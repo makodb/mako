@@ -638,10 +638,52 @@ inline PollableProxy make_tcp_connection_pollable_proxy(
 // the DSL methods delegate to these (same pattern as TcpConnection above).
 // Each carries its own `// @unsafe` at the definition site.
 struct TcpListener;  // defined by the GEN block below
-ChannelError tcplistener_listen(const TcpListener& self, std::string_view addr);
-void         tcplistener_close(const TcpListener& self);
 bool         tcplistener_handle_read(const TcpListener& self);
 void         tcplistener_handle_error(const TcpListener& self);
+
+// Forward decls for the DSL listen() body below — both definitions
+// live later in the file (io_kind_to_channel_error with the connection
+// kernels — module-internal, so its declaration must leave the export
+// block to keep one linkage; the proxy maker after the shims).
+struct TcpListener;
+inline PollableProxy make_tcp_listener_pollable_proxy(rusty::Arc<TcpListener> listener);
+}  // export namespace rrr (paused for a module-linkage definition)
+namespace rrr {
+// @safe - Map a rusty::io::Error::Kind to a ChannelError. Used at the
+// boundary where `rusty::net::*` operations return Result<T,io::Error>
+// and we need to surface the failure as a ChannelError on the
+// listener / connection API. Defined HERE (module linkage, before the
+// TcpListener DSL block whose listen() calls it); previously lived in
+// the impl-side anonymous namespace, but an exported inline method
+// cannot name an internal-linkage helper.
+// KERNEL by probe (arc cycle 9): foreign NESTED enum paths
+// (rusty::io::Error::Kind::X) in DSL comparison position get the
+// variant-call lowering (X() — invalid); only same-file DSL enums
+// compare cleanly. This mapper therefore stays hand-written C++.
+// @unsafe kernel by verdict: a match/comparison over rusty::io::Error::Kind
+// is not DSL-expressible today -- ANY qualified C++ enum-class variant path
+// (Kind::ConnectionRefused) emits a nullary variant CALL (Kind::ConnectionRefused()),
+// the DSL-enum factory convention misapplied to a plain C++ enum. Same trap
+// family as the docs 7.51-era notes; needs a transpiler-side "is this a DSL
+// enum" check before appending parens.
+ChannelError io_kind_to_channel_error(rusty::io::Error::Kind kind) {
+    switch (kind) {
+        case rusty::io::Error::Kind::ConnectionRefused: return ChannelError::ConnectionRefused;
+        case rusty::io::Error::Kind::ConnectionReset:
+        case rusty::io::Error::Kind::ConnectionAborted:
+        case rusty::io::Error::Kind::NotConnected:
+        case rusty::io::Error::Kind::BrokenPipe:        return ChannelError::ConnectionReset;
+        case rusty::io::Error::Kind::TimedOut:          return ChannelError::Timeout;
+        case rusty::io::Error::Kind::AddrInUse:         return ChannelError::AddressInUse;
+        case rusty::io::Error::Kind::AddrNotAvailable:  return ChannelError::AddressInvalid;
+        case rusty::io::Error::Kind::InvalidInput:      return ChannelError::AddressInvalid;
+        case rusty::io::Error::Kind::PermissionDenied:  return ChannelError::PermissionDenied;
+        case rusty::io::Error::Kind::WouldBlock:        return ChannelError::WouldBlock;
+        default:                                        return ChannelError::Internal;
+    }
+}
+}  // namespace rrr
+export namespace rrr {
 
 // Server-side TCP listener — owns a `rusty::net::TcpListener` (RAII-closes
 // the listen fd on drop) + an accept loop. All fields are already rusty
@@ -657,8 +699,11 @@ void         tcplistener_handle_error(const TcpListener& self);
 // which carry their own `// @unsafe`.
 #if RUSTYCPP_RUST
 struct TcpListener {
-    listener_: rusty::net::TcpListener,
-    bound_address_: std::string,
+    // Interior-mutable: `listen()` runs on the shared Arc facade (the
+    // shim's &mut is on the Box, not the TcpListener), so the bind-time
+    // writes go through RefCell instead of the old localized const_cast.
+    listener_: RefCell<rusty::net::TcpListener>,
+    bound_address_: RefCell<std::string>,
     closed_: Cell<bool>,
     listened_: Cell<bool>,
     poll_thread_: Option<Arc<PollThread>>,
@@ -670,8 +715,8 @@ struct TcpListener {
 impl TcpListener {
     #[cpp_ctor] fn new() -> TcpListener {
         TcpListener {
-            listener_: Default::default(),
-            bound_address_: Default::default(),
+            listener_: RefCell::<rusty::net::TcpListener>::new(Default::default()),
+            bound_address_: RefCell::<std::string>::new(Default::default()),
             closed_: Cell::new(false),
             listened_: Cell::new(false),
             poll_thread_: None,
@@ -681,12 +726,77 @@ impl TcpListener {
         }
     }
 
+    // Bind path: rusty::net::TcpListener::bind + socket_addr_v4_from_str
+    // + set_nonblocking — pure flow control over Results, all field
+    // writes through the RefCells (listen runs once; the RefCell
+    // replaces the old setup-time const_cast pattern).
     fn listen(&self, addr: std::string_view) -> ChannelError {
-        tcplistener_listen(self, addr)
+        if self.closed_.get() {
+            return ChannelError_AddressInUse();
+        }
+        if self.listened_.get() {
+            return ChannelError_AddressInUse();
+        }
+        let parse_result = rusty::net::socket_addr_v4_from_str(addr);
+        if parse_result.is_err() {
+            return ChannelError_AddressInvalid();
+        }
+        let bind_result = rusty::net::TcpListener::bind(parse_result.unwrap());
+        if bind_result.is_err() {
+            return io_kind_to_channel_error(bind_result.unwrap_err().kind());
+        }
+        {
+            let mut g = self.listener_.borrow_mut();
+            *g = bind_result.unwrap();
+        }
+        let nonblock_result = {
+            let g = self.listener_.borrow();
+            (*g).set_nonblocking(true)
+        };
+        if nonblock_result.is_err() {
+            let ch = io_kind_to_channel_error(nonblock_result.unwrap_err().kind());
+            let mut g = self.listener_.borrow_mut();
+            let _closed = core::mem::take(&mut *g); // RAII close
+            return ch;
+        }
+        // Discover actual bound address (port may have been 0).
+        let local_result = {
+            let g = self.listener_.borrow();
+            (*g).local_addr()
+        };
+        {
+            let mut b = self.bound_address_.borrow_mut();
+            if local_result.is_ok() {
+                *b = rusty::net::socket_addr_v4_to_string(local_result.unwrap());
+            } else {
+                *b = format!("{}", addr);
+            }
+        }
+        self.listened_.set(true);
+        // Auto-register with the poll thread if the factory wired one
+        // in. The factory pre-installs `poll_thread_` and a weak
+        // self-ref before handing the listener proxy to the user; we
+        // upgrade the weak ref and hand a PollableProxy clone to the
+        // poll thread.
+        if self.poll_thread_.is_some() && self.self_weak_.is_some() {
+            let self_opt = self.self_weak_.as_ref().unwrap().upgrade();
+            if self_opt.is_some() {
+                let pt: &Arc<PollThread> = self.poll_thread_.as_ref().unwrap();
+                pt.add_proxy(make_tcp_listener_pollable_proxy(self_opt.unwrap()));
+            }
+        }
+        ChannelError_None()
     }
 
+    // Sets the closed latch and replaces the owned listener with a
+    // default one — the old value drops here, RAII-closing the fd.
     fn close(&self) {
-        tcplistener_close(self)
+        if self.closed_.get() {
+            return;
+        }
+        self.closed_.set(true);
+        let mut g = self.listener_.borrow_mut();
+        let _closed = core::mem::take(&mut *g);
     }
 
     fn is_closed(&self) -> bool {
@@ -694,7 +804,8 @@ impl TcpListener {
     }
 
     fn local_address(&self) -> std::string {
-        self.bound_address_
+        let g = self.bound_address_.borrow();
+        (*g).clone()
     }
 
     fn set_on_accept(&self, cb: OnAcceptCallback) {
@@ -708,7 +819,8 @@ impl TcpListener {
     }
 
     fn fd(&self) -> i32 {
-        self.listener_.as_owned_fd().as_raw_fd()
+        let g = self.listener_.borrow();
+        (*g).as_owned_fd().as_raw_fd()
     }
 
     fn poll_mode(&self) -> i32 {
@@ -744,12 +856,12 @@ impl TcpListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=9c2a598c8bbec81550f6af69586f06c03def4cc63cf427dc85a7fd53c5223e7e*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=e3b5f94302de2fb4a74397b85007ae87d4067aabe238bfeb4c1c1c34d1c4b1fc*/
 struct TcpListener;
 
 struct TcpListener {
-    rusty::net::TcpListener listener_;
-    std::string bound_address_;
+    rusty::RefCell<rusty::net::TcpListener> listener_;
+    rusty::RefCell<std::string> bound_address_;
     rusty::Cell<bool> closed_;
     rusty::Cell<bool> listened_;
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
@@ -777,8 +889,8 @@ struct TcpListener {
 
 
 TcpListener::TcpListener()
-    : listener_(rusty::default_like<rusty::net::TcpListener>())
-    , bound_address_(rusty::default_like<std::string>())
+    : listener_(rusty::RefCell<rusty::net::TcpListener>::new_(rusty::default_like<rusty::net::TcpListener>()))
+    , bound_address_(rusty::RefCell<std::string>::new_(rusty::default_like<std::string>()))
     , closed_(rusty::Cell<bool>::new_(false))
     , listened_(rusty::Cell<bool>::new_(false))
     , poll_thread_(rusty::Option<rusty::Arc<PollThread>>{rusty::None})
@@ -788,11 +900,60 @@ TcpListener::TcpListener()
 {}
 
 ChannelError TcpListener::listen(std::string_view addr) const {
-    return tcplistener_listen((*this), std::move(addr));
+    if (this->closed_.get()) {
+        return ChannelError_AddressInUse();
+    }
+    if (this->listened_.get()) {
+        return ChannelError_AddressInUse();
+    }
+    auto parse_result = rusty::net::socket_addr_v4_from_str(std::move(addr));
+    if (parse_result.is_err()) {
+        return ChannelError_AddressInvalid();
+    }
+    auto bind_result = rusty::net::TcpListener::bind(parse_result.unwrap());
+    if (bind_result.is_err()) {
+        return io_kind_to_channel_error(bind_result.unwrap_err().kind());
+    }
+    {
+        auto g = this->listener_.borrow_mut();
+        *g = bind_result.unwrap();
+    }
+    auto nonblock_result = [&]() { const auto g = this->listener_.borrow();
+return ((*g)).set_nonblocking(true); }();
+    if (nonblock_result.is_err()) {
+        auto ch = io_kind_to_channel_error(nonblock_result.unwrap_err().kind());
+        auto g = this->listener_.borrow_mut();
+        const auto _closed = rusty::mem::take(*g);
+        return std::move(ch);
+    }
+    auto local_result = [&]() { const auto g = this->listener_.borrow();
+return ((*g)).local_addr(); }();
+    {
+        auto b = this->bound_address_.borrow_mut();
+        if (local_result.is_ok()) {
+            *b = rusty::net::socket_addr_v4_to_string(local_result.unwrap());
+        } else {
+            *b = std::format("{}" , addr);
+        }
+    }
+    this->listened_.set(true);
+    if (this->poll_thread_.is_some() && this->self_weak_.is_some()) {
+        auto self_opt = this->self_weak_.as_ref().unwrap().upgrade();
+        if (self_opt.is_some()) {
+            const rusty::Arc<PollThread>& pt = this->poll_thread_.as_ref().unwrap();
+            pt->add_proxy(make_tcp_listener_pollable_proxy(self_opt.unwrap()));
+        }
+    }
+    return ChannelError_None();
 }
 
 void TcpListener::close() const {
-    tcplistener_close((*this));
+    if (this->closed_.get()) {
+        return;
+    }
+    this->closed_.set(true);
+    auto g = this->listener_.borrow_mut();
+    const auto _closed = rusty::mem::take(*g);
 }
 
 bool TcpListener::is_closed() const {
@@ -800,7 +961,8 @@ bool TcpListener::is_closed() const {
 }
 
 std::string TcpListener::local_address() const {
-    return this->bound_address_;
+    const auto g = this->bound_address_.borrow();
+    return rusty::clone(((*g)));
 }
 
 void TcpListener::set_on_accept(OnAcceptCallback cb) const {
@@ -814,7 +976,8 @@ void TcpListener::set_on_error(OnErrorCallback cb) const {
 }
 
 int32_t TcpListener::fd() const {
-    return this->listener_.as_owned_fd().as_raw_fd();
+    const auto g = this->listener_.borrow();
+    return ((*g)).as_owned_fd().as_raw_fd();
 }
 
 int32_t TcpListener::poll_mode() const {
@@ -1249,80 +1412,91 @@ void         tcpconn_drop_after_error(TcpOutBuf& buf, size_t offset);
 void         tcpconn_deliver_on_closed_locked(const TcpConnection& conn, ChannelError reason);
 ChannelError tcpconn_errno_to_channel_error(int err);
 
-// @unsafe - encodes into the outbound buffer (raw payload pointer) and
-// posts `PollThread::update_mode` to wake the poll loop.
-ChannelError tcpconn_send_frame(const TcpConnection& self, const ChannelFrame& frame) {
-    if (self.closed_.get()) {
-        return ChannelError::ConnectionReset;
+// Authored as inline Rust DSL; the raw-payload encode stays in the
+// `frame_codec_encode_into` kernel (pointer arithmetic + memcpy), the
+// DSL owns the control flow around it.
+//
+// The extended-header flag is always clear here: `frame.size` in the
+// channel's `ChannelFrame` is the *raw payload byte count* (no flag),
+// and the codec sets the flag when the RPC layer constructs a
+// response — see the pre-DSL comment history for the wire-compat
+// rationale.
+//
+// The wake path mirrors the legacy fd path's idiom in
+// `ClientConnection::replay_pending_requests`: on the poll thread just
+// set the deferred flag (poll_loop picks it up via
+// `check_pending_write_update`); off the poll thread post
+// `update_mode(fd, READ|WRITE)` directly — posting writes the mpsc
+// channel's eventfd and wakes `epoll_wait` immediately. Without this,
+// multi-threaded senders contend on the non-atomic
+// `pending_write_update_` Cell and lose wake-ups (the
+// MultiThreadedStressTest 100-thread wedge, TODO-srpc 4g1b). The
+// `poll_thread_` slot may be None for socketpair-driven unit tests
+// (single-threaded — flag-poll is fine).
+#if RUSTYCPP_RUST
+fn tcpconn_send_frame(conn: &TcpConnection, frame: &ChannelFrame) -> ChannelError {
+    if conn.closed_.get() {
+        return ChannelError_ConnectionReset();
     }
-    if (frame.size > 0 && frame.payload == nullptr) {
-        return ChannelError::Internal;
+    if frame.size > 0usize && frame.payload.is_null() {
+        return ChannelError_Internal();
     }
-    if (frame.size > static_cast<std::size_t>(kMaxFramePayloadSize)) {
-        return ChannelError::Internal;
+    if frame.size > (kMaxFramePayloadSize as usize) {
+        return ChannelError_Internal();
     }
+    let extended_header_flag = false;
 
-    // Determine whether the caller asked for the response extended-
-    // header flag by sniffing the frame size's high bit. The channel
-    // layer treats `payload` as opaque; the encoded byte stream that
-    // crosses the wire carries the flag in the size header. To stay
-    // wire-compatible with the existing inline send paths
-    // (`ServerConnection::reply` writes the extended-flag bit into the
-    // size prefix, NOT into `payload`), we expose the extended flag
-    // through a separate convention: `frame.size` in the channel's
-    // `ChannelFrame` is the *raw payload byte count* (no flag), and
-    // the codec is responsible for setting the flag when the RPC
-    // layer constructs a response. For sub-leaf 3a we always emit
-    // request-style frames (flag clear). The server-side flag handling
-    // lands when the RPC layer is refactored onto channel.
-    constexpr bool extended_header_flag = false;
-
-    auto guard = self.outbound_.lock().unwrap();
-    auto& buf = *guard;
+    let mut guard = conn.outbound_.lock().unwrap();
 
     // Reject when the queue is already past the high water — we never
     // append to a buffer that's already over budget so backpressure is
     // strictly bounded.
-    if (buf.size() >= self.outbound_high_water_) {
-        return ChannelError::WouldBlock;
+    if (*guard).len() >= conn.outbound_high_water_ {
+        return ChannelError_WouldBlock();
     }
 
-    if (!frame_codec_encode_into(buf,
-                                 frame.payload,
-                                 static_cast<std::int32_t>(frame.size),
-                                 extended_header_flag)) {
-        return ChannelError::Internal;
+    if !frame_codec_encode_into(&mut *guard, frame.payload,
+                                frame.size as i32, extended_header_flag) {
+        return ChannelError_Internal();
     }
 
-    // Wake the poll thread so the new outbound bytes actually leave
-    // the buffer. Two paths, mirroring the legacy fd path's idiom in
-    // `ClientConnection::replay_pending_requests`:
-    //
-    //   * On the poll thread: just set the deferred flag — the
-    //     poll_loop will pick it up at the bottom of the current
-    //     iteration via `check_pending_write_update`.
-    //
-    //   * Off the poll thread (the common case — RPC user threads
-    //     calling `send_frame` from `dispatch_frame_via_channel`):
-    //     post `update_mode(fd, READ|WRITE)` directly. Posting writes
-    //     to the mpsc channel's eventfd, which wakes the poll thread's
-    //     `epoll_wait` immediately. Without this, multi-threaded
-    //     senders contend on the non-atomic `pending_write_update_`
-    //     `Cell<bool>` and lose wake-ups, producing the
-    //     `MultiThreadedStressTest` 100-thread wedge documented in
-    //     `docs/TODO-srpc.md` sub-leaf 4g1b.
-    //
-    // The `poll_thread_` slot may be `None` for unit tests that drive
-    // `TcpConnection` directly via `socketpair(2)` without a poll
-    // thread (those tests are single-threaded — flag-poll is fine).
-    if (self.poll_thread_.is_some() && !pollworker_is_on_poll_thread()) {
-        self.poll_thread_.as_ref().unwrap()->update_mode(
-            self.fd_.as_raw_fd(), PollMode::READ | PollMode::WRITE);
+    if conn.poll_thread_.is_some() && !pollworker_is_on_poll_thread() {
+        let pt: &Arc<PollThread> = conn.poll_thread_.as_ref().unwrap();
+        pt.update_mode(conn.fd_.as_raw_fd(), PollMode::READ | PollMode::WRITE);
     } else {
-        self.pending_write_update_.set(true);
+        conn.pending_write_update_.set(true);
     }
-    return ChannelError::None;
+    ChannelError_None()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.12 version=1 rust_sha256=69e85f7d58c9ced9cd4d0a723ed1f253cad724e3794ebe8e7dae982f1a9f4f31*/
+ChannelError tcpconn_send_frame(const TcpConnection& conn, const ChannelFrame& frame) {
+    if (conn.closed_.get()) {
+        return ChannelError_ConnectionReset();
+    }
+    if ((rusty::detail::deref_if_pointer_like(frame.size) > static_cast<size_t>(0)) && (frame.payload == nullptr)) {
+        return ChannelError_Internal();
+    }
+    if (rusty::detail::deref_if_pointer_like(frame.size) > ((static_cast<size_t>(kMaxFramePayloadSize)))) {
+        return ChannelError_Internal();
+    }
+    const auto extended_header_flag = false;
+    auto&& guard = rusty::deref_call(conn.outbound_.lock(), rusty::detail::__mdisp_unwrap{});
+    if (rusty::len((rusty::detail::deref_if_pointer_like(guard))) >= rusty::detail::deref_if_pointer_like(conn.outbound_high_water_)) {
+        return ChannelError_WouldBlock();
+    }
+    if (rusty::detail::rust_not(frame_codec_encode_into(rusty::detail::deref_if_pointer_like(guard), frame.payload, static_cast<int32_t>(frame.size), std::move(extended_header_flag)))) {
+        return ChannelError_Internal();
+    }
+    if (conn.poll_thread_.is_some() && rusty::detail::rust_not(pollworker_is_on_poll_thread())) {
+        const rusty::Arc<PollThread>& pt = conn.poll_thread_.as_ref().unwrap();
+        pt->update_mode(conn.fd_.as_raw_fd(), rusty::clone(PollMode::READ) | rusty::clone(PollMode::WRITE));
+    } else {
+        conn.pending_write_update_.set(true);
+    }
+    return ChannelError_None();
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.12*/
 
 // @unsafe - drives tcpconn_drain_outbound_locked (which is @unsafe for
 // raw `uint8_t*` arithmetic + send syscall).
@@ -1878,37 +2052,6 @@ ChannelError tcpconn_errno_to_channel_error(int32_t err) {
 
 namespace {
 
-// @safe - Map a rusty::io::Error::Kind to a ChannelError. Used at the
-// boundary where `rusty::net::*` operations return Result<T,io::Error>
-// and we need to surface the failure as a ChannelError on the
-// listener / connection API.
-// KERNEL by probe (arc cycle 9): foreign NESTED enum paths
-// (rusty::io::Error::Kind::X) in DSL comparison position get the
-// variant-call lowering (X() — invalid); only same-file DSL enums
-// compare cleanly. This mapper therefore stays hand-written C++.
-// @unsafe kernel by verdict: a match/comparison over rusty::io::Error::Kind
-// is not DSL-expressible today -- ANY qualified C++ enum-class variant path
-// (Kind::ConnectionRefused) emits a nullary variant CALL (Kind::ConnectionRefused()),
-// the DSL-enum factory convention misapplied to a plain C++ enum. Same trap
-// family as the docs 7.51-era notes; needs a transpiler-side "is this a DSL
-// enum" check before appending parens.
-ChannelError io_kind_to_channel_error(rusty::io::Error::Kind kind) {
-    switch (kind) {
-        case rusty::io::Error::Kind::ConnectionRefused: return ChannelError::ConnectionRefused;
-        case rusty::io::Error::Kind::ConnectionReset:
-        case rusty::io::Error::Kind::ConnectionAborted:
-        case rusty::io::Error::Kind::NotConnected:
-        case rusty::io::Error::Kind::BrokenPipe:        return ChannelError::ConnectionReset;
-        case rusty::io::Error::Kind::TimedOut:          return ChannelError::Timeout;
-        case rusty::io::Error::Kind::AddrInUse:         return ChannelError::AddressInUse;
-        case rusty::io::Error::Kind::AddrNotAvailable:  return ChannelError::AddressInvalid;
-        case rusty::io::Error::Kind::InvalidInput:      return ChannelError::AddressInvalid;
-        case rusty::io::Error::Kind::PermissionDenied:  return ChannelError::PermissionDenied;
-        case rusty::io::Error::Kind::WouldBlock:        return ChannelError::WouldBlock;
-        default:                                        return ChannelError::Internal;
-    }
-}
-
 // Set the FD non-blocking. Returns 0 on success, errno on failure.
 // Authored in the DSL via expression-shaped unsafe{} libc calls (the
 // threading.cpp pthread pattern): fcntl is variadic C but the call
@@ -1959,68 +2102,9 @@ int32_t set_nonblocking_fd(int32_t fd) {
 // set_poll_thread / set_self_weak) now live in the DSL block; the dead
 // `listen_errno_to_channel_error` static is dropped.
 
-// @safe - bind path delegates to rusty::net::TcpListener::bind +
-// socket_addr_v4_from_str + set_nonblocking; pure flow control over Results.
-ChannelError tcplistener_listen(const TcpListener& self, std::string_view addr) {
-    if (self.closed_.get()) {
-        return ChannelError::AddressInUse;
-    }
-    if (self.listened_.get()) {
-        return ChannelError::AddressInUse;
-    }
-
-    auto parse_result = rusty::net::socket_addr_v4_from_str(addr);
-    if (parse_result.is_err()) {
-        return ChannelError::AddressInvalid;
-    }
-    auto bind_result = rusty::net::TcpListener::bind(parse_result.unwrap());
-    if (bind_result.is_err()) {
-        return io_kind_to_channel_error(bind_result.unwrap_err().kind());
-    }
-    // Setup-time plain-field writes on the const facade — the
-    // documented localized-const_cast pattern (listen runs once).
-    const_cast<TcpListener&>(self).listener_ = bind_result.unwrap();
-
-    auto nonblock_result = self.listener_.set_nonblocking(true);
-    if (nonblock_result.is_err()) {
-        ChannelError ch = io_kind_to_channel_error(
-            nonblock_result.unwrap_err().kind());
-        const_cast<TcpListener&>(self).listener_ = rusty::net::TcpListener{};  // RAII close
-        return ch;
-    }
-
-    // Discover actual bound address (port may have been 0).
-    auto local_result = self.listener_.local_addr();
-    if (local_result.is_ok()) {
-        const_cast<TcpListener&>(self).bound_address_ = rusty::net::socket_addr_v4_to_string(
-            local_result.unwrap());
-    } else {
-        const_cast<TcpListener&>(self).bound_address_ = std::string(addr);
-    }
-
-    self.listened_.set(true);
-
-    // Auto-register with the poll thread if the factory wired one in.
-    // The factory pre-installs `poll_thread_` and a weak self-ref
-    // before handing the listener proxy to the user; we upgrade the
-    // weak ref and hand a `PollableProxy` clone to the poll thread.
-    if (self.poll_thread_.is_some() && self.self_weak_.is_some()) {
-        auto self_opt = self.self_weak_.as_ref().unwrap().upgrade();
-        if (self_opt.is_some()) {
-            self.poll_thread_.as_ref().unwrap()->add_proxy(
-                make_tcp_listener_pollable_proxy(self_opt.unwrap()));
-        }
-    }
-    return ChannelError::None;
-}
-
-// @safe - sets the closed latch and drops the owned listener (RAII close).
-void tcplistener_close(const TcpListener& self) {
-    if (self.closed_.get()) return;
-    self.closed_.set(true);
-
-    const_cast<TcpListener&>(self).listener_ = rusty::net::TcpListener{};  // RAII close
-}
+// Note: `tcplistener_listen` and `tcplistener_close` moved into the
+// DSL impl block (listen / close methods) — the RefCell-wrapped fields
+// replaced their setup-time const_cast writes.
 
 // @unsafe - last-writer-wins callback store under the spinlock.
 
@@ -2087,14 +2171,14 @@ fn tcplistener_handle_read(lst: &TcpListener) -> bool {
                     (*guard)(step.ch, step.msg);
                 }
             }
-            tcplistener_close(lst);
+            lst.close();
             return any_progress;
         }
     }
     any_progress
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener_read version=1 rust_sha256=bf02f686ebcc74f1f40e3606bcc354f33435b549187e8bfbf90485eed2192fd4*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener_read version=1 rust_sha256=080592ac95bc87701ff3d161936f2b63f6914e3fc7abfe2ded3a1edacda11472*/
 bool tcplistener_handle_read(const TcpListener& lst) {
     if (lst.closed_.get()) {
         return false;
@@ -2127,7 +2211,7 @@ bool tcplistener_handle_read(const TcpListener& lst) {
                     (rusty::detail::deref_if_pointer_like(guard))(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ch); }) { return (__r.ch); } else if constexpr (requires { (__r.ch_field); }) { return (__r.ch_field); } else if constexpr (requires { ((*__r).ch); }) { return ((*__r).ch); } else { return ((*__r).ch_field); } }(step)), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.msg); }) { return (__r.msg); } else if constexpr (requires { (__r.msg_field); }) { return (__r.msg_field); } else if constexpr (requires { ((*__r).msg); }) { return ((*__r).msg); } else { return ((*__r).msg_field); } }(step)));
                 }
             }
-            tcplistener_close(lst);
+            lst.close();
             return std::move(any_progress);
         }
     }
@@ -2142,18 +2226,21 @@ ChannelConnectionProxy tcplistener_take_proxy(AcceptStep* s) { return s->proxy.t
 // @unsafe - const method on the foreign rusty::net::TcpListener field.
 #if RUSTYCPP_RUST
 fn tcplistener_is_bound(lst: &TcpListener) -> bool {
-    lst.listener_.is_bound()
+    let g = lst.listener_.borrow();
+    (*g).is_bound()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.22 version=1 rust_sha256=d2e9594a77040a29371fe7770bd14915523ab8a7fb1c253ddf1f30ad60a6f3cf*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.22 version=1 rust_sha256=3780c6f38b82c0bdeacce69f7635eda06c2929f76c84927575a40ed86b6fe038*/
 bool tcplistener_is_bound(const TcpListener& lst) {
-    return lst.listener_.is_bound();
+    auto&& g = rusty::borrow(lst.listener_);
+    return ((rusty::detail::deref_if_pointer_like(g))).is_bound();
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.22*/
 
 // @unsafe - accept(2) via rusty::net + the full accepted-socket wrap.
 int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out) {
-    auto accept_result = self.listener_.accept();
+    auto listener_guard = self.listener_.borrow();
+    auto accept_result = (*listener_guard).accept();
     if (accept_result.is_err()) {
         auto err = accept_result.unwrap_err();
         auto kind = err.kind();
@@ -2223,10 +2310,10 @@ fn tcplistener_handle_error(listener: &TcpListener) {
             (*guard)(ChannelError_Internal(), "epoll/poll signaled error");
         }
     }
-    tcplistener_close(listener);
+    listener.close();
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.20 version=1 rust_sha256=832ba5c63c38770ec7d6e48dbafab135da8b23f0c30494f1647c5d9bd622d2fe*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.20 version=1 rust_sha256=56a1514c092e75e73ea033dfa0cc5fae8d59a6f9cbe64128ea5253e1cf6efe36*/
 void tcplistener_handle_error(const TcpListener& listener) {
     if (listener.closed_.get()) {
         return;
@@ -2237,7 +2324,7 @@ void tcplistener_handle_error(const TcpListener& listener) {
             (rusty::detail::deref_if_pointer_like(guard))(ChannelError_Internal(), "epoll/poll signaled error");
         }
     }
-    tcplistener_close(listener);
+    listener.close();
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.20*/
 
@@ -2294,19 +2381,21 @@ ChannelError connect_errno_to_channel_error(int32_t err) {
 // socket/nonblock/EINPROGRESS/select/SO_ERROR ladder with
 // close-on-every-error IS the body. A DSL shell over one fat step
 // kernel would be cosmetic fragmentation (anti-fragmentation rule).
-ConnectResult tcp_factory_connect(const TcpFactory& self, std::string_view addr) {
-    auto parse_result = rusty::net::socket_addr_v4_from_str(addr);
-    if (parse_result.is_err()) {
-        return ConnectResult{rusty::None, ChannelError::AddressInvalid};
-    }
-    sockaddr_in sa =
-        rusty::net::sockaddr_in_from_socket_addr_v4(parse_result.unwrap());
+// The socket/connect/select ladder — one classify-and-wrap syscall
+// kernel. Returns the connected fd (>= 0), or -1 with *err_out set.
+// Everything here is fd_set/timeval/sockaddr surgery with out-param
+// syscalls; the parse head and the Arc-wiring tail live in the DSL
+// tcp_factory_connect below.
+int32_t tcp_factory_connect_socket(rusty::net::SocketAddrV4 peer,
+                                   int32_t connect_timeout_ms,
+                                   ChannelError* err_out) {
+    sockaddr_in sa = rusty::net::sockaddr_in_from_socket_addr_v4(peer);
 
     // @unsafe — system call
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        return ConnectResult{rusty::None,
-                             connect_errno_to_channel_error(errno)};
+        *err_out = connect_errno_to_channel_error(errno);
+        return -1;
     }
 
 #ifdef __APPLE__
@@ -2324,15 +2413,15 @@ ConnectResult tcp_factory_connect(const TcpFactory& self, std::string_view addr)
     if (set_nonblocking_fd(fd) != 0) {
         const int err = errno;
         ::close(fd);
-        return ConnectResult{rusty::None,
-                             connect_errno_to_channel_error(err)};
+        *err_out = connect_errno_to_channel_error(err);
+            return -1;
     }
 
     // @unsafe — system call
     int rc = ::connect(fd, reinterpret_cast<const sockaddr*>(&sa), sizeof(sa));
     if (rc < 0) {
         const int err = errno;
-        if (err == EINPROGRESS && self.connect_timeout_ms_ > 0) {
+        if (err == EINPROGRESS && connect_timeout_ms > 0) {
             // Wait up to `connect_timeout_ms_` for the connect to
             // complete. `select` returns with the fd writable on
             // success or when the kernel surfaces an error via
@@ -2341,21 +2430,21 @@ ConnectResult tcp_factory_connect(const TcpFactory& self, std::string_view addr)
             FD_ZERO(&wset);
             FD_SET(fd, &wset);
             timeval tv;
-            tv.tv_sec  =  self.connect_timeout_ms_ / 1000;
-            tv.tv_usec = (self.connect_timeout_ms_ % 1000) * 1000;
+            tv.tv_sec  =  connect_timeout_ms / 1000;
+            tv.tv_usec = (connect_timeout_ms % 1000) * 1000;
 
             // @unsafe — system call
             int sel = ::select(fd + 1, nullptr, &wset, nullptr, &tv);
             if (sel == 0) {
                 ::close(fd);
-                return ConnectResult{rusty::None,
-                                     ChannelError::Timeout};
+                *err_out = ChannelError::Timeout;
+            return -1;
             }
             if (sel < 0) {
                 const int sel_err = errno;
                 ::close(fd);
-                return ConnectResult{rusty::None,
-                                     connect_errno_to_channel_error(sel_err)};
+                *err_out = connect_errno_to_channel_error(sel_err);
+            return -1;
             }
             // Check SO_ERROR for the actual connect outcome.
             int so_err = 0;
@@ -2365,13 +2454,13 @@ ConnectResult tcp_factory_connect(const TcpFactory& self, std::string_view addr)
                 || so_err != 0) {
                 const int eff_err = (so_err != 0) ? so_err : errno;
                 ::close(fd);
-                return ConnectResult{rusty::None,
-                                     connect_errno_to_channel_error(eff_err)};
+                *err_out = connect_errno_to_channel_error(eff_err);
+            return -1;
             }
         } else if (err != EISCONN) {
             ::close(fd);
-            return ConnectResult{rusty::None,
-                                 connect_errno_to_channel_error(err)};
+            *err_out = connect_errno_to_channel_error(err);
+            return -1;
         }
     }
 
@@ -2395,31 +2484,78 @@ ConnectResult tcp_factory_connect(const TcpFactory& self, std::string_view addr)
             local_sa.sin_port == sa.sin_port &&
             local_sa.sin_addr.s_addr == sa.sin_addr.s_addr) {
             ::close(fd);
-            return ConnectResult{rusty::None,
-                                 ChannelError::ConnectionRefused};
+            *err_out = ChannelError::ConnectionRefused;
+            return -1;
         }
     }
 
-    // Build the TcpConnection and register its pollable proxy with
-    // the poll thread before returning. The channel proxy keeps one
-    // Arc; the pollable proxy keeps another, so the connection
-    // survives until both layers release.
-    auto conn = rusty::Arc<TcpConnection>::make(fd, std::string(addr));
-    // wire the poll thread reference into
-    // the connection BEFORE the channel proxy is handed back, so any
-    // user-thread `send_frame` call can post `update_mode` actively
-    // (without the lost-wake-up race against `pending_write_update_`).
-    {
-        auto& mut_conn = const_cast<TcpConnection&>(*conn.get());
-        mut_conn.set_poll_thread(self.poll_thread_.clone());
-    }
-    self.poll_thread_->add_proxy(make_tcp_connection_pollable_proxy(conn.clone()));
-
-    return ConnectResult{
-        rusty::Some(make_tcp_connection_channel_proxy(std::move(conn))),
-        ChannelError::None,
-    };
+    return fd;
 }
+
+// Parse head + connection build/wiring as DSL over the syscall kernel.
+// The old tail's `const_cast<TcpConnection&>(*conn.get())` becomes the
+// get_mut mint window (the Arc is freshly minted and uniquely owned).
+// The poll thread is wired into the connection BEFORE the channel
+// proxy is handed back, so any user-thread `send_frame` can post
+// `update_mode` actively (no lost-wake-up race against
+// `pending_write_update_`); the channel proxy keeps one Arc, the
+// pollable proxy another, so the connection survives until both
+// layers release.
+#if RUSTYCPP_RUST
+fn tcp_factory_connect(fac: &TcpFactory, addr: std::string_view) -> ConnectResult {
+    let parse_result = rusty::net::socket_addr_v4_from_str(addr);
+    if parse_result.is_err() {
+        return ConnectResult {
+            connection: None,
+            error: ChannelError_AddressInvalid(),
+        };
+    }
+    let mut err: ChannelError = ChannelError_None();
+    let fd = tcp_factory_connect_socket(parse_result.unwrap(),
+                                        fac.connect_timeout_ms_,
+                                        &raw mut err);
+    if fd < 0i32 {
+        return ConnectResult { connection: None, error: err };
+    }
+
+    let mut conn: Arc<TcpConnection> =
+        Arc::<TcpConnection>::make(fd, format!("{}", addr));
+    {
+        let opt = conn.get_mut();
+        let mut_conn: &mut TcpConnection = opt.unwrap();
+        mut_conn.set_poll_thread(fac.poll_thread_.clone());
+    }
+    let pt: &Arc<PollThread> = &fac.poll_thread_;
+    pt.add_proxy(make_tcp_connection_pollable_proxy(conn.clone()));
+
+    ConnectResult {
+        connection: Some(make_tcp_connection_channel_proxy(conn)),
+        error: ChannelError_None(),
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.25 version=1 rust_sha256=3891ea53fc0276750c765c9a18afb52425b59a5c5a31ab7790a7902ce2028bfe*/
+ConnectResult tcp_factory_connect(const TcpFactory& fac, std::string_view addr) {
+    auto parse_result = rusty::net::socket_addr_v4_from_str(std::move(addr));
+    if (parse_result.is_err()) {
+        return ConnectResult{.connection = rusty::None, .error = ChannelError_AddressInvalid()};
+    }
+    ChannelError err = ChannelError_None();
+    auto fd = tcp_factory_connect_socket(parse_result.unwrap(), fac.connect_timeout_ms_, &err);
+    if (rusty::detail::deref_if_pointer_like(fd) < static_cast<int32_t>(0)) {
+        return ConnectResult{.connection = rusty::None, .error = std::move(err)};
+    }
+    rusty::Arc<TcpConnection> conn = rusty::Arc<TcpConnection>::make(std::move(fd), std::format("{}" , addr));
+    {
+        auto opt = conn.get_mut();
+        TcpConnection& mut_conn = opt.unwrap();
+        mut_conn.set_poll_thread(rusty::clone(fac.poll_thread_));
+    }
+    const rusty::Arc<PollThread>& pt = fac.poll_thread_;
+    pt->add_proxy(make_tcp_connection_pollable_proxy(rusty::clone(conn)));
+    return ConnectResult{.connection = rusty::Some(make_tcp_connection_channel_proxy(std::move(conn))), .error = ChannelError_None()};
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.25*/
 
 rusty::Option<ChannelListenerProxy> tcp_factory_make_listener(const TcpFactory& self) {
     auto listener = rusty::Arc<TcpListener>::make();
