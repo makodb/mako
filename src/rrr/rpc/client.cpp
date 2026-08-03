@@ -4776,28 +4776,62 @@ void clientconn_bind_channel_via_poll_thread(
 // raw pointer stays valid because the spawning lambda keeps an
 // `Arc<ClientConnection>` alive for the fiber's lifetime, and the
 // connection owns the `Box<FiberChannel>`.
-void clientconn_run_recv_loop(const ClientConnection& self) {
-  FiberChannel* fc = nullptr;
-  {
-    auto guard = self.fiber_channel_.lock().unwrap();
-    if ((*guard).is_none()) return;
-    // @unsafe { Box::get returns raw pointer }
-    fc = const_cast<FiberChannel*>((*guard).as_ref().unwrap().get());
-  }
-  while (true) {
-    rusty::Option<OwnedFrame> frame_opt = fc->recv_frame();
-    if (frame_opt.is_none()) {
-      // Channel closed. Run the close-side fan-out (sub-leaf 4d):
-      // cancel pending futures with ENOTCONN, fire error / disconnected
-      // callbacks, and trigger auto-reconnect if the policy allows. The
-      // fiber then exits, dropping its Arc<ClientConnection> capture.
-      self.on_channel_closed_fan_out();
-      return;
-    }
-    auto frame = std::move(frame_opt).unwrap();
-    self.decode_response_and_notify(frame.bytes.data(), frame.bytes.size());
-  }
+// @unsafe - Box::get raw extraction for the DSL loop below (the
+// pointer must outlive the guard — recv_frame() parks the fiber, and
+// holding the lock across the yield would block dispatch_frame racers;
+// the spawning lambda's Arc<ClientConnection> keeps the Box alive).
+inline FiberChannel* clientconn_fiber_channel_ptr(
+    const rusty::Option<rusty::Box<FiberChannel>>& slot) {
+  return const_cast<FiberChannel*>(slot.as_ref().unwrap().get());
 }
+
+#if RUSTYCPP_RUST
+fn clientconn_run_recv_loop(conn: &ClientConnection) {
+    let mut fc: *mut FiberChannel = core::ptr::null_mut();
+    {
+        let guard = conn.fiber_channel_.lock().unwrap();
+        if (*guard).is_none() {
+            return;
+        }
+        fc = clientconn_fiber_channel_ptr((*guard));
+    }
+    loop {
+        let frame_opt: Option<OwnedFrame> = (*fc).recv_frame();
+        if frame_opt.is_none() {
+            // Channel closed. Run the close-side fan-out (sub-leaf 4d):
+            // cancel pending futures with ENOTCONN, fire error /
+            // disconnected callbacks, and trigger auto-reconnect if the
+            // policy allows. The fiber then exits, dropping its
+            // Arc<ClientConnection> capture.
+            conn.on_channel_closed_fan_out();
+            return;
+        }
+        let frame = frame_opt.unwrap();
+        conn.decode_response_and_notify(frame.bytes.as_ptr(), frame.bytes.len());
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.18 version=1 rust_sha256=b0efddd535fa0ea387b7a621195020bbbe3b6affa88d29d295ebfd72d949c592*/
+void clientconn_run_recv_loop(const ClientConnection& conn) {
+    FiberChannel* fc = rusty::ptr::null_mut();
+    {
+        const auto&& guard = rusty::deref_call(conn.fiber_channel_.lock(), rusty::detail::__mdisp_unwrap{});
+        if (((rusty::detail::deref_if_pointer_like(guard))).is_none()) {
+            return;
+        }
+        fc = clientconn_fiber_channel_ptr((rusty::detail::deref_if_pointer_like(guard)));
+    }
+    while (true) {
+        rusty::Option<OwnedFrame> frame_opt = ((*fc)).recv_frame();
+        if (frame_opt.is_none()) {
+            conn.on_channel_closed_fan_out();
+            return;
+        }
+        const auto frame = frame_opt.unwrap();
+        conn.decode_response_and_notify(rusty::as_ptr(frame.bytes), rusty::len(frame.bytes));
+    }
+}
+/*RUSTYCPP:GEN-END id=client.18*/
 
 
 // @unsafe - Marshal operators, Future::notify_ready, pending_fu_ map.
