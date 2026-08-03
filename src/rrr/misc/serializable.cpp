@@ -1714,6 +1714,12 @@ namespace WireSerialize_ {
 template<class T> void serialize(const std::list<T>& self_, BinaryWriteArchive& ar);
 template<class T> void serialize(const rusty::Vec<T>& self_, BinaryWriteArchive& ar);
 template<class T> void serialize(const std::vector<T>& self_, BinaryWriteArchive& ar);
+template<class T> void serialize(const std::set<T>& self_, BinaryWriteArchive& ar);
+template<class T> void serialize(const std::unordered_set<T>& self_, BinaryWriteArchive& ar);
+template<class K, class V> void serialize(const std::map<K, V>& self_, BinaryWriteArchive& ar);
+template<class K, class V> void serialize(const std::unordered_map<K, V>& self_, BinaryWriteArchive& ar);
+template<class T> void serialize(const rusty::BTreeSet<T>& self_, BinaryWriteArchive& ar);
+template<class K, class V> void serialize(const rusty::BTreeMap<K, V>& self_, BinaryWriteArchive& ar);
 }
 namespace Serialize_ {
 template<class T>
@@ -1786,8 +1792,84 @@ impl<T> WireSerialize for std::vector<T> {
         }
     }
 }
+
+impl<T> WireSerialize for std::set<T> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.size() as i64);
+        Serialize_::serialize(v_len, ar);
+        for e in self {
+            Serialize_::serialize(e, ar);
+        }
+    }
+}
+
+impl<T> WireSerialize for std::unordered_set<T> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.size() as i64);
+        Serialize_::serialize(v_len, ar);
+        for e in self {
+            Serialize_::serialize(e, ar);
+        }
+    }
+}
+
+impl<K, V> WireSerialize for std::map<K, V> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.size() as i64);
+        Serialize_::serialize(v_len, ar);
+        for kv in self {
+            Serialize_::serialize(kv.first, ar);
+            Serialize_::serialize(kv.second, ar);
+        }
+    }
+}
+
+impl<K, V> WireSerialize for std::unordered_map<K, V> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.size() as i64);
+        Serialize_::serialize(v_len, ar);
+        for kv in self {
+            Serialize_::serialize(kv.first, ar);
+            Serialize_::serialize(kv.second, ar);
+        }
+    }
+}
+
+// rusty B-tree containers iterate Rust-style (no begin()/end()); the
+// explicit iterator loop is the same shape their old C++ bodies used.
+impl<T> WireSerialize for rusty::BTreeSet<T> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.len() as i64);
+        Serialize_::serialize(v_len, ar);
+        let mut it = self.iter();
+        loop {
+            let e = it.next();
+            if e.is_none() {
+                break;
+            }
+            Serialize_::serialize(e.unwrap(), ar);
+        }
+    }
+}
+
+impl<K, V> WireSerialize for rusty::BTreeMap<K, V> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.len() as i64);
+        Serialize_::serialize(v_len, ar);
+        let mut it = self.iter();
+        loop {
+            let e = it.next();
+            if e.is_none() {
+                break;
+            }
+            let kv = e.unwrap();
+            Serialize_::serialize(kv.0, ar);
+            Serialize_::serialize(kv.1, ar);
+        }
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.wire_ser version=1 rust_sha256=ddbf1c38384a3bfea26f6303c8102f125acef13aaf26998213e0e651962f9098*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.wire_ser version=1 rust_sha256=d2f4076328f9ebc2e2a9a0bb4f8e1c062a07ac0c2a3b6905675bdda5fb0bca95*/
 class WireSerialize;
 
 // Extension trait free-function forward declarations
@@ -1801,6 +1883,24 @@ namespace rusty_ext {
     template<typename T>
     void serialize(const std::vector<T>& self_, BinaryWriteArchive& ar);
 
+    template<typename T>
+    void serialize(const std::set<T>& self_, BinaryWriteArchive& ar);
+
+    template<typename T>
+    void serialize(const std::unordered_set<T>& self_, BinaryWriteArchive& ar);
+
+    template<typename K, typename V>
+    void serialize(const std::map<K, V>& self_, BinaryWriteArchive& ar);
+
+    template<typename K, typename V>
+    void serialize(const std::unordered_map<K, V>& self_, BinaryWriteArchive& ar);
+
+    template<typename T>
+    void serialize(const rusty::BTreeSet<T>& self_, BinaryWriteArchive& ar);
+
+    template<typename K, typename V>
+    void serialize(const rusty::BTreeMap<K, V>& self_, BinaryWriteArchive& ar);
+
 }
 
 
@@ -1817,6 +1917,36 @@ using namespace WireSerialize_;
 namespace WireSerialize_ {
     template<typename T>
     void serialize(const std::vector<T>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const std::set<T>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const std::unordered_set<T>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename K, typename V>
+    void serialize(const std::map<K, V>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename K, typename V>
+    void serialize(const std::unordered_map<K, V>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const rusty::BTreeSet<T>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename K, typename V>
+    void serialize(const rusty::BTreeMap<K, V>& self_, BinaryWriteArchive& ar);
 }
 using namespace WireSerialize_;
 class WireSerialize {
@@ -1890,6 +2020,122 @@ void serialize(BinaryWriteArchive& ar) const {
 }
 #endif  // patcher: end orphan-impl stub
 
+// TODO orphan impl: methods for `std::set` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::set
+void serialize(BinaryWriteArchive& ar) const {
+    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
+    Serialize_::serialize(v_len, ar);
+    for (auto&& e : rusty::for_in(rusty::iter((*this)))) {
+        Serialize_::serialize(e, ar);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::unordered_set` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::unordered_set
+void serialize(BinaryWriteArchive& ar) const {
+    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
+    Serialize_::serialize(v_len, ar);
+    for (auto&& e : rusty::for_in(rusty::iter((*this)))) {
+        Serialize_::serialize(e, ar);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::map` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::map
+void serialize(BinaryWriteArchive& ar) const {
+    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
+    Serialize_::serialize(v_len, ar);
+    for (auto&& kv : rusty::for_in(rusty::iter((*this)))) {
+        Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.first); }) { return (__r.first); } else if constexpr (requires { (__r.first_field); }) { return (__r.first_field); } else if constexpr (requires { ((*__r).first); }) { return ((*__r).first); } else { return ((*__r).first_field); } }(kv), ar);
+        Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.second); }) { return (__r.second); } else if constexpr (requires { (__r.second_field); }) { return (__r.second_field); } else if constexpr (requires { ((*__r).second); }) { return ((*__r).second); } else { return ((*__r).second_field); } }(kv), ar);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::unordered_map` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::unordered_map
+void serialize(BinaryWriteArchive& ar) const {
+    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
+    Serialize_::serialize(v_len, ar);
+    for (auto&& kv : rusty::for_in(rusty::iter((*this)))) {
+        Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.first); }) { return (__r.first); } else if constexpr (requires { (__r.first_field); }) { return (__r.first_field); } else if constexpr (requires { ((*__r).first); }) { return ((*__r).first); } else { return ((*__r).first_field); } }(kv), ar);
+        Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.second); }) { return (__r.second); } else if constexpr (requires { (__r.second_field); }) { return (__r.second_field); } else if constexpr (requires { ((*__r).second); }) { return ((*__r).second); } else { return ((*__r).second_field); } }(kv), ar);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `rusty::BTreeSet` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for rusty::BTreeSet
+void serialize(BinaryWriteArchive& ar) const {
+    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len((*this))));
+    Serialize_::serialize(v_len, ar);
+    auto it = rusty::iter((*this));
+    while (true) {
+        auto e = it.next();
+        if (e.is_none()) {
+            break;
+        }
+        Serialize_::serialize(e.unwrap(), ar);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `rusty::BTreeMap` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for rusty::BTreeMap
+void serialize(BinaryWriteArchive& ar) const {
+    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len((*this))));
+    Serialize_::serialize(v_len, ar);
+    auto it = rusty::iter((*this));
+    while (true) {
+        auto e = it.next();
+        if (e.is_none()) {
+            break;
+        }
+        const auto kv = e.unwrap();
+        Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+        Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
 // Extension trait WireSerialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
     template<typename T>
@@ -1926,11 +2172,91 @@ namespace rusty_ext {
         }
     }
 
+    template<typename T>
+    void serialize(const std::set<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        for (auto&& e : rusty::for_in(rusty::iter(self_))) {
+            Serialize_::serialize(e, ar);
+        }
+    }
+
+    template<typename T>
+    void serialize(const std::unordered_set<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        for (auto&& e : rusty::for_in(rusty::iter(self_))) {
+            Serialize_::serialize(e, ar);
+        }
+    }
+
+    template<typename K, typename V>
+    void serialize(const std::map<K, V>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        for (auto&& kv : rusty::for_in(rusty::iter(self_))) {
+            Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.first); }) { return (__r.first); } else if constexpr (requires { (__r.first_field); }) { return (__r.first_field); } else if constexpr (requires { ((*__r).first); }) { return ((*__r).first); } else { return ((*__r).first_field); } }(kv), ar);
+            Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.second); }) { return (__r.second); } else if constexpr (requires { (__r.second_field); }) { return (__r.second_field); } else if constexpr (requires { ((*__r).second); }) { return ((*__r).second); } else { return ((*__r).second_field); } }(kv), ar);
+        }
+    }
+
+    template<typename K, typename V>
+    void serialize(const std::unordered_map<K, V>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        for (auto&& kv : rusty::for_in(rusty::iter(self_))) {
+            Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.first); }) { return (__r.first); } else if constexpr (requires { (__r.first_field); }) { return (__r.first_field); } else if constexpr (requires { ((*__r).first); }) { return ((*__r).first); } else { return ((*__r).first_field); } }(kv), ar);
+            Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.second); }) { return (__r.second); } else if constexpr (requires { (__r.second_field); }) { return (__r.second_field); } else if constexpr (requires { ((*__r).second); }) { return ((*__r).second); } else { return ((*__r).second_field); } }(kv), ar);
+        }
+    }
+
+    template<typename T>
+    void serialize(const rusty::BTreeSet<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        auto it = rusty::iter(self_);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            Serialize_::serialize(e.unwrap(), ar);
+        }
+    }
+
+    template<typename K, typename V>
+    void serialize(const rusty::BTreeMap<K, V>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        auto it = rusty::iter(self_);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            const auto kv = e.unwrap();
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+        }
+    }
+
 }
 
 // TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::list<T>>`
 // TODO(interface_traits): skipped generic impl `WireSerializeAdapter<rusty::Vec<T>>`
 // TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::vector<T>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::set<T>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::unordered_set<T>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::map<K, V>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::unordered_map<K, V>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<rusty::BTreeSet<T>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<rusty::BTreeMap<K, V>>`
 
 // UFCS trait migration: free functions for `impl WireSerialize for ...`
 namespace WireSerialize_ {
@@ -1975,6 +2301,98 @@ namespace WireSerialize_ {
     }
 
 }
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const std::set<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        for (auto&& e : rusty::for_in(rusty::iter(self_))) {
+            Serialize_::serialize(e, ar);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const std::unordered_set<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        for (auto&& e : rusty::for_in(rusty::iter(self_))) {
+            Serialize_::serialize(e, ar);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename K, typename V>
+    void serialize(const std::map<K, V>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        for (auto&& kv : rusty::for_in(rusty::iter(self_))) {
+            Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.first); }) { return (__r.first); } else if constexpr (requires { (__r.first_field); }) { return (__r.first_field); } else if constexpr (requires { ((*__r).first); }) { return ((*__r).first); } else { return ((*__r).first_field); } }(kv), ar);
+            Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.second); }) { return (__r.second); } else if constexpr (requires { (__r.second_field); }) { return (__r.second_field); } else if constexpr (requires { ((*__r).second); }) { return ((*__r).second); } else { return ((*__r).second_field); } }(kv), ar);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename K, typename V>
+    void serialize(const std::unordered_map<K, V>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        for (auto&& kv : rusty::for_in(rusty::iter(self_))) {
+            Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.first); }) { return (__r.first); } else if constexpr (requires { (__r.first_field); }) { return (__r.first_field); } else if constexpr (requires { ((*__r).first); }) { return ((*__r).first); } else { return ((*__r).first_field); } }(kv), ar);
+            Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.second); }) { return (__r.second); } else if constexpr (requires { (__r.second_field); }) { return (__r.second_field); } else if constexpr (requires { ((*__r).second); }) { return ((*__r).second); } else { return ((*__r).second_field); } }(kv), ar);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const rusty::BTreeSet<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        auto it = rusty::iter(self_);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            Serialize_::serialize(e.unwrap(), ar);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename K, typename V>
+    void serialize(const rusty::BTreeMap<K, V>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        auto it = rusty::iter(self_);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            const auto kv = e.unwrap();
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+        }
+    }
+
+}
 /*RUSTYCPP:GEN-END id=serializable.wire_ser*/
 
 namespace Serialize_ {
@@ -1992,19 +2410,12 @@ inline void serialize(const std::list<T>& v, BinaryWriteArchive& ar) {
 
 template<class T>
 inline void serialize(const rusty::BTreeSet<T>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-  serialize(v_len, ar);
-  // rusty BTreeSet has no begin()/end(); iterate the Rust-style iterator.
-  auto __it = v.iter();
-  for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
-    serialize(std::move(__e).unwrap(), ar);
+  WireSerialize_::serialize(v, ar);
 }
 
 template<class T>
 inline void serialize(const std::set<T>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) serialize(*it, ar);
+  WireSerialize_::serialize(v, ar);
 }
 
 template<class T>
@@ -2029,33 +2440,17 @@ inline void serialize(const rusty::HashSet<T>& v, BinaryWriteArchive& ar) {
 
 template<class T>
 inline void serialize(const std::unordered_set<T>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) serialize(*it, ar);
+  WireSerialize_::serialize(v, ar);
 }
 
 template<class K, class V>
 inline void serialize(const rusty::BTreeMap<K, V>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-  serialize(v_len, ar);
-  // rusty BTreeMap has no begin()/end(); iterate the Rust-style iterator.
-  // iter().next() yields Option<std::tuple<const K&, V&>>.
-  auto __it = v.iter();
-  for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
-    auto kv = std::move(__e).unwrap();
-    serialize(std::get<0>(kv), ar);
-    serialize(std::get<1>(kv), ar);
-  }
+  WireSerialize_::serialize(v, ar);
 }
 
 template<class K, class V>
 inline void serialize(const std::map<K, V>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) {
-    serialize(it->first, ar);
-    serialize(it->second, ar);
-  }
+  WireSerialize_::serialize(v, ar);
 }
 
 template<class K, class V>
@@ -2076,12 +2471,7 @@ inline void serialize(const rusty::HashMap<K, V>& v, BinaryWriteArchive& ar) {
 
 template<class K, class V>
 inline void serialize(const std::unordered_map<K, V>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) {
-    serialize(it->first, ar);
-    serialize(it->second, ar);
-  }
+  WireSerialize_::serialize(v, ar);
 }
 
 }  // namespace Serialize_
