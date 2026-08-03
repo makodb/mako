@@ -4628,15 +4628,28 @@ void stackless_profile_note_register(size_t scanned, bool reuse, size_t slots_no
 // @safe - Returns current fiber with single-threaded reference counting
 // SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
 // Returns None if called outside of a fiber context
-rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
-  // @unsafe - RefCell::borrow, Rc::clone
-  {
-    auto guard = sp_running_fiber_th_.borrow();
-    if ((*guard).is_none()) {
-      return rusty::None;
+// The static member delegates to the DSL free fn over the hoisted
+// namespace thread_local.
+#if RUSTYCPP_RUST
+fn fiber_current_fiber() -> Option<rusty::Rc<Fiber>> {
+    let guard = sp_running_fiber_th_.borrow();
+    if (*guard).is_none() {
+        return None;
     }
-    return rusty::Some((*guard).as_ref().unwrap().clone());
-  }
+    Some((*guard).as_ref().unwrap().clone())
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.33 version=1 rust_sha256=71161dba394e986d41a6b15746a37443dd636d36f2ffcf039917a38afced2cfa*/
+rusty::Option<rusty::Rc<Fiber>> fiber_current_fiber() {
+    auto&& guard = rusty::borrow(sp_running_fiber_th_);
+    if (((rusty::detail::deref_if_pointer_like(guard))).is_none()) {
+        return rusty::Option<rusty::Rc<Fiber>>{rusty::None};
+    }
+    return rusty::Option<rusty::Rc<Fiber>>(rusty::clone(((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap()));
+}
+/*RUSTYCPP:GEN-END id=reactor.33*/
+rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
+  return fiber_current_fiber();
 }
 
 // @unsafe - Creates and runs a new fiber with rusty::Rc ownership
@@ -4649,12 +4662,30 @@ Fiber::create_run_impl(rusty::Function<void()> func, const char* file, int64_t l
   return fiber;
 }
 
+// The static member delegates to the DSL free fn (§7.59 turbofish
+// factory call with an argument).
+#if RUSTYCPP_RUST
+fn fiber_sleep(microseconds: u64) {
+    if microseconds == 0u64 {
+        return;
+    }
+    let x = reactor_create_sp_event::<TimeoutEvent>(microseconds);
+    (*x).wait();
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.34 version=1 rust_sha256=942440718bc474ed4e94af98c419b8907766e5ba0e584cbfad75c1ea4007d5ed*/
+void fiber_sleep(uint64_t microseconds);
+
+void fiber_sleep(uint64_t microseconds) {
+    if (rusty::detail::deref_if_pointer_like(microseconds) == static_cast<uint64_t>(0)) {
+        return;
+    }
+    const auto x = reactor_create_sp_event<TimeoutEvent>(std::move(microseconds));
+    ((rusty::detail::deref_if_pointer_like(x))).wait();
+}
+/*RUSTYCPP:GEN-END id=reactor.34*/
 void Fiber::sleep(uint64_t microseconds) {
-  if (microseconds == 0) {
-    return;
-  }
-  auto x = reactor_create_sp_event<TimeoutEvent>(microseconds);
-  x->wait();
+  return fiber_sleep(microseconds);
 }
 
 /**
@@ -4674,11 +4705,34 @@ void Fiber::sleep(uint64_t microseconds) {
 // as kernels: Rc::<T>::make turbofish adjacent to a Log_* call
 // mis-lowers the log as a member of the turbofish expression).
 rusty::Rc<Reactor> reactor_make() { return rusty::Rc<Reactor>::make(); }
-void reactor_log_create(bool disk) {
-    if (disk) { Log_debug("create a disk fiber scheduler"); return; }
+// REUSING_FIBER is a project macro; it survives the lowering as an
+// identifier (same as the SHUT_RDWR/EAGAIN idiom in tcp_channel).
+#if RUSTYCPP_RUST
+fn reactor_log_create(disk: bool) {
+    if disk {
+        Log_debug("create a disk fiber scheduler");
+        return;
+    }
     Log_debug("create a fiber scheduler");
-    if (!REUSING_FIBER) { Log_warn("reusing fiber not enabled!"); }
+    if !REUSING_FIBER {
+        Log_warn("reusing fiber not enabled!");
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.35 version=1 rust_sha256=dac19153cefa676827fb3a8bfe668677987f64674b47cbcb0bbf087fd285b959*/
+void reactor_log_create(bool disk);
+
+void reactor_log_create(bool disk) {
+    if (disk) {
+        Log_debug("create a disk fiber scheduler");
+        return;
+    }
+    Log_debug("create a fiber scheduler");
+    if (rusty::detail::rust_not(REUSING_FIBER)) {
+        Log_warn("reusing fiber not enabled!");
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.35*/
 
 // Singleton fetch-or-init for the per-thread schedulers, authored as
 // inline Rust DSL over the namespace-scope TLS slots; the members
@@ -4989,12 +5043,21 @@ static PollThreadWorker pollworker_make(PollCmdReceiver receiver) {
                           false};
 }
 
-// @unsafe - factory function creates worker and wraps in Rc<RefCell> (rustycpp false positive on move)
-rusty::Rc<rusty::RefCell<PollThreadWorker>> pollworker_create(PollCmdReceiver receiver) {
-  // Create worker, then wrap in RefCell
-  auto worker = pollworker_make(std::move(receiver));
-  return rusty::Rc<rusty::RefCell<PollThreadWorker>>::make(std::move(worker));
+// Create the worker (the 7-field aggregate stays in the tiny
+// pollworker_make kernel — its Epoll()/map defaults are alias ctors
+// with no DSL spelling) and wrap it in the shared RefCell.
+#if RUSTYCPP_RUST
+fn pollworker_create(receiver: PollCmdReceiver) -> rusty::Rc<rusty::RefCell<PollThreadWorker>> {
+    let mut worker = pollworker_make(receiver);
+    rusty::Rc::<rusty::RefCell<PollThreadWorker>>::make(worker)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.37 version=1 rust_sha256=ff4895c81826163125160dcd83c4d0d9a0d168ea3b2b8bcd634d6c152077c731*/
+rusty::Rc<rusty::RefCell<PollThreadWorker>> pollworker_create(PollCmdReceiver receiver) {
+    auto worker = pollworker_make(std::move(receiver));
+    return rusty::Rc<rusty::RefCell<PollThreadWorker>>::make(std::move(worker));
+}
+/*RUSTYCPP:GEN-END id=reactor.37*/
 
 void pollworker_poll_loop(PollThreadWorker& self) {
   Log_debug("[poll_loop] Starting poll loop");
