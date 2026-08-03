@@ -4148,3 +4148,21 @@ wait_until_gte (park + retain-by-identity, with a 2-line
 autoderef-misrouted to the pointee — same family as Box::get /
 sconn_proxy_ptr, §7.58). `retain(move |item: &Arc<IntEvent>| ...)`
 passes a typed-param closure straight through.
+
+### 7.60 Inline-argument closures can mis-infer a return type — bind to a let first
+
+An `Arc::<OneTimeJob>::new_(OneTimeJob::new_(move || { ... }))` closure
+in argument position emitted `[...]() -> bool { ... }` regardless of
+body shape (early-return removed, single-call body — still `-> bool`;
+the same family as the `::new_` spurious-return note at
+ClientProxy::close). The INLINE-ARGUMENT emission path infers the
+lambda's return type from surrounding context and gets it wrong; the
+LET-BOUND path does not:
+
+    let job_fn = move || { clientconn_recv_job_entry(weak_self); };
+    let recv_job: Arc<OneTimeJob> = Arc::<OneTimeJob>::new_(OneTimeJob::new_(job_fn));
+
+Also recorded from the same body: a cross-file `#[cpp_ctor]` type has
+NO DSL construction spelling from another file (the ctor lives in the
+defining file's GEN; `Type::new_` does not exist) — keep a small
+make_box kernel at the boundary (clientconn_make_fiber_channel).

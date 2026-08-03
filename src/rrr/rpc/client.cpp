@@ -4720,43 +4720,94 @@ int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* a
 // callbacks fire on. Submits a `OneTimeJob` whose `Work()` runs
 // `run_recv_loop()` from a fiber that the poll thread's
 // `trigger_job` spawns on its own reactor.
-void clientconn_bind_channel_via_poll_thread(
-    const ClientConnection& self, ChannelConnectionProxy channel) {
-  if (!channel) return;
-
-  // Move the proxy into the heap-allocated FiberChannel and flip
-  // the latch on the calling thread — these are pure data
-  // mutations and the recv-loop fiber doesn't observe them until
-  // after we submit the OneTimeJob below.
-  // rusty::make_box + rusty::Mutex::lock + Option::operator= are all @safe.
-  {
-    auto guard = self.fiber_channel_.lock().unwrap();
-    *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
-    // Wire up the on_frame/on_closed/on_error lambdas on the just-
-    // installed FiberChannel (see comment in the make_box site above
-    // — bind_callbacks() runs after the Box address is final).
-    (*guard).as_ref().unwrap()->bind_callbacks();
-  }
-  self.channel_mode_.set(true);
-
-  WeakClientConnection weak_self = self.weak_self_;
-
-  // Schedule the recv-loop fiber spawn onto the poll thread. The
-  // poll thread's `trigger_job` calls `Fiber::create_run` from
-  // its own reactor, so the resulting fiber's IntEvent waits and
-  // the `on_frame` callback's signal both land on the same
-  // thread.
-  // @unsafe { Arc::new_ + rusty::Function + cross-thread queue }
-  auto recv_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([weak_self]() {
-    auto conn_opt = weak_self.upgrade();
-    if (conn_opt.is_none()) return;
-    auto conn = conn_opt.unwrap();
-    conn->run_recv_loop();
-  }));
-  // Upcast Arc<OneTimeJob> -> Arc<Job> for the PollThread queue.
-  auto recv_job_base = rusty::Arc<Job>(recv_job);
-  self.poll_thread_worker_->add(std::move(recv_job_base));
+// @unsafe - cross-file #[cpp_ctor] construction: FiberChannel's `fn
+// new` emits a real C++ constructor in fiber_channel.cpp, which THIS
+// file's DSL cannot name (the factory spelling new_ does not exist for
+// cpp_ctor types) — so the boxed construction stays a 3-line kernel.
+inline rusty::Box<FiberChannel> clientconn_make_fiber_channel(
+    ChannelConnectionProxy ch) {
+  return rusty::make_box<FiberChannel>(std::move(ch));
 }
+
+// The recv-job body, as a free fn so the OneTimeJob closure stays the
+// single-call shape (see the inference-bug note at the closure site).
+#if RUSTYCPP_RUST
+fn clientconn_recv_job_entry(weak_self: WeakClientConnection) {
+    let conn_opt = weak_self.upgrade();
+    if conn_opt.is_some() {
+        let c = conn_opt.unwrap();
+        (*c).run_recv_loop();
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.20 version=1 rust_sha256=ecb683d6581300d207099562ed5d476a2aa62546a04eae5774a3f6b8077eb5a8*/
+void clientconn_recv_job_entry(WeakClientConnection weak_self) {
+    auto conn_opt = weak_self.upgrade();
+    if (conn_opt.is_some()) {
+        const auto c = conn_opt.unwrap();
+        ((rusty::detail::deref_if_pointer_like(c))).run_recv_loop();
+    }
+}
+/*RUSTYCPP:GEN-END id=client.20*/
+
+#if RUSTYCPP_RUST
+fn clientconn_bind_channel_via_poll_thread(conn: &ClientConnection,
+                                           mut channel: ChannelConnectionProxy) {
+    if !channel.is_valid() {
+        return;
+    }
+    // Move the proxy into the heap-allocated FiberChannel and flip the
+    // latch on the calling thread — pure data mutations; the recv-loop
+    // fiber doesn't observe them until the OneTimeJob below is
+    // submitted. bind_callbacks() runs after the Box address is final.
+    {
+        let mut guard = conn.fiber_channel_.lock().unwrap();
+        *guard = Some(clientconn_make_fiber_channel(channel));
+        let fc: &mut Box<FiberChannel> = (*guard).as_mut().unwrap();
+        fc.bind_callbacks();
+    }
+    conn.channel_mode_.set(true);
+
+    let weak_self: WeakClientConnection = conn.weak_self_.clone();
+
+    // Schedule the recv-loop fiber spawn onto the poll thread. The
+    // poll thread's `trigger_job` calls `Fiber::create_run` from its
+    // own reactor, so the resulting fiber's IntEvent waits and the
+    // `on_frame` callback's signal both land on the same thread.
+    // (The closure is bound to a local first: the inline-argument
+    // closure path mis-infers a return type here — the ::new_ note at
+    // ClientProxy::close — while the let-bound path emits it clean.)
+    let job_fn = move || {
+        clientconn_recv_job_entry(weak_self);
+    };
+    let recv_job: Arc<OneTimeJob> =
+        Arc::<OneTimeJob>::new_(OneTimeJob::new_(job_fn));
+    // Implicit Arc<OneTimeJob> -> Arc<Job> upcast for the queue.
+    let pt: &Arc<PollThread> = &conn.poll_thread_worker_;
+    pt.add(recv_job);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.19 version=1 rust_sha256=4380d1d29c7b3ffce51fd856d343113b2169cb864fb4b54a9d285c83db2ba92f*/
+void clientconn_bind_channel_via_poll_thread(const ClientConnection& conn, ChannelConnectionProxy channel) {
+    if (rusty::detail::rust_not(channel.is_valid())) {
+        return;
+    }
+    {
+        auto&& guard = rusty::deref_call(conn.fiber_channel_.lock(), rusty::detail::__mdisp_unwrap{});
+        rusty::detail::deref_if_pointer_like(guard) = rusty::Some(clientconn_make_fiber_channel(std::move(channel)));
+        rusty::Box<FiberChannel>& fc = ((rusty::detail::deref_if_pointer_like(guard))).as_mut().unwrap();
+        fc->bind_callbacks();
+    }
+    conn.channel_mode_.set(true);
+    WeakClientConnection weak_self = rusty::clone(conn.weak_self_);
+    auto job_fn = [=, weak_self = std::move(weak_self)]() {
+clientconn_recv_job_entry(std::move(weak_self));
+};
+    const rusty::Arc<OneTimeJob> recv_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(std::move(job_fn)));
+    const rusty::Arc<PollThread>& pt = conn.poll_thread_worker_;
+    pt->add(std::move(recv_job));
+}
+/*RUSTYCPP:GEN-END id=client.19*/
 
 
 
