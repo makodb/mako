@@ -5663,51 +5663,86 @@ rusty::Arc<QuorumEvent> quorum_event_make(int32_t n_total, int32_t quorum) {
 }
 /*RUSTYCPP:GEN-END id=reactor.38*/
 
-// @unsafe - spawns a background fiber whose mutable closure captures the
-// move-only finalize_func + a reference to `self`. Faithful port of the former
-// QuorumEvent::finalize; only touches `self` (the final_ev clone + the
-// dangling_rpc copy-out) BEFORE wait_timeout (see comment A), so the reference
-// is safe.
-void quorum_event_finalize(
-    const QuorumEvent& self, uint64_t timeout,
-    QuorumFinalizeFn finalize_func) {
-  Fiber::create_run([timeout, finalize_func = std::move(finalize_func), &self]() mutable {
-    bool ret = false;
+// The pair Vec type behind QuorumFinalizeFn's parameter — std::pair
+// has no DSL spelling, so both the alias and the copy-out kernel below
+// carry that shape for the DSL finalize body.
+using QuorumDanglingVec = rusty::Vec<std::pair<uint16_t, rrr::i64> >;
 
-    auto final_ev = self.finalize_event_.clone();  // copy the finalize event (comment A)
-    rusty::Vec<std::pair<uint16_t, rrr::i64> > dangling_rpc;
-    // borrow_mut (RefCell::borrow_mut is const) — HashMap iteration needs a
-    // non-const map; this is a read-only copy-out, no aliasing.
-    for (auto it : *self.xids_.borrow_mut())
-      dangling_rpc.push(it);  // fetch dangling rpc info before it's freed (comment A)
-
-    final_ev->wait_timeout(timeout);
-    /* A: by the time this fires, the quorum event could have been freed. Thus,
-     avoid accessing `self` or its members after this line */
-
-    // didn't receive all RPC replies
-    if (final_ev->status_.get() == EventStatus::TIMEOUT) {
-      ret = finalize_func(dangling_rpc);
-      // Drain guard: a TIMEOUT'd event is never evicted by the reactor loop
-      // (extract takes READY, retain drops DONE), so a registered
-      // finalize_event_ would otherwise linger in the queues forever at
-      // broadcast rate. Mark it DONE here (we run on the owner thread) so
-      // the next pass evicts and prune can free it.
-      final_ev->status_.set(EventStatus::DONE);
-    }
-    (void)ret;
-  }, __FILE__, __LINE__);
+// @unsafe - copy-out of the xids_ map into the pair Vec (std::pair has
+// no DSL spelling; borrow_mut because the map port's iteration wants a
+// non-const map — read-only copy, no aliasing). Runs BEFORE the wait,
+// per comment A in the DSL body below.
+QuorumDanglingVec quorum_collect_dangling(const QuorumEvent* qe) {
+    QuorumDanglingVec v;
+    for (auto it : *qe->xids_.borrow_mut()) v.push(it);
+    return v;
 }
 
-// @unsafe - reads/clears the reactor's shared slow_ flag (matches the former
-// QuorumEvent::is_slow / Event::is_slow); slow_ is public and Reactor is
-// complete here. `self` is unused (the flag is reactor-global).
-bool quorum_event_is_slow(const QuorumEvent& self) {
-  (void)self;
-  bool result = Reactor::get_reactor()->slow_.get();
-  Reactor::get_reactor()->slow_.set(false);
-  return result;
+// Spawns a background fiber that parks on the finalize event; faithful
+// port of the former QuorumEvent::finalize. The closure captures a raw
+// QuorumEvent pointer instead of the old `&self` — same lifetime
+// discipline: `self` is only touched (final_ev clone + dangling
+// copy-out) BEFORE wait_timeout (comment A), after which the quorum
+// event may already be freed. The finalize_func call uses the &mut
+// alias (a by-value Vec local would be move-wrapped at its last use
+// and fail to bind the Function's Vec& parameter).
+#if RUSTYCPP_RUST
+fn quorum_event_finalize(qe: &QuorumEvent, timeout: u64,
+                         finalize_func: QuorumFinalizeFn) {
+    let qe_ptr: *const QuorumEvent = &raw const *qe;
+    Fiber::create_run(move || {
+        let final_ev = (*qe_ptr).finalize_event_.clone(); // comment A
+        let mut dangling_rpc: QuorumDanglingVec = quorum_collect_dangling(qe_ptr);
+        (*final_ev).wait_timeout(timeout);
+        // A: by the time this fires, the quorum event could have been
+        // freed. Avoid touching qe_ptr or its members after this line.
+        if (*final_ev).status_.get() == EventStatus::TIMEOUT {
+            // Didn't receive all RPC replies.
+            let dr: &mut QuorumDanglingVec = &mut dangling_rpc;
+            let _ret = finalize_func(dr);
+            // Drain guard: a TIMEOUT'd event is never evicted by the
+            // reactor loop (extract takes READY, retain drops DONE), so
+            // a registered finalize_event_ would otherwise linger in the
+            // queues forever at broadcast rate. Mark it DONE here (we
+            // run on the owner thread) so the next pass evicts and
+            // prune can free it.
+            (*final_ev).status_.set(EventStatus::DONE);
+        }
+    });
 }
+
+// Reads/clears the reactor's shared slow_ flag (matches the former
+// QuorumEvent::is_slow / Event::is_slow); the param is unused — the
+// flag is reactor-global.
+fn quorum_event_is_slow(_qe: &QuorumEvent) -> bool {
+    let r = Reactor::get_reactor();
+    let result: bool = (*r).slow_.get();
+    (*r).slow_.set(false);
+    result
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.39 version=1 rust_sha256=7657756df74da09ca97fc48f45485e795773b8c7cc77072e3d97dd2417cac3f7*/
+void quorum_event_finalize(const QuorumEvent& qe, uint64_t timeout, QuorumFinalizeFn finalize_func) {
+    const QuorumEvent* qe_ptr = &qe;
+    Fiber::create_run([=, finalize_func = std::move(finalize_func), qe_ptr = std::move(qe_ptr), timeout = std::move(timeout)]() mutable {
+const auto final_ev = rusty::clone((*qe_ptr).finalize_event_);
+QuorumDanglingVec dangling_rpc = quorum_collect_dangling(qe_ptr);
+((rusty::detail::deref_if_pointer_like(final_ev))).wait_timeout(std::move(timeout));
+if ((rusty::detail::deref_if_pointer_like(final_ev)).status_.get() == rusty::clone(EventStatus::TIMEOUT)) {
+    QuorumDanglingVec& dr = dangling_rpc;
+    const auto _ret = finalize_func(dr);
+    (rusty::detail::deref_if_pointer_like(final_ev)).status_.set(rusty::clone(rusty::clone(EventStatus::DONE)));
+}
+});
+}
+
+bool quorum_event_is_slow(const QuorumEvent& _qe) {
+    const auto r = Reactor::get_reactor();
+    bool result = (rusty::detail::deref_if_pointer_like(r)).slow_.get();
+    (rusty::detail::deref_if_pointer_like(r)).slow_.set(false);
+    return std::move(result);
+}
+/*RUSTYCPP:GEN-END id=reactor.39*/
 
 
 }  // namespace janus (definitions)
