@@ -4603,94 +4603,120 @@ void clientconn_enqueue_heartbeat_probe(const ClientConnection& conn) {
 // usual `invoke_error_callback` path. Caller is `connect(addr)`,
 // which already transitioned the state to CONNECTING and verified
 // the factory binding.
-int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* addr_i8) {
-  // DSL emits `const int8_t*` for `*const i8`; the legacy body uses char*.
-  const char* addr = reinterpret_cast<const char*>(addr_i8);
-  // Take a *clone* of the bound factory so we can call `connect` on
-  // it without holding the RefCell guard across what may be a
-  // blocking syscall (TCP handshake, address resolution). The
-  // ChannelFactoryProxy's underlying type (e.g. TcpFactory wrapped in
-  // an Arc<TcpFactory> adapter) is reference-counted, so copying the
-  // proxy is cheap. We don't have a generic clone() on
-  // rusty::Box<ChannelFactoryBase>, so we use the proxy in place
-  // through the Box wrapper while the rusty::Mutex guard is held.
-  // @unsafe { rusty::Mutex::lock + ChannelFactoryProxy copy }
-  {
-    auto guard = self.factory_.lock().unwrap();
-    if ((*guard).is_none()) {
-      Log_error(
-          "rrr::ClientConnection::connect_via_factory: factory unbound at "
-          "the moment of connect (race against bind_factory)");
-      self.state_machine_.transition_to(ConnectionState::FAILED);
-      self.invoke_error_callback(ENOTCONN, "factory unbound");
-      return ENOTCONN;
-    }
-    // The proxy (rusty::Box<ChannelFactoryBase>) is move-only; we
-    // can't clone. Use it in place via the Box wrapper. The
-    // rusty::Mutex guard is held across the connect() syscall — the
-    // caller's perspective is that
-    // connect is synchronous (channel-layer contract), and the
-    // factory itself is read-only (bind_factory is essentially
-    // one-shot per Client lifecycle), so holding the lock briefly
-    // while we issue the syscall doesn't introduce contention with
-    // the dispatch path (which locks `fiber_channel_`, not
-    // `factory_`).
-    auto* bound = (*guard).as_ref().unwrap().get();
-    ConnectResult result = bound->connect(std::string_view(addr));
-    if (result.error != ChannelError::None || result.connection.is_none()) {
-      // channel_error_to_string is DSL now and returns std::string_view,
-      // which has no operator+ with std::string (rule-2 call-site fix).
-      const auto err_str = std::string("factory connect failed: ")
-          .append(channel_error_to_string(result.error));
-      Log_error("rrr::ClientConnection: {} (addr={})", err_str.c_str(), addr);
-      self.state_machine_.transition_to(ConnectionState::FAILED);
-      // Map the channel error onto an errno-shaped value the legacy
-      // call sites expect.
-      const int rc = (result.error == ChannelError::ConnectionRefused)
-                       ? ECONNREFUSED
-                     : (result.error == ChannelError::AddressInvalid)
-                       ? EINVAL
-                       : ENOTCONN;
-      self.invoke_error_callback(rc, err_str);
-      return rc;
-    }
-    // Sub-leaf 4g1c: bypass FiberChannel + recv-loop fiber entirely.
-    // Install on_frame/on_closed callbacks directly on the channel
-    // proxy. on_frame runs on the poll thread (where the channel
-    // layer fires it) and calls decode_response_and_notify inline —
-    // no IntEvent, no fiber yield, no waiting_events_ churn. This
-    // works around the deeper reactor/fiber wedge documented in 4g1b.
-    self.bind_channel_direct(result.connection.unwrap());
-  }
-
-  // Record address for the close fan-out's reconnect spawn — it
-  // re-runs the factory connect with the same target. std::string
-  // assignment from a const char* is benign in @safe code.
-  self.reconnect_address_.set(addr);
-
-  // Mirror the fd path's terminal transition: the channel layer's
-  // own state (proxy.is_closed()) becomes the source of truth, but
-  // we still drive the legacy state machine through CONNECTED so
-  // existing health-check / metric APIs (`connected()`,
-  // `connection_state()`) keep working.
-  if (!self.state_machine_.transition_to(ConnectionState::CONNECTED)) {
-    self.state_machine_.force_state(ConnectionState::CONNECTED);
-  }
-  // Record connect timestamp so `metrics_.connect_time_ms()` is
-  // non-zero from the moment a request can be issued. The metric
-  // tests assert `> 0`; the absolute value (steady-clock-relative)
-  // is informational.
-  {
-    uint64_t now = clientconn_monotonic_ms_now();
-    self.metrics_.record_connect(now);
-    // Seed `last_activity_time_` so `is_idle()` measures time since
-    // connect (or since the most recent send/recv) rather than
-    // returning false forever because no I/O has happened yet.
-    self.update_last_activity(now);
-  }
-  self.invoke_connected_callback();
-  return 0;
+// @unsafe - strlen over the reinterpret_cast'ed addr; owned string for
+// the DSL body (`*const i8` has no char* spelling in the DSL).
+inline std::string clientconn_addr_to_string(const int8_t* addr) {
+  const char* p = reinterpret_cast<const char*>(addr);
+  return std::string(p, strlen(p));
 }
+
+// The factory-driven connect. The factory is used IN PLACE through
+// the Box while the rusty::Mutex guard is held — the proxy is
+// move-only (no clone), connect is synchronous per the channel-layer
+// contract, and the factory is effectively read-only after
+// bind_factory, so briefly holding the lock across the syscall does
+// not contend with the dispatch path (which locks fiber_channel_).
+// 4g1c: on success bind_channel_direct installs on_frame/on_closed
+// directly on the proxy — no FiberChannel, no recv-loop fiber.
+#if RUSTYCPP_RUST
+fn clientconn_connect_via_factory(conn: &ClientConnection, addr_i8: *const i8) -> i32 {
+    let addr_str: std::string = clientconn_addr_to_string(addr_i8);
+    {
+        let mut guard = conn.factory_.lock().unwrap();
+        if (*guard).is_none() {
+            Log_error("rrr::ClientConnection::connect_via_factory: factory unbound at the moment of connect (race against bind_factory)");
+            conn.state_machine_.transition_to(ConnectionState::FAILED);
+            conn.invoke_error_callback(ENOTCONN, "factory unbound");
+            return ENOTCONN;
+        }
+        let bound: &mut Box<ChannelFactoryBase> = (*guard).as_mut().unwrap();
+        let mut result: ConnectResult = bound.connect(addr_str.clone());
+        if result.error != ChannelError::None || result.connection.is_none() {
+            let err_name = channel_error_to_string(result.error);
+            let err_str: std::string = format!("factory connect failed: {}", err_name);
+            Log_error("rrr::ClientConnection: {} (addr={})", err_str, addr_str);
+            conn.state_machine_.transition_to(ConnectionState::FAILED);
+            // Map the channel error onto an errno-shaped value the
+            // legacy call sites expect.
+            let mut rc: i32 = ENOTCONN;
+            if result.error == ChannelError::ConnectionRefused {
+                rc = ECONNREFUSED;
+            } else if result.error == ChannelError::AddressInvalid {
+                rc = EINVAL;
+            }
+            conn.invoke_error_callback(rc, err_str);
+            return rc;
+        }
+        let mut conn_proxy = result.connection.take().unwrap();
+        conn.bind_channel_direct(conn_proxy);
+    }
+
+    // Record address for the close fan-out's reconnect spawn — it
+    // re-runs the factory connect with the same target.
+    conn.reconnect_address_.set(addr_str);
+
+    // Mirror the fd path's terminal transition: the channel layer's
+    // own state (proxy.is_closed()) becomes the source of truth, but
+    // we still drive the legacy state machine through CONNECTED so
+    // existing health-check / metric APIs keep working.
+    if !conn.state_machine_.transition_to(ConnectionState::CONNECTED) {
+        conn.state_machine_.force_state(ConnectionState::CONNECTED);
+    }
+    // Record connect timestamp so metrics_.connect_time_ms() is
+    // non-zero from the moment a request can be issued; seed
+    // last_activity_time_ so is_idle() measures time since connect.
+    {
+        let now: u64 = clientconn_monotonic_ms_now();
+        conn.metrics_.record_connect(now);
+        conn.update_last_activity(now);
+    }
+    conn.invoke_connected_callback();
+    0i32
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.21 version=1 rust_sha256=3dda9d5704e71a361380c3e133b148235c3a296b15d13c463811ffce501e0c6f*/
+int32_t clientconn_connect_via_factory(const ClientConnection& conn, const int8_t* addr_i8) {
+    std::string addr_str = clientconn_addr_to_string(addr_i8);
+    {
+        auto&& guard = rusty::deref_call(conn.factory_.lock(), rusty::detail::__mdisp_unwrap{});
+        if (((rusty::detail::deref_if_pointer_like(guard))).is_none()) {
+            Log_error("rrr::ClientConnection::connect_via_factory: factory unbound at the moment of connect (race against bind_factory)");
+            conn.state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::FAILED)));
+            conn.invoke_error_callback(ENOTCONN, "factory unbound");
+            return ENOTCONN;
+        }
+        rusty::Box<ChannelFactoryBase>& bound = ((rusty::detail::deref_if_pointer_like(guard))).as_mut().unwrap();
+        ConnectResult result = bound->connect(rusty::clone(addr_str));
+        if ((rusty::detail::deref_if_pointer_like(result.error) != rusty::detail::deref_if_pointer_like(ChannelError::None)) || result.connection.is_none()) {
+            const auto err_name = channel_error_to_string(std::move(result.error));
+            std::string err_str = std::format("factory connect failed: {}" , err_name);
+            Log_error("rrr::ClientConnection: {} (addr={})", std::move(err_str), std::move(addr_str));
+            conn.state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::FAILED)));
+            int32_t rc = ENOTCONN;
+            if (rusty::detail::deref_if_pointer_like(result.error) == rusty::detail::deref_if_pointer_like(ChannelError::ConnectionRefused)) {
+                rc = ECONNREFUSED;
+            } else if (rusty::detail::deref_if_pointer_like(result.error) == rusty::detail::deref_if_pointer_like(ChannelError::AddressInvalid)) {
+                rc = EINVAL;
+            }
+            conn.invoke_error_callback(std::move(rc), std::move(err_str));
+            return std::move(rc);
+        }
+        auto conn_proxy = result.connection.take().unwrap();
+        conn.bind_channel_direct(std::move(conn_proxy));
+    }
+    conn.reconnect_address_.set(std::move(addr_str));
+    if (rusty::detail::rust_not(conn.state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::CONNECTED))))) {
+        conn.state_machine_.force_state(rusty::clone(rusty::clone(ConnectionState::CONNECTED)));
+    }
+    {
+        const uint64_t now = clientconn_monotonic_ms_now();
+        conn.metrics_.record_connect(std::move(now));
+        conn.update_last_activity(std::move(now));
+    }
+    conn.invoke_connected_callback();
+    return static_cast<int32_t>(0);
+}
+/*RUSTYCPP:GEN-END id=client.21*/
 
 
 // @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
