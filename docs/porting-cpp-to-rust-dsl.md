@@ -4133,3 +4133,18 @@ closed two more families this session:
     guard.
   * A DSL fn returning a Rust tuple lowers to `std::tuple`, not
     `std::pair` — update `.first/.second` callers to `std::get<>`.
+
+### 7.59 Variadic factories ARE callable from the DSL (turbofish probe)
+
+`reactor_create_sp_event::<IntEvent>()` lowers to
+`reactor_create_sp_event<IntEvent>()` — an explicit template argument
+on a hand-written VARIADIC factory template works from a DSL body. The
+factories themselves stay C++ (variadic parameter packs remain a
+floor), but "this body calls create_sp_event" is no longer a reason to
+keep the BODY a kernel. The SharedIntEvent trio converted on this:
+set (guard-indexed waiter sweep), wait (borrow_mut Function install),
+wait_until_gte (park + retain-by-identity, with a 2-line
+`int_event_raw_ptr` kernel because `.get()` on the Arc HANDLE would be
+autoderef-misrouted to the pointee — same family as Box::get /
+sconn_proxy_ptr, §7.58). `retain(move |item: &Arc<IntEvent>| ...)`
+passes a typed-param closure straight through.

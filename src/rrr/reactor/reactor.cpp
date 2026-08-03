@@ -763,11 +763,12 @@ bool int_event_is_ready(const IntEvent& ev) {
 
 struct SharedIntEvent;
 
-// Hand-written backing free fns for the DSL methods below — the bodies
-// drive Reactor::create_sp_event / Event-status machinery (not
-// DSL-expressible). Definitions near the bottom of this file.
-// (shared_int_event_set is DSL now — defined with the others below;
-// its decl comes from the GEN block there.)
+// Backing free fns for the DSL methods below — ALL THREE are DSL now
+// (the old "drives create_sp_event — not DSL-expressible" cause expired:
+// an explicit template argument on the variadic factory lowers fine).
+// Definitions near the bottom of this file; the DSL emits their
+// definitions' decls, these forward decls just satisfy the delegating
+// methods above them.
 int32_t shared_int_event_set(SharedIntEvent& sie, int32_t v);
 bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout);
 void shared_int_event_wait(SharedIntEvent& self, EventTestFn f);
@@ -4234,42 +4235,89 @@ int32_t shared_int_event_set(SharedIntEvent& sie, int32_t v) {
 }
 /*RUSTYCPP:GEN-END id=reactor.28*/
 
-// @unsafe - holds a raw `IntEvent*` (`ev_ptr = ev.get()`) across the
-// retain() lambda capture to identity-compare against shared_ptr<IntEvent>
-// entries in `events_`. The shared_ptr keeps the target alive for the
-// duration of the call.
-bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout) {
-  if (self.value_ >= x) {
-    return false;
-  }
-  auto ev =  reactor_create_sp_event<IntEvent>();
-  ev->value_.set(self.value_);
-  ev->target_.set(x);
-  self.events_.push(ev);
-  ev->wait_timeout(timeout);
-  // verify(ev->status_.get() != EventStatus::TIMEOUT);  // why can't it be timeout?
-  // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
-  bool if_timeout = (ev->status_.get() == EventStatus::TIMEOUT);
-  auto* ev_ptr = ev.get();
-  self.events_.retain(rusty::Function<bool(const rusty::Arc<IntEvent>&)>(
-      [ev_ptr](const rusty::Arc<IntEvent>& item) {
-        return item.get() != ev_ptr;
-      }));
-  return if_timeout;
+// @unsafe - Arc handle-method raw extraction for the retain identity
+// compare below (`.get()` on the handle would be misrouted to the
+// pointee by the DSL autoderef — same reason as sconn_proxy_ptr).
+inline const IntEvent* int_event_raw_ptr(const rusty::Arc<IntEvent>& ev) {
+    return ev.get();
 }
 
-void shared_int_event_wait(SharedIntEvent& self, EventTestFn f) {
-  if (f(self.value_)) {
-    return;
-  }
-  auto ev =  reactor_create_sp_event<IntEvent>();
-  ev->value_.set(self.value_);
-  (*ev->state_.test_.borrow_mut()) = std::move(f);
-  self.events_.push(ev);
-//  ev->wait(1000*1000*1000);
-//  verify(ev->status_ != EventStatus::TIMEOUT);
-  ev->wait();
+// Threshold wait: register a fresh IntEvent, park with a timeout, then
+// drop it from the waiter list by pointer identity (the Arc keeps the
+// target alive across the retain). Returns whether the wait timed out.
+#if RUSTYCPP_RUST
+fn shared_int_event_wait_until_gte(sie: &mut SharedIntEvent, x: i32, timeout: i32) -> bool {
+    if sie.value_ >= x {
+        return false;
+    }
+    let ev: rusty::Arc<IntEvent> = reactor_create_sp_event::<IntEvent>();
+    (*ev).value_.set(sie.value_);
+    (*ev).target_.set(x);
+    sie.events_.push(ev.clone());
+    (*ev).wait_timeout(timeout as u64);
+    // Remove the event from the waiter list once it reaches a terminal
+    // state (READY or TIMEOUT).
+    let if_timeout: bool = (*ev).status_.get() == EventStatus::TIMEOUT;
+    let ev_ptr: *const IntEvent = int_event_raw_ptr(ev);
+    sie.events_.retain(move |item: &rusty::Arc<IntEvent>| {
+        int_event_raw_ptr(item) != ev_ptr
+    });
+    if_timeout
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.30 version=1 rust_sha256=6e52f12c3d50741219fc8f9d16ea4d7fc949ebce44d6213b5eee4dca26c6fb26*/
+bool shared_int_event_wait_until_gte(SharedIntEvent& sie, int32_t x, int32_t timeout) {
+    if (rusty::detail::deref_if_pointer_like(sie.value_) >= rusty::detail::deref_if_pointer_like(x)) {
+        return false;
+    }
+    const rusty::Arc<IntEvent> ev = reactor_create_sp_event<IntEvent>();
+    (rusty::detail::deref_if_pointer_like(ev)).value_.set(sie.value_);
+    (rusty::detail::deref_if_pointer_like(ev)).target_.set(std::move(x));
+    sie.events_.push(rusty::clone(ev));
+    ((rusty::detail::deref_if_pointer_like(ev))).wait_timeout(static_cast<uint64_t>(timeout));
+    bool if_timeout = (rusty::detail::deref_if_pointer_like(ev)).status_.get() == rusty::clone(EventStatus::TIMEOUT);
+    const IntEvent* ev_ptr = int_event_raw_ptr(std::move(ev));
+    sie.events_.retain([=, ev_ptr = std::move(ev_ptr)](const rusty::Arc<IntEvent>& item) {
+return int_event_raw_ptr(item) != ev_ptr;
+});
+    return std::move(if_timeout);
+}
+/*RUSTYCPP:GEN-END id=reactor.30*/
+
+// Custom-predicate wait: register a fresh IntEvent carrying the test
+// Function and park on it. Probe result recorded here: an explicit
+// template argument on a variadic factory (`reactor_create_sp_event::
+// <IntEvent>()`) DOES lower from the DSL.
+#if RUSTYCPP_RUST
+fn shared_int_event_wait(sie: &mut SharedIntEvent, f: EventTestFn) {
+    if f(sie.value_) {
+        return;
+    }
+    let ev: rusty::Arc<IntEvent> = reactor_create_sp_event::<IntEvent>();
+    (*ev).value_.set(sie.value_);
+    {
+        let mut guard = (*ev).state_.test_.borrow_mut();
+        *guard = f;
+    }
+    sie.events_.push(ev.clone());
+    (*ev).wait();
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.29 version=1 rust_sha256=d4f030ca0c519819e00cecd353721dff934674dcb189d1e14434f9c6c4528efd*/
+void shared_int_event_wait(SharedIntEvent& sie, EventTestFn f) {
+    if (f(sie.value_)) {
+        return;
+    }
+    const rusty::Arc<IntEvent> ev = reactor_create_sp_event<IntEvent>();
+    (rusty::detail::deref_if_pointer_like(ev)).value_.set(sie.value_);
+    {
+        auto&& guard = (rusty::detail::deref_if_pointer_like(ev)).state_.test_.borrow_mut();
+        rusty::detail::deref_if_pointer_like(guard) = std::move(f);
+    }
+    sie.events_.push(rusty::clone(ev));
+    ((rusty::detail::deref_if_pointer_like(ev))).wait();
+}
+/*RUSTYCPP:GEN-END id=reactor.29*/
 
 
 // --- from fiber_impl.cc --------------------------------------------------
