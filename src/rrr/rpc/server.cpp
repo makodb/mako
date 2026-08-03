@@ -2125,92 +2125,187 @@ void request_fill_body(Request& req, std::span<const uint8_t> bytes) {
 
 // I/O loop: the channel layer has already stripped the 4-byte size
 // prefix, so the body is `[xid:v64][rpc_id:i32][user-args]`.
-void sconn_decode_request_and_dispatch(
-        const ServerConnection& self, const std::uint8_t* bytes, std::size_t size) {
-    if (self.status_.get() == ServerConnStatus::CLOSED) {
+// @unsafe - default-constructed boxed Request for the DSL decode body
+// (in-place make_box; Request's aggregate default is not spellable
+// cross-block without churn).
+inline rusty::Box<Request> sconn_make_request() {
+    return rusty::make_box<Request>();
+}
+
+// The slow-path fiber body, as a free fn so the spawn closure stays
+// the single-call shape (§7.60 — the inline-argument closure emission
+// mis-infers return types on multi-statement bodies).
+#if RUSTYCPP_RUST
+fn sconn_dispatch_in_fiber(ctx: Arc<RpcServiceContext>, svc_index: usize,
+                           rpc_id: i32, req: Box<Request>,
+                           weak_this: WeakServerConnection) {
+    let mut guard = (*ctx).services[svc_index].borrow_mut();
+    let svc: &mut Box<Service> = &mut *guard;
+    svc.__dispatch__(rpc_id, req, weak_this);
+}
+
+// Decode one channel-mode request frame and dispatch. The body is
+// `[xid:v64][rpc_id:i32][user-args]` (the channel layer already
+// stripped the size prefix). Bytes are copied into the Request BEFORE
+// any path that may yield — the channel-layer contract makes them
+// valid only for this callback. The archive is a view over req.src;
+// the cursor advance persists into the handler's reads.
+fn sconn_decode_request_and_dispatch(sconn: &ServerConnection,
+                                     bytes: *const u8, size: usize) {
+    if sconn.status_.get() == ServerConnStatus::CLOSED {
+        return;
+    }
+    let mut req_box = sconn_make_request();
+    if size > 0usize {
+        request_fill_body(&mut *req_box,
+                          unsafe { core::slice::from_raw_parts(bytes, size) });
+    }
+
+    // Malformed frame (not enough bytes for an xid): drop it — there
+    // is no valid xid to reply against. v64 is 1-8 bytes; an empty
+    // body means there is no xid at all.
+    if (*req_box).src.remaining() == 0usize {
+        Log_warn("rrr::ServerConnection: empty channel-mode request frame, dropping");
+        return;
+    }
+    let mut header_ar = BinaryReadArchive {
+        source_: make_source_proxy(&raw mut (*req_box).src),
+    };
+    let mut v_xid = v64::new(0i64);
+    Deserialize_::deserialize(&mut v_xid, header_ar);
+    (*req_box).xid = v_xid.get();
+    (*req_box).attach_pending_guard((*sconn.ctx_).pending_requests.clone());
+
+    // sizeof(i32) spelled as its value: not enough bytes for rpc_id.
+    if (*req_box).src.remaining() < 4usize {
+        let mut empty_fn1: ServerReplyFn = Default::default();
+        sconn_reply((*sconn), (*req_box), EINVAL, empty_fn1);
         return;
     }
 
-    // Build a Request and copy the frame's bytes into its body.
-    // The channel-layer contract makes `bytes` valid only for the
-    // duration of this callback, so we must copy before any code path
-    // that may yield (e.g. `Fiber::create_run`).
-    auto req_box = rusty::make_box<Request>();
-    Request& req = *req_box;
-    if (size > 0) {
-        request_fill_body(req, std::span<const std::uint8_t>(bytes, size));
-    }
-
-    // Header parse: xid + rpc_id. If the frame is malformed (less
-    // than enough bytes for xid), drop it (no valid xid to reply
-    // against). v64 is variable-length 1-8 bytes; an empty body
-    // means there's no xid. The archive is a view; the cursor
-    // advances in req.src and persists into the handler's reads.
-    if (req.src.remaining() == 0) {
-        Log_warn("rrr::ServerConnection: empty channel-mode request frame, "
-                 "dropping");
-        return;
-    }
-    BinaryReadArchive header_ar(make_source_proxy(&req.src));
-    v64 v_xid;
-    rrr::Deserialize_::deserialize(v_xid, header_ar);
-    req.xid = v_xid.get();
-    req.attach_pending_guard(self.ctx_->pending_requests);
-
-    if (req.src.remaining() < sizeof(i32)) {
-        sconn_reply(self, req, EINVAL, ServerReplyFn{});
-        return;
-    }
-
-    i32 rpc_id;
-    rrr::Deserialize_::deserialize(rpc_id, header_ar);
-    if (rpc_id == static_cast<i32>(kInternalHeartbeatRpcId)) {
-        // @safe - rusty atomic load is const
-        if (!self.ctx_->drop_heartbeat_replies->load(rusty::sync::atomic::Ordering::Acquire)) {
-            sconn_reply(self, req, 0, ServerReplyFn{});
+    let mut rpc_id: i32 = 0i32;
+    Deserialize_::deserialize(&mut rpc_id, header_ar);
+    if rpc_id == (kInternalHeartbeatRpcId as i32) {
+        let hb: &Arc<ServerDropHeartbeatRepliesAtomic> =
+            &(*sconn.ctx_).drop_heartbeat_replies;
+        if !hb.load(rusty::sync::atomic::Ordering::Acquire) {
+            let mut empty_fn2: ServerReplyFn = Default::default();
+            sconn_reply((*sconn), (*req_box), 0i32, empty_fn2);
         }
         return;
     }
 
-    auto svc_index_opt = self.ctx_->rpc_to_service.get(rpc_id);
-    if (svc_index_opt.is_none()) {
-        bool surpress_warning = false;
+    let svc_index_opt = (*sconn.ctx_).rpc_to_service.get(rpc_id);
+    if svc_index_opt.is_none() {
+        let mut surpress_warning = false;
         {
-            auto guard = g_rpc_id_missing.lock().unwrap();
-            if (!(*guard).contains(rpc_id)) {
+            let mut guard = g_rpc_id_missing.lock().unwrap();
+            if !(*guard).contains(rpc_id) {
                 (*guard).insert(rpc_id);
             } else {
                 surpress_warning = true;
             }
         }
-        if (!surpress_warning) {
-            Log_warn("rrr::ServerConnection: no handler for rpc_id = {} "
-                     "(channel-mode dispatch)", rpc_id);
+        if !surpress_warning {
+            Log_warn("rrr::ServerConnection: no handler for rpc_id = {} (channel-mode dispatch)",
+                     rpc_id);
         }
-        sconn_reply(self, req, ENOENT, ServerReplyFn{});
+        let mut empty_fn3: ServerReplyFn = Default::default();
+        sconn_reply((*sconn), (*req_box), ENOENT, empty_fn3);
         return;
     }
 
-    size_t svc_index = svc_index_opt.unwrap();
-    auto weak_this = self.weak_self_;
-    if (self.ctx_->fast_rpc_ids.contains(rpc_id)) {
+    let svc_index: usize = *svc_index_opt.unwrap();
+    let weak_this = sconn.weak_self_.clone();
+    if (*sconn.ctx_).fast_rpc_ids.contains(rpc_id) {
         // Fast inline dispatch — no fiber spawn.
-        auto guard = self.ctx_->services[svc_index].borrow_mut();
-        (*guard)->__dispatch__(rpc_id, std::move(req_box), weak_this);
+        let mut guard = (*sconn.ctx_).services[svc_index].borrow_mut();
+        let svc: &mut Box<Service> = &mut *guard;
+        svc.__dispatch__(rpc_id, req_box, weak_this);
     } else {
-        // Slow path — spawn a fiber so the handler can yield (e.g.
-        // for nested RPC calls). Capture an Arc<RpcServiceContext>
-        // clone so the fiber stays valid even if the connection is
-        // closed mid-flight.
-        auto ctx = self.ctx_.clone();
-        Fiber::create_run([ctx, svc_index, rpc_id,
-                           req = std::move(req_box),
-                           weak_this]() mutable {
-            auto guard = ctx->services[svc_index].borrow_mut();
-            (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
-        }, __FILE__, __LINE__);
+        // Slow path — spawn a fiber so the handler can yield (e.g. for
+        // nested RPC calls). The ctx Arc clone keeps the services alive
+        // even if the connection is closed mid-flight.
+        let ctx2 = sconn.ctx_.clone();
+        let job_fn = move || {
+            sconn_dispatch_in_fiber(ctx2, svc_index, rpc_id, req_box, weak_this);
+        };
+        Fiber::create_run(job_fn);
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.19 version=1 rust_sha256=3afd312d2cd66804eec705411675f64d79e3455168d013d53e04d0c576cefb74*/
+void sconn_dispatch_in_fiber(rusty::Arc<RpcServiceContext> ctx, size_t svc_index, int32_t rpc_id, rusty::Box<Request> req, WeakServerConnection weak_this) {
+    auto&& guard = (rusty::detail::deref_if_pointer_like(ctx)).services[svc_index].borrow_mut();
+    rusty::Box<Service>& svc = rusty::detail::deref_if_pointer_like(guard);
+    svc->__dispatch__(std::move(rpc_id), std::move(req), std::move(weak_this));
+}
+
+void sconn_decode_request_and_dispatch(const ServerConnection& sconn, const uint8_t* bytes, size_t size) {
+    if (sconn.status_.get() == rusty::clone(ServerConnStatus_CLOSED())) {
+        return;
+    }
+    auto req_box = sconn_make_request();
+    if (rusty::detail::deref_if_pointer_like(size) > static_cast<size_t>(0)) {
+        request_fill_body(rusty::detail::deref_if_pointer_like(req_box), rusty::from_raw_parts(bytes, std::move(size)));
+    }
+    if ((rusty::detail::deref_if_pointer_like(req_box)).src.remaining() == static_cast<size_t>(0)) {
+        Log_warn("rrr::ServerConnection: empty channel-mode request frame, dropping");
+        return;
+    }
+    auto header_ar = BinaryReadArchive{.source_ = make_source_proxy(&(rusty::detail::deref_if_pointer_like(req_box)).src)};
+    auto v_xid = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_xid, header_ar);
+    (rusty::detail::deref_if_pointer_like(req_box)).xid = v_xid.get();
+    ((rusty::detail::deref_if_pointer_like(req_box))).attach_pending_guard(rusty::clone((rusty::detail::deref_if_pointer_like(sconn.ctx_)).pending_requests));
+    if ((rusty::detail::deref_if_pointer_like(req_box)).src.remaining() < static_cast<size_t>(4)) {
+        ServerReplyFn empty_fn1 = rusty::default_like<ServerReplyFn>();
+        sconn_reply((sconn), (rusty::detail::deref_if_pointer_like(req_box)), EINVAL, std::move(empty_fn1));
+        return;
+    }
+    int32_t rpc_id = static_cast<int32_t>(0);
+    Deserialize_::deserialize(rpc_id, header_ar);
+    if (rusty::detail::deref_if_pointer_like(rpc_id) == ((static_cast<int32_t>(kInternalHeartbeatRpcId)))) {
+        const rusty::Arc<ServerDropHeartbeatRepliesAtomic>& hb = (rusty::detail::deref_if_pointer_like(sconn.ctx_)).drop_heartbeat_replies;
+        if (rusty::detail::rust_not(hb->load(rusty::sync::atomic::Ordering::Acquire))) {
+            ServerReplyFn empty_fn2 = rusty::default_like<ServerReplyFn>();
+            sconn_reply((sconn), (rusty::detail::deref_if_pointer_like(req_box)), static_cast<int32_t>(0), std::move(empty_fn2));
+        }
+        return;
+    }
+    auto svc_index_opt = (rusty::detail::deref_if_pointer_like(sconn.ctx_)).rpc_to_service.get(std::move(rpc_id));
+    if (svc_index_opt.is_none()) {
+        auto surpress_warning = false;
+        {
+            auto&& guard = rusty::deref_call(g_rpc_id_missing.lock(), rusty::detail::__mdisp_unwrap{});
+            if (rusty::detail::rust_not(rusty::contains((rusty::detail::deref_if_pointer_like(guard)), std::move(rpc_id)))) {
+                ((rusty::detail::deref_if_pointer_like(guard))).insert(std::move(rpc_id));
+            } else {
+                surpress_warning = true;
+            }
+        }
+        if (rusty::detail::rust_not(surpress_warning)) {
+            Log_warn("rrr::ServerConnection: no handler for rpc_id = {} (channel-mode dispatch)", std::move(rpc_id));
+        }
+        ServerReplyFn empty_fn3 = rusty::default_like<ServerReplyFn>();
+        sconn_reply((sconn), (rusty::detail::deref_if_pointer_like(req_box)), ENOENT, std::move(empty_fn3));
+        return;
+    }
+    size_t svc_index = rusty::detail::deref_if_pointer_like(svc_index_opt.unwrap());
+    auto weak_this = rusty::clone(sconn.weak_self_);
+    if (rusty::contains((rusty::detail::deref_if_pointer_like(sconn.ctx_)).fast_rpc_ids, std::move(rpc_id))) {
+        auto&& guard = (rusty::detail::deref_if_pointer_like(sconn.ctx_)).services[svc_index].borrow_mut();
+        rusty::Box<Service>& svc = rusty::detail::deref_if_pointer_like(guard);
+        svc->__dispatch__(std::move(rpc_id), std::move(req_box), std::move(weak_this));
+    } else {
+        auto ctx2 = rusty::clone(sconn.ctx_);
+        auto job_fn = [=, ctx2 = std::move(ctx2), req_box = std::move(req_box), rpc_id = std::move(rpc_id), svc_index = std::move(svc_index), weak_this = std::move(weak_this)]() mutable {
+sconn_dispatch_in_fiber(std::move(ctx2), std::move(svc_index), std::move(rpc_id), std::move(req_box), std::move(weak_this));
+};
+        Fiber::create_run(std::move(job_fn));
+    }
+}
+/*RUSTYCPP:GEN-END id=server.19*/
 
 // @unsafe - 5b: dispatch a reply-frame body through the bound proxy.
 //
