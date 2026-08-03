@@ -1700,18 +1700,30 @@ inline void serialize(const std::pair<T1, T2>& v, BinaryWriteArchive& ar) {
   serialize(v.second, ar);
 }
 
+// Bodies moved to the WireSerialize DSL block below (impl<T>-for-
+// container trait lowering, same as std::list); these 1-line
+// forwarders keep the overload set in Serialize_ where qualified
+// callers and the nested-container decls resolve. The namespace is
+// opened empty here so the qualified dependent calls parse; the GEN
+// below populates it, and the calls resolve at instantiation.
+}  // namespace Serialize_ (paused for the fwd namespace decls)
+// Forward declarations of the DSL-generated overloads: a qualified
+// callee must resolve at template-definition context, so the names
+// must exist here even though the GEN definitions come later.
+namespace WireSerialize_ {
+template<class T> void serialize(const std::list<T>& self_, BinaryWriteArchive& ar);
+template<class T> void serialize(const rusty::Vec<T>& self_, BinaryWriteArchive& ar);
+template<class T> void serialize(const std::vector<T>& self_, BinaryWriteArchive& ar);
+}
+namespace Serialize_ {
 template<class T>
 inline void serialize(const rusty::Vec<T>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) serialize(*it, ar);
+  WireSerialize_::serialize(v, ar);
 }
 
 template<class T>
 inline void serialize(const std::vector<T>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) serialize(*it, ar);
+  WireSerialize_::serialize(v, ar);
 }
 
 // First slice of the serde overload family converted to DSL (playbook
@@ -1745,8 +1757,37 @@ impl<T> WireSerialize for std::list<T> {
         }
     }
 }
+
+// Index loops, not `for e in self`: rusty::iter over these vector
+// shapes in this position mis-yields (the element call deduced T = the
+// whole container and landed on the poisoned catch-all). Bodies live
+// here; 1-line forwarders in Serialize_ keep the overload set where
+// qualified callers look (the placement-arcana-free route).
+impl<T> WireSerialize for Vec<T> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.len() as i64);
+        Serialize_::serialize(v_len, ar);
+        let mut i: usize = 0usize;
+        while i < self.len() {
+            Serialize_::serialize(self[i], ar);
+            i += 1usize;
+        }
+    }
+}
+
+impl<T> WireSerialize for std::vector<T> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.size() as i64);
+        Serialize_::serialize(v_len, ar);
+        let mut i: usize = 0usize;
+        while i < self.size() {
+            Serialize_::serialize(self[i], ar);
+            i += 1usize;
+        }
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.wire_ser version=1 rust_sha256=266daf71126145f4a183bcedaf8d3f1c826756e0605d76bf1d4200b5812c40a6*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.wire_ser version=1 rust_sha256=ddbf1c38384a3bfea26f6303c8102f125acef13aaf26998213e0e651962f9098*/
 class WireSerialize;
 
 // Extension trait free-function forward declarations
@@ -1754,12 +1795,28 @@ namespace rusty_ext {
     template<typename T>
     void serialize(const std::list<T>& self_, BinaryWriteArchive& ar);
 
+    template<typename T>
+    void serialize(const rusty::Vec<T>& self_, BinaryWriteArchive& ar);
+
+    template<typename T>
+    void serialize(const std::vector<T>& self_, BinaryWriteArchive& ar);
+
 }
 
 
 namespace WireSerialize_ {
     template<typename T>
     void serialize(const std::list<T>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const rusty::Vec<T>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const std::vector<T>& self_, BinaryWriteArchive& ar);
 }
 using namespace WireSerialize_;
 class WireSerialize {
@@ -1795,6 +1852,44 @@ void serialize(BinaryWriteArchive& ar) const {
 }
 #endif  // patcher: end orphan-impl stub
 
+// TODO orphan impl: methods for `Vec` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for Vec
+void serialize(BinaryWriteArchive& ar) const {
+    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len((*this))));
+    Serialize_::serialize(v_len, ar);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len((*this))) {
+        Serialize_::serialize((*this)[i], ar);
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::vector` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::vector
+void serialize(BinaryWriteArchive& ar) const {
+    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
+    Serialize_::serialize(v_len, ar);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < this->size()) {
+        Serialize_::serialize((*this)[i], ar);
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
 // Extension trait WireSerialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
     template<typename T>
@@ -1807,9 +1902,35 @@ namespace rusty_ext {
         }
     }
 
+    template<typename T>
+    void serialize(const rusty::Vec<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len(self_)) {
+            Serialize_::serialize(self_[i], ar);
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename T>
+    void serialize(const std::vector<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < self_.size()) {
+            Serialize_::serialize(self_[i], ar);
+            i += static_cast<size_t>(1);
+        }
+    }
+
 }
 
 // TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::list<T>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<rusty::Vec<T>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::vector<T>>`
 
 // UFCS trait migration: free functions for `impl WireSerialize for ...`
 namespace WireSerialize_ {
@@ -1824,21 +1945,50 @@ namespace WireSerialize_ {
     }
 
 }
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const rusty::Vec<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len(self_)) {
+            Serialize_::serialize(self_[i], ar);
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const std::vector<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < self_.size()) {
+            Serialize_::serialize(self_[i], ar);
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
 /*RUSTYCPP:GEN-END id=serializable.wire_ser*/
 
 namespace Serialize_ {
-// Bridge the generated overload back into `Serialize_`.
-//
-// The trait block must live at `rrr` scope (a second `rusty_ext` inside
-// `Serialize_` is ambiguous against the Deserialize trait's), but callers
-// reach this family through the QUALIFIED name `Serialize_::serialize`
-// — e.g. test_marshal.cc's `rrr::Serialize_::serialize(empty_list, war)`.
-// A qualified call that misses lands on the catch-all, whose
-// `adl_detail_` poison deliberately blocks the ascent that would have
-// found it, so the failure is a hard error rather than a silent wrong
-// pick. This using-declaration puts the generated overload in the scope
-// callers name, without moving its definition.
-using ::rrr::WireSerialize_::serialize;
+// Bridge the generated overloads back into `Serialize_` via 1-line
+// forwarders (the trait block must live at `rrr` scope — a second
+// `rusty_ext` inside `Serialize_` is ambiguous against the Deserialize
+// trait's — but callers reach this family through the QUALIFIED name
+// `Serialize_::serialize`, and a miss lands on the poisoned catch-all).
+// A forwarder per container replaces the earlier using-declaration,
+// which conflicts with same-signature forwarders declared in-scope.
+template<class T>
+inline void serialize(const std::list<T>& v, BinaryWriteArchive& ar) {
+  WireSerialize_::serialize(v, ar);
+}
 
 template<class T>
 inline void serialize(const rusty::BTreeSet<T>& v, BinaryWriteArchive& ar) {
