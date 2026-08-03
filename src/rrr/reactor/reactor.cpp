@@ -719,23 +719,42 @@ rusty::Option<rusty::Rc<Fiber>> IntEvent::upgrade_fiber() const {
 }
 /*RUSTYCPP:GEN-END id=reactor.int_event*/
 
-// @safe - sets value_ and runs the readiness test kernel; returns the
-// previous value (verbatim from the legacy IntEvent::set).
-inline int32_t int_event_set(const IntEvent& self, int32_t n) {
-  int32_t t = self.value_.get();
-  self.value_.set(n);
-  event_test_impl(self);
-  return t;
+// Sets value_ and runs the readiness test; returns the previous value
+// (verbatim from the legacy IntEvent::set). The custom-predicate check
+// is the tcp on_frame guard shape: borrow the Function slot, bool-test
+// the guard, invoke through it.
+#if RUSTYCPP_RUST
+fn int_event_set(ev: &IntEvent, n: i32) -> i32 {
+    let t: i32 = ev.value_.get();
+    ev.value_.set(n);
+    event_test_impl(ev);
+    t
 }
 
-// @unsafe - invokes the state_.test_ rusty::Function (custom predicate).
-inline bool int_event_is_ready(const IntEvent& self) {
-  auto guard = self.state_.test_.borrow();
-  if (*guard) {
-    return (*guard)(self.value_.get());
-  }
-  return self.value_.get() >= self.target_.get();
+fn int_event_is_ready(ev: &IntEvent) -> bool {
+    let guard = ev.state_.test_.borrow();
+    if *guard {
+        return (*guard)(ev.value_.get());
+    }
+    ev.value_.get() >= ev.target_.get()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.6 version=1 rust_sha256=00db42f1c1618921dc9babee7e1e77d45150cb46bf6132044cc5e778a6c5a2c5*/
+int32_t int_event_set(const IntEvent& ev, int32_t n) {
+    int32_t t = ev.value_.get();
+    ev.value_.set(std::move(n));
+    event_test_impl(ev);
+    return std::move(t);
+}
+
+bool int_event_is_ready(const IntEvent& ev) {
+    auto&& guard = rusty::borrow(ev.state_.test_);
+    if (rusty::detail::deref_if_pointer_like(guard)) {
+        return (rusty::detail::deref_if_pointer_like(guard))(ev.value_.get());
+    }
+    return ev.value_.get() >= ev.target_.get();
+}
+/*RUSTYCPP:GEN-END id=reactor.6*/
 
 // `SharedIntEvent` — a shared counter that wakes IntEvent waiters when
 // it crosses their thresholds. The `rusty::Arc<IntEvent>` element
@@ -5203,23 +5222,57 @@ void pollworker_process_pending_removals(PollThreadWorker& w) {
 
 // @unsafe - Box-trait arrow dispatch (the 1-line kernels the DSL calls).
 int pollable_proxy_fd(const PollableProxy& p) { return p->fd(); }
-// @unsafe - drains the pending-remove set into an indexable Vec for
-// the DSL sweep (the HashSet's range-for has no rusty::iter shim).
-rusty::Vec<int> pollworker_take_removals(PollThreadWorker& self) {
-    rusty::Vec<int> v;
-    for (int fd : self.pending_remove_) {
-        v.push(fd);
+// Drains the pending-remove set into an indexable Vec for the DSL
+// sweep. HashSet::drain() empties the set as it yields — the same
+// idiom the client's pending-future map uses — replacing the old
+// iterate-then-clear ("no rusty::iter shim" cause expired).
+#if RUSTYCPP_RUST
+fn pollworker_take_removals(w: &mut PollThreadWorker) -> Vec<i32> {
+    // The HashSet port has no drain(); take the whole set (leaves an
+    // empty one behind — same net effect as the old iterate-then-clear)
+    // and copy the fds out through iter().
+    let taken = core::mem::take(&mut w.pending_remove_);
+    let mut v: Vec<i32> = Vec::new();
+    for fd in taken.iter() {
+        v.push(*fd);
     }
-    self.pending_remove_.clear();
-    return v;
+    v
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.31 version=1 rust_sha256=8ce055e559981cf9202809a490982d6bd3927a8e81598eb2a27e04db8e7b4b8a*/
+rusty::Vec<int32_t> pollworker_take_removals(PollThreadWorker& w) {
+    const auto taken = rusty::mem::take(w.pending_remove_);
+    rusty::Vec<int32_t> v = rusty::Vec<int32_t>::new_();
+    for (auto&& fd : rusty::for_in(rusty::iter(taken))) {
+        v.push(std::move(rusty::detail::deref_if_pointer_like(fd)));
+    }
+    return std::move(v);
+}
+/*RUSTYCPP:GEN-END id=reactor.31*/
 int pollable_proxy_mode(const PollableProxy& p) { return p->poll_mode(); }
-void pollworker_close_proxy_of(PollThreadWorker& self, int fd) {
-    auto proxy_opt = self.fd_to_pollable_.get(fd);
-    if (proxy_opt.is_some()) {
-        proxy_opt.unwrap()->close();
+// The map hands back Option<Box&>; the named-Box binding makes close()
+// lower to `->` (playbook §7.13).
+#if RUSTYCPP_RUST
+fn pollworker_close_proxy_of(w: &mut PollThreadWorker, fd: i32) {
+    // The map port's non-const get() returns Option<V&>; the &mut-typed
+    // Box binding keeps the mutable overload selected so close()'s
+    // non-const dispatch compiles.
+    let proxy_opt = w.fd_to_pollable_.get(fd);
+    if proxy_opt.is_some() {
+        let p: &mut Box<PollableBase> = proxy_opt.unwrap();
+        p.close();
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.32 version=1 rust_sha256=991c4898103f9a77280f2acfd05f062144007f67a8b4a2c3b1aaa98a5f7d4aab*/
+void pollworker_close_proxy_of(PollThreadWorker& w, int32_t fd) {
+    auto proxy_opt = w.fd_to_pollable_.get(std::move(fd));
+    if (proxy_opt.is_some()) {
+        rusty::Box<PollableBase>& p = proxy_opt.unwrap();
+        p->close();
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.32*/
 
 // @safe - Update poll mode directly (bypasses channel); only safe on
 // the poll thread. Kernel by verdict: takes the abstract Pollable by
