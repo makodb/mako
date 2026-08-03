@@ -31,7 +31,7 @@
 #include <utility>
 #include <vector>
 
-#include <rusty/arc.hpp>
+#include <rusty/rusty.hpp>
 #include <rusty/box.hpp>
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
@@ -43,6 +43,8 @@
 #include "dispatcher.hpp"
 
 #include "../constants.h"
+
+import rusty;
 
 namespace janus {
 namespace raft {
@@ -112,8 +114,8 @@ inline int channel_faults_find_partition(const ChannelFaults& faults,
 
 #if RUSTYCPP_RUST
 pub struct ChannelFaults {
-    dropped: std::vector<std::pair<u16, u16>>,
-    partitions: std::vector<std::vector<u16>>,
+    dropped: rusty::Vec<std::pair<u16, u16>>,
+    partitions: rusty::Vec<rusty::Vec<u16>>,
 }
 
 impl ChannelFaults {
@@ -122,18 +124,18 @@ impl ChannelFaults {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=channel_transport.faults version=1 rust_sha256=d72e873ce88c41732e9b246ee3a1e5ca0e550d9d286e4405f6c45e41a1faba83*/
+/*RUSTYCPP:GEN-BEGIN id=channel_transport.faults version=1 rust_sha256=8f049ef94c5991ab8a314938ef675c91de9c205582eeb3dd05022fa25181ea1d*/
 struct ChannelFaults;
 
 struct ChannelFaults {
-    std::vector<std::pair<uint16_t, uint16_t>> dropped;
-    std::vector<std::vector<uint16_t>> partitions;
+    rusty::Vec<std::pair<uint16_t, uint16_t>> dropped;
+    rusty::Vec<rusty::Vec<uint16_t>> partitions;
 
     bool is_dropped(uint16_t from, uint16_t to) const;
 };
 
 
-inline bool ChannelFaults::is_dropped(uint16_t from, uint16_t to) const {
+bool ChannelFaults::is_dropped(uint16_t from, uint16_t to) const {
     return channel_faults_is_dropped((*this), std::move(from), std::move(to));
 }
 /*RUSTYCPP:GEN-END id=channel_transport.faults*/
@@ -160,30 +162,31 @@ pub fn channel_envelope_matches_destination(envelope_to: u16,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=channel_transport.small_helpers version=1 rust_sha256=79f5eaf4cbb3e6137d5ee633b66a7a7ee99d2db35066a1c67b0df7e0cfc45173*/
-inline bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to);
-inline bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition);
-inline bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site);
+bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to);
+bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition);
+bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site);
 
-inline bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to) {
-    return drop_from == from && drop_to == to;
+bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to) {
+    return (rusty::detail::deref_if_pointer_like(drop_from) == rusty::detail::deref_if_pointer_like(from)) && (rusty::detail::deref_if_pointer_like(drop_to) == rusty::detail::deref_if_pointer_like(to));
 }
 
-inline bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition) {
-    return from_partition != to_partition;
+bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition) {
+    return rusty::detail::deref_if_pointer_like(from_partition) != rusty::detail::deref_if_pointer_like(to_partition);
 }
 
-inline bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site) {
-    return envelope_to == site;
+bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site) {
+    return rusty::detail::deref_if_pointer_like(envelope_to) == rusty::detail::deref_if_pointer_like(site);
 }
 /*RUSTYCPP:GEN-END id=channel_transport.small_helpers*/
 
 inline bool channel_faults_is_dropped(const ChannelFaults& faults,
                                       siteid_t from,
                                       siteid_t to) {
-  for (auto& p : faults.dropped) {
+  for (size_t i = 0; i < faults.dropped.size(); ++i) {
+    const auto& p = faults.dropped[i];
     if (channel_faults_drop_matches(p.first, p.second, from, to)) return true;
   }
-  if (!faults.partitions.empty()) {
+  if (faults.partitions.size() != 0) {
     auto pf = channel_faults_find_partition(faults, from);
     auto pt = channel_faults_find_partition(faults, to);
     if (channel_faults_partitions_block(pf, pt)) return true;
@@ -194,7 +197,8 @@ inline bool channel_faults_is_dropped(const ChannelFaults& faults,
 inline int channel_faults_find_partition(const ChannelFaults& faults,
                                          siteid_t site) {
   for (size_t i = 0; i < faults.partitions.size(); ++i) {
-    for (auto x : faults.partitions[i]) {
+    for (size_t j = 0; j < faults.partitions[i].size(); ++j) {
+      auto x = faults.partitions[i][j];
       if (x == site) return static_cast<int>(i);
     }
   }
@@ -243,19 +247,19 @@ struct ChannelSwitchboardStateCore {
 };
 
 
-inline ChannelSwitchboardStateCore ChannelSwitchboardStateCore::new_() {
+ChannelSwitchboardStateCore ChannelSwitchboardStateCore::new_() {
     return ChannelSwitchboardStateCore{.faults_ = ChannelFaults{}};
 }
 
-inline bool ChannelSwitchboardStateCore::is_dropped(uint16_t from, uint16_t to) const {
+bool ChannelSwitchboardStateCore::is_dropped(uint16_t from, uint16_t to) const {
     return this->faults_.is_dropped(std::move(from), std::move(to));
 }
 
-inline void ChannelSwitchboardStateCore::reset_faults() {
+void ChannelSwitchboardStateCore::reset_faults() {
     this->faults_ = ChannelFaults{};
 }
 
-inline ChannelFaults& ChannelSwitchboardStateCore::faults_mut() {
+ChannelFaults& ChannelSwitchboardStateCore::faults_mut() {
     return this->faults_;
 }
 /*RUSTYCPP:GEN-END id=channel_transport.switchboard_state*/
@@ -289,10 +293,16 @@ class ChannelSwitchboard {
 
   // @safe - fault-injection accessors
   void drop_direction(siteid_t from, siteid_t to) {
-    state_core_.faults_mut().dropped.emplace_back(from, to);
+    state_core_.faults_mut().dropped.push({from, to});
   }
   void partition(std::vector<std::vector<siteid_t>> groups) {
-    state_core_.faults_mut().partitions = std::move(groups);
+    auto partitions = rusty::Vec<rusty::Vec<siteid_t>>::new_();
+    for (auto& group : groups) {
+      auto copied = rusty::Vec<siteid_t>::new_();
+      for (auto site : group) copied.push(site);
+      partitions.push(std::move(copied));
+    }
+    state_core_.faults_mut().partitions = std::move(partitions);
   }
   void reset_faults() {
     state_core_.reset_faults();
@@ -578,64 +588,64 @@ struct ChannelTransportAdapterCore {
 };
 
 
-inline ChannelTransportAdapterCore ChannelTransportAdapterCore::new_(ChannelSwitchboard* sw, uint16_t self_site, uint32_t par) {
+ChannelTransportAdapterCore ChannelTransportAdapterCore::new_(ChannelSwitchboard* sw, uint16_t self_site, uint32_t par) {
     return ChannelTransportAdapterCore{.sw_ = sw, .self_ = std::move(self_site), .par_ = std::move(par)};
 }
 
-inline uint16_t ChannelTransportAdapterCore::self_site_id() const {
+uint16_t ChannelTransportAdapterCore::self_site_id() const {
     return this->self_;
 }
 
-inline AppendEntriesReply ChannelTransportAdapterCore::send_append_entries(uint16_t dst, AppendEntriesReq req) {
+AppendEntriesReply ChannelTransportAdapterCore::send_append_entries(uint16_t dst, AppendEntriesReq req) {
     // @unsafe
     {
         return channel_transport_send_append_entries_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
     }
 }
 
-inline EmptyAppendEntriesReply ChannelTransportAdapterCore::send_empty_append_entries(uint16_t dst, EmptyAppendEntriesReq req) {
+EmptyAppendEntriesReply ChannelTransportAdapterCore::send_empty_append_entries(uint16_t dst, EmptyAppendEntriesReq req) {
     // @unsafe
     {
         return channel_transport_send_empty_append_entries_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
     }
 }
 
-inline VoteReply ChannelTransportAdapterCore::send_vote(uint16_t dst, VoteReq req) {
+VoteReply ChannelTransportAdapterCore::send_vote(uint16_t dst, VoteReq req) {
     // @unsafe
     {
         return channel_transport_send_vote_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
     }
 }
 
-inline TimeoutNowReply ChannelTransportAdapterCore::send_timeout_now(uint16_t dst, TimeoutNowReq req) {
+TimeoutNowReply ChannelTransportAdapterCore::send_timeout_now(uint16_t dst, TimeoutNowReq req) {
     // @unsafe
     {
         return channel_transport_send_timeout_now_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
     }
 }
 
-inline InstallSnapshotReply ChannelTransportAdapterCore::send_install_snapshot(uint16_t dst, InstallSnapshotReq req) {
+InstallSnapshotReply ChannelTransportAdapterCore::send_install_snapshot(uint16_t dst, InstallSnapshotReq req) {
     // @unsafe
     {
         return channel_transport_send_install_snapshot_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
     }
 }
 
-inline void ChannelTransportAdapterCore::send_vote_durable(uint16_t candidate, VoteDurableReq req) {
+void ChannelTransportAdapterCore::send_vote_durable(uint16_t candidate, VoteDurableReq req) {
     // @unsafe
     {
         channel_transport_send_vote_durable_cpp(this->sw_, this->self_, std::move(candidate), this->par_, std::move(req));
     }
 }
 
-inline void ChannelTransportAdapterCore::send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req) {
+void ChannelTransportAdapterCore::send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req) {
     // @unsafe
     {
         channel_transport_send_append_entries_durable_cpp(this->sw_, this->self_, std::move(leader), this->par_, std::move(req));
     }
 }
 
-inline void ChannelTransportAdapterCore::send_notify_restart(uint16_t dst, uint32_t par) {
+void ChannelTransportAdapterCore::send_notify_restart(uint16_t dst, uint32_t par) {
     // @unsafe
     {
         channel_transport_send_notify_restart_cpp(this->sw_, this->self_, std::move(dst), std::move(par));

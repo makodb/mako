@@ -26,6 +26,13 @@
 #include <utility>
 #include <vector>
 
+#include <rusty/rusty.hpp>
+
+// `rusty::Vec` is exported by RustyCpp's named umbrella module.  The
+// handwritten headers above provide its supporting declarations (including
+// the generated scalar helpers); the import provides the Vec alias itself.
+import rusty;
+
 #include "snapshot_manager.hpp"
 
 namespace janus {
@@ -47,7 +54,7 @@ pub fn memory_snapshot_metadata(last_index: u64,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.metadata version=1 rust_sha256=3678b8c2aca40b44613126d24c67e673f791cd4fe51ca6b49a74a69ae31d1b57*/
-inline SnapshotMetadata memory_snapshot_metadata(uint64_t last_index, uint64_t last_term, size_t size) {
+SnapshotMetadata memory_snapshot_metadata(uint64_t last_index, uint64_t last_term, size_t size) {
     return SnapshotMetadata{.last_included_index = std::move(last_index), .last_included_term = std::move(last_term), .timestamp_ms = 0, .size_bytes = std::move(size), .checksum = std::string()};
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.metadata*/
@@ -76,41 +83,45 @@ pub fn memory_snapshot_reader_is_complete(payload_size: usize,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.stream_helpers version=1 rust_sha256=d98f5868cc5d5a7f49cde4ce1883e770ee25ece0c944988a8a8e95fc364028f1*/
-inline size_t memory_snapshot_advance_offset(size_t offset, size_t size);
-inline size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size);
-inline bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset);
+size_t memory_snapshot_advance_offset(size_t offset, size_t size);
+size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size);
+bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset);
 
-inline size_t memory_snapshot_advance_offset(size_t offset, size_t size) {
-    return offset + size;
+size_t memory_snapshot_advance_offset(size_t offset, size_t size) {
+    return rusty::detail::deref_if_pointer_like(offset) + rusty::detail::deref_if_pointer_like(size);
 }
 
-inline size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size) {
-    auto remaining = payload_size - offset;
-    if (buffer_size < remaining) {
+size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size) {
+    auto remaining = rusty::detail::deref_if_pointer_like(payload_size) - rusty::detail::deref_if_pointer_like(offset);
+    if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {
         return std::move(buffer_size);
     } else {
         return std::move(remaining);
     }
 }
 
-inline bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset) {
-    return offset >= payload_size;
+bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset) {
+    return rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(payload_size);
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.stream_helpers*/
 
-// @unsafe - raw pointer append to a caller-owned staging buffer.
-inline bool memory_snapshot_writer_write_cpp(std::string* buffer,
+// The SnapshotWriter virtual API is the sole raw-byte boundary. Snapshot
+// payload ownership itself is always a Rusty Vec<u8>, never a std::string.
+// @unsafe - copies caller-owned bytes into an owned Rusty byte vector.
+inline bool memory_snapshot_copy_from_raw(rusty::Vec<uint8_t>* buffer,
                                              size_t* offset,
                                              const char* data,
                                              size_t size) {
-  buffer->append(data, size);
+  for (size_t i = 0; i < size; ++i) {
+    buffer->push(static_cast<uint8_t>(data[i]));
+  }
   *offset = memory_snapshot_advance_offset(*offset, size);
   return true;
 }
 
 // @unsafe - publishes a completed in-memory snapshot under the manager mutex.
-inline bool memory_snapshot_writer_finalize_cpp(std::string* buffer,
-                                                std::string* dest_payload,
+inline bool memory_snapshot_writer_finalize_cpp(rusty::Vec<uint8_t>* buffer,
+                                                rusty::Vec<uint8_t>* dest_payload,
                                                 SnapshotMetadata* dest_meta,
                                                 bool* has_snapshot,
                                                 std::mutex* mtx,
@@ -127,7 +138,7 @@ inline bool memory_snapshot_writer_finalize_cpp(std::string* buffer,
 }
 
 // @safe - resets writer-local staging state.
-inline bool memory_snapshot_writer_abort_cpp(std::string* buffer,
+inline bool memory_snapshot_writer_abort_cpp(rusty::Vec<uint8_t>* buffer,
                                              size_t* offset,
                                              bool* finalized) {
   buffer->clear();
@@ -137,7 +148,7 @@ inline bool memory_snapshot_writer_abort_cpp(std::string* buffer,
 }
 
 // @unsafe - copies snapshot payload bytes into caller-owned raw output buffer.
-inline bool memory_snapshot_reader_read_cpp(const std::string* payload,
+inline bool memory_snapshot_copy_to_raw(const rusty::Vec<uint8_t>* payload,
                                             size_t* offset,
                                             char* buffer,
                                             size_t buffer_size,
@@ -152,7 +163,7 @@ inline bool memory_snapshot_reader_read_cpp(const std::string* payload,
 }
 
 // @safe - checks reader-local stream position against owned payload size.
-inline bool memory_snapshot_reader_is_complete_cpp(const std::string* payload,
+inline bool memory_snapshot_reader_is_complete_cpp(const rusty::Vec<uint8_t>* payload,
                                                    size_t offset) {
   return memory_snapshot_reader_is_complete(payload->size(), offset);
 }
@@ -169,11 +180,11 @@ inline const SnapshotMetadata& memory_snapshot_reader_metadata_cpp(
 // included snapshot_manager.hpp file.
 #if RUSTYCPP_RUST
 pub struct MemorySnapshotWriterCore {
-    dest_payload_: *mut std::string,
+    dest_payload_: *mut rusty::Vec<u8>,
     dest_meta_: *mut SnapshotMetadata,
     has_snapshot_: *mut bool,
     mtx_: *mut std::mutex,
-    buffer_: std::string,
+    buffer_: rusty::Vec<u8>,
     offset_: usize,
     last_index_: u64,
     last_term_: u64,
@@ -183,7 +194,7 @@ pub struct MemorySnapshotWriterCore {
 impl MemorySnapshotWriterCore {
     // @unsafe - borrows MemorySnapshotManager internals. The writer must not
     // outlive the manager that created it.
-    fn new(dest_payload: *mut std::string,
+    fn new(dest_payload: *mut rusty::Vec<u8>,
            dest_meta: *mut SnapshotMetadata,
            has_snapshot: *mut bool,
            mtx: *mut std::mutex,
@@ -194,7 +205,7 @@ impl MemorySnapshotWriterCore {
             dest_meta_: dest_meta,
             has_snapshot_: has_snapshot,
             mtx_: mtx,
-            buffer_: std::string(),
+            buffer_: rusty::Vec::<u8>::new_(),
             offset_: 0usize,
             last_index_: last_index,
             last_term_: last_term,
@@ -205,7 +216,7 @@ impl MemorySnapshotWriterCore {
     // @unsafe - raw pointer append to internal buffer.
     fn Write(&mut self, data: *const c_char, size: usize) -> bool {
         unsafe {
-            memory_snapshot_writer_write_cpp(&mut self.buffer_,
+            memory_snapshot_copy_from_raw(&mut self.buffer_,
                                              &mut self.offset_,
                                              data,
                                              size)
@@ -241,21 +252,21 @@ impl MemorySnapshotWriterCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.writer_core version=1 rust_sha256=db83f53ef4be3a944f9498a4e1b9b5cc7b5237c94d98fb487c6dc107a97cf86c*/
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.writer_core version=1 rust_sha256=d12bdf978ae0472f0437c4d825e81b681f119eb98b9953c3c3ff61582e44ccdd*/
 struct MemorySnapshotWriterCore;
 
 struct MemorySnapshotWriterCore {
-    std::string* dest_payload_;
+    rusty::Vec<uint8_t>* dest_payload_;
     SnapshotMetadata* dest_meta_;
     bool* has_snapshot_;
     std::mutex* mtx_;
-    std::string buffer_;
+    rusty::Vec<uint8_t> buffer_;
     size_t offset_;
     uint64_t last_index_;
     uint64_t last_term_;
     bool finalized_;
 
-    static MemorySnapshotWriterCore new_(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term);
+    static MemorySnapshotWriterCore new_(rusty::Vec<uint8_t>* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term);
     bool Write(const c_char* data, size_t size);
     bool Finalize();
     bool Abort();
@@ -263,32 +274,32 @@ struct MemorySnapshotWriterCore {
 };
 
 
-inline MemorySnapshotWriterCore MemorySnapshotWriterCore::new_(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term) {
-    return MemorySnapshotWriterCore{.dest_payload_ = dest_payload, .dest_meta_ = dest_meta, .has_snapshot_ = has_snapshot, .mtx_ = mtx, .buffer_ = std::string(), .offset_ = static_cast<size_t>(0), .last_index_ = std::move(last_index), .last_term_ = std::move(last_term), .finalized_ = false};
+MemorySnapshotWriterCore MemorySnapshotWriterCore::new_(rusty::Vec<uint8_t>* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term) {
+    return MemorySnapshotWriterCore{.dest_payload_ = dest_payload, .dest_meta_ = dest_meta, .has_snapshot_ = has_snapshot, .mtx_ = mtx, .buffer_ = rusty::Vec<uint8_t>::new_(), .offset_ = static_cast<size_t>(0), .last_index_ = std::move(last_index), .last_term_ = std::move(last_term), .finalized_ = false};
 }
 
-inline bool MemorySnapshotWriterCore::Write(const c_char* data, size_t size) {
+bool MemorySnapshotWriterCore::Write(const c_char* data, size_t size) {
     // @unsafe
     {
-        return memory_snapshot_writer_write_cpp(&this->buffer_, &this->offset_, data, std::move(size));
+        return memory_snapshot_copy_from_raw(&this->buffer_, &this->offset_, data, std::move(size));
     }
 }
 
-inline bool MemorySnapshotWriterCore::Finalize() {
+bool MemorySnapshotWriterCore::Finalize() {
     // @unsafe
     {
         return memory_snapshot_writer_finalize_cpp(&this->buffer_, this->dest_payload_, this->dest_meta_, this->has_snapshot_, this->mtx_, this->last_index_, this->last_term_, &this->finalized_);
     }
 }
 
-inline bool MemorySnapshotWriterCore::Abort() {
+bool MemorySnapshotWriterCore::Abort() {
     // @unsafe
     {
         return memory_snapshot_writer_abort_cpp(&this->buffer_, &this->offset_, &this->finalized_);
     }
 }
 
-inline size_t MemorySnapshotWriterCore::GetOffset() const {
+size_t MemorySnapshotWriterCore::GetOffset() const {
     return this->offset_;
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.writer_core*/
@@ -296,7 +307,7 @@ inline size_t MemorySnapshotWriterCore::GetOffset() const {
 class MemorySnapshotWriter : public SnapshotWriter {
  public:
   // @unsafe - borrows MemorySnapshotManager internals via core_.
-  MemorySnapshotWriter(std::string* dest_payload,
+  MemorySnapshotWriter(rusty::Vec<uint8_t>* dest_payload,
                        SnapshotMetadata* dest_meta,
                        bool* has_snapshot,
                        std::mutex* mtx,
@@ -332,14 +343,14 @@ class MemorySnapshotWriter : public SnapshotWriter {
 // SnapshotReader interface.
 #if RUSTYCPP_RUST
 pub struct MemorySnapshotReaderCore {
-    payload_: std::string,
+    payload_: rusty::Vec<u8>,
     meta_: SnapshotMetadata,
     offset_: usize,
 }
 
 impl MemorySnapshotReaderCore {
     // @safe
-    fn new(payload: std::string, meta: SnapshotMetadata) -> MemorySnapshotReaderCore {
+    fn new(payload: rusty::Vec<u8>, meta: SnapshotMetadata) -> MemorySnapshotReaderCore {
         MemorySnapshotReaderCore {
             payload_: payload,
             meta_: meta,
@@ -347,11 +358,11 @@ impl MemorySnapshotReaderCore {
         }
     }
 
-    // @unsafe - raw buffer copy from internal string.
+    // @unsafe - copies owned bytes across the SnapshotReader raw boundary.
     fn Read(&mut self, buffer: *mut c_char, buffer_size: usize,
             bytes_read: *mut usize) -> bool {
         unsafe {
-            memory_snapshot_reader_read_cpp(&self.payload_,
+            memory_snapshot_copy_to_raw(&self.payload_,
                                             &mut self.offset_,
                                             buffer,
                                             buffer_size,
@@ -375,15 +386,15 @@ impl MemorySnapshotReaderCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.reader_core version=1 rust_sha256=ab46269cc0c28ff36fa0746bf9dc798a86c10e33119c0b1fa8d90eab0afe07d8*/
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.reader_core version=1 rust_sha256=0c0291d7f09cfd39482cb4336b01334d891e89f9f7220975bd13210e4ff1eb44*/
 struct MemorySnapshotReaderCore;
 
 struct MemorySnapshotReaderCore {
-    std::string payload_;
+    rusty::Vec<uint8_t> payload_;
     SnapshotMetadata meta_;
     size_t offset_;
 
-    static MemorySnapshotReaderCore new_(std::string payload, SnapshotMetadata meta);
+    static MemorySnapshotReaderCore new_(rusty::Vec<uint8_t> payload, SnapshotMetadata meta);
     bool Read(c_char* buffer, size_t buffer_size, size_t* bytes_read);
     bool IsComplete() const;
     const SnapshotMetadata& GetMetadata() const;
@@ -391,29 +402,29 @@ struct MemorySnapshotReaderCore {
 };
 
 
-inline MemorySnapshotReaderCore MemorySnapshotReaderCore::new_(std::string payload, SnapshotMetadata meta) {
+MemorySnapshotReaderCore MemorySnapshotReaderCore::new_(rusty::Vec<uint8_t> payload, SnapshotMetadata meta) {
     return MemorySnapshotReaderCore{.payload_ = std::move(payload), .meta_ = std::move(meta), .offset_ = static_cast<size_t>(0)};
 }
 
-inline bool MemorySnapshotReaderCore::Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) {
+bool MemorySnapshotReaderCore::Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) {
     // @unsafe
     {
-        return memory_snapshot_reader_read_cpp(&this->payload_, &this->offset_, buffer, std::move(buffer_size), bytes_read);
+        return memory_snapshot_copy_to_raw(&this->payload_, &this->offset_, buffer, std::move(buffer_size), bytes_read);
     }
 }
 
-inline bool MemorySnapshotReaderCore::IsComplete() const {
+bool MemorySnapshotReaderCore::IsComplete() const {
     return memory_snapshot_reader_is_complete_cpp(&this->payload_, this->offset_);
 }
 
-inline const SnapshotMetadata& MemorySnapshotReaderCore::GetMetadata() const {
+const SnapshotMetadata& MemorySnapshotReaderCore::GetMetadata() const {
     // @unsafe
     {
         return memory_snapshot_reader_metadata_cpp(&this->meta_);
     }
 }
 
-inline size_t MemorySnapshotReaderCore::GetOffset() const {
+size_t MemorySnapshotReaderCore::GetOffset() const {
     return this->offset_;
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.reader_core*/
@@ -421,10 +432,10 @@ inline size_t MemorySnapshotReaderCore::GetOffset() const {
 class MemorySnapshotReader : public SnapshotReader {
  public:
   // @safe
-  MemorySnapshotReader(std::string payload, SnapshotMetadata meta)
+  MemorySnapshotReader(rusty::Vec<uint8_t> payload, SnapshotMetadata meta)
       : core_(MemorySnapshotReaderCore::new_(std::move(payload), std::move(meta))) {}
 
-  // @unsafe - raw buffer copy from internal string
+  // @unsafe - SnapshotReader's virtual interface exposes caller-owned bytes.
   bool Read(char* buffer, size_t buffer_size, size_t* bytes_read) override {
     return core_.Read(buffer, buffer_size, bytes_read);
   }
@@ -448,7 +459,7 @@ class MemorySnapshotReader : public SnapshotReader {
 
 // @unsafe - returns a writer borrowing manager-owned state.
 inline std::unique_ptr<SnapshotWriter> memory_snapshot_manager_begin_snapshot_cpp(
-    std::string* payload, SnapshotMetadata* meta, bool* has_snapshot,
+    rusty::Vec<uint8_t>* payload, SnapshotMetadata* meta, bool* has_snapshot,
     std::mutex* mtx, slotid_t last_index, ballot_t last_term) {
   return std::make_unique<MemorySnapshotWriter>(
       payload, meta, has_snapshot, mtx, last_index, last_term);
@@ -456,9 +467,12 @@ inline std::unique_ptr<SnapshotWriter> memory_snapshot_manager_begin_snapshot_cp
 
 // @unsafe - copies caller-owned bytes into manager state.
 inline bool memory_snapshot_manager_take_snapshot_cpp(
-    std::string* payload, SnapshotMetadata* meta, bool* has_snapshot,
+    rusty::Vec<uint8_t>* payload, SnapshotMetadata* meta, bool* has_snapshot,
     slotid_t last_index, ballot_t last_term, const char* data, size_t size) {
-  payload->assign(data, size);
+  payload->clear();
+  for (size_t i = 0; i < size; ++i) {
+    payload->push(static_cast<uint8_t>(data[i]));
+  }
   *meta = memory_snapshot_metadata(last_index, last_term, size);
   *has_snapshot = true;
   return true;
@@ -466,19 +480,20 @@ inline bool memory_snapshot_manager_take_snapshot_cpp(
 
 // @safe - returns a reader owning copies of the in-memory snapshot state.
 inline std::unique_ptr<SnapshotReader> memory_snapshot_manager_begin_load_cpp(
-    const std::string* payload, const SnapshotMetadata* meta,
+    const rusty::Vec<uint8_t>* payload, const SnapshotMetadata* meta,
     bool has_snapshot) {
   if (!has_snapshot) return nullptr;
-  return std::make_unique<MemorySnapshotReader>(*payload, *meta);
+  return std::make_unique<MemorySnapshotReader>(payload->clone(), *meta);
 }
 
 // @unsafe - writes latest snapshot into caller-owned output pointers.
 inline bool memory_snapshot_manager_load_latest_cpp(
-    const std::string* payload, const SnapshotMetadata* meta, bool has_snapshot,
+    const rusty::Vec<uint8_t>* payload, const SnapshotMetadata* meta, bool has_snapshot,
     SnapshotMetadata* metadata_out, std::string* data_out) {
   if (!has_snapshot) return false;
   if (metadata_out) *metadata_out = *meta;
-  if (data_out) *data_out = *payload;
+  if (data_out) data_out->assign(reinterpret_cast<const char*>(payload->data()),
+                                 payload->size());
   return true;
 }
 
@@ -504,7 +519,7 @@ inline bool memory_snapshot_manager_has_at_or_after_cpp(
 
 // @safe - single-snapshot manager prunes the current snapshot if it is old.
 inline size_t memory_snapshot_manager_prune_cpp(
-    std::string* payload, SnapshotMetadata* meta, bool* has_snapshot,
+    rusty::Vec<uint8_t>* payload, SnapshotMetadata* meta, bool* has_snapshot,
     slotid_t keep_after_index) {
   if (*has_snapshot && meta->last_included_index < keep_after_index) {
     *has_snapshot = false;
@@ -517,7 +532,7 @@ inline size_t memory_snapshot_manager_prune_cpp(
 
 // @safe
 inline size_t memory_snapshot_manager_delete_all_cpp(
-    std::string* payload, SnapshotMetadata* meta, bool* has_snapshot) {
+    rusty::Vec<uint8_t>* payload, SnapshotMetadata* meta, bool* has_snapshot) {
   size_t n = *has_snapshot ? 1 : 0;
   *has_snapshot = false;
   payload->clear();
@@ -538,7 +553,7 @@ inline const std::string& memory_snapshot_manager_storage_path_cpp(
 pub struct MemorySnapshotManagerCore {
     has_snapshot_: bool,
     meta_: SnapshotMetadata,
-    payload_: std::string,
+    payload_: rusty::Vec<u8>,
     storage_path_: std::string,
 }
 
@@ -548,7 +563,7 @@ impl MemorySnapshotManagerCore {
         MemorySnapshotManagerCore {
             has_snapshot_: false,
             meta_: SnapshotMetadata {},
-            payload_: std::string(),
+            payload_: rusty::Vec::<u8>::new_(),
             storage_path_: std::string("<memory>"),
         }
     }
@@ -638,13 +653,13 @@ impl MemorySnapshotManagerCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.manager_core version=1 rust_sha256=3ffeff6f0a9192c71b888529fa8118486ec802650930019f6aa8b4c839fadcb0*/
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.manager_core version=1 rust_sha256=818cd6a71bcf1b6ac7e4cfa0c228f8c5698f456100ba224d3e8557e89b88af28*/
 struct MemorySnapshotManagerCore;
 
 struct MemorySnapshotManagerCore {
     bool has_snapshot_;
     SnapshotMetadata meta_;
-    std::string payload_;
+    rusty::Vec<uint8_t> payload_;
     std::string storage_path_;
 
     static MemorySnapshotManagerCore new_();
@@ -661,56 +676,56 @@ struct MemorySnapshotManagerCore {
 };
 
 
-inline MemorySnapshotManagerCore MemorySnapshotManagerCore::new_() {
-    return MemorySnapshotManagerCore{.has_snapshot_ = false, .meta_ = SnapshotMetadata{}, .payload_ = std::string(), .storage_path_ = std::string("<memory>")};
+MemorySnapshotManagerCore MemorySnapshotManagerCore::new_() {
+    return MemorySnapshotManagerCore{.has_snapshot_ = false, .meta_ = SnapshotMetadata{}, .payload_ = rusty::Vec<uint8_t>::new_(), .storage_path_ = std::string("<memory>")};
 }
 
-inline std::unique_ptr<SnapshotWriter> MemorySnapshotManagerCore::BeginSnapshot(std::mutex* mtx, uint64_t last_index, int64_t last_term) {
+std::unique_ptr<SnapshotWriter> MemorySnapshotManagerCore::BeginSnapshot(std::mutex* mtx, uint64_t last_index, int64_t last_term) {
     // @unsafe
     {
         return memory_snapshot_manager_begin_snapshot_cpp(&this->payload_, &this->meta_, &this->has_snapshot_, mtx, std::move(last_index), std::move(last_term));
     }
 }
 
-inline bool MemorySnapshotManagerCore::TakeSnapshot(uint64_t last_index, int64_t last_term, const c_char* data, size_t size) {
+bool MemorySnapshotManagerCore::TakeSnapshot(uint64_t last_index, int64_t last_term, const c_char* data, size_t size) {
     // @unsafe
     {
         return memory_snapshot_manager_take_snapshot_cpp(&this->payload_, &this->meta_, &this->has_snapshot_, std::move(last_index), std::move(last_term), data, std::move(size));
     }
 }
 
-inline std::unique_ptr<SnapshotReader> MemorySnapshotManagerCore::BeginLoad(const SnapshotMetadata& _metadata) const {
+std::unique_ptr<SnapshotReader> MemorySnapshotManagerCore::BeginLoad(const SnapshotMetadata& _metadata) const {
     return memory_snapshot_manager_begin_load_cpp(&this->payload_, &this->meta_, this->has_snapshot_);
 }
 
-inline bool MemorySnapshotManagerCore::LoadLatestSnapshot(SnapshotMetadata* metadata_out, std::string* data_out) const {
+bool MemorySnapshotManagerCore::LoadLatestSnapshot(SnapshotMetadata* metadata_out, std::string* data_out) const {
     // @unsafe
     {
         return memory_snapshot_manager_load_latest_cpp(&this->payload_, &this->meta_, this->has_snapshot_, metadata_out, data_out);
     }
 }
 
-inline rusty::Option<SnapshotMetadata> MemorySnapshotManagerCore::GetLatestSnapshot() const {
+rusty::Option<SnapshotMetadata> MemorySnapshotManagerCore::GetLatestSnapshot() const {
     return memory_snapshot_manager_latest_cpp(&this->meta_, this->has_snapshot_);
 }
 
-inline std::vector<SnapshotMetadata> MemorySnapshotManagerCore::ListSnapshots() const {
+std::vector<SnapshotMetadata> MemorySnapshotManagerCore::ListSnapshots() const {
     return memory_snapshot_manager_list_cpp(&this->meta_, this->has_snapshot_);
 }
 
-inline bool MemorySnapshotManagerCore::HasSnapshotAtOrAfter(uint64_t min_index) const {
+bool MemorySnapshotManagerCore::HasSnapshotAtOrAfter(uint64_t min_index) const {
     return memory_snapshot_manager_has_at_or_after_cpp(&this->meta_, this->has_snapshot_, std::move(min_index));
 }
 
-inline size_t MemorySnapshotManagerCore::PruneSnapshots(uint64_t keep_after_index) {
+size_t MemorySnapshotManagerCore::PruneSnapshots(uint64_t keep_after_index) {
     return memory_snapshot_manager_prune_cpp(&this->payload_, &this->meta_, &this->has_snapshot_, std::move(keep_after_index));
 }
 
-inline size_t MemorySnapshotManagerCore::DeleteAllSnapshots() {
+size_t MemorySnapshotManagerCore::DeleteAllSnapshots() {
     return memory_snapshot_manager_delete_all_cpp(&this->payload_, &this->meta_, &this->has_snapshot_);
 }
 
-inline const std::string& MemorySnapshotManagerCore::GetStoragePath() const {
+const std::string& MemorySnapshotManagerCore::GetStoragePath() const {
     // @unsafe
     {
         return memory_snapshot_manager_storage_path_cpp(&this->storage_path_);

@@ -6576,9 +6576,9 @@ int RaftLabTest::testAddServerBasic(void) {
   siteid_t new_server_id = 9999;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->current_config_.count(new_server_id) == 0,
+    Assert2(server->current_config().count(new_server_id) == 0,
             "Server %d should not already be in config", new_server_id);
-    server->current_config_.insert(new_server_id);
+    server->current_config().insert(new_server_id);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
@@ -6610,7 +6610,7 @@ int RaftLabTest::testAddServerBasic(void) {
   // Reset config to original to not break subsequent operations
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(new_server_id);
+    server->current_config().erase(new_server_id);
     server->membership_core_.set_config_change_pending(false);
   }
 
@@ -6643,7 +6643,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
   siteid_t extra_server_id = 8888;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.insert(extra_server_id);
+    server->current_config().insert(extra_server_id);
     server->membership_core_.set_config_change_pending(false);  // Clear so we can do remove
   }
 
@@ -6656,9 +6656,9 @@ int RaftLabTest::testRemoveServerBasic(void) {
   // Remove the extra server
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->current_config_.count(extra_server_id) > 0,
+    Assert2(server->current_config().count(extra_server_id) > 0,
             "Extra server should be in config before remove");
-    server->current_config_.erase(extra_server_id);
+    server->current_config().erase(extra_server_id);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
@@ -6710,7 +6710,7 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   // 1. Simulate first AddServer - sets pending flag
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.insert(static_cast<siteid_t>(7777));
+    server->current_config().insert(static_cast<siteid_t>(7777));
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
@@ -6738,7 +6738,7 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
     Assert2(!server->membership_core_.config_change_pending(),
             "Pending flag should be cleared");
     // Now a new change should be allowed
-    server->current_config_.erase(static_cast<siteid_t>(7777));
+    server->current_config().erase(static_cast<siteid_t>(7777));
     server->membership_core_.set_config_change_pending(true);
   }
   Assert2(server->membership_core_.config_change_pending(),
@@ -6819,13 +6819,13 @@ int RaftLabTest::testNewServerCatchUp(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     // Verify not already present
-    Assert2(server->current_config_.count(new_server_id) == 0,
+    Assert2(server->current_config().count(new_server_id) == 0,
             "New server should not already be in config");
-    Assert2(server->learners_.count(new_server_id) == 0,
+    Assert2(server->learners().count(new_server_id) == 0,
             "New server should not already be a learner");
 
     // Add as learner (mimicking what OnAddServer now does)
-    server->learners_.insert(new_server_id);
+    server->learners().insert(new_server_id);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
 
@@ -6906,7 +6906,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
   siteid_t new_server_id2 = 9999;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(new_server_id2);
+    server->learners().insert(new_server_id2);
     server->membership_core_.set_config_change_pending(true);
     server->next_index_[new_server_id2] = server->lastLogIndex + 1;
     // Set match_index just at the threshold boundary
@@ -6936,7 +6936,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
   siteid_t new_server_id3 = 7777;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(new_server_id3);
+    server->learners().insert(new_server_id3);
     server->membership_core_.set_config_change_pending(true);
     server->next_index_[new_server_id3] = server->lastLogIndex + 1;
     // Commit more entries to make the gap large
@@ -6971,9 +6971,9 @@ int RaftLabTest::testNewServerCatchUp(void) {
   // Cleanup: remove fake servers from config to avoid breaking subsequent operations
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(new_server_id);
-    server->current_config_.erase(new_server_id2);
-    server->learners_.erase(new_server_id3);
+    server->current_config().erase(new_server_id);
+    server->current_config().erase(new_server_id2);
+    server->learners().erase(new_server_id3);
     server->match_index_.erase(new_server_id);
     server->match_index_.erase(new_server_id2);
     server->match_index_.erase(new_server_id3);
@@ -7031,7 +7031,7 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   siteid_t new_server_id = 999;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(new_server_id);
+    server->learners().insert(new_server_id);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[new_server_id] = server->lastLogIndex + 1;
@@ -7080,7 +7080,7 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   // Cleanup
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(new_server_id);
+    server->current_config().erase(new_server_id);
     server->match_index_.erase(new_server_id);
     server->next_index_.erase(new_server_id);
     server->membership_core_.set_config_change_pending(false);
@@ -7123,8 +7123,8 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   siteid_t fake2 = 8002;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.insert(fake1);
-    server->current_config_.insert(fake2);
+    server->current_config().insert(fake1);
+    server->current_config().insert(fake2);
   }
 
   size_t size_with_extras = server->GetCurrentConfig().size();
@@ -7137,7 +7137,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   // 3. Remove fake1 via config manipulation (simulating OnRemoveServer)
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(fake1);
+    server->current_config().erase(fake1);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
@@ -7164,7 +7164,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   // Remove fake2 to restore config
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(fake2);
+    server->current_config().erase(fake2);
   }
 
   // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
@@ -7205,7 +7205,7 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   siteid_t new_server_id = 997;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(new_server_id);
+    server->learners().insert(new_server_id);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[new_server_id] = server->lastLogIndex + 1;
@@ -7242,7 +7242,7 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   // Cleanup
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.erase(new_server_id);
+    server->learners().erase(new_server_id);
     server->match_index_.erase(new_server_id);
     server->next_index_.erase(new_server_id);
     server->membership_core_.set_config_change_pending(false);
@@ -7275,7 +7275,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   siteid_t fake_server = 996;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.insert(fake_server);
+    server->learners().insert(fake_server);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[fake_server] = server->lastLogIndex + 1;
@@ -7324,7 +7324,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   // Cleanup old leader's pending state (it may rejoin as follower)
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners_.erase(fake_server);
+    server->learners().erase(fake_server);
     server->match_index_.erase(fake_server);
     server->next_index_.erase(fake_server);
     server->membership_core_.set_config_change_pending(false);
@@ -7360,7 +7360,7 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     Assert2(!server->membership_core_.config_change_pending(),
             "No config change should be pending initially");
-    server->learners_.insert(server1);
+    server->learners().insert(server1);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[server1] = server->lastLogIndex + 1;
@@ -7407,7 +7407,7 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     Assert2(!server->membership_core_.config_change_pending(),
             "Pending should be false, allowing new config change");
-    server->learners_.insert(server2);
+    server->learners().insert(server2);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[server2] = server->lastLogIndex + 1;
@@ -7422,8 +7422,8 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   // Cleanup
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(server1);
-    server->learners_.erase(server2);
+    server->current_config().erase(server1);
+    server->learners().erase(server2);
     server->match_index_.erase(server1);
     server->match_index_.erase(server2);
     server->next_index_.erase(server1);

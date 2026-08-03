@@ -37,7 +37,16 @@
 
 #include "snapshot_format.hpp"
 #include "snapshot_manager.hpp"
-#include "rusty/slice.hpp"
+// testconf.h has a legacy two-argument Init macro. Preserve it around the
+// RustyCpp umbrella, whose array helpers use Init as an ordinary identifier.
+#pragma push_macro("Init")
+#undef Init
+#include "rusty/rusty.hpp"
+#pragma pop_macro("Init")
+
+// Snapshot payloads are owned byte vectors.  Paths remain strings because
+// they cross the POSIX filesystem boundary.
+import rusty;
 
 namespace janus {
 namespace raft {
@@ -148,12 +157,12 @@ inline size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_sn
 inline bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count);
 
 inline size_t file_snapshot_advance_offset(size_t offset, size_t size) {
-    return offset + size;
+    return rusty::detail::deref_if_pointer_like(offset) + rusty::detail::deref_if_pointer_like(size);
 }
 
 inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size) {
-    auto remaining = data_size - offset;
-    if (buffer_size < remaining) {
+    auto remaining = rusty::detail::deref_if_pointer_like(data_size) - rusty::detail::deref_if_pointer_like(offset);
+    if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {
         return std::move(buffer_size);
     } else {
         return std::move(remaining);
@@ -161,19 +170,19 @@ inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset
 }
 
 inline bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset) {
-    return valid && offset >= data_size;
+    return rusty::detail::deref_if_pointer_like(valid) && (rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(data_size));
 }
 
 inline bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index) {
-    return snapshot_index < keep_after_index;
+    return rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(keep_after_index);
 }
 
 inline bool file_snapshot_has_latest(size_t snapshot_count) {
-    return snapshot_count > 0;
+    return rusty::detail::deref_if_pointer_like(snapshot_count) > 0;
 }
 
 inline size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots) {
-    if (snapshot_count > max_snapshots) {
+    if (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) {
         return std::move(max_snapshots);
     } else {
         return std::move(snapshot_count);
@@ -181,7 +190,7 @@ inline size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_sn
 }
 
 inline bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count) {
-    return snapshot_count > max_snapshots && position >= max_snapshots;
+    return (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) && (rusty::detail::deref_if_pointer_like(position) >= rusty::detail::deref_if_pointer_like(max_snapshots));
 }
 
 inline SnapshotMetadata file_snapshot_metadata_from_name_parts(const std::string& index_part, const std::string& term_part, size_t size_bytes) {
@@ -200,7 +209,7 @@ inline bool file_snapshot_writer_cleanup_cpp(const std::string* temp_path,
 }
 
 // @unsafe - raw pointer append into a caller-owned staging buffer.
-inline bool file_snapshot_writer_write_cpp(std::string* buffer,
+inline bool file_snapshot_writer_write_cpp(rusty::Vec<uint8_t>* buffer,
                                            size_t* offset,
                                            bool finalized,
                                            bool aborted,
@@ -210,7 +219,7 @@ inline bool file_snapshot_writer_write_cpp(std::string* buffer,
     Log_error("[SNAPSHOT-WRITER] Write after finalize/abort");
     return false;
   }
-  buffer->append(data, size);
+  for (size_t i = 0; i < size; ++i) buffer->push(static_cast<uint8_t>(data[i]));
   *offset = file_snapshot_advance_offset(*offset, size);
   return true;
 }
@@ -220,7 +229,7 @@ inline bool file_snapshot_writer_finalize_cpp(const std::string* final_path,
                                               const std::string* temp_path,
                                               slotid_t last_index,
                                               ballot_t last_term,
-                                              std::string* buffer,
+                                              rusty::Vec<uint8_t>* buffer,
                                               bool* finalized,
                                               bool aborted) {
   if (*finalized || aborted) {
@@ -230,7 +239,7 @@ inline bool file_snapshot_writer_finalize_cpp(const std::string* final_path,
 
   std::string serialized;
   if (!SnapshotFormat::Serialize(last_index, last_term,
-                                 buffer->data(), buffer->size(),
+                                 reinterpret_cast<const char*>(buffer->data()), buffer->size(),
                                  &serialized)) {
     Log_error("[SNAPSHOT-WRITER] Failed to serialize snapshot");
     return false;
@@ -288,8 +297,8 @@ inline bool file_snapshot_writer_abort_cpp(const std::string* temp_path,
 
 // @unsafe - opens, stats, reads, deserializes, and verifies a snapshot file.
 inline bool file_snapshot_reader_open_cpp(const std::string* path,
-                                          std::string* file_data,
-                                          std::string* data,
+                                          rusty::Vec<uint8_t>* file_data,
+                                          rusty::Vec<uint8_t>* data,
                                           SnapshotMetadata* metadata,
                                           bool* valid) {
   int fd = open(path->c_str(), O_RDONLY);
@@ -308,8 +317,8 @@ inline bool file_snapshot_reader_open_cpp(const std::string* path,
     return false;
   }
 
-  file_data->resize(st.st_size);
-  ssize_t bytes_read = read(fd, file_data->data(), st.st_size);
+  std::string serialized(st.st_size, '\0');
+  ssize_t bytes_read = read(fd, serialized.data(), st.st_size);
   close(fd);
 
   if (bytes_read != st.st_size) {
@@ -320,8 +329,9 @@ inline bool file_snapshot_reader_open_cpp(const std::string* path,
   }
 
   uint64_t last_index, last_term;
-  if (!SnapshotFormat::Deserialize(file_data->data(), file_data->size(),
-                                   &last_index, &last_term, data)) {
+  std::string decoded;
+  if (!SnapshotFormat::Deserialize(serialized.data(), serialized.size(),
+                                   &last_index, &last_term, &decoded)) {
     Log_error("[SNAPSHOT-READER] Failed to deserialize: {}", path->c_str());
     *valid = false;
     return false;
@@ -329,10 +339,14 @@ inline bool file_snapshot_reader_open_cpp(const std::string* path,
 
   metadata->last_included_index = last_index;
   metadata->last_included_term = last_term;
+  file_data->clear();
+  data->clear();
+  for (unsigned char byte : serialized) file_data->push(byte);
+  for (unsigned char byte : decoded) data->push(byte);
   metadata->size_bytes = data->size();
 
   SnapshotHeader header = snapshot_header_defaults();
-  if (SnapshotFormat::GetHeader(file_data->data(), file_data->size(), &header)) {
+  if (SnapshotFormat::GetHeader(serialized.data(), serialized.size(), &header)) {
     metadata->timestamp_ms = header.timestamp_ms;
   }
 
@@ -343,7 +357,7 @@ inline bool file_snapshot_reader_open_cpp(const std::string* path,
 }
 
 // @unsafe - copies snapshot payload bytes into caller-owned raw output buffer.
-inline bool file_snapshot_reader_read_cpp(const std::string* data,
+inline bool file_snapshot_reader_read_cpp(const rusty::Vec<uint8_t>* data,
                                           size_t* read_offset,
                                           bool valid,
                                           char* buffer,
@@ -366,7 +380,7 @@ inline bool file_snapshot_reader_read_cpp(const std::string* data,
 }
 
 // @safe - checks reader-local stream position.
-inline bool file_snapshot_reader_is_complete_cpp(const std::string* data,
+inline bool file_snapshot_reader_is_complete_cpp(const rusty::Vec<uint8_t>* data,
                                                  bool valid,
                                                  size_t read_offset) {
   return file_snapshot_reader_is_complete(valid, data->size(), read_offset);
@@ -394,7 +408,7 @@ pub struct FileSnapshotWriterCore {
     offset_: usize,
     finalized_: bool,
     aborted_: bool,
-    buffer_: std::string,
+    buffer_: rusty::Vec<u8>,
 }
 
 impl FileSnapshotWriterCore {
@@ -412,7 +426,7 @@ impl FileSnapshotWriterCore {
             offset_: 0usize,
             finalized_: false,
             aborted_: false,
-            buffer_: std::string(),
+            buffer_: rusty::Vec::<u8>::new_(),
         }
     }
 
@@ -459,7 +473,7 @@ impl FileSnapshotWriterCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.writer_core version=1 rust_sha256=e78ca986049aecac50445c4d82b1baf3b19983d7b82dcb960d671370e487a32a*/
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.writer_core version=1 rust_sha256=04479d502c334424eb77105bae672e5af989efc53b512b7083d21335ab0aeb0a*/
 struct FileSnapshotWriterCore;
 
 struct FileSnapshotWriterCore {
@@ -470,7 +484,7 @@ struct FileSnapshotWriterCore {
     size_t offset_;
     bool finalized_;
     bool aborted_;
-    std::string buffer_;
+    rusty::Vec<uint8_t> buffer_;
 
     static FileSnapshotWriterCore new_(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term);
     bool Cleanup() const;
@@ -482,7 +496,7 @@ struct FileSnapshotWriterCore {
 
 
 inline FileSnapshotWriterCore FileSnapshotWriterCore::new_(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term) {
-    return FileSnapshotWriterCore{.final_path_ = std::move(final_path), .temp_path_ = std::move(temp_path), .last_index_ = std::move(last_index), .last_term_ = std::move(last_term), .offset_ = static_cast<size_t>(0), .finalized_ = false, .aborted_ = false, .buffer_ = std::string()};
+    return FileSnapshotWriterCore{.final_path_ = std::move(final_path), .temp_path_ = std::move(temp_path), .last_index_ = std::move(last_index), .last_term_ = std::move(last_term), .offset_ = static_cast<size_t>(0), .finalized_ = false, .aborted_ = false, .buffer_ = rusty::Vec<uint8_t>::new_()};
 }
 
 inline bool FileSnapshotWriterCore::Cleanup() const {
@@ -559,8 +573,8 @@ class FileSnapshotWriter : public SnapshotWriter {
 #if RUSTYCPP_RUST
 pub struct FileSnapshotReaderCore {
     path_: std::string,
-    file_data_: std::string,
-    data_: std::string,
+    file_data_: rusty::Vec<u8>,
+    data_: rusty::Vec<u8>,
     metadata_: SnapshotMetadata,
     read_offset_: usize,
     valid_: bool,
@@ -571,8 +585,8 @@ impl FileSnapshotReaderCore {
     fn new(path: std::string) -> FileSnapshotReaderCore {
         FileSnapshotReaderCore {
             path_: path,
-            file_data_: std::string(),
-            data_: std::string(),
+            file_data_: rusty::Vec::<u8>::new_(),
+            data_: rusty::Vec::<u8>::new_(),
             metadata_: SnapshotMetadata {},
             read_offset_: 0usize,
             valid_: false,
@@ -626,13 +640,13 @@ impl FileSnapshotReaderCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.reader_core version=1 rust_sha256=402be0c36bb54c1c11e3908493c808ffa628fab7643b29f00215eed75413ac13*/
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.reader_core version=1 rust_sha256=1743a8867e8150be150a3851fad9e09cdcffa9b7483dda122321af21ff3b8084*/
 struct FileSnapshotReaderCore;
 
 struct FileSnapshotReaderCore {
     std::string path_;
-    std::string file_data_;
-    std::string data_;
+    rusty::Vec<uint8_t> file_data_;
+    rusty::Vec<uint8_t> data_;
     SnapshotMetadata metadata_;
     size_t read_offset_;
     bool valid_;
@@ -648,7 +662,7 @@ struct FileSnapshotReaderCore {
 
 
 inline FileSnapshotReaderCore FileSnapshotReaderCore::new_(std::string path) {
-    return FileSnapshotReaderCore{.path_ = std::move(path), .file_data_ = std::string(), .data_ = std::string(), .metadata_ = SnapshotMetadata{}, .read_offset_ = static_cast<size_t>(0), .valid_ = false};
+    return FileSnapshotReaderCore{.path_ = std::move(path), .file_data_ = rusty::Vec<uint8_t>::new_(), .data_ = rusty::Vec<uint8_t>::new_(), .metadata_ = SnapshotMetadata{}, .read_offset_ = static_cast<size_t>(0), .valid_ = false};
 }
 
 inline bool FileSnapshotReaderCore::Open() {
