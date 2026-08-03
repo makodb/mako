@@ -110,6 +110,12 @@ if(NOT TARGET rrr)
             FILE_SET rrr_modules TYPE CXX_MODULES FILES ${RRR_MODULE_SRC}
         )
     endif()
+    # Goal-0 C demotion: syscall ladders that will never be Rust live as
+    # plain C with C signatures (the crate's own extern-C kernels mirror
+    # them); the C++ modules keep thin type-converting shims.
+    target_sources(rrr PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_connect.c
+    )
     # `src/compat` ships shims that fix third-party header gotchas
     # without modifying the submodule (e.g.
     # `compat/rusty/function.hpp` adds `#include <cstdlib>` before

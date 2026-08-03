@@ -2381,115 +2381,33 @@ ChannelError connect_errno_to_channel_error(int32_t err) {
 // socket/nonblock/EINPROGRESS/select/SO_ERROR ladder with
 // close-on-every-error IS the body. A DSL shell over one fat step
 // kernel would be cosmetic fragmentation (anti-fragmentation rule).
-// The socket/connect/select ladder — one classify-and-wrap syscall
-// kernel. Returns the connected fd (>= 0), or -1 with *err_out set.
-// Everything here is fd_set/timeval/sockaddr surgery with out-param
-// syscalls; the parse head and the Arc-wiring tail live in the DSL
-// tcp_factory_connect below.
+// The socket/connect/select ladder lives in srpc_connect.c now (plain
+// C, Goal-0 C demotion — this surface will never be Rust). This shim
+// converts the C++ boundary types: SocketAddrV4 in, ChannelError out.
+// C return contract: >=0 fd; -1 errno in *out_errno; -2 timeout;
+// -3 self-connect guard (reported as ConnectionRefused so callers
+// retry like a not-yet-up server).
+extern "C" int32_t srpc_tcp_connect_socket(uint32_t addr_be, uint16_t port_be,
+                                           int32_t timeout_ms, int32_t* out_errno);
+
 int32_t tcp_factory_connect_socket(rusty::net::SocketAddrV4 peer,
                                    int32_t connect_timeout_ms,
                                    ChannelError* err_out) {
     sockaddr_in sa = rusty::net::sockaddr_in_from_socket_addr_v4(peer);
-
-    // @unsafe — system call
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        *err_out = connect_errno_to_channel_error(errno);
-        return -1;
+    int32_t err_no = 0;
+    int32_t fd = srpc_tcp_connect_socket(sa.sin_addr.s_addr, sa.sin_port,
+                                         connect_timeout_ms, &err_no);
+    if (fd >= 0) {
+        return fd;
     }
-
-#ifdef __APPLE__
-    // Prevent SIGPIPE termination on write() to closed sockets.
-    // Linux uses MSG_NOSIGNAL on send(); macOS lacks that flag.
-    {
-        const int yes = 1;
-        // @unsafe — system call
-        (void)::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+    if (fd == -2) {
+        *err_out = ChannelError::Timeout;
+    } else if (fd == -3) {
+        *err_out = ChannelError::ConnectionRefused;
+    } else {
+        *err_out = connect_errno_to_channel_error(err_no);
     }
-#endif
-
-    // Make the socket non-blocking BEFORE the connect so we can apply
-    // a timeout via `select(2)` if the kernel doesn't fail-fast.
-    if (set_nonblocking_fd(fd) != 0) {
-        const int err = errno;
-        ::close(fd);
-        *err_out = connect_errno_to_channel_error(err);
-            return -1;
-    }
-
-    // @unsafe — system call
-    int rc = ::connect(fd, reinterpret_cast<const sockaddr*>(&sa), sizeof(sa));
-    if (rc < 0) {
-        const int err = errno;
-        if (err == EINPROGRESS && connect_timeout_ms > 0) {
-            // Wait up to `connect_timeout_ms_` for the connect to
-            // complete. `select` returns with the fd writable on
-            // success or when the kernel surfaces an error via
-            // SO_ERROR.
-            fd_set wset;
-            FD_ZERO(&wset);
-            FD_SET(fd, &wset);
-            timeval tv;
-            tv.tv_sec  =  connect_timeout_ms / 1000;
-            tv.tv_usec = (connect_timeout_ms % 1000) * 1000;
-
-            // @unsafe — system call
-            int sel = ::select(fd + 1, nullptr, &wset, nullptr, &tv);
-            if (sel == 0) {
-                ::close(fd);
-                *err_out = ChannelError::Timeout;
-            return -1;
-            }
-            if (sel < 0) {
-                const int sel_err = errno;
-                ::close(fd);
-                *err_out = connect_errno_to_channel_error(sel_err);
-            return -1;
-            }
-            // Check SO_ERROR for the actual connect outcome.
-            int so_err = 0;
-            socklen_t so_err_len = sizeof(so_err);
-            // @unsafe — system call
-            if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &so_err_len) < 0
-                || so_err != 0) {
-                const int eff_err = (so_err != 0) ? so_err : errno;
-                ::close(fd);
-                *err_out = connect_errno_to_channel_error(eff_err);
-            return -1;
-            }
-        } else if (err != EISCONN) {
-            ::close(fd);
-            *err_out = connect_errno_to_channel_error(err);
-            return -1;
-        }
-    }
-
-    // TCP self-connect guard. Connecting over loopback to a port inside
-    // the kernel's ephemeral range while no listener is bound yet can
-    // have the kernel pick source port == destination port, and TCP
-    // simultaneous-open then ESTABLISHes the socket to itself. The
-    // phantom connection (a) exchanges frames with itself and (b) squats
-    // the server's listen port, so the later bind() dies EADDRINUSE even
-    // under SO_REUSEADDR. A real peer connection can never have an
-    // identical local and remote endpoint, so refuse it; reporting
-    // ConnectionRefused makes callers retry exactly like a not-yet-up
-    // server, and the retry draws a fresh source port.
-    {
-        sockaddr_in local_sa;
-        socklen_t local_len = sizeof(local_sa);
-        // @unsafe — system call
-        if (::getsockname(fd, reinterpret_cast<sockaddr*>(&local_sa),
-                          &local_len) == 0 &&
-            local_len == sizeof(local_sa) &&
-            local_sa.sin_port == sa.sin_port &&
-            local_sa.sin_addr.s_addr == sa.sin_addr.s_addr) {
-            ::close(fd);
-            *err_out = ChannelError::ConnectionRefused;
-            return -1;
-        }
-    }
-
-    return fd;
+    return -1;
 }
 
 // Parse head + connection build/wiring as DSL over the syscall kernel.
