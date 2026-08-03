@@ -48,6 +48,12 @@ import rrr.utils;
 // `shutdown_phase_to_string` free function is `// @safe`. The
 // `make_service_proxy_from_box` / `make_service_proxy_from_typed_box`
 // helpers are pure Box adapters.
+/*RUSTYCPP:GEN-DISPATCH-BEGIN*/
+namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(unwrap)
+} } // namespace rusty::detail (issue #31 deref_call dispatch)
+/*RUSTYCPP:GEN-DISPATCH-END*/
+
 export namespace rrr {
 
 class Server;
@@ -2032,25 +2038,47 @@ namespace rrr {
 // data member): the "no handler for rpc_id" warning-dedup set.
 static rusty::Mutex<rusty::HashSet<i32>> g_rpc_id_missing{rusty::HashSet<i32>()};
 
-// @unsafe - Build the reply body (header + user payload) into a BufferSink
-// and dispatch through the bound channel proxy via BinaryWriteArchive
-// operators + raw byte pointers. (Was the templated `reply<F>`; de-templated
-// to a `ServerReplyFn` — Function SBO keeps the `[&]` reply lambdas inline,
-// no per-reply alloc.) An empty `write_fn` (the former 2-arg empty-reply
-// overload) writes just the header.
-void sconn_reply(const ServerConnection& self, const Request& req,
-                 i32 error_code, ServerReplyFn write_fn) {
-    BufferSink body_sink;
-    BinaryWriteArchive ar(make_sink_proxy(&body_sink));
-    rrr::Serialize_::serialize(v64(req.xid), ar);
-    rrr::Serialize_::serialize(v32(error_code), ar);
-    rrr::Serialize_::serialize(v64(static_cast<i64>(self.ctx_->server_instance_id)), ar);
+// Build the reply body (header + user payload) into a BufferSink and
+// dispatch through the bound channel proxy. (Was the templated
+// `reply<F>`; de-templated to a `ServerReplyFn` — Function SBO keeps
+// the `[&]` reply lambdas inline, no per-reply alloc.) An empty
+// `write_fn` (the former 2-arg empty-reply overload) writes just the
+// header. Authored as inline Rust DSL: both archive types are
+// single-field aggregates, so the struct literals here are the same
+// shapes the serde impls in serializable.cpp already use.
+#if RUSTYCPP_RUST
+fn sconn_reply(sconn: &ServerConnection, req: &Request,
+               error_code: i32, write_fn: ServerReplyFn) {
+    let mut body_sink: BufferSink = BufferSink { bytes: Vec::<u8>::new() };
+    // `ar` is a &mut alias: bare reference args pass as lvalues, where a
+    // by-value local would get move-wrapped at its last use and fail to
+    // bind the serialize overloads' `BinaryWriteArchive&`.
+    let mut ar_store = BinaryWriteArchive { sink_: make_sink_proxy(&raw mut body_sink) };
+    let ar: &mut BinaryWriteArchive = &mut ar_store;
+    Serialize_::serialize(v64::new(req.xid), ar);
+    Serialize_::serialize(v32::new(error_code), ar);
+    Serialize_::serialize(v64::new((*sconn.ctx_).server_instance_id as i64), ar);
+    if write_fn {
+        write_fn(ar);
+    }
+    sconn_dispatch_response_frame_via_channel((*sconn), body_sink.bytes.as_ptr(),
+                                              body_sink.bytes.len());
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.16 version=1 rust_sha256=33782bd7bde013e52f888edc7878adca073b78aeff03d42a5c6f7ea815243e6f*/
+void sconn_reply(const ServerConnection& sconn, const Request& req, int32_t error_code, ServerReplyFn write_fn) {
+    BufferSink body_sink = BufferSink{.bytes = rusty::Vec<uint8_t>::new_()};
+    auto ar_store = BinaryWriteArchive{.sink_ = make_sink_proxy(&body_sink)};
+    BinaryWriteArchive& ar = ar_store;
+    Serialize_::serialize(v64::new_(req.xid), ar);
+    Serialize_::serialize(v32::new_(std::move(error_code)), ar);
+    Serialize_::serialize(v64::new_(static_cast<int64_t>((rusty::detail::deref_if_pointer_like(sconn.ctx_)).server_instance_id)), ar);
     if (write_fn) {
         write_fn(ar);
     }
-    sconn_dispatch_response_frame_via_channel(self, body_sink.bytes.data(),
-                                              body_sink.bytes.len());
+    sconn_dispatch_response_frame_via_channel((sconn), rusty::as_ptr(body_sink.bytes), rusty::len(body_sink.bytes));
 }
+/*RUSTYCPP:GEN-END id=server.16*/
 
 // @unsafe - 5b/5c/5d: bind a channel proxy and flip the channel-mode latch.
 //
@@ -2194,24 +2222,54 @@ void sconn_decode_request_and_dispatch(
 // value is intentionally discarded — the RPC layer mirrors the
 // legacy fd path's behavior of not surfacing send-side errors from
 // `reply()`.
-void sconn_dispatch_response_frame_via_channel(
-        const ServerConnection& self, const std::uint8_t* bytes, std::size_t size) {
-    ChannelConnectionBase* conn = nullptr;
-    // @unsafe { rusty::Mutex::lock + Box::get + raw pointer extraction }
+// @unsafe - Box::get raw extraction for the DSL dispatch body below —
+// the pointer must OUTLIVE the guard (send happens without the lock,
+// per the channel-layer contract that send_frame is internally
+// thread-safe), and Box's own `.get()` is a handle method the DSL's
+// autoderef would misroute to the pointee.
+inline ChannelConnectionBase* sconn_proxy_ptr(
+        const rusty::Option<ChannelConnectionProxy>& slot) {
+    return slot.as_ref().unwrap().get();
+}
+
+// Dispatch a reply-frame body through the bound proxy. Locks the
+// rusty::Mutex briefly to extract the proxy pointer, then drops the
+// guard so the actual `send_frame` happens without holding the lock.
+// Errors are observable via the proxy's installed on_error/on_closed
+// callbacks; the return value is deliberately discarded — the RPC
+// layer mirrors the legacy fd path's behavior of not surfacing
+// send-side errors from `reply()`.
+#if RUSTYCPP_RUST
+fn sconn_dispatch_response_frame_via_channel(sconn: &ServerConnection,
+                                             bytes: *const u8, size: usize) {
+    let mut conn_ptr: *mut ChannelConnectionBase = core::ptr::null_mut();
     {
-        auto guard = self.channel_proxy_.lock().unwrap();
-        if ((*guard).is_none()) {
-            Log_warn("rrr::ServerConnection::dispatch_response_frame_via_channel: "
-                     "channel mode flipped on but proxy is unbound (race?). "
-                     "Dropping reply.");
+        let guard = sconn.channel_proxy_.lock().unwrap();
+        if (*guard).is_none() {
+            Log_warn("rrr::ServerConnection::dispatch_response_frame_via_channel: channel mode flipped on but proxy is unbound (race?). Dropping reply.");
             return;
         }
-        conn = (*guard).as_ref().unwrap().get();
+        conn_ptr = sconn_proxy_ptr((*guard));
     }
-    ChannelFrame frame{bytes, size};
-    // @unsafe - virtual method dispatch through ChannelConnectionBase*
-    (void)conn->send_frame(frame);
+    let frame = ChannelFrame { payload: bytes, size: size };
+    let _ = (*conn_ptr).send_frame(frame);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.18 version=1 rust_sha256=da0590086c4d614906eabbdb2084968f03a5c4af4499fca1187881dac72e21b8*/
+void sconn_dispatch_response_frame_via_channel(const ServerConnection& sconn, const uint8_t* bytes, size_t size) {
+    ChannelConnectionBase* conn_ptr = rusty::ptr::null_mut();
+    {
+        const auto&& guard = rusty::deref_call(sconn.channel_proxy_.lock(), rusty::detail::__mdisp_unwrap{});
+        if (((rusty::detail::deref_if_pointer_like(guard))).is_none()) {
+            Log_warn("rrr::ServerConnection::dispatch_response_frame_via_channel: channel mode flipped on but proxy is unbound (race?). Dropping reply.");
+            return;
+        }
+        conn_ptr = sconn_proxy_ptr((rusty::detail::deref_if_pointer_like(guard)));
+    }
+    const auto frame = ChannelFrame{.payload = bytes, .size = std::move(size)};
+    static_cast<void>(((*conn_ptr)).send_frame(std::move(frame)));
+}
+/*RUSTYCPP:GEN-END id=server.18*/
 
 // @unsafe - Executes callback inline for API compatibility.
 
