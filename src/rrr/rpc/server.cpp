@@ -1043,6 +1043,14 @@ inline const char* server_dsl_addr_to_cstr(const int8_t* addr) {
     return reinterpret_cast<const char*>(addr);
 }
 
+// @unsafe - strlen over the reinterpret_cast'ed addr. Returns an owned
+// std::string for the DSL `start()` body (`*const i8` has no `char*`
+// spelling in the DSL, and std::string wants char*).
+inline std::string server_dsl_addr_to_string(const int8_t* addr) {
+    const char* p = reinterpret_cast<const char*>(addr);
+    return std::string(p, strlen(p));
+}
+
 // Forward declaration of Server to allow helper signatures to refer
 // to it. The DSL emits the full definition below.
 class Server;
@@ -1274,13 +1282,6 @@ inline void server_invoke_shutdown_hook_safely(ShutdownHook& hook) {
         Log_error("Server::graceful_shutdown: hook threw unknown exception");
     }
 }
-
-// Forward declaration for the `server_start_impl` helper — the body
-// is defined in plain C++ further down because it references Server's
-// fields, makes complex on_accept / on_error lambda captures, and
-// drives Arc<RpcServiceContext> moves that the DSL grammar can't
-// express directly.
-int32_t server_start_impl(Server& self, const int8_t* bind_addr);
 
 // @safe - Iterate over each registered service and invoke the
 // callback. Lives here as a free function template so the DSL's
@@ -1525,8 +1526,120 @@ impl Server {
         self.ctx_field.as_ref().unwrap().addr
     }
 
+    // Freeze the pending registrations into an immutable
+    // RpcServiceContext, auto-install a TcpFactory when none is bound,
+    // make + wire the channel listener, and bind. The accept callback
+    // uses the get_mut mint window twice on the freshly made
+    // ServerConnection Arc (weak wiring, then bind_channel) — the same
+    // two windows the old kernel used — and reaches the server's
+    // connection table through a captured raw pointer (the Server
+    // outlives its listener; the callback dies with the listener).
     fn start(&mut self, bind_addr: *const i8) -> i32 {
-        server_start_impl(self, bind_addr)
+        if bind_addr.is_null() {
+            Log_error("rrr::Server::start: bind_addr is NULL!");
+            return -1;
+        }
+        let addr_str: std::string = server_dsl_addr_to_string(bind_addr);
+
+        // Wrap each service in RefCell for interior mutability. The
+        // pending Vec is taken whole (ServiceProxy is a Box — no
+        // per-element default to take against) and drained in order.
+        let mut pending: Vec<ServiceProxy> =
+            core::mem::take(&mut self.pending_services_field);
+        let mut wrapped_services: Vec<RefCell<ServiceProxy>> = Vec::new();
+        for svc in pending.drain(..) {
+            wrapped_services.push(RefCell::<ServiceProxy>::new(svc));
+        }
+
+        // Create immutable RpcServiceContext from pending registration
+        // data.
+        self.ctx_field = Some(Arc::<RpcServiceContext>::new_(RpcServiceContext::new(
+            core::mem::take(&mut self.pending_rpc_to_service_field),
+            core::mem::take(&mut self.pending_fast_rpc_ids_field),
+            wrapped_services,
+            addr_str.clone(),
+            self.pending_requests_field.clone(),
+            self.drop_heartbeat_replies_field.clone(),
+            self.instance_id_field,
+        )));
+
+        // Auto-install a default TcpFactory if the caller hasn't bound
+        // one.
+        if !self.is_channel_factory_bound() {
+            let tcp_factory: Arc<TcpFactory> = Arc::<TcpFactory>::new_(
+                TcpFactory::new(self.poll_thread_field.as_ref().unwrap().clone()));
+            self.set_channel_factory(make_tcp_factory_proxy(tcp_factory));
+        }
+
+        if self.is_channel_factory_bound() {
+            let listener_opt = {
+                let factory: &mut Box<ChannelFactoryBase> =
+                    self.channel_factory_field.as_mut().unwrap();
+                factory.make_listener()
+            };
+            if listener_opt.is_none() {
+                Log_error("rrr::Server::start: factory->make_listener() returned a null proxy (factory backend={})",
+                          "unknown");
+                self.ctx_field = None;
+                return -1;
+            }
+            let mut listener: ChannelListenerProxy = listener_opt.unwrap();
+
+            let server_ptr: *mut Server = &raw mut *self;
+            let ctx_arc: Arc<RpcServiceContext> =
+                self.ctx_field.as_ref().unwrap().clone();
+
+            {
+                let ch: &mut Box<ChannelListenerBase> = &mut listener;
+                ch.set_on_accept(move |conn_proxy: ChannelConnectionProxy| {
+                    if !conn_proxy.is_valid() {
+                        return;
+                    }
+                    let mut sconn: Arc<ServerConnection> =
+                        Arc::<ServerConnection>::make(ctx_arc.clone(), -1i32);
+                    // get_mut, not const_cast: the Arc was just made and
+                    // is still uniquely owned — exactly when Arc::get_mut
+                    // yields a &mut.
+                    {
+                        let opt = sconn.get_mut();
+                        let mut_sconn: &mut ServerConnection = opt.unwrap();
+                        mut_sconn.install_self_weak_for_testing(
+                            rusty::sync::downgrade(sconn));
+                    }
+                    {
+                        let opt2 = sconn.get_mut();
+                        let mut_sconn2: &mut ServerConnection = opt2.unwrap();
+                        mut_sconn2.bind_channel(conn_proxy);
+                    }
+                    {
+                        let mut guard =
+                            (*server_ptr).channel_sconns_field.lock().unwrap();
+                        (*guard).push(sconn);
+                    }
+                });
+                ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
+                    Log_warn("rrr::Server: channel listener error {}: {}",
+                             channel_error_to_string(err), msg);
+                });
+            }
+
+            let listen_err = {
+                let ch2: &mut Box<ChannelListenerBase> = &mut listener;
+                ch2.listen(addr_str.clone())
+            };
+            if listen_err != ChannelError::None {
+                Log_error("rrr::Server::start: channel listener failed to bind {}: {}",
+                          addr_str, channel_error_to_string(listen_err));
+                self.ctx_field = None;
+                return -1;
+            }
+
+            self.channel_listener_field = Some(listener);
+            return 0;
+        }
+
+        verify(false);
+        -1
     }
 
     fn get_bound_port(&self) -> i32 {
@@ -1566,7 +1679,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=2508f05f06986c754962b3c51f6101d5f7eb85ff62c23525906c5f4fa389e04c*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=007b211908b3d05a17d6291a641cec731b90509e5aa997818adedec1f7b4058c*/
 struct Server;
 
 struct Server {
@@ -1788,7 +1901,70 @@ std::string Server::addr() const {
 }
 
 int32_t Server::start(const int8_t* bind_addr) {
-    return server_start_impl((*this), bind_addr);
+    if ((bind_addr == nullptr)) {
+        Log_error("rrr::Server::start: bind_addr is NULL!");
+        return -1;
+    }
+    std::string addr_str = server_dsl_addr_to_string(bind_addr);
+    rusty::Vec<ServiceProxy> pending = rusty::mem::take(this->pending_services_field);
+    rusty::Vec<rusty::RefCell<ServiceProxy>> wrapped_services = rusty::Vec<rusty::RefCell<ServiceProxy>>::new_();
+    for (auto&& svc : rusty::for_in(pending.drain(rusty::range_full()))) {
+        wrapped_services.push(rusty::RefCell<ServiceProxy>::new_(std::move(svc)));
+    }
+    this->ctx_field = rusty::Option<rusty::Arc<RpcServiceContext>>(rusty::Arc<RpcServiceContext>::new_(RpcServiceContext::new_(rusty::mem::take(this->pending_rpc_to_service_field), rusty::mem::take(this->pending_fast_rpc_ids_field), std::move(wrapped_services), rusty::clone(addr_str), rusty::clone(this->pending_requests_field), rusty::clone(this->drop_heartbeat_replies_field), this->instance_id_field)));
+    if (!this->is_channel_factory_bound()) {
+        const rusty::Arc<TcpFactory> tcp_factory = rusty::Arc<TcpFactory>::new_(TcpFactory::new_(rusty::clone(this->poll_thread_field.as_ref().unwrap())));
+        this->set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
+    }
+    if (this->is_channel_factory_bound()) {
+        auto listener_opt = [&]() { rusty::Box<ChannelFactoryBase>& factory = this->channel_factory_field.as_mut().unwrap();
+return factory->make_listener(); }();
+        if (listener_opt.is_none()) {
+            Log_error("rrr::Server::start: factory->make_listener() returned a null proxy (factory backend={})", "unknown");
+            this->ctx_field = rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None};
+            return -1;
+        }
+        ChannelListenerProxy listener = listener_opt.unwrap();
+        Server* server_ptr = &(*this);
+        rusty::Arc<RpcServiceContext> ctx_arc = rusty::clone(this->ctx_field.as_ref().unwrap());
+        {
+            rusty::Box<ChannelListenerBase>& ch = listener;
+            ch->set_on_accept([=, ctx_arc = std::move(ctx_arc), server_ptr = std::move(server_ptr)](ChannelConnectionProxy conn_proxy) {
+if (rusty::detail::rust_not(conn_proxy.is_valid())) {
+    return;
+}
+rusty::Arc<ServerConnection> sconn = rusty::Arc<ServerConnection>::make(rusty::clone(ctx_arc), static_cast<int32_t>(-1));
+{
+    auto opt = sconn.get_mut();
+    ServerConnection& mut_sconn = opt.unwrap();
+    mut_sconn.install_self_weak_for_testing(rusty::sync::downgrade(std::move(sconn)));
+}
+{
+    auto opt2 = sconn.get_mut();
+    ServerConnection& mut_sconn2 = opt2.unwrap();
+    mut_sconn2.bind_channel(std::move(conn_proxy));
+}
+{
+    auto guard = (*server_ptr).channel_sconns_field.lock().unwrap();
+    ((*guard)).push(std::move(sconn));
+}
+});
+            ch->set_on_error([=](ChannelError err, std::string_view msg) {
+Log_warn("rrr::Server: channel listener error {}: {}", channel_error_to_string(std::move(err)), std::move(msg));
+});
+        }
+        const auto listen_err = [&]() { rusty::Box<ChannelListenerBase>& ch2 = listener;
+return ch2->listen(rusty::clone(addr_str)); }();
+        if (rusty::detail::deref_if_pointer_like(listen_err) != rusty::detail::deref_if_pointer_like(ChannelError::None)) {
+            Log_error("rrr::Server::start: channel listener failed to bind {}: {}", std::move(addr_str), channel_error_to_string(std::move(listen_err)));
+            this->ctx_field = rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None};
+            return -1;
+        }
+        this->channel_listener_field = rusty::Option<ChannelListenerProxy>(std::move(listener));
+        return static_cast<int32_t>(0);
+    }
+    verify(false);
+    return -1;
 }
 
 int32_t Server::get_bound_port() const {
@@ -2067,105 +2243,5 @@ void sconn_dispatch_response_frame_via_channel(
 // Server impl helpers — free functions called from the DSL block.
 // ============================================================================
 
-// @unsafe - The full start() body. Lifted verbatim from the legacy
-// out-of-line method, only with `self->` instead of bare member
-// names. Kept out of the DSL because on_accept / on_error lambda
-// captures (capturing `Server*` + `Arc<RpcServiceContext>`), the
-// `make_listener` factory call sequence, and the channel-error /
-// listen-error branching don't translate cleanly to the DSL grammar.
-int32_t server_start_impl(Server& self, const int8_t* bind_addr_raw) {
-    const char* bind_addr = server_dsl_addr_to_cstr(bind_addr_raw);
-    if (!bind_addr) {
-        Log_error("rrr::Server::start: bind_addr is NULL!");
-        return -1;
-    }
-
-    // Wrap each service in RefCell for interior mutability.
-    rusty::Vec<rusty::RefCell<ServiceProxy>> wrapped_services;
-    for (size_t i = 0; i < self.pending_services_field.size(); ++i) {
-        wrapped_services.push(rusty::RefCell<ServiceProxy>(
-            std::move(self.pending_services_field[i])));
-    }
-
-    // Create immutable RpcServiceContext from pending registration data
-    std::string addr_str(bind_addr, strlen(bind_addr));
-    self.ctx_field = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
-        RpcServiceContext::new_(
-            std::move(self.pending_rpc_to_service_field),
-            std::move(self.pending_fast_rpc_ids_field),
-            std::move(wrapped_services),
-            addr_str,
-            self.pending_requests_field,
-            self.drop_heartbeat_replies_field,
-            self.instance_id_field)));
-
-    // auto-install default TcpFactory if the caller hasn't bound one.
-    if (!self.is_channel_factory_bound()) {
-        auto tcp_factory = rusty::Arc<TcpFactory>::new_(TcpFactory::new_(
-            self.poll_thread_field.as_ref().unwrap().clone()));
-        self.set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
-    }
-
-    if (self.is_channel_factory_bound()) {
-        rusty::Option<ChannelListenerProxy> listener_opt;
-        // @unsafe { Box::get + proxy method dispatch }
-        {
-            auto* factory = self.channel_factory_field.as_ref().unwrap().get();
-            listener_opt = factory->make_listener();
-        }
-        if (listener_opt.is_none()) {
-            Log_error("rrr::Server::start: factory->make_listener() returned a "
-                      "null proxy (factory backend={})",
-                      "unknown");
-            self.ctx_field = rusty::None;
-            return -1;
-        }
-        ChannelListenerProxy listener = std::move(listener_opt).unwrap();
-
-        Server* server_ptr = &self;
-        rusty::Arc<RpcServiceContext> ctx_arc =
-            self.ctx_field.as_ref().unwrap().clone();
-
-        // @unsafe - lambda capture, channel proxy mutator
-        listener->set_on_accept([server_ptr, ctx_arc](
-                                    ChannelConnectionProxy conn_proxy) {
-            if (!conn_proxy) return;
-            auto sconn = rusty::Arc<ServerConnection>::make(
-                ctx_arc.clone(), /*socket=*/-1);
-            // get_mut(), not const_cast: the Arc was just made and is still
-            // uniquely owned here, which is exactly when Rust's Arc::get_mut
-            // yields a &mut. Same window as inmemory_factory_make_listener.
-            {
-                auto mut_sconn = sconn.get_mut();
-                mut_sconn.unwrap().install_self_weak_for_testing(
-                    rusty::sync::downgrade(sconn));
-            }
-            sconn.get_mut().unwrap().bind_channel(std::move(conn_proxy));
-            {
-                auto guard = server_ptr->channel_sconns_field.lock().unwrap();
-                (*guard).push(std::move(sconn));
-            }
-        });
-        listener->set_on_error([](ChannelError err, std::string_view msg) {
-            Log_warn("rrr::Server: channel listener error {}: {}",
-                     channel_error_to_string(err),
-                     std::string_view(msg.data(), msg.size()));
-        });
-
-        ChannelError listen_err = listener->listen(std::string_view(bind_addr));
-        if (listen_err != ChannelError::None) {
-            Log_error("rrr::Server::start: channel listener failed to bind {}: {}",
-                      bind_addr, channel_error_to_string(listen_err));
-            self.ctx_field = rusty::None;
-            return -1;
-        }
-
-        self.channel_listener_field = rusty::Some(std::move(listener));
-        return 0;
-    }
-
-    verify(false);
-    return -1;
-}
 
 }  // namespace rrr
