@@ -55,6 +55,12 @@ import rrr.threading;
 // class-level `// @unsafe`. Methods that genuinely cross into
 // network I/O / socket fd / Marshal byte ops keep their existing
 // per-method `// @unsafe` annotations.
+/*RUSTYCPP:GEN-DISPATCH-BEGIN*/
+namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(unwrap)
+} } // namespace rusty::detail (issue #31 deref_call dispatch)
+/*RUSTYCPP:GEN-DISPATCH-END*/
+
 export namespace rrr {
 
 // `ReplyBuffer` — the Future's reply payload, serde-shaped (Marshal-
@@ -4504,27 +4510,54 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
     return FutureResult::Ok(final_fu);
 }
 
-// @unsafe - Dispatch one frame body through the bound channel proxy.
+// Dispatch one frame body through the bound channel proxy.
 //
 // 4g1c: direct-channel binding takes precedence over the FiberChannel
 // binding (only one is bound at a time per ClientConnection
-// lifecycle). rusty::Mutex::lock, Option::as_mut, Box deref.
-ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self,
-                                                   const std::uint8_t* body_bytes,
-                                                   std::size_t body_size) {
-  if (!self.channel_mode_.get()) return ChannelError::ConnectionReset;
-  {
-    auto guard = self.direct_channel_.lock().unwrap();
-    if ((*guard).is_some()) {
-      auto& mut_proxy = *(*guard).as_mut().unwrap();
-      return mut_proxy.send_frame(ChannelFrame{body_bytes, body_size});
+// lifecycle). Sends run under the slot's lock here (unlike the
+// server's reply path) — both bindings' send_frame are brief.
+#if RUSTYCPP_RUST
+fn clientconn_dispatch_frame_via_channel(conn: &ClientConnection,
+                                         body_bytes: *const u8,
+                                         body_size: usize) -> ChannelError {
+    if !conn.channel_mode_.get() {
+        return ChannelError_ConnectionReset();
     }
-  }
-  auto guard = self.fiber_channel_.lock().unwrap();
-  if ((*guard).is_none()) return ChannelError::ConnectionReset;
-  return (*guard).as_mut().unwrap()->send_frame(
-      ChannelFrame{body_bytes, body_size});
+    {
+        let mut guard = conn.direct_channel_.lock().unwrap();
+        if (*guard).is_some() {
+            let p: &mut Box<ChannelConnectionBase> = (*guard).as_mut().unwrap();
+            return p.send_frame(ChannelFrame { payload: body_bytes, size: body_size });
+        }
+    }
+    let mut guard2 = conn.fiber_channel_.lock().unwrap();
+    if (*guard2).is_none() {
+        return ChannelError_ConnectionReset();
+    }
+    let p2: &mut Box<FiberChannel> = (*guard2).as_mut().unwrap();
+    p2.send_frame(ChannelFrame { payload: body_bytes, size: body_size })
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.16 version=1 rust_sha256=35ba0b3851cd9cb41fb82deb8ba68f14d4cb5f6ef5619835225057055e0a7a04*/
+ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& conn, const uint8_t* body_bytes, size_t body_size) {
+    if (rusty::detail::rust_not(conn.channel_mode_.get())) {
+        return ChannelError_ConnectionReset();
+    }
+    {
+        auto&& guard = rusty::deref_call(conn.direct_channel_.lock(), rusty::detail::__mdisp_unwrap{});
+        if (((rusty::detail::deref_if_pointer_like(guard))).is_some()) {
+            rusty::Box<ChannelConnectionBase>& p = ((rusty::detail::deref_if_pointer_like(guard))).as_mut().unwrap();
+            return p->send_frame(ChannelFrame{.payload = body_bytes, .size = std::move(body_size)});
+        }
+    }
+    auto&& guard2 = rusty::deref_call(conn.fiber_channel_.lock(), rusty::detail::__mdisp_unwrap{});
+    if (((rusty::detail::deref_if_pointer_like(guard2))).is_none()) {
+        return ChannelError_ConnectionReset();
+    }
+    rusty::Box<FiberChannel>& p2 = ((rusty::detail::deref_if_pointer_like(guard2))).as_mut().unwrap();
+    return p2->send_frame(ChannelFrame{.payload = body_bytes, .size = std::move(body_size)});
+}
+/*RUSTYCPP:GEN-END id=client.16*/
 
 // @unsafe - Enqueue one internal heartbeat probe through the bound
 // channel proxy.
@@ -4533,16 +4566,31 @@ ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self,
 // `out_` Marshal that backed the fd path is gone. Callers (the
 // poll-loop tick) only fire heartbeats on connected clients, which
 // always have a bound channel by construction.
-void clientconn_enqueue_heartbeat_probe(const ClientConnection& self) {
-  // Build the heartbeat frame body and dispatch through the channel proxy.
-  BufferSink body_sink;
-  BinaryWriteArchive ar(make_sink_proxy(&body_sink));
-  rrr::Serialize_::serialize(v64(self.xid_counter_.next(1)), ar);
-  rrr::Serialize_::serialize(static_cast<i32>(kInternalHeartbeatRpcId), ar);
-  // Send-side errors are ignored here (same as the legacy fd path).
-  (void)self.dispatch_frame_via_channel(body_sink.bytes.data(),
-                                        body_sink.bytes.len());
+#if RUSTYCPP_RUST
+fn clientconn_enqueue_heartbeat_probe(conn: &ClientConnection) {
+    // Build the heartbeat frame body and dispatch through the channel
+    // proxy. Same archive shape as the server's sconn_reply: aggregate
+    // struct literals + the &mut alias so serialize's Archive& binds.
+    let mut body_sink: BufferSink = BufferSink { bytes: Vec::<u8>::new() };
+    let mut ar_store = BinaryWriteArchive { sink_: make_sink_proxy(&raw mut body_sink) };
+    let ar: &mut BinaryWriteArchive = &mut ar_store;
+    Serialize_::serialize(v64::new(conn.xid_counter_.next(1i64)), ar);
+    Serialize_::serialize(kInternalHeartbeatRpcId as i32, ar);
+    // Send-side errors are ignored here (same as the legacy fd path).
+    let _ = conn.dispatch_frame_via_channel(body_sink.bytes.as_ptr(),
+                                            body_sink.bytes.len());
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.17 version=1 rust_sha256=f4c3301fe04c220beb004d902035b761603958f4dd27a55c394bbb0c8aefffc3*/
+void clientconn_enqueue_heartbeat_probe(const ClientConnection& conn) {
+    BufferSink body_sink = BufferSink{.bytes = rusty::Vec<uint8_t>::new_()};
+    auto ar_store = BinaryWriteArchive{.sink_ = make_sink_proxy(&body_sink)};
+    BinaryWriteArchive& ar = ar_store;
+    Serialize_::serialize(v64::new_(conn.xid_counter_.next(static_cast<int64_t>(1))), ar);
+    Serialize_::serialize(static_cast<int32_t>(kInternalHeartbeatRpcId), ar);
+    static_cast<void>(conn.dispatch_frame_via_channel(rusty::as_ptr(body_sink.bytes), rusty::len(body_sink.bytes)));
+}
+/*RUSTYCPP:GEN-END id=client.17*/
 
 
 // @unsafe - Channel-factory connect path.

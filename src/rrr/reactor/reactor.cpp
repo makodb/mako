@@ -4003,14 +4003,38 @@ uint64_t event_core_get_fiber_id() {
   return fiber_opt.unwrap()->id.get();
 }
 
-void event_state_seed(const EventState& st) {
-  (*st.wait_place_.borrow_mut()) = "not recorded";
-  auto fiber_opt = Fiber::current_fiber();
-  if (fiber_opt.is_some()) {
-    auto rc_fiber = fiber_opt.unwrap();
-    (*st.wp_fiber_.borrow_mut()) = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
-  }
+// Seeds an event's EventState (wait_place_ tag + creating-fiber weak
+// capture), matching the legacy Event constructor. The tag goes through
+// format! (a bare &str literal would lower to string_view, which
+// std::string does not assign from).
+#if RUSTYCPP_RUST
+fn event_state_seed(st: &EventState) {
+    {
+        let mut g = st.wait_place_.borrow_mut();
+        *g = format!("not recorded");
+    }
+    let fiber_opt = Fiber::current_fiber();
+    if fiber_opt.is_some() {
+        let rc_fiber = fiber_opt.unwrap();
+        let mut g2 = st.wp_fiber_.borrow_mut();
+        *g2 = rusty::port::rc::Rc::<Fiber>::downgrade(rc_fiber);
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.24 version=1 rust_sha256=eb6007bf8e08f78bbb50caa981b4f406659649504695dce0c3454539b9066f51*/
+void event_state_seed(const EventState& st) {
+    {
+        auto&& g = st.wait_place_.borrow_mut();
+        rusty::detail::deref_if_pointer_like(g) = std::format("not recorded");
+    }
+    auto fiber_opt = Fiber::current_fiber();
+    if (fiber_opt.is_some()) {
+        auto rc_fiber = fiber_opt.unwrap();
+        auto&& g2 = st.wp_fiber_.borrow_mut();
+        rusty::detail::deref_if_pointer_like(g2) = rusty::port::rc::Rc<Fiber>::downgrade(std::move(rc_fiber));
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.24*/
 
 // Authored as inline Rust DSL. The default `rusty::sync::Weak<T>()` that
 // used to need a C++ helper is spellable now (§7.30 table); the
