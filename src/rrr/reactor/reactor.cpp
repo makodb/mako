@@ -766,7 +766,9 @@ struct SharedIntEvent;
 // Hand-written backing free fns for the DSL methods below — the bodies
 // drive Reactor::create_sp_event / Event-status machinery (not
 // DSL-expressible). Definitions near the bottom of this file.
-int shared_int_event_set(SharedIntEvent& self, const int& v);
+// (shared_int_event_set is DSL now — defined with the others below;
+// its decl comes from the GEN block there.)
+int32_t shared_int_event_set(SharedIntEvent& sie, int32_t v);
 bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout);
 void shared_int_event_wait(SharedIntEvent& self, EventTestFn f);
 
@@ -4193,18 +4195,44 @@ rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>
 
 
 
-int shared_int_event_set(SharedIntEvent& self, const int& v) {
-  auto ret = self.value_;
-  self.value_ = v;
-  for (auto& ev : self.events_) {
-    if (ev->status_.get() <= EventStatus::WAIT) {
-      if (ev->target_.get() <= v) {
-        ev->set(v);
-      }
+// Publish the new value and wake every registered waiter whose target
+// is now satisfied. Indexed sweep (the DSL guard-indexing idiom); the
+// Arc element needs the explicit deref for method dispatch.
+#if RUSTYCPP_RUST
+fn shared_int_event_set(sie: &mut SharedIntEvent, v: i32) -> i32 {
+    let ret: i32 = sie.value_;
+    sie.value_ = v;
+    let mut i: usize = 0usize;
+    while i < sie.events_.len() {
+        let ev: &rusty::Arc<IntEvent> = &sie.events_[i];
+        if (*ev).status_.get() <= EventStatus::WAIT {
+            if (*ev).target_.get() <= v {
+                (*ev).set(v);
+            }
+        }
+        i += 1usize;
     }
-  }
-  return ret;
+    ret
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.28 version=1 rust_sha256=965396c9d89418791931baf8043398d878a1754e69b139ca9236e131073780c6*/
+int32_t shared_int_event_set(SharedIntEvent& sie, int32_t v) {
+    SharedIntEvent* sie_shadow1 = &sie;
+    int32_t ret = (*sie_shadow1).value_;
+    (*sie_shadow1).value_ = std::move(v);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len((*sie_shadow1).events_)) {
+        const rusty::Arc<IntEvent>& ev = (*sie_shadow1).events_[i];
+        if ((rusty::detail::deref_if_pointer_like(ev)).status_.get() <= rusty::clone(EventStatus::WAIT)) {
+            if ((rusty::detail::deref_if_pointer_like(ev)).target_.get() <= rusty::detail::deref_if_pointer_like(v)) {
+                ((rusty::detail::deref_if_pointer_like(ev))).set(std::move(v));
+            }
+        }
+        i += static_cast<size_t>(1);
+    }
+    return std::move(ret);
+}
+/*RUSTYCPP:GEN-END id=reactor.28*/
 
 // @unsafe - holds a raw `IntEvent*` (`ev_ptr = ev.get()`) across the
 // retain() lambda capture to identity-compare against shared_ptr<IntEvent>
