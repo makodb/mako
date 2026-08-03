@@ -4928,101 +4928,166 @@ void clientconn_run_recv_loop(const ClientConnection& conn) {
 // reads the instance ID. Sub-leaf 4f's migration switch / parity
 // pass will revisit if a legacy-server interop path needs the bit
 // surfaced through `ChannelFrame`.
-void clientconn_decode_response_and_notify(const ClientConnection& self, const std::uint8_t* bytes,
-                                                  std::size_t size) {
-  // Account for every inbound frame body byte and bump the activity
-  // clock so `metrics_.bytes_received()` and `is_idle()` reflect real
-  // I/O regardless of which dispatch slot the reply maps onto.
-  self.on_response_received(size);
-  // parse the response header directly from
-  // the input bytes via BufferSource + BinaryReadArchive — no
-  // intermediate `Marshal body` allocation.  The payload tail (if
-  // any) is written into the matching Future's `reply_` Marshal via
-  // a single byte-copy.  BufferSource bounds reads to `size`, so a
-  // truncated frame aborts inside `BinaryReadArchive::read_exact`
-  // (matches the legacy `Marshal::operator>>` behaviour on short
-  // reads).
-  BufferSource src(bytes, size);
-  BinaryReadArchive ar(make_source_proxy(&src));
-
-  v64 v_reply_xid;
-  v32 v_error_code;
-  // See the function-header note: in channel mode the extended-header
-  // flag is consumed by the framing layer.  We assume the server
-  // always emits the extended form (matches `server.hpp` today).
-  v64 v_server_instance_id;
-  rrr::Deserialize_::deserialize(v_reply_xid, ar);
-  rrr::Deserialize_::deserialize(v_error_code, ar);
-  rrr::Deserialize_::deserialize(v_server_instance_id, ar);
-  self.check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
-
-  size_t parsed_header_size = src.pos();
-  size_t response_payload_bytes = size - parsed_header_size;
-  self.heartbeat_manager_.on_pong_received();
-
-  // Fast path: slim async-callback slot (request_async users).
-  // Check first — for callback-only callers this is the dominant
-  // pattern and we can avoid touching the HashMap entirely.
-  {
-    const size_t slot = static_cast<size_t>(v_reply_xid.get())
-                          % kAsyncSlotCount;
-    rusty::Option<AsyncReplyCallback> cb_opt = rusty::None;
-    {
-      auto guard = self.pending_cb_slots_.lock().unwrap();
-      if ((*guard)[slot].is_some()) {
-        cb_opt = std::move((*guard)[slot]);
-        (*guard)[slot] = rusty::None;
-      }
-    }
-    if (cb_opt.is_some()) {
-      auto cb = std::move(cb_opt.unwrap());
-      const i32 err_code = static_cast<i32>(v_error_code.get());
-      if (err_code == 0) {
-        self.metrics_.record_request_completed();
-      } else {
-        self.metrics_.record_request_failed();
-      }
-      self.record_circuit_result(err_code);
-      cb(err_code, bytes + parsed_header_size, response_payload_bytes);
-      return;
-    }
-  }
-
-  rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
-  {
-    auto guard = self.pending_fu_.lock().unwrap();
-    auto fu_ptr = (*guard).get(v_reply_xid.get());
-    if (fu_ptr.is_some()) {
-      fu_opt = rusty::Some(fu_ptr.unwrap().clone());
-      (*guard).remove(v_reply_xid.get());
-    }
-  }
-
-  if (fu_opt.is_some()) {
-    auto fu = fu_opt.unwrap();
-    verify(fu->xid_ == v_reply_xid.get());
-    fu->error_code_.set(v_error_code.get());
-    if (response_payload_bytes > 0) {
-      reply_buffer_fill(*fu->reply_.borrow_mut(),
-                        std::span<const std::uint8_t>(bytes + parsed_header_size,
-                                                      response_payload_bytes));
-    }
-
-    if (v_error_code.get() == 0) {
-      self.metrics_.record_request_completed();
-    } else {
-      self.metrics_.record_request_failed();
-    }
-    self.record_circuit_result(v_error_code.get());
-
-    fu->notify_ready(fu);
-  }
-  // No matching future (timed out or replaced) → drop the payload.
-  // The legacy fd path drained the bytes through a throwaway Marshal
-  // to keep its chunk list balanced, but that was an idiom of the
-  // legacy fd reader; with channel-mode framing the input bytes are
-  // owned by the caller and freed on return — nothing to drain.
+// @unsafe - pointer arithmetic for the payload tail (iterator-surgery
+// family; the DSL body below reaches the offset through this).
+inline const std::uint8_t* clientconn_payload_ptr(const std::uint8_t* bytes,
+                                                  std::size_t off) {
+  return bytes + off;
 }
+
+// Decode one response frame body and resolve the matching pending
+// slot. Header parse goes directly over the input bytes via
+// BufferSource + BinaryReadArchive (no intermediate Marshal); a
+// truncated frame aborts inside read_exact, matching the legacy
+// short-read behaviour. Fast path first: the slim async-callback slot
+// (request_async users) avoids touching the future map entirely.
+#if RUSTYCPP_RUST
+fn clientconn_decode_response_and_notify(conn: &ClientConnection,
+                                         bytes: *const u8, size: usize) {
+    // Account for every inbound frame body byte and bump the activity
+    // clock so metrics_.bytes_received() and is_idle() reflect real
+    // I/O regardless of which dispatch slot the reply maps onto.
+    conn.on_response_received(size);
+    let mut src = BufferSource::new(bytes, size);
+    let mut ar = BinaryReadArchive { source_: make_source_proxy(&raw mut src) };
+
+    let mut v_reply_xid = v64::new(0i64);
+    let mut v_error_code = v32::new(0i32);
+    // In channel mode the extended-header flag is consumed by the
+    // framing layer; the server always emits the extended form.
+    let mut v_server_instance_id = v64::new(0i64);
+    Deserialize_::deserialize(&mut v_reply_xid, ar);
+    Deserialize_::deserialize(&mut v_error_code, ar);
+    Deserialize_::deserialize(&mut v_server_instance_id, ar);
+    conn.check_server_instance(v_server_instance_id.get() as u64);
+
+    let parsed_header_size: usize = src.pos();
+    let response_payload_bytes: usize = size - parsed_header_size;
+    conn.heartbeat_manager_.on_pong_received();
+
+    {
+        let slot: usize = (v_reply_xid.get() as usize) % kAsyncSlotCount;
+        let mut cb_opt: Option<AsyncReplyCallback> = None;
+        {
+            let mut guard = conn.pending_cb_slots_.lock().unwrap();
+            if (*guard)[slot].is_some() {
+                cb_opt = core::mem::take(&mut (*guard)[slot]);
+            }
+        }
+        if cb_opt.is_some() {
+            let mut cb = cb_opt.unwrap();
+            let err_code: i32 = v_error_code.get();
+            if err_code == 0i32 {
+                conn.metrics_.record_request_completed();
+            } else {
+                conn.metrics_.record_request_failed();
+            }
+            conn.record_circuit_result(err_code);
+            cb(err_code, clientconn_payload_ptr(bytes, parsed_header_size),
+               response_payload_bytes);
+            return;
+        }
+    }
+
+    let mut fu_opt: Option<Arc<Future>> = None;
+    {
+        let mut guard = conn.pending_fu_.lock().unwrap();
+        let fu_ptr = (*guard).get(v_reply_xid.get());
+        if fu_ptr.is_some() {
+            fu_opt = Some(fu_ptr.unwrap().clone());
+            (*guard).remove(v_reply_xid.get());
+        }
+    }
+
+    if fu_opt.is_some() {
+        let fu = fu_opt.unwrap();
+        verify((*fu).xid_ == v_reply_xid.get());
+        (*fu).error_code_.set(v_error_code.get());
+        if response_payload_bytes > 0usize {
+            let mut rb_guard = (*fu).reply_.borrow_mut();
+            reply_buffer_fill(&mut *rb_guard, unsafe {
+                core::slice::from_raw_parts(
+                    clientconn_payload_ptr(bytes, parsed_header_size),
+                    response_payload_bytes)
+            });
+        }
+        if v_error_code.get() == 0i32 {
+            conn.metrics_.record_request_completed();
+        } else {
+            conn.metrics_.record_request_failed();
+        }
+        conn.record_circuit_result(v_error_code.get());
+        (*fu).notify_ready(fu.clone());
+    }
+    // No matching future (timed out or replaced) -> drop the payload.
+    // With channel-mode framing the input bytes are owned by the
+    // caller and freed on return -- nothing to drain.
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.22 version=1 rust_sha256=b70003d7cface664bb8728127a79f33d64e026018e594a8d129268f892a3eab5*/
+void clientconn_decode_response_and_notify(const ClientConnection& conn, const uint8_t* bytes, size_t size) {
+    conn.on_response_received(std::move(size));
+    auto src = BufferSource::new_(bytes, std::move(size));
+    auto ar = BinaryReadArchive{.source_ = make_source_proxy(&src)};
+    auto v_reply_xid = v64::new_(static_cast<int64_t>(0));
+    auto v_error_code = v32::new_(static_cast<int32_t>(0));
+    auto v_server_instance_id = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_reply_xid, ar);
+    Deserialize_::deserialize(v_error_code, ar);
+    Deserialize_::deserialize(v_server_instance_id, ar);
+    conn.check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
+    const size_t parsed_header_size = src.pos();
+    const size_t response_payload_bytes = rusty::detail::deref_if_pointer_like(size) - rusty::detail::deref_if_pointer_like(parsed_header_size);
+    conn.heartbeat_manager_.on_pong_received();
+    {
+        const size_t slot = ((static_cast<size_t>(v_reply_xid.get()))) % rusty::detail::deref_if_pointer_like(kAsyncSlotCount);
+        rusty::Option<AsyncReplyCallback> cb_opt = rusty::Option<AsyncReplyCallback>{rusty::None};
+        {
+            auto&& guard = rusty::deref_call(conn.pending_cb_slots_.lock(), rusty::detail::__mdisp_unwrap{});
+            if ((rusty::detail::deref_if_pointer_like(guard))[slot].is_some()) {
+                cb_opt = rusty::mem::take((rusty::detail::deref_if_pointer_like(guard))[slot]);
+            }
+        }
+        if (cb_opt.is_some()) {
+            auto cb = cb_opt.unwrap();
+            const int32_t err_code = v_error_code.get();
+            if (rusty::detail::deref_if_pointer_like(err_code) == static_cast<int32_t>(0)) {
+                conn.metrics_.record_request_completed();
+            } else {
+                conn.metrics_.record_request_failed();
+            }
+            conn.record_circuit_result(std::move(err_code));
+            cb(std::move(err_code), clientconn_payload_ptr(bytes, std::move(parsed_header_size)), std::move(response_payload_bytes));
+            return;
+        }
+    }
+    rusty::Option<rusty::Arc<Future>> fu_opt = rusty::Option<rusty::Arc<Future>>{rusty::None};
+    {
+        auto&& guard = rusty::deref_call(conn.pending_fu_.lock(), rusty::detail::__mdisp_unwrap{});
+        auto fu_ptr = ((rusty::detail::deref_if_pointer_like(guard))).get(v_reply_xid.get());
+        if (fu_ptr.is_some()) {
+            fu_opt = rusty::Option<rusty::Arc<Future>>(rusty::clone(fu_ptr.unwrap()));
+            ((rusty::detail::deref_if_pointer_like(guard))).remove(v_reply_xid.get());
+        }
+    }
+    if (fu_opt.is_some()) {
+        const auto fu = fu_opt.unwrap();
+        verify(rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(fu)).xid_) == v_reply_xid.get());
+        (rusty::detail::deref_if_pointer_like(fu)).error_code_.set(v_error_code.get());
+        if (rusty::detail::deref_if_pointer_like(response_payload_bytes) > static_cast<size_t>(0)) {
+            auto&& rb_guard = (rusty::detail::deref_if_pointer_like(fu)).reply_.borrow_mut();
+            reply_buffer_fill(rusty::detail::deref_if_pointer_like(rb_guard), rusty::from_raw_parts(clientconn_payload_ptr(bytes, std::move(parsed_header_size)), std::move(response_payload_bytes)));
+        }
+        if (v_error_code.get() == static_cast<int32_t>(0)) {
+            conn.metrics_.record_request_completed();
+        } else {
+            conn.metrics_.record_request_failed();
+        }
+        conn.record_circuit_result(v_error_code.get());
+        ((rusty::detail::deref_if_pointer_like(fu))).notify_ready(rusty::clone(fu));
+    }
+}
+/*RUSTYCPP:GEN-END id=client.22*/
 
 // @unsafe - one-line delegator to the friend free fn (extraction
 // step toward the DSL flip).

@@ -1788,9 +1788,9 @@ template <class U> class WireSerializeAdapterRefMut;
 // Methods for std::list
 void serialize(BinaryWriteArchive& ar) const {
     rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
-    Serialize_::serialize(std::move(v_len), ar);
+    Serialize_::serialize(v_len, ar);
     for (auto&& e : rusty::for_in(rusty::iter((*this)))) {
-        Serialize_::serialize(std::move(e), ar);
+        Serialize_::serialize(e, ar);
     }
 }
 #endif  // patcher: end orphan-impl stub
@@ -1801,9 +1801,9 @@ namespace rusty_ext {
     void serialize(const std::list<T>& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
-        Serialize_::serialize(std::move(v_len), ar);
+        Serialize_::serialize(v_len, ar);
         for (auto&& e : rusty::for_in(rusty::iter(self_))) {
-            Serialize_::serialize(std::move(e), ar);
+            Serialize_::serialize(e, ar);
         }
     }
 
@@ -1817,9 +1817,9 @@ namespace WireSerialize_ {
     void serialize(const std::list<T>& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
-        Serialize_::serialize(std::move(v_len), ar);
+        Serialize_::serialize(v_len, ar);
         for (auto&& e : rusty::for_in(rusty::iter(self_))) {
-            Serialize_::serialize(std::move(e), ar);
+            Serialize_::serialize(e, ar);
         }
     }
 
