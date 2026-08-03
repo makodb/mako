@@ -491,38 +491,81 @@ struct BoxEvent : public EventPollable {
 };
 /*RUSTYCPP:GEN-END id=reactor.box_event*/
 
-// Template factory + slot-op kernels for BoxEvent<Type>, defined after the
-// struct is complete and in this exported module region so deptran's
-// BoxEvent<int>/<bool>/<std::string> instantiations resolve.
-template<class Type>
-rusty::Arc<BoxEvent<Type>> boxevent_make() {
-  auto sp = rusty::Arc<BoxEvent<Type>>::make(
-      rusty::Cell<EventStatus>::new_(EventStatus::INIT),  // status_
-      rusty::thread::current_id(),                        // owner_thread_
-      EventState{},                                       // state_
-      rusty::Cell<bool>::new_(true),                      // prunable_
-      rusty::sync::Weak<EventPollable>(),                 // self_
-      rusty::RefCell<Type>(),                             // content_ (Type{})
-      rusty::Cell<bool>::new_(false));                    // is_set_
-  event_state_seed(sp->state_);
-  return sp;
+// Factory + slot ops for BoxEvent<Type>, authored as DSL generic fns
+// (fn f<Type> lowers to the same template; §7.58's lb precedent).
+// Defined after the struct is complete and in this exported module
+// region so deptran's BoxEvent<int>/<bool>/<std::string>
+// instantiations resolve. Generic defaults: Default::default() is
+// legal in TURBOFISH-call args (the make's RefCell slot) and the
+// clear goes through core::mem::take (assignment-position Default
+// does not lower).
+#if RUSTYCPP_RUST
+fn boxevent_make<Type>() -> Arc<BoxEvent<Type>> {
+    let sp = rusty::Arc::<BoxEvent<Type>>::make(
+        rusty::Cell::<EventStatus>::new(EventStatus::INIT),   // status_
+        rusty::thread::current_id(),                          // owner_thread_
+        EventState {},                                        // state_
+        rusty::Cell::<bool>::new(true),                       // prunable_
+        rusty::sync::Weak::<EventPollable>(),                 // self_
+        rusty::RefCell::<Type>::new(Default::default()),      // content_
+        rusty::Cell::<bool>::new(false),                      // is_set_
+    );
+    event_state_seed(sp.state_);
+    return sp;
 }
 
-// @unsafe - returns the slot payload by value (copy out of the RefCell).
-template<class Type> Type boxevent_get(const BoxEvent<Type>& self) {
-  return *self.content_.borrow();
+// Returns the slot payload by value (copy out of the RefCell).
+fn boxevent_get<Type>(ev: &BoxEvent<Type>) -> Type {
+    let g = ev.content_.borrow();
+    (*g).clone()
 }
-// @unsafe - deref-assign the RefCell<Type> slot + run the readiness test.
-template<class Type> void boxevent_set(const BoxEvent<Type>& self, const Type& c) {
-  self.is_set_.set(true);
-  (*self.content_.borrow_mut()) = c;
-  self.test();
+
+fn boxevent_set<Type>(ev: &BoxEvent<Type>, c: &Type) {
+    ev.is_set_.set(true);
+    {
+        let mut g = ev.content_.borrow_mut();
+        *g = c.clone();
+    }
+    ev.test();
 }
-// @unsafe - value-init the slot back to Type{}.
-template<class Type> void boxevent_clear(const BoxEvent<Type>& self) {
-  self.is_set_.set(false);
-  (*self.content_.borrow_mut()) = Type{};
+
+fn boxevent_clear<Type>(ev: &BoxEvent<Type>) {
+    ev.is_set_.set(false);
+    let mut g = ev.content_.borrow_mut();
+    let _old = core::mem::take(&mut *g);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.5 version=1 rust_sha256=ff451405ec517e52a229208d518da0b88d55c87938395b0a477a061caf9aae1a*/
+template<typename Type>
+rusty::Arc<BoxEvent<Type>> boxevent_make() {
+    auto sp = rusty::Arc<BoxEvent<Type>>::make(std::conditional_t<true, rusty::Cell<EventStatus>, Type>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, std::conditional_t<true, rusty::Cell<bool>, Type>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::RefCell<Type>::new_(rusty::default_like<Type>()), std::conditional_t<true, rusty::Cell<bool>, Type>::new_(false));
+    event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
+    return std::move(sp);
+}
+
+template<typename Type>
+Type boxevent_get(const BoxEvent<Type>& ev) {
+    auto&& g = rusty::borrow(ev.content_);
+    return rusty::clone(((rusty::detail::deref_if_pointer_like(g))));
+}
+
+template<typename Type>
+void boxevent_set(const BoxEvent<Type>& ev, const Type& c) {
+    ev.is_set_.set(true);
+    {
+        auto&& g = ev.content_.borrow_mut();
+        rusty::detail::deref_if_pointer_like(g) = rusty::clone(c);
+    }
+    ev.test();
+}
+
+template<typename Type>
+void boxevent_clear(const BoxEvent<Type>& ev) {
+    ev.is_set_.set(false);
+    auto&& g = ev.content_.borrow_mut();
+    const auto _old = rusty::mem::take(rusty::detail::deref_if_pointer_like(g));
+}
+/*RUSTYCPP:GEN-END id=reactor.5*/
 
 // `IntEvent` — an Event that fires when value_ reaches target_ (or a custom
 // inherited `test_` predicate passes). Hand-written subclass of the stateful
