@@ -1148,12 +1148,14 @@ int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* a
 void clientconn_bind_channel_via_poll_thread(const ClientConnection& self, ChannelConnectionProxy channel);
 RpcError clientconn_map_system_error(i32 err);
 uint64_t clientconn_monotonic_ms_now();
+// (by-value F: matches the DSL generic's lowering — write_fn is
+// consumed by the single write it performs)
 template<typename F>
-FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rpc_id, const FutureAttr& attr, F&& write_fn);
+FutureResult clientconn_request_via_channel(const ClientConnection& conn, i32 rpc_id, const FutureAttr& attr, F write_fn);
 template<typename F>
 FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id, const RequestOptions& options, const FutureAttr& attr, F&& write_fn);
 template<typename F>
-rusty::Result<rusty::Unit, i32> clientconn_request_async(const ClientConnection& self, i32 rpc_id, F&& write_fn, AsyncReplyCallback on_reply);
+rusty::Result<rusty::Unit, i32> clientconn_request_async(const ClientConnection& conn, i32 rpc_id, F write_fn, AsyncReplyCallback on_reply);
 bool operator==(const rusty::Arc<ClientConnection>& lhs, const rusty::Arc<ClientConnection>& rhs);
 
 // @safe - Client-side socket handler exposed to poll loop via Pollable
@@ -4196,156 +4198,315 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
 // [user args] into a contiguous BufferSink and dispatches through the
 // bound proxy. Extracted from the inline request_via_channel template
 // method; the DSL flip's generic method delegates here.
-template<typename F>
-FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rpc_id,
-                                            const FutureAttr& attr, F&& write_fn) {
-    if (!self.allow_request_with_circuit_metrics()) {
+#if RUSTYCPP_RUST
+fn clientconn_request_via_channel<F>(conn: &ClientConnection, rpc_id: i32,
+                                     attr: &FutureAttr, mut write_fn: F) -> FutureResult {
+    if !conn.allow_request_with_circuit_metrics() {
         return FutureResult::Err(EBUSY);
     }
-    self.pending_queue_.expire_stale();
-    if (!self.state_machine_.is_connected()) {
-        const BufferingConfig buffering_cfg = self.buffering_config_.get();
-        if (buffering_cfg.enabled &&
-            buffering_cfg.behavior == DisconnectBehavior::QUEUE) {
-            auto fu = Future::create(self.xid_counter_.next(1), attr);
-            auto fu_for_cb = fu;  // Arc clone for the callback.
-            auto qr = QueuedRequest::new_();
-            qr.xid     = fu->xid_;
-            qr.rpc_id  = rpc_id;
-            qr.ttl_ms  = buffering_cfg.default_ttl_ms;
-            // Capture an explicit self-pointer (== the old [this]); the
-            // callback outlives this call but not the connection.
-            const ClientConnection* self_ptr = &self;
-            qr.callback = rusty::Function<void(int)>(
-                [fu_for_cb, self_ptr](int err) mutable {
-                    self_ptr->metrics_.record_queue_drop();
-                    fu_for_cb->error_code_.set(err);
-                    fu_for_cb->notify_ready(fu_for_cb);
-                });
-            if (self.pending_queue_.enqueue(std::move(qr))) {
-                return FutureResult::Ok(std::move(fu));
+    conn.pending_queue_.expire_stale();
+    if !conn.state_machine_.is_connected() {
+        let buffering_cfg = conn.buffering_config_.get();
+        if buffering_cfg.enabled && buffering_cfg.behavior == DisconnectBehavior::QUEUE {
+            let fu = Future::create(conn.xid_counter_.next(1i64), attr);
+            let fu_for_cb = fu.clone();
+            let mut qr = QueuedRequest::new();
+            qr.xid = (*fu).xid_;
+            qr.rpc_id = rpc_id;
+            qr.ttl_ms = buffering_cfg.default_ttl_ms;
+            // Raw self-pointer capture (== the old [this]); the callback
+            // outlives this call but not the connection.
+            let conn_ptr: *const ClientConnection = &raw const *conn;
+            let cb_fn = move |err: i32| {
+                (*conn_ptr).metrics_.record_queue_drop();
+                (*fu_for_cb).error_code_.set(err);
+                (*fu_for_cb).notify_ready(fu_for_cb.clone());
+            };
+            qr.callback = cb_fn;
+            if conn.pending_queue_.enqueue(qr) {
+                return FutureResult::Ok(fu);
             }
             return FutureResult::Err(kRequestQueueRejectedError);
         }
-        self.record_circuit_result(ENOTCONN);
+        conn.record_circuit_result(ENOTCONN);
         return FutureResult::Err(ENOTCONN);
     }
     {
-        auto direct_guard = self.direct_channel_.lock().unwrap();
-        if ((*direct_guard).is_some()) {
-            auto& proxy = *(*direct_guard).as_ref().unwrap();
-            if (proxy.is_closed()) {
-                self.record_circuit_result(ENOTCONN);
+        let mut direct_guard = conn.direct_channel_.lock().unwrap();
+        if (*direct_guard).is_some() {
+            let proxy: &Box<ChannelConnectionBase> = (*direct_guard).as_ref().unwrap();
+            if proxy.is_closed() {
+                conn.record_circuit_result(ENOTCONN);
                 return FutureResult::Err(ENOTCONN);
             }
         } else {
-            auto guard = self.fiber_channel_.lock().unwrap();
-            if ((*guard).is_none() ||
-                (*guard).as_ref().unwrap()->is_closed()) {
-                self.record_circuit_result(ENOTCONN);
+            let guard2 = conn.fiber_channel_.lock().unwrap();
+            let mut chan_dead = (*guard2).is_none();
+            if !chan_dead {
+                let fc: &Box<FiberChannel> = (*guard2).as_ref().unwrap();
+                if fc.is_closed() {
+                    chan_dead = true;
+                }
+            }
+            if chan_dead {
+                conn.record_circuit_result(ENOTCONN);
                 return FutureResult::Err(ENOTCONN);
             }
         }
     }
 
-    auto fu = Future::create(self.xid_counter_.next(1), attr);
+    let fu = Future::create(conn.xid_counter_.next(1i64), attr);
     {
-        auto pending_guard = self.pending_fu_.lock().unwrap();
-        (*pending_guard).insert(fu->xid_, fu);
+        let mut pending_guard = conn.pending_fu_.lock().unwrap();
+        (*pending_guard).insert((*fu).xid_, fu.clone());
     }
 
-    BufferSink body_sink;
-    BinaryWriteArchive ar(make_sink_proxy(&body_sink));
-    static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
-                  "request write_fn must accept BinaryWriteArchive&");
-    rrr::Serialize_::serialize(v64(fu->xid_), ar);
-    rrr::Serialize_::serialize(rpc_id, ar);
+    // sconn_reply's archive shape: aggregate literals + the &mut alias
+    // (bare reference args pass as lvalues where a by-value local would
+    // be move-wrapped at its last use).
+    let mut body_sink: BufferSink = BufferSink { bytes: Vec::<u8>::new() };
+    let mut ar_store = BinaryWriteArchive { sink_: make_sink_proxy(&raw mut body_sink) };
+    let ar: &mut BinaryWriteArchive = &mut ar_store;
+    Serialize_::serialize(v64::new((*fu).xid_), ar);
+    Serialize_::serialize(rpc_id, ar);
     write_fn(ar);
 
-    const ChannelError ch_err =
-        self.dispatch_frame_via_channel(body_sink.bytes.data(),
-                                        body_sink.bytes.len());
-    if (ch_err != ChannelError::None) {
+    let ch_err = conn.dispatch_frame_via_channel(body_sink.bytes.as_ptr(),
+                                                 body_sink.bytes.len());
+    if ch_err != ChannelError::None {
         {
-            auto pending_guard = self.pending_fu_.lock().unwrap();
-            (*pending_guard).remove(fu->xid_);
+            let mut pending_guard2 = conn.pending_fu_.lock().unwrap();
+            (*pending_guard2).remove((*fu).xid_);
         }
-        self.record_circuit_result(EIO);
+        conn.record_circuit_result(EIO);
         return FutureResult::Err(EIO);
     }
 
-    self.metrics_.record_request_sent();
-    self.on_request_dispatched(body_sink.bytes.len());
-    return FutureResult::Ok(fu);
+    conn.metrics_.record_request_sent();
+    conn.on_request_dispatched(body_sink.bytes.len());
+    FutureResult::Ok(fu)
 }
-
-// @unsafe - Slim async-callback request (no Arc<Future>, no HashMap node).
-// Extracted from the inline request_async template method.
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.23 version=1 rust_sha256=b577481cb6c86338451ae76a9b1ae7b6a04bcdf2d840fb62fd843d62e41823c6*/
 template<typename F>
-rusty::Result<rusty::Unit, i32> clientconn_request_async(
-    const ClientConnection& self, i32 rpc_id, F&& write_fn,
-    AsyncReplyCallback on_reply) {
-    if (!self.allow_request_with_circuit_metrics()) {
-        return rusty::Result<rusty::Unit, i32>::Err(EBUSY);
+FutureResult clientconn_request_via_channel(const ClientConnection& conn, int32_t rpc_id, const FutureAttr& attr, F write_fn) {
+    if (rusty::detail::rust_not(conn.allow_request_with_circuit_metrics())) {
+        return FutureResult::Err(EBUSY);
     }
-    if (!self.state_machine_.is_connected()) {
-        self.record_circuit_result(ENOTCONN);
-        return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
+    conn.pending_queue_.expire_stale();
+    if (rusty::detail::rust_not(conn.state_machine_.is_connected())) {
+        const auto buffering_cfg = conn.buffering_config_.get();
+        if (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(buffering_cfg)) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.behavior); }) { return (__r.behavior); } else if constexpr (requires { (__r.behavior_field); }) { return (__r.behavior_field); } else if constexpr (requires { ((*__r).behavior); }) { return ((*__r).behavior); } else { return ((*__r).behavior_field); } }(buffering_cfg)) == rusty::clone(DisconnectBehavior_QUEUE()))) {
+            auto fu = Future::create(conn.xid_counter_.next(static_cast<int64_t>(1)), attr);
+            auto fu_for_cb = rusty::clone(fu);
+            auto qr = QueuedRequest::new_();
+            qr.xid = (rusty::detail::deref_if_pointer_like(fu)).xid_;
+            qr.rpc_id = std::move(rpc_id);
+            qr.ttl_ms = std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.default_ttl_ms); }) { return (__r.default_ttl_ms); } else if constexpr (requires { (__r.default_ttl_ms_field); }) { return (__r.default_ttl_ms_field); } else if constexpr (requires { ((*__r).default_ttl_ms); }) { return ((*__r).default_ttl_ms); } else { return ((*__r).default_ttl_ms_field); } }(buffering_cfg));
+            const ClientConnection* conn_ptr = &conn;
+            auto cb_fn = [=, conn_ptr = std::move(conn_ptr), fu_for_cb = std::move(fu_for_cb)](int32_t err) mutable {
+(*conn_ptr).metrics_.record_queue_drop();
+(rusty::detail::deref_if_pointer_like(fu_for_cb)).error_code_.set(std::move(err));
+((rusty::detail::deref_if_pointer_like(fu_for_cb))).notify_ready(rusty::clone(fu_for_cb));
+};
+            qr.callback = std::move(cb_fn);
+            if (conn.pending_queue_.enqueue(std::move(qr))) {
+                return FutureResult::Ok(std::move(fu));
+            }
+            return FutureResult::Err(std::move(kRequestQueueRejectedError));
+        }
+        conn.record_circuit_result(ENOTCONN);
+        return FutureResult::Err(ENOTCONN);
     }
     {
-        auto direct_guard = self.direct_channel_.lock().unwrap();
-        if ((*direct_guard).is_some()) {
-            auto& proxy = *(*direct_guard).as_ref().unwrap();
-            if (proxy.is_closed()) {
-                self.record_circuit_result(ENOTCONN);
-                return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
+        auto&& direct_guard = rusty::deref_call(conn.direct_channel_.lock(), rusty::detail::__mdisp_unwrap{});
+        if (((rusty::detail::deref_if_pointer_like(direct_guard))).is_some()) {
+            const rusty::Box<ChannelConnectionBase>& proxy = ((rusty::detail::deref_if_pointer_like(direct_guard))).as_ref().unwrap();
+            if (proxy->is_closed()) {
+                conn.record_circuit_result(ENOTCONN);
+                return FutureResult::Err(ENOTCONN);
             }
         } else {
-            auto guard = self.fiber_channel_.lock().unwrap();
-            if ((*guard).is_none() ||
-                (*guard).as_ref().unwrap()->is_closed()) {
-                self.record_circuit_result(ENOTCONN);
-                return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
+            const auto&& guard2 = rusty::deref_call(conn.fiber_channel_.lock(), rusty::detail::__mdisp_unwrap{});
+            auto chan_dead = ((rusty::detail::deref_if_pointer_like(guard2))).is_none();
+            if (rusty::detail::rust_not(chan_dead)) {
+                const rusty::Box<FiberChannel>& fc = ((rusty::detail::deref_if_pointer_like(guard2))).as_ref().unwrap();
+                if (fc->is_closed()) {
+                    chan_dead = true;
+                }
+            }
+            if (chan_dead) {
+                conn.record_circuit_result(ENOTCONN);
+                return FutureResult::Err(ENOTCONN);
+            }
+        }
+    }
+    auto fu = Future::create(conn.xid_counter_.next(static_cast<int64_t>(1)), attr);
+    {
+        auto&& pending_guard = rusty::deref_call(conn.pending_fu_.lock(), rusty::detail::__mdisp_unwrap{});
+        ((rusty::detail::deref_if_pointer_like(pending_guard))).insert((rusty::detail::deref_if_pointer_like(fu)).xid_, rusty::clone(fu));
+    }
+    BufferSink body_sink = BufferSink{.bytes = std::conditional_t<true, rusty::Vec<uint8_t>, F>::new_()};
+    auto ar_store = BinaryWriteArchive{.sink_ = make_sink_proxy(&body_sink)};
+    BinaryWriteArchive& ar = ar_store;
+    Serialize_::serialize(v64::new_((rusty::detail::deref_if_pointer_like(fu)).xid_), ar);
+    Serialize_::serialize(rpc_id, ar);
+    write_fn(ar);
+    const auto ch_err = conn.dispatch_frame_via_channel(rusty::as_ptr(body_sink.bytes), rusty::len(body_sink.bytes));
+    if (rusty::detail::deref_if_pointer_like(ch_err) != rusty::detail::deref_if_pointer_like(ChannelError::None)) {
+        {
+            auto&& pending_guard2 = rusty::deref_call(conn.pending_fu_.lock(), rusty::detail::__mdisp_unwrap{});
+            ((rusty::detail::deref_if_pointer_like(pending_guard2))).remove((rusty::detail::deref_if_pointer_like(fu)).xid_);
+        }
+        conn.record_circuit_result(EIO);
+        return FutureResult::Err(EIO);
+    }
+    conn.metrics_.record_request_sent();
+    conn.on_request_dispatched(rusty::len(body_sink.bytes));
+    return FutureResult::Ok(std::move(fu));
+}
+/*RUSTYCPP:GEN-END id=client.23*/
+
+// Slim async-callback request (no Arc<Future>, no HashMap node) — the
+// slot-based twin of request_via_channel, same DSL shapes throughout.
+#if RUSTYCPP_RUST
+fn clientconn_request_async<F>(conn: &ClientConnection, rpc_id: i32,
+                               mut write_fn: F, mut on_reply: AsyncReplyCallback)
+                               -> Result<(), i32> {
+    if !conn.allow_request_with_circuit_metrics() {
+        return Result::<(), i32>::Err(EBUSY);
+    }
+    if !conn.state_machine_.is_connected() {
+        conn.record_circuit_result(ENOTCONN);
+        return Result::<(), i32>::Err(ENOTCONN);
+    }
+    {
+        let mut direct_guard = conn.direct_channel_.lock().unwrap();
+        if (*direct_guard).is_some() {
+            let proxy: &Box<ChannelConnectionBase> = (*direct_guard).as_ref().unwrap();
+            if proxy.is_closed() {
+                conn.record_circuit_result(ENOTCONN);
+                return Result::<(), i32>::Err(ENOTCONN);
+            }
+        } else {
+            let guard2 = conn.fiber_channel_.lock().unwrap();
+            let mut chan_dead = (*guard2).is_none();
+            if !chan_dead {
+                let fc: &Box<FiberChannel> = (*guard2).as_ref().unwrap();
+                if fc.is_closed() {
+                    chan_dead = true;
+                }
+            }
+            if chan_dead {
+                conn.record_circuit_result(ENOTCONN);
+                return Result::<(), i32>::Err(ENOTCONN);
             }
         }
     }
 
-    const i64 xid = self.xid_counter_.next(1);
-    const size_t slot = static_cast<size_t>(xid) % kAsyncSlotCount;
+    let xid: i64 = conn.xid_counter_.next(1i64);
+    let slot: usize = (xid as usize) % kAsyncSlotCount;
     {
-        auto guard = self.pending_cb_slots_.lock().unwrap();
-        if ((*guard)[slot].is_some()) {
-            self.record_circuit_result(EBUSY);
-            return rusty::Result<rusty::Unit, i32>::Err(EBUSY);
+        let mut guard = conn.pending_cb_slots_.lock().unwrap();
+        if (*guard)[slot].is_some() {
+            conn.record_circuit_result(EBUSY);
+            return Result::<(), i32>::Err(EBUSY);
         }
-        (*guard)[slot] = rusty::Some(std::move(on_reply));
+        (*guard)[slot] = Some(on_reply);
     }
 
-    BufferSink body_sink;
-    BinaryWriteArchive ar(make_sink_proxy(&body_sink));
-    static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
-                  "request_async write_fn must accept BinaryWriteArchive&");
-    rrr::Serialize_::serialize(v64(xid), ar);
-    rrr::Serialize_::serialize(rpc_id, ar);
+    let mut body_sink: BufferSink = BufferSink { bytes: Vec::<u8>::new() };
+    let mut ar_store = BinaryWriteArchive { sink_: make_sink_proxy(&raw mut body_sink) };
+    let ar: &mut BinaryWriteArchive = &mut ar_store;
+    Serialize_::serialize(v64::new(xid), ar);
+    Serialize_::serialize(rpc_id, ar);
     write_fn(ar);
 
-    const ChannelError ch_err =
-        self.dispatch_frame_via_channel(body_sink.bytes.data(),
-                                        body_sink.bytes.len());
-    if (ch_err != ChannelError::None) {
-        auto guard = self.pending_cb_slots_.lock().unwrap();
-        (*guard)[slot] = rusty::None;
-        self.record_circuit_result(EIO);
-        return rusty::Result<rusty::Unit, i32>::Err(EIO);
+    let ch_err = conn.dispatch_frame_via_channel(body_sink.bytes.as_ptr(),
+                                                 body_sink.bytes.len());
+    if ch_err != ChannelError::None {
+        let mut guard = conn.pending_cb_slots_.lock().unwrap();
+        (*guard)[slot] = None;
+        conn.record_circuit_result(EIO);
+        return Result::<(), i32>::Err(EIO);
     }
-    self.metrics_.record_request_sent();
-    self.on_request_dispatched(body_sink.bytes.len());
-    return rusty::Result<rusty::Unit, i32>::Ok(rusty::Unit{});
+    conn.metrics_.record_request_sent();
+    conn.on_request_dispatched(body_sink.bytes.len());
+    Result::<(), i32>::Ok(())
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.24 version=1 rust_sha256=11aab555f20808485d1db946928fcf899505bb0218e926310db5a68f6daa722e*/
+template<typename F>
+rusty::Result<rusty::Unit, int32_t> clientconn_request_async(const ClientConnection& conn, int32_t rpc_id, F write_fn, AsyncReplyCallback on_reply) {
+    if (rusty::detail::rust_not(conn.allow_request_with_circuit_metrics())) {
+        return rusty::Result<rusty::Unit, int32_t>::Err(EBUSY);
+    }
+    if (rusty::detail::rust_not(conn.state_machine_.is_connected())) {
+        conn.record_circuit_result(ENOTCONN);
+        return rusty::Result<rusty::Unit, int32_t>::Err(ENOTCONN);
+    }
+    {
+        auto&& direct_guard = rusty::deref_call(conn.direct_channel_.lock(), rusty::detail::__mdisp_unwrap{});
+        if (((rusty::detail::deref_if_pointer_like(direct_guard))).is_some()) {
+            const rusty::Box<ChannelConnectionBase>& proxy = ((rusty::detail::deref_if_pointer_like(direct_guard))).as_ref().unwrap();
+            if (proxy->is_closed()) {
+                conn.record_circuit_result(ENOTCONN);
+                return rusty::Result<rusty::Unit, int32_t>::Err(ENOTCONN);
+            }
+        } else {
+            const auto&& guard2 = rusty::deref_call(conn.fiber_channel_.lock(), rusty::detail::__mdisp_unwrap{});
+            auto chan_dead = ((rusty::detail::deref_if_pointer_like(guard2))).is_none();
+            if (rusty::detail::rust_not(chan_dead)) {
+                const rusty::Box<FiberChannel>& fc = ((rusty::detail::deref_if_pointer_like(guard2))).as_ref().unwrap();
+                if (fc->is_closed()) {
+                    chan_dead = true;
+                }
+            }
+            if (chan_dead) {
+                conn.record_circuit_result(ENOTCONN);
+                return rusty::Result<rusty::Unit, int32_t>::Err(ENOTCONN);
+            }
+        }
+    }
+    const int64_t xid = conn.xid_counter_.next(static_cast<int64_t>(1));
+    const size_t slot = ((static_cast<size_t>(xid))) % rusty::detail::deref_if_pointer_like(kAsyncSlotCount);
+    {
+        auto&& guard = rusty::deref_call(conn.pending_cb_slots_.lock(), rusty::detail::__mdisp_unwrap{});
+        if ((rusty::detail::deref_if_pointer_like(guard))[slot].is_some()) {
+            conn.record_circuit_result(EBUSY);
+            return rusty::Result<rusty::Unit, int32_t>::Err(EBUSY);
+        }
+        (rusty::detail::deref_if_pointer_like(guard))[slot] = rusty::Option<AsyncReplyCallback>(std::move(on_reply));
+    }
+    BufferSink body_sink = BufferSink{.bytes = std::conditional_t<true, rusty::Vec<uint8_t>, F>::new_()};
+    auto ar_store = BinaryWriteArchive{.sink_ = make_sink_proxy(&body_sink)};
+    BinaryWriteArchive& ar = ar_store;
+    Serialize_::serialize(v64::new_(std::move(xid)), ar);
+    Serialize_::serialize(rpc_id, ar);
+    write_fn(ar);
+    const auto ch_err = conn.dispatch_frame_via_channel(rusty::as_ptr(body_sink.bytes), rusty::len(body_sink.bytes));
+    if (rusty::detail::deref_if_pointer_like(ch_err) != rusty::detail::deref_if_pointer_like(ChannelError::None)) {
+        auto&& guard = rusty::deref_call(conn.pending_cb_slots_.lock(), rusty::detail::__mdisp_unwrap{});
+        (rusty::detail::deref_if_pointer_like(guard))[slot] = rusty::None;
+        conn.record_circuit_result(EIO);
+        return rusty::Result<rusty::Unit, int32_t>::Err(EIO);
+    }
+    conn.metrics_.record_request_sent();
+    conn.on_request_dispatched(rusty::len(body_sink.bytes));
+    return rusty::Result<rusty::Unit, int32_t>::Ok(std::make_tuple());
+}
+/*RUSTYCPP:GEN-END id=client.24*/
 
 // @unsafe - Same as request_via_channel, plus serialize-once for safe
 // retry replay + an async retry/backoff spawn. Extracted from the inline
 // request_with_options(rpc_id, options, attr, write_fn) template method.
+// KERNEL by verdict (2026-08-03 sweep): std::chrono steady_clock/
+// duration_cast (no DSL spelling), a preprocessor conditional INSIDE the
+// spawned lambda (#if EWOULDBLOCK != EAGAIN), reinterpret_cast string
+// build of the replay payload, and reference-capturing helper lambdas
+// (finish_terminal et al.) mutating spawn-locals across the retry loop —
+// four floors at once; not a candidate until chrono + non-move-closure
+// state capture have DSL routes.
 template<typename F>
 FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id,
                                              const RequestOptions& options,
