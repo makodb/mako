@@ -43,12 +43,12 @@ bash src/mako/update_config.sh
 # Build
 make -j32
 
-# Run tests
-./ci/ci.sh all
+# Run the full GA/CI matrix
+./docker_build.sh ci all
 ```
 
 Notes:
-- On macOS, eRPC is disabled; `./ci/ci.sh all` skips the eRPC variants and runs the rrr/rpc-based tests.
+- For a local host-build shortcut, use `./ci/ci.sh all`. On macOS, eRPC is disabled; the local shortcut skips the eRPC variants and runs the rrr/rpc-based tests.
 
 ---
 
@@ -108,7 +108,7 @@ Mako includes a Redis-compatible layer for:
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make changes with tests
-4. Ensure tests pass (`./ci/ci.sh all`)
+4. Ensure the full GA/CI matrix passes (`./docker_build.sh ci all`)
 5. Submit a pull request
 
 ---

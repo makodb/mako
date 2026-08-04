@@ -79,10 +79,13 @@ Additionally, **Raft can run standalone** (without Mako) via `deptran_server`:
 
 ### Mako + Paxos Tests
 
-Use `./ci/ci.sh` for testing Mako with **Paxos** replication:
+Use `./docker_build.sh ci all` for the full GA/CI matrix. Use `./ci/ci.sh` as a local host-build shortcut for testing Mako with **Paxos** replication:
 
 ```bash
-# Run all Paxos CI tests
+# Run the full GA/CI matrix
+./docker_build.sh ci all
+
+# Run all local Paxos CI tests
 ./ci/ci.sh all
 
 # Individual tests
