@@ -2561,6 +2561,14 @@ inline bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p,
 // container reads keep the default-construct-then-read-into shape). Lowers
 // to a UFCS free fn `Deserialize_::deserialize(T&, BinaryReadArchive&)`.
 // The `operator>>` overloads below forward here.
+// Fwd-decl of the late hand-written string overload: the generated
+// container bodies below resolve their qualified element calls against
+// declarations visible at this point in the module (reachability =
+// declaration order), and a pair<string, ...> element needs it.
+namespace Deserialize_ {
+inline void deserialize(std::string& self_, BinaryReadArchive& ar);
+}
+
 #if RUSTYCPP_RUST
 pub trait Deserialize {
     fn deserialize(&mut self, ar: &mut BinaryReadArchive);
@@ -2659,8 +2667,210 @@ impl Deserialize for f64 {
         }
     }
 }
+
+// ---- Container impls (generic; emitted straight into Deserialize_,
+// where the callers and the nested-container fwd-decls already look —
+// unlike the serialize side, no forwarders are needed here). Wire
+// format: v64 length prefix + N elements in order; containers cleared
+// first, matching the Marshal operator>> semantics the old hand
+// bodies preserved. The hashbrown decoders ARE safe to convert: they
+// only insert (the clang-22 mangler crash is in ENUMERATION, which
+// only the serialize side does).
+
+impl<T1, T2> Deserialize for std::pair<T1, T2> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        Deserialize_::deserialize(&mut self.first, ar);
+        Deserialize_::deserialize(&mut self.second, ar);
+    }
+}
+
+impl<T> Deserialize for Vec<T> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        self.reserve(n);
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut elem: T = Default::default();
+            Deserialize_::deserialize(&mut elem, ar);
+            self.push(elem);
+            i += 1usize;
+        }
+    }
+}
+
+impl<T> Deserialize for std::vector<T> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        self.reserve(n);
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut elem: T = Default::default();
+            Deserialize_::deserialize(&mut elem, ar);
+            self.push_back(elem);
+            i += 1usize;
+        }
+    }
+}
+
+impl<T> Deserialize for std::list<T> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut elem: T = Default::default();
+            Deserialize_::deserialize(&mut elem, ar);
+            self.push_back(elem);
+            i += 1usize;
+        }
+    }
+}
+
+impl<T> Deserialize for rusty::BTreeSet<T> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut elem: T = Default::default();
+            Deserialize_::deserialize(&mut elem, ar);
+            self.insert(elem);
+            i += 1usize;
+        }
+    }
+}
+
+impl<T> Deserialize for std::set<T> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut elem: T = Default::default();
+            Deserialize_::deserialize(&mut elem, ar);
+            self.insert(elem);
+            i += 1usize;
+        }
+    }
+}
+
+impl<T> Deserialize for rusty::HashSet<T> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut elem: T = Default::default();
+            Deserialize_::deserialize(&mut elem, ar);
+            self.insert(elem);
+            i += 1usize;
+        }
+    }
+}
+
+impl<T> Deserialize for std::unordered_set<T> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut elem: T = Default::default();
+            Deserialize_::deserialize(&mut elem, ar);
+            self.insert(elem);
+            i += 1usize;
+        }
+    }
+}
+
+impl<K, V> Deserialize for rusty::BTreeMap<K, V> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut key: K = Default::default();
+            let mut value: V = Default::default();
+            Deserialize_::deserialize(&mut key, ar);
+            Deserialize_::deserialize(&mut value, ar);
+            self.insert(key, value);
+            i += 1usize;
+        }
+    }
+}
+
+impl<K, V> Deserialize for std::map<K, V> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut key: K = Default::default();
+            let mut value: V = Default::default();
+            Deserialize_::deserialize(&mut key, ar);
+            Deserialize_::deserialize(&mut value, ar);
+            self.emplace(key, value);
+            i += 1usize;
+        }
+    }
+}
+
+impl<K, V> Deserialize for rusty::HashMap<K, V> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut key: K = Default::default();
+            let mut value: V = Default::default();
+            Deserialize_::deserialize(&mut key, ar);
+            Deserialize_::deserialize(&mut value, ar);
+            self.insert(key, value);
+            i += 1usize;
+        }
+    }
+}
+
+impl<K, V> Deserialize for std::unordered_map<K, V> {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        self.clear();
+        let n: usize = v_len.get() as usize;
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut key: K = Default::default();
+            let mut value: V = Default::default();
+            Deserialize_::deserialize(&mut key, ar);
+            Deserialize_::deserialize(&mut value, ar);
+            self.emplace(key, value);
+            i += 1usize;
+        }
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=981d4817ed90246efe31c93a081d3d38c9d8d0763d5f62db55542165d70e90d9*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=9bbaa27e5e3e9d5025dae8faf15ce213041bc18abc8bc42ee7c44d27aa790bf7*/
 class Deserialize;
 
 // Extension trait free-function forward declarations
@@ -2687,6 +2897,42 @@ namespace rusty_ext {
 
     void deserialize(double& self_, BinaryReadArchive& ar);
 
+    template<typename T1, typename T2>
+    void deserialize(std::pair<T1, T2>& self_, BinaryReadArchive& ar);
+
+    template<typename T>
+    void deserialize(rusty::Vec<T>& self_, BinaryReadArchive& ar);
+
+    template<typename T>
+    void deserialize(std::vector<T>& self_, BinaryReadArchive& ar);
+
+    template<typename T>
+    void deserialize(std::list<T>& self_, BinaryReadArchive& ar);
+
+    template<typename T>
+    void deserialize(rusty::BTreeSet<T>& self_, BinaryReadArchive& ar);
+
+    template<typename T>
+    void deserialize(std::set<T>& self_, BinaryReadArchive& ar);
+
+    template<typename T>
+    void deserialize(rusty::HashSet<T>& self_, BinaryReadArchive& ar);
+
+    template<typename T>
+    void deserialize(std::unordered_set<T>& self_, BinaryReadArchive& ar);
+
+    template<typename K, typename V>
+    void deserialize(rusty::BTreeMap<K, V>& self_, BinaryReadArchive& ar);
+
+    template<typename K, typename V>
+    void deserialize(std::map<K, V>& self_, BinaryReadArchive& ar);
+
+    template<typename K, typename V>
+    void deserialize(rusty::HashMap<K, V>& self_, BinaryReadArchive& ar);
+
+    template<typename K, typename V>
+    void deserialize(std::unordered_map<K, V>& self_, BinaryReadArchive& ar);
+
 }
 
 
@@ -2732,6 +2978,66 @@ namespace Deserialize_ {
 using namespace Deserialize_;
 namespace Deserialize_ {
     void deserialize(double& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename T1, typename T2>
+    void deserialize(std::pair<T1, T2>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(rusty::Vec<T>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(std::vector<T>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(std::list<T>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(rusty::BTreeSet<T>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(std::set<T>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(rusty::HashSet<T>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(std::unordered_set<T>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename K, typename V>
+    void deserialize(rusty::BTreeMap<K, V>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename K, typename V>
+    void deserialize(std::map<K, V>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename K, typename V>
+    void deserialize(rusty::HashMap<K, V>& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    template<typename K, typename V>
+    void deserialize(std::unordered_map<K, V>& self_, BinaryReadArchive& ar);
 }
 using namespace Deserialize_;
 class Deserialize {
@@ -2941,6 +3247,283 @@ void deserialize(BinaryReadArchive& ar) {
 }
 #endif  // patcher: end orphan-impl stub
 
+// TODO orphan impl: methods for `std::pair` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::pair
+void deserialize(BinaryReadArchive& ar) {
+    Deserialize_::deserialize(this->first, ar);
+    Deserialize_::deserialize(this->second, ar);
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `Vec` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for Vec
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    this->reserve(std::move(n));
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        T elem = rusty::default_like<T>();
+        Deserialize_::deserialize(elem, ar);
+        this->push(std::move(elem));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::vector` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::vector
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    this->reserve(std::move(n));
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        T elem = rusty::default_like<T>();
+        Deserialize_::deserialize(elem, ar);
+        this->push_back(std::move(elem));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::list` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::list
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        T elem = rusty::default_like<T>();
+        Deserialize_::deserialize(elem, ar);
+        this->push_back(std::move(elem));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `rusty::BTreeSet` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for rusty::BTreeSet
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        T elem = rusty::default_like<T>();
+        Deserialize_::deserialize(elem, ar);
+        this->insert(std::move(elem));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::set` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::set
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        T elem = rusty::default_like<T>();
+        Deserialize_::deserialize(elem, ar);
+        this->insert(std::move(elem));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `rusty::HashSet` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for rusty::HashSet
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        T elem = rusty::default_like<T>();
+        Deserialize_::deserialize(elem, ar);
+        this->insert(std::move(elem));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::unordered_set` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::unordered_set
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        T elem = rusty::default_like<T>();
+        Deserialize_::deserialize(elem, ar);
+        this->insert(std::move(elem));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `rusty::BTreeMap` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for rusty::BTreeMap
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        K key = rusty::default_like<K>();
+        V value = rusty::default_like<V>();
+        Deserialize_::deserialize(key, ar);
+        Deserialize_::deserialize(value, ar);
+        this->insert(std::move(key), std::move(value));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::map` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::map
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        K key = rusty::default_like<K>();
+        V value = rusty::default_like<V>();
+        Deserialize_::deserialize(key, ar);
+        Deserialize_::deserialize(value, ar);
+        this->emplace(std::move(key), std::move(value));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `rusty::HashMap` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for rusty::HashMap
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        K key = rusty::default_like<K>();
+        V value = rusty::default_like<V>();
+        Deserialize_::deserialize(key, ar);
+        Deserialize_::deserialize(value, ar);
+        this->insert(std::move(key), std::move(value));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `std::unordered_map` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for std::unordered_map
+void deserialize(BinaryReadArchive& ar) {
+    auto v_len = v64::new_(static_cast<int64_t>(0));
+    Deserialize_::deserialize(v_len, ar);
+    this->clear();
+    const size_t n = static_cast<size_t>(v_len.get());
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        K key = rusty::default_like<K>();
+        V value = rusty::default_like<V>();
+        Deserialize_::deserialize(key, ar);
+        Deserialize_::deserialize(value, ar);
+        this->emplace(std::move(key), std::move(value));
+        i += static_cast<size_t>(1);
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
 // Extension trait Deserialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
     void deserialize(v32& self_, BinaryReadArchive& ar) {
@@ -3043,6 +3626,199 @@ namespace rusty_ext {
         {
             uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<double>());
+        }
+    }
+
+    template<typename T1, typename T2>
+    void deserialize(std::pair<T1, T2>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        Deserialize_::deserialize(self_.first, ar);
+        Deserialize_::deserialize(self_.second, ar);
+    }
+
+    template<typename T>
+    void deserialize(rusty::Vec<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        self_.reserve(std::move(n));
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.push(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename T>
+    void deserialize(std::vector<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        self_.reserve(std::move(n));
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.push_back(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename T>
+    void deserialize(std::list<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.push_back(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename T>
+    void deserialize(rusty::BTreeSet<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.insert(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename T>
+    void deserialize(std::set<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.insert(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename T>
+    void deserialize(rusty::HashSet<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.insert(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename T>
+    void deserialize(std::unordered_set<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.insert(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename K, typename V>
+    void deserialize(rusty::BTreeMap<K, V>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            K key = rusty::default_like<K>();
+            V value = rusty::default_like<V>();
+            Deserialize_::deserialize(key, ar);
+            Deserialize_::deserialize(value, ar);
+            self_.insert(std::move(key), std::move(value));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename K, typename V>
+    void deserialize(std::map<K, V>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            K key = rusty::default_like<K>();
+            V value = rusty::default_like<V>();
+            Deserialize_::deserialize(key, ar);
+            Deserialize_::deserialize(value, ar);
+            self_.emplace(std::move(key), std::move(value));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename K, typename V>
+    void deserialize(rusty::HashMap<K, V>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            K key = rusty::default_like<K>();
+            V value = rusty::default_like<V>();
+            Deserialize_::deserialize(key, ar);
+            Deserialize_::deserialize(value, ar);
+            self_.insert(std::move(key), std::move(value));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+    template<typename K, typename V>
+    void deserialize(std::unordered_map<K, V>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            K key = rusty::default_like<K>();
+            V value = rusty::default_like<V>();
+            Deserialize_::deserialize(key, ar);
+            Deserialize_::deserialize(value, ar);
+            self_.emplace(std::move(key), std::move(value));
+            i += static_cast<size_t>(1);
         }
     }
 
@@ -3389,6 +4165,18 @@ public:
     }
 };
 
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::pair<T1, T2>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::Vec<T>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::vector<T>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::list<T>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::BTreeSet<T>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::set<T>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::HashSet<T>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::unordered_set<T>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::BTreeMap<K, V>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::map<K, V>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::HashMap<K, V>>`
+// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::unordered_map<K, V>>`
 
 // UFCS trait migration: free functions for `impl Deserialize for ...`
 namespace Deserialize_ {
@@ -3526,6 +4314,235 @@ namespace Deserialize_ {
     }
 
 }
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename T1, typename T2>
+    void deserialize(std::pair<T1, T2>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        Deserialize_::deserialize(self_.first, ar);
+        Deserialize_::deserialize(self_.second, ar);
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(rusty::Vec<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        self_.reserve(std::move(n));
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.push(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(std::vector<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        self_.reserve(std::move(n));
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.push_back(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(std::list<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.push_back(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(rusty::BTreeSet<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.insert(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(std::set<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.insert(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(rusty::HashSet<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.insert(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename T>
+    void deserialize(std::unordered_set<T>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            T elem = rusty::default_like<T>();
+            Deserialize_::deserialize(elem, ar);
+            self_.insert(std::move(elem));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename K, typename V>
+    void deserialize(rusty::BTreeMap<K, V>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            K key = rusty::default_like<K>();
+            V value = rusty::default_like<V>();
+            Deserialize_::deserialize(key, ar);
+            Deserialize_::deserialize(value, ar);
+            self_.insert(std::move(key), std::move(value));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename K, typename V>
+    void deserialize(std::map<K, V>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            K key = rusty::default_like<K>();
+            V value = rusty::default_like<V>();
+            Deserialize_::deserialize(key, ar);
+            Deserialize_::deserialize(value, ar);
+            self_.emplace(std::move(key), std::move(value));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename K, typename V>
+    void deserialize(rusty::HashMap<K, V>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            K key = rusty::default_like<K>();
+            V value = rusty::default_like<V>();
+            Deserialize_::deserialize(key, ar);
+            Deserialize_::deserialize(value, ar);
+            self_.insert(std::move(key), std::move(value));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    template<typename K, typename V>
+    void deserialize(std::unordered_map<K, V>& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        self_.clear();
+        const size_t n = static_cast<size_t>(v_len.get());
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            K key = rusty::default_like<K>();
+            V value = rusty::default_like<V>();
+            Deserialize_::deserialize(key, ar);
+            Deserialize_::deserialize(value, ar);
+            self_.emplace(std::move(key), std::move(value));
+            i += static_cast<size_t>(1);
+        }
+    }
+
+}
 /*RUSTYCPP:GEN-END id=serializable.deserialize_trait*/
 
 // ---- Fixed-width primitives. ------------------------------------------
@@ -3575,177 +4592,14 @@ inline void deserialize(T& v, BinaryReadArchive& ar) {
 // so nested containers resolve regardless of definition order; element
 // calls are unqualified and fall back to the generic catch-all.
 namespace Deserialize_ {
-template<class T1, class T2> inline void deserialize(std::pair<T1, T2>& v, BinaryReadArchive& ar);
-template<class T> inline void deserialize(rusty::Vec<T>& v, BinaryReadArchive& ar);
-template<class T> inline void deserialize(std::vector<T>& v, BinaryReadArchive& ar);
-template<class T> inline void deserialize(std::list<T>& v, BinaryReadArchive& ar);
-template<class T> inline void deserialize(rusty::BTreeSet<T>& v, BinaryReadArchive& ar);
-template<class T> inline void deserialize(std::set<T>& v, BinaryReadArchive& ar);
-template<class T> inline void deserialize(rusty::HashSet<T>& v, BinaryReadArchive& ar);
-template<class T> inline void deserialize(std::unordered_set<T>& v, BinaryReadArchive& ar);
-template<class K, class V> inline void deserialize(rusty::BTreeMap<K, V>& v, BinaryReadArchive& ar);
-template<class K, class V> inline void deserialize(std::map<K, V>& v, BinaryReadArchive& ar);
-template<class K, class V> inline void deserialize(rusty::HashMap<K, V>& v, BinaryReadArchive& ar);
-template<class K, class V> inline void deserialize(std::unordered_map<K, V>& v, BinaryReadArchive& ar);
+// (pair + container fwd-decls deleted — the trait GEN above declares
+// every overload before any use, and its definitions are non-inline.)
 
-template<class T1, class T2>
-inline void deserialize(std::pair<T1, T2>& v, BinaryReadArchive& ar) {
-  deserialize(v.first, ar);
-  deserialize(v.second, ar);
-}
+// (pair + container deserialize definitions moved into the
+// Deserialize trait block above — impl-for-container lowering lands
+// directly in this namespace; the forward declarations above remain
+// for nested-container resolution.)
 
-template<class T>
-inline void deserialize(rusty::Vec<T>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  v.reserve(n);
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    deserialize(elem, ar);
-    v.push(std::move(elem));
-  }
-}
-
-template<class T>
-inline void deserialize(std::vector<T>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  v.reserve(n);
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    deserialize(elem, ar);
-    v.push_back(std::move(elem));
-  }
-}
-
-template<class T>
-inline void deserialize(std::list<T>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    deserialize(elem, ar);
-    v.push_back(std::move(elem));
-  }
-}
-
-template<class T>
-inline void deserialize(rusty::BTreeSet<T>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    deserialize(elem, ar);
-    v.insert(std::move(elem));
-  }
-}
-
-template<class T>
-inline void deserialize(std::set<T>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    deserialize(elem, ar);
-    v.insert(std::move(elem));
-  }
-}
-
-template<class T>
-inline void deserialize(rusty::HashSet<T>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    deserialize(elem, ar);
-    v.insert(std::move(elem));
-  }
-}
-
-template<class T>
-inline void deserialize(std::unordered_set<T>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    deserialize(elem, ar);
-    v.insert(std::move(elem));
-  }
-}
-
-template<class K, class V>
-inline void deserialize(rusty::BTreeMap<K, V>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    K key{};
-    V value{};
-    deserialize(key, ar);
-    deserialize(value, ar);
-    v.insert(std::move(key), std::move(value));
-  }
-}
-
-template<class K, class V>
-inline void deserialize(std::map<K, V>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    K key{};
-    V value{};
-    deserialize(key, ar);
-    deserialize(value, ar);
-    v.emplace(std::move(key), std::move(value));
-  }
-}
-
-template<class K, class V>
-inline void deserialize(rusty::HashMap<K, V>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    K key{};
-    V value{};
-    deserialize(key, ar);
-    deserialize(value, ar);
-    v.insert(std::move(key), std::move(value));
-  }
-}
-
-template<class K, class V>
-inline void deserialize(std::unordered_map<K, V>& v, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    K key{};
-    V value{};
-    deserialize(key, ar);
-    deserialize(value, ar);
-    v.emplace(std::move(key), std::move(value));
-  }
-}
 
 }  // namespace Deserialize_
 
