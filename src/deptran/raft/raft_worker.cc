@@ -279,6 +279,21 @@ RaftWorker::RaftWorker()
 RaftWorker::~RaftWorker() {
   StopSubmitThread();
 
+  // Safety-failed payloads are copied into these legacy raw-pointer queues.
+  // A callback may consume entries during normal operation; release only the
+  // entries still owned by this worker at shutdown.
+  const auto clear_unreplayed = [](auto& queue) {
+    while (!queue.empty()) {
+      std::free(const_cast<char*>(std::get<4>(queue.front())));
+      queue.pop();
+    }
+  };
+  clear_unreplayed(un_replay_logs_);
+  for (auto& [partition_id, queue] : un_replay_logs_by_partition_) {
+    (void)partition_id;
+    clear_unreplayed(queue);
+  }
+
   // Shutdown PollThreadWorkers if we own them
   if (svr_poll_thread_worker_.is_some()) {
     svr_poll_thread_worker_.as_ref().unwrap()->shutdown();

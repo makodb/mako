@@ -1453,10 +1453,9 @@ struct RaftServerPendingAppendEntries {
 void RaftServer::HeartbeatLoop() {
   // @unsafe
   {
-  // Legacy timer allocation is tied to the fiber-based heartbeat loop and is
-  // left as a hard-deferred manual lifetime boundary.
-  auto hb_timer = new Timer();
-  hb_timer->start();
+    // Timer is a value type; heap allocation here leaked one object per loop.
+    Timer hb_timer;
+    hb_timer.start();
   }
 
   parid_t partition_id = partition_id_;
@@ -3050,11 +3049,12 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
 void RaftServer::StopLeadershipTransferMonitoring() {
   leadership_monitor_stop_ = true;
 
-  // Detach the monitor thread so it can exit gracefully without deadlock
-  // The thread will see leadership_monitor_stop_ and exit on its own
+  // The monitor captures `this`, so it must finish before the server can be
+  // destroyed or a new monitor can be installed. This call is made without
+  // mtx_, and the monitor observes the stop flag at its next wakeup.
   if (leadership_monitor_thread_.joinable()) {
-    Log_debug("[LEADERSHIP-TRANSFER] Site {}: Detaching monitor thread (will exit on its own)", site_id_);
-    leadership_monitor_thread_.detach();
+    Log_debug("[LEADERSHIP-TRANSFER] Site {}: Joining monitor thread", site_id_);
+    leadership_monitor_thread_.join();
   }
 }
 

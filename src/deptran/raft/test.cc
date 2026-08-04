@@ -1514,12 +1514,14 @@ static void *doConcurrentStarts(void *args) {
   uint64_t idx, tm;
   auto ok = csargs->config->Start(csargs->leader, 701 + csargs->i, &idx, &tm);
   if (!ok || tm != csargs->term) {
+    delete csargs;
     return nullptr;
   }
   {
     std::lock_guard<std::mutex> lock(*(csargs->mtx));
     csargs->indices->push_back(idx);
   }
+  delete csargs;
   return nullptr;
 }
 
@@ -1736,6 +1738,7 @@ static void *doConcurrentAgreement(void *args) {
     std::lock_guard<std::mutex> lock(*(caargs->mtx));
     caargs->retvals->push_back(retval);
   }
+  delete caargs;
   return nullptr;
 }
 
