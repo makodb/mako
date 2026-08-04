@@ -448,7 +448,7 @@ TEST_F(ReactorTest, QuorumEvent) {
     auto reactor = Reactor::get_reactor();
     
     // QuorumEvent needs total count and quorum
-    auto sp_event = reactor_create_sp_event<janus::QuorumEvent>(3, 2);  // 3 total, need 2 votes
+    auto sp_event = create_sp_quorum_event(3, 2);  // 3 total, need 2 votes
     
     EXPECT_FALSE(sp_event->is_ready());
     

@@ -467,7 +467,7 @@ rusty::Arc<QuorumEvent> Communicator::SendReelect(){
 	//paused = true;
 	//sleep(10);
 	int total = rpc_par_proxies_[0].size() - 1;
-  rusty::Arc<QuorumEvent> e = reactor_create_sp_event<QuorumEvent>(total, 1);
+  rusty::Arc<QuorumEvent> e = create_sp_quorum_event(total, 1);
 	auto pair_leader_proxy = LeaderProxyForPartition(0);
 	int new_leader = (pair_leader_proxy.first + 1) % total;
 
@@ -601,7 +601,7 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
     Coordinator* coo,
     TxData* txn) {
   int total = cmds_by_par.size();
-  //std::shared_ptr<WaitAll> e = reactor_create_sp_event<WaitAll>();
+  //std::shared_ptr<WaitAll> e = create_sp_waitall();
   rusty::Arc<IntEvent> e = create_sp_int_event(1);
 	e->value_.set(0);
 	e->target_.set(total);
@@ -771,7 +771,7 @@ Communicator::SendPrepare(Coordinator* coo,
 	int32_t res_ = 10;
   TxData* cmd = (TxData*) coo->cmd_;
   auto n = cmd->partition_ids_.size();
-  auto e = reactor_create_sp_event<WaitAll>();
+  auto e = create_sp_waitall();
   auto phase = coo->phase_;
   int n_total = 1;
   int quorum_id = 0;
@@ -780,7 +780,7 @@ Communicator::SendPrepare(Coordinator* coo,
     auto site_id = leader_id;
     auto proxies = rpc_par_proxies_[partition_id];
     if(follower_forwarding) n_total = 3;
-    auto qe = reactor_create_sp_event<QuorumEvent>(n_total, 1);
+    auto qe = create_sp_quorum_event(n_total, 1);
     e->add_event(qe);
     auto src_coroid = qe->get_fiber_id();
       
@@ -898,14 +898,14 @@ Communicator::SendCommit(Coordinator* coo,
 	TxData* cmd = (TxData*) coo->cmd_;
   int n_total = 1;
   auto n = cmd->GetPartitionIds().size();
-  auto e = reactor_create_sp_event<WaitAll>();
+  auto e = create_sp_waitall();
   
   for(auto& rp : cmd->partition_ids_){
     auto leader_id = LeaderProxyForPartition(rp).first;
     auto site_id = leader_id;
     auto proxies = rpc_par_proxies_[rp];
     if(follower_forwarding) n_total = 3;
-    auto qe = reactor_create_sp_event<QuorumEvent>(n_total, 1);
+    auto qe = create_sp_quorum_event(n_total, 1);
     qe->id_.set(Communicator::global_id);
     auto src_coroid = qe->get_fiber_id();
 
@@ -1022,13 +1022,13 @@ Communicator::SendAbort(Coordinator* coo,
   TxData* cmd = (TxData*) coo->cmd_;
   int n_total = 1;
   auto n = cmd->GetPartitionIds().size();
-  auto e = reactor_create_sp_event<WaitAll>();
+  auto e = create_sp_waitall();
   for(auto& rp : cmd->partition_ids_){
     auto proxies = rpc_par_proxies_[rp];
     auto leader_id = LeaderProxyForPartition(rp).first;
     auto site_id = leader_id;
     if(follower_forwarding) n_total = 3;
-    auto qe = reactor_create_sp_event<QuorumEvent>(n_total, 1);
+    auto qe = create_sp_quorum_event(n_total, 1);
     qe->id_.set(Communicator::global_id);
     auto src_coroid = qe->get_fiber_id();
 
@@ -1267,7 +1267,7 @@ rusty::Arc<QuorumEvent> Communicator::FailoverPauseSocketOut(
   Log_info("!!!!!!!!!!!!!! enter Communicator::FailoverPauseSocketOut");
 #endif
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = reactor_create_sp_event<QuorumEvent>(1, 1);
+  auto e = create_sp_quorum_event(1, 1);
   auto proxies = rpc_par_proxies_[par_id];
   // sleep(1);
   // WAN_WAIT;
@@ -1308,7 +1308,7 @@ rusty::Arc<QuorumEvent> Communicator::FailoverResumeSocketOut(
   Log_info("!!!!!!!!!!!!!! enter Communicator::FailoverResumeSocketOut");
 #endif
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = reactor_create_sp_event<QuorumEvent>(1, 1);
+  auto e = create_sp_quorum_event(1, 1);
   auto proxies = rpc_par_proxies_[par_id];
   // sleep(1);
   // WAN_WAIT;
@@ -1402,7 +1402,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
                                                                 const View& new_view, 
                                                                 epoch_t new_view_id) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = reactor_create_sp_event<QuorumEvent>(n, n/2+1);
+  auto e = create_sp_quorum_event(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -1568,7 +1568,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
   //          par_id, loc_id, sid, rid);
 
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = reactor_create_sp_event<QuorumEvent>(n, n/2+1);
+  auto e = create_sp_quorum_event(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -1711,7 +1711,7 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
 
 rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastCommit(parid_t par_id, locid_t loc_id, epoch_t jepoch, epoch_t oepoch, int sid, int set_size) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = reactor_create_sp_event<QuorumEvent>(n, n/2+1);
+  auto e = create_sp_quorum_event(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -1778,7 +1778,7 @@ shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRe
 
 rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastFinishRecovery(parid_t par_id, locid_t loc_id, epoch_t oepoch) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = reactor_create_sp_event<QuorumEvent>(n, n/2+1);
+  auto e = create_sp_quorum_event(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;

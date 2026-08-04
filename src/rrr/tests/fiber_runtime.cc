@@ -160,7 +160,7 @@ TEST(FiberRuntimeTest, orevent) {
     auto t1 = Time::now(true);
     auto timeout = 10 * 1000000;
     auto sp_e1 = create_sp_timeout_event(timeout);
-    auto sp_e2 = reactor_create_sp_event<WaitAny>(sp_e1, inte);
+    auto sp_e2 = create_sp_waitany(sp_e1, inte);
     sp_e2->wait();
     auto t2 = Time::now(true);
     ASSERT_GT(t1 + timeout, t2);

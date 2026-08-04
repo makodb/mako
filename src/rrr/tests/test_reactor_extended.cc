@@ -318,7 +318,7 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     // Trigger one event before creating WaitAny
     event1->set(1);
     
-    auto sp_or_event = reactor_create_sp_event<WaitAny>(event1, event2);
+    auto sp_or_event = create_sp_waitany(event1, event2);
     
     std::atomic<bool> or_triggered{false};
     reactor->create_run_fiber([sp_or_event, &or_triggered]() {
@@ -335,7 +335,7 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     // Trigger second event (use default target=1)
     event4->set(1);
     
-    auto sp_or_event2 = reactor_create_sp_event<WaitAny>(event3, event4);
+    auto sp_or_event2 = create_sp_waitany(event3, event4);
     
     std::atomic<bool> or_triggered2{false};
     reactor->create_run_fiber([sp_or_event2, &or_triggered2]() {
