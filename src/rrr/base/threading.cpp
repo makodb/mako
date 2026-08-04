@@ -228,14 +228,12 @@ using rusty::sync::atomic::AtomicBool;
 // @safe - architecture-specific pause hint for spin loops. Defined
 // outside the DSL because the DSL has no inline-asm or preprocessor
 // support. The inline `@unsafe` block scopes the asm instruction.
+// The pause/yield instruction lives in srpc_timing.c now (plain C,
+// Goal-0 C demotion — inline asm will never be Rust DSL).
+extern "C" void srpc_cpu_pause(void);
+
 inline void cpu_pause() noexcept {
-#if defined(__i386__) || defined(__x86_64__)
-    // @unsafe { inline asm }
-    { asm volatile("pause"); }
-#elif defined(__aarch64__)
-    // @unsafe { inline asm }
-    { asm volatile("yield"); }
-#endif
+    srpc_cpu_pause();  // @unsafe
 }
 
 // `SpinLock` — atomic-flag busy-wait lock. The previous `Lockable`

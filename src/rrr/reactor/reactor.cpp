@@ -264,12 +264,24 @@ rusty::Option<rusty::Rc<Fiber>> event_core_upgrade_fiber(const W& ev) {
     return rusty::deref_call(rusty::borrow(ev.state_.wp_fiber_), rusty::detail::__mdisp_upgrade{});
 }
 /*RUSTYCPP:GEN-END id=reactor.3*/
-template <typename W> void event_core_record_place(const W& self, SrcFileCStr file, int line) {
-  char buff[200];
-  sprintf(buff, "%s:%d", file, line);
-  (*self.state_.wait_place_.borrow_mut()) += std::string(buff);
-  self.state_.rcd_wait_.set(true);
+// (was a sprintf kernel; format! -> std::format emission retired that)
+#if RUSTYCPP_RUST
+fn event_core_record_place<W>(self_: &W, file: SrcFileCStr, line: i32) {
+    let tag: std::string = format!("{}:{}", file, line);
+    let mut g = self_.state_.wait_place_.borrow_mut();
+    *g += tag;
+    self_.state_.rcd_wait_.set(true);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.4 version=1 rust_sha256=5dbce4daef4c1afe2307d556583eb08549afe1c47478c851c9010d83ece415a6*/
+template<typename W>
+void event_core_record_place(const W& self_, SrcFileCStr file, int32_t line) {
+    const std::string tag = std::format("{}:{}" , file , line);
+    auto&& g = self_.state_.wait_place_.borrow_mut();
+    rusty::detail::deref_if_pointer_like(g) += tag;
+    self_.state_.rcd_wait_.set(true);
+}
+/*RUSTYCPP:GEN-END id=reactor.4*/
 // Current fiber id — matches Event::get_fiber_id (reads the running
 // fiber, not event state), declared here for the flat structs that expose
 // it (defined after Fiber below).
@@ -1183,10 +1195,17 @@ rusty::Option<rusty::Rc<Fiber>> TimeoutEvent::upgrade_fiber() const {
 }
 /*RUSTYCPP:GEN-END id=reactor.timeout_event*/
 
-// @unsafe - Time::now read; strict `>` preserved from the original.
-inline bool timeout_event_is_ready(const TimeoutEvent& self) {
-  return Time::now(true) > self.wakeup_time_;
+// @safe - Time::now read; strict `>` preserved from the original.
+#if RUSTYCPP_RUST
+fn timeout_event_is_ready(self_: &TimeoutEvent) -> bool {
+    Time::now(true) > self_.wakeup_time_
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.16 version=1 rust_sha256=3d4fe2059a0fc7145fba5145e2ad97b1303ca121aea2851dd3bd6a3785ae3659*/
+bool timeout_event_is_ready(const TimeoutEvent& self_) {
+    return Time::now(true) > rusty::detail::deref_if_pointer_like(self_.wakeup_time_);
+}
+/*RUSTYCPP:GEN-END id=reactor.16*/
 
 // `WaitAny` — a composite event that is ready as soon as ANY of its child
 // events is ready (polled in the reactor loop via `is_composite_event()`).
@@ -4040,11 +4059,22 @@ bool event_test_impl(const W& ev) {
 // replicates the legacy Event constructor's seeding — wait_place_ tag and
 // the creating-fiber capture — on top of the aggregate's zero state, plus
 // the type's own defaults. Field order matches the DSL struct exactly.
-uint64_t event_core_get_fiber_id() {
-  auto fiber_opt = Fiber::current_fiber();
-  verify(fiber_opt.is_some());
-  return fiber_opt.unwrap()->id.get();
+#if RUSTYCPP_RUST
+fn event_core_get_fiber_id() -> u64 {
+    let fiber_opt = Fiber::current_fiber();
+    verify(fiber_opt.is_some());
+    (*fiber_opt.unwrap()).id.get()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.25 version=1 rust_sha256=beec5a65763d42205ddcfde216c55be9da3ff7812ef948ff24dc88bcd6221196*/
+uint64_t event_core_get_fiber_id();
+
+uint64_t event_core_get_fiber_id() {
+    auto fiber_opt = Fiber::current_fiber();
+    verify(fiber_opt.is_some());
+    return (rusty::detail::deref_if_pointer_like(fiber_opt.unwrap())).id.get();
+}
+/*RUSTYCPP:GEN-END id=reactor.25*/
 
 // Seeds an event's EventState (wait_place_ tag + creating-fiber weak
 // capture), matching the legacy Event constructor. The tag goes through
@@ -4744,10 +4774,18 @@ void Fiber::sleep(uint64_t microseconds) {
  * - Returns valid Rc<Reactor> pinned to current thread
  * - Reactor's thread_id_ matches rusty::thread::current_id()
  */
-// @unsafe - Rc<Reactor> allocation + the create-time log lines (kept
-// as kernels: Rc::<T>::make turbofish adjacent to a Log_* call
-// mis-lowers the log as a member of the turbofish expression).
-rusty::Rc<Reactor> reactor_make() { return rusty::Rc<Reactor>::make(); }
+// @safe - Rc<Reactor> allocation (the old turbofish+Log mis-lowering
+// note no longer applies: the body has no log call).
+#if RUSTYCPP_RUST
+fn reactor_make() -> Rc<Reactor> {
+    Rc::<Reactor>::make()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.40 version=1 rust_sha256=722bb5c897eb18725642565af8d7a584487465db7e74da98ff0a904c488ca70b*/
+rusty::Rc<Reactor> reactor_make() {
+    return rusty::Rc<Reactor>::make();
+}
+/*RUSTYCPP:GEN-END id=reactor.40*/
 // REUSING_FIBER is a project macro; it survives the lowering as an
 // identifier (same as the SHUT_RDWR/EAGAIN idiom in tcp_channel).
 #if RUSTYCPP_RUST

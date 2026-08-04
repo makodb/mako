@@ -208,39 +208,14 @@ void OneTimeJob::Work() {
 // `char*` buffers; the namespace label is here for future helpers.
 namespace rrr {
 
-// @unsafe - writes digits into a caller-supplied raw `char*` buffer.
-static void make_int(char* str, int val, int digits) {
-    char* p = str + digits;
-    for (int i = 0; i < digits; i++) {
-        int d = val % 10;
-        val /= 10;
-        p--;
-        *p = '0' + d;
-    }
-}
+// The timestamp formatter (time/localtime_r/gettimeofday + raw digit
+// writing, formerly make_int + this body) lives in srpc_timing.c now
+// (plain C, Goal-0 C demotion).
+extern "C" void srpc_time_now_str(char* now);
 
-// @unsafe - time() + localtime_r syscalls, gettimeofday, and raw
-// `char* now` byte-buffer indexing through make_int.
+// @unsafe - thin shim over the C kernel (raw char* passthrough).
 void time_now_str(char* now) {
-    time_t seconds_since_epoch = time(nullptr);
-    struct tm local_calendar;
-    localtime_r(&seconds_since_epoch, &local_calendar);
-    make_int(now, local_calendar.tm_year + 1900, 4);
-    now[4] = '-';
-    make_int(now + 5, local_calendar.tm_mon + 1, 2);
-    now[7] = '-';
-    make_int(now + 8, local_calendar.tm_mday, 2);
-    now[10] = ' ';
-    make_int(now + 11, local_calendar.tm_hour, 2);
-    now[13] = ':';
-    make_int(now + 14, local_calendar.tm_min, 2);
-    now[16] = ':';
-    make_int(now + 17, local_calendar.tm_sec, 2);
-    now[19] = '.';
-    timeval tv;
-    gettimeofday(&tv, nullptr);
-    make_int(now + 20, tv.tv_usec / 1000, 3);
-    now[23] = '\0';
+    srpc_time_now_str(now);
 }
 
 // Thin wrapper around `rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN)`.

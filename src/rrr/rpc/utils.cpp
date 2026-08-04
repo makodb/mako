@@ -10,6 +10,8 @@ module;
 // Reachability again: the GEN now names `rusty::ptr::null_mut()` for the
 // DSL's `core::ptr::null_mut()`.
 #include <rusty/ptr.hpp>
+// Reachability: get_host_name's GEN names `rusty::is_empty`.
+#include <rusty/array.hpp>
 #include <rusty/slice.hpp>
 #include <rusty/sys/env.hpp>
 
@@ -178,51 +180,18 @@ int set_nonblocking(int fd, bool nonblocking) {
     return ret;
 }
 
-// @unsafe - socket / bind / getsockname / close syscalls + C-style
-// casts of `sockaddr_in*` to `sockaddr*` + raw `ai_addr` deref.
+// The syscall ladder (socket/getaddrinfo/bind/getsockname/close) lives
+// in srpc_net.c now (plain C, Goal-0 C demotion). Contract: port on
+// success, 0 if nothing free in 1024..64999, -1 on syscall failure.
+extern "C" int srpc_find_open_port(void);
+
+// @unsafe - thin shim over the C kernel; logging stays C++-side.
 int find_open_port() {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        Log_error("Failed to create socket");
-        return -1;
-    }
-
-    auto addr_result = addrinfo_resolve("0.0.0.0", nullptr, nullptr);
-    if (addr_result.is_err()) {
-        Log_error("Failed to getaddrinfo");
-        ::close(fd);
-        return -1;
-    }
-    auto local_addr = addr_result.unwrap();
-
-    int port = -1;
-
-    for (int i = 1024; i < 65000; ++i) {
-        ((sockaddr_in*)local_addr.get()->ai_addr)->sin_port = i;
-        if (::bind(fd, local_addr.get()->ai_addr, local_addr.get()->ai_addrlen) != 0) {
-            continue;
-        }
-
-        sockaddr_in addr;
-        socklen_t addrlen;
-        memset(&addr, 0, sizeof(addr));
-        if (getsockname(fd, (sockaddr*)&addr, &addrlen) != 0) {
-            Log_error("Failed to get socket address");
-            ::close(fd);
-            return -1;
-        }
-
-        port = i;
-        break;
-    }
-
-    ::close(fd);
-
-    if (port != -1) {
+    int port = srpc_find_open_port();
+    if (port > 0) {
         Log_info("Found open port: {}", port);
         return port;
     }
-
     Log_error("Failed to find open port.");
     return -1;
 }
@@ -230,12 +199,30 @@ int find_open_port() {
 // @safe - rusty::sys::env::hostname returns an owned std::string and
 // wraps gethostname in an inner @unsafe block. Returns "" on syscall
 // failure (parity with the prior body).
+#if RUSTYCPP_RUST
+fn get_host_name() -> std::string {
+    let name: std::string = rusty::sys::env::hostname();
+    let missing: bool = name.is_empty();
+    if missing {
+        // rrr:: qualification dodges a transpiler defect: a fn returning
+        // std::string mis-resolves UNQUALIFIED free-fn calls against the
+        // return type (emitted std::string::Log_error). Upstream fix queued.
+        rrr::Log_error("Failed to get hostname.");
+    }
+    name
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=utils.2 version=1 rust_sha256=934302266624fc179dd92173399a674dd5953ab379bade70cc8f5151d172335b*/
+std::string get_host_name();
+
 std::string get_host_name() {
     std::string name = rusty::sys::env::hostname();
-    if (name.empty()) {
-        Log_error("Failed to get hostname.");
+    const bool missing = rusty::is_empty(name);
+    if (missing) {
+        rrr::Log_error("Failed to get hostname.");
     }
-    return name;
+    return std::move(name);
 }
+/*RUSTYCPP:GEN-END id=utils.2*/
 
 } // namespace rrr
