@@ -177,12 +177,12 @@ struct PendingRequestGuard {
     rusty::Arc<rusty::sync::atomic::AtomicI32> pending_counter;
     mutable bool _rusty_forgotten = false;
     PendingRequestGuard(rusty::Arc<rusty::sync::atomic::AtomicI32> pending_counter_init) : pending_counter(std::move(pending_counter_init)) {}
-    PendingRequestGuard(const PendingRequestGuard&) = default;
+    PendingRequestGuard(const PendingRequestGuard&) = delete;
     PendingRequestGuard(PendingRequestGuard&& other) noexcept : pending_counter(std::move(other.pending_counter)) {
         this->_rusty_forgotten = other._rusty_forgotten;
         other._rusty_forgotten = true;
     }
-    PendingRequestGuard& operator=(const PendingRequestGuard&) = default;
+    PendingRequestGuard& operator=(const PendingRequestGuard&) = delete;
     PendingRequestGuard& operator=(PendingRequestGuard&& other) noexcept {
         if (this == &other) {
             return *this;

@@ -3231,12 +3231,12 @@ struct PollThread {
     rusty::sync::atomic::AtomicBool shutdown_called_;
     mutable bool _rusty_forgotten = false;
     PollThread(rusty::sync::mpsc::Sender<PollCommand> sender__init, PollJoinSlot join_handle__init, rusty::sync::atomic::AtomicU64 poll_thread_id_bits__init, rusty::sync::atomic::AtomicBool shutdown_called__init) : sender_(std::move(sender__init)), join_handle_(std::move(join_handle__init)), poll_thread_id_bits_(std::move(poll_thread_id_bits__init)), shutdown_called_(std::move(shutdown_called__init)) {}
-    PollThread(const PollThread&) = default;
+    PollThread(const PollThread&) = delete;
     PollThread(PollThread&& other) noexcept : sender_(std::move(other.sender_)), join_handle_(std::move(other.join_handle_)), poll_thread_id_bits_(std::move(other.poll_thread_id_bits_)), shutdown_called_(std::move(other.shutdown_called_)) {
         this->_rusty_forgotten = other._rusty_forgotten;
         other._rusty_forgotten = true;
     }
-    PollThread& operator=(const PollThread&) = default;
+    PollThread& operator=(const PollThread&) = delete;
     PollThread& operator=(PollThread&& other) noexcept {
         if (this == &other) {
             return *this;

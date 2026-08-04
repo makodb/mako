@@ -866,188 +866,27 @@ template <class U> class SerializeAdapter;
 template <class U> class SerializeAdapterRef;
 template <class U> class SerializeAdapterRefMut;
 
-// TODO orphan impl: methods for `v32` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for v32
-void serialize(BinaryWriteArchive& ar) const {
-    auto b = varint_buf_new();
-    const auto bsize = SparseInt::dump32(this->get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
-    ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `v32` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `v64` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for v64
-void serialize(BinaryWriteArchive& ar) const {
-    auto b = varint_buf_new();
-    const auto bsize = SparseInt::dump64(this->get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
-    ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `v64` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `i32` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for i32
-void serialize(BinaryWriteArchive& ar) const {
-    // @unsafe
-    {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(rusty::detail::ptr_or_addr((*this)))));
-        ar.write_bytes(p, rusty::mem::size_of<int32_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `i32` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `i8` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for i8
-void serialize(BinaryWriteArchive& ar) const {
-    // @unsafe
-    {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(rusty::detail::ptr_or_addr((*this)))));
-        ar.write_bytes(p, rusty::mem::size_of<int8_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `i8` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `i16` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for i16
-void serialize(BinaryWriteArchive& ar) const {
-    // @unsafe
-    {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(rusty::detail::ptr_or_addr((*this)))));
-        ar.write_bytes(p, rusty::mem::size_of<int16_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `i16` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `i64` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for i64
-void serialize(BinaryWriteArchive& ar) const {
-    // @unsafe
-    {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(rusty::detail::ptr_or_addr((*this)))));
-        ar.write_bytes(p, rusty::mem::size_of<int64_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `i64` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `u8` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for u8
-void serialize(BinaryWriteArchive& ar) const {
-    // @unsafe
-    {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(rusty::detail::ptr_or_addr((*this)))));
-        ar.write_bytes(p, rusty::mem::size_of<uint8_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `u8` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `u16` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for u16
-void serialize(BinaryWriteArchive& ar) const {
-    // @unsafe
-    {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(rusty::detail::ptr_or_addr((*this)))));
-        ar.write_bytes(p, rusty::mem::size_of<uint16_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `u16` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `u32` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for u32
-void serialize(BinaryWriteArchive& ar) const {
-    // @unsafe
-    {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(rusty::detail::ptr_or_addr((*this)))));
-        ar.write_bytes(p, rusty::mem::size_of<uint32_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `u32` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `u64` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for u64
-void serialize(BinaryWriteArchive& ar) const {
-    // @unsafe
-    {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(rusty::detail::ptr_or_addr((*this)))));
-        ar.write_bytes(p, rusty::mem::size_of<uint64_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `u64` lowered via the Serialize_ free functions above
 
-// TODO orphan impl: methods for `f64` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for f64
-void serialize(BinaryWriteArchive& ar) const {
-    // @unsafe
-    {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(rusty::detail::ptr_or_addr((*this)))));
-        ar.write_bytes(p, rusty::mem::size_of<double>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `f64` lowered via the Serialize_ free functions above
 
 // Extension trait Serialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
@@ -1965,176 +1804,23 @@ template <class U> class WireSerializeAdapter;
 template <class U> class WireSerializeAdapterRef;
 template <class U> class WireSerializeAdapterRefMut;
 
-// TODO orphan impl: methods for `std::list` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::list
-void serialize(BinaryWriteArchive& ar) const {
-    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
-    Serialize_::serialize(v_len, ar);
-    for (auto&& e : rusty::for_in(rusty::iter((*this)))) {
-        Serialize_::serialize(e, ar);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::list` lowered via the WireSerialize_ free functions above
 
-// TODO orphan impl: methods for `Vec` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for Vec
-void serialize(BinaryWriteArchive& ar) const {
-    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len((*this))));
-    Serialize_::serialize(v_len, ar);
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::len((*this))) {
-        Serialize_::serialize((*this)[i], ar);
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `Vec` lowered via the WireSerialize_ free functions above
 
-// TODO orphan impl: methods for `std::vector` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::vector
-void serialize(BinaryWriteArchive& ar) const {
-    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
-    Serialize_::serialize(v_len, ar);
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < this->size()) {
-        Serialize_::serialize((*this)[i], ar);
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::vector` lowered via the WireSerialize_ free functions above
 
-// TODO orphan impl: methods for `std::set` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::set
-void serialize(BinaryWriteArchive& ar) const {
-    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
-    Serialize_::serialize(v_len, ar);
-    for (auto&& e : rusty::for_in(rusty::iter((*this)))) {
-        Serialize_::serialize(e, ar);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::set` lowered via the WireSerialize_ free functions above
 
-// TODO orphan impl: methods for `std::unordered_set` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::unordered_set
-void serialize(BinaryWriteArchive& ar) const {
-    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
-    Serialize_::serialize(v_len, ar);
-    for (auto&& e : rusty::for_in(rusty::iter((*this)))) {
-        Serialize_::serialize(e, ar);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::unordered_set` lowered via the WireSerialize_ free functions above
 
-// TODO orphan impl: methods for `std::map` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::map
-void serialize(BinaryWriteArchive& ar) const {
-    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
-    Serialize_::serialize(v_len, ar);
-    for (auto&& kv : rusty::for_in(rusty::iter((*this)))) {
-        Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.first); }) { return (__r.first); } else if constexpr (requires { (__r.first_field); }) { return (__r.first_field); } else if constexpr (requires { ((*__r).first); }) { return ((*__r).first); } else { return ((*__r).first_field); } }(kv), ar);
-        Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.second); }) { return (__r.second); } else if constexpr (requires { (__r.second_field); }) { return (__r.second_field); } else if constexpr (requires { ((*__r).second); }) { return ((*__r).second); } else { return ((*__r).second_field); } }(kv), ar);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::map` lowered via the WireSerialize_ free functions above
 
-// TODO orphan impl: methods for `std::unordered_map` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::unordered_map
-void serialize(BinaryWriteArchive& ar) const {
-    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(this->size()));
-    Serialize_::serialize(v_len, ar);
-    for (auto&& kv : rusty::for_in(rusty::iter((*this)))) {
-        Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.first); }) { return (__r.first); } else if constexpr (requires { (__r.first_field); }) { return (__r.first_field); } else if constexpr (requires { ((*__r).first); }) { return ((*__r).first); } else { return ((*__r).first_field); } }(kv), ar);
-        Serialize_::serialize([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.second); }) { return (__r.second); } else if constexpr (requires { (__r.second_field); }) { return (__r.second_field); } else if constexpr (requires { ((*__r).second); }) { return ((*__r).second); } else { return ((*__r).second_field); } }(kv), ar);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::unordered_map` lowered via the WireSerialize_ free functions above
 
-// TODO orphan impl: methods for `rusty::BTreeSet` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for rusty::BTreeSet
-void serialize(BinaryWriteArchive& ar) const {
-    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len((*this))));
-    Serialize_::serialize(v_len, ar);
-    auto it = rusty::iter((*this));
-    while (true) {
-        auto e = it.next();
-        if (e.is_none()) {
-            break;
-        }
-        Serialize_::serialize(e.unwrap(), ar);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `rusty::BTreeSet` lowered via the WireSerialize_ free functions above
 
-// TODO orphan impl: methods for `rusty::BTreeMap` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for rusty::BTreeMap
-void serialize(BinaryWriteArchive& ar) const {
-    rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len((*this))));
-    Serialize_::serialize(v_len, ar);
-    auto it = rusty::iter((*this));
-    while (true) {
-        auto e = it.next();
-        if (e.is_none()) {
-            break;
-        }
-        const auto kv = e.unwrap();
-        Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
-        Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `rusty::BTreeMap` lowered via the WireSerialize_ free functions above
 
 // Extension trait WireSerialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
@@ -3063,473 +2749,51 @@ template <class U> class DeserializeAdapter;
 template <class U> class DeserializeAdapterRef;
 template <class U> class DeserializeAdapterRefMut;
 
-// TODO orphan impl: methods for `v32` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for v32
-void deserialize(BinaryReadArchive& ar) {
-    auto b = varint_buf_new();
-    verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
-    const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
-    if (rusty::detail::deref_if_pointer_like(total) > 1) {
-        verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
-    }
-    this->set(SparseInt::load32(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `v32` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `v64` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for v64
-void deserialize(BinaryReadArchive& ar) {
-    auto b = varint_buf_new();
-    verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
-    const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
-    if (rusty::detail::deref_if_pointer_like(total) > 1) {
-        verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
-    }
-    this->set(SparseInt::load64(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `v64` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `i32` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for i32
-void deserialize(BinaryReadArchive& ar) {
-    // @unsafe
-    {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(rusty::detail::ptr_or_addr((*this))))));
-        ar.read_or_abort(p, rusty::mem::size_of<int32_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `i32` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `i8` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for i8
-void deserialize(BinaryReadArchive& ar) {
-    // @unsafe
-    {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(rusty::detail::ptr_or_addr((*this))))));
-        ar.read_or_abort(p, rusty::mem::size_of<int8_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `i8` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `i16` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for i16
-void deserialize(BinaryReadArchive& ar) {
-    // @unsafe
-    {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(rusty::detail::ptr_or_addr((*this))))));
-        ar.read_or_abort(p, rusty::mem::size_of<int16_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `i16` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `i64` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for i64
-void deserialize(BinaryReadArchive& ar) {
-    // @unsafe
-    {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(rusty::detail::ptr_or_addr((*this))))));
-        ar.read_or_abort(p, rusty::mem::size_of<int64_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `i64` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `u8` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for u8
-void deserialize(BinaryReadArchive& ar) {
-    // @unsafe
-    {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(rusty::detail::ptr_or_addr((*this))))));
-        ar.read_or_abort(p, rusty::mem::size_of<uint8_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `u8` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `u16` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for u16
-void deserialize(BinaryReadArchive& ar) {
-    // @unsafe
-    {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(rusty::detail::ptr_or_addr((*this))))));
-        ar.read_or_abort(p, rusty::mem::size_of<uint16_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `u16` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `u32` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for u32
-void deserialize(BinaryReadArchive& ar) {
-    // @unsafe
-    {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(rusty::detail::ptr_or_addr((*this))))));
-        ar.read_or_abort(p, rusty::mem::size_of<uint32_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `u32` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `u64` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for u64
-void deserialize(BinaryReadArchive& ar) {
-    // @unsafe
-    {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(rusty::detail::ptr_or_addr((*this))))));
-        ar.read_or_abort(p, rusty::mem::size_of<uint64_t>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `u64` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `f64` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for f64
-void deserialize(BinaryReadArchive& ar) {
-    // @unsafe
-    {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(rusty::detail::ptr_or_addr((*this))))));
-        ar.read_or_abort(p, rusty::mem::size_of<double>());
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `f64` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `std::pair` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::pair
-void deserialize(BinaryReadArchive& ar) {
-    Deserialize_::deserialize(this->first, ar);
-    Deserialize_::deserialize(this->second, ar);
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::pair` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `Vec` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for Vec
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    this->reserve(std::move(n));
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        T elem = rusty::default_like<T>();
-        Deserialize_::deserialize(elem, ar);
-        this->push(std::move(elem));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `Vec` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `std::vector` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::vector
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    this->reserve(std::move(n));
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        T elem = rusty::default_like<T>();
-        Deserialize_::deserialize(elem, ar);
-        this->push_back(std::move(elem));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::vector` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `std::list` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::list
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        T elem = rusty::default_like<T>();
-        Deserialize_::deserialize(elem, ar);
-        this->push_back(std::move(elem));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::list` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `rusty::BTreeSet` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for rusty::BTreeSet
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        T elem = rusty::default_like<T>();
-        Deserialize_::deserialize(elem, ar);
-        this->insert(std::move(elem));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `rusty::BTreeSet` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `std::set` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::set
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        T elem = rusty::default_like<T>();
-        Deserialize_::deserialize(elem, ar);
-        this->insert(std::move(elem));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::set` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `rusty::HashSet` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for rusty::HashSet
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        T elem = rusty::default_like<T>();
-        Deserialize_::deserialize(elem, ar);
-        this->insert(std::move(elem));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `rusty::HashSet` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `std::unordered_set` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::unordered_set
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        T elem = rusty::default_like<T>();
-        Deserialize_::deserialize(elem, ar);
-        this->insert(std::move(elem));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::unordered_set` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `rusty::BTreeMap` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for rusty::BTreeMap
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        K key = rusty::default_like<K>();
-        V value = rusty::default_like<V>();
-        Deserialize_::deserialize(key, ar);
-        Deserialize_::deserialize(value, ar);
-        this->insert(std::move(key), std::move(value));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `rusty::BTreeMap` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `std::map` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::map
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        K key = rusty::default_like<K>();
-        V value = rusty::default_like<V>();
-        Deserialize_::deserialize(key, ar);
-        Deserialize_::deserialize(value, ar);
-        this->emplace(std::move(key), std::move(value));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::map` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `rusty::HashMap` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for rusty::HashMap
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        K key = rusty::default_like<K>();
-        V value = rusty::default_like<V>();
-        Deserialize_::deserialize(key, ar);
-        Deserialize_::deserialize(value, ar);
-        this->insert(std::move(key), std::move(value));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `rusty::HashMap` lowered via the Deserialize_ free functions above
 
-// TODO orphan impl: methods for `std::unordered_map` were declared in this file but the
-// host type lives in another module / TU. These methods are emitted as
-// free-standing template functions that reference `this`/`(*this)`,
-// which is not valid C++ outside a member function. Move them into the
-// host type's struct body, or rewrite `this`/`(*this)` to an explicit
-// `self_` parameter and qualify all call sites accordingly.
-#if 0  // patcher: orphan-impl block stubbed
-// Methods for std::unordered_map
-void deserialize(BinaryReadArchive& ar) {
-    auto v_len = v64::new_(static_cast<int64_t>(0));
-    Deserialize_::deserialize(v_len, ar);
-    this->clear();
-    const size_t n = static_cast<size_t>(v_len.get());
-    size_t i = static_cast<size_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        K key = rusty::default_like<K>();
-        V value = rusty::default_like<V>();
-        Deserialize_::deserialize(key, ar);
-        Deserialize_::deserialize(value, ar);
-        this->emplace(std::move(key), std::move(value));
-        i += static_cast<size_t>(1);
-    }
-}
-#endif  // patcher: end orphan-impl stub
+// trait impl for `std::unordered_map` lowered via the Deserialize_ free functions above
 
 // Extension trait Deserialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
