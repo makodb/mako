@@ -5445,41 +5445,82 @@ size_t clientpool_get_healthy_client_count(const ClientPool& self_, const std::s
 /*RUSTYCPP:GEN-END id=client.27*/
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops + is_client_healthy are @safe.
-size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::string& addr) {
-  // Config snapshot BEFORE `state_`, per the lock-order invariant.
-  auto cfg = self.pool_config();
-  auto guard = self.state_.lock().unwrap();
-  size_t removed = 0;
-  auto clients_opt = (*guard).cache.get_mut(addr);
-  if (clients_opt.is_some()) {
-    // BTreeMap::get returns `Option<V&>`; unwrap() yields a
-    // reference. Use `.` instead of `->`, drop the `*` deref.
-    auto& clients = clients_opt.unwrap();
+// One-step typed &mut unwrap (§7.37) binds the cached Vec by reference.
+#if RUSTYCPP_RUST
+fn clientpool_remove_unhealthy_clients(self_: &ClientPool, addr: &std::string) -> usize {
+    // Config snapshot BEFORE `state_`, per the lock-order invariant.
+    let cfg: PoolConfig = self_.pool_config();
+    let mut guard = self_.state_.lock().unwrap();
+    let mut removed: usize = 0usize;
+    // Probe with get(): an intermediate `let opt = ...get_mut(..)` binding
+    // lowers to `auto&` on a temporary Option (won't compile). The chained
+    // one-step unwrap below binds the inner &mut directly (§7.37).
+    let has_entry: bool = (*guard).cache.get(addr).is_some();
+    if has_entry {
+        let clients: &mut Vec<Arc<Client>> = (*guard).cache.get_mut(addr).unwrap();
+        // Remove unhealthy clients, but keep at least min_connections.
+        let mut kept: Vec<Arc<Client>> = Vec::<Arc<Client>>();
+        kept.reserve((*clients).len());
+        let mut i: usize = 0usize;
+        while i < (*clients).len() {
+            let client: &Arc<Client> = &(*clients)[i];
+            if (*clients).len() - removed <= cfg.min_connections as usize {
+                kept.push(client.clone());
+                i += 1usize;
+                continue;
+            }
+            if !clientpool_is_client_healthy_with(cfg, client) {
+                (*client).close();
+                removed += 1usize;
+            } else {
+                kept.push(client.clone());
+            }
+            i += 1usize;
+        }
+        *clients = kept;
 
-    // Remove unhealthy clients, but keep at least min_connections.
-    rusty::Vec<rusty::Arc<Client>> kept;
-    kept.reserve(clients.len());
-    for (const auto& client : clients) {
-      if (clients.len() - removed <= static_cast<size_t>(cfg.min_connections)) {
-        kept.push(client.clone());
-        continue;
-      }
-      if (!clientpool_is_client_healthy_with(cfg, client)) {
-        client->close();
-        removed++;
-      } else {
-        kept.push(client.clone());
-      }
+        // Remove empty entries from cache
+        if (*clients).is_empty() {
+            (*guard).cache.remove(addr);
+        }
     }
-    clients = std::move(kept);
-
-    // Remove empty entries from cache
-    if (clients.is_empty()) {
-      (*guard).cache.remove(addr);
-    }
-  }
-  return removed;
+    removed
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.28 version=1 rust_sha256=ed9ca5462df4cb50ecf1bc77a1c62a6d62febedc655a5d7c411712d82dcea56f*/
+size_t clientpool_remove_unhealthy_clients(const ClientPool& self_, const std::string& addr) {
+    const PoolConfig cfg = self_.pool_config();
+    auto&& guard = rusty::deref_call(self_.state_.lock(), rusty::detail::__mdisp_unwrap{});
+    size_t removed = static_cast<size_t>(0);
+    const bool has_entry = (rusty::detail::deref_if_pointer_like(guard)).cache.get(addr).is_some();
+    if (has_entry) {
+        rusty::Vec<rusty::Arc<Client>>& clients = (rusty::detail::deref_if_pointer_like(guard)).cache.get_mut(addr).unwrap();
+        rusty::Vec<rusty::Arc<Client>> kept = rusty::Vec<rusty::Arc<Client>>();
+        kept.reserve(rusty::len((clients)));
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len((clients))) {
+            const rusty::Arc<Client>& client = (clients)[i];
+            if ((rusty::len((clients)) - rusty::detail::deref_if_pointer_like(removed)) <= (static_cast<size_t>(cfg.min_connections))) {
+                kept.push(rusty::clone(client));
+                i += static_cast<size_t>(1);
+                continue;
+            }
+            if (rusty::detail::rust_not(clientpool_is_client_healthy_with(std::move(cfg), client))) {
+                ((rusty::detail::deref_if_pointer_like(client))).close();
+                removed += static_cast<size_t>(1);
+            } else {
+                kept.push(rusty::clone(client));
+            }
+            i += static_cast<size_t>(1);
+        }
+        clients = std::move(kept);
+        if (rusty::is_empty(((clients)))) {
+            (rusty::detail::deref_if_pointer_like(guard)).cache.remove(addr);
+        }
+    }
+    return std::move(removed);
+}
+/*RUSTYCPP:GEN-END id=client.28*/
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops + is_idle/close are @safe.
 size_t clientpool_close_idle_clients(const ClientPool& self, const std::string& addr, uint64_t current_time_ms) {
