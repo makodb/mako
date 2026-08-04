@@ -5523,43 +5523,86 @@ size_t clientpool_remove_unhealthy_clients(const ClientPool& self_, const std::s
 /*RUSTYCPP:GEN-END id=client.28*/
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops + is_idle/close are @safe.
-size_t clientpool_close_idle_clients(const ClientPool& self, const std::string& addr, uint64_t current_time_ms) {
-  auto cfg = self.pool_config();
+// Twin of remove_unhealthy_clients above (idle predicate instead of
+// health); same get() probe + chained one-step &mut unwrap (§7.37).
+#if RUSTYCPP_RUST
+fn clientpool_close_idle_clients(self_: &ClientPool, addr: &std::string, current_time_ms: u64) -> usize {
+    let cfg: PoolConfig = self_.pool_config();
 
-  // If idle timeout is 0, no timeout
-  if (cfg.idle_timeout_ms == 0) {
-    return 0;
-  }
-
-  auto guard = self.state_.lock().unwrap();
-  size_t closed = 0;
-  auto clients_opt = (*guard).cache.get_mut(addr);
-  if (clients_opt.is_some()) {
-    // BTreeMap::get returns `Option<V&>`.
-    auto& clients = clients_opt.unwrap();
-
-    rusty::Vec<rusty::Arc<Client>> kept;
-    kept.reserve(clients.len());
-    for (const auto& client : clients) {
-      if (clients.len() - closed <= static_cast<size_t>(cfg.min_connections)) {
-        kept.push(client.clone());
-        continue;
-      }
-      if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
-        client->close();
-        closed++;
-      } else {
-        kept.push(client.clone());
-      }
+    // If idle timeout is 0, no timeout
+    if cfg.idle_timeout_ms == 0u64 {
+        return 0usize;
     }
-    clients = std::move(kept);
 
-    if (clients.is_empty()) {
-      (*guard).cache.remove(addr);
+    let mut guard = self_.state_.lock().unwrap();
+    let mut closed: usize = 0usize;
+    let has_entry: bool = (*guard).cache.get(addr).is_some();
+    if has_entry {
+        let clients: &mut Vec<Arc<Client>> = (*guard).cache.get_mut(addr).unwrap();
+        let mut kept: Vec<Arc<Client>> = Vec::<Arc<Client>>();
+        kept.reserve((*clients).len());
+        let mut i: usize = 0usize;
+        while i < (*clients).len() {
+            let client: &Arc<Client> = &(*clients)[i];
+            if (*clients).len() - closed <= cfg.min_connections as usize {
+                kept.push(client.clone());
+                i += 1usize;
+                continue;
+            }
+            if (*client).is_idle(cfg.idle_timeout_ms, current_time_ms) {
+                (*client).close();
+                closed += 1usize;
+            } else {
+                kept.push(client.clone());
+            }
+            i += 1usize;
+        }
+        *clients = kept;
+
+        if (*clients).is_empty() {
+            (*guard).cache.remove(addr);
+        }
     }
-  }
-  return closed;
+    closed
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.29 version=1 rust_sha256=93c98fdb8228522e93026994afd257100d1833965aee36b5ae2e9530101bf350*/
+size_t clientpool_close_idle_clients(const ClientPool& self_, const std::string& addr, uint64_t current_time_ms) {
+    const PoolConfig cfg = self_.pool_config();
+    if (rusty::detail::deref_if_pointer_like(cfg.idle_timeout_ms) == static_cast<uint64_t>(0)) {
+        return static_cast<size_t>(0);
+    }
+    auto&& guard = rusty::deref_call(self_.state_.lock(), rusty::detail::__mdisp_unwrap{});
+    size_t closed = static_cast<size_t>(0);
+    const bool has_entry = (rusty::detail::deref_if_pointer_like(guard)).cache.get(addr).is_some();
+    if (has_entry) {
+        rusty::Vec<rusty::Arc<Client>>& clients = (rusty::detail::deref_if_pointer_like(guard)).cache.get_mut(addr).unwrap();
+        rusty::Vec<rusty::Arc<Client>> kept = rusty::Vec<rusty::Arc<Client>>();
+        kept.reserve(rusty::len((clients)));
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len((clients))) {
+            const rusty::Arc<Client>& client = (clients)[i];
+            if ((rusty::len((clients)) - rusty::detail::deref_if_pointer_like(closed)) <= (static_cast<size_t>(cfg.min_connections))) {
+                kept.push(rusty::clone(client));
+                i += static_cast<size_t>(1);
+                continue;
+            }
+            if (((rusty::detail::deref_if_pointer_like(client))).is_idle(std::move(cfg.idle_timeout_ms), std::move(current_time_ms))) {
+                ((rusty::detail::deref_if_pointer_like(client))).close();
+                closed += static_cast<size_t>(1);
+            } else {
+                kept.push(rusty::clone(client));
+            }
+            i += static_cast<size_t>(1);
+        }
+        clients = std::move(kept);
+        if (rusty::is_empty(((clients)))) {
+            (rusty::detail::deref_if_pointer_like(guard)).cache.remove(addr);
+        }
+    }
+    return std::move(closed);
+}
+/*RUSTYCPP:GEN-END id=client.29*/
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops are @safe.
 size_t clientpool_remove_all_unhealthy(const ClientPool& self) {
