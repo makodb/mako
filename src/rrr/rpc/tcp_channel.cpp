@@ -121,8 +121,12 @@ void         tcpconn_handle_error(const TcpConnection& self);
 // literal can't spell a default-constructed std::vector / FrameStreamReader
 // / On*Callback inline, so the ctor field inits call these. (`OwnedFd`,
 // `Cell`, `Option`, and `rusty::Mutex<std::vector<u8>>` it spells directly.)
+// Default-value factories for TcpConnection's #[cpp_ctor] literal: a
+// bare Default::default() mis-infers in THIS ctor's field positions
+// (works in TcpListener's — parameterized-ctor inference gap), and
+// #[cpp_ctor] bodies must stay pure literals, so typed lets can't help.
+// tcpconn_default_inbound died (FrameStreamReader::new() lowers fine).
 inline std::vector<std::uint8_t> tcpconn_empty_buf()        { return {}; }
-inline FrameStreamReader         tcpconn_default_inbound()  { return FrameStreamReader::new_(); }
 inline OnFrameCallback           tcpconn_default_on_frame() { return OnFrameCallback{}; }
 inline OnClosedCallback          tcpconn_default_on_closed(){ return OnClosedCallback{}; }
 inline OnErrorCallback           tcpconn_default_on_error() { return OnErrorCallback{}; }
@@ -169,7 +173,7 @@ impl TcpConnection {
             peer_address_: peer_address,
             outbound_high_water_: kTcpConnectionOutboundHighWaterDefault,
             outbound_: rusty::Mutex::<std::vector<u8>>::new(tcpconn_empty_buf()),
-            inbound_: RefCell::new(tcpconn_default_inbound()),
+            inbound_: RefCell::new(FrameStreamReader::new()),
             closed_: Cell::new(false),
             on_closed_fired_: Cell::new(false),
             pending_write_update_: Cell::new(false),
@@ -263,7 +267,7 @@ impl TcpConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=4ee531d879e49851da30de1488fbe5a907953e79cf21651a4c352d349627d2ba*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=fef3dd0297308772d5cff2343b6d361cd6f17ee3497bea50c11b1a4520410cac*/
 struct TcpConnection;
 
 struct TcpConnection {
@@ -306,7 +310,7 @@ TcpConnection::TcpConnection(int32_t fd, std::string peer_address)
     , peer_address_(std::move(peer_address))
     , outbound_high_water_(kTcpConnectionOutboundHighWaterDefault)
     , outbound_(rusty::Mutex<std::vector<uint8_t>>::new_(tcpconn_empty_buf()))
-    , inbound_(rusty::RefCell<FrameStreamReader>::new_(tcpconn_default_inbound()))
+    , inbound_(rusty::RefCell<FrameStreamReader>::new_(FrameStreamReader::new_()))
     , closed_(rusty::Cell<bool>::new_(false))
     , on_closed_fired_(rusty::Cell<bool>::new_(false))
     , pending_write_update_(rusty::Cell<bool>::new_(false))
@@ -734,7 +738,7 @@ impl TcpListener {
             poll_thread_: None,
             self_weak_: None,
             on_accept_: rusty::Mutex::<OnAcceptCallback>::new(Default::default()),
-            on_error_: rusty::Mutex::<OnErrorCallback>::new(Default::default()),
+            on_error_: rusty::Mutex::<OnErrorCallback>::new(tcpconn_default_on_error()),
         }
     }
 
@@ -868,7 +872,7 @@ impl TcpListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=e3b5f94302de2fb4a74397b85007ae87d4067aabe238bfeb4c1c1c34d1c4b1fc*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=5ec5e9087bcc3f2c0cae06b9ba4b850d0f6da00b6f5441588b490788fece3426*/
 struct TcpListener;
 
 struct TcpListener {
@@ -908,7 +912,7 @@ TcpListener::TcpListener()
     , poll_thread_(rusty::Option<rusty::Arc<PollThread>>{rusty::None})
     , self_weak_(rusty::Option<rusty::sync::Weak<TcpListener>>{rusty::None})
     , on_accept_(rusty::Mutex<OnAcceptCallback>::new_(rusty::default_like<OnAcceptCallback>()))
-    , on_error_(rusty::Mutex<OnErrorCallback>::new_(rusty::default_like<OnErrorCallback>()))
+    , on_error_(rusty::Mutex<OnErrorCallback>::new_(tcpconn_default_on_error()))
 {}
 
 ChannelError TcpListener::listen(std::string_view addr) const {
@@ -2500,17 +2504,34 @@ ConnectResult tcp_factory_connect(const TcpFactory& fac, std::string_view addr) 
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.25*/
 
-rusty::Option<ChannelListenerProxy> tcp_factory_make_listener(const TcpFactory& self) {
-    auto listener = rusty::Arc<TcpListener>::make();
-    // Wire the listener up with the poll thread + a weak self-ref so
-    // it can self-register on a successful `listen(addr)` and so
-    // accepted connections are auto-registered too.
+// Wire the listener up with the poll thread + a weak self-ref so it can
+// self-register on a successful `listen(addr)` and so accepted
+// connections are auto-registered too. get_mut, not const_cast: the Arc
+// was just made and is still uniquely owned (same mint-window idiom as
+// the server accept path).
+#if RUSTYCPP_RUST
+fn tcp_factory_make_listener(self_: &TcpFactory) -> Option<ChannelListenerProxy> {
+    let mut listener: Arc<TcpListener> = Arc::<TcpListener>::make();
     {
-        auto& mut_l = const_cast<TcpListener&>(*listener.get());
-        mut_l.set_poll_thread(self.poll_thread_.clone());
+        let opt = listener.get_mut();
+        let mut_l: &mut TcpListener = opt.unwrap();
+        mut_l.set_poll_thread(self_.poll_thread_.clone());
         mut_l.set_self_weak(rusty::sync::downgrade(listener));
     }
-    return rusty::Some(make_tcp_listener_channel_proxy(std::move(listener)));
+    Some(make_tcp_listener_channel_proxy(listener))
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.30 version=1 rust_sha256=534aab19a50835b3e07abb6e136d04b133172a8362fe0ce919ab3634184c462c*/
+rusty::Option<ChannelListenerProxy> tcp_factory_make_listener(const TcpFactory& self_) {
+    rusty::Arc<TcpListener> listener = rusty::Arc<TcpListener>::make();
+    {
+        auto opt = listener.get_mut();
+        TcpListener& mut_l = opt.unwrap();
+        mut_l.set_poll_thread(rusty::clone(self_.poll_thread_));
+        mut_l.set_self_weak(rusty::sync::downgrade(std::move(listener)));
+    }
+    return rusty::Option<ChannelListenerProxy>(make_tcp_listener_channel_proxy(std::move(listener)));
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.30*/
 
 }  // namespace rrr
