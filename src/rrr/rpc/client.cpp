@@ -5363,21 +5363,41 @@ RpcError clientconn_map_system_error(int32_t err) {
 // ClientPool implementation
 // ============================================================================
 
-// @safe - pure predicate over a config snapshot + Client metrics.
-bool clientpool_is_client_healthy_with(PoolConfig cfg, const rusty::Arc<Client>& client) {
-  if (!cfg.health_check_enabled) {
-    return true;
-  }
-  if (!client->connected()) {
-    return false;
-  }
-  const uint64_t requests_sent = client->metrics().requests_sent();
-  if (requests_sent < cfg.min_requests_for_health) {
-    return true;
-  }
-  const uint64_t success_rate = client->metrics().success_rate_percent();
-  return success_rate >= cfg.unhealthy_threshold_percent;
+// Pure predicate over a config snapshot + Client metrics — no shared
+// state touched, so this one carries none of the pool's unwrap-copy
+// hazard (which lives in the map-walking helpers below).
+#if RUSTYCPP_RUST
+fn clientpool_is_client_healthy_with(cfg: PoolConfig, client: &rusty::Arc<Client>) -> bool {
+    if !cfg.health_check_enabled {
+        return true;
+    }
+    if !(*client).connected() {
+        return false;
+    }
+    let requests_sent: u64 = (*client).metrics().requests_sent();
+    if requests_sent < cfg.min_requests_for_health {
+        return true;
+    }
+    let success_rate: u64 = (*client).metrics().success_rate_percent();
+    success_rate >= cfg.unhealthy_threshold_percent
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.26 version=1 rust_sha256=e08d5a2d942633516a58801155559ac18403638e228e3c3fa262c54abc8983a8*/
+bool clientpool_is_client_healthy_with(PoolConfig cfg, const rusty::Arc<Client>& client) {
+    if (rusty::detail::rust_not(cfg.health_check_enabled)) {
+        return true;
+    }
+    if (rusty::detail::rust_not(((rusty::detail::deref_if_pointer_like(client))).connected())) {
+        return false;
+    }
+    const uint64_t requests_sent = ((rusty::detail::deref_if_pointer_like(client))).metrics().requests_sent();
+    if (rusty::detail::deref_if_pointer_like(requests_sent) < rusty::detail::deref_if_pointer_like(cfg.min_requests_for_health)) {
+        return true;
+    }
+    const uint64_t success_rate = ((rusty::detail::deref_if_pointer_like(client))).metrics().success_rate_percent();
+    return rusty::detail::deref_if_pointer_like(success_rate) >= rusty::detail::deref_if_pointer_like(cfg.unhealthy_threshold_percent);
+}
+/*RUSTYCPP:GEN-END id=client.26*/
 
 // @safe - rusty::Mutex::lock + BTreeMap ops + is_client_healthy are all @safe.
 // Delegated (not inline DSL): the inline `let clients = opt.unwrap()` lowered
