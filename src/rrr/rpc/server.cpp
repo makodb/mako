@@ -313,9 +313,16 @@ using ServiceProxy = rusty::Box<Service>;
 
 // Pass-through factory for services that already inherit Service.
 // @safe - Box move.
-inline ServiceProxy make_service_proxy_from_box(rusty::Box<Service> svc) {
-  return svc;
+#if RUSTYCPP_RUST
+fn make_service_proxy_from_box(svc: Box<Service>) -> ServiceProxy {
+    svc
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.5 version=1 rust_sha256=f9d7e881e8cffa3964df38067d765e145057dc24b0bc47c67c80d486b1bc0335*/
+ServiceProxy make_service_proxy_from_box(rusty::Box<Service> svc) {
+    return std::move(svc);
+}
+/*RUSTYCPP:GEN-END id=server.5*/
 
 // Concept matching the structural shape of a service: the duck-typed
 // `__reg_to__` / `__dispatch__` pair. Generated rcc_rpc.h services

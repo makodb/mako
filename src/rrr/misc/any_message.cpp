@@ -391,30 +391,26 @@ rusty::Mutex<AnyMessageRegistryMap>& registry() {
 
 }  // namespace
 
-// @unsafe - rusty::Mutex::lock().unwrap() + HashMap::get / contains_key /
-// insert pattern not yet recognized as @safe here (annotation
-// discovery limitation across the AnyMessageRegistryMap struct).
-int any_message_registry::register_type(std::string name,
-                                      std::type_index ti,
-                                      Factory factory) {
-  auto guard = registry().lock().unwrap();
-  size_t hash = ti.hash_code();
-  verify((*guard).by_name.get(name).is_none() &&
-         "AnyMessageRegistry: name already registered.");
-  if ((*guard).name_by_type_hash.get(hash).is_none()) {
-    (*guard).name_by_type_hash.insert(hash, name);
-  }
-  (*guard).by_name.insert(std::move(name), std::move(factory));
-  return 0;
-}
 
-// Registry queries, authored as inline Rust DSL (register_type stays a
-// hand-written kernel above: its body must use the `name` parameter
-// twice across two map inserts, which Rust move semantics reject).
+// Registry API, authored as inline Rust DSL (register_type's old
+// "name used twice" kernel reason dissolves with name.clone(); the
+// duplicate-name verify loses its string-literal message — diagnostic
+// only).
 // Reopened namespace: the DSL emits unqualified definitions, which
 // must land inside any_message_registry to define the declared API.
 namespace any_message_registry {
 #if RUSTYCPP_RUST
+fn register_type(name: std::string, ti: std::type_index, factory: Factory) -> i32 {
+    let mut guard = registry().lock().unwrap();
+    let hash: usize = ti.hash_code();
+    verify((*guard).by_name.get(&name).is_none());
+    if (*guard).name_by_type_hash.get(&hash).is_none() {
+        (*guard).name_by_type_hash.insert(hash, name.clone());
+    }
+    (*guard).by_name.insert(name, factory);
+    0
+}
+
 fn create(name: &std::string) -> Option<SerializableProxy> {
     let mut guard = registry().lock().unwrap();
     let entry = (*guard).by_name.get(name);
@@ -449,11 +445,22 @@ fn clear_for_testing() {
     (*guard).name_by_type_hash.clear();
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.registry_queries version=1 rust_sha256=9b1f2cd57d3ac02d74868301f0d96573cca643897adf77554d84772307f45727*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.registry_queries version=1 rust_sha256=74c3c7e34a747d74f8042b369ed48f4fff809431a70c6cefb3ed90d95fc3ca77*/
 std::string name_for_type_owned(std::type_index ti);
 bool is_registered_name(const std::string& name);
 bool is_registered_type(std::type_index ti);
 void clear_for_testing();
+
+int32_t register_type(std::string name, std::type_index ti, Factory factory) {
+    auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
+    const size_t hash = ti.hash_code();
+    verify((rusty::detail::deref_if_pointer_like(guard)).by_name.get(name).is_none());
+    if ((rusty::detail::deref_if_pointer_like(guard)).name_by_type_hash.get(hash).is_none()) {
+        (rusty::detail::deref_if_pointer_like(guard)).name_by_type_hash.insert(std::move(hash), rusty::clone(name));
+    }
+    (rusty::detail::deref_if_pointer_like(guard)).by_name.insert(std::move(name), std::move(factory));
+    return static_cast<int32_t>(0);
+}
 
 rusty::Option<SerializableProxy> create(const std::string& name) {
     auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
