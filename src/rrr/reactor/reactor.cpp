@@ -85,6 +85,7 @@ RUSTY_METHOD_DISPATCH(is_composite_event)
 RUSTY_METHOD_DISPATCH(is_ready)
 RUSTY_METHOD_DISPATCH(push_back)
 RUSTY_METHOD_DISPATCH(retain)
+RUSTY_METHOD_DISPATCH(set_self)
 RUSTY_METHOD_DISPATCH(size)
 RUSTY_METHOD_DISPATCH(upgrade)
 } } // namespace rusty::detail (issue #31 deref_call dispatch)
@@ -2860,28 +2861,94 @@ inline void reactor_spawn_stackless_task_with_result(const Reactor& self, rusty:
 //      under sustained event churn (e.g. one IntEvent per recv_frame).
 // Cross-thread notification reaches an event via its weak_ptr self-ref
 // (get_self()), so a pruned/freed event is observed as null — no use-after-free.
+// Shared post-mint registration, as inline Rust DSL. Unique-owner init
+// window: ev is freshly minted (strong_count 1), so get_mut() gives the
+// one mutable access needed to stamp __debug_creator and install the
+// self weak-ref before ev is ever shared. The upcast to
+// Arc<EventPollable> is a plain typed let — rusty::Arc's converting
+// ctor does the derived->base hop (sync::Weak has none of its own).
+// The canonical strong ref lands in all_events_; finished sole-owned
+// events are pruned amortized (bounded growth).
+#if RUSTYCPP_RUST
+fn reactor_setup_sp_event<Ev>(ev0: Arc<Ev>) -> Arc<Ev> {
+    let mut ev = ev0;
+    {
+        let opt = ev.get_mut();
+        verify(opt.is_some());
+        let m: &mut Ev = opt.unwrap();
+        m.state_.__debug_creator = 1;
+        let base: rusty::Arc<EventPollable> = ev.clone();
+        m.set_self(rusty::sync::downgrade(base));
+    }
+    let reactor = Reactor::get_reactor();
+    {
+        let stored: rusty::Arc<EventPollable> = ev.clone();
+        let mut guard = (*reactor).all_events_.borrow_mut();
+        (*guard).push_back(stored);
+    }
+    (*reactor).prune_finished_events();
+    ev
+}
+
+// Per-type creation entry points (the event_make dispatcher's named
+// branches, one honest factory each — the callsite-rewrite campaign
+// migrates reactor_create_sp_event<Ev> sites onto these).
+fn create_sp_int_event(target: i32) -> Arc<IntEvent> {
+    reactor_setup_sp_event::<IntEvent>(int_event_make(target))
+}
+
+fn create_sp_timeout_event(wait_us: u64) -> Arc<TimeoutEvent> {
+    reactor_setup_sp_event::<TimeoutEvent>(timeout_event_make(wait_us))
+}
+
+fn create_sp_never_event() -> Arc<NeverEvent> {
+    reactor_setup_sp_event::<NeverEvent>(never_event_make())
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.26 version=1 rust_sha256=540c20c6d1e2bd0b5e5746c8fd094d93dd1af7c83c46fa8349607a7ecbb073dd*/
+template<typename Ev>
+rusty::Arc<Ev> reactor_setup_sp_event(rusty::Arc<Ev> ev0);
+
+template<typename Ev>
+rusty::Arc<Ev> reactor_setup_sp_event(rusty::Arc<Ev> ev0) {
+    auto ev = std::move(ev0);
+    {
+        auto opt = ev.get_mut();
+        verify(opt.is_some());
+        Ev& m = opt.unwrap();
+        m.state_.__debug_creator = 1;
+        const rusty::Arc<EventPollable> base = rusty::clone(ev);
+        rusty::deref_call(m, rusty::detail::__mdisp_set_self{}, rusty::sync::downgrade(std::move(base)));
+    }
+    const auto reactor = Reactor::get_reactor();
+    {
+        rusty::Arc<EventPollable> stored = rusty::clone(ev);
+        auto&& guard = (rusty::detail::deref_if_pointer_like(reactor)).all_events_.borrow_mut();
+        ((rusty::detail::deref_if_pointer_like(guard))).push_back(std::move(stored));
+    }
+    ((rusty::detail::deref_if_pointer_like(reactor))).prune_finished_events();
+    return std::move(ev);
+}
+
+rusty::Arc<IntEvent> create_sp_int_event(int32_t target) {
+    return reactor_setup_sp_event<IntEvent>(int_event_make(std::move(target)));
+}
+
+rusty::Arc<TimeoutEvent> create_sp_timeout_event(uint64_t wait_us) {
+    return reactor_setup_sp_event<TimeoutEvent>(timeout_event_make(std::move(wait_us)));
+}
+
+rusty::Arc<NeverEvent> create_sp_never_event() {
+    return reactor_setup_sp_event<NeverEvent>(never_event_make());
+}
+/*RUSTYCPP:GEN-END id=reactor.26*/
+
+// Variadic dispatch entry (shrinks as call sites migrate to the
+// per-type factories above; the generic tail stays for BoxEvent<T> and
+// QuorumEvent subclasses).
 template <typename Ev, typename... Args>
 inline rusty::Arc<Ev> reactor_create_sp_event(Args&&... args) {  // @unsafe
-  auto ev = event_make<Ev>(args...);
-  // Unique-owner init window: ev is freshly minted (strong_count 1),
-  // so get_mut() gives the one mutable access needed to stamp
-  // __debug_creator and install the self weak-ref before ev is ever
-  // shared. The self-ref is a sync::Weak<EventPollable> obtained by
-  // upcasting Arc<Ev> -> Arc<EventPollable> (single-base) then
-  // downgrading (sync::Weak has no derived->base converting ctor).
-  {
-    auto mut_opt = ev.get_mut();
-    verify(mut_opt.is_some());
-    Ev& m = mut_opt.unwrap();
-    m.state_.__debug_creator = 1;
-    m.set_self(rusty::sync::downgrade(rusty::Arc<EventPollable>(ev)));
-  }
-  // Store the canonical strong ref in all_events_ (upcast clone).
-  auto reactor = Reactor::get_reactor();
-  reactor->all_events_.borrow_mut()->push_back(rusty::Arc<EventPollable>(ev));
-  // Clear out finished events the reactor is the sole owner of (bounded growth).
-  (*reactor).prune_finished_events();
-  return ev;
+  return reactor_setup_sp_event<Ev>(event_make<Ev>(std::forward<Args>(args)...));
 }
 
 // @unsafe - Creates event and returns reference to shared_ptr content
