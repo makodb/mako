@@ -817,9 +817,13 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
     second_fu->wait();
     ASSERT_EQ(second_fu->get_error_code(), 0);
 
+    // 4000ms, not 1000ms: restart detection rides the response path plus a
+    // poll-thread job hop; under ctest -j8 CPU contention the 1s budget
+    // flaked (gate 65) while every sibling wait in this file already uses
+    // 4000-5000ms.
     ASSERT_TRUE(wait_for_condition([&]() {
         return restart_callback_count.load(std::memory_order_acquire) >= 1;
-    }, milliseconds(1000)));
+    }, milliseconds(4000)));
 
     EXPECT_EQ(restart_callback_count.load(std::memory_order_acquire), 1);
     EXPECT_EQ(observed_old_id.load(std::memory_order_acquire), first_server_id);
