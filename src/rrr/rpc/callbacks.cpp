@@ -43,6 +43,18 @@ inline void invoke_callback_safely(const Callback& cb, Args&&... args) {
     }
 }
 
+// @unsafe - rusty::Condvar::wait_while with a closure predicate; the DSL
+// grammar can't express the wait-while lambda binding (same shape as
+// server_wait_for_shutdown_impl). Blocks until no invoke_* dispatch is
+// in flight — the rundown half of CallbackManager::clear_all.
+inline void callback_manager_wait_inflight_drain(
+        const rusty::Mutex<size_t>* inflight,
+        const rusty::Box<rusty::Condvar>* cv) {
+    auto guard = inflight->lock().unwrap();
+    guard = (*cv)->wait_while(std::move(guard),
+        [](size_t& n) { return n != 0; }).unwrap();
+}
+
 #if RUSTYCPP_RUST
 struct ConnectionCallbacks {
     on_connected: Vec<ConnectionCallback>,
@@ -80,13 +92,40 @@ impl ConnectionCallbacks {
 
 struct CallbackManager {
     callbacks_field: rusty::Mutex<ConnectionCallbacks>,
+    // Rundown state: count of invoke_* dispatches currently running
+    // (snapshot taken, callbacks possibly mid-invocation) + the condvar
+    // clear_all waits on. Closes the teardown race where a poll-thread
+    // fiber snapshots the Arc'd callbacks just before clear_all empties
+    // the lists, then invokes a lambda whose captured stack frame the
+    // clearing thread has already left (~50% SIGSEGV in
+    // rpc_state_integration LifecycleCallbacksFireInExpectedOrder).
+    inflight_field: rusty::Mutex<usize>,
+    inflight_cv_field: Box<rusty::Condvar>,
 }
 
 impl CallbackManager {
     fn new() -> CallbackManager {
         CallbackManager {
             callbacks_field: rusty::Mutex::<ConnectionCallbacks>::new(ConnectionCallbacks {}),
+            inflight_field: rusty::Mutex::<usize>::new(0usize),
+            inflight_cv_field: Box::new(rusty::Condvar {}),
         }
+    }
+
+    // Bracket every invoke_* dispatch. enter BEFORE the snapshot, exit
+    // after the last callback returns (invoke_callback_safely swallows
+    // user exceptions, so exit is always reached).
+    fn inflight_enter(&self) {
+        let mut g = self.inflight_field.lock().unwrap();
+        *g += 1usize;
+    }
+
+    fn inflight_exit(&self) {
+        {
+            let mut g = self.inflight_field.lock().unwrap();
+            *g -= 1usize;
+        }
+        self.inflight_cv_field.notify_all();
     }
 
     // NOTE: field access through a `rusty::MutexGuard<T>` lowers to `.`
@@ -128,6 +167,7 @@ impl CallbackManager {
     }
 
     fn invoke_on_connected(&self) {
+        self.inflight_enter();
         let callbacks_copy: Vec<ConnectionCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_connected.clone()
@@ -138,9 +178,11 @@ impl CallbackManager {
             invoke_callback_safely(callbacks_copy[i]);
             i += 1usize;
         }
+        self.inflight_exit();
     }
 
     fn invoke_on_disconnected(&self) {
+        self.inflight_enter();
         let callbacks_copy: Vec<ConnectionCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_disconnected.clone()
@@ -151,9 +193,11 @@ impl CallbackManager {
             invoke_callback_safely(callbacks_copy[i]);
             i += 1usize;
         }
+        self.inflight_exit();
     }
 
     fn invoke_on_error(&self, error: RpcError, message: &std::string) {
+        self.inflight_enter();
         let callbacks_copy: Vec<ErrorCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_error.clone()
@@ -164,9 +208,11 @@ impl CallbackManager {
             invoke_callback_safely(callbacks_copy[i], error, message);
             i += 1usize;
         }
+        self.inflight_exit();
     }
 
     fn invoke_on_reconnecting(&self) {
+        self.inflight_enter();
         let callbacks_copy: Vec<ConnectionCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_reconnecting.clone()
@@ -177,9 +223,11 @@ impl CallbackManager {
             invoke_callback_safely(callbacks_copy[i]);
             i += 1usize;
         }
+        self.inflight_exit();
     }
 
     fn invoke_on_reconnected(&self, success: bool) {
+        self.inflight_enter();
         let callbacks_copy: Vec<ReconnectCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_reconnected.clone()
@@ -190,11 +238,19 @@ impl CallbackManager {
             invoke_callback_safely(callbacks_copy[i], success);
             i += 1usize;
         }
+        self.inflight_exit();
     }
 
+    // After clear_all returns, no previously-registered callback is
+    // running or will run again — safe to free captured state. Do NOT
+    // call from inside a callback (the drain would wait on itself).
     fn clear_all(&self) {
-        let guard = self.callbacks_field.lock().unwrap();
-        guard.clear();
+        {
+            let guard = self.callbacks_field.lock().unwrap();
+            guard.clear();
+        }
+        callback_manager_wait_inflight_drain(
+            &self.inflight_field, &self.inflight_cv_field);
     }
 
     fn callback_count(&self) -> usize {
@@ -232,7 +288,7 @@ impl CallbackManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=8199f02f23e7188544e6247ffb4b0475a06c70d3e3b496b641250540750a351f*/
+/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=cb95ca3744ceab79c3edd15d93ef64239dfd7b4d6b28abc2a3d287f926a1a44d*/
 struct ConnectionCallbacks;
 struct CallbackManager;
 
@@ -250,8 +306,12 @@ struct ConnectionCallbacks {
 
 struct CallbackManager {
     rusty::Mutex<ConnectionCallbacks> callbacks_field;
+    rusty::Mutex<size_t> inflight_field;
+    rusty::Box<rusty::Condvar> inflight_cv_field;
 
     static CallbackManager new_();
+    void inflight_enter() const;
+    void inflight_exit() const;
     void add_on_connected(rusty::Function<void() const> cb) const;
     void add_on_disconnected(rusty::Function<void() const> cb) const;
     void add_on_error(rusty::Function<void(RpcError, const std::string&) const> cb) const;
@@ -290,7 +350,20 @@ void ConnectionCallbacks::clear() {
 }
 
 CallbackManager CallbackManager::new_() {
-    return CallbackManager{.callbacks_field = rusty::Mutex<ConnectionCallbacks>::new_(ConnectionCallbacks{})};
+    return CallbackManager{.callbacks_field = rusty::Mutex<ConnectionCallbacks>::new_(ConnectionCallbacks{}), .inflight_field = rusty::Mutex<size_t>::new_(static_cast<size_t>(0)), .inflight_cv_field = rusty::Box<rusty::Condvar>::new_(rusty::Condvar{})};
+}
+
+void CallbackManager::inflight_enter() const {
+    auto g = this->inflight_field.lock().unwrap();
+    *g += static_cast<size_t>(1);
+}
+
+void CallbackManager::inflight_exit() const {
+    {
+        auto g = this->inflight_field.lock().unwrap();
+        *g -= static_cast<size_t>(1);
+    }
+    this->inflight_cv_field->notify_all();
 }
 
 void CallbackManager::add_on_connected(rusty::Function<void() const> cb) const {
@@ -324,6 +397,7 @@ void CallbackManager::add_on_reconnected(rusty::Function<void(bool) const> cb) c
 }
 
 void CallbackManager::invoke_on_connected() const {
+    this->inflight_enter();
     const rusty::Vec<ConnectionCallback> callbacks_copy = [&]() -> rusty::Vec<ConnectionCallback> { auto guard = this->callbacks_field.lock().unwrap();
 return rusty::clone((*guard).on_connected); }();
     const size_t n = callbacks_copy.size();
@@ -332,9 +406,11 @@ return rusty::clone((*guard).on_connected); }();
         invoke_callback_safely(callbacks_copy[i]);
         i += static_cast<size_t>(1);
     }
+    this->inflight_exit();
 }
 
 void CallbackManager::invoke_on_disconnected() const {
+    this->inflight_enter();
     const rusty::Vec<ConnectionCallback> callbacks_copy = [&]() -> rusty::Vec<ConnectionCallback> { auto guard = this->callbacks_field.lock().unwrap();
 return rusty::clone((*guard).on_disconnected); }();
     const size_t n = callbacks_copy.size();
@@ -343,9 +419,11 @@ return rusty::clone((*guard).on_disconnected); }();
         invoke_callback_safely(callbacks_copy[i]);
         i += static_cast<size_t>(1);
     }
+    this->inflight_exit();
 }
 
 void CallbackManager::invoke_on_error(RpcError error, const std::string& message) const {
+    this->inflight_enter();
     const rusty::Vec<ErrorCallback> callbacks_copy = [&]() -> rusty::Vec<ErrorCallback> { auto guard = this->callbacks_field.lock().unwrap();
 return rusty::clone((*guard).on_error); }();
     const size_t n = callbacks_copy.size();
@@ -354,9 +432,11 @@ return rusty::clone((*guard).on_error); }();
         invoke_callback_safely(callbacks_copy[i], std::move(error), message);
         i += static_cast<size_t>(1);
     }
+    this->inflight_exit();
 }
 
 void CallbackManager::invoke_on_reconnecting() const {
+    this->inflight_enter();
     const rusty::Vec<ConnectionCallback> callbacks_copy = [&]() -> rusty::Vec<ConnectionCallback> { auto guard = this->callbacks_field.lock().unwrap();
 return rusty::clone((*guard).on_reconnecting); }();
     const size_t n = callbacks_copy.size();
@@ -365,9 +445,11 @@ return rusty::clone((*guard).on_reconnecting); }();
         invoke_callback_safely(callbacks_copy[i]);
         i += static_cast<size_t>(1);
     }
+    this->inflight_exit();
 }
 
 void CallbackManager::invoke_on_reconnected(bool success) const {
+    this->inflight_enter();
     const rusty::Vec<ReconnectCallback> callbacks_copy = [&]() -> rusty::Vec<ReconnectCallback> { auto guard = this->callbacks_field.lock().unwrap();
 return rusty::clone((*guard).on_reconnected); }();
     const size_t n = callbacks_copy.size();
@@ -376,11 +458,15 @@ return rusty::clone((*guard).on_reconnected); }();
         invoke_callback_safely(callbacks_copy[i], std::move(success));
         i += static_cast<size_t>(1);
     }
+    this->inflight_exit();
 }
 
 void CallbackManager::clear_all() const {
-    auto guard = this->callbacks_field.lock().unwrap();
-    (*guard).clear();
+    {
+        auto guard = this->callbacks_field.lock().unwrap();
+        (*guard).clear();
+    }
+    callback_manager_wait_inflight_drain(&this->inflight_field, &this->inflight_cv_field);
 }
 
 size_t CallbackManager::callback_count() const {

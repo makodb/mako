@@ -644,6 +644,16 @@ TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
         return false;
     };
 
+    // Clear callbacks on EVERY exit path — a failed ASSERT returns out of
+    // TestBody early, and a late on_disconnected job would otherwise invoke
+    // these stack-capturing lambdas after the frame is gone (was a ~50%
+    // full-suite SIGSEGV under ASan). CallbackManager::clear_all() drains
+    // in-flight dispatches, so once the guard runs the captures may die.
+    struct ClearCallbacksGuard {
+        rusty::Arc<Client>& c;
+        ~ClearCallbacksGuard() { c->clear_connection_callbacks(); }
+    } clear_callbacks_guard{client};
+
     client->add_on_connected([&]() { record_event(kConnected); });
     client->add_on_disconnected([&]() { record_event(kDisconnected); });
     client->add_on_error([&](RpcError err, const std::string&) {
