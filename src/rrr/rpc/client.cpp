@@ -5605,105 +5605,273 @@ size_t clientpool_close_idle_clients(const ClientPool& self_, const std::string&
 /*RUSTYCPP:GEN-END id=client.29*/
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops are @safe.
-size_t clientpool_remove_all_unhealthy(const ClientPool& self) {
-  // Config snapshot BEFORE `state_`, per the lock-order invariant on
-  // ClientPool. This read used to sit after the lock, which is the one
-  // site in the pool that acquired the two in the opposite order from
-  // get_client.
-  auto cfg = self.pool_config();
-  auto guard = self.state_.lock().unwrap();
-  size_t total_removed = 0;
+// Keys-snapshot walker: the per-key body mutates `cache` via remove, so
+// project the keys first (explicit iter/loop — the proven BTreeMap DSL
+// idiom); then the wave-27 kept-swap per entry.
+#if RUSTYCPP_RUST
+fn clientpool_remove_all_unhealthy(self_: &ClientPool) -> usize {
+    // Config snapshot BEFORE `state_`, per the lock-order invariant on
+    // ClientPool. This read used to sit after the lock, which was the one
+    // site in the pool that acquired the two in the opposite order from
+    // get_client.
+    let cfg: PoolConfig = self_.pool_config();
+    let mut guard = self_.state_.lock().unwrap();
+    let mut total_removed: usize = 0usize;
 
-  // Snapshot keys into a Vec so the loop body (which mutates `cache` via
-  // remove) doesn't iterate while modifying. BTreeMap::iter() yields
-  // tuple<const K&, V&>; project the key.
-  rusty::Vec<std::string> keys;
-  for (auto&& _kv : rusty::for_in((*guard).cache.iter())) {
-    keys.push(std::string(std::get<0>(rusty::detail::deref_if_pointer(_kv))));
-  }
-  rusty::Vec<std::string> empty_keys;
-  for (const auto& addr : keys) {
-    auto clients_opt = (*guard).cache.get_mut(addr);
-    if (clients_opt.is_none()) {
-      continue;
+    let mut keys: Vec<std::string> = Vec::<std::string>();
+    {
+        let mut it = (*guard).cache.iter();
+        loop {
+            let e = it.next();
+            if e.is_none() {
+                break;
+            }
+            let kv = e.unwrap();
+            keys.push(kv.0.clone());
+        }
     }
-    // BTreeMap::get returns `Option<V&>`.
-    auto& clients = clients_opt.unwrap();
-    size_t removed = 0;
-    rusty::Vec<rusty::Arc<Client>> kept;
-    kept.reserve(clients.len());
-    for (const auto& client : clients) {
-      if (clients.len() - removed <= static_cast<size_t>(cfg.min_connections)) {
-        kept.push(client.clone());
-        continue;
-      }
-      if (!clientpool_is_client_healthy_with(cfg, client)) {
-        client->close();
-        removed++;
-      } else {
-        kept.push(client.clone());
-      }
+    let mut empty_keys: Vec<std::string> = Vec::<std::string>();
+    let mut k: usize = 0usize;
+    while k < keys.len() {
+        let addr: &std::string = &keys[k];
+        let has_entry: bool = (*guard).cache.get(addr).is_some();
+        if !has_entry {
+            k += 1usize;
+            continue;
+        }
+        let clients: &mut Vec<Arc<Client>> = (*guard).cache.get_mut(addr).unwrap();
+        let mut removed: usize = 0usize;
+        let mut kept: Vec<Arc<Client>> = Vec::<Arc<Client>>();
+        kept.reserve((*clients).len());
+        let mut i: usize = 0usize;
+        while i < (*clients).len() {
+            let client: &Arc<Client> = &(*clients)[i];
+            if (*clients).len() - removed <= cfg.min_connections as usize {
+                kept.push(client.clone());
+                i += 1usize;
+                continue;
+            }
+            if !clientpool_is_client_healthy_with(cfg, client) {
+                (*client).close();
+                removed += 1usize;
+            } else {
+                kept.push(client.clone());
+            }
+            i += 1usize;
+        }
+        *clients = kept;
+        total_removed += removed;
+        if (*clients).is_empty() {
+            empty_keys.push(addr.clone());
+        }
+        k += 1usize;
     }
-    clients = std::move(kept);
-    total_removed += removed;
-    if (clients.is_empty()) {
-      empty_keys.push(addr);
+    let mut j: usize = 0usize;
+    while j < empty_keys.len() {
+        let key: &std::string = &empty_keys[j];
+        (*guard).cache.remove(key);
+        j += 1usize;
     }
-  }
-  for (const auto& addr : empty_keys) {
-    (*guard).cache.remove(addr);
-  }
-  return total_removed;
+    total_removed
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.30 version=1 rust_sha256=0547ef7d80d892b01851222313028d081b49051408d9ddb39833d3b9547d13dc*/
+size_t clientpool_remove_all_unhealthy(const ClientPool& self_) {
+    const PoolConfig cfg = self_.pool_config();
+    auto&& guard = rusty::deref_call(self_.state_.lock(), rusty::detail::__mdisp_unwrap{});
+    size_t total_removed = static_cast<size_t>(0);
+    rusty::Vec<std::string> keys = rusty::Vec<std::string>();
+    {
+        auto it = rusty::iter((rusty::detail::deref_if_pointer_like(guard)).cache);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            const auto kv = e.unwrap();
+            keys.push(rusty::clone(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))));
+        }
+    }
+    rusty::Vec<std::string> empty_keys = rusty::Vec<std::string>();
+    size_t k = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(k) < rusty::len(keys)) {
+        const std::string& addr = keys[k];
+        const bool has_entry = (rusty::detail::deref_if_pointer_like(guard)).cache.get(addr).is_some();
+        if (!has_entry) {
+            k += static_cast<size_t>(1);
+            continue;
+        }
+        rusty::Vec<rusty::Arc<Client>>& clients = (rusty::detail::deref_if_pointer_like(guard)).cache.get_mut(addr).unwrap();
+        size_t removed = static_cast<size_t>(0);
+        rusty::Vec<rusty::Arc<Client>> kept = rusty::Vec<rusty::Arc<Client>>();
+        kept.reserve(rusty::len((clients)));
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len((clients))) {
+            const rusty::Arc<Client>& client = (clients)[i];
+            if ((rusty::len((clients)) - rusty::detail::deref_if_pointer_like(removed)) <= (static_cast<size_t>(cfg.min_connections))) {
+                kept.push(rusty::clone(client));
+                i += static_cast<size_t>(1);
+                continue;
+            }
+            if (rusty::detail::rust_not(clientpool_is_client_healthy_with(std::move(cfg), client))) {
+                ((rusty::detail::deref_if_pointer_like(client))).close();
+                removed += static_cast<size_t>(1);
+            } else {
+                kept.push(rusty::clone(client));
+            }
+            i += static_cast<size_t>(1);
+        }
+        clients = std::move(kept);
+        total_removed += removed;
+        if (rusty::is_empty(((clients)))) {
+            empty_keys.push(rusty::clone(addr));
+        }
+        k += static_cast<size_t>(1);
+    }
+    size_t j = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(j) < rusty::len(empty_keys)) {
+        const std::string& key = empty_keys[j];
+        (rusty::detail::deref_if_pointer_like(guard)).cache.remove(key);
+        j += static_cast<size_t>(1);
+    }
+    return std::move(total_removed);
+}
+/*RUSTYCPP:GEN-END id=client.30*/
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops are @safe.
-size_t clientpool_close_all_idle(const ClientPool& self, uint64_t current_time_ms) {
-  auto cfg = self.pool_config();
-  if (cfg.idle_timeout_ms == 0) {
-    return 0;
-  }
+// Same keys-snapshot drain as remove_all_unhealthy, idle predicate.
+#if RUSTYCPP_RUST
+fn clientpool_close_all_idle(self_: &ClientPool, current_time_ms: u64) -> usize {
+    let cfg: PoolConfig = self_.pool_config();
+    if cfg.idle_timeout_ms == 0u64 {
+        return 0usize;
+    }
 
-  auto guard = self.state_.lock().unwrap();
-  size_t total_closed = 0;
+    let mut guard = self_.state_.lock().unwrap();
+    let mut total_closed: usize = 0usize;
 
-  // same drain pattern as remove_all_unhealthy above — snapshot keys.
-  rusty::Vec<std::string> keys;
-  for (auto&& _kv : rusty::for_in((*guard).cache.iter())) {
-    keys.push(std::string(std::get<0>(rusty::detail::deref_if_pointer(_kv))));
-  }
-  rusty::Vec<std::string> empty_keys;
-  for (const auto& addr : keys) {
-    auto clients_opt = (*guard).cache.get_mut(addr);
-    if (clients_opt.is_none()) {
-      continue;
+    let mut keys: Vec<std::string> = Vec::<std::string>();
+    {
+        let mut it = (*guard).cache.iter();
+        loop {
+            let e = it.next();
+            if e.is_none() {
+                break;
+            }
+            let kv = e.unwrap();
+            keys.push(kv.0.clone());
+        }
     }
-    auto& clients = clients_opt.unwrap();
-    size_t closed = 0;
-    rusty::Vec<rusty::Arc<Client>> kept;
-    kept.reserve(clients.len());
-    for (const auto& client : clients) {
-      if (clients.len() - closed <= static_cast<size_t>(cfg.min_connections)) {
-        kept.push(client.clone());
-        continue;
-      }
-      if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
-        client->close();
-        closed++;
-      } else {
-        kept.push(client.clone());
-      }
+    let mut empty_keys: Vec<std::string> = Vec::<std::string>();
+    let mut k: usize = 0usize;
+    while k < keys.len() {
+        let addr: &std::string = &keys[k];
+        let has_entry: bool = (*guard).cache.get(addr).is_some();
+        if !has_entry {
+            k += 1usize;
+            continue;
+        }
+        let clients: &mut Vec<Arc<Client>> = (*guard).cache.get_mut(addr).unwrap();
+        let mut closed: usize = 0usize;
+        let mut kept: Vec<Arc<Client>> = Vec::<Arc<Client>>();
+        kept.reserve((*clients).len());
+        let mut i: usize = 0usize;
+        while i < (*clients).len() {
+            let client: &Arc<Client> = &(*clients)[i];
+            if (*clients).len() - closed <= cfg.min_connections as usize {
+                kept.push(client.clone());
+                i += 1usize;
+                continue;
+            }
+            if (*client).is_idle(cfg.idle_timeout_ms, current_time_ms) {
+                (*client).close();
+                closed += 1usize;
+            } else {
+                kept.push(client.clone());
+            }
+            i += 1usize;
+        }
+        *clients = kept;
+        total_closed += closed;
+        if (*clients).is_empty() {
+            empty_keys.push(addr.clone());
+        }
+        k += 1usize;
     }
-    clients = std::move(kept);
-    total_closed += closed;
-    if (clients.is_empty()) {
-      empty_keys.push(addr);
+    let mut j: usize = 0usize;
+    while j < empty_keys.len() {
+        let key: &std::string = &empty_keys[j];
+        (*guard).cache.remove(key);
+        j += 1usize;
     }
-  }
-  for (const auto& addr : empty_keys) {
-    (*guard).cache.remove(addr);
-  }
-  return total_closed;
+    total_closed
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.31 version=1 rust_sha256=5fe33f16752501c42d792789908119a8dce7e00f43cccd4d94a1895d02ad2ecf*/
+size_t clientpool_close_all_idle(const ClientPool& self_, uint64_t current_time_ms) {
+    const PoolConfig cfg = self_.pool_config();
+    if (rusty::detail::deref_if_pointer_like(cfg.idle_timeout_ms) == static_cast<uint64_t>(0)) {
+        return static_cast<size_t>(0);
+    }
+    auto&& guard = rusty::deref_call(self_.state_.lock(), rusty::detail::__mdisp_unwrap{});
+    size_t total_closed = static_cast<size_t>(0);
+    rusty::Vec<std::string> keys = rusty::Vec<std::string>();
+    {
+        auto it = rusty::iter((rusty::detail::deref_if_pointer_like(guard)).cache);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            const auto kv = e.unwrap();
+            keys.push(rusty::clone(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))));
+        }
+    }
+    rusty::Vec<std::string> empty_keys = rusty::Vec<std::string>();
+    size_t k = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(k) < rusty::len(keys)) {
+        const std::string& addr = keys[k];
+        const bool has_entry = (rusty::detail::deref_if_pointer_like(guard)).cache.get(addr).is_some();
+        if (!has_entry) {
+            k += static_cast<size_t>(1);
+            continue;
+        }
+        rusty::Vec<rusty::Arc<Client>>& clients = (rusty::detail::deref_if_pointer_like(guard)).cache.get_mut(addr).unwrap();
+        size_t closed = static_cast<size_t>(0);
+        rusty::Vec<rusty::Arc<Client>> kept = rusty::Vec<rusty::Arc<Client>>();
+        kept.reserve(rusty::len((clients)));
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len((clients))) {
+            const rusty::Arc<Client>& client = (clients)[i];
+            if ((rusty::len((clients)) - rusty::detail::deref_if_pointer_like(closed)) <= (static_cast<size_t>(cfg.min_connections))) {
+                kept.push(rusty::clone(client));
+                i += static_cast<size_t>(1);
+                continue;
+            }
+            if (((rusty::detail::deref_if_pointer_like(client))).is_idle(std::move(cfg.idle_timeout_ms), std::move(current_time_ms))) {
+                ((rusty::detail::deref_if_pointer_like(client))).close();
+                closed += static_cast<size_t>(1);
+            } else {
+                kept.push(rusty::clone(client));
+            }
+            i += static_cast<size_t>(1);
+        }
+        clients = std::move(kept);
+        total_closed += closed;
+        if (rusty::is_empty(((clients)))) {
+            empty_keys.push(rusty::clone(addr));
+        }
+        k += static_cast<size_t>(1);
+    }
+    size_t j = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(j) < rusty::len(empty_keys)) {
+        const std::string& key = empty_keys[j];
+        (rusty::detail::deref_if_pointer_like(guard)).cache.remove(key);
+        j += static_cast<size_t>(1);
+    }
+    return std::move(total_closed);
+}
+/*RUSTYCPP:GEN-END id=client.31*/
 
 
 // @unsafe - Drives Client::connect / reconnect synchronously; the state_
