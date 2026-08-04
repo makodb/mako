@@ -5400,25 +5400,49 @@ bool clientpool_is_client_healthy_with(PoolConfig cfg, const rusty::Arc<Client>&
 /*RUSTYCPP:GEN-END id=client.26*/
 
 // @safe - rusty::Mutex::lock + BTreeMap ops + is_client_healthy are all @safe.
-// Delegated (not inline DSL): the inline `let clients = opt.unwrap()` lowered
-// to a Vec copy (vs the `auto& clients` reference here), which corrupted the
-// cached Arcs. Keep the proven reference-based body.
-size_t clientpool_get_healthy_client_count(const ClientPool& self, const std::string& addr) {
-  // Config snapshot BEFORE `state_`, per the lock-order invariant.
-  auto cfg = self.pool_config();
-  auto guard = self.state_.lock().unwrap();
-  size_t count = 0;
-  auto clients_opt = (*guard).cache.get(addr);
-  if (clients_opt.is_some()) {
-    auto& clients = clients_opt.unwrap();
-    for (const auto& client : clients) {
-      if (clientpool_is_client_healthy_with(cfg, client)) {
-        count++;
-      }
+// One-step typed unwrap (§7.37): `let clients: &Vec<..> = opt.unwrap()` binds
+// a reference. The earlier untyped `let clients = opt.unwrap()` lowered to a
+// Vec COPY and corrupted the cached Arcs — that hazard is why this fn stayed
+// hand-written; ASan-gated now.
+#if RUSTYCPP_RUST
+fn clientpool_get_healthy_client_count(self_: &ClientPool, addr: &std::string) -> usize {
+    // Config snapshot BEFORE `state_`, per the lock-order invariant.
+    let cfg: PoolConfig = self_.pool_config();
+    let guard = self_.state_.lock().unwrap();
+    let mut count: usize = 0usize;
+    let clients_opt = (*guard).cache.get(addr);
+    if clients_opt.is_some() {
+        let clients: &Vec<Arc<Client>> = clients_opt.unwrap();
+        let mut i: usize = 0usize;
+        while i < (*clients).len() {
+            if clientpool_is_client_healthy_with(cfg, &(*clients)[i]) {
+                count += 1usize;
+            }
+            i += 1usize;
+        }
     }
-  }
-  return count;
+    count
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.27 version=1 rust_sha256=d509ce8ecb1a0303fc4af634115a461eac9a2964128e17eaf011b35ed0162694*/
+size_t clientpool_get_healthy_client_count(const ClientPool& self_, const std::string& addr) {
+    const PoolConfig cfg = self_.pool_config();
+    const auto&& guard = rusty::deref_call(self_.state_.lock(), rusty::detail::__mdisp_unwrap{});
+    size_t count = static_cast<size_t>(0);
+    auto clients_opt = (rusty::detail::deref_if_pointer_like(guard)).cache.get(addr);
+    if (clients_opt.is_some()) {
+        const rusty::Vec<rusty::Arc<Client>>& clients = clients_opt.unwrap();
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len((clients))) {
+            if (clientpool_is_client_healthy_with(std::move(cfg), (clients)[i])) {
+                count += static_cast<size_t>(1);
+            }
+            i += static_cast<size_t>(1);
+        }
+    }
+    return std::move(count);
+}
+/*RUSTYCPP:GEN-END id=client.27*/
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops + is_client_healthy are @safe.
 size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::string& addr) {
