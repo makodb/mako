@@ -5874,112 +5874,223 @@ size_t clientpool_close_all_idle(const ClientPool& self_, uint64_t current_time_
 /*RUSTYCPP:GEN-END id=client.31*/
 
 
-// @unsafe - Drives Client::connect / reconnect synchronously; the state_
-// lock + BTreeMap ops are @safe but the network I/O underneath is not.
-rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, const std::string& addr) {
-  rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
-  auto cfg = self.pool_config();
-  int num_connections = cfg.min_connections;
-
-  auto guard = self.state_.lock().unwrap();
-
-  // Get or create load balancer state for this address
-  auto lb_state_opt = (*guard).lb_state.get_mut(addr);
-  if (lb_state_opt.is_none()) {
-    (*guard).lb_state.insert(addr, LoadBalancerState::new_());
-    lb_state_opt = (*guard).lb_state.get_mut(addr);
-  }
-  // BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
-  auto& lb_state = lb_state_opt.unwrap();
-
-  auto clients_opt = (*guard).cache.get_mut(addr);
-  if (clients_opt.is_some()) {
-    auto& clients = clients_opt.unwrap();
-    int client_count = static_cast<int>(clients.size());
-
-    // Use load balancer to select starting index
-    size_t start_idx = LoadBalancer::select(
-        cfg.load_balancing,
-        clients,
-        lb_state,
-        static_cast<size_t>(RandomGenerator::rand(0, RAND_MAX))
-    );
-
-    for (int i = 0; i < client_count; i++) {
-      int idx = (start_idx + i) % client_count;
-      auto& client = clients[idx];
-
-      // Check if client is connected and healthy
-      if (client->connected() && clientpool_is_client_healthy_with(cfg, client)) {
-        sp_cl = rusty::Some(client.clone());
-        break;
-      }
-
-      // Try to reconnect failed/disconnected clients
-      auto state = client->connection_state();
-      if (state == ConnectionState::FAILED || state == ConnectionState::DISCONNECTED) {
-        Log_info("ClientPool: client to {} in state {}, attempting reconnect",
-                 addr.c_str(), connection_state_to_string(state));
-        if (client->try_reconnect_if_needed()) {
-          Log_info("ClientPool: reconnected to {} successfully", addr.c_str());
-          sp_cl = rusty::Some(client.clone());
-          break;
-        } else {
-          Log_warn("ClientPool: reconnect to {} failed", addr.c_str());
-        }
-      }
-    }
-
-    // If no healthy client found after trying reconnects, recreate all connections
-    if (sp_cl.is_none()) {
-      Log_info("ClientPool: all clients to {} failed, recreating connections", addr.c_str());
-      // Close old connections
-      for (auto& client : clients) {
-        client->close();
-      }
-      clients.clear();
-
-      // Create new connections (use min_connections)
-      bool ok = true;
-      for (int i = 0; i < num_connections; i++) {
-        auto client = Client::create(self.poll_thread_worker_.as_ref().unwrap().clone());
-        client->set_client_mode(true);
-        if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) != 0) {
-          Log_warn("ClientPool: failed to create new connection to {}", addr.c_str());
-          ok = false;
-          break;
-        }
-        clients.push(client);
-      }
-
-      if (ok && !clients.is_empty()) {
-        sp_cl = rusty::Some(clients[static_cast<size_t>(RandomGenerator::rand(0, static_cast<int>(clients.size()) - 1))].clone());
-      } else {
-        // Remove from cache if we can't connect
-        (*guard).cache.remove(addr);
-      }
-    }
-  } else {
-    // No cached connections - create new ones
-    rusty::Vec<rusty::Arc<Client>> parallel_clients;
-    bool ok = true;
-    for (int i = 0; i < num_connections; i++) {
-      auto client = Client::create(self.poll_thread_worker_.as_ref().unwrap().clone());
-      client->set_client_mode(true);  // Jetpack: mark as client
-      if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) != 0) {
-        ok = false;
-        break;
-      }
-      parallel_clients.push(client);
-    }
-    if (ok) {
-      sp_cl = rusty::Some(parallel_clients[static_cast<size_t>(RandomGenerator::rand(0, static_cast<int>(parallel_clients.size()) - 1))].clone());
-      (*guard).cache.insert(addr, std::move(parallel_clients));
-    }
-    // If not ok, parallel_clients automatically cleaned up by Arc
-  }
-  return sp_cl;
+// @unsafe kernel - the rrr wire type wants `const int8_t*`; the
+// reinterpret_cast from c_str() is not expressible in the DSL.
+static int32_t clientpool_connect_client(const rusty::Arc<Client>& client, const std::string& addr) {
+  return client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);  // @unsafe
 }
+
+// @unsafe - Drives Client::connect / reconnect synchronously; the state_
+// lock + BTreeMap ops are @safe but the network I/O underneath is not
+// (isolated in the clientpool_connect_client kernel above).
+#if RUSTYCPP_RUST
+fn clientpool_get_client(self_: &ClientPool, addr: &std::string) -> Option<Arc<Client>> {
+    let mut sp_cl: Option<Arc<Client>> = None;
+    let cfg: PoolConfig = self_.pool_config();
+    let num_connections: i32 = cfg.min_connections;
+
+    let mut guard = self_.state_.lock().unwrap();
+
+    // Get or create load balancer state for this address. select() takes
+    // &LoadBalancerState (round-robin advances through a Cell), so the
+    // shared get() probe is enough.
+    let has_lb: bool = (*guard).lb_state.get(addr).is_some();
+    if !has_lb {
+        (*guard).lb_state.insert(addr.clone(), LoadBalancerState::new());
+    }
+    let lb_state: &LoadBalancerState = (*guard).lb_state.get(addr).unwrap();
+
+    let has_cached: bool = (*guard).cache.get(addr).is_some();
+    if has_cached {
+        let clients: &mut Vec<Arc<Client>> = (*guard).cache.get_mut(addr).unwrap();
+        let client_count: i32 = (*clients).len() as i32;
+
+        // Use load balancer to select starting index
+        let start_idx: usize = LoadBalancer::select(
+            cfg.load_balancing, clients, lb_state,
+            RandomGenerator::rand(0i32, RAND_MAX) as usize);
+
+        let mut i: i32 = 0i32;
+        while i < client_count {
+            let idx: usize = (start_idx + i as usize) % (client_count as usize);
+            let client: &Arc<Client> = &(*clients)[idx];
+
+            // Check if client is connected and healthy
+            if (*client).connected() && clientpool_is_client_healthy_with(cfg, client) {
+                sp_cl = Some(client.clone());
+                break;
+            }
+
+            // Try to reconnect failed/disconnected clients
+            let state: ConnectionState = (*client).connection_state();
+            if (state as i32) == (ConnectionState::FAILED as i32)
+                || (state as i32) == (ConnectionState::DISCONNECTED as i32) {
+                let state_name = connection_state_to_string(state);
+                Log_info("ClientPool: client to {} in state {}, attempting reconnect",
+                         addr, state_name);
+                if (*client).try_reconnect_if_needed() {
+                    Log_info("ClientPool: reconnected to {} successfully", addr);
+                    sp_cl = Some(client.clone());
+                    break;
+                } else {
+                    Log_warn("ClientPool: reconnect to {} failed", addr);
+                }
+            }
+            i += 1i32;
+        }
+
+        // If no healthy client found after trying reconnects, recreate all connections
+        if sp_cl.is_none() {
+            Log_info("ClientPool: all clients to {} failed, recreating connections", addr);
+            // Close old connections
+            let mut ci: usize = 0usize;
+            while ci < (*clients).len() {
+                (*(*clients)[ci]).close();
+                ci += 1usize;
+            }
+            (*clients).clear();
+
+            // Create new connections (use min_connections)
+            let mut ok: bool = true;
+            let mut n: i32 = 0i32;
+            while n < num_connections {
+                let client: Arc<Client> =
+                    Client::create(self_.poll_thread_worker_.as_ref().unwrap().clone());
+                (*client).set_client_mode(true);
+                if clientpool_connect_client(&client, addr) != 0i32 {
+                    Log_warn("ClientPool: failed to create new connection to {}", addr);
+                    ok = false;
+                    break;
+                }
+                (*clients).push(client);
+                n += 1i32;
+            }
+
+            if ok && !(*clients).is_empty() {
+                let pick: usize =
+                    RandomGenerator::rand(0i32, (*clients).len() as i32 - 1i32) as usize;
+                sp_cl = Some((*clients)[pick].clone());
+            } else {
+                // Remove from cache if we can't connect
+                (*guard).cache.remove(addr);
+            }
+        }
+    } else {
+        // No cached connections - create new ones
+        let mut parallel_clients: Vec<Arc<Client>> = Vec::<Arc<Client>>();
+        let mut ok: bool = true;
+        let mut n2: i32 = 0i32;
+        while n2 < num_connections {
+            let client: Arc<Client> =
+                Client::create(self_.poll_thread_worker_.as_ref().unwrap().clone());
+            (*client).set_client_mode(true);  // Jetpack: mark as client
+            if clientpool_connect_client(&client, addr) != 0i32 {
+                ok = false;
+                break;
+            }
+            parallel_clients.push(client);
+            n2 += 1i32;
+        }
+        if ok {
+            let pick2: usize =
+                RandomGenerator::rand(0i32, parallel_clients.len() as i32 - 1i32) as usize;
+            sp_cl = Some(parallel_clients[pick2].clone());
+            (*guard).cache.insert(addr.clone(), parallel_clients);
+        }
+        // If not ok, parallel_clients cleans up via the Arc drops
+    }
+    sp_cl
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.32 version=1 rust_sha256=5adaf8a1963f9d63f3055de5da4a82036a1667cbe7e59b626d4c814ec5964d10*/
+rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self_, const std::string& addr) {
+    rusty::Option<rusty::Arc<Client>> sp_cl = rusty::Option<rusty::Arc<Client>>{rusty::None};
+    const PoolConfig cfg = self_.pool_config();
+    const int32_t num_connections = cfg.min_connections;
+    auto&& guard = rusty::deref_call(self_.state_.lock(), rusty::detail::__mdisp_unwrap{});
+    const bool has_lb = (rusty::detail::deref_if_pointer_like(guard)).lb_state.get(addr).is_some();
+    if (!has_lb) {
+        (rusty::detail::deref_if_pointer_like(guard)).lb_state.insert(rusty::clone(addr), LoadBalancerState::new_());
+    }
+    const LoadBalancerState& lb_state = (rusty::detail::deref_if_pointer_like(guard)).lb_state.get(addr).unwrap();
+    const bool has_cached = (rusty::detail::deref_if_pointer_like(guard)).cache.get(addr).is_some();
+    if (has_cached) {
+        rusty::Vec<rusty::Arc<Client>>& clients = (rusty::detail::deref_if_pointer_like(guard)).cache.get_mut(addr).unwrap();
+        const int32_t client_count = static_cast<int32_t>(rusty::len((clients)));
+        const size_t start_idx = LoadBalancer::select(std::move(cfg.load_balancing), clients, lb_state, static_cast<size_t>(RandomGenerator::rand(static_cast<int32_t>(0), RAND_MAX)));
+        int32_t i = static_cast<int32_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(client_count)) {
+            const size_t idx = ((rusty::detail::deref_if_pointer_like(start_idx) + (static_cast<size_t>(i)))) % ((static_cast<size_t>(client_count)));
+            const rusty::Arc<Client>& client = (clients)[idx];
+            if (((rusty::detail::deref_if_pointer_like(client))).connected() && clientpool_is_client_healthy_with(std::move(cfg), client)) {
+                sp_cl = rusty::Option<rusty::Arc<Client>>(rusty::clone(client));
+                break;
+            }
+            const ConnectionState state = ((rusty::detail::deref_if_pointer_like(client))).connection_state();
+            if ((((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::FAILED)))) || (((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED))))) {
+                auto state_name = connection_state_to_string(std::move(state));
+                Log_info("ClientPool: client to {} in state {}, attempting reconnect", addr, std::move(state_name));
+                if (((rusty::detail::deref_if_pointer_like(client))).try_reconnect_if_needed()) {
+                    Log_info("ClientPool: reconnected to {} successfully", addr);
+                    sp_cl = rusty::Option<rusty::Arc<Client>>(rusty::clone(client));
+                    break;
+                } else {
+                    Log_warn("ClientPool: reconnect to {} failed", addr);
+                }
+            }
+            i += static_cast<int32_t>(1);
+        }
+        if (sp_cl.is_none()) {
+            Log_info("ClientPool: all clients to {} failed, recreating connections", addr);
+            size_t ci = static_cast<size_t>(0);
+            while (rusty::detail::deref_if_pointer_like(ci) < rusty::len((clients))) {
+                ((rusty::detail::deref_if_pointer_like((clients)[ci]))).close();
+                ci += static_cast<size_t>(1);
+            }
+            ((clients)).clear();
+            bool ok = true;
+            int32_t n = static_cast<int32_t>(0);
+            while (rusty::detail::deref_if_pointer_like(n) < rusty::detail::deref_if_pointer_like(num_connections)) {
+                rusty::Arc<Client> client = Client::create(rusty::clone(self_.poll_thread_worker_.as_ref().unwrap()));
+                ((rusty::detail::deref_if_pointer_like(client))).set_client_mode(true);
+                if (clientpool_connect_client(client, addr) != static_cast<int32_t>(0)) {
+                    Log_warn("ClientPool: failed to create new connection to {}", addr);
+                    ok = false;
+                    break;
+                }
+                ((clients)).push(std::move(client));
+                n += static_cast<int32_t>(1);
+            }
+            if (rusty::detail::deref_if_pointer_like(ok) && rusty::detail::rust_not(rusty::is_empty(((clients))))) {
+                const size_t pick = static_cast<size_t>(RandomGenerator::rand(static_cast<int32_t>(0), (static_cast<int32_t>(rusty::len((clients)))) - static_cast<int32_t>(1)));
+                sp_cl = rusty::Option<rusty::Arc<Client>>(rusty::clone((clients)[pick]));
+            } else {
+                (rusty::detail::deref_if_pointer_like(guard)).cache.remove(addr);
+            }
+        }
+    } else {
+        rusty::Vec<rusty::Arc<Client>> parallel_clients = rusty::Vec<rusty::Arc<Client>>();
+        bool ok = true;
+        int32_t n2 = static_cast<int32_t>(0);
+        while (rusty::detail::deref_if_pointer_like(n2) < rusty::detail::deref_if_pointer_like(num_connections)) {
+            rusty::Arc<Client> client = Client::create(rusty::clone(self_.poll_thread_worker_.as_ref().unwrap()));
+            ((rusty::detail::deref_if_pointer_like(client))).set_client_mode(true);
+            if (clientpool_connect_client(client, addr) != static_cast<int32_t>(0)) {
+                ok = false;
+                break;
+            }
+            parallel_clients.push(std::move(client));
+            n2 += static_cast<int32_t>(1);
+        }
+        if (ok) {
+            const size_t pick2 = static_cast<size_t>(RandomGenerator::rand(static_cast<int32_t>(0), (static_cast<int32_t>(rusty::len(parallel_clients))) - static_cast<int32_t>(1)));
+            sp_cl = rusty::Option<rusty::Arc<Client>>(rusty::clone(parallel_clients[pick2]));
+            (rusty::detail::deref_if_pointer_like(guard)).cache.insert(rusty::clone(addr), std::move(parallel_clients));
+        }
+    }
+    return std::move(sp_cl);
+}
+/*RUSTYCPP:GEN-END id=client.32*/
 
 // @safe - 4g3c3: keepalive is now configured by the channel layer's
 // `TcpConnection` at construction time (see `tcp_channel.cpp`); the
