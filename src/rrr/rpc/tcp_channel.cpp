@@ -587,15 +587,27 @@ bool TcpPollableShim::is_closed() const {
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.pollable_shim*/
 
-inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
-    rusty::Arc<TcpConnection> conn) {
-    return rusty::make_box<TcpChannelShim>(std::move(conn));
+#if RUSTYCPP_RUST
+fn make_tcp_connection_channel_proxy(conn: rusty::Arc<TcpConnection>) -> ChannelConnectionProxy {
+    Box::new(TcpChannelShim { conn_: conn })
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.5 version=1 rust_sha256=cec688b22d6120186bd07ebddbf762669cd64d100cb3bfb5c340b80cc89a4583*/
+ChannelConnectionProxy make_tcp_connection_channel_proxy(rusty::Arc<TcpConnection> conn) {
+    return rusty::Box<TcpChannelShim>::new_(TcpChannelShim(std::move(conn)));
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.5*/
 
-inline PollableProxy make_tcp_connection_pollable_proxy(
-    rusty::Arc<TcpConnection> conn) {
-    return rusty::make_box<TcpPollableShim>(std::move(conn));
+#if RUSTYCPP_RUST
+fn make_tcp_connection_pollable_proxy(conn: rusty::Arc<TcpConnection>) -> PollableProxy {
+    Box::new(TcpPollableShim { conn_: conn })
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.6 version=1 rust_sha256=c80b3065b2404ec90e95c70039b7cac19a044d6d437ab13548c7a9d4f19654e6*/
+PollableProxy make_tcp_connection_pollable_proxy(rusty::Arc<TcpConnection> conn) {
+    return rusty::Box<TcpPollableShim>::new_(TcpPollableShim(std::move(conn)));
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.6*/
 
 // ---------------------------------------------------------------------------
 // TcpListener
@@ -1180,10 +1192,16 @@ inline ChannelListenerProxy make_tcp_listener_channel_proxy(
     return rusty::make_box<TcpListenerChannelShim>(std::move(listener));
 }
 
-inline PollableProxy make_tcp_listener_pollable_proxy(
-    rusty::Arc<TcpListener> listener) {
-    return rusty::make_box<TcpListenerPollableShim>(std::move(listener));
+#if RUSTYCPP_RUST
+fn make_tcp_listener_pollable_proxy(listener: rusty::Arc<TcpListener>) -> PollableProxy {
+    Box::new(TcpListenerPollableShim { listener_: listener })
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.9 version=1 rust_sha256=e3f0b9dfcfeece4fcfe5b99a84af0520abb93fe9676abc78fe640e12c43b51ec*/
+PollableProxy make_tcp_listener_pollable_proxy(rusty::Arc<TcpListener> listener) {
+    return rusty::Box<TcpListenerPollableShim>::new_(TcpListenerPollableShim(std::move(listener)));
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.9*/
 
 // ---------------------------------------------------------------------------
 // TcpFactory
@@ -1342,9 +1360,16 @@ std::string TcpFactoryShim::backend_name() const {
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.factory_shim*/
 
-inline ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory) {
-    return rusty::make_box<TcpFactoryShim>(std::move(factory));
+#if RUSTYCPP_RUST
+fn make_tcp_factory_proxy(factory: rusty::Arc<TcpFactory>) -> ChannelFactoryProxy {
+    Box::new(TcpFactoryShim { factory_: factory })
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.14 version=1 rust_sha256=5ee8f1277d7c5520dfeffe29a9ef7950630cdfae0a8d244fd74264ec1e8cb716*/
+ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory) {
+    return rusty::Box<TcpFactoryShim>::new_(TcpFactoryShim(std::move(factory)));
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.14*/
 
 }  // export namespace rrr
 
