@@ -602,7 +602,7 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
     TxData* txn) {
   int total = cmds_by_par.size();
   //std::shared_ptr<WaitAll> e = reactor_create_sp_event<WaitAll>();
-  rusty::Arc<IntEvent> e = reactor_create_sp_event<IntEvent>();
+  rusty::Arc<IntEvent> e = create_sp_int_event(1);
 	e->value_.set(0);
 	e->target_.set(total);
   std::unordered_set<int> leaders{};

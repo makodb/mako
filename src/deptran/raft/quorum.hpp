@@ -52,7 +52,7 @@ class RaftQuorum {
         n_needed_(n_needed),
         // rrr::Reactor::create_sp_event returns rusty::Arc; the reactor
         // owns the event via its all_events_ list.
-        ready_(::rrr::reactor_create_sp_event<::rrr::IntEvent>(n_needed)),
+        ready_(::rrr::create_sp_int_event(n_needed)),
         replies_(std::vector<std::pair<siteid_t, Reply>>{}) {}
 
   // Non-copyable, non-movable: holds an event registered with the reactor.

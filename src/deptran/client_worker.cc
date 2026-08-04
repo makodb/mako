@@ -301,8 +301,8 @@ void ClientWorker::Work() {
         coo->cli_id_ = cli_id_;
         verify(coo->sp_ev_commit_.is_none());
         verify(coo->sp_ev_done_.is_none());
-        coo->sp_ev_commit_ = rusty::Some(reactor_create_sp_event<IntEvent>());
-        coo->sp_ev_done_ = rusty::Some(reactor_create_sp_event<IntEvent>());
+        coo->sp_ev_commit_ = rusty::Some(create_sp_int_event(1));
+        coo->sp_ev_done_ = rusty::Some(create_sp_int_event(1));
 
         Log_debug("Dispatching request for {}", n_tx);
         this->outbound++;

@@ -66,7 +66,7 @@ class TxWorkspace {
   Value& WaitAt(int32_t k) {
     // Predicate wait via IntEvent (the residual Event class was deleted; its
     // 2 predicate call sites moved to IntEvent, which honors state_.test_).
-    auto e = reactor_create_sp_event<rrr::IntEvent>();
+    auto e = create_sp_int_event(1);
     (*e->state_.test_.borrow_mut()) = [this, k](int x)->bool{
       auto it = this->values_->find(k);
       return (it != this->values_->end());

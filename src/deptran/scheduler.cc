@@ -911,7 +911,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   // Create an event to track all recovery dispatches
   rusty::Option<rusty::Arc<IntEvent>> recovery_event = rusty::None;
   if (set_size > 0) {
-    recovery_event = rusty::Some(reactor_create_sp_event<IntEvent>(set_size));
+    recovery_event = rusty::Some(create_sp_int_event(set_size));
     // Log_info("[JETPACK-RECOVERY-EVENT] Created recovery event: target={}, initial value={}, event_ptr={}", 
     //          recovery_event->target_.get(), recovery_event->value_.get(), recovery_event.get());
   }

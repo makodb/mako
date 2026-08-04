@@ -51,7 +51,7 @@ TEST_F(ExtendedReactorTest, EventTimeout) {
 TEST_F(ExtendedReactorTest, SingleFiberEvent) {
     auto reactor = Reactor::get_reactor();
     
-    auto sp_event = reactor_create_sp_event<IntEvent>();
+    auto sp_event = create_sp_int_event(1);
     std::atomic<int> completed_count{0};
     
     // Set the event BEFORE creating the fiber (use default target=1)
@@ -113,9 +113,9 @@ TEST_F(ExtendedReactorTest, FiberException) {
 TEST_F(ExtendedReactorTest, EventChain) {
     auto reactor = Reactor::get_reactor();
     
-    auto sp_event1 = reactor_create_sp_event<IntEvent>();
-    auto sp_event2 = reactor_create_sp_event<IntEvent>();
-    auto sp_event3 = reactor_create_sp_event<IntEvent>();
+    auto sp_event1 = create_sp_int_event(1);
+    auto sp_event2 = create_sp_int_event(1);
+    auto sp_event3 = create_sp_int_event(1);
     
     sp_event1->target_.set(10);
     sp_event2->target_.set(20);
@@ -193,7 +193,7 @@ TEST_F(ExtendedReactorTest, ManyIndependentEvents) {
     
     // Create and trigger all events first (all use default target=1)
     for (int i = 0; i < num_events; i++) {
-        auto event = reactor_create_sp_event<IntEvent>();
+        auto event = create_sp_int_event(1);
         event->set(1);  // Set to target value
         events.push_back(event);
     }
@@ -283,7 +283,7 @@ TEST_F(ExtendedReactorTest, EventRecycling) {
         
         // Create batch
         for (int i = 0; i < 100; i++) {
-            auto event = reactor_create_sp_event<IntEvent>();
+            auto event = create_sp_int_event(1);
             events.push_back(event);
             
             reactor->create_run_fiber([event]() {
@@ -312,8 +312,8 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     auto reactor = Reactor::get_reactor();
     
     // Test WaitAny - waits for any event
-    auto event1 = reactor_create_sp_event<IntEvent>();
-    auto event2 = reactor_create_sp_event<IntEvent>();
+    auto event1 = create_sp_int_event(1);
+    auto event2 = create_sp_int_event(1);
     
     // Trigger one event before creating WaitAny
     event1->set(1);
@@ -329,8 +329,8 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     EXPECT_TRUE(or_triggered);
     
     // Test with triggering second event
-    auto event3 = reactor_create_sp_event<IntEvent>();
-    auto event4 = reactor_create_sp_event<IntEvent>();
+    auto event3 = create_sp_int_event(1);
+    auto event4 = create_sp_int_event(1);
     
     // Trigger second event (use default target=1)
     event4->set(1);

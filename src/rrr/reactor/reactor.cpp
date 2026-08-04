@@ -4433,7 +4433,7 @@ bool shared_int_event_wait_until_gte(SharedIntEvent& sie, int32_t x, int32_t tim
     if (rusty::detail::deref_if_pointer_like(sie.value_) >= rusty::detail::deref_if_pointer_like(x)) {
         return false;
     }
-    const rusty::Arc<IntEvent> ev = reactor_create_sp_event<IntEvent>();
+    const rusty::Arc<IntEvent> ev = create_sp_int_event(1);
     (rusty::detail::deref_if_pointer_like(ev)).value_.set(sie.value_);
     (rusty::detail::deref_if_pointer_like(ev)).target_.set(std::move(x));
     sie.events_.push(rusty::clone(ev));
@@ -4471,7 +4471,7 @@ void shared_int_event_wait(SharedIntEvent& sie, EventTestFn f) {
     if (f(sie.value_)) {
         return;
     }
-    const rusty::Arc<IntEvent> ev = reactor_create_sp_event<IntEvent>();
+    const rusty::Arc<IntEvent> ev = create_sp_int_event(1);
     (rusty::detail::deref_if_pointer_like(ev)).value_.set(sie.value_);
     {
         auto&& guard = (rusty::detail::deref_if_pointer_like(ev)).state_.test_.borrow_mut();
@@ -5891,7 +5891,7 @@ fn quorum_event_make(n_total: i32, quorum: i32) -> Arc<QuorumEvent> {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=reactor.38 version=1 rust_sha256=48aa033ae98f36241bb18f89357738d0cf2e5f94b7e73e6efbc42f80c656a3bd*/
 rusty::Arc<QuorumEvent> quorum_event_make(int32_t n_total, int32_t quorum) {
-    auto sp = rusty::Arc<QuorumEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>>(rusty::HashMap<uint16_t, rrr::i64>()), std::move(n_total), std::move(quorum), rusty::Cell<QuorumPolicy>::new_(rusty::clone(rusty::clone(QuorumPolicy::DEFAULT))), rusty::Cell<bool>::new_(false), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)), rusty::Cell<bool>::new_(false), rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(-1)), rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(18446744073709551615)), rrr::reactor_create_sp_event<IntEvent>(std::move(n_total)));
+    auto sp = rusty::Arc<QuorumEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>>(rusty::HashMap<uint16_t, rrr::i64>()), std::move(n_total), std::move(quorum), rusty::Cell<QuorumPolicy>::new_(rusty::clone(rusty::clone(QuorumPolicy::DEFAULT))), rusty::Cell<bool>::new_(false), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)), rusty::Cell<bool>::new_(false), rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(-1)), rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(18446744073709551615)), rrr::create_sp_int_event(std::move(n_total)));
     event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
     return std::move(sp);
 }

@@ -562,7 +562,7 @@ fn fiberchannel_make_event() -> rusty::Arc<IntEvent> {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=fiber_channel.7 version=1 rust_sha256=eafafcf1d751d7eeb0b16ae684b65754096cdf30bea85048dd93f47b7101a7ae*/
 rusty::Arc<IntEvent> fiberchannel_make_event() {
-    return reactor_create_sp_event<IntEvent>();
+    return create_sp_int_event(1);
 }
 /*RUSTYCPP:GEN-END id=fiber_channel.7*/
 

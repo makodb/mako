@@ -155,7 +155,7 @@ TEST(FiberRuntimeTest, timeout) {
 }
 
 TEST(FiberRuntimeTest, orevent) {
-  auto inte = reactor_create_sp_event<IntEvent>();
+  auto inte = create_sp_int_event(1);
   auto fiber1 = Fiber::create_run([&inte](){
     auto t1 = Time::now(true);
     auto timeout = 10 * 1000000;

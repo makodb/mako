@@ -60,7 +60,7 @@ class Coordinator {
   // every use in classic/coordinator.cc. Option<Arc> keeps the empty state
   // (mako-dev parity: this was a default-NULL shared_ptr<IntEvent>) instead of
   // eagerly creating a throwaway event. The eager
-  // `{reactor_create_sp_event<IntEvent>()}` default initializer this replaces
+  // `{create_sp_int_event(1)}` default initializer this replaces
   // was a real bug, not just waste: coordinators are constructed on ARBITRARY
   // submitter threads (PaxosWorker::_Submit), including mako worker threads
   // running their thread_local destructors (~StringAllocator flushes the log
