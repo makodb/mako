@@ -25,7 +25,6 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
@@ -153,7 +152,6 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
             # misc/
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp

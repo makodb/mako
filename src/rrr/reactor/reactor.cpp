@@ -58,7 +58,6 @@ import rrr.basetypes;
 import rrr.debugging;
 import rrr.logging;
 import rrr.misc;
-import rrr.strop;
 import rrr.threading;
 import rrr.epoll_wrapper;
 import rrr.pollable_proxy;

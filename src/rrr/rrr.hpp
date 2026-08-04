@@ -51,7 +51,6 @@ import rrr.reactor;
 // import rrr.request_options;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
 import rrr.server;
 import rrr.stat;
-import rrr.strop;
 import rrr.tcp_channel;
 import rrr.threading;
 import rrr.utils;

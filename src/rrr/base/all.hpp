@@ -8,5 +8,4 @@ import rrr.basetypes;
 import rrr.debugging;
 import rrr.logging;
 import rrr.misc;
-import rrr.strop;
 import rrr.threading;

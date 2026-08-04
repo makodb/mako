@@ -201,6 +201,55 @@ void OneTimeJob::Work() {
 }
 /*RUSTYCPP:GEN-END id=misc.one_time_job*/
 
+
+// Relocated from the deleted rrr.strop module (its only live symbols;
+// startswith/endswith/strsplit were dead and went with the module).
+// @unsafe - OVERLOADED NAME (double/int pair). Rust has no function
+// overloading, so the two cannot coexist as one DSL fn (7.24a); route
+// is callsite_rewrite (test-helper + memdb re-export are the only
+// consumers).
+std::string format_decimal(double val) {
+    std::ostringstream o;
+    o.precision(2);
+    o << std::fixed << val;
+    std::string s(o.str());
+    std::string str;
+    size_t idx = 0;
+    while (idx < s.size()) {
+        if (s[idx] == '.') {
+            break;
+        }
+        idx++;
+    }
+    str.reserve(s.size() + 16);
+    for (size_t i = 0; i < idx; i++) {
+        if ((idx - i) % 3 == 0 && i != 0 && s[i - 1] != '-') {
+            str += ',';
+        }
+        str += s[i];
+    }
+    str += s.substr(idx);
+    if (str == "-0.00") {
+        str = "0.00";
+    }
+    return str;
+}
+
+std::string format_decimal(int val) {
+    std::ostringstream o;
+    o << val;
+    std::string s(o.str());
+    std::string str;
+    str.reserve(s.size() + 8);
+    for (size_t i = 0; i < s.size(); i++) {
+        if ((s.size() - i) % 3 == 0 && i != 0 && s[i - 1] != '-') {
+            str += ',';
+        }
+        str += s[i];
+    }
+    return str;
+}
+
 } // export namespace rrr
 
 // @safe - impl namespace. Every function below carries its own

@@ -505,51 +505,103 @@ void fiberchannel_signal_pending_recv(FiberChannel& ch) {
 }
 /*RUSTYCPP:GEN-END id=fiberchannel.signal_pending_recv*/
 
-// @unsafe - Mutex + Arc make + store. Arms the single-waiter event under
-// the dedicated mutex (called only on the reactor thread from recv_frame).
-void fiberchannel_arm(FiberChannel& self) {
-    auto guard = self.pending_recv_event_.lock().unwrap();
-    (*guard) = rusty::Option<rusty::Arc<IntEvent>>(fiberchannel_make_event());
+// Arms the single-waiter event under the dedicated mutex (called only
+// on the reactor thread from recv_frame).
+#if RUSTYCPP_RUST
+fn fiberchannel_arm(self_: &mut FiberChannel) {
+    let mut guard = self_.pending_recv_event_.lock().unwrap();
+    *guard = rusty::Some(fiberchannel_make_event());
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.4 version=1 rust_sha256=21365169a27022e8d97978ebe7cab29527abae655e2ad1ec8be7f84562d19455*/
+void fiberchannel_arm(FiberChannel& self_) {
+    auto&& guard = rusty::deref_call(self_.pending_recv_event_.lock(), rusty::detail::__mdisp_unwrap{});
+    rusty::detail::deref_if_pointer_like(guard) = rusty::Some(fiberchannel_make_event());
+}
+/*RUSTYCPP:GEN-END id=fiber_channel.4*/
 
 // @unsafe - Mutex + store None. Clears the waiter under the dedicated
 // mutex after the wait completes (reactor thread only).
 
-// @unsafe - proxy deref through `ch_->send_frame(f)`.
-ChannelError fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f) {
-    return self.ch_->send_frame(f);
+// Proxy deref through `ch_`.
+#if RUSTYCPP_RUST
+fn fiberchannel_send_frame(self_: &mut FiberChannel, f: &ChannelFrame) -> ChannelError {
+    let ch: &mut Box<ChannelConnectionBase> = &mut self_.ch_;
+    ch.send_frame(f)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.5 version=1 rust_sha256=35429d3e397900b27a4c2ccc56a133242824a17257341f61354017103b86896e*/
+ChannelError fiberchannel_send_frame(FiberChannel& self_, const ChannelFrame& f) {
+    rusty::Box<ChannelConnectionBase>& ch = self_.ch_;
+    return ch->send_frame(f);
+}
+/*RUSTYCPP:GEN-END id=fiber_channel.5*/
 
-// @unsafe - proxy deref through `ch_->close()`.
-void fiberchannel_close(FiberChannel& self) {
-    self.ch_->close();
+// Proxy deref through `ch_`.
+#if RUSTYCPP_RUST
+fn fiberchannel_close(self_: &mut FiberChannel) {
+    let ch: &mut Box<ChannelConnectionBase> = &mut self_.ch_;
+    ch.close();
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.6 version=1 rust_sha256=bc3da6732a79354b29ff065322beaef79ac71505d4b32b3c28177730e22c9b72*/
+void fiberchannel_close(FiberChannel& self_) {
+    rusty::Box<ChannelConnectionBase>& ch = self_.ch_;
+    ch->close();
+}
+/*RUSTYCPP:GEN-END id=fiber_channel.6*/
 
 // @unsafe - Mutex lock + move-out-of-deque (the DSL cannot spell a
 // container front()-move); one lock covers test+move+pop.
 
-// @unsafe - Reactor template factory + Arc hand-off.
+// Reactor template factory + Arc hand-off.
+#if RUSTYCPP_RUST
+fn fiberchannel_make_event() -> rusty::Arc<IntEvent> {
+    reactor_create_sp_event::<IntEvent>()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.7 version=1 rust_sha256=eafafcf1d751d7eeb0b16ae684b65754096cdf30bea85048dd93f47b7101a7ae*/
 rusty::Arc<IntEvent> fiberchannel_make_event() {
     return reactor_create_sp_event<IntEvent>();
 }
+/*RUSTYCPP:GEN-END id=fiber_channel.7*/
 
 // @unsafe - fiber-suspending Event::wait through the Arc (a defensive
 // Arc clone keeps the event alive across the suspend even if the field
 // is reset concurrently).
-void fiberchannel_wait_event(FiberChannel& self) {
-    // Clone the waiter out under the mutex, then suspend OUTSIDE the lock
-    // (holding the mutex across a fiber yield would deadlock the reactor).
-    // The owned Arc keeps the event alive across the suspend even if a
-    // signal disarms the field concurrently.
-    rusty::Option<rusty::Arc<IntEvent>> held{rusty::None};
+// Clone the waiter out under the mutex, then suspend OUTSIDE the lock
+// (holding the mutex across a fiber yield would deadlock the reactor).
+// The owned Arc keeps the event alive across the suspend even if a
+// signal disarms the field concurrently. Same load-bearing scoped-block
+// shape as fiberchannel_signal_pending_recv above.
+#if RUSTYCPP_RUST
+fn fiberchannel_wait_event(self_: &mut FiberChannel) {
+    let mut held: rusty::Option<rusty::Arc<IntEvent>> = rusty::Option::<rusty::Arc<IntEvent>>::None;
     {
-        auto guard = self.pending_recv_event_.lock().unwrap();
+        let mut guard = self_.pending_recv_event_.lock().unwrap();
         held = (*guard).clone();
     }
-    if (held.is_some()) {
-        auto event = held.unwrap();
-        event->wait();
+    if held.is_some() {
+        let event = held.unwrap();
+        unsafe { event.wait(); }
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.8 version=1 rust_sha256=2f92e15a149a94ba9b02b99bfcfb6cf8316bd58773712f59ac0b8e31abf5a66e*/
+void fiberchannel_wait_event(FiberChannel& self_) {
+    rusty::Option<rusty::Arc<IntEvent>> held = rusty::Option<rusty::Arc<IntEvent>>{rusty::None};
+    {
+        auto&& guard = rusty::deref_call(self_.pending_recv_event_.lock(), rusty::detail::__mdisp_unwrap{});
+        held = rusty::clone(((rusty::detail::deref_if_pointer_like(guard))));
+    }
+    if (held.is_some()) {
+        const auto event = held.unwrap();
+        // @unsafe
+        {
+            event->wait();
+        }
+    }
+}
+/*RUSTYCPP:GEN-END id=fiber_channel.8*/
 
 }  // namespace rrr

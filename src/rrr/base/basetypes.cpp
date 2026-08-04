@@ -654,12 +654,25 @@ constexpr uint64_t RRR_USEC_PER_SEC = static_cast<uint64_t>(1000000);
 // @safe - precondition check that aborts on failure. Defined outside
 // the DSL because `verify()` lives in `rrr.debugging` which imports
 // basetypes (would be circular). Same shape, different name.
-inline void abort_if_false(bool cond) {
-    if (!cond) {
-        // @unsafe { libc abort }
-        { std::abort(); }
+#if RUSTYCPP_RUST
+fn abort_if_false(cond: bool) {
+    if !cond {
+        unsafe { abort(); }
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.6 version=1 rust_sha256=222bd5266a4084da249eec86eb678b5e37fddea9991e41adf9831006b4c8ce72*/
+void abort_if_false(bool cond);
+
+void abort_if_false(bool cond) {
+    if (!cond) {
+        // @unsafe
+        {
+            abort();
+        }
+    }
+}
+/*RUSTYCPP:GEN-END id=basetypes.6*/
 
 // @safe - architecture-conditional wall-clock helper. Defined outside
 // the DSL because the DSL has no preprocessor / `cfg!` support; the
