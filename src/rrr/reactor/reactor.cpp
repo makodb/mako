@@ -4819,7 +4819,7 @@ void fiber_sleep(uint64_t microseconds) {
     if (rusty::detail::deref_if_pointer_like(microseconds) == static_cast<uint64_t>(0)) {
         return;
     }
-    const auto x = reactor_create_sp_event<TimeoutEvent>(std::move(microseconds));
+    const auto x = create_sp_timeout_event(std::move(microseconds));
     ((rusty::detail::deref_if_pointer_like(x))).wait();
 }
 /*RUSTYCPP:GEN-END id=reactor.34*/

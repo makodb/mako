@@ -362,12 +362,12 @@ void ClassicServiceImpl::FailoverPauseSocketOut(
     // TODO: yidawu need to test with multi clients in diff machines
     int wait_int = 50 * 1000; // 50ms
     while (clt_cnt_.load() == 0) {
-      auto e = reactor_create_sp_event<NeverEvent>();
+      auto e = create_sp_never_event();
       e->wait_timeout(wait_int);
     }
     clt_cnt_--;
     while (clt_cnt_.load() != 0) {
-      auto e = reactor_create_sp_event<NeverEvent>();
+      auto e = create_sp_never_event();
       e->wait_timeout(wait_int);
     }
     dtxn_sched_->rep_sched_->Pause();

@@ -29,7 +29,7 @@ TEST_F(ExtendedReactorTest, EventTimeout) {
     auto reactor = Reactor::get_reactor();
     
     // Create an event that will timeout (TimeoutEvent takes microseconds)
-    auto sp_event = reactor_create_sp_event<TimeoutEvent>(100000); // 100ms = 100,000 microseconds
+    auto sp_event = create_sp_timeout_event(100000); // 100ms = 100,000 microseconds
     
     EXPECT_FALSE(sp_event->is_ready());
     

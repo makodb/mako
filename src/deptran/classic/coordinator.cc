@@ -124,7 +124,7 @@ void CoordinatorClassic::GotoNextPhase() {
 					first = false;
 				}
 				Log_info("total: {}", commo()->total_);
-				auto t = reactor_create_sp_event<TimeoutEvent>(0.1*1000*1000);
+				auto t = create_sp_timeout_event(0.1*1000*1000);
 				t->wait_timeout(0.1*1000*1000);
 			}*/
 			DispatchAsync(true);
@@ -711,7 +711,7 @@ retry:
       *cur_pause = e->q().leader_id_.get();
     }
   } else if (e->no()) {
-    auto sp_e = reactor_create_sp_event<TimeoutEvent>(300 * 1000);
+    auto sp_e = create_sp_timeout_event(300 * 1000);
     sp_e->wait();
     // usleep(300 * 1000) ;  // 300 ms
     goto retry;

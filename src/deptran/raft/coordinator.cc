@@ -160,7 +160,7 @@ void CoordinatorRaft::AppendEntries() {
     // @unsafe
     {
     while (this->svr_->commitIndex < index) {
-      reactor_create_sp_event<TimeoutEvent>(1000)->wait();
+      create_sp_timeout_event(1000)->wait();
       if (this->svr_->currentTerm != term) {
         Log_info("Term changed during AppendEntries: expected {}, got {}. Leader changed.",
                  term, this->svr_->currentTerm);

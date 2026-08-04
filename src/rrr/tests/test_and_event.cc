@@ -137,7 +137,7 @@ TEST(AndEventTest, MixedEventTypes) {
     
     // Mix different event types
     auto int_event = create_sp_int_event(1);
-    auto timeout_event = reactor_create_sp_event<TimeoutEvent>(100000); // 100ms
+    auto timeout_event = create_sp_timeout_event(100000); // 100ms
     
     rusty::Vec<rusty::Arc<EventPollable>> events = {int_event, timeout_event};
     auto and_event = reactor_create_sp_event<WaitAll>(events);

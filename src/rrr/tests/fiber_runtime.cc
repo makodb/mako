@@ -143,7 +143,7 @@ TEST(FiberRuntimeTest, timeout) {
   auto fiber1 = Fiber::create_run([](){
     auto t1 = Time::now(true);
     auto timeout = 1 * 1000000;
-    auto sp_e = reactor_create_sp_event<TimeoutEvent>(timeout);
+    auto sp_e = create_sp_timeout_event(timeout);
     Log_debug("set timeout, start wait");
     sp_e->wait();
     auto t2 = Time::now(true);
@@ -159,7 +159,7 @@ TEST(FiberRuntimeTest, orevent) {
   auto fiber1 = Fiber::create_run([&inte](){
     auto t1 = Time::now(true);
     auto timeout = 10 * 1000000;
-    auto sp_e1 = reactor_create_sp_event<TimeoutEvent>(timeout);
+    auto sp_e1 = create_sp_timeout_event(timeout);
     auto sp_e2 = reactor_create_sp_event<WaitAny>(sp_e1, inte);
     sp_e2->wait();
     auto t2 = Time::now(true);
