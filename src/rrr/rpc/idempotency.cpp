@@ -153,16 +153,32 @@ uint64_t IdempotencyKeyHash::hash_one(const IdempotencyKey& key) const {
 
 // Archive serde for IdempotencyKey.
 // @safe - field-by-field dispatch to the archive leaf impls.
-inline void serialize(const IdempotencyKey& key, BinaryWriteArchive& m) {
+#if RUSTYCPP_RUST
+fn serialize(key: &IdempotencyKey, m: &mut BinaryWriteArchive) {
     rrr::Serialize_::serialize(key.client_id, m);
     rrr::Serialize_::serialize(key.sequence, m);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.3 version=1 rust_sha256=ae967db6fe2000d923e58049f02e2c1d9a97a53ed921d50a44372c4da59b8ca4*/
+void serialize(const IdempotencyKey& key, BinaryWriteArchive& m) {
+    rrr::Serialize_::serialize(key.client_id, m);
+    rrr::Serialize_::serialize(key.sequence, m);
+}
+/*RUSTYCPP:GEN-END id=idempotency.3*/
 
 // @safe - see serialize above.
-inline void deserialize(IdempotencyKey& key, BinaryReadArchive& m) {
+#if RUSTYCPP_RUST
+fn deserialize(key: &mut IdempotencyKey, m: &mut BinaryReadArchive) {
+    rrr::Deserialize_::deserialize(&mut key.client_id, m);
+    rrr::Deserialize_::deserialize(&mut key.sequence, m);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.4 version=1 rust_sha256=0111a88890d07e36f6a7abe952237707a44e760007a0d04ed2f99fee407453a7*/
+void deserialize(IdempotencyKey& key, BinaryReadArchive& m) {
     rrr::Deserialize_::deserialize(key.client_id, m);
     rrr::Deserialize_::deserialize(key.sequence, m);
 }
+/*RUSTYCPP:GEN-END id=idempotency.4*/
 
 // ===========================================================================
 // IdempotencyConfig

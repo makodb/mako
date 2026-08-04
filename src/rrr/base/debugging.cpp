@@ -190,16 +190,28 @@ BtCapture bt_capture() {
 }
 
 // @unsafe - snprintf into a raw `char[16]`.
-std::string bt_index_prefix(int i) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%-3d  ", i);
-    return std::string(buf);
+// (was an snprintf kernel; std::format's {:<3} covers %-3d)
+#if RUSTYCPP_RUST
+fn bt_index_prefix(i: i32) -> std::string {
+    format!("{:<3}  ", i)
 }
 
-// @unsafe - trivial factory for the DSL.
-std::string bt_empty_string() {
-    return std::string();
+fn bt_empty_string() -> std::string {
+    format!("")
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=debugging.2 version=1 rust_sha256=62b433c3b21b3524deeb62bd5a39c7b325b7181c24c396be38d73da313f0e821*/
+std::string bt_index_prefix(int32_t i);
+std::string bt_empty_string();
+
+std::string bt_index_prefix(int32_t i) {
+    return std::format("{:<3}  " , i);
+}
+
+std::string bt_empty_string() {
+    return std::format("");
+}
+/*RUSTYCPP:GEN-END id=debugging.2*/
 
 // @unsafe - fputs of the rendered report to the caller-supplied FILE*.
 void print_stack_trace(FILE* fp) {

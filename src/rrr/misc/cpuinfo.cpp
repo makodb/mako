@@ -486,12 +486,27 @@ void cpuinfo_get_memory(CPUInfo& info, const std::string& pid, rusty::Vec<double
 
 // @safe - path builders for the DSL (operator+ on std::string has no
 // DSL spelling).
-inline std::string cpuinfo_net_path(const std::string& pid) {
-    return "/proc/" + pid + "/net/dev";
+#if RUSTYCPP_RUST
+fn cpuinfo_net_path(pid: &std::string) -> std::string {
+    format!("/proc/{}/net/dev", pid)
 }
-inline std::string cpuinfo_stat_path(const std::string& pid) {
-    return "/proc/" + pid + "/stat";
+
+fn cpuinfo_stat_path(pid: &std::string) -> std::string {
+    format!("/proc/{}/stat", pid)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.4 version=1 rust_sha256=0b0774e1025b07413622a49e53c531d09ae930d5968971fa821ff0b6fcd70347*/
+std::string cpuinfo_net_path(const std::string& pid);
+std::string cpuinfo_stat_path(const std::string& pid);
+
+std::string cpuinfo_net_path(const std::string& pid) {
+    return std::format("/proc/{}/net/dev" , pid);
+}
+
+std::string cpuinfo_stat_path(const std::string& pid) {
+    return std::format("/proc/{}/stat" , pid);
+}
+/*RUSTYCPP:GEN-END id=cpuinfo.4*/
 
 } // export namespace rrr
 
@@ -580,9 +595,18 @@ CPUInfo cpuinfo_new() {
 }
 
 // @unsafe - Log_debug varargs shim for the DSL delta method.
-void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks) {
+#if RUSTYCPP_RUST
+fn cpuinfo_log_ticks(last_ticks: clock_t, ticks: clock_t) {
     Log_debug("ticks: {} -> {}", last_ticks, ticks);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.6 version=1 rust_sha256=4e9ad4cc0dc6dddf006301b929b8df3001b822af0a4d07b3a1a345c7a7649742*/
+void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks);
+
+void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks) {
+    Log_debug("ticks: {} -> {}", std::move(last_ticks), std::move(ticks));
+}
+/*RUSTYCPP:GEN-END id=cpuinfo.6*/
 
 // @safe - Rust-idiomatic singleton accessor.
 //
