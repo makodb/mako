@@ -2561,12 +2561,19 @@ inline bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p,
 // container reads keep the default-construct-then-read-into shape). Lowers
 // to a UFCS free fn `Deserialize_::deserialize(T&, BinaryReadArchive&)`.
 // The `operator>>` overloads below forward here.
-// Fwd-decl of the late hand-written string overload: the generated
+// Fwd-decls of the late hand-written overloads: the generated
 // container bodies below resolve their qualified element calls against
 // declarations visible at this point in the module (reachability =
-// declaration order), and a pair<string, ...> element needs it.
+// declaration order). The string overload covers pair<string, ...>
+// elements; the CATCH-ALL template covers user-type elements
+// (mdb::Value, janus::* in generated rcc_rpc.h maps) — at overload
+// resolution the exact scalar/container matches still win (non-template
+// beats template; partial ordering beats plain T&), so this reproduces
+// exactly what the old bodies' unqualified lookup found.
 namespace Deserialize_ {
 inline void deserialize(std::string& self_, BinaryReadArchive& ar);
+template<typename T>
+inline void deserialize(T& v, BinaryReadArchive& ar);
 }
 
 #if RUSTYCPP_RUST
