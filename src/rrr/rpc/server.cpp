@@ -1333,6 +1333,14 @@ inline void server_for_each_service_impl(const Server& self, F&& callback);
 // `// @unsafe` overrides; the rest of the class is now analyzed as @safe
 // by default. Mirrors the Tier-4 flip on `Client`.
 #if RUSTYCPP_RUST
+// Accepted-connection registry shared between the Server and its
+// listener's on_accept closure. `closed` flips in ~Server; a late
+// accept observing it closes the connection instead of pushing.
+struct ChannelSconns {
+    closed: bool,
+    conns: Vec<Arc<ServerConnection>>,
+}
+
 struct Server {
     pending_services_field: Vec<ServiceProxy>,
     pending_rpc_to_service_field: HashMap<i32, usize>,
@@ -1351,9 +1359,13 @@ struct Server {
     // Arc-shared: the listener's on_accept closure runs on the poll
     // thread and can fire after ~Server on another thread (listener
     // close is an in-order poll-thread job, not a fence). Sharing the
-    // vector keeps a late accept writing into live memory; the vector
-    // dies with its last ref. (ASan-caught UAF: rpc_client_pool_test.)
-    channel_sconns_field: Arc<rusty::Mutex<Vec<Arc<ServerConnection>>>>,
+    // state keeps a late accept writing into live memory (ASan-caught
+    // UAF: rpc_client_pool_test), and the `closed` marker makes it
+    // CORRECT too: an accept that loses the race against ~Server must
+    // close the connection instead of parking it in an orphaned vector
+    // nobody will ever close (the client then stays "connected" forever
+    // — the state_integration >5s !connected() stall).
+    channel_sconns_field: Arc<rusty::Mutex<ChannelSconns>>,
 }
 
 impl Drop for Server {
@@ -1380,12 +1392,13 @@ impl Drop for Server {
         }
         {
             let mut guard = self.channel_sconns_field.lock().unwrap();
+            (*guard).closed = true;
             let mut i: usize = 0usize;
-            while i < (*guard).len() {
-                (*(*guard)[i]).close();
+            while i < (*guard).conns.len() {
+                (*(*guard).conns[i]).close();
                 i += 1usize;
             }
-            (*guard).clear();
+            (*guard).conns.clear();
         }
         self.ctx_field = None;
     }
@@ -1408,8 +1421,11 @@ impl Server {
             instance_id_field: server_generate_instance_id(),
             channel_factory_field: None,
             channel_listener_field: None,
-            channel_sconns_field: Arc::<rusty::Mutex<Vec<Arc<ServerConnection>>>>::new_(
-                rusty::Mutex::<Vec<Arc<ServerConnection>>>::new(Vec::<Arc<ServerConnection>>())),
+            channel_sconns_field: Arc::<rusty::Mutex<ChannelSconns>>::new_(
+                rusty::Mutex::<ChannelSconns>::new(ChannelSconns {
+                    closed: false,
+                    conns: Vec::<Arc<ServerConnection>>(),
+                })),
         }
     }
 
@@ -1597,7 +1613,7 @@ impl Server {
             }
             let mut listener: ChannelListenerProxy = listener_opt.unwrap();
 
-            let sconns_arc: Arc<rusty::Mutex<Vec<Arc<ServerConnection>>>> =
+            let sconns_arc: Arc<rusty::Mutex<ChannelSconns>> =
                 self.channel_sconns_field.clone();
             let ctx_arc: Arc<RpcServiceContext> =
                 self.ctx_field.as_ref().unwrap().clone();
@@ -1626,7 +1642,16 @@ impl Server {
                     }
                     {
                         let mut guard = sconns_arc.lock().unwrap();
-                        (*guard).push(sconn);
+                        if (*guard).closed {
+                            // This accept lost the race against ~Server:
+                            // close the connection now or nobody ever will
+                            // (an orphaned-but-open sconn kept the peer
+                            // "connected" indefinitely — the >5s
+                            // !connected() stall in state_integration).
+                            (*sconn).close();
+                            return;
+                        }
+                        (*guard).conns.push(sconn);
                     }
                 });
                 ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
@@ -1691,8 +1716,14 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=82f7aaa103a0546d790259acf721d22602aee0430af115e9d36ca7f1c4967628*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=1c45e56316695e92e162bf8637719ff9b65ceef837f804e31ec8088b64484cae*/
+struct ChannelSconns;
 struct Server;
+
+struct ChannelSconns {
+    bool closed;
+    rusty::Vec<rusty::Arc<ServerConnection>> conns;
+};
 
 struct Server {
     rusty::Vec<ServiceProxy> pending_services_field;
@@ -1709,9 +1740,9 @@ struct Server {
     uint64_t instance_id_field;
     rusty::Option<ChannelFactoryProxy> channel_factory_field;
     rusty::Option<ChannelListenerProxy> channel_listener_field;
-    rusty::Arc<rusty::Mutex<rusty::Vec<rusty::Arc<ServerConnection>>>> channel_sconns_field;
+    rusty::Arc<rusty::Mutex<ChannelSconns>> channel_sconns_field;
     mutable bool _rusty_forgotten = false;
-    Server(rusty::Vec<ServiceProxy> pending_services_field_init, rusty::HashMap<int32_t, size_t> pending_rpc_to_service_field_init, rusty::HashSet<int32_t> pending_fast_rpc_ids_field_init, rusty::Option<rusty::Arc<RpcServiceContext>> ctx_field_init, rusty::Option<rusty::Arc<PollThread>> poll_thread_field_init, rusty::Mutex<ShutdownState> shutdown_state_field_init, rusty::Box<rusty::Condvar> shutdown_cond_field_init, rusty::Cell<ShutdownPhase> shutdown_phase_field_init, rusty::Mutex<rusty::Vec<ShutdownHook>> shutdown_hooks_field_init, rusty::Arc<ServerPendingRequestsAtomic> pending_requests_field_init, rusty::Arc<ServerDropHeartbeatRepliesAtomic> drop_heartbeat_replies_field_init, uint64_t instance_id_field_init, rusty::Option<ChannelFactoryProxy> channel_factory_field_init, rusty::Option<ChannelListenerProxy> channel_listener_field_init, rusty::Arc<rusty::Mutex<rusty::Vec<rusty::Arc<ServerConnection>>>> channel_sconns_field_init) : pending_services_field(std::move(pending_services_field_init)), pending_rpc_to_service_field(std::move(pending_rpc_to_service_field_init)), pending_fast_rpc_ids_field(std::move(pending_fast_rpc_ids_field_init)), ctx_field(std::move(ctx_field_init)), poll_thread_field(std::move(poll_thread_field_init)), shutdown_state_field(std::move(shutdown_state_field_init)), shutdown_cond_field(std::move(shutdown_cond_field_init)), shutdown_phase_field(std::move(shutdown_phase_field_init)), shutdown_hooks_field(std::move(shutdown_hooks_field_init)), pending_requests_field(std::move(pending_requests_field_init)), drop_heartbeat_replies_field(std::move(drop_heartbeat_replies_field_init)), instance_id_field(std::move(instance_id_field_init)), channel_factory_field(std::move(channel_factory_field_init)), channel_listener_field(std::move(channel_listener_field_init)), channel_sconns_field(std::move(channel_sconns_field_init)) {}
+    Server(rusty::Vec<ServiceProxy> pending_services_field_init, rusty::HashMap<int32_t, size_t> pending_rpc_to_service_field_init, rusty::HashSet<int32_t> pending_fast_rpc_ids_field_init, rusty::Option<rusty::Arc<RpcServiceContext>> ctx_field_init, rusty::Option<rusty::Arc<PollThread>> poll_thread_field_init, rusty::Mutex<ShutdownState> shutdown_state_field_init, rusty::Box<rusty::Condvar> shutdown_cond_field_init, rusty::Cell<ShutdownPhase> shutdown_phase_field_init, rusty::Mutex<rusty::Vec<ShutdownHook>> shutdown_hooks_field_init, rusty::Arc<ServerPendingRequestsAtomic> pending_requests_field_init, rusty::Arc<ServerDropHeartbeatRepliesAtomic> drop_heartbeat_replies_field_init, uint64_t instance_id_field_init, rusty::Option<ChannelFactoryProxy> channel_factory_field_init, rusty::Option<ChannelListenerProxy> channel_listener_field_init, rusty::Arc<rusty::Mutex<ChannelSconns>> channel_sconns_field_init) : pending_services_field(std::move(pending_services_field_init)), pending_rpc_to_service_field(std::move(pending_rpc_to_service_field_init)), pending_fast_rpc_ids_field(std::move(pending_fast_rpc_ids_field_init)), ctx_field(std::move(ctx_field_init)), poll_thread_field(std::move(poll_thread_field_init)), shutdown_state_field(std::move(shutdown_state_field_init)), shutdown_cond_field(std::move(shutdown_cond_field_init)), shutdown_phase_field(std::move(shutdown_phase_field_init)), shutdown_hooks_field(std::move(shutdown_hooks_field_init)), pending_requests_field(std::move(pending_requests_field_init)), drop_heartbeat_replies_field(std::move(drop_heartbeat_replies_field_init)), instance_id_field(std::move(instance_id_field_init)), channel_factory_field(std::move(channel_factory_field_init)), channel_listener_field(std::move(channel_listener_field_init)), channel_sconns_field(std::move(channel_sconns_field_init)) {}
     Server(const Server&) = delete;
     Server(Server&& other) noexcept : pending_services_field(std::move(other.pending_services_field)), pending_rpc_to_service_field(std::move(other.pending_rpc_to_service_field)), pending_fast_rpc_ids_field(std::move(other.pending_fast_rpc_ids_field)), ctx_field(std::move(other.ctx_field)), poll_thread_field(std::move(other.poll_thread_field)), shutdown_state_field(std::move(other.shutdown_state_field)), shutdown_cond_field(std::move(other.shutdown_cond_field)), shutdown_phase_field(std::move(other.shutdown_phase_field)), shutdown_hooks_field(std::move(other.shutdown_hooks_field)), pending_requests_field(std::move(other.pending_requests_field)), drop_heartbeat_replies_field(std::move(other.drop_heartbeat_replies_field)), instance_id_field(std::move(other.instance_id_field)), channel_factory_field(std::move(other.channel_factory_field)), channel_listener_field(std::move(other.channel_listener_field)), channel_sconns_field(std::move(other.channel_sconns_field)) {
         this->_rusty_forgotten = other._rusty_forgotten;
@@ -1775,18 +1806,19 @@ listener_box->close();
     }
     {
         auto guard = this->channel_sconns_field->lock().unwrap();
+        (rusty::detail::deref_if_pointer_like(guard)).closed = true;
         size_t i = static_cast<size_t>(0);
-        while (rusty::detail::deref_if_pointer_like(i) < rusty::len((rusty::detail::deref_if_pointer_like(guard)))) {
-            ((rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard))[i]))).close();
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len((rusty::detail::deref_if_pointer_like(guard)).conns)) {
+            ((rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).conns[i]))).close();
             i += static_cast<size_t>(1);
         }
-        ((rusty::detail::deref_if_pointer_like(guard))).clear();
+        (rusty::detail::deref_if_pointer_like(guard)).conns.clear();
     }
     this->ctx_field = rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None};
 }
 
 Server Server::new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
-    return Server(rusty::Vec<ServiceProxy>(), rusty::HashMap<int32_t, size_t>(), rusty::HashSet<int32_t>(), rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None}, server_resolve_poll_thread(std::move(poll_thread_worker)), rusty::Mutex<ShutdownState>(ShutdownState{}), rusty::Box<rusty::Condvar>::new_(rusty::Condvar{}), rusty::Cell<ShutdownPhase>::new_(rusty::clone(rusty::clone(ShutdownPhase_RUNNING()))), rusty::Mutex<rusty::Vec<ShutdownHook>>::new_(rusty::Vec<ShutdownHook>()), rusty::Arc<ServerPendingRequestsAtomic>::make(static_cast<int32_t>(0)), rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false), server_generate_instance_id(), rusty::Option<ChannelFactoryProxy>{rusty::None}, rusty::Option<ChannelListenerProxy>{rusty::None}, rusty::Arc<rusty::Mutex<rusty::Vec<rusty::Arc<ServerConnection>>>>::new_(rusty::Mutex<rusty::Vec<rusty::Arc<ServerConnection>>>::new_(rusty::Vec<rusty::Arc<ServerConnection>>())));
+    return Server(rusty::Vec<ServiceProxy>(), rusty::HashMap<int32_t, size_t>(), rusty::HashSet<int32_t>(), rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None}, server_resolve_poll_thread(std::move(poll_thread_worker)), rusty::Mutex<ShutdownState>(ShutdownState{}), rusty::Box<rusty::Condvar>::new_(rusty::Condvar{}), rusty::Cell<ShutdownPhase>::new_(rusty::clone(rusty::clone(ShutdownPhase_RUNNING()))), rusty::Mutex<rusty::Vec<ShutdownHook>>::new_(rusty::Vec<ShutdownHook>()), rusty::Arc<ServerPendingRequestsAtomic>::make(static_cast<int32_t>(0)), rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false), server_generate_instance_id(), rusty::Option<ChannelFactoryProxy>{rusty::None}, rusty::Option<ChannelListenerProxy>{rusty::None}, rusty::Arc<rusty::Mutex<ChannelSconns>>::new_(rusty::Mutex<ChannelSconns>::new_(ChannelSconns{.closed = false, .conns = rusty::Vec<rusty::Arc<ServerConnection>>()})));
 }
 
 void Server::set_channel_factory(ChannelFactoryProxy factory) {
@@ -1937,7 +1969,7 @@ return factory->make_listener(); }();
             return -1;
         }
         ChannelListenerProxy listener = listener_opt.unwrap();
-        rusty::Arc<rusty::Mutex<rusty::Vec<rusty::Arc<ServerConnection>>>> sconns_arc = rusty::clone(this->channel_sconns_field);
+        rusty::Arc<rusty::Mutex<ChannelSconns>> sconns_arc = rusty::clone(this->channel_sconns_field);
         rusty::Arc<RpcServiceContext> ctx_arc = rusty::clone(this->ctx_field.as_ref().unwrap());
         {
             rusty::Box<ChannelListenerBase>& ch = listener;
@@ -1958,7 +1990,11 @@ rusty::Arc<ServerConnection> sconn = rusty::Arc<ServerConnection>::make(rusty::c
 }
 {
     auto guard = sconns_arc->lock().unwrap();
-    ((rusty::detail::deref_if_pointer_like(guard))).push(std::move(sconn));
+    if ((rusty::detail::deref_if_pointer_like(guard)).closed) {
+        ((rusty::detail::deref_if_pointer_like(sconn))).close();
+        return;
+    }
+    (rusty::detail::deref_if_pointer_like(guard)).conns.push(std::move(sconn));
 }
 });
             ch->set_on_error([=](ChannelError err, std::string_view msg) {
