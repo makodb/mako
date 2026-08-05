@@ -20,7 +20,6 @@ import rusty;
 //   Log_info: [safe, (...) -> void]
 //   Log_debug: [safe, (...) -> void]
 //   verify: [safe, (...) -> void]
-//   std::make_unique: [safe, (...) -> owned]
 //   std::make_shared: [safe, (...) -> owned]
 //   Config::GetConfig: [safe, () -> *]
 //   Reactor::get_reactor: [safe, () -> *]
@@ -93,7 +92,7 @@ RaftFrame::RaftFrame(int mode) : Frame(mode) {
 
 }
 
-// @safe - owned unique_ptr members release resources after the destructor body.
+// @safe - owned Rusty boxes release resources after the destructor body.
 RaftFrame::~RaftFrame() {
 }
 
@@ -153,12 +152,12 @@ Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
                                   std::move(client_status),
                                   id);
   coo->frame_ = this;
-  verify(commo_ != nullptr);
-  coo->commo_ = commo_.get();
+  verify(commo_.is_some());
+  coo->commo_ = commo_.as_ref().unwrap().get();
   // Share the frame-owned server with this coordinator; RaftFrame keeps the
   // pointee alive for the coordinator lifetime.
-  verify(svr_ != nullptr);
-  coo->svr_ = this->svr_.get();
+  verify(svr_.is_some());
+  coo->svr_ = this->svr_.as_ref().unwrap().get();
   coo->slot_hint_ = slot_hint_;  // Safe: Arc copy shares ownership
   coo->slot_id_ = slot_hint_->get();
   slot_hint_->set(slot_hint_->get() + 1);
@@ -171,16 +170,17 @@ Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
 
 // @unsafe - returns raw pointer to owned member (caller does not take ownership), calls Log_error/Log_debug
 TxLogServer *RaftFrame::CreateScheduler() {
-  if(svr_ == nullptr)
+  if (svr_.is_none())
   {
     // @unsafe
-    { svr_ = std::make_unique<RaftServer>(this); }
+    { svr_ = rusty::Option<rusty::Box<RaftServer>>(
+          rusty::Box<RaftServer>::emplace(this)); }
   }
   else
   {
     // @unsafe { Log_error is not borrow-checked }
     Log_error("[RAFT] RaftFrame::CreateScheduler called but scheduler already exists");
-    return svr_.get();
+    return svr_.as_ref().unwrap().get();
   }
   // @unsafe
   { Log_debug("create new fpga raft sched loc: {}", this->site_info_->locale_id); }
@@ -196,7 +196,7 @@ TxLogServer *RaftFrame::CreateScheduler() {
   }
 #endif
 
-  return svr_.get();
+  return svr_.as_ref().unwrap().get();
 }
 
 // @unsafe - returns raw pointer to owned member, external calls marked @external [safe]
@@ -209,9 +209,10 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
     auto guard = rrr::sp_running_fiber_th_.borrow();
     Log_info("CreateCommo: sp_running_fiber_th_ = {}", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
   }
-  if (commo_ == nullptr) {
+  if (commo_.is_none()) {
     Log_info("CreateCommo: Creating RaftFrame-owned RaftCommo");
-    commo_ = std::make_unique<RaftCommo>(std::move(poll_thread_worker));
+    commo_ = rusty::Option<rusty::Box<RaftCommo>>(
+        rusty::Box<RaftCommo>::emplace(std::move(poll_thread_worker)));
   }
 
   #ifdef RAFT_TEST_CORO
@@ -288,8 +289,9 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   }
   #endif
 
-  Log_info("CreateCommo: Returning commo_ = {}", (void*)commo_.get());
-  return commo_.get();
+  Log_info("CreateCommo: Returning commo_ = {}",
+           static_cast<void*>(commo_.as_ref().unwrap().get()));
+  return commo_.as_ref().unwrap().get();
 }
 
 // @unsafe - external calls marked @external [safe]

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/option.hpp>
 #include "../__dep__.h"
 #include "../coordinator.h"
 #include "../benchmark_control_rpc.h"
@@ -13,7 +15,6 @@
 #include <condition_variable>
 #include <deque>
 #include <map>
-#include <memory>
 #include <thread>
 #include <rusty/cell.hpp>
 #include <rusty/function.hpp>
@@ -244,17 +245,17 @@ public:
   // RPC infrastructure
   // @safe - shared PollThread handle; Arc/Option manages this lifetime.
   rusty::Option<rusty::Arc<PollThread>> svr_poll_thread_worker_;
-  // @unsafe - owned RPC server. Allocated in SetupService(), reset in ShutDown();
+  // @unsafe - owned RPC server. Allocated in SetupService(), cleared in ShutDown();
   // services are transferred to the server via reg_service().
-  std::unique_ptr<rrr::Server> rpc_server_;
+  rusty::Option<rusty::Box<rrr::Server>> rpc_server_{rusty::None};
 
   // Heartbeat/control RPC
   // @safe - shared heartbeat PollThread/status handles.
   rusty::Option<rusty::Arc<PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
   // @unsafe - owned heartbeat/control server. Allocated in SetupHeartbeat(),
-  // reset in ShutDown().
-  std::unique_ptr<rrr::Server> hb_rpc_server_;
+  // cleared in ShutDown().
+  rusty::Option<rusty::Box<rrr::Server>> hb_rpc_server_{rusty::None};
 
   // Queue for unreplayed logs (follower only)
   std::queue<std::tuple<int, int, int, int, const char*>> un_replay_logs_;

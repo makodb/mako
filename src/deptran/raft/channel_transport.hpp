@@ -276,7 +276,7 @@ class ChannelSwitchboard {
   // @safe - registers a new site. Returns the receiver side.
   rusty::sync::mpsc::Receiver<Envelope> register_site(siteid_t s) {
     auto [tx, rx] = rusty::sync::mpsc::channel<Envelope>();
-    senders_.push_back({s, std::move(tx)});
+    senders_.push({s, std::move(tx)});
     return std::move(rx);
   }
 
@@ -309,7 +309,7 @@ class ChannelSwitchboard {
   }
 
  private:
-  std::vector<std::pair<siteid_t, rusty::sync::mpsc::Sender<Envelope>>> senders_;
+  rusty::Vec<std::pair<siteid_t, rusty::sync::mpsc::Sender<Envelope>>> senders_;
   ChannelSwitchboardStateCore state_core_;
 };
 

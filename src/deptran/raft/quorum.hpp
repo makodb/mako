@@ -38,6 +38,8 @@
 
 #include "../constants.h"  // siteid_t
 
+import rusty;
+
 namespace janus {
 namespace raft {
 
@@ -117,7 +119,7 @@ class RaftQuorum {
         n_needed_(n_needed),
         ready_(raft_quorum_share_ready_event(
             ::rrr::Reactor::create_sp_event<::rrr::IntEvent>(n_needed))),
-        replies_(std::vector<std::pair<siteid_t, Reply>>{}) {}
+        replies_(rusty::Vec<std::pair<siteid_t, Reply>>::new_()) {}
 
   // Non-copyable, non-movable: holds an event registered with the reactor.
   RaftQuorum(const RaftQuorum&) = delete;
@@ -129,8 +131,7 @@ class RaftQuorum {
   void on_reply(siteid_t from, Reply reply) {
     {
       auto guard = replies_.lock().unwrap();
-      // @unsafe { std::vector::emplace_back is not borrow-checked }
-      guard->emplace_back(from, std::move(reply));
+      guard->push({from, std::move(reply)});
     }
     int n = n_received_.fetch_add(
                 1, ::rusty::sync::atomic::Ordering::AcqRel) +
@@ -156,9 +157,13 @@ class RaftQuorum {
   // @safe - drain the accumulated (siteid, reply) pairs.
   std::vector<std::pair<siteid_t, Reply>> collect() {
     auto guard = replies_.lock().unwrap();
+    auto replies = std::move(*guard);
+    *guard = rusty::Vec<std::pair<siteid_t, Reply>>::new_();
     std::vector<std::pair<siteid_t, Reply>> out;
-    // @unsafe { std::vector::swap is not borrow-checked }
-    out.swap(*guard);
+    out.reserve(replies.size());
+    for (auto& reply : replies) {
+      out.push_back(std::move(reply));
+    }
     return out;
   }
 
@@ -178,7 +183,7 @@ class RaftQuorum {
   // See class-level @unsafe note about std::shared_ptr.
   std::shared_ptr<::rrr::IntEvent> ready_;
   rusty::sync::atomic::AtomicI32 n_received_{0};
-  mutable rusty::Mutex<std::vector<std::pair<siteid_t, Reply>>> replies_;
+  mutable rusty::Mutex<rusty::Vec<std::pair<siteid_t, Reply>>> replies_;
 };
 
 }  // namespace raft

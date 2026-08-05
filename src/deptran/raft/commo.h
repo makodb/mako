@@ -9,6 +9,7 @@
 #include <rusty/function.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/mutex.hpp>
 #include <rusty/slice.hpp>
 
 // @external: {
@@ -110,12 +111,11 @@ inline bool commo_quorum_should_advance_term(uint64_t term, uint64_t highest_ter
 /*RUSTYCPP:GEN-END id=commo.quorum_decisions*/
 
 // @unsafe - owns the flattened QuorumEvent through the upstream composition
-// wrapper and tracks voters behind a std::mutex.
+// wrapper and tracks voters in a Rusty mutex.
 class RaftVoteQuorumEvent: public QuorumEventWrapper {
  private:
   // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
-  std::set<siteid_t> spec_voters_;
-  std::mutex voters_mtx_;
+  rusty::Mutex<std::set<siteid_t>> spec_voters_{std::set<siteid_t>{}};
 
  public:
   using QuorumEventWrapper::QuorumEventWrapper;
@@ -131,8 +131,8 @@ class RaftVoteQuorumEvent: public QuorumEventWrapper {
       { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
       // Track the voter for speculative voting
       if (commo_quorum_should_record_vote(y, voter_id)) {
-        std::lock_guard<std::mutex> lock(voters_mtx_);
-        spec_voters_.insert(voter_id);
+        auto voters = spec_voters_.lock().unwrap();
+        voters->insert(voter_id);
       }
     } else {
       vote_no();
@@ -155,8 +155,8 @@ class RaftVoteQuorumEvent: public QuorumEventWrapper {
 
   // @unsafe - Get the set of sites that voted yes (memory votes)
   std::set<siteid_t> GetSpecVoters() {
-    std::lock_guard<std::mutex> lock(voters_mtx_);
-    return spec_voters_;
+    auto voters = spec_voters_.lock().unwrap();
+    return *voters;
   }
 };
 

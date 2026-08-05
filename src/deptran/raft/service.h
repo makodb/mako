@@ -10,9 +10,9 @@
 #include "../rcc_rpc.h"
 #include "server.h"
 #include <atomic>
-#include <mutex>
 #include <map>
 #include <rusty/cell.hpp>
+#include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
 
 // @external: {
@@ -128,8 +128,9 @@ class RaftServiceImpl : public RaftService {
  public:
   // Static registry to find services by site_id (for Kill/Restart support).
   // @unsafe - stores borrowed service pointers; registry does not own entries.
-  static std::map<siteid_t, RaftServiceImpl*> service_registry_;
-  static std::mutex registry_mutex_;
+  // The map and its synchronization live in one Rusty mutex so callers cannot
+  // access the registry outside its lock scope.
+  static rusty::Mutex<std::map<siteid_t, RaftServiceImpl*>> service_registry_;
 
   // @unsafe - borrowed server pointer, site id, and restart poll-thread handle
   // live in a DSL core. Static registry and RPC overrides stay as C++ bridge
