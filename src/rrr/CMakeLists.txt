@@ -116,6 +116,7 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_connect.c
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_net.c
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_timing.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/srpc_fiber.c
     )
     # `src/compat` ships shims that fix third-party header gotchas
     # without modifying the submodule (e.g.

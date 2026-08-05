@@ -15,6 +15,8 @@
 module;
 
 #include <std_compat.hpp>
+// The plain-C stackful-fiber engine (Goal-0 fiber-API C demotion).
+#include "srpc_fiber.h"
 #include <std_annotation.hpp>
 
 #include <bit>
@@ -1547,35 +1549,9 @@ class Fiber;
  *
  * Stores callee-saved registers plus stack/instruction pointer.
  */
-struct FiberContext {
-#if defined(__x86_64__)
-  void* rsp{nullptr};
-  void* rip{nullptr};
-  std::uintptr_t rbx{0};
-  std::uintptr_t rbp{0};
-  std::uintptr_t r12{0};
-  std::uintptr_t r13{0};
-  std::uintptr_t r14{0};
-  std::uintptr_t r15{0};
-#elif defined(__aarch64__)
-  // AAPCS64 callee-saved: x19-x28, x29 (fp), x30 (lr used as pc), sp.
-  void* sp{nullptr};          // offset  0
-  void* pc{nullptr};          // offset  8 (lr on entry = resume address)
-  std::uintptr_t x19{0};      // offset 16
-  std::uintptr_t x20{0};      // offset 24
-  std::uintptr_t x21{0};      // offset 32
-  std::uintptr_t x22{0};      // offset 40
-  std::uintptr_t x23{0};      // offset 48
-  std::uintptr_t x24{0};      // offset 56
-  std::uintptr_t x25{0};      // offset 64
-  std::uintptr_t x26{0};      // offset 72
-  std::uintptr_t x27{0};      // offset 80
-  std::uintptr_t x28{0};      // offset 88
-  std::uintptr_t fp{0};       // offset 96 (x29)
-#endif
-};
-
-extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to);
+// (The fiber register bag + swap declaration live in srpc_fiber.h now —
+//  the whole stackful engine is plain C in srpc_fiber.c; the .S files'
+//  offset contract is against srpc_fiber_ctx.)
 
 // Default stack size for stackless fibers (1 MiB). Lifted out of
 // `fiber_task_t` class scope (was `private static constexpr`) because
@@ -1643,6 +1619,11 @@ fiber_yield_t fiber_yield_t::new_(fiber_task_t& task) {
 // function, authored as DSL further down (§7.30).
 void fiber_yield_invoke(fiber_yield_t& self);
 
+// Thin C++ holder over the plain-C srpc_fiber engine. The mmap stacks,
+// ABI context seeding, TLS active slot, and resume/yield/finish state
+// machine all live in srpc_fiber.c; the one irreducible C++ piece is
+// fiber_task_entry_thunk, where C re-enters C++ to invoke the
+// rusty::Function task body on the fiber stack.
 class fiber_task_t {
  public:
   using TaskFn = rusty::Function<void(fiber_yield_t&)>;
@@ -1663,33 +1644,19 @@ class fiber_task_t {
 
   void operator()();
 
+  // Invoked (via the extern-C thunk) by the C trampoline on the fiber
+  // stack: runs the rusty::Function task body with the yield handle.
+  void run_body();
+
  private:
   friend class fiber_yield_t;
   friend void fiber_yield_invoke(fiber_yield_t& self);
 
-  enum class State : uint8_t {
-    NEW = 0,
-    RUNNING,
-    SUSPENDED,
-    FINISHED
-  };
-
-  static thread_local fiber_task_t* tls_active_task_;
-
-  static void entry_trampoline();
-  [[noreturn]] void entry();
-
-  void init_context();
-  void resume();
   void yield_to_caller();
 
   TaskFn fn_;
   fiber_yield_t yield_;
-  FiberContext caller_ctx_{};
-  FiberContext fiber_ctx_{};
-  void* stack_mapping_{nullptr};
-  std::size_t stack_mapping_bytes_{0};
-  State state_{State::NEW};
+  srpc_fiber fib_{};
 };
 
 class Reactor;
@@ -5689,8 +5656,6 @@ void pollthread_drop(const PollThread& pt) {
 //   fiber_context_x86_64.cc  (x86_64)
 //   fiber_context_aarch64.cc (AArch64/ARM64)
 
-thread_local fiber_task_t* fiber_task_t::tls_active_task_ = nullptr;
-
 // Authored as inline Rust DSL. The raw `fiber_task_t*` deref lowers fine —
 // the older comment claiming the transpiler could not translate it was
 // stale (§7.30). The parameter is `y`, not `self`: a DSL param named
@@ -5718,113 +5683,38 @@ void fiber_yield_invoke(fiber_yield_t& y) {
 }
 /*RUSTYCPP:GEN-END id=reactor.23*/
 
+extern "C" void fiber_task_entry_thunk(void* self);
+
 fiber_task_t::fiber_task_t(TaskFn fn)
     : fn_(std::move(fn)),
       yield_(fiber_yield_t::new_(*this)) {
-  init_context();
+  // @unsafe - hands `this` to the C engine as the entry-thunk argument.
+  srpc_fiber_init(&fib_, kDefaultStackBytes, &fiber_task_entry_thunk, this);
   // Match Boost.Coroutine2 pull_type behavior: run immediately on construction.
-  resume();
+  srpc_fiber_resume(&fib_);
 }
 
 fiber_task_t::~fiber_task_t() {
-  if (stack_mapping_ != nullptr) {
-    int rc = munmap(stack_mapping_, stack_mapping_bytes_);
-    verify(rc == 0);
-    stack_mapping_ = nullptr;
-    stack_mapping_bytes_ = 0;
-  }
+  srpc_fiber_destroy(&fib_);
 }
 
 void fiber_task_t::operator()() {
-  resume();
+  srpc_fiber_resume(&fib_);
 }
 
-// @unsafe - mmap stack region, install guard page via mprotect,
-// reinterpret_cast the trampoline address and stack-top into the
-// ABI-specific FiberContext (rsp/rip on x86_64, sp/pc on aarch64).
-// The whole body is raw-pointer arithmetic by design.
-void fiber_task_t::init_context() {
-  std::size_t page_sz =
-      static_cast<std::size_t>(rusty::sys::process::sysconf(_SC_PAGESIZE));
-  if (page_sz == 0) {
-    page_sz = 4096;
-  }
-
-  stack_mapping_bytes_ = kDefaultStackBytes + page_sz;
-  void* mapping = mmap(nullptr,
-                       stack_mapping_bytes_,
-                       PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS,
-                       -1,
-                       0);
-  verify(mapping != MAP_FAILED);
-  int protect_rc = mprotect(mapping, page_sz, PROT_NONE);
-  verify(protect_rc == 0);
-  stack_mapping_ = mapping;
-
-  std::uintptr_t stack_top =
-      reinterpret_cast<std::uintptr_t>(static_cast<char*>(stack_mapping_) + stack_mapping_bytes_);
-  stack_top &= ~static_cast<std::uintptr_t>(0xF);
-
-  fiber_ctx_ = FiberContext{};
-  caller_ctx_ = FiberContext{};
-  const auto trampoline_addr =
-      reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(&fiber_task_t::entry_trampoline));
-#if defined(__x86_64__)
-  // SysV x86_64 ABI: %rsp % 16 == 8 on function entry (simulates a call pushing ret addr).
-  stack_top -= sizeof(void*);
-  *reinterpret_cast<void**>(stack_top) = nullptr;
-  fiber_ctx_.rsp = reinterpret_cast<void*>(stack_top);
-  fiber_ctx_.rip = trampoline_addr;
-#elif defined(__aarch64__)
-  // AAPCS64: sp must be 16-byte aligned on function entry. No fake return address needed;
-  // the trampoline address is stored in pc (= lr) and entered via ret.
-  fiber_ctx_.sp = reinterpret_cast<void*>(stack_top);
-  fiber_ctx_.pc = trampoline_addr;
-#endif
-}
-
-// @unsafe - fiber context switch via raw `fiber_task_t*` thread-local
-// (`tls_active_task_`) save/restore + `&caller_ctx_`/`&fiber_ctx_`
-// address-of into `fiber_swap_context`. The whole call is the fiber-
-// switching primitive.
-void fiber_task_t::resume() {
-  if (state_ == State::FINISHED) {
-    return;
-  }
-  auto* old = tls_active_task_;
-  tls_active_task_ = this;
-  fiber_swap_context(&caller_ctx_, &fiber_ctx_);
-  tls_active_task_ = old;
-}
-
-// @unsafe - companion to resume() — `&fiber_ctx_`/`&caller_ctx_` into
-// the fiber-switching primitive.
 void fiber_task_t::yield_to_caller() {
-  verify(state_ == State::RUNNING);
-  state_ = State::SUSPENDED;
-  fiber_swap_context(&fiber_ctx_, &caller_ctx_);
-  if (state_ != State::FINISHED) {
-    state_ = State::RUNNING;
-  }
+  srpc_fiber_yield(&fib_);
 }
 
-// @unsafe - reads the raw `fiber_task_t*` thread-local set by resume()
-// and dispatches into the fiber's entry routine.
-void fiber_task_t::entry_trampoline() {
-  auto* task = tls_active_task_;
-  verify(task != nullptr);
-  task->entry();
-}
-
-// @unsafe - uses raw `this` for the fiber-finished callback dispatch.
-[[noreturn]] void fiber_task_t::entry() {
-  state_ = State::RUNNING;
+void fiber_task_t::run_body() {
   verify(static_cast<bool>(fn_));
   fn_(yield_);
-  state_ = State::FINISHED;
-  fiber_swap_context(&fiber_ctx_, &caller_ctx_);
-  std::abort();
+}
+
+// @unsafe - the one C->C++ reentry: invoked by the C trampoline on the
+// fiber stack.
+extern "C" void fiber_task_entry_thunk(void* self) {
+  static_cast<fiber_task_t*>(self)->run_body();
 }
 
 }  // namespace rrr (definitions)
