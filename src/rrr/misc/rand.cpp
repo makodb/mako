@@ -235,64 +235,20 @@ namespace rrr {
 
 namespace {
 
-#if defined(__APPLE__) || defined(__clang__)
-pthread_key_t randgen_seed_key;
-pthread_once_t randgen_seed_key_once = PTHREAD_ONCE_INIT;
-pthread_once_t randgen_delete_key_once = PTHREAD_ONCE_INIT;
-#endif
-
 int randgen_nu_constant = 0;
-
-// The cycle-counter read lives in srpc_timing.c now (plain C, Goal-0 C
-// demotion — inline asm will never be Rust DSL).
-extern "C" std::uint64_t srpc_rdtsc(void);
-unsigned long long randgen_rdtsc() {
-    return static_cast<unsigned long long>(srpc_rdtsc());
-}
-
-#if defined(__APPLE__) || defined(__clang__)
-// @unsafe - pthread_key_create with raw `free` function pointer.
-void randgen_create_key() {
-    pthread_key_create(&randgen_seed_key, free);
-}
-
-// @unsafe - pthread_key_delete on raw pthread key.
-void randgen_delete_key() {
-    pthread_key_delete(randgen_seed_key);
-}
-
-// @unsafe - returns raw `unsigned int*` from pthread_getspecific;
-// malloc + C-style casts + pointer deref to seed the slot.
-unsigned int *randgen_get_seed() {
-    pthread_once(&randgen_seed_key_once, randgen_create_key);
-    unsigned int *seed = (unsigned int *)pthread_getspecific(randgen_seed_key);
-    if (seed == NULL) {
-        seed = (unsigned int *)malloc(sizeof(unsigned int));
-        pthread_setspecific(randgen_seed_key, (void *)seed);
-        *seed = randgen_rdtsc();
-    }
-    return seed;
-}
-#else
-thread_local unsigned int randgen_seed = randgen_rdtsc();
-#endif
 
 }  // namespace
 
-// @unsafe - the irreducible C surface: rand_r over the pthread-keyed /
-// thread-local seed. All range/scale logic lives in the DSL statics.
+// The per-thread PRNG seed store (pthread_key plumbing, the raw
+// `unsigned int*` seed, rand_r over it, and the pthread_once teardown)
+// lives in srpc_rand.c now — plain C, Goal-0 C demotion. None of it
+// needed C++, and none of it could ever be inline-Rust DSL.
+extern "C" int srpc_rand_raw(void);
+extern "C" void srpc_rand_destroy(void);
+
+// @unsafe - thin shim over the C kernel.
 int randgen_rand_raw() {
-    int r = 0;
-    // @unsafe { get_seed returns raw unsigned int*; rand_r dereferences it }
-    {
-#if defined(__APPLE__) || defined(__clang__)
-        unsigned int *seed = randgen_get_seed();
-        r = rand_r(seed);
-#else
-        r = rand_r(&randgen_seed);
-#endif
-    }
-    return r;
+    return srpc_rand_raw();
 }
 
 // @safe - RAND_MAX as a double for the DSL's scale math (the macro has
@@ -306,11 +262,9 @@ int randgen_nu_constant_now() {
 // @unsafe - std::string surgery (substr/prepend) for int2str_n's
 // fixed-width formatting; kept as a kernel for the substr call.
 
-// @unsafe - pthread_once + raw pthread key teardown.
+// @unsafe - thin shim over the C kernel (pthread teardown lives there).
 void randgen_destroy() {
-#if defined(__APPLE__) || defined(__clang__)
-    pthread_once(&randgen_delete_key_once, randgen_delete_key);
-#endif
+    srpc_rand_destroy();
 }
 
 

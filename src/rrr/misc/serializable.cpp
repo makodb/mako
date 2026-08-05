@@ -477,21 +477,14 @@ public:
 };
 /*RUSTYCPP:GEN-END id=serializable.fd_sink*/
 
-// @safe - The only raw-pointer op is ::write itself, annotated below.
+// The ::write EINTR-retry ladder lives in srpc_io.c now (plain C,
+// Goal-0 C demotion). This shim keeps the FdSink& signature so every
+// call site — including the tests — is unchanged.
+extern "C" void srpc_fd_write_all(int fd, const void* p, size_t n);
+
+// @unsafe - thin shim over the C kernel; the fd is not owned here.
 inline void fd_sink_write(FdSink& self, const void* p, size_t n) {
-    if (n == 0) return;
-    const auto* b = static_cast<const uint8_t*>(p);
-    size_t written = 0;
-    while (written < n) {
-        // @unsafe { ::write — raw libc syscall on a fd we don't own }
-        ssize_t r = ::write(self.fd_, b + written, n - written);
-        if (r < 0) {
-            if (errno == EINTR) continue;
-            verify(false);
-        }
-        verify(r > 0);
-        written += static_cast<size_t>(r);
-    }
+    srpc_fd_write_all(self.fd_, p, n);
 }
 
 struct FdSource;
@@ -574,22 +567,13 @@ public:
 };
 /*RUSTYCPP:GEN-END id=serializable.fd_source*/
 
-// @safe - The only raw-pointer op is ::read itself, annotated below.
+// The ::read ladder (EINTR retry, short read at EOF) lives in
+// srpc_io.c now. Same shim treatment as fd_sink_write above.
+extern "C" size_t srpc_fd_read_upto(int fd, void* p, size_t n);
+
+// @unsafe - thin shim over the C kernel; the fd is not owned here.
 inline size_t fd_source_read(FdSource& self, void* p, size_t n) {
-    if (n == 0) return 0;
-    auto* b = static_cast<uint8_t*>(p);
-    size_t got = 0;
-    while (got < n) {
-        // @unsafe { ::read — raw libc syscall on a fd we don't own }
-        ssize_t r = ::read(self.fd_, b + got, n - got);
-        if (r < 0) {
-            if (errno == EINTR) continue;
-            verify(false);
-        }
-        if (r == 0) break;  // EOF — return short read.
-        got += static_cast<size_t>(r);
-    }
-    return got;
+    return srpc_fd_read_upto(self.fd_, p, n);
 }
 
 inline SinkProxy make_sink_proxy(FdSink* sink) {
