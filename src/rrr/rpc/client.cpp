@@ -87,12 +87,6 @@ struct ReplyBuffer {
 };
 /*RUSTYCPP:GEN-END id=client.reply_buffer*/
 
-// @safe - value-init factory (empty body, null/0 cursor); the DSL has
-// no spelling for a null-pointer BufferSource literal.
-inline ReplyBuffer reply_buffer_empty() {
-    return ReplyBuffer{};
-}
-
 // Fill the reply body from the wire bytes, then point the read cursor at
 // the filled buffer. Call at most once per ReplyBuffer, before any read.
 //
@@ -102,13 +96,28 @@ inline ReplyBuffer reply_buffer_empty() {
 // sub-range by pointer arithmetic, so they now build that span
 // explicitly at the boundary where the arithmetic belongs.
 #if RUSTYCPP_RUST
+// @safe - value-init factory (empty body, null/0 cursor). The old excuse
+// ("the DSL has no spelling for a null-pointer BufferSource literal") is
+// expired: core::ptr::null() lowers to rusty::ptr::null() and is already
+// used elsewhere in this file's DSL.
+fn reply_buffer_empty() -> ReplyBuffer {
+    ReplyBuffer {
+        body: Vec::<u8>::new(),
+        src: BufferSource::new_(core::ptr::null(), 0usize),
+    }
+}
+
 fn reply_buffer_fill(rb: &mut ReplyBuffer, bytes: &[u8]) {
     rb.body.clear();
     rb.body.extend_from_slice(bytes);
     rb.src = BufferSource::new_(rb.body.data(), rb.body.len());
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.reply_fill version=1 rust_sha256=dbefb4f206231dec0cfcf41e07a68ae8eb549f988f8244f31f3f1a7512a19f81*/
+/*RUSTYCPP:GEN-BEGIN id=client.reply_fill version=1 rust_sha256=c96ace134d7963d20872ba5ca944623d7b7da585a9b3236944f0e5957cd19772*/
+ReplyBuffer reply_buffer_empty() {
+    return ReplyBuffer{.body = rusty::Vec<uint8_t>::new_(), .src = BufferSource::new_(rusty::ptr::null(), static_cast<size_t>(0))};
+}
+
 void reply_buffer_fill(ReplyBuffer& rb, std::span<const uint8_t> bytes) {
     ReplyBuffer* rb_shadow1 = &rb;
     (*rb_shadow1).body.clear();
@@ -1000,13 +1009,7 @@ struct ReconnectState {
 using AsyncReplyCallback = rusty::Function<
     void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
 
-// @unsafe - reinterpret a std::string's C string as the `const int8_t*`
-// address form clientconn_connect expects. Hand-written because the DSL has
-// no reinterpret_cast / `.c_str()`; the string must outlive the connect()
-// call, so callers pass a named local (not a temporary).
-inline const int8_t* str_as_i8(const std::string& s) {
-  return reinterpret_cast<const int8_t*>(s.c_str());
-}
+
 
 // @unsafe - Build the pre-filled async-callback slot vector
 // (kAsyncSlotCount Nones) for ClientConnection::pending_cb_slots_.
@@ -1206,7 +1209,7 @@ impl ClientConnection {
                         // reconnect_address_ itself, so we just re-run it.
                         (*conn).reset_channel_mode_for_reconnect();
                         let reconnect_addr: std::string = (*conn).reconnect_address_.get();
-                        let _ = (*conn).connect(str_as_i8(reconnect_addr));
+                        let _ = (*conn).connect(reconnect_addr.c_str() as *const i8);
                         return;
                     }
                     unsafe { Log_info("rrr::ClientConnection: channel-mode auto-reconnect (legacy) triggered after on_closed"); }
@@ -1694,7 +1697,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=5d6915ec48a93e69a798c2793a3bc248bafaac0c349a42432b640ead0251fc68*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=94b5a4cad0a03db2876ea4615e06b82eab6ceb1280002c541c522320a8c16211*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1927,7 +1930,7 @@ if ((((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::
         }
         ((rusty::detail::deref_if_pointer_like(conn))).reset_channel_mode_for_reconnect();
         const std::string reconnect_addr = (rusty::detail::deref_if_pointer_like(conn)).reconnect_address_.get();
-        static_cast<void>(((rusty::detail::deref_if_pointer_like(conn))).connect(str_as_i8(std::move(reconnect_addr))));
+        static_cast<void>(((rusty::detail::deref_if_pointer_like(conn))).connect(rusty::detail::ptr_cast<const int8_t*>(reconnect_addr.c_str())));
         return;
     }
     // @unsafe
@@ -5302,12 +5305,7 @@ void clientconn_run_recv_loop(const ClientConnection& conn) {
 // reads the instance ID. Sub-leaf 4f's migration switch / parity
 // pass will revisit if a legacy-server interop path needs the bit
 // surfaced through `ChannelFrame`.
-// @unsafe - pointer arithmetic for the payload tail (iterator-surgery
-// family; the DSL body below reaches the offset through this).
-inline const std::uint8_t* clientconn_payload_ptr(const std::uint8_t* bytes,
-                                                  std::size_t off) {
-  return bytes + off;
-}
+
 
 // Decode one response frame body and resolve the matching pending
 // slot. Header parse goes directly over the input bytes via
@@ -5357,7 +5355,7 @@ fn clientconn_decode_response_and_notify(conn: &ClientConnection,
                 conn.metrics_.record_request_failed();
             }
             conn.record_circuit_result(err_code);
-            cb(err_code, clientconn_payload_ptr(bytes, parsed_header_size),
+            cb(err_code, bytes.add(parsed_header_size),
                response_payload_bytes);
             return;
         }
@@ -5381,7 +5379,7 @@ fn clientconn_decode_response_and_notify(conn: &ClientConnection,
             let mut rb_guard = (*fu).reply_.borrow_mut();
             reply_buffer_fill(&mut *rb_guard, unsafe {
                 core::slice::from_raw_parts(
-                    clientconn_payload_ptr(bytes, parsed_header_size),
+                    bytes.add(parsed_header_size),
                     response_payload_bytes)
             });
         }
@@ -5398,7 +5396,7 @@ fn clientconn_decode_response_and_notify(conn: &ClientConnection,
     // caller and freed on return -- nothing to drain.
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.22 version=1 rust_sha256=b70003d7cface664bb8728127a79f33d64e026018e594a8d129268f892a3eab5*/
+/*RUSTYCPP:GEN-BEGIN id=client.22 version=1 rust_sha256=eb40ae721af9096c9e1348fa5af3e13bf10956dea31dff320a98a45a05512073*/
 void clientconn_decode_response_and_notify(const ClientConnection& conn, const uint8_t* bytes, size_t size) {
     conn.on_response_received(std::move(size));
     auto src = BufferSource::new_(bytes, std::move(size));
@@ -5431,7 +5429,7 @@ void clientconn_decode_response_and_notify(const ClientConnection& conn, const u
                 conn.metrics_.record_request_failed();
             }
             conn.record_circuit_result(std::move(err_code));
-            cb(std::move(err_code), clientconn_payload_ptr(bytes, std::move(parsed_header_size)), std::move(response_payload_bytes));
+            cb(std::move(err_code), rusty::ptr::add(bytes, std::move(parsed_header_size)), std::move(response_payload_bytes));
             return;
         }
     }
@@ -5450,7 +5448,7 @@ void clientconn_decode_response_and_notify(const ClientConnection& conn, const u
         (rusty::detail::deref_if_pointer_like(fu)).error_code_.set(v_error_code.get());
         if (rusty::detail::deref_if_pointer_like(response_payload_bytes) > static_cast<size_t>(0)) {
             auto&& rb_guard = (rusty::detail::deref_if_pointer_like(fu)).reply_.borrow_mut();
-            reply_buffer_fill(rusty::detail::deref_if_pointer_like(rb_guard), rusty::from_raw_parts(clientconn_payload_ptr(bytes, std::move(parsed_header_size)), std::move(response_payload_bytes)));
+            reply_buffer_fill(rusty::detail::deref_if_pointer_like(rb_guard), rusty::from_raw_parts(rusty::ptr::add(bytes, std::move(parsed_header_size)), std::move(response_payload_bytes)));
         }
         if (v_error_code.get() == static_cast<int32_t>(0)) {
             conn.metrics_.record_request_completed();
@@ -6087,16 +6085,18 @@ size_t clientpool_close_all_idle(const ClientPool& self_, uint64_t current_time_
 /*RUSTYCPP:GEN-END id=client.31*/
 
 
-// @unsafe kernel - the rrr wire type wants `const int8_t*`; the
-// reinterpret_cast from c_str() is not expressible in the DSL.
-static int32_t clientpool_connect_client(const rusty::Arc<Client>& client, const std::string& addr) {
-  return client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);  // @unsafe
-}
-
 // @unsafe - Drives Client::connect / reconnect synchronously; the state_
 // lock + BTreeMap ops are @safe but the network I/O underneath is not
-// (isolated in the clientpool_connect_client kernel above).
+// (it is reached through clientpool_connect_client below).
 #if RUSTYCPP_RUST
+// The `const int8_t*` the rrr wire type wants is spelled `addr.c_str()
+// as *const i8`, which lowers to the same reinterpret_cast the old
+// kernel wrote by hand. Kept in THIS block, not its own, so caller and
+// callee share one `#if RUSTYCPP_RUST` region.
+fn clientpool_connect_client(client: &Arc<Client>, addr: &std::string) -> i32 {
+    client.connect(addr.c_str() as *const i8, true)
+}
+
 fn clientpool_get_client(self_: &ClientPool, addr: &std::string) -> Option<Arc<Client>> {
     let mut sp_cl: Option<Arc<Client>> = None;
     let cfg: PoolConfig = self_.pool_config();
@@ -6215,7 +6215,11 @@ fn clientpool_get_client(self_: &ClientPool, addr: &std::string) -> Option<Arc<C
     sp_cl
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.32 version=1 rust_sha256=5adaf8a1963f9d63f3055de5da4a82036a1667cbe7e59b626d4c814ec5964d10*/
+/*RUSTYCPP:GEN-BEGIN id=client.32 version=1 rust_sha256=8df92d5c3da4eb707d62d6c311c320ed99f4cd6dff041bd524abb8f4c4b780f6*/
+int32_t clientpool_connect_client(const rusty::Arc<Client>& client, const std::string& addr) {
+    return client->connect(rusty::detail::ptr_cast<const int8_t*>(addr.c_str()), true);
+}
+
 rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self_, const std::string& addr) {
     rusty::Option<rusty::Arc<Client>> sp_cl = rusty::Option<rusty::Arc<Client>>{rusty::None};
     const PoolConfig cfg = self_.pool_config();

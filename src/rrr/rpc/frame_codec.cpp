@@ -19,10 +19,13 @@ import rrr.internal_protocol;
 // The buffer + read offset live in `cursor_`; the unread bytes are
 // peeked via `cursor_.fill_buf()` (a `std::span`) and dropped via
 // `cursor_.consume(n)`, so `next_frame` / `consume_frame` no longer do
-// raw `buf_.data() + read_pos_` arithmetic and `compact_if_needed` no
-// longer does `std::memmove` (it copies the unread tail off the span).
-// The only residual @unsafe are inherent boundaries: `append` (raw
-// transport pointer in) and the zero-copy FrameView payload pointer.
+// raw `buf_.data() + read_pos_` arithmetic. `compact_if_needed` DOES
+// memmove again (`ptr::copy` in place over the Cursor's own vector) —
+// that replaced a build-a-fresh-vector-and-reseat body and drops one
+// allocation off the rare compaction path.
+// The residual @unsafe are inherent boundaries: `append` and the
+// compaction memmove (raw transport pointer / raw buffer arithmetic)
+// plus the zero-copy FrameView payload pointer.
 export namespace rrr {
 
 
@@ -346,24 +349,43 @@ bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
  * defined threshold so long-lived connections don't accumulate
  * unbounded slack.
  */
-// The Cursor alias + construction helper let the DSL spell the field
-// type and the `new()` factory init (the DSL can't express the
-// `rusty::io::Cursor<std::vector<..>>` template args or a
-// `std::vector{}` construction inline).
-using FrameCursor = rusty::io::Cursor<std::vector<std::uint8_t>>;
+// Authored as inline Rust DSL. The note that used to sit here claimed the
+// DSL could spell neither the `rusty::io::Cursor<std::vector<..>>` template
+// args nor an inline `std::vector{}` construction — both are wrong at pin
+// da6e9bf4: the `type` alias lowers verbatim, and `Default::default()` in
+// the argument of `FrameCursor::new` resolves through the alias to
+// `rusty::default_like<std::vector<uint8_t>>()`, which bottoms out in the
+// same `std::vector<uint8_t>{}` this used to spell (dispatch.hpp:280).
+// The emitted `make_frame_cursor` loses `inline`; harmless, since it is
+// attached to this module and defined exactly once, and its only caller is
+// `FrameStreamReader::new_()` below.
+#if RUSTYCPP_RUST
+type FrameCursor = rusty::io::Cursor<std::vector<u8>>;
 
-inline FrameCursor make_frame_cursor() {
-    return FrameCursor::new_(std::vector<std::uint8_t>{});
+fn make_frame_cursor() -> FrameCursor {
+    FrameCursor::new(Default::default())
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.7 version=1 rust_sha256=01dce9078468ab726c0d534fabb0d80aa3167fba2bb959a0cfa6a01f55fb2149*/
+using FrameCursor = rusty::io::Cursor<std::vector<uint8_t>>;
+FrameCursor make_frame_cursor();
+
+
+FrameCursor make_frame_cursor() {
+    return FrameCursor::new_(rusty::default_like<std::vector<uint8_t>>());
+}
+/*RUSTYCPP:GEN-END id=frame_codec.7*/
 
 struct FrameStreamReader;
 
-// Hand-written backing free fns for the DSL methods whose bodies are
-// raw-pointer / std::span / std::vector interop (not DSL-expressible).
-// Definitions in the impl namespace at the bottom of this file.
-void fsr_append(FrameStreamReader& self, const std::uint8_t* data,
+// Forward declarations for the DSL-authored backing free fns the
+// `FrameStreamReader` methods forward to. Both bodies are inline Rust DSL
+// down in the impl namespace at the bottom of this file; these declarations
+// exist only so the methods' GEN block (emitted above those definitions)
+// can name them.
+void fsr_append(FrameStreamReader& self_, const std::uint8_t* data,
                 std::size_t size);
-void fsr_consume_frame(FrameStreamReader& self);
+void fsr_consume_frame(FrameStreamReader& self_);
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -657,35 +679,101 @@ bool frame_codec_encode_into(std::vector<uint8_t>& out, const uint8_t* payload, 
 // FrameStreamReader
 // ---------------------------------------------------------------------------
 
-// @unsafe - takes raw `const uint8_t*` data + size pair from transport
-// (an inherent boundary). The buffer growth itself is via the Cursor's
-// owned vector.
-void fsr_append(FrameStreamReader& self, const std::uint8_t* data,
-                std::size_t size) {
-    if (size == 0) return;
-    auto& buf = self.cursor_.get_mut();
-    buf.insert(buf.end(), data, data + size);
+// Authored as inline Rust DSL.
+//
+// @unsafe - takes a raw `const uint8_t*` data + size pair from the transport
+// (an inherent boundary). The buffer growth itself is via the Cursor's owned
+// vector: a DSL `&mut std::vector<u8>` binding lowers VERBATIM to
+// `std::vector<uint8_t>&` (rusty::Vec never enters the picture), the same
+// lowering frame_codec_encode_into relies on.
+//
+// The old iterator-pair `buf.insert(buf.end(), data, data + size)` became
+// `resize` + `ptr::copy_nonoverlapping` (a real memcpy), matching
+// frame_codec_encode_into. Cost of the reshape: `resize` value-initializes
+// the freshly grown tail before the copy overwrites it, so the appended
+// bytes are written twice.
+#if RUSTYCPP_RUST
+fn fsr_append(self_: &mut FrameStreamReader, data: *const u8, size: usize) {
+    if size == 0usize {
+        return;
+    }
+    let buf: &mut std::vector<u8> = self_.cursor_.get_mut();
+    let old: usize = buf.size();
+    buf.resize(old + size);
+    unsafe {
+        core::ptr::copy_nonoverlapping(data, rusty::ptr::add(buf.data(), old), size);
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.11 version=1 rust_sha256=84adb86253296f0a5cb3b8c0033cd40c7955fe6d38188e5bb6a2e4c27888425e*/
+void fsr_append(FrameStreamReader& self_, const uint8_t* data, size_t size) {
+    if (rusty::detail::deref_if_pointer_like(size) == static_cast<size_t>(0)) {
+        return;
+    }
+    std::vector<uint8_t>& buf = self_.cursor_.get_mut();
+    const size_t old = buf.size();
+    buf.resize(rusty::detail::deref_if_pointer_like(old) + rusty::detail::deref_if_pointer_like(size));
+    // @unsafe
+    {
+        rusty::ptr::copy_nonoverlapping(data, rusty::ptr::add(buf.data(), std::move(old)), std::move(size));
+    }
+}
+/*RUSTYCPP:GEN-END id=frame_codec.11*/
 
 
 namespace {
 
-// @safe - compacts by copying the unread tail (via `cursor_.fill_buf()`
-// span) into a fresh buffer and re-seating the Cursor — no `std::memmove`
-// + raw `buf_.data() + read_pos_` arithmetic. Rare path (only past the
-// 64 KiB compaction threshold), so the one alloc is well amortized.
-// (Was the private method `compact_if_needed`; only fsr_consume_frame
-// calls it, so it drops off the struct API entirely.)
-void fsr_compact_if_needed(FrameStreamReader& self) {
-    const std::size_t read_pos = self.cursor_.position();
-    if (read_pos == 0) return;
-    if (read_pos < kCompactThresholdBytes) return;
-
-    const std::span<const std::uint8_t> rem = self.cursor_.fill_buf();
-    std::vector<std::uint8_t> compacted(rem.begin(), rem.end());
-    self.cursor_ = rusty::io::Cursor<std::vector<std::uint8_t>>::new_(
-        std::move(compacted));
+// Authored as inline Rust DSL. (Was the private method `compact_if_needed`;
+// only fsr_consume_frame calls it, so it stays off the struct API — and
+// staying a free fn HERE keeps it and `kCompactThresholdBytes` together in
+// the same non-exported anon namespace. Promoting it to a method on the
+// exported struct would drag that constant across the export boundary.)
+//
+// @unsafe - compacts IN PLACE: the unread tail is memmove'd (`ptr::copy`)
+// down to the front of the Cursor's own vector, the vector is shrunk to the
+// tail length, and the read offset is reset to 0. The previous body built a
+// fresh `std::vector` from the `fill_buf()` span and re-seated the Cursor;
+// this drops that allocation. Rare path (only past the 64 KiB threshold).
+//
+// `self_` is a `&mut` PARAMETER, so it lowers to a C++ reference and
+// fsr_consume_frame's existing call site passes straight through.
+#if RUSTYCPP_RUST
+fn fsr_compact_if_needed(self_: &mut FrameStreamReader) {
+    let read_pos: usize = self_.cursor_.position();
+    if read_pos == 0usize {
+        return;
+    }
+    if read_pos < kCompactThresholdBytes {
+        return;
+    }
+    let buf: &mut std::vector<u8> = self_.cursor_.get_mut();
+    let remaining: usize = buf.size() - read_pos;
+    unsafe {
+        core::ptr::copy(rusty::ptr::add(buf.data(), read_pos), buf.data(), remaining);
+    }
+    buf.resize(remaining);
+    self_.cursor_.set_position(0usize);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.12 version=1 rust_sha256=708c74b06390d08d0dd2856b8fb81bbc04ce78a0dbdf763e029b15295461209a*/
+void fsr_compact_if_needed(FrameStreamReader& self_) {
+    const size_t read_pos = self_.cursor_.position();
+    if (rusty::detail::deref_if_pointer_like(read_pos) == static_cast<size_t>(0)) {
+        return;
+    }
+    if (rusty::detail::deref_if_pointer_like(read_pos) < rusty::detail::deref_if_pointer_like(kCompactThresholdBytes)) {
+        return;
+    }
+    std::vector<uint8_t>& buf = self_.cursor_.get_mut();
+    const size_t remaining = buf.size() - rusty::detail::deref_if_pointer_like(read_pos);
+    // @unsafe
+    {
+        rusty::ptr::copy(rusty::ptr::add(buf.data(), std::move(read_pos)), buf.data(), std::move(remaining));
+    }
+    buf.resize(std::move(remaining));
+    self_.cursor_.set_position(static_cast<size_t>(0));
+}
+/*RUSTYCPP:GEN-END id=frame_codec.12*/
 
 }  // namespace
 
@@ -697,14 +785,14 @@ void fsr_compact_if_needed(FrameStreamReader& self) {
 // to, and it stays a free function ON PURPOSE. The note that used to sit
 // here called the body un-convertible because of the EXPORT BOUNDARY:
 // inlining it into the DSL method hoists its `fsr_compact_if_needed` call
-// up into `export namespace rrr`, where that non-exported kernel is not
+// up into `export namespace rrr`, where that non-exported helper is not
 // the same entity -- it compiles and then fails to link (playbook 7.34).
 // That argument only ever applied to INLINING. Converting the body IN
 // PLACE keeps the call site down here in the impl namespace beside the
-// kernel, so the boundary is never crossed and the method keeps its
-// one-line forwarder. (Once fsr_compact_if_needed itself becomes a DSL
-// method on the struct, the two can be merged and this block folded into
-// FrameStreamReader::consume_frame.)
+// helper, so the boundary is never crossed and the method keeps its
+// one-line forwarder. fsr_compact_if_needed is itself DSL now, but it
+// stays a free fn in the anon namespace above for the same boundary
+// reason (see its own comment).
 //
 // `header_ref` is a NAMED BINDING for the same reason as in next_frame:
 // frame_codec_peek_header lives in a DIFFERENT `#if RUSTYCPP_RUST` block,

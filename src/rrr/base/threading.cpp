@@ -225,16 +225,35 @@ using rusty::sync::atomic::Ordering;
 using rusty::sync::atomic::AtomicBool;
 /*RUSTYCPP:GEN-END id=threading.atomic_usings*/
 
-// @safe - architecture-specific pause hint for spin loops. Defined
-// outside the DSL because the DSL has no inline-asm or preprocessor
-// support. The inline `@unsafe` block scopes the asm instruction.
-// The pause/yield instruction lives in srpc_timing.c now (plain C,
-// Goal-0 C demotion — inline asm will never be Rust DSL).
+// @safe - architecture-specific pause hint for spin loops. The
+// pause/yield instruction itself lives in srpc_timing.c (plain C,
+// Goal-0 C demotion -- inline asm will never be Rust DSL); this is the
+// one-line passthrough over it, authored as inline Rust DSL exactly
+// like `get_ncpu` in base/misc.cpp. The `extern "C"` declaration
+// stays hand-written C-bridge scaffolding and must precede the block.
+//
+// Two C++ qualifiers are dropped vs. the pre-DSL form: `inline` and
+// `noexcept`. Neither costs anything here -- the only callers are
+// SpinLock::lock/unlock below in this same TU, so the definition is
+// still visible for inlining, and `srpc_cpu_pause` is C and cannot
+// throw.
 extern "C" void srpc_cpu_pause(void);
 
-inline void cpu_pause() noexcept {
-    srpc_cpu_pause();  // @unsafe
+#if RUSTYCPP_RUST
+fn cpu_pause() {
+    unsafe { srpc_cpu_pause(); }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=threading.4 version=1 rust_sha256=d81887ce42eb48b40001f9a99c4f48ab58a7ec9065063918af176390def6dbe1*/
+void cpu_pause();
+
+void cpu_pause() {
+    // @unsafe
+    {
+        srpc_cpu_pause();
+    }
+}
+/*RUSTYCPP:GEN-END id=threading.4*/
 
 // `SpinLock` — atomic-flag busy-wait lock. The previous `Lockable`
 // abstract base was deleted (no polymorphic callers in the tree);

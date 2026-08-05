@@ -3,9 +3,11 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/refcell.hpp>
-// Reachability: this file's GEN names rusty::as_mut_ptr.
+// Reachability: this file's GEN names rusty::as_mut_ptr and
+// rusty::sync::atomic::AtomicI32.
 #include <rusty/array.hpp>
 #include <rusty/slice.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <rusty/os/fd.hpp>
 
 #include <unistd.h>
@@ -39,16 +41,41 @@ import rrr.debugging;
 // to an implementation unit). The close is the OwnedFd RAII drop.
 export namespace rrr {
 
+// `PollMode` / `PollReady` — the two constant sets the poll layer speaks
+// in. Authored as inline Rust DSL: `pub const NAME: i32 = ..` lowers to
+// `constexpr int32_t NAME = ..`. The `namespace X {` braces stay
+// hand-written scaffolding — a DSL block emits at the enclosing scope
+// and cannot open a namespace.
+//
+// The emitted constants drop the `inline` the hand-written ones carried.
+// That is safe here because a const variable in the purview of a module
+// interface unit has MODULE linkage, not internal: the single definition
+// below stays ODR-usable from importers (checked with an address-of and
+// a const-ref bind from an importing TU — both compile and link).
 namespace PollMode {
-    inline constexpr int READ = 0x1;
-    inline constexpr int WRITE = 0x2;
-    inline constexpr int NO_CHANGE = -1;
+#if RUSTYCPP_RUST
+pub const READ: i32 = 0x1;
+pub const WRITE: i32 = 0x2;
+pub const NO_CHANGE: i32 = -1;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll_wrapper.1 version=1 rust_sha256=10300b1d677ba058fca4724f50a836dc6e1c756053b46495708faa947f482fd3*/
+constexpr int32_t READ = static_cast<int32_t>(1);
+constexpr int32_t WRITE = static_cast<int32_t>(2);
+constexpr int32_t NO_CHANGE = -1;
+/*RUSTYCPP:GEN-END id=epoll_wrapper.1*/
 }
 
 namespace PollReady {
-    inline constexpr int READABLE = 0x1;
-    inline constexpr int WRITABLE = 0x2;
-    inline constexpr int ERROR = 0x4;
+#if RUSTYCPP_RUST
+pub const READABLE: i32 = 0x1;
+pub const WRITABLE: i32 = 0x2;
+pub const ERROR: i32 = 0x4;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll_wrapper.3 version=1 rust_sha256=176833170f7e300660bf046252bb5f12eb06047679378b3a54ac9c47ac77212a*/
+constexpr int32_t READABLE = static_cast<int32_t>(1);
+constexpr int32_t WRITABLE = static_cast<int32_t>(2);
+constexpr int32_t ERROR = static_cast<int32_t>(4);
+/*RUSTYCPP:GEN-END id=epoll_wrapper.3*/
 }
 
 // `Pollable` — abstract base for things that the epoll/kqueue wrapper
@@ -102,9 +129,23 @@ template <class U> class PollableAdapterRefMut;
 
 // Global counter of Epoll::Remove calls — test instrumentation (was the
 // static member `Epoll::remove_count_`; hoisted to module scope because the
-// DSL emits instance fields only). Read/reset by test_reactor.cc and
-// Reactor::get_remove_count().
-inline std::atomic<int> epoll_remove_count{0};
+// DSL emits instance fields only). Reset/read by test_reactor.cc, bumped
+// by the platform remove body.
+//
+// Authored as inline Rust DSL: a module-scope `static NAME: T = ..` lowers
+// to an `extern` declaration plus the `inline` definition — the DSL
+// spelling of the old `inline std::atomic<int>`. Retyping to
+// rusty::sync::atomic::AtomicI32 leaves `.load()` unchanged (its Ordering
+// argument defaults to SeqCst) but drops plain assignment, so the reset in
+// test_reactor.cc spells `.store(0)`.
+#if RUSTYCPP_RUST
+static epoll_remove_count: rusty::sync::atomic::AtomicI32 = rusty::sync::atomic::AtomicI32::new(0);
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll_wrapper.4 version=1 rust_sha256=e4c807ae4be400ab2cb3843489c041e410e135dbbb3845bb475dd4c6f9ee01a4*/
+extern rusty::sync::atomic::AtomicI32 epoll_remove_count;
+
+inline rusty::sync::atomic::AtomicI32 epoll_remove_count = rusty::sync::atomic::AtomicI32::new_(0);
+/*RUSTYCPP:GEN-END id=epoll_wrapper.4*/
 
 // === platform syscall entry points ===
 // Declarations only — the bodies live in the CMake-selected platform
@@ -120,8 +161,22 @@ int epoll_remove_impl(int32_t poll_fd, int fd);
 int epoll_update_impl(int32_t poll_fd, int fd, int new_mode, int old_mode);
 
 // @unsafe - shared remove-counter bump (test instrumentation), callable
-// from the DSL bodies in the implementation units.
-inline void epoll_bump_remove_count() { epoll_remove_count++; }
+// from the DSL bodies in the implementation units. No longer `inline`:
+// a DSL fn emits an ordinary module-attached definition here, which the
+// platform implementation unit calls across the TU boundary (Remove is a
+// teardown path, not a hot one).
+#if RUSTYCPP_RUST
+fn epoll_bump_remove_count() {
+    epoll_remove_count.fetch_add(1, rusty::sync::atomic::Ordering::SeqCst);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll_wrapper.5 version=1 rust_sha256=d04e5fafad102048d61ab66e46867c90a80863cea61db3c2c110c3061e4e73a0*/
+void epoll_bump_remove_count();
+
+void epoll_bump_remove_count() {
+    epoll_remove_count.fetch_add(1, rusty::sync::atomic::Ordering::SeqCst);
+}
+/*RUSTYCPP:GEN-END id=epoll_wrapper.5*/
 
 
 

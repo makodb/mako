@@ -18,6 +18,7 @@ module;
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -39,9 +40,10 @@ import rrr.logging;
 // move-only `rusty::Cell<bool>` field (`owned_`) is what deletes the copy
 // ctor — here load-bearing, since copying an owning addrinfo* would
 // double free. Every raw-pointer body is an `@unsafe` free function
-// below the struct. The free functions set_nonblocking / find_open_port
-// / get_host_name are pure syscalls (fcntl, socket/bind/getsockname/
-// close, gethostname) and are `// @unsafe`.
+// below the struct. `set_nonblocking` is the one hand-written syscall
+// wrapper left (fcntl) and is `// @unsafe`; `find_open_port` and
+// `get_host_name` are DSL — the first a shim over the plain-C
+// `srpc_find_open_port` ladder, the second over rusty::sys::env::hostname.
 export namespace rrr {
 
 // @safe - owns a `struct addrinfo*`; see file header. Move-only via the
@@ -186,15 +188,42 @@ int set_nonblocking(int fd, bool nonblocking) {
 extern "C" int srpc_find_open_port(void);
 
 // @unsafe - thin shim over the C kernel; logging stays C++-side.
-int find_open_port() {
-    int port = srpc_find_open_port();
-    if (port > 0) {
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Unlike get_host_name below, the Log_* calls need NO `rrr::`
+// qualification: the return-type free-fn misresolution fires only for a fn
+// returning a CLASS type, and this one returns i32 (playbook 7.12,
+// re-probed at pin da6e9bf4).
+//
+// Explicit block id: auto-numbering names a block by POSITION, so a block
+// here would be emitted as `utils.2` and collide with the get_host_name
+// block below.
+#if RUSTYCPP_RUST
+fn find_open_port() -> i32 {
+    let port: i32 = srpc_find_open_port();
+    if port > 0 {
         Log_info("Found open port: {}", port);
         return port;
     }
     Log_error("Failed to find open port.");
+    -1
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=utils.find_open_port version=1 rust_sha256=fc379891cf1ccbfda3351de49a83403a1fd697f98512072477fd3eee1a86f4d9*/
+int32_t find_open_port();
+
+int32_t find_open_port() {
+    int32_t port = srpc_find_open_port();
+    if (rusty::detail::deref_if_pointer_like(port) > 0) {
+        Log_info("Found open port: {}", std::move(port));
+        return std::move(port);
+    }
+    Log_error("Failed to find open port.");
     return -1;
 }
+/*RUSTYCPP:GEN-END id=utils.find_open_port*/
 
 // @safe - rusty::sys::env::hostname returns an owned std::string and
 // wraps gethostname in an inner @unsafe block. Returns "" on syscall

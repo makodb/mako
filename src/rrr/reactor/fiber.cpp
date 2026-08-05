@@ -114,13 +114,38 @@ bool in_fiber_context() {
  *
  * This allows the reactor to run other ready fibers before returning
  * to the current fiber. No-op if called outside fiber context.
+ *
+ * Authored as inline Rust DSL. `yield` is a reserved Rust keyword, so the
+ * fn is spelled with the raw identifier `r#yield`; the transpiler emits a
+ * plain `void yield()`. The explicit `Option<Rc<Fiber>>` annotation is the
+ * same one get_id needs (playbook 7.13) — without it the Rc is not
+ * inferred and the call lowers as `.yield_()` instead of `->yield_()`.
+ *
+ * The hand-written version was `inline ... noexcept`. `inline` is moot in
+ * a module interface unit (the sibling DSL helpers above are defined the
+ * same way), and `noexcept` has no DSL spelling; this is a leaf call into
+ * Fiber::yield_, so the only observable delta would be
+ * propagate-instead-of-terminate on an exception that is never thrown.
+ * Both call sites (tests/fiber_test.cc:155,165) are plain calls.
  */
-inline void yield() noexcept {
-    auto fiber = Fiber::current_fiber();
+#if RUSTYCPP_RUST
+fn r#yield() {
+    let fiber: rusty::Option<rusty::Rc<Fiber>> = Fiber::current_fiber();
+    if fiber.is_some() {
+        fiber.unwrap().yield_();
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber.yield version=1 rust_sha256=0368cc7f73414e1606825d6bbb334f64e5591c8a5888cf52cbfeed849997af48*/
+void yield();
+
+void yield() {
+    rusty::Option<rusty::Rc<Fiber>> fiber = Fiber::current_fiber();
     if (fiber.is_some()) {
         fiber.unwrap()->yield_();
     }
 }
+/*RUSTYCPP:GEN-END id=fiber.yield*/
 
 /**
  * Sleep helpers (sleep_us / sleep_ms / sleep_s / sleep_until_us).

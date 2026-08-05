@@ -26,9 +26,21 @@ import rrr.threading;
 //     the per-callback try/catch swallow.
 export namespace rrr {
 
+// Authored as inline Rust DSL. `dyn Fn` is callable through `&self`, so it
+// lowers to the trailing-`const` C++ signature these aliases need (`dyn
+// FnMut` would give the non-const form). Spell the string parameter
+// `&std::string`, NOT `&String` — the latter lowers to
+// `const rusty::String&`, a different type.
+#if RUSTYCPP_RUST
+type ConnectionCallback = rusty::Arc<rusty::Function<dyn Fn()>>;
+type ErrorCallback = rusty::Arc<rusty::Function<dyn Fn(RpcError, &std::string)>>;
+type ReconnectCallback = rusty::Arc<rusty::Function<dyn Fn(bool)>>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=callbacks.2 version=1 rust_sha256=bc6501a4c6cb41f46e0b9900a07aef4ae9d456c7440fe6e9c3b5381550c9033f*/
 using ConnectionCallback = rusty::Arc<rusty::Function<void() const>>;
 using ErrorCallback = rusty::Arc<rusty::Function<void(RpcError, const std::string&) const>>;
 using ReconnectCallback = rusty::Arc<rusty::Function<void(bool) const>>;
+/*RUSTYCPP:GEN-END id=callbacks.2*/
 
 // @safe - try/catch protects the dispatcher from a user callback that
 // throws. The catch swallows everything per the original behaviour.
@@ -41,18 +53,6 @@ inline void invoke_callback_safely(const Callback& cb, Args&&... args) {
         (*cb)(std::forward<Args>(args)...);
     } catch (...) {
     }
-}
-
-// @unsafe - rusty::Condvar::wait_while with a closure predicate; the DSL
-// grammar can't express the wait-while lambda binding (same shape as
-// server_wait_for_shutdown_impl). Blocks until no invoke_* dispatch is
-// in flight — the rundown half of CallbackManager::clear_all.
-inline void callback_manager_wait_inflight_drain(
-        const rusty::Mutex<size_t>* inflight,
-        const rusty::Box<rusty::Condvar>* cv) {
-    auto guard = inflight->lock().unwrap();
-    guard = (*cv)->wait_while(std::move(guard),
-        [](size_t& n) { return n != 0; }).unwrap();
 }
 
 #if RUSTYCPP_RUST
@@ -249,8 +249,20 @@ impl CallbackManager {
             let guard = self.callbacks_field.lock().unwrap();
             guard.clear();
         }
-        callback_manager_wait_inflight_drain(
-            &self.inflight_field, &self.inflight_cv_field);
+        // Rundown: block until no invoke_* dispatch is in flight. This used
+        // to call a hand-written `callback_manager_wait_inflight_drain`
+        // because "the DSL grammar can't express the wait-while lambda
+        // binding" — it does now, and the emit is byte-for-byte the old
+        // body: `wait_while(std::move(guard), [&](size_t& n){ ... })
+        // .unwrap()`, including the auto std::move on the guard and the Box
+        // arrow-deref. INLINED rather than kept a free fn on purpose: a free
+        // fn taking `&rusty::Mutex<usize>` lowers to a REFERENCE parameter
+        // while this call site's `&self.inflight_field` lowers to a POINTER,
+        // and inlining sidesteps that mismatch entirely.
+        let mut inflight_guard = self.inflight_field.lock().unwrap();
+        inflight_guard = self.inflight_cv_field
+            .wait_while(inflight_guard, |n: &mut usize| { *n != 0usize })
+            .unwrap();
     }
 
     fn callback_count(&self) -> usize {
@@ -288,7 +300,7 @@ impl CallbackManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=cb95ca3744ceab79c3edd15d93ef64239dfd7b4d6b28abc2a3d287f926a1a44d*/
+/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=3a21a098fdcebfce87d03709e62b23712fb64fbd18304d5c64e0f239d28d92c6*/
 struct ConnectionCallbacks;
 struct CallbackManager;
 
@@ -466,7 +478,10 @@ void CallbackManager::clear_all() const {
         auto guard = this->callbacks_field.lock().unwrap();
         (*guard).clear();
     }
-    callback_manager_wait_inflight_drain(&this->inflight_field, &this->inflight_cv_field);
+    auto inflight_guard = this->inflight_field.lock().unwrap();
+    inflight_guard = this->inflight_cv_field->wait_while(std::move(inflight_guard), [&](size_t& n) {
+return n != static_cast<size_t>(0);
+}).unwrap();
 }
 
 size_t CallbackManager::callback_count() const {

@@ -547,7 +547,7 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
 
     // Reset the global remove counter (was Epoll::remove_count_ static member;
     // hoisted to rrr::epoll_remove_count when Epoll moved to the DSL).
-    rrr::epoll_remove_count = 0;
+    rrr::epoll_remove_count.store(0);
 
     {
         auto test_poll_worker = PollThread::create();

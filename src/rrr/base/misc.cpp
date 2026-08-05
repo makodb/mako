@@ -21,10 +21,9 @@ import rrr.basetypes;
 
 // @safe - mostly templated helpers (clamp, insert_into_map, erase) +
 // Job/OneTimeJob/FrequentJob value classes. The syscall-touching
-// functions (`rdtsc`, `time_now_str`, `get_ncpu`, 
-// `getline`, the static `make_int` byte-writer) and
-// `FrequentJob::Ready` (calls rrr::Time::now(false)) carry per-method
-// `// @unsafe` overrides.
+// functions (`rdtsc`, `get_ncpu`, `getline`) and `FrequentJob::Ready`
+// (calls rrr::Time::now(false)) carry per-method `// @unsafe`
+// overrides.
 export namespace rrr {
 
 // The cycle-counter read lives in srpc_timing.c now (plain C, Goal-0 C
@@ -64,16 +63,35 @@ T clamp(const T& v, const T1& lower, const T2& upper) {
 }
 /*RUSTYCPP:GEN-END id=misc.1*/
 
-// YYYY-MM-DD HH:MM:SS.mmm; caller-supplied buffer must be at least 24 bytes.
-void time_now_str(char *now);
+
 int get_ncpu();
 
 // NOTE: \n is stripped from input
 std::string getline(FILE *fp, char delim = '\n');
 
+// `insert_into_map` -- 20 call sites across src/memdb. Authored as
+// inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
+// of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block as a real
+// `template<typename K, typename V, typename Map>` with a
+// byte-identical parameter list, so no call site changes.
+//
+// The body swapped `map.insert(typename Map::value_type(key, value))`
+// for `map.emplace(key, value)`: that dependent-type spelling was the
+// ONLY thing here that needed C++ template metaprogramming, and
+// emplace is semantically identical for every container this is
+// called with (std::map / multimap / unordered_map /
+// unordered_multimap -- C++11 requires multimap::emplace to insert at
+// the upper bound of the equivalent range, exactly like
+// insert(value_type)). The generic receiver makes the transpiler emit
+// `rusty::deref_call(map, rusty::detail::__mdisp_emplace{}, ...)`,
+// which is what grew the GEN-DISPATCH block at the top of the file.
 template <class K, class V, class Map>
 // @unsafe - uses the DEPENDENT TYPE `typename Map::value_type`, which is
-// C++ template metaprogramming with no DSL equivalent.
+// C++ template metaprogramming with no DSL equivalent. (Converting it
+// emitted `rusty::deref_call(map, __mdisp_emplace{}, ...)`, which fails
+// at all 136 call sites — the emplace dispatcher is module-purview and
+// not exported.)
 inline void insert_into_map(Map &map, const K &key, const V &value) {
   map.insert(typename Map::value_type(key, value));
 }
@@ -270,15 +288,13 @@ std::string format_thousands(double val) {
 // `char*` buffers; the namespace label is here for future helpers.
 namespace rrr {
 
-// The timestamp formatter (time/localtime_r/gettimeofday + raw digit
-// writing, formerly make_int + this body) lives in srpc_timing.c now
-// (plain C, Goal-0 C demotion).
-extern "C" void srpc_time_now_str(char* now);
-
-// @unsafe - thin shim over the C kernel (raw char* passthrough).
-void time_now_str(char* now) {
-    srpc_time_now_str(now);
-}
+// The `time_now_str` shim and its `extern "C" srpc_time_now_str`
+// bridge declaration are gone. The timestamp formatter lives in
+// srpc_timing.c (plain C, Goal-0 C demotion) and its ONE consumer --
+// base/logging.cpp's `log_time_now` kernel -- now declares and calls
+// the C entry point directly. Converting the shim to DSL instead would
+// have been a net loss: `*mut i8` lowers to `int8_t*`, which does not
+// bind the caller's `char[24]` without adding a reinterpret_cast.
 
 // Thin wrapper around `rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN)`.
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is

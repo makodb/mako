@@ -287,15 +287,35 @@ inline rusty::Option<rusty::Arc<T>> anymessage_unpack(const AnyMessage& self) {
 
 // @unsafe - aggregate-constructs the AnyMessage (returned by value;
 // callers store it directly in rcc_rpc.h fields).
-template <typename T>
-inline AnyMessage anymessage_pack_as(std::string name,
-                                     rusty::Arc<T> val) {
-  auto payload = rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
-      std::move(val));
-  return AnyMessage{std::move(name),
-                    rusty::Option<SerializableProxy>(
-                        SerializableProxy(std::move(payload)))};
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. This is the only anymessage_* template
+// with no RTTI, hence the only one convertible.
+//
+// TRAP, probe-verified at pin da6e9bf4: the `let` annotation MUST be the
+// `SerializableProxy` ALIAS, never the spelled-out
+// `rusty::Arc<SerializableBase>`. Spelling the same template head as the
+// turbofish makes the transpiler substitute the ANNOTATION's type argument
+// into the call, silently emitting `rusty::Arc<SerializableBase>::make(val)`
+// — a different, wrong factory. Through the alias it emits the intended
+// `rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(...)`, and the
+// Arc<Derived> -> Arc<Base> upcast happens in Arc's implicit converting ctor
+// (one refcount bump, exactly as the hand-written version did).
+#if RUSTYCPP_RUST
+fn anymessage_pack_as<T>(name: std::string, val: rusty::Arc<T>) -> AnyMessage {
+    let payload: SerializableProxy =
+        rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(val);
+    AnyMessage { type_name_: name, payload_: rusty::Some(payload) }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=any_message.pack_as version=1 rust_sha256=a0555f77932caac4c454e9726bbeeb745f4100203ec855b99248c981e31ba75b*/
+template<typename T>
+AnyMessage anymessage_pack_as(std::string name, rusty::Arc<T> val) {
+    SerializableProxy payload = rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(val));
+    return AnyMessage{.type_name_ = std::move(name), .payload_ = rusty::Option<SerializableProxy>(std::move(payload))};
+}
+/*RUSTYCPP:GEN-END id=any_message.pack_as*/
 
 // @unsafe - dereferences raw `const std::string*` from name_for_type
 // and forwards to the @unsafe anymessage_pack_as.
@@ -309,27 +329,49 @@ inline AnyMessage anymessage_pack(rusty::Arc<T> val) {
   return anymessage_pack_as<T>(name, std::move(val));
 }
 
-// ---- Free archive operators -----------------------------------------
+// ---- Free archive serde fns + operator forwarders --------------------
 
 // Phase 8 batch 4 (endgame straggler): serde free functions own the
-// AnyMessage wire format; the operators are forwarders kept until the
-// operator layer is deleted.
-// @unsafe - forwards to `am.save(ar)` which drives a Marshal
-// operator<< chain.
-inline void serialize(const AnyMessage& am, BinaryWriteArchive& ar) {
-  am.save(ar);
+// AnyMessage wire format; the operators below are forwarders kept until the
+// operator layer is deleted. The two serde fns are LIVE — rcc_rpc.h's
+// generated structs reach them via `rrr::Serialize_::serialize(o.md_graph,
+// ar)` — so they outlive the operators and must not be deleted with them.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. Both bodies are one-line delegations,
+// which the DSL emits UNQUALIFIED in the enclosing namespace — exactly what
+// the Serialize_ / ADL bridge needs. `&AnyMessage` lowers to
+// `const AnyMessage&` and `&mut AnyMessage` to `AnyMessage&`, so the two
+// exported signatures are unchanged; the only delta is the dropped `inline`,
+// harmless for a definition attached to this module interface unit.
+//
+// @unsafe - both forward into save/load, which drive a Marshal
+// operator<< / operator>> chain.
+#if RUSTYCPP_RUST
+fn serialize(am: &AnyMessage, ar: &mut BinaryWriteArchive) {
+    am.save(ar);
 }
 
+fn deserialize(am: &mut AnyMessage, ar: &mut BinaryReadArchive) {
+    am.load(ar);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=any_message.serde version=1 rust_sha256=f6c50f6c35be66f123993360f3f50cea9c4ab21cb634d3414ed11025f009a7e0*/
+void serialize(const AnyMessage& am, BinaryWriteArchive& ar) {
+    am.save(ar);
+}
+
+void deserialize(AnyMessage& am, BinaryReadArchive& ar) {
+    am.load(ar);
+}
+/*RUSTYCPP:GEN-END id=any_message.serde*/
+
+// Operators have no DSL spelling; these stay hand-written forwarders.
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
                                       const AnyMessage& am) {
   serialize(am, ar);
   return ar;
-}
-
-// @unsafe - forwards to `am.load(ar)` which drives a Marshal
-// operator>> chain.
-inline void deserialize(AnyMessage& am, BinaryReadArchive& ar) {
-  am.load(ar);
 }
 
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,

@@ -351,8 +351,17 @@ impl<T> Service for ServiceBoxShim<T> {
         self.svc_.__dispatch__(rpc_id, req, sconn)
     }
 }
+
+// @safe - wraps a typed Box<T> in the ServiceBoxShim above; Box move
+// only. Merged into this block so the factory sits beside the shim it
+// builds. NOTE: a DSL generic emits a bare `template<typename T>`, so
+// the old `ServiceLike` constraint is dropped -- it was diagnostics-only
+// (the concept itself stays; tests static_assert on it).
+fn make_service_proxy_from_typed_box<T>(svc: Box<T>) -> ServiceProxy {
+    rusty::make_box::<ServiceBoxShim<T>>(svc)
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.service_shim version=1 rust_sha256=8ea14174fc475f154893d662426c5842da99c0350b2545961078fb302be55a61*/
+/*RUSTYCPP:GEN-BEGIN id=server.service_shim version=1 rust_sha256=196690969dff94cb163e04fedd989bb804f097321cbaac347a83fa0438565f3a*/
 template<typename T>
 struct ServiceBoxShim;
 
@@ -373,13 +382,14 @@ struct ServiceBoxShim : public Service {
     static constexpr bool is_send = rusty::is_send<T>::value;
     static constexpr bool is_sync = rusty::is_sync<T>::value;
 };
+
+template<typename T>
+ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
+    return rusty::make_box<ServiceBoxShim<T>>(std::move(svc));
+}
 /*RUSTYCPP:GEN-END id=server.service_shim*/
 
-// @safe - Wraps a typed Box<T> in the ServiceTypedBoxAdapter; Box move only.
-template <ServiceLike T>
-inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
-  return rusty::make_box<ServiceBoxShim<T>>(std::move(svc));
-}
+
 
 // Forward-declared atomic typedefs (full definitions repeated below near
 // Server, where the original definitions live). Hoisted here because
@@ -1102,24 +1112,35 @@ rusty::Option<rusty::Arc<PollThread>> server_resolve_poll_thread(rusty::Option<r
 }
 /*RUSTYCPP:GEN-END id=server.resolve_poll_thread*/
 
-// @unsafe - std::random_device may use system entropy sources.
-// Two micro-kernels: a steady-clock read and a random_device draw. Both
-// are std objects the DSL grammar cannot construct; everything built ON
-// them (the mix, the mask, the zero guard) is DSL below.
-// @safe - rrr's own clock (Time::now microseconds, scaled to the nano
-// range the id-mix historically used; entropy comes from the
-// random_u64 mix, not clock granularity). std::chrono is gone.
-inline uint64_t server_now_nanos() {
-    return Time::now(true) * 1000;
-}
-
-// @unsafe - constructs a std::random_device and draws from it.
+// @unsafe - one micro-kernel is left here: constructing a
+// std::random_device and drawing from it. Everything built ON it (the
+// clock read, the mix, the mask, the zero guard) is DSL below.
 inline uint64_t server_random_u64() {
     std::random_device rd;
     return static_cast<uint64_t>(rd()) << 32 | static_cast<uint64_t>(rd());
 }
 
 #if RUSTYCPP_RUST
+// @safe - rrr's own clock (Time::now microseconds, scaled to the nano
+// range the id-mix historically used; entropy comes from the random_u64
+// mix, not clock granularity). std::chrono is gone.
+fn server_now_nanos() -> u64 {
+    (Time::now(true) as u64) * 1000u64
+}
+
+// Block until do_shutdown() flips the flag. The old note here claimed
+// "the DSL grammar can't express the wait-while lambda binding"; that is
+// wrong -- a closure predicate over the guard lowers to exactly the
+// `[&](ShutdownState& s) { return rust_not(s.shutdown); }` the hand
+// written kernel spelled, including the std::move onto the guard.
+fn server_wait_for_shutdown_impl(state: &rusty::Mutex<ShutdownState>,
+                                 cond: &rusty::Box<rusty::Condvar>) {
+    Log_debug("Server::wait_for_shutdown");
+    let mut guard = state.lock().unwrap();
+    guard = cond.wait_while(guard, |s: &mut ShutdownState| { !s.shutdown }).unwrap();
+    Log_debug("Server::wait_for_shutdown - done");
+}
+
 fn server_generate_instance_id() -> u64 {
     let time_component: u64 = server_now_nanos();
     let random_component: u64 = server_random_u64();
@@ -1135,8 +1156,22 @@ fn server_generate_instance_id() -> u64 {
     id
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.instance_id version=1 rust_sha256=a5b222e5d450cd498727c808292b95698f7a275c6417f5ba90fc576e714cbd24*/
+/*RUSTYCPP:GEN-BEGIN id=server.instance_id version=1 rust_sha256=ee19c1f1f32e117de7acfb4ab825310d7f6f69d541ec3c9de0430d5624e39fb3*/
+uint64_t server_now_nanos();
 uint64_t server_generate_instance_id();
+
+uint64_t server_now_nanos() {
+    return ((static_cast<uint64_t>(Time::now(true)))) * static_cast<uint64_t>(1000);
+}
+
+void server_wait_for_shutdown_impl(const rusty::Mutex<ShutdownState>& state, const rusty::Box<rusty::Condvar>& cond) {
+    Log_debug("Server::wait_for_shutdown");
+    auto guard = state.lock().unwrap();
+    guard = cond->wait_while(std::move(guard), [&](ShutdownState& s) {
+return rusty::detail::rust_not(s.shutdown);
+}).unwrap();
+    Log_debug("Server::wait_for_shutdown - done");
+}
 
 uint64_t server_generate_instance_id() {
     const uint64_t time_component = server_now_nanos();
@@ -1151,18 +1186,6 @@ uint64_t server_generate_instance_id() {
 }
 /*RUSTYCPP:GEN-END id=server.instance_id*/
 
-// @unsafe - rusty::Mutex::lock + rusty::Condvar::wait_while with a
-// closure predicate. The DSL grammar can't express the wait-while
-// lambda binding, so the call is forwarded here.
-inline void server_wait_for_shutdown_impl(
-        const rusty::Mutex<ShutdownState>& state,
-        const rusty::Box<rusty::Condvar>& cond) {
-    Log_debug("Server::wait_for_shutdown");
-    auto guard = state.lock().unwrap();
-    guard = cond->wait_while(std::move(guard),
-        [](ShutdownState& s) { return !s.shutdown; }).unwrap();
-    Log_debug("Server::wait_for_shutdown - done");
-}
 
 
 
@@ -2063,11 +2086,7 @@ void Server::for_each_service(F callback) const {
 // `// @unsafe` markers individually.
 namespace rrr {
 
-// Static member definitions for missing RPC ID tracking
-// rusty::Mutex wraps the unordered_set for thread-safe access
-// Hoisted out of ServerConnection (the DSL struct can't carry a static
-// data member): the "no handler for rpc_id" warning-dedup set.
-static rusty::Mutex<rusty::HashSet<i32>> g_rpc_id_missing{rusty::HashSet<i32>()};
+
 
 // Build the reply body (header + user payload) into a BufferSink and
 // dispatch through the bound channel proxy. (Was the templated
@@ -2156,17 +2175,21 @@ void request_fill_body(Request& req, std::span<const uint8_t> bytes) {
 
 // I/O loop: the channel layer has already stripped the 4-byte size
 // prefix, so the body is `[xid:v64][rpc_id:i32][user-args]`.
-// @unsafe - default-constructed boxed Request for the DSL decode body
-// (in-place make_box; Request's aggregate default is not spellable
-// cross-block without churn).
-inline rusty::Box<Request> sconn_make_request() {
-    return rusty::make_box<Request>();
-}
+
 
 // The slow-path fiber body, as a free fn so the spawn closure stays
 // the single-call shape (§7.60 — the inline-argument closure emission
 // mis-infers return types on multi-statement bodies).
 #if RUSTYCPP_RUST
+// The "no handler for rpc_id" warning-dedup set. Hoisted out of
+// ServerConnection (a DSL struct carries no static data member) and now
+// module-scope DSL: it emits an `extern` declaration plus an `inline`
+// definition. Linkage widens from `static` (internal) to inline/module,
+// which is benign -- this is the non-exported `namespace rrr` and
+// server.cpp is the module's only TU.
+static g_rpc_id_missing: rusty::Mutex<rusty::HashSet<i32>> =
+    rusty::Mutex::<rusty::HashSet<i32>>::new(rusty::HashSet::<i32>::new());
+
 fn sconn_dispatch_in_fiber(ctx: Arc<RpcServiceContext>, svc_index: usize,
                            rpc_id: i32, req: Box<Request>,
                            weak_this: WeakServerConnection) {
@@ -2186,7 +2209,7 @@ fn sconn_decode_request_and_dispatch(sconn: &ServerConnection,
     if sconn.status_.get() == ServerConnStatus::CLOSED {
         return;
     }
-    let mut req_box = sconn_make_request();
+    let mut req_box = rusty::make_box::<Request>();
     if size > 0usize {
         request_fill_body(&mut *req_box,
                           unsafe { core::slice::from_raw_parts(bytes, size) });
@@ -2265,7 +2288,11 @@ fn sconn_decode_request_and_dispatch(sconn: &ServerConnection,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.19 version=1 rust_sha256=3afd312d2cd66804eec705411675f64d79e3455168d013d53e04d0c576cefb74*/
+/*RUSTYCPP:GEN-BEGIN id=server.19 version=1 rust_sha256=f3f11ccb67fb1cf6a46da5ddf6d59285b8986ac853947d1a9181f43ded37a31f*/
+extern rusty::Mutex<rusty::HashSet<int32_t>> g_rpc_id_missing;
+
+inline rusty::Mutex<rusty::HashSet<int32_t>> g_rpc_id_missing = rusty::Mutex<rusty::HashSet<int32_t>>::new_(rusty::HashSet<int32_t>::new_());
+
 void sconn_dispatch_in_fiber(rusty::Arc<RpcServiceContext> ctx, size_t svc_index, int32_t rpc_id, rusty::Box<Request> req, WeakServerConnection weak_this) {
     auto&& guard = (rusty::detail::deref_if_pointer_like(ctx)).services[svc_index].borrow_mut();
     rusty::Box<Service>& svc = rusty::detail::deref_if_pointer_like(guard);
@@ -2276,7 +2303,7 @@ void sconn_decode_request_and_dispatch(const ServerConnection& sconn, const uint
     if (sconn.status_.get() == rusty::clone(ServerConnStatus_CLOSED())) {
         return;
     }
-    auto req_box = sconn_make_request();
+    auto req_box = rusty::make_box<Request>();
     if (rusty::detail::deref_if_pointer_like(size) > static_cast<size_t>(0)) {
         request_fill_body(rusty::detail::deref_if_pointer_like(req_box), rusty::from_raw_parts(bytes, std::move(size)));
     }
@@ -2308,7 +2335,7 @@ void sconn_decode_request_and_dispatch(const ServerConnection& sconn, const uint
     if (svc_index_opt.is_none()) {
         auto surpress_warning = false;
         {
-            auto&& guard = rusty::deref_call(g_rpc_id_missing.lock(), rusty::detail::__mdisp_unwrap{});
+            auto guard = g_rpc_id_missing.lock().unwrap();
             if (rusty::detail::rust_not(rusty::contains((rusty::detail::deref_if_pointer_like(guard)), std::move(rpc_id)))) {
                 ((rusty::detail::deref_if_pointer_like(guard))).insert(std::move(rpc_id));
             } else {

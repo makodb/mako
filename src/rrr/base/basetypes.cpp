@@ -23,14 +23,37 @@ export namespace rrr {
 
 // Bring `Ordering` and `AtomicI64` into the `rrr` namespace so DSL
 // bodies can write `Ordering::Relaxed` / `AtomicI64::new(...)` (Rust
-// idiom) and the emitted C++ resolves via these using-decls.
-using rusty::sync::atomic::Ordering;
-using rusty::sync::atomic::AtomicI64;
+// idiom) and the emitted C++ resolves via these using-decls. The
+// `i8`..`i64` aliases are the historical rrr integer spellings that
+// src/bench/tpcc, src/memdb and rpc/server.cpp still name as
+// `rrr::i32` / `base::i64`, so they are live, not dead scaffolding.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. Probe-verified nuance: the
+// transpiler does NOT rewrite an alias NAME that collides with a Rust
+// primitive -- `pub type i32 = int32_t;` emits `using i32 = int32_t;`,
+// which is exactly what the call sites need. The emitted order is
+// aliases first, usings second (no dependency either way).
+#if RUSTYCPP_RUST
+use rusty::sync::atomic::Ordering;
+use rusty::sync::atomic::AtomicI64;
 
-typedef int8_t i8;
-typedef int16_t i16;
-typedef int32_t i32;
-typedef int64_t i64;
+pub type i8 = int8_t;
+pub type i16 = int16_t;
+pub type i32 = int32_t;
+pub type i64 = int64_t;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.7 version=1 rust_sha256=a6c5879d9739eedcd4342f4cabfdeb6a104e29338254af74ad9e299b9bdc0101*/
+using i8 = int8_t;
+using i16 = int16_t;
+using i32 = int32_t;
+using i64 = int64_t;
+
+using rusty::sync::atomic::Ordering;
+
+using rusty::sync::atomic::AtomicI64;
+/*RUSTYCPP:GEN-END id=basetypes.7*/
 
 struct SparseInt;
 

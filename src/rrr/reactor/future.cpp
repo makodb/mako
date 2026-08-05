@@ -59,27 +59,48 @@ template <typename T>
 struct FiberFuture;
 
 // =============================================================================
-// @unsafe helpers the DSL bodies call.
+// Construction and hand-off helpers.
 //
-// Construction and hand-off only: the two state factories the DSL
-// constructors call, plus `fiber_promise_get_future` (defined after
-// FiberFuture). The state accessors that used to live here — set_value /
-// is_ready / get / wait_for / valid — are now the DSL method bodies; the
-// note that once explained their pointer parameters described a transpiler
-// limitation that no longer exists.
+// Construction and hand-off only: the two state factories the generated
+// constructors call (themselves DSL, below), plus `fiber_promise_get_future`
+// (declared here, defined after FiberFuture). The state accessors that used
+// to live here — set_value / is_ready / get / wait_for / valid — are now the
+// DSL method bodies; the note that once explained their pointer parameters
+// described a transpiler limitation that no longer exists.
 // =============================================================================
 
-// @unsafe - constructs a BoxEvent<T> as an Arc via Reactor internals.
-template <typename T>
-rusty::Arc<BoxEvent<T>> fiber_make_state() {
-  return create_sp_box_event<T>();
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. Both are generic free fns, which lower
+// to real `template<typename T>` functions — no type erasure. They must stay
+// ABOVE the FiberPromise / FiberFuture GEN blocks: the generated constructors
+// name `fiber_make_state<T>` / `fiber_null_state<T>` as template-ids, and
+// ordinary lookup has to find them at the template definition point.
+//
+// @unsafe - fiber_make_state constructs a BoxEvent<T> as an Arc via Reactor
+// internals. fiber_null_state is @safe: a bare `None` lowers to
+// `rusty::Option<...>{rusty::None}`, the empty state of a default/invalid
+// FiberFuture.
+#if RUSTYCPP_RUST
+fn fiber_make_state<T>() -> rusty::Arc<BoxEvent<T>> {
+    create_sp_box_event::<T>()
 }
 
-// @safe - the empty (None) state, for a default/invalid FiberFuture.
-template <typename T>
-rusty::Option<rusty::Arc<BoxEvent<T>>> fiber_null_state() {
-  return rusty::None;
+fn fiber_null_state<T>() -> rusty::Option<rusty::Arc<BoxEvent<T>>> {
+    None
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=future.state_factories version=1 rust_sha256=cd0f9167d855b0a2074389756ea5f5937ab12bb61e96afd9071872ea2445d7bc*/
+template<typename T>
+rusty::Arc<BoxEvent<T>> fiber_make_state() {
+    return create_sp_box_event<T>();
+}
+
+template<typename T>
+rusty::Option<rusty::Arc<BoxEvent<T>>> fiber_null_state() {
+    return rusty::Option<rusty::Arc<BoxEvent<T>>>{rusty::None};
+}
+/*RUSTYCPP:GEN-END id=future.state_factories*/
 
 // @unsafe - throws if already retrieved, then shares the state into a fresh
 // FiberFuture. Takes the promise by reference (the DSL lowers a bare `self`

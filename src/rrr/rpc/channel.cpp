@@ -179,7 +179,15 @@ template <class U> class ChannelConnectionBaseAdapterRefMut;
 // Owned, non-nullable handle to a channel connection. Use
 // `rusty::Option<ChannelConnectionProxy>` at call sites that need a
 // nullable / sentinel form (e.g. `ConnectResult.connection`).
+// Authored as inline Rust DSL: `type X = rusty::Box<Trait>;` lowers
+// byte-identically (playbook §7.29; shipped idiom at
+// rpc/pollable_proxy.cpp:81).
+#if RUSTYCPP_RUST
+type ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.5 version=1 rust_sha256=4e67b9b02c3131ef9d6db46066f4eee356c059d2d64326ad8c1fec1ce4618b70*/
 using ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;
+/*RUSTYCPP:GEN-END id=channel.5*/
 
 using OnAcceptCallback = detail::CallbackWrapper<void(ChannelConnectionProxy) const>;
 
@@ -220,7 +228,13 @@ template <class U> class ChannelListenerBaseAdapterRef;
 template <class U> class ChannelListenerBaseAdapterRefMut;
 /*RUSTYCPP:GEN-END id=channel.3*/
 
+// Authored as inline Rust DSL (§7.29), same as ChannelConnectionProxy above.
+#if RUSTYCPP_RUST
+type ChannelListenerProxy = rusty::Box<ChannelListenerBase>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.6 version=1 rust_sha256=de3b6ccbaa319831ac6eb8937cfbbe7881e16a61cf6f487581e2c7ad161910dd*/
 using ChannelListenerProxy = rusty::Box<ChannelListenerBase>;
+/*RUSTYCPP:GEN-END id=channel.6*/
 
 // `ConnectResult` — value-result returned by `ChannelFactoryBase::connect`.
 // All call sites use positional brace init (`ConnectResult{connection,
@@ -285,6 +299,12 @@ template <class U> class ChannelFactoryBaseAdapterRef;
 template <class U> class ChannelFactoryBaseAdapterRefMut;
 /*RUSTYCPP:GEN-END id=channel.4*/
 
+// Authored as inline Rust DSL (§7.29), same as the two proxy aliases above.
+#if RUSTYCPP_RUST
+type ChannelFactoryProxy = rusty::Box<ChannelFactoryBase>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.9 version=1 rust_sha256=49335f94ba7d1fcbdd20c03d4598fc0cf8773754027869a426c043c80b2eefc2*/
 using ChannelFactoryProxy = rusty::Box<ChannelFactoryBase>;
+/*RUSTYCPP:GEN-END id=channel.9*/
 
 }  // export namespace rrr

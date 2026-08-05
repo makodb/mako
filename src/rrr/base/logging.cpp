@@ -12,7 +12,7 @@ export module rrr.logging;
 
 import std;
 import rrr.debugging;
-import rrr.misc; // for time_now_str
+
 
 // @safe - printf-style logger, reshaped for the DSL (H-category shrink):
 // the irreducible C surface is four micro-kernels below (varargs render,
@@ -27,25 +27,80 @@ import rrr.misc; // for time_now_str
 // vsprintf into a raw char[1000]).
 export namespace rrr {
 
+// The process-wide log level. Was the private class-static
+// `Log::level_s`; a DSL struct has no associated-state form, so it
+// becomes a namespace-scope atomic that `Log`'s associated fns
+// read and write. Emits an `extern` declaration plus an `inline`
+// definition (probe-verified: valid, and the initializer is a prvalue
+// so no copy of the atomic is required).
+#if RUSTYCPP_RUST
+static LOG_LEVEL_S: rusty::sync::atomic::AtomicI32 = rusty::sync::atomic::AtomicI32::new(4i32);
+#endif
+/*RUSTYCPP:GEN-BEGIN id=logging.1 version=1 rust_sha256=61da74a4dfb8f74ecbdb09bf1f731fe961366b32e8a8324617023e89997a453b*/
+extern rusty::sync::atomic::AtomicI32 LOG_LEVEL_S;
+
+inline rusty::sync::atomic::AtomicI32 LOG_LEVEL_S = rusty::sync::atomic::AtomicI32::new_(static_cast<int32_t>(4));
+/*RUSTYCPP:GEN-END id=logging.1*/
+
 // @safe - see file header.
-class Log {
-    static rusty::sync::atomic::AtomicI32 level_s;
-    static std::ostream* stm_s;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The FATAL..DEBUG levels are DSL
+// associated constants and lower to `static constexpr int32_t`
+// members, so `Log::DEBUG` / `Log::INFO` keep working unchanged at
+// deptran/__dep__.h:115-117 and rrr/tests/rpcbench.cc:218.
+//
+// Two members did NOT come along: the ostream sink pointer and
+// `sink_write`, which a DSL struct cannot carry as hand-written
+// statics. They are the free `log_sink_write` kernel declared below.
+#if RUSTYCPP_RUST
+struct Log {}
 
-public:
+impl Log {
+    const FATAL: i32 = 0;
+    const ERROR: i32 = 1;
+    const WARN: i32 = 2;
+    const INFO: i32 = 3;
+    const DEBUG: i32 = 4;
 
-    enum {
-        FATAL = 0, ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4
-    };
+    // @safe - Atomic<i32>::store.
+    fn set_level(level: i32) {
+        LOG_LEVEL_S.store(level, rusty::sync::atomic::Ordering::Relaxed);
+    }
 
-    // @safe - Atomic<int>::store (@safe).
-    static void set_level(int level);
+    // @safe - Atomic<i32>::load.
+    fn level_now() -> i32 {
+        LOG_LEVEL_S.load(rusty::sync::atomic::Ordering::Relaxed)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=logging.2 version=1 rust_sha256=7c828f6694ccc3d2cc6a1b5602309e0ae631ba9df104d03abb4e2bfc94ae0331*/
+struct Log;
 
-    // Internal plumbing shared with the DSL core (public so the
-    // namespace-scope kernels/DSL below can reach the statics).
-    static int  level_now();
-    static void sink_write(const std::string& line);
+struct Log {
+    static constexpr int32_t FATAL = static_cast<int32_t>(0);
+    static constexpr int32_t ERROR = static_cast<int32_t>(1);
+    static constexpr int32_t WARN = static_cast<int32_t>(2);
+    static constexpr int32_t INFO = static_cast<int32_t>(3);
+    static constexpr int32_t DEBUG = static_cast<int32_t>(4);
+
+    static void set_level(int32_t level);
+    static int32_t level_now();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
+
+
+void Log::set_level(int32_t level) {
+    LOG_LEVEL_S.store(std::move(level), rusty::sync::atomic::Ordering::Relaxed);
+}
+
+int32_t Log::level_now() {
+    return LOG_LEVEL_S.load(rusty::sync::atomic::Ordering::Relaxed);
+}
+/*RUSTYCPP:GEN-END id=logging.2*/
 
 // forward decl so the format templates below can call the DSL log_line.
 void log_line(int32_t level, int32_t line, const int8_t* file, const std::string& msg);
@@ -95,8 +150,13 @@ inline void Log_fatal(std::format_string<Args...> fmt, Args&&... args) {
 // because the DSL caller's `*const i8` lowers to that.
 std::string log_basename(const int8_t* fpath);
 
-// @unsafe - wraps the char-buffer time_now_str kernel.
+// @unsafe - wraps the char-buffer srpc_time_now_str C kernel.
 std::string log_time_now();
+
+// @unsafe - std::ostream operator<< sink write. Was the class-static
+// `Log::sink_write`; a DSL struct cannot carry a hand-written static
+// member, so the ostream sink stayed behind as a free kernel.
+void log_sink_write(const std::string& line);
 
 // DSL core: level filter + line decoration + sink routing. Everything
 // here is plain control flow over std::string.
@@ -130,11 +190,11 @@ fn log_line(level: i32, line: i32, file: *const i8, msg: &std::string) {
         out.append(log_time_now());
         out.append(" | ");
         out.append(msg);
-        Log::sink_write(out);
+        log_sink_write(out);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=logging.log_line version=1 rust_sha256=e3f331d0f1e8b724ac7c5607f8392e9840e08bb562248056f2e9f698348c7828*/
+/*RUSTYCPP:GEN-BEGIN id=logging.log_line version=1 rust_sha256=16f860b4fb9eead970458fdfabd4de70515649eb6e4cca24eb15bbc0180b666e*/
 std::string_view log_level_tag(int32_t level);
 void log_line(int32_t level, int32_t line, const int8_t* file, const std::string& msg);
 
@@ -157,7 +217,7 @@ void log_line(int32_t level, int32_t line, const int8_t* file, const std::string
         out.append(log_time_now());
         out.append(" | ");
         out.append(msg);
-        Log::sink_write(std::move(out));
+        log_sink_write(std::move(out));
     }
 }
 /*RUSTYCPP:GEN-END id=logging.log_line*/
@@ -167,22 +227,14 @@ void log_line(int32_t level, int32_t line, const int8_t* file, const std::string
 // @safe - impl namespace. Kernel definitions carry per-method @unsafe.
 namespace rrr {
 
-rusty::sync::atomic::AtomicI32 Log::level_s{Log::DEBUG};
-std::ostream* Log::stm_s = &std::cout;
+// @unsafe - std::ostream operator<< sink write. Both the sink pointer
+// and the write were class statics on `Log` until `Log` became a DSL
+// struct; a DSL struct cannot carry hand-written statics, so they live
+// on here as a module-linkage pointer plus a free kernel.
+std::ostream* log_stm_s = &std::cout;
 
-// @safe - Atomic<int>::store is @safe.
-void Log::set_level(int level) {
-    level_s.store(level, rusty::sync::atomic::Ordering::Relaxed);
-}
-
-// @safe - Atomic<int>::load is @safe.
-int Log::level_now() {
-    return level_s.load(rusty::sync::atomic::Ordering::Relaxed);
-}
-
-// @unsafe - std::ostream operator<< sink write.
-void Log::sink_write(const std::string& line) {
-    (*stm_s) << line << std::endl;
+void log_sink_write(const std::string& line) {
+    (*log_stm_s) << line << std::endl;
 }
 
 // @unsafe - raw pointer scan; returns an owned copy.
@@ -195,11 +247,18 @@ std::string log_basename(const int8_t* fpath) {
     return std::string(base != nullptr ? base + 1 : p);
 }
 
-// @unsafe - wraps the char-buffer time_now_str kernel.
+// The timestamp formatter (time/localtime_r/gettimeofday + raw digit
+// writing) lives in srpc_timing.c (plain C, Goal-0 C demotion). This
+// kernel is its only consumer in the tree, so it declares the C entry
+// point directly; the former `rrr::time_now_str` shim in
+// base/misc.cpp is deleted.
+extern "C" void srpc_time_now_str(char* now);
+
+// @unsafe - raw char-buffer bridge to the C timestamp formatter.
 std::string log_time_now() {
     constexpr int kTimeNowStrSize = 24;
     char now_str[kTimeNowStrSize];
-    time_now_str(now_str);
+    srpc_time_now_str(now_str);
     return std::string(now_str);
 }
 

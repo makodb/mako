@@ -84,31 +84,43 @@ int32_t epoll_add_impl(int32_t poll_fd, int32_t fd, int32_t poll_mode) {
 /*RUSTYCPP:GEN-END id=epoll.add_impl*/
 
 
-// The Linux epoll_ctl(DEL) body, authored in the DSL as a route-2
-// unsafe{} libc call over the zeroed-event factory.
+// The Linux epoll_ctl(DEL) entry point, authored in the DSL as a
+// route-2 unsafe{} libc call over the zeroed-event factory. The
+// test-instrumentation bump is simply the first statement — it used to
+// need a hand-written C++ wrapper around an `_body` helper, which is
+// gone; this fn now IS the interface-declared `epoll_remove_impl`.
 #if RUSTYCPP_RUST
-fn epoll_remove_impl_body(poll_fd: i32, fd: i32) {
+fn epoll_remove_impl(poll_fd: i32, fd: i32) -> i32 {
+    epoll_bump_remove_count();
     let mut ev = epoll_event_zeroed();
     unsafe { epoll_ctl(poll_fd, EPOLL_CTL_DEL, fd, &mut ev); }
+    0
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=epoll.remove_body version=1 rust_sha256=307cef2652fbaa1fd3e98fc1580c9526bb2dda228fef521509aa92cdbb6fb90e*/
-void epoll_remove_impl_body(int32_t poll_fd, int32_t fd);
+/*RUSTYCPP:GEN-BEGIN id=epoll.remove_body version=1 rust_sha256=bf41f3b7b04a267b150c532eee695bea96704263990944684f309d95ae383a65*/
+int32_t epoll_remove_impl(int32_t poll_fd, int32_t fd);
 
-void epoll_remove_impl_body(int32_t poll_fd, int32_t fd) {
+int32_t epoll_remove_impl(int32_t poll_fd, int32_t fd) {
+    epoll_bump_remove_count();
     auto ev = epoll_event_zeroed();
     // @unsafe
     {
         epoll_ctl(std::move(poll_fd), EPOLL_CTL_DEL, std::move(fd), &ev);
     }
+    return static_cast<int32_t>(0);
 }
 /*RUSTYCPP:GEN-END id=epoll.remove_body*/
 
 
-// The Linux epoll_ctl(MOD) body — interest recompute + ENOENT/EBADF
-// tolerance (racing close/remove) — as DSL over the zeroed factory.
+// The Linux epoll_ctl(MOD) entry point — interest recompute +
+// ENOENT/EBADF tolerance (racing close/remove) — as DSL over the zeroed
+// factory. `old_mode` is unused on Linux (EPOLL_CTL_MOD replaces the
+// whole interest set) but stays in the signature: the shared interface
+// declares it because the kqueue twin really needs it. Carrying it here
+// is what deleted the hand-written C++ wrapper that used to drop it (a
+// named-but-unused C++ parameter does not warn, verified under -Wall).
 #if RUSTYCPP_RUST
-fn epoll_update_impl_body(poll_fd: i32, fd: i32, new_mode: i32) -> i32 {
+fn epoll_update_impl(poll_fd: i32, fd: i32, new_mode: i32, old_mode: i32) -> i32 {
     let mut ev = epoll_event_zeroed();
     ev.data.fd = fd;
     ev.events = EPOLLET | EPOLLRDHUP;
@@ -129,10 +141,10 @@ fn epoll_update_impl_body(poll_fd: i32, fd: i32, new_mode: i32) -> i32 {
     0
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=epoll.update_body version=1 rust_sha256=60c57347f674a1d43765fe1cbdd1c021debe74f16b3dfb4ce169b51fc51edf3f*/
-int32_t epoll_update_impl_body(int32_t poll_fd, int32_t fd, int32_t new_mode);
+/*RUSTYCPP:GEN-BEGIN id=epoll.update_body version=1 rust_sha256=6085e4a717dd73e91409795df2ae858d779595b7358cda614b969a1933b3ad74*/
+int32_t epoll_update_impl(int32_t poll_fd, int32_t fd, int32_t new_mode, int32_t old_mode);
 
-int32_t epoll_update_impl_body(int32_t poll_fd, int32_t fd, int32_t new_mode) {
+int32_t epoll_update_impl(int32_t poll_fd, int32_t fd, int32_t new_mode, int32_t old_mode) {
     auto ev = epoll_event_zeroed();
     [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.data); }) { return (__r.data); } else if constexpr (requires { (__r.data_field); }) { return (__r.data_field); } else if constexpr (requires { ((*__r).data); }) { return ((*__r).data); } else { return ((*__r).data_field); } }(ev).fd = std::move(fd);
     [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev) = rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
@@ -155,24 +167,24 @@ int32_t epoll_update_impl_body(int32_t poll_fd, int32_t fd, int32_t new_mode) {
 /*RUSTYCPP:GEN-END id=epoll.update_body*/
 
 
-// Declared-in-interface entry points. add lowers directly; remove and
-// update wrap their DSL bodies to keep the interface signatures
-// (instrumentation bump / dropped legacy old_mode param).
+// The remaining interface-declared entry point: allocate the epoll poll
+// fd. (`epoll_create`'s size hint has been ignored since Linux 2.6.8 but
+// must still be positive.)
+#if RUSTYCPP_RUST
+fn epoll_open() -> i32 {
+    let fd: i32 = unsafe { epoll_create(10) };
+    verify(fd != -1);
+    fd
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll_platform_linux.4 version=1 rust_sha256=b1154281fae5d352306e0bbd69605a4e64c3ca767658d54faeaa69a14154cff0*/
+int32_t epoll_open();
+
 int32_t epoll_open() {
     int32_t fd = epoll_create(10);
-    verify(fd != -1);
-    return fd;
+    verify(rusty::detail::deref_if_pointer_like(fd) != -1);
+    return std::move(fd);
 }
-
-int epoll_remove_impl(int32_t poll_fd, int fd) {
-    epoll_bump_remove_count();
-    epoll_remove_impl_body(poll_fd, fd);
-    return 0;
-}
-
-int epoll_update_impl(int32_t poll_fd, int fd, int new_mode, int old_mode) {
-    (void)old_mode;
-    return epoll_update_impl_body(poll_fd, fd, new_mode);
-}
+/*RUSTYCPP:GEN-END id=epoll_platform_linux.4*/
 
 }  // namespace rrr

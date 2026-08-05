@@ -113,10 +113,43 @@ void print_stack_trace(FILE* fp) {
 // Raw capture: the backtrace_symbols strings, minus the last frame
 // (legacy loop bound). ok=false when backtrace_symbols itself failed.
 // Move-only (rusty::Vec field).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The DSL has no default field
+// initializers, so `ok = false` moved into a `BtCapture::new_()`
+// factory and `bt_capture` constructs through it -- a bare
+// `BtCapture cap;` on the emitted aggregate would leave `ok`
+// indeterminate. Spelling the Vec element type in `Vec::<std::string>
+// ::new()` is mandatory: bare `rusty::Vec::new()` makes the
+// transpiler panic on a leaked `auto` template argument.
+#if RUSTYCPP_RUST
 struct BtCapture {
-    bool ok = false;
+    ok: bool,
+    symbols: rusty::Vec<std::string>,
+}
+
+impl BtCapture {
+    fn new() -> BtCapture {
+        BtCapture { ok: false, symbols: rusty::Vec::<std::string>::new() }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=debugging.1 version=1 rust_sha256=9cab6ba5f8722df577a000981845413671a181b29d615f3cbbb9e7fed1daf7d5*/
+struct BtCapture;
+
+struct BtCapture {
+    bool ok;
     rusty::Vec<std::string> symbols;
+
+    static BtCapture new_();
 };
+
+
+BtCapture BtCapture::new_() {
+    return BtCapture{.ok = false, .symbols = rusty::Vec<std::string>::new_()};
+}
+/*RUSTYCPP:GEN-END id=debugging.1*/
 
 // @unsafe - backtrace/backtrace_symbols raw `char**` + free.
 BtCapture bt_capture();
@@ -171,7 +204,7 @@ std::string bt_render(const BtCapture& cap) {
 // @unsafe - backtrace/backtrace_symbols raw `char**` + free. Drops the
 // last frame (the pre-reshape loop ran to `frames - 1`).
 BtCapture bt_capture() {
-    BtCapture cap;
+    BtCapture cap = BtCapture::new_();
     const int max_trace = 1024;
     void* callstack[max_trace];
     memset(callstack, 0, sizeof(callstack));
@@ -213,12 +246,29 @@ std::string bt_empty_string() {
 }
 /*RUSTYCPP:GEN-END id=debugging.2*/
 
-// @unsafe - fputs of the rendered report to the caller-supplied FILE*.
-void print_stack_trace(FILE* fp) {
-    BtCapture cap = bt_capture();
-    std::string report = bt_render(cap);
-    fputs(report.c_str(), fp);
+// The report writer. Authored as inline Rust DSL: a `*mut FILE`
+// parameter lowers to `FILE*`, and the `unsafe {}` block keeps the
+// `@unsafe` annotation on the fputs. The exported declaration at the
+// top of this file stays hand-written C++ -- it carries the
+// `= stderr` default argument and `__attribute__((noinline))`, neither
+// of which the DSL can spell.
+#if RUSTYCPP_RUST
+fn print_stack_trace(fp: *mut FILE) {
+    let cap = bt_capture();
+    let report = bt_render(&cap);
+    unsafe { fputs(report.c_str(), fp); }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=debugging.4 version=1 rust_sha256=2f97cb5efe74f695b3c0911f2c1edde92cd07cb5cb5d3cea05949c5b8179230a*/
+void print_stack_trace(FILE* fp) {
+    const auto cap = bt_capture();
+    const auto report = bt_render(cap);
+    // @unsafe
+    {
+        fputs(report.c_str(), fp);
+    }
+}
+/*RUSTYCPP:GEN-END id=debugging.4*/
 
 #endif // ifdef __APPLE__
 
