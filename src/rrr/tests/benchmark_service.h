@@ -777,9 +777,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.flag, __reply_ar__);
             return rusty::Result<RpcFastPrimeResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<fast_primeTypedFuture, rrr::i32> async_fast_prime(const RpcFastPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -789,9 +786,6 @@ public:
             return rusty::Result<fast_primeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_primeTypedFuture, rrr::i32>::Ok(fast_primeTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_primeTypedFuture> await_fast_prime(const RpcFastPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_prime(req, __fu_attr__));
     }
     rusty::Result<RpcFastPrimeResponse, rrr::i32> fast_prime(const RpcFastPrimeRequest& req) {
         auto __typed_fu_result__ = this->async_fast_prime(req);
@@ -828,9 +822,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.v, __reply_ar__);
             return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<fast_dot_prodTypedFuture, rrr::i32> async_fast_dot_prod(const RpcFastDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -841,9 +832,6 @@ public:
             return rusty::Result<fast_dot_prodTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_dot_prodTypedFuture, rrr::i32>::Ok(fast_dot_prodTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_dot_prodTypedFuture> await_fast_dot_prod(const RpcFastDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_dot_prod(req, __fu_attr__));
     }
     rusty::Result<RpcFastDotProdResponse, rrr::i32> fast_dot_prod(const RpcFastDotProdRequest& req) {
         auto __typed_fu_result__ = this->async_fast_dot_prod(req);
@@ -880,9 +868,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.a_add_b, __reply_ar__);
             return rusty::Result<RpcFastAddResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<fast_addTypedFuture, rrr::i32> async_fast_add(const RpcFastAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -893,9 +878,6 @@ public:
             return rusty::Result<fast_addTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_addTypedFuture, rrr::i32>::Ok(fast_addTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_addTypedFuture> await_fast_add(const RpcFastAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_add(req, __fu_attr__));
     }
     rusty::Result<RpcFastAddResponse, rrr::i32> fast_add(const RpcFastAddRequest& req) {
         auto __typed_fu_result__ = this->async_fast_add(req);
@@ -929,9 +911,6 @@ public:
             RpcFastNopResponse __typed_resp__;
             return rusty::Result<RpcFastNopResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<fast_nopTypedFuture, rrr::i32> async_fast_nop(const RpcFastNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -941,9 +920,6 @@ public:
             return rusty::Result<fast_nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_nopTypedFuture, rrr::i32>::Ok(fast_nopTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_nopTypedFuture> await_fast_nop(const RpcFastNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_nop(req, __fu_attr__));
     }
     rusty::Result<RpcFastNopResponse, rrr::i32> fast_nop(const RpcFastNopRequest& req) {
         auto __typed_fu_result__ = this->async_fast_nop(req);
@@ -980,9 +956,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.v, __reply_ar__);
             return rusty::Result<RpcFastVecResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<fast_vecTypedFuture, rrr::i32> async_fast_vec(const RpcFastVecRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -992,9 +965,6 @@ public:
             return rusty::Result<fast_vecTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_vecTypedFuture, rrr::i32>::Ok(fast_vecTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_vecTypedFuture> await_fast_vec(const RpcFastVecRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_vec(req, __fu_attr__));
     }
     rusty::Result<RpcFastVecResponse, rrr::i32> fast_vec(const RpcFastVecRequest& req) {
         auto __typed_fu_result__ = this->async_fast_vec(req);
@@ -1031,9 +1001,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.flag, __reply_ar__);
             return rusty::Result<RpcPrimeResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<primeTypedFuture, rrr::i32> async_prime(const RpcPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1043,9 +1010,6 @@ public:
             return rusty::Result<primeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<primeTypedFuture, rrr::i32>::Ok(primeTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<primeTypedFuture> await_prime(const RpcPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_prime(req, __fu_attr__));
     }
     rusty::Result<RpcPrimeResponse, rrr::i32> prime(const RpcPrimeRequest& req) {
         auto __typed_fu_result__ = this->async_prime(req);
@@ -1082,9 +1046,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.v, __reply_ar__);
             return rusty::Result<RpcDotProdResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<dot_prodTypedFuture, rrr::i32> async_dot_prod(const RpcDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1095,9 +1056,6 @@ public:
             return rusty::Result<dot_prodTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<dot_prodTypedFuture, rrr::i32>::Ok(dot_prodTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<dot_prodTypedFuture> await_dot_prod(const RpcDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_dot_prod(req, __fu_attr__));
     }
     rusty::Result<RpcDotProdResponse, rrr::i32> dot_prod(const RpcDotProdRequest& req) {
         auto __typed_fu_result__ = this->async_dot_prod(req);
@@ -1134,9 +1092,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.a_add_b, __reply_ar__);
             return rusty::Result<RpcAddResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<addTypedFuture, rrr::i32> async_add(const RpcAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1147,9 +1102,6 @@ public:
             return rusty::Result<addTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<addTypedFuture, rrr::i32>::Ok(addTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<addTypedFuture> await_add(const RpcAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_add(req, __fu_attr__));
     }
     rusty::Result<RpcAddResponse, rrr::i32> add(const RpcAddRequest& req) {
         auto __typed_fu_result__ = this->async_add(req);
@@ -1183,9 +1135,6 @@ public:
             RpcNopResponse __typed_resp__;
             return rusty::Result<RpcNopResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<nopTypedFuture, rrr::i32> async_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1195,9 +1144,6 @@ public:
             return rusty::Result<nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<nopTypedFuture, rrr::i32>::Ok(nopTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<nopTypedFuture> await_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_nop(req, __fu_attr__));
     }
     rusty::Result<RpcNopResponse, rrr::i32> nop(const RpcNopRequest& req) {
         auto __typed_fu_result__ = this->async_nop(req);
@@ -1231,9 +1177,6 @@ public:
             RpcAsyncNopResponse __typed_resp__;
             return rusty::Result<RpcAsyncNopResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<async_nopTypedFuture, rrr::i32> async_async_nop(const RpcAsyncNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::ASYNC_NOP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1243,9 +1186,6 @@ public:
             return rusty::Result<async_nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<async_nopTypedFuture, rrr::i32>::Ok(async_nopTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<async_nopTypedFuture> await_async_nop(const RpcAsyncNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_async_nop(req, __fu_attr__));
     }
     rusty::Result<RpcAsyncNopResponse, rrr::i32> async_nop(const RpcAsyncNopRequest& req) {
         auto __typed_fu_result__ = this->async_async_nop(req);
@@ -1279,9 +1219,6 @@ public:
             RpcSleepResponse __typed_resp__;
             return rusty::Result<RpcSleepResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<sleepTypedFuture, rrr::i32> async_sleep(const RpcSleepRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1291,9 +1228,6 @@ public:
             return rusty::Result<sleepTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<sleepTypedFuture, rrr::i32>::Ok(sleepTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<sleepTypedFuture> await_sleep(const RpcSleepRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_sleep(req, __fu_attr__));
     }
     rusty::Result<RpcSleepResponse, rrr::i32> sleep(const RpcSleepRequest& req) {
         auto __typed_fu_result__ = this->async_sleep(req);
@@ -1330,9 +1264,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.result, __reply_ar__);
             return rusty::Result<RpcDeferredEchoResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<deferred_echoTypedFuture, rrr::i32> async_deferred_echo(const RpcDeferredEchoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::DEFERRED_ECHO, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1342,9 +1273,6 @@ public:
             return rusty::Result<deferred_echoTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<deferred_echoTypedFuture, rrr::i32>::Ok(deferred_echoTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<deferred_echoTypedFuture> await_deferred_echo(const RpcDeferredEchoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_deferred_echo(req, __fu_attr__));
     }
     rusty::Result<RpcDeferredEchoResponse, rrr::i32> deferred_echo(const RpcDeferredEchoRequest& req) {
         auto __typed_fu_result__ = this->async_deferred_echo(req);

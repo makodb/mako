@@ -763,9 +763,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -776,9 +773,6 @@ public:
             return rusty::Result<PrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<PrepareTypedFuture, rrr::i32>::Ok(PrepareTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<PrepareTypedFuture> await_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Prepare(req, __fu_attr__));
     }
     rusty::Result<RpcPrepareResponse, rrr::i32> Prepare(const RpcPrepareRequest& req) {
         auto __typed_fu_result__ = this->async_Prepare(req);
@@ -816,9 +810,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<AcceptTypedFuture, rrr::i32> async_Accept(const RpcAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::ACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -831,9 +822,6 @@ public:
             return rusty::Result<AcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<AcceptTypedFuture, rrr::i32>::Ok(AcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<AcceptTypedFuture> await_Accept(const RpcAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Accept(req, __fu_attr__));
     }
     rusty::Result<RpcAcceptResponse, rrr::i32> Accept(const RpcAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_Accept(req);
@@ -867,9 +855,6 @@ public:
             RpcDecideResponse __typed_resp__;
             return rusty::Result<RpcDecideResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<DecideTypedFuture, rrr::i32> async_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::DECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -881,9 +866,6 @@ public:
             return rusty::Result<DecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<DecideTypedFuture, rrr::i32>::Ok(DecideTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<DecideTypedFuture> await_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Decide(req, __fu_attr__));
     }
     rusty::Result<RpcDecideResponse, rrr::i32> Decide(const RpcDecideRequest& req) {
         auto __typed_fu_result__ = this->async_Decide(req);
@@ -921,9 +903,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.ret_ballot, __reply_ar__);
             return rusty::Result<RpcForwardToLearnerServerResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<ForwardToLearnerServerTypedFuture, rrr::i32> async_ForwardToLearnerServer(const RpcForwardToLearnerServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::FORWARDTOLEARNERSERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -936,9 +915,6 @@ public:
             return rusty::Result<ForwardToLearnerServerTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<ForwardToLearnerServerTypedFuture, rrr::i32>::Ok(ForwardToLearnerServerTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<ForwardToLearnerServerTypedFuture> await_ForwardToLearnerServer(const RpcForwardToLearnerServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_ForwardToLearnerServer(req, __fu_attr__));
     }
     rusty::Result<RpcForwardToLearnerServerResponse, rrr::i32> ForwardToLearnerServer(const RpcForwardToLearnerServerRequest& req) {
         auto __typed_fu_result__ = this->async_ForwardToLearnerServer(req);
@@ -976,9 +952,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcBulkAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<BulkAcceptTypedFuture, rrr::i32> async_BulkAccept(const RpcBulkAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::BULKACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -988,9 +961,6 @@ public:
             return rusty::Result<BulkAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<BulkAcceptTypedFuture, rrr::i32>::Ok(BulkAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<BulkAcceptTypedFuture> await_BulkAccept(const RpcBulkAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_BulkAccept(req, __fu_attr__));
     }
     rusty::Result<RpcBulkAcceptResponse, rrr::i32> BulkAccept(const RpcBulkAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_BulkAccept(req);
@@ -1029,9 +999,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.ret, __reply_ar__);
             return rusty::Result<RpcSyncLogResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<SyncLogTypedFuture, rrr::i32> async_SyncLog(const RpcSyncLogRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCLOG, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1041,9 +1008,6 @@ public:
             return rusty::Result<SyncLogTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<SyncLogTypedFuture, rrr::i32>::Ok(SyncLogTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<SyncLogTypedFuture> await_SyncLog(const RpcSyncLogRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_SyncLog(req, __fu_attr__));
     }
     rusty::Result<RpcSyncLogResponse, rrr::i32> SyncLog(const RpcSyncLogRequest& req) {
         auto __typed_fu_result__ = this->async_SyncLog(req);
@@ -1081,9 +1045,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcSyncCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<SyncCommitTypedFuture, rrr::i32> async_SyncCommit(const RpcSyncCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1093,9 +1054,6 @@ public:
             return rusty::Result<SyncCommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<SyncCommitTypedFuture, rrr::i32>::Ok(SyncCommitTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<SyncCommitTypedFuture> await_SyncCommit(const RpcSyncCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_SyncCommit(req, __fu_attr__));
     }
     rusty::Result<RpcSyncCommitResponse, rrr::i32> SyncCommit(const RpcSyncCommitRequest& req) {
         auto __typed_fu_result__ = this->async_SyncCommit(req);
@@ -1133,9 +1091,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcBulkDecideResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<BulkDecideTypedFuture, rrr::i32> async_BulkDecide(const RpcBulkDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::BULKDECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1145,9 +1100,6 @@ public:
             return rusty::Result<BulkDecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<BulkDecideTypedFuture, rrr::i32>::Ok(BulkDecideTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<BulkDecideTypedFuture> await_BulkDecide(const RpcBulkDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_BulkDecide(req, __fu_attr__));
     }
     rusty::Result<RpcBulkDecideResponse, rrr::i32> BulkDecide(const RpcBulkDecideRequest& req) {
         auto __typed_fu_result__ = this->async_BulkDecide(req);
@@ -1414,9 +1366,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MenciusService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1427,9 +1376,6 @@ public:
             return rusty::Result<PrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<PrepareTypedFuture, rrr::i32>::Ok(PrepareTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<PrepareTypedFuture> await_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Prepare(req, __fu_attr__));
     }
     rusty::Result<RpcPrepareResponse, rrr::i32> Prepare(const RpcPrepareRequest& req) {
         auto __typed_fu_result__ = this->async_Prepare(req);
@@ -1467,9 +1413,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcSuggestResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<SuggestTypedFuture, rrr::i32> async_Suggest(const RpcSuggestRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MenciusService::SUGGEST, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1485,9 +1428,6 @@ public:
             return rusty::Result<SuggestTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<SuggestTypedFuture, rrr::i32>::Ok(SuggestTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<SuggestTypedFuture> await_Suggest(const RpcSuggestRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Suggest(req, __fu_attr__));
     }
     rusty::Result<RpcSuggestResponse, rrr::i32> Suggest(const RpcSuggestRequest& req) {
         auto __typed_fu_result__ = this->async_Suggest(req);
@@ -1521,9 +1461,6 @@ public:
             RpcDecideResponse __typed_resp__;
             return rusty::Result<RpcDecideResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<DecideTypedFuture, rrr::i32> async_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MenciusService::DECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -1535,9 +1472,6 @@ public:
             return rusty::Result<DecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<DecideTypedFuture, rrr::i32>::Ok(DecideTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<DecideTypedFuture> await_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Decide(req, __fu_attr__));
     }
     rusty::Result<RpcDecideResponse, rrr::i32> Decide(const RpcDecideRequest& req) {
         auto __typed_fu_result__ = this->async_Decide(req);
@@ -2035,9 +1969,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.followerPrevLogIndex, __reply_ar__);
             return rusty::Result<RpcHeartbeatResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<HeartbeatTypedFuture, rrr::i32> async_Heartbeat(const RpcHeartbeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::HEARTBEAT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -2048,9 +1979,6 @@ public:
             return rusty::Result<HeartbeatTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<HeartbeatTypedFuture, rrr::i32>::Ok(HeartbeatTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<HeartbeatTypedFuture> await_Heartbeat(const RpcHeartbeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Heartbeat(req, __fu_attr__));
     }
     rusty::Result<RpcHeartbeatResponse, rrr::i32> Heartbeat(const RpcHeartbeatRequest& req) {
         auto __typed_fu_result__ = this->async_Heartbeat(req);
@@ -2088,9 +2016,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.vote_granted, __reply_ar__);
             return rusty::Result<RpcVoteResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<VoteTypedFuture, rrr::i32> async_Vote(const RpcVoteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::VOTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -2103,9 +2028,6 @@ public:
             return rusty::Result<VoteTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<VoteTypedFuture, rrr::i32>::Ok(VoteTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<VoteTypedFuture> await_Vote(const RpcVoteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Vote(req, __fu_attr__));
     }
     rusty::Result<RpcVoteResponse, rrr::i32> Vote(const RpcVoteRequest& req) {
         auto __typed_fu_result__ = this->async_Vote(req);
@@ -2143,9 +2065,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.vote_granted, __reply_ar__);
             return rusty::Result<RpcVote2FPGAResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<Vote2FPGATypedFuture, rrr::i32> async_Vote2FPGA(const RpcVote2FPGARequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::VOTE2FPGA, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -2158,9 +2077,6 @@ public:
             return rusty::Result<Vote2FPGATypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<Vote2FPGATypedFuture, rrr::i32>::Ok(Vote2FPGATypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<Vote2FPGATypedFuture> await_Vote2FPGA(const RpcVote2FPGARequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Vote2FPGA(req, __fu_attr__));
     }
     rusty::Result<RpcVote2FPGAResponse, rrr::i32> Vote2FPGA(const RpcVote2FPGARequest& req) {
         auto __typed_fu_result__ = this->async_Vote2FPGA(req);
@@ -2199,9 +2115,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
             return rusty::Result<RpcAppendEntriesResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<AppendEntriesTypedFuture, rrr::i32> async_AppendEntries(const RpcAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::APPENDENTRIES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -2218,9 +2131,6 @@ public:
             return rusty::Result<AppendEntriesTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<AppendEntriesTypedFuture, rrr::i32>::Ok(AppendEntriesTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<AppendEntriesTypedFuture> await_AppendEntries(const RpcAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_AppendEntries(req, __fu_attr__));
     }
     rusty::Result<RpcAppendEntriesResponse, rrr::i32> AppendEntries(const RpcAppendEntriesRequest& req) {
         auto __typed_fu_result__ = this->async_AppendEntries(req);
@@ -2259,9 +2169,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
             return rusty::Result<RpcAppendEntries2Response, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<AppendEntries2TypedFuture, rrr::i32> async_AppendEntries2(const RpcAppendEntries2Request& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::APPENDENTRIES2, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -2278,9 +2185,6 @@ public:
             return rusty::Result<AppendEntries2TypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<AppendEntries2TypedFuture, rrr::i32>::Ok(AppendEntries2TypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<AppendEntries2TypedFuture> await_AppendEntries2(const RpcAppendEntries2Request& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_AppendEntries2(req, __fu_attr__));
     }
     rusty::Result<RpcAppendEntries2Response, rrr::i32> AppendEntries2(const RpcAppendEntries2Request& req) {
         auto __typed_fu_result__ = this->async_AppendEntries2(req);
@@ -2314,9 +2218,6 @@ public:
             RpcDecideResponse __typed_resp__;
             return rusty::Result<RpcDecideResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<DecideTypedFuture, rrr::i32> async_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::DECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -2329,9 +2230,6 @@ public:
             return rusty::Result<DecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<DecideTypedFuture, rrr::i32>::Ok(DecideTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<DecideTypedFuture> await_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Decide(req, __fu_attr__));
     }
     rusty::Result<RpcDecideResponse, rrr::i32> Decide(const RpcDecideRequest& req) {
         auto __typed_fu_result__ = this->async_Decide(req);
@@ -3176,9 +3074,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.vote_granted, __reply_ar__);
             return rusty::Result<RpcVoteResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<VoteTypedFuture, rrr::i32> async_Vote(const RpcVoteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::VOTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3191,9 +3086,6 @@ public:
             return rusty::Result<VoteTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<VoteTypedFuture, rrr::i32>::Ok(VoteTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<VoteTypedFuture> await_Vote(const RpcVoteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Vote(req, __fu_attr__));
     }
     rusty::Result<RpcVoteResponse, rrr::i32> Vote(const RpcVoteRequest& req) {
         auto __typed_fu_result__ = this->async_Vote(req);
@@ -3230,9 +3122,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
             return rusty::Result<RpcVoteDurableResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<VoteDurableTypedFuture, rrr::i32> async_VoteDurable(const RpcVoteDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::VOTEDURABLE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3243,9 +3132,6 @@ public:
             return rusty::Result<VoteDurableTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<VoteDurableTypedFuture, rrr::i32>::Ok(VoteDurableTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<VoteDurableTypedFuture> await_VoteDurable(const RpcVoteDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_VoteDurable(req, __fu_attr__));
     }
     rusty::Result<RpcVoteDurableResponse, rrr::i32> VoteDurable(const RpcVoteDurableRequest& req) {
         auto __typed_fu_result__ = this->async_VoteDurable(req);
@@ -3285,9 +3171,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.followerAckType, __reply_ar__);
             return rusty::Result<RpcAppendEntriesResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<AppendEntriesTypedFuture, rrr::i32> async_AppendEntries(const RpcAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::APPENDENTRIES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3305,9 +3188,6 @@ public:
             return rusty::Result<AppendEntriesTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<AppendEntriesTypedFuture, rrr::i32>::Ok(AppendEntriesTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<AppendEntriesTypedFuture> await_AppendEntries(const RpcAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_AppendEntries(req, __fu_attr__));
     }
     rusty::Result<RpcAppendEntriesResponse, rrr::i32> AppendEntries(const RpcAppendEntriesRequest& req) {
         auto __typed_fu_result__ = this->async_AppendEntries(req);
@@ -3347,9 +3227,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.followerAckType, __reply_ar__);
             return rusty::Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<EmptyAppendEntriesTypedFuture, rrr::i32> async_EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::EMPTYAPPENDENTRIES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3366,9 +3243,6 @@ public:
             return rusty::Result<EmptyAppendEntriesTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<EmptyAppendEntriesTypedFuture, rrr::i32>::Ok(EmptyAppendEntriesTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<EmptyAppendEntriesTypedFuture> await_EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_EmptyAppendEntries(req, __fu_attr__));
     }
     rusty::Result<RpcEmptyAppendEntriesResponse, rrr::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
         auto __typed_fu_result__ = this->async_EmptyAppendEntries(req);
@@ -3405,9 +3279,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
             return rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<AppendEntriesDurableTypedFuture, rrr::i32> async_AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::APPENDENTRIESDURABLE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3419,9 +3290,6 @@ public:
             return rusty::Result<AppendEntriesDurableTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<AppendEntriesDurableTypedFuture, rrr::i32>::Ok(AppendEntriesDurableTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<AppendEntriesDurableTypedFuture> await_AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_AppendEntriesDurable(req, __fu_attr__));
     }
     rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32> AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) {
         auto __typed_fu_result__ = this->async_AppendEntriesDurable(req);
@@ -3459,9 +3327,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
             return rusty::Result<RpcTimeoutNowResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<TimeoutNowTypedFuture, rrr::i32> async_TimeoutNow(const RpcTimeoutNowRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::TIMEOUTNOW, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3472,9 +3337,6 @@ public:
             return rusty::Result<TimeoutNowTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<TimeoutNowTypedFuture, rrr::i32>::Ok(TimeoutNowTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<TimeoutNowTypedFuture> await_TimeoutNow(const RpcTimeoutNowRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_TimeoutNow(req, __fu_attr__));
     }
     rusty::Result<RpcTimeoutNowResponse, rrr::i32> TimeoutNow(const RpcTimeoutNowRequest& req) {
         auto __typed_fu_result__ = this->async_TimeoutNow(req);
@@ -3511,9 +3373,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
             return rusty::Result<RpcNotifyRestartResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<NotifyRestartTypedFuture, rrr::i32> async_NotifyRestart(const RpcNotifyRestartRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::NOTIFYRESTART, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3523,9 +3382,6 @@ public:
             return rusty::Result<NotifyRestartTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<NotifyRestartTypedFuture, rrr::i32>::Ok(NotifyRestartTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<NotifyRestartTypedFuture> await_NotifyRestart(const RpcNotifyRestartRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_NotifyRestart(req, __fu_attr__));
     }
     rusty::Result<RpcNotifyRestartResponse, rrr::i32> NotifyRestart(const RpcNotifyRestartRequest& req) {
         auto __typed_fu_result__ = this->async_NotifyRestart(req);
@@ -3562,9 +3418,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.term_out, __reply_ar__);
             return rusty::Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<InstallSnapshotTypedFuture, rrr::i32> async_InstallSnapshot(const RpcInstallSnapshotRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::INSTALLSNAPSHOT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3578,9 +3431,6 @@ public:
             return rusty::Result<InstallSnapshotTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<InstallSnapshotTypedFuture, rrr::i32>::Ok(InstallSnapshotTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<InstallSnapshotTypedFuture> await_InstallSnapshot(const RpcInstallSnapshotRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_InstallSnapshot(req, __fu_attr__));
     }
     rusty::Result<RpcInstallSnapshotResponse, rrr::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) {
         auto __typed_fu_result__ = this->async_InstallSnapshot(req);
@@ -3619,9 +3469,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.leader_hint, __reply_ar__);
             return rusty::Result<RpcAddServerResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<AddServerTypedFuture, rrr::i32> async_AddServer(const RpcAddServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::ADDSERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3633,9 +3480,6 @@ public:
             return rusty::Result<AddServerTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<AddServerTypedFuture, rrr::i32>::Ok(AddServerTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<AddServerTypedFuture> await_AddServer(const RpcAddServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_AddServer(req, __fu_attr__));
     }
     rusty::Result<RpcAddServerResponse, rrr::i32> AddServer(const RpcAddServerRequest& req) {
         auto __typed_fu_result__ = this->async_AddServer(req);
@@ -3674,9 +3518,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.leader_hint, __reply_ar__);
             return rusty::Result<RpcRemoveServerResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RemoveServerTypedFuture, rrr::i32> async_RemoveServer(const RpcRemoveServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::REMOVESERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -3687,9 +3528,6 @@ public:
             return rusty::Result<RemoveServerTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RemoveServerTypedFuture, rrr::i32>::Ok(RemoveServerTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RemoveServerTypedFuture> await_RemoveServer(const RpcRemoveServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RemoveServer(req, __fu_attr__));
     }
     rusty::Result<RpcRemoveServerResponse, rrr::i32> RemoveServer(const RpcRemoveServerRequest& req) {
         auto __typed_fu_result__ = this->async_RemoveServer(req);
@@ -4046,9 +3884,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.status, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(CopilotService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -4061,9 +3896,6 @@ public:
             return rusty::Result<PrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<PrepareTypedFuture, rrr::i32>::Ok(PrepareTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<PrepareTypedFuture> await_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Prepare(req, __fu_attr__));
     }
     rusty::Result<RpcPrepareResponse, rrr::i32> Prepare(const RpcPrepareRequest& req) {
         auto __typed_fu_result__ = this->async_Prepare(req);
@@ -4101,9 +3933,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.ret_dep, __reply_ar__);
             return rusty::Result<RpcFastAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<FastAcceptTypedFuture, rrr::i32> async_FastAccept(const RpcFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(CopilotService::FASTACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -4118,9 +3947,6 @@ public:
             return rusty::Result<FastAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<FastAcceptTypedFuture, rrr::i32>::Ok(FastAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<FastAcceptTypedFuture> await_FastAccept(const RpcFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_FastAccept(req, __fu_attr__));
     }
     rusty::Result<RpcFastAcceptResponse, rrr::i32> FastAccept(const RpcFastAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_FastAccept(req);
@@ -4157,9 +3983,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             return rusty::Result<RpcAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<AcceptTypedFuture, rrr::i32> async_Accept(const RpcAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(CopilotService::ACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -4174,9 +3997,6 @@ public:
             return rusty::Result<AcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<AcceptTypedFuture, rrr::i32>::Ok(AcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<AcceptTypedFuture> await_Accept(const RpcAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Accept(req, __fu_attr__));
     }
     rusty::Result<RpcAcceptResponse, rrr::i32> Accept(const RpcAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_Accept(req);
@@ -4210,9 +4030,6 @@ public:
             RpcCommitResponse __typed_resp__;
             return rusty::Result<RpcCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<CommitTypedFuture, rrr::i32> async_Commit(const RpcCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(CopilotService::COMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -4225,9 +4042,6 @@ public:
             return rusty::Result<CommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<CommitTypedFuture, rrr::i32>::Ok(CommitTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<CommitTypedFuture> await_Commit(const RpcCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Commit(req, __fu_attr__));
     }
     rusty::Result<RpcCommitResponse, rrr::i32> Commit(const RpcCommitRequest& req) {
         auto __typed_fu_result__ = this->async_Commit(req);
@@ -7025,9 +6839,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.ret, __reply_ar__);
             return rusty::Result<RpcMsgStringResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<MsgStringTypedFuture, rrr::i32> async_MsgString(const RpcMsgStringRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::MSGSTRING, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7037,9 +6848,6 @@ public:
             return rusty::Result<MsgStringTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<MsgStringTypedFuture, rrr::i32>::Ok(MsgStringTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<MsgStringTypedFuture> await_MsgString(const RpcMsgStringRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_MsgString(req, __fu_attr__));
     }
     rusty::Result<RpcMsgStringResponse, rrr::i32> MsgString(const RpcMsgStringRequest& req) {
         auto __typed_fu_result__ = this->async_MsgString(req);
@@ -7076,9 +6884,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.ret, __reply_ar__);
             return rusty::Result<RpcMsgMarshallResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<MsgMarshallTypedFuture, rrr::i32> async_MsgMarshall(const RpcMsgMarshallRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::MSGMARSHALL, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7088,9 +6893,6 @@ public:
             return rusty::Result<MsgMarshallTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<MsgMarshallTypedFuture, rrr::i32>::Ok(MsgMarshallTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<MsgMarshallTypedFuture> await_MsgMarshall(const RpcMsgMarshallRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_MsgMarshall(req, __fu_attr__));
     }
     rusty::Result<RpcMsgMarshallResponse, rrr::i32> MsgMarshall(const RpcMsgMarshallRequest& req) {
         auto __typed_fu_result__ = this->async_MsgMarshall(req);
@@ -7127,9 +6929,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
             return rusty::Result<RpcReElectResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<ReElectTypedFuture, rrr::i32> async_ReElect(const RpcReElectRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::REELECT, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -7138,9 +6937,6 @@ public:
         }
         (void)req;
         return rusty::Result<ReElectTypedFuture, rrr::i32>::Ok(ReElectTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<ReElectTypedFuture> await_ReElect(const RpcReElectRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_ReElect(req, __fu_attr__));
     }
     rusty::Result<RpcReElectResponse, rrr::i32> ReElect(const RpcReElectRequest& req) {
         auto __typed_fu_result__ = this->async_ReElect(req);
@@ -7179,9 +6975,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
             return rusty::Result<RpcRuleSpeculativeExecuteResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RuleSpeculativeExecuteTypedFuture, rrr::i32> async_RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RULESPECULATIVEEXECUTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7191,9 +6984,6 @@ public:
             return rusty::Result<RuleSpeculativeExecuteTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RuleSpeculativeExecuteTypedFuture, rrr::i32>::Ok(RuleSpeculativeExecuteTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RuleSpeculativeExecuteTypedFuture> await_RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RuleSpeculativeExecute(req, __fu_attr__));
     }
     rusty::Result<RpcRuleSpeculativeExecuteResponse, rrr::i32> RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest& req) {
         auto __typed_fu_result__ = this->async_RuleSpeculativeExecute(req);
@@ -7233,9 +7023,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.view_data, __reply_ar__);
             return rusty::Result<RpcDispatchResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<DispatchTypedFuture, rrr::i32> async_Dispatch(const RpcDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::DISPATCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7247,9 +7034,6 @@ public:
             return rusty::Result<DispatchTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<DispatchTypedFuture, rrr::i32>::Ok(DispatchTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<DispatchTypedFuture> await_Dispatch(const RpcDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Dispatch(req, __fu_attr__));
     }
     rusty::Result<RpcDispatchResponse, rrr::i32> Dispatch(const RpcDispatchRequest& req) {
         auto __typed_fu_result__ = this->async_Dispatch(req);
@@ -7288,9 +7072,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7302,9 +7083,6 @@ public:
             return rusty::Result<PrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<PrepareTypedFuture, rrr::i32>::Ok(PrepareTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<PrepareTypedFuture> await_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Prepare(req, __fu_attr__));
     }
     rusty::Result<RpcPrepareResponse, rrr::i32> Prepare(const RpcPrepareRequest& req) {
         auto __typed_fu_result__ = this->async_Prepare(req);
@@ -7345,9 +7123,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.view_data, __reply_ar__);
             return rusty::Result<RpcCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<CommitTypedFuture, rrr::i32> async_Commit(const RpcCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::COMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7358,9 +7133,6 @@ public:
             return rusty::Result<CommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<CommitTypedFuture, rrr::i32>::Ok(CommitTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<CommitTypedFuture> await_Commit(const RpcCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Commit(req, __fu_attr__));
     }
     rusty::Result<RpcCommitResponse, rrr::i32> Commit(const RpcCommitRequest& req) {
         auto __typed_fu_result__ = this->async_Commit(req);
@@ -7401,9 +7173,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.view_data, __reply_ar__);
             return rusty::Result<RpcAbortResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<AbortTypedFuture, rrr::i32> async_Abort(const RpcAbortRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::ABORT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7414,9 +7183,6 @@ public:
             return rusty::Result<AbortTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<AbortTypedFuture, rrr::i32>::Ok(AbortTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<AbortTypedFuture> await_Abort(const RpcAbortRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Abort(req, __fu_attr__));
     }
     rusty::Result<RpcAbortResponse, rrr::i32> Abort(const RpcAbortRequest& req) {
         auto __typed_fu_result__ = this->async_Abort(req);
@@ -7453,9 +7219,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcEarlyAbortResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<EarlyAbortTypedFuture, rrr::i32> async_EarlyAbort(const RpcEarlyAbortRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::EARLYABORT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7465,9 +7228,6 @@ public:
             return rusty::Result<EarlyAbortTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<EarlyAbortTypedFuture, rrr::i32>::Ok(EarlyAbortTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<EarlyAbortTypedFuture> await_EarlyAbort(const RpcEarlyAbortRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_EarlyAbort(req, __fu_attr__));
     }
     rusty::Result<RpcEarlyAbortResponse, rrr::i32> EarlyAbort(const RpcEarlyAbortRequest& req) {
         auto __typed_fu_result__ = this->async_EarlyAbort(req);
@@ -7504,9 +7264,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcUpgradeEpochResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<UpgradeEpochTypedFuture, rrr::i32> async_UpgradeEpoch(const RpcUpgradeEpochRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::UPGRADEEPOCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7516,9 +7273,6 @@ public:
             return rusty::Result<UpgradeEpochTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<UpgradeEpochTypedFuture, rrr::i32>::Ok(UpgradeEpochTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<UpgradeEpochTypedFuture> await_UpgradeEpoch(const RpcUpgradeEpochRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_UpgradeEpoch(req, __fu_attr__));
     }
     rusty::Result<RpcUpgradeEpochResponse, rrr::i32> UpgradeEpoch(const RpcUpgradeEpochRequest& req) {
         auto __typed_fu_result__ = this->async_UpgradeEpoch(req);
@@ -7552,9 +7306,6 @@ public:
             RpcTruncateEpochResponse __typed_resp__;
             return rusty::Result<RpcTruncateEpochResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<TruncateEpochTypedFuture, rrr::i32> async_TruncateEpoch(const RpcTruncateEpochRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::TRUNCATEEPOCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7564,9 +7315,6 @@ public:
             return rusty::Result<TruncateEpochTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<TruncateEpochTypedFuture, rrr::i32>::Ok(TruncateEpochTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<TruncateEpochTypedFuture> await_TruncateEpoch(const RpcTruncateEpochRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_TruncateEpoch(req, __fu_attr__));
     }
     rusty::Result<RpcTruncateEpochResponse, rrr::i32> TruncateEpoch(const RpcTruncateEpochRequest& req) {
         auto __typed_fu_result__ = this->async_TruncateEpoch(req);
@@ -7603,9 +7351,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
             return rusty::Result<RpcIsLeaderResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<IsLeaderTypedFuture, rrr::i32> async_IsLeader(const RpcIsLeaderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::ISLEADER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7615,9 +7360,6 @@ public:
             return rusty::Result<IsLeaderTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<IsLeaderTypedFuture, rrr::i32>::Ok(IsLeaderTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<IsLeaderTypedFuture> await_IsLeader(const RpcIsLeaderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_IsLeader(req, __fu_attr__));
     }
     rusty::Result<RpcIsLeaderResponse, rrr::i32> IsLeader(const RpcIsLeaderRequest& req) {
         auto __typed_fu_result__ = this->async_IsLeader(req);
@@ -7654,9 +7396,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
             return rusty::Result<RpcIsFPGALeaderResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<IsFPGALeaderTypedFuture, rrr::i32> async_IsFPGALeader(const RpcIsFPGALeaderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::ISFPGALEADER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7666,9 +7405,6 @@ public:
             return rusty::Result<IsFPGALeaderTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<IsFPGALeaderTypedFuture, rrr::i32>::Ok(IsFPGALeaderTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<IsFPGALeaderTypedFuture> await_IsFPGALeader(const RpcIsFPGALeaderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_IsFPGALeader(req, __fu_attr__));
     }
     rusty::Result<RpcIsFPGALeaderResponse, rrr::i32> IsFPGALeader(const RpcIsFPGALeaderRequest& req) {
         auto __typed_fu_result__ = this->async_IsFPGALeader(req);
@@ -7705,9 +7441,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcSimpleCmdResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<SimpleCmdTypedFuture, rrr::i32> async_SimpleCmd(const RpcSimpleCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::SIMPLECMD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7717,9 +7450,6 @@ public:
             return rusty::Result<SimpleCmdTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<SimpleCmdTypedFuture, rrr::i32>::Ok(SimpleCmdTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<SimpleCmdTypedFuture> await_SimpleCmd(const RpcSimpleCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_SimpleCmd(req, __fu_attr__));
     }
     rusty::Result<RpcSimpleCmdResponse, rrr::i32> SimpleCmd(const RpcSimpleCmdRequest& req) {
         auto __typed_fu_result__ = this->async_SimpleCmd(req);
@@ -7756,9 +7486,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcFailoverPauseSocketOutResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<FailoverPauseSocketOutTypedFuture, rrr::i32> async_FailoverPauseSocketOut(const RpcFailoverPauseSocketOutRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::FAILOVERPAUSESOCKETOUT, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -7767,9 +7494,6 @@ public:
         }
         (void)req;
         return rusty::Result<FailoverPauseSocketOutTypedFuture, rrr::i32>::Ok(FailoverPauseSocketOutTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<FailoverPauseSocketOutTypedFuture> await_FailoverPauseSocketOut(const RpcFailoverPauseSocketOutRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_FailoverPauseSocketOut(req, __fu_attr__));
     }
     rusty::Result<RpcFailoverPauseSocketOutResponse, rrr::i32> FailoverPauseSocketOut(const RpcFailoverPauseSocketOutRequest& req) {
         auto __typed_fu_result__ = this->async_FailoverPauseSocketOut(req);
@@ -7806,9 +7530,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcFailoverResumeSocketOutResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<FailoverResumeSocketOutTypedFuture, rrr::i32> async_FailoverResumeSocketOut(const RpcFailoverResumeSocketOutRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::FAILOVERRESUMESOCKETOUT, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -7817,9 +7538,6 @@ public:
         }
         (void)req;
         return rusty::Result<FailoverResumeSocketOutTypedFuture, rrr::i32>::Ok(FailoverResumeSocketOutTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<FailoverResumeSocketOutTypedFuture> await_FailoverResumeSocketOut(const RpcFailoverResumeSocketOutRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_FailoverResumeSocketOut(req, __fu_attr__));
     }
     rusty::Result<RpcFailoverResumeSocketOutResponse, rrr::i32> FailoverResumeSocketOut(const RpcFailoverResumeSocketOutRequest& req) {
         auto __typed_fu_result__ = this->async_FailoverResumeSocketOut(req);
@@ -7853,9 +7571,6 @@ public:
             RpcRpcNullResponse __typed_resp__;
             return rusty::Result<RpcRpcNullResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<rpc_nullTypedFuture, rrr::i32> async_rpc_null(const RpcRpcNullRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RPC_NULL, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -7864,9 +7579,6 @@ public:
         }
         (void)req;
         return rusty::Result<rpc_nullTypedFuture, rrr::i32>::Ok(rpc_nullTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<rpc_nullTypedFuture> await_rpc_null(const RpcRpcNullRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_rpc_null(req, __fu_attr__));
     }
     rusty::Result<RpcRpcNullResponse, rrr::i32> rpc_null(const RpcRpcNullRequest& req) {
         auto __typed_fu_result__ = this->async_rpc_null(req);
@@ -7900,9 +7612,6 @@ public:
             RpcTapirAcceptResponse __typed_resp__;
             return rusty::Result<RpcTapirAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<TapirAcceptTypedFuture, rrr::i32> async_TapirAccept(const RpcTapirAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::TAPIRACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7914,9 +7623,6 @@ public:
             return rusty::Result<TapirAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<TapirAcceptTypedFuture, rrr::i32>::Ok(TapirAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<TapirAcceptTypedFuture> await_TapirAccept(const RpcTapirAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_TapirAccept(req, __fu_attr__));
     }
     rusty::Result<RpcTapirAcceptResponse, rrr::i32> TapirAccept(const RpcTapirAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_TapirAccept(req);
@@ -7953,9 +7659,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcTapirFastAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<TapirFastAcceptTypedFuture, rrr::i32> async_TapirFastAccept(const RpcTapirFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::TAPIRFASTACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -7966,9 +7669,6 @@ public:
             return rusty::Result<TapirFastAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<TapirFastAcceptTypedFuture, rrr::i32>::Ok(TapirFastAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<TapirFastAcceptTypedFuture> await_TapirFastAccept(const RpcTapirFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_TapirFastAccept(req, __fu_attr__));
     }
     rusty::Result<RpcTapirFastAcceptResponse, rrr::i32> TapirFastAccept(const RpcTapirFastAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_TapirFastAccept(req);
@@ -8002,9 +7702,6 @@ public:
             RpcTapirDecideResponse __typed_resp__;
             return rusty::Result<RpcTapirDecideResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<TapirDecideTypedFuture, rrr::i32> async_TapirDecide(const RpcTapirDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::TAPIRDECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8015,9 +7712,6 @@ public:
             return rusty::Result<TapirDecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<TapirDecideTypedFuture, rrr::i32>::Ok(TapirDecideTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<TapirDecideTypedFuture> await_TapirDecide(const RpcTapirDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_TapirDecide(req, __fu_attr__));
     }
     rusty::Result<RpcTapirDecideResponse, rrr::i32> TapirDecide(const RpcTapirDecideRequest& req) {
         auto __typed_fu_result__ = this->async_TapirDecide(req);
@@ -8056,9 +7750,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.md_graph, __reply_ar__);
             return rusty::Result<RpcRccDispatchResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RccDispatchTypedFuture, rrr::i32> async_RccDispatch(const RpcRccDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCDISPATCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8068,9 +7759,6 @@ public:
             return rusty::Result<RccDispatchTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RccDispatchTypedFuture, rrr::i32>::Ok(RccDispatchTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RccDispatchTypedFuture> await_RccDispatch(const RpcRccDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RccDispatch(req, __fu_attr__));
     }
     rusty::Result<RpcRccDispatchResponse, rrr::i32> RccDispatch(const RpcRccDispatchRequest& req) {
         auto __typed_fu_result__ = this->async_RccDispatch(req);
@@ -8107,9 +7795,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.outputs, __reply_ar__);
             return rusty::Result<RpcRccFinishResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RccFinishTypedFuture, rrr::i32> async_RccFinish(const RpcRccFinishRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCFINISH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8120,9 +7805,6 @@ public:
             return rusty::Result<RccFinishTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RccFinishTypedFuture, rrr::i32>::Ok(RccFinishTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RccFinishTypedFuture> await_RccFinish(const RpcRccFinishRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RccFinish(req, __fu_attr__));
     }
     rusty::Result<RpcRccFinishResponse, rrr::i32> RccFinish(const RpcRccFinishRequest& req) {
         auto __typed_fu_result__ = this->async_RccFinish(req);
@@ -8159,9 +7841,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.out_0, __reply_ar__);
             return rusty::Result<RpcRccInquireResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RccInquireTypedFuture, rrr::i32> async_RccInquire(const RpcRccInquireRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCINQUIRE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8172,9 +7851,6 @@ public:
             return rusty::Result<RccInquireTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RccInquireTypedFuture, rrr::i32>::Ok(RccInquireTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RccInquireTypedFuture> await_RccInquire(const RpcRccInquireRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RccInquire(req, __fu_attr__));
     }
     rusty::Result<RpcRccInquireResponse, rrr::i32> RccInquire(const RpcRccInquireRequest& req) {
         auto __typed_fu_result__ = this->async_RccInquire(req);
@@ -8211,9 +7887,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcRccDispatchRoResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RccDispatchRoTypedFuture, rrr::i32> async_RccDispatchRo(const RpcRccDispatchRoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCDISPATCHRO, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8223,9 +7896,6 @@ public:
             return rusty::Result<RccDispatchRoTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RccDispatchRoTypedFuture, rrr::i32>::Ok(RccDispatchRoTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RccDispatchRoTypedFuture> await_RccDispatchRo(const RpcRccDispatchRoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RccDispatchRo(req, __fu_attr__));
     }
     rusty::Result<RpcRccDispatchRoResponse, rrr::i32> RccDispatchRo(const RpcRccDispatchRoRequest& req) {
         auto __typed_fu_result__ = this->async_RccDispatchRo(req);
@@ -8262,9 +7932,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcRccInquireValidationResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RccInquireValidationTypedFuture, rrr::i32> async_RccInquireValidation(const RpcRccInquireValidationRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCINQUIREVALIDATION, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8275,9 +7942,6 @@ public:
             return rusty::Result<RccInquireValidationTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RccInquireValidationTypedFuture, rrr::i32>::Ok(RccInquireValidationTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RccInquireValidationTypedFuture> await_RccInquireValidation(const RpcRccInquireValidationRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RccInquireValidation(req, __fu_attr__));
     }
     rusty::Result<RpcRccInquireValidationResponse, rrr::i32> RccInquireValidation(const RpcRccInquireValidationRequest& req) {
         auto __typed_fu_result__ = this->async_RccInquireValidation(req);
@@ -8311,9 +7975,6 @@ public:
             RpcRccNotifyGlobalValidationResponse __typed_resp__;
             return rusty::Result<RpcRccNotifyGlobalValidationResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RccNotifyGlobalValidationTypedFuture, rrr::i32> async_RccNotifyGlobalValidation(const RpcRccNotifyGlobalValidationRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCNOTIFYGLOBALVALIDATION, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8325,9 +7986,6 @@ public:
             return rusty::Result<RccNotifyGlobalValidationTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RccNotifyGlobalValidationTypedFuture, rrr::i32>::Ok(RccNotifyGlobalValidationTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RccNotifyGlobalValidationTypedFuture> await_RccNotifyGlobalValidation(const RpcRccNotifyGlobalValidationRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RccNotifyGlobalValidation(req, __fu_attr__));
     }
     rusty::Result<RpcRccNotifyGlobalValidationResponse, rrr::i32> RccNotifyGlobalValidation(const RpcRccNotifyGlobalValidationRequest& req) {
         auto __typed_fu_result__ = this->async_RccNotifyGlobalValidation(req);
@@ -8366,9 +8024,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusDispatchResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JanusDispatchTypedFuture, rrr::i32> async_JanusDispatch(const RpcJanusDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSDISPATCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8378,9 +8033,6 @@ public:
             return rusty::Result<JanusDispatchTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JanusDispatchTypedFuture, rrr::i32>::Ok(JanusDispatchTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JanusDispatchTypedFuture> await_JanusDispatch(const RpcJanusDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JanusDispatch(req, __fu_attr__));
     }
     rusty::Result<RpcJanusDispatchResponse, rrr::i32> JanusDispatch(const RpcJanusDispatchRequest& req) {
         auto __typed_fu_result__ = this->async_JanusDispatch(req);
@@ -8418,9 +8070,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcRccCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RccCommitTypedFuture, rrr::i32> async_RccCommit(const RpcRccCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8433,9 +8082,6 @@ public:
             return rusty::Result<RccCommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RccCommitTypedFuture, rrr::i32>::Ok(RccCommitTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RccCommitTypedFuture> await_RccCommit(const RpcRccCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RccCommit(req, __fu_attr__));
     }
     rusty::Result<RpcRccCommitResponse, rrr::i32> RccCommit(const RpcRccCommitRequest& req) {
         auto __typed_fu_result__ = this->async_RccCommit(req);
@@ -8473,9 +8119,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcJanusCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JanusCommitTypedFuture, rrr::i32> async_JanusCommit(const RpcJanusCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8488,9 +8131,6 @@ public:
             return rusty::Result<JanusCommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JanusCommitTypedFuture, rrr::i32>::Ok(JanusCommitTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JanusCommitTypedFuture> await_JanusCommit(const RpcJanusCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JanusCommit(req, __fu_attr__));
     }
     rusty::Result<RpcJanusCommitResponse, rrr::i32> JanusCommit(const RpcJanusCommitRequest& req) {
         auto __typed_fu_result__ = this->async_JanusCommit(req);
@@ -8528,9 +8168,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcJanusCommitWoGraphResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JanusCommitWoGraphTypedFuture, rrr::i32> async_JanusCommitWoGraph(const RpcJanusCommitWoGraphRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSCOMMITWOGRAPH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8542,9 +8179,6 @@ public:
             return rusty::Result<JanusCommitWoGraphTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JanusCommitWoGraphTypedFuture, rrr::i32>::Ok(JanusCommitWoGraphTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JanusCommitWoGraphTypedFuture> await_JanusCommitWoGraph(const RpcJanusCommitWoGraphRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JanusCommitWoGraph(req, __fu_attr__));
     }
     rusty::Result<RpcJanusCommitWoGraphResponse, rrr::i32> JanusCommitWoGraph(const RpcJanusCommitWoGraphRequest& req) {
         auto __typed_fu_result__ = this->async_JanusCommitWoGraph(req);
@@ -8581,9 +8215,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusInquireResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JanusInquireTypedFuture, rrr::i32> async_JanusInquire(const RpcJanusInquireRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSINQUIRE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8594,9 +8225,6 @@ public:
             return rusty::Result<JanusInquireTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JanusInquireTypedFuture, rrr::i32>::Ok(JanusInquireTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JanusInquireTypedFuture> await_JanusInquire(const RpcJanusInquireRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JanusInquire(req, __fu_attr__));
     }
     rusty::Result<RpcJanusInquireResponse, rrr::i32> JanusInquire(const RpcJanusInquireRequest& req) {
         auto __typed_fu_result__ = this->async_JanusInquire(req);
@@ -8634,9 +8262,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.x, __reply_ar__);
             return rusty::Result<RpcRccPreAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RccPreAcceptTypedFuture, rrr::i32> async_RccPreAccept(const RpcRccPreAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCPREACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8648,9 +8273,6 @@ public:
             return rusty::Result<RccPreAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RccPreAcceptTypedFuture, rrr::i32>::Ok(RccPreAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RccPreAcceptTypedFuture> await_RccPreAccept(const RpcRccPreAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RccPreAccept(req, __fu_attr__));
     }
     rusty::Result<RpcRccPreAcceptResponse, rrr::i32> RccPreAccept(const RpcRccPreAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_RccPreAccept(req);
@@ -8688,9 +8310,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusPreAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JanusPreAcceptTypedFuture, rrr::i32> async_JanusPreAccept(const RpcJanusPreAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSPREACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8703,9 +8322,6 @@ public:
             return rusty::Result<JanusPreAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JanusPreAcceptTypedFuture, rrr::i32>::Ok(JanusPreAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JanusPreAcceptTypedFuture> await_JanusPreAccept(const RpcJanusPreAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JanusPreAccept(req, __fu_attr__));
     }
     rusty::Result<RpcJanusPreAcceptResponse, rrr::i32> JanusPreAccept(const RpcJanusPreAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_JanusPreAccept(req);
@@ -8743,9 +8359,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusPreAcceptWoGraphResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JanusPreAcceptWoGraphTypedFuture, rrr::i32> async_JanusPreAcceptWoGraph(const RpcJanusPreAcceptWoGraphRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSPREACCEPTWOGRAPH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8757,9 +8370,6 @@ public:
             return rusty::Result<JanusPreAcceptWoGraphTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JanusPreAcceptWoGraphTypedFuture, rrr::i32>::Ok(JanusPreAcceptWoGraphTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JanusPreAcceptWoGraphTypedFuture> await_JanusPreAcceptWoGraph(const RpcJanusPreAcceptWoGraphRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JanusPreAcceptWoGraph(req, __fu_attr__));
     }
     rusty::Result<RpcJanusPreAcceptWoGraphResponse, rrr::i32> JanusPreAcceptWoGraph(const RpcJanusPreAcceptWoGraphRequest& req) {
         auto __typed_fu_result__ = this->async_JanusPreAcceptWoGraph(req);
@@ -8796,9 +8406,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcRccAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<RccAcceptTypedFuture, rrr::i32> async_RccAccept(const RpcRccAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8811,9 +8418,6 @@ public:
             return rusty::Result<RccAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<RccAcceptTypedFuture, rrr::i32>::Ok(RccAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<RccAcceptTypedFuture> await_RccAccept(const RpcRccAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_RccAccept(req, __fu_attr__));
     }
     rusty::Result<RpcRccAcceptResponse, rrr::i32> RccAccept(const RpcRccAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_RccAccept(req);
@@ -8850,9 +8454,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcJanusAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JanusAcceptTypedFuture, rrr::i32> async_JanusAccept(const RpcJanusAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8865,9 +8466,6 @@ public:
             return rusty::Result<JanusAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JanusAcceptTypedFuture, rrr::i32>::Ok(JanusAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JanusAcceptTypedFuture> await_JanusAccept(const RpcJanusAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JanusAccept(req, __fu_attr__));
     }
     rusty::Result<RpcJanusAcceptResponse, rrr::i32> JanusAccept(const RpcJanusAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_JanusAccept(req);
@@ -8901,9 +8499,6 @@ public:
             RpcJetpackBeginRecoveryResponse __typed_resp__;
             return rusty::Result<RpcJetpackBeginRecoveryResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JetpackBeginRecoveryTypedFuture, rrr::i32> async_JetpackBeginRecovery(const RpcJetpackBeginRecoveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKBEGINRECOVERY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8915,9 +8510,6 @@ public:
             return rusty::Result<JetpackBeginRecoveryTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JetpackBeginRecoveryTypedFuture, rrr::i32>::Ok(JetpackBeginRecoveryTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JetpackBeginRecoveryTypedFuture> await_JetpackBeginRecovery(const RpcJetpackBeginRecoveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JetpackBeginRecovery(req, __fu_attr__));
     }
     rusty::Result<RpcJetpackBeginRecoveryResponse, rrr::i32> JetpackBeginRecovery(const RpcJetpackBeginRecoveryRequest& req) {
         auto __typed_fu_result__ = this->async_JetpackBeginRecovery(req);
@@ -8959,9 +8551,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.id_set, __reply_ar__);
             return rusty::Result<RpcJetpackPullIdSetResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JetpackPullIdSetTypedFuture, rrr::i32> async_JetpackPullIdSet(const RpcJetpackPullIdSetRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLIDSET, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -8972,9 +8561,6 @@ public:
             return rusty::Result<JetpackPullIdSetTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JetpackPullIdSetTypedFuture, rrr::i32>::Ok(JetpackPullIdSetTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JetpackPullIdSetTypedFuture> await_JetpackPullIdSet(const RpcJetpackPullIdSetRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JetpackPullIdSet(req, __fu_attr__));
     }
     rusty::Result<RpcJetpackPullIdSetResponse, rrr::i32> JetpackPullIdSet(const RpcJetpackPullIdSetRequest& req) {
         auto __typed_fu_result__ = this->async_JetpackPullIdSet(req);
@@ -9016,9 +8602,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.cmd_batch, __reply_ar__);
             return rusty::Result<RpcJetpackPullCmdResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JetpackPullCmdTypedFuture, rrr::i32> async_JetpackPullCmd(const RpcJetpackPullCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLCMD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -9030,9 +8613,6 @@ public:
             return rusty::Result<JetpackPullCmdTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JetpackPullCmdTypedFuture, rrr::i32>::Ok(JetpackPullCmdTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JetpackPullCmdTypedFuture> await_JetpackPullCmd(const RpcJetpackPullCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JetpackPullCmd(req, __fu_attr__));
     }
     rusty::Result<RpcJetpackPullCmdResponse, rrr::i32> JetpackPullCmd(const RpcJetpackPullCmdRequest& req) {
         auto __typed_fu_result__ = this->async_JetpackPullCmd(req);
@@ -9066,9 +8646,6 @@ public:
             RpcJetpackRecordCmdResponse __typed_resp__;
             return rusty::Result<RpcJetpackRecordCmdResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JetpackRecordCmdTypedFuture, rrr::i32> async_JetpackRecordCmd(const RpcJetpackRecordCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKRECORDCMD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -9082,9 +8659,6 @@ public:
             return rusty::Result<JetpackRecordCmdTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JetpackRecordCmdTypedFuture, rrr::i32>::Ok(JetpackRecordCmdTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JetpackRecordCmdTypedFuture> await_JetpackRecordCmd(const RpcJetpackRecordCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JetpackRecordCmd(req, __fu_attr__));
     }
     rusty::Result<RpcJetpackRecordCmdResponse, rrr::i32> JetpackRecordCmd(const RpcJetpackRecordCmdRequest& req) {
         auto __typed_fu_result__ = this->async_JetpackRecordCmd(req);
@@ -9129,9 +8703,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.replied_set_size, __reply_ar__);
             return rusty::Result<RpcJetpackPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JetpackPrepareTypedFuture, rrr::i32> async_JetpackPrepare(const RpcJetpackPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKPREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -9143,9 +8714,6 @@ public:
             return rusty::Result<JetpackPrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JetpackPrepareTypedFuture, rrr::i32>::Ok(JetpackPrepareTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JetpackPrepareTypedFuture> await_JetpackPrepare(const RpcJetpackPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JetpackPrepare(req, __fu_attr__));
     }
     rusty::Result<RpcJetpackPrepareResponse, rrr::i32> JetpackPrepare(const RpcJetpackPrepareRequest& req) {
         auto __typed_fu_result__ = this->async_JetpackPrepare(req);
@@ -9187,9 +8755,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.reply_max_seen_ballot, __reply_ar__);
             return rusty::Result<RpcJetpackAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JetpackAcceptTypedFuture, rrr::i32> async_JetpackAccept(const RpcJetpackAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -9203,9 +8768,6 @@ public:
             return rusty::Result<JetpackAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JetpackAcceptTypedFuture, rrr::i32>::Ok(JetpackAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JetpackAcceptTypedFuture> await_JetpackAccept(const RpcJetpackAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JetpackAccept(req, __fu_attr__));
     }
     rusty::Result<RpcJetpackAcceptResponse, rrr::i32> JetpackAccept(const RpcJetpackAcceptRequest& req) {
         auto __typed_fu_result__ = this->async_JetpackAccept(req);
@@ -9239,9 +8801,6 @@ public:
             RpcJetpackCommitResponse __typed_resp__;
             return rusty::Result<RpcJetpackCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JetpackCommitTypedFuture, rrr::i32> async_JetpackCommit(const RpcJetpackCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -9254,9 +8813,6 @@ public:
             return rusty::Result<JetpackCommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JetpackCommitTypedFuture, rrr::i32>::Ok(JetpackCommitTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JetpackCommitTypedFuture> await_JetpackCommit(const RpcJetpackCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JetpackCommit(req, __fu_attr__));
     }
     rusty::Result<RpcJetpackCommitResponse, rrr::i32> JetpackCommit(const RpcJetpackCommitRequest& req) {
         auto __typed_fu_result__ = this->async_JetpackCommit(req);
@@ -9298,9 +8854,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.cmd, __reply_ar__);
             return rusty::Result<RpcJetpackPullRecSetInsResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JetpackPullRecSetInsTypedFuture, rrr::i32> async_JetpackPullRecSetIns(const RpcJetpackPullRecSetInsRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLRECSETINS, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -9313,9 +8866,6 @@ public:
             return rusty::Result<JetpackPullRecSetInsTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JetpackPullRecSetInsTypedFuture, rrr::i32>::Ok(JetpackPullRecSetInsTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JetpackPullRecSetInsTypedFuture> await_JetpackPullRecSetIns(const RpcJetpackPullRecSetInsRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JetpackPullRecSetIns(req, __fu_attr__));
     }
     rusty::Result<RpcJetpackPullRecSetInsResponse, rrr::i32> JetpackPullRecSetIns(const RpcJetpackPullRecSetInsRequest& req) {
         auto __typed_fu_result__ = this->async_JetpackPullRecSetIns(req);
@@ -9349,9 +8899,6 @@ public:
             RpcJetpackFinishRecoveryResponse __typed_resp__;
             return rusty::Result<RpcJetpackFinishRecoveryResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<JetpackFinishRecoveryTypedFuture, rrr::i32> async_JetpackFinishRecovery(const RpcJetpackFinishRecoveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKFINISHRECOVERY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -9361,9 +8908,6 @@ public:
             return rusty::Result<JetpackFinishRecoveryTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<JetpackFinishRecoveryTypedFuture, rrr::i32>::Ok(JetpackFinishRecoveryTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<JetpackFinishRecoveryTypedFuture> await_JetpackFinishRecovery(const RpcJetpackFinishRecoveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_JetpackFinishRecovery(req, __fu_attr__));
     }
     rusty::Result<RpcJetpackFinishRecoveryResponse, rrr::i32> JetpackFinishRecovery(const RpcJetpackFinishRecoveryRequest& req) {
         auto __typed_fu_result__ = this->async_JetpackFinishRecovery(req);
@@ -9610,9 +9154,6 @@ public:
             RpcServerShutdownResponse __typed_resp__;
             return rusty::Result<RpcServerShutdownResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<server_shutdownTypedFuture, rrr::i32> async_server_shutdown(const RpcServerShutdownRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ServerControlService::SERVER_SHUTDOWN, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -9621,9 +9162,6 @@ public:
         }
         (void)req;
         return rusty::Result<server_shutdownTypedFuture, rrr::i32>::Ok(server_shutdownTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<server_shutdownTypedFuture> await_server_shutdown(const RpcServerShutdownRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_server_shutdown(req, __fu_attr__));
     }
     rusty::Result<RpcServerShutdownResponse, rrr::i32> server_shutdown(const RpcServerShutdownRequest& req) {
         auto __typed_fu_result__ = this->async_server_shutdown(req);
@@ -9660,9 +9198,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcServerReadyResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<server_readyTypedFuture, rrr::i32> async_server_ready(const RpcServerReadyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ServerControlService::SERVER_READY, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -9671,9 +9206,6 @@ public:
         }
         (void)req;
         return rusty::Result<server_readyTypedFuture, rrr::i32>::Ok(server_readyTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<server_readyTypedFuture> await_server_ready(const RpcServerReadyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_server_ready(req, __fu_attr__));
     }
     rusty::Result<RpcServerReadyResponse, rrr::i32> server_ready(const RpcServerReadyRequest& req) {
         auto __typed_fu_result__ = this->async_server_ready(req);
@@ -9710,9 +9242,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcServerHeartBeatWithDataResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<server_heart_beat_with_dataTypedFuture, rrr::i32> async_server_heart_beat_with_data(const RpcServerHeartBeatWithDataRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ServerControlService::SERVER_HEART_BEAT_WITH_DATA, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -9721,9 +9250,6 @@ public:
         }
         (void)req;
         return rusty::Result<server_heart_beat_with_dataTypedFuture, rrr::i32>::Ok(server_heart_beat_with_dataTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<server_heart_beat_with_dataTypedFuture> await_server_heart_beat_with_data(const RpcServerHeartBeatWithDataRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_server_heart_beat_with_data(req, __fu_attr__));
     }
     rusty::Result<RpcServerHeartBeatWithDataResponse, rrr::i32> server_heart_beat_with_data(const RpcServerHeartBeatWithDataRequest& req) {
         auto __typed_fu_result__ = this->async_server_heart_beat_with_data(req);
@@ -9757,9 +9283,6 @@ public:
             RpcServerHeartBeatResponse __typed_resp__;
             return rusty::Result<RpcServerHeartBeatResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<server_heart_beatTypedFuture, rrr::i32> async_server_heart_beat(const RpcServerHeartBeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ServerControlService::SERVER_HEART_BEAT, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -9768,9 +9291,6 @@ public:
         }
         (void)req;
         return rusty::Result<server_heart_beatTypedFuture, rrr::i32>::Ok(server_heart_beatTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<server_heart_beatTypedFuture> await_server_heart_beat(const RpcServerHeartBeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_server_heart_beat(req, __fu_attr__));
     }
     rusty::Result<RpcServerHeartBeatResponse, rrr::i32> server_heart_beat(const RpcServerHeartBeatRequest& req) {
         auto __typed_fu_result__ = this->async_server_heart_beat(req);
@@ -10214,9 +9734,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.txn_names, __reply_ar__);
             return rusty::Result<RpcClientGetTxnNamesResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<client_get_txn_namesTypedFuture, rrr::i32> async_client_get_txn_names(const RpcClientGetTxnNamesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_GET_TXN_NAMES, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -10225,9 +9742,6 @@ public:
         }
         (void)req;
         return rusty::Result<client_get_txn_namesTypedFuture, rrr::i32>::Ok(client_get_txn_namesTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<client_get_txn_namesTypedFuture> await_client_get_txn_names(const RpcClientGetTxnNamesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_client_get_txn_names(req, __fu_attr__));
     }
     rusty::Result<RpcClientGetTxnNamesResponse, rrr::i32> client_get_txn_names(const RpcClientGetTxnNamesRequest& req) {
         auto __typed_fu_result__ = this->async_client_get_txn_names(req);
@@ -10261,9 +9775,6 @@ public:
             RpcClientShutdownResponse __typed_resp__;
             return rusty::Result<RpcClientShutdownResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<client_shutdownTypedFuture, rrr::i32> async_client_shutdown(const RpcClientShutdownRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_SHUTDOWN, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -10272,9 +9783,6 @@ public:
         }
         (void)req;
         return rusty::Result<client_shutdownTypedFuture, rrr::i32>::Ok(client_shutdownTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<client_shutdownTypedFuture> await_client_shutdown(const RpcClientShutdownRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_client_shutdown(req, __fu_attr__));
     }
     rusty::Result<RpcClientShutdownResponse, rrr::i32> client_shutdown(const RpcClientShutdownRequest& req) {
         auto __typed_fu_result__ = this->async_client_shutdown(req);
@@ -10308,9 +9816,6 @@ public:
             RpcClientForceStopResponse __typed_resp__;
             return rusty::Result<RpcClientForceStopResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<client_force_stopTypedFuture, rrr::i32> async_client_force_stop(const RpcClientForceStopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_FORCE_STOP, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -10319,9 +9824,6 @@ public:
         }
         (void)req;
         return rusty::Result<client_force_stopTypedFuture, rrr::i32>::Ok(client_force_stopTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<client_force_stopTypedFuture> await_client_force_stop(const RpcClientForceStopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_client_force_stop(req, __fu_attr__));
     }
     rusty::Result<RpcClientForceStopResponse, rrr::i32> client_force_stop(const RpcClientForceStopRequest& req) {
         auto __typed_fu_result__ = this->async_client_force_stop(req);
@@ -10358,9 +9860,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcClientResponseResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<client_responseTypedFuture, rrr::i32> async_client_response(const RpcClientResponseRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_RESPONSE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -10370,9 +9869,6 @@ public:
             return rusty::Result<client_responseTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<client_responseTypedFuture, rrr::i32>::Ok(client_responseTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<client_responseTypedFuture> await_client_response(const RpcClientResponseRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_client_response(req, __fu_attr__));
     }
     rusty::Result<RpcClientResponseResponse, rrr::i32> client_response(const RpcClientResponseRequest& req) {
         auto __typed_fu_result__ = this->async_client_response(req);
@@ -10409,9 +9905,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcClientReadyResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<client_readyTypedFuture, rrr::i32> async_client_ready(const RpcClientReadyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_READY, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -10420,9 +9913,6 @@ public:
         }
         (void)req;
         return rusty::Result<client_readyTypedFuture, rrr::i32>::Ok(client_readyTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<client_readyTypedFuture> await_client_ready(const RpcClientReadyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_client_ready(req, __fu_attr__));
     }
     rusty::Result<RpcClientReadyResponse, rrr::i32> client_ready(const RpcClientReadyRequest& req) {
         auto __typed_fu_result__ = this->async_client_ready(req);
@@ -10459,9 +9949,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcClientReadyBlockResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<client_ready_blockTypedFuture, rrr::i32> async_client_ready_block(const RpcClientReadyBlockRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_READY_BLOCK, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -10470,9 +9957,6 @@ public:
         }
         (void)req;
         return rusty::Result<client_ready_blockTypedFuture, rrr::i32>::Ok(client_ready_blockTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<client_ready_blockTypedFuture> await_client_ready_block(const RpcClientReadyBlockRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_client_ready_block(req, __fu_attr__));
     }
     rusty::Result<RpcClientReadyBlockResponse, rrr::i32> client_ready_block(const RpcClientReadyBlockRequest& req) {
         auto __typed_fu_result__ = this->async_client_ready_block(req);
@@ -10506,9 +9990,6 @@ public:
             RpcClientStartResponse __typed_resp__;
             return rusty::Result<RpcClientStartResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<client_startTypedFuture, rrr::i32> async_client_start(const RpcClientStartRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_START, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
@@ -10517,9 +9998,6 @@ public:
         }
         (void)req;
         return rusty::Result<client_startTypedFuture, rrr::i32>::Ok(client_startTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<client_startTypedFuture> await_client_start(const RpcClientStartRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_client_start(req, __fu_attr__));
     }
     rusty::Result<RpcClientStartResponse, rrr::i32> client_start(const RpcClientStartRequest& req) {
         auto __typed_fu_result__ = this->async_client_start(req);
@@ -10556,9 +10034,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.result, __reply_ar__);
             return rusty::Result<RpcDispatchTxnResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<DispatchTxnTypedFuture, rrr::i32> async_DispatchTxn(const RpcDispatchTxnRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::DISPATCHTXN, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -10568,9 +10043,6 @@ public:
             return rusty::Result<DispatchTxnTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<DispatchTxnTypedFuture, rrr::i32>::Ok(DispatchTxnTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<DispatchTxnTypedFuture> await_DispatchTxn(const RpcDispatchTxnRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_DispatchTxn(req, __fu_attr__));
     }
     rusty::Result<RpcDispatchTxnResponse, rrr::i32> DispatchTxn(const RpcDispatchTxnRequest& req) {
         auto __typed_fu_result__ = this->async_DispatchTxn(req);
@@ -10697,9 +10169,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.value, __reply_ar__);
             return rusty::Result<RpcReadConfigKeyResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<ReadConfigKeyTypedFuture, rrr::i32> async_ReadConfigKey(const RpcReadConfigKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ConfigKvServiceService::READCONFIGKEY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -10709,9 +10178,6 @@ public:
             return rusty::Result<ReadConfigKeyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<ReadConfigKeyTypedFuture, rrr::i32>::Ok(ReadConfigKeyTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<ReadConfigKeyTypedFuture> await_ReadConfigKey(const RpcReadConfigKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_ReadConfigKey(req, __fu_attr__));
     }
     rusty::Result<RpcReadConfigKeyResponse, rrr::i32> ReadConfigKey(const RpcReadConfigKeyRequest& req) {
         auto __typed_fu_result__ = this->async_ReadConfigKey(req);

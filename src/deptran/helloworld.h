@@ -123,9 +123,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(HelloworldClientService::TXN_READ, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -135,9 +132,6 @@ public:
             return rusty::Result<txn_readTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_readTypedFuture, rrr::i32>::Ok(txn_readTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<txn_readTypedFuture> await_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_txn_read(req, __fu_attr__));
     }
     rusty::Result<RpcTxnReadResponse, rrr::i32> txn_read(const RpcTxnReadRequest& req) {
         auto __typed_fu_result__ = this->async_txn_read(req);

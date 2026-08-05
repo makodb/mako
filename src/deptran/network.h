@@ -404,9 +404,6 @@ public:
             RpcTxnRmwResponse __typed_resp__;
             return rusty::Result<RpcTxnRmwResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<txn_rmwTypedFuture, rrr::i32> async_txn_rmw(const RpcTxnRmwRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_RMW, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -416,9 +413,6 @@ public:
             return rusty::Result<txn_rmwTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_rmwTypedFuture, rrr::i32>::Ok(txn_rmwTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<txn_rmwTypedFuture> await_txn_rmw(const RpcTxnRmwRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_txn_rmw(req, __fu_attr__));
     }
     rusty::Result<RpcTxnRmwResponse, rrr::i32> txn_rmw(const RpcTxnRmwRequest& req) {
         auto __typed_fu_result__ = this->async_txn_rmw(req);
@@ -452,9 +446,6 @@ public:
             RpcTxnReadResponse __typed_resp__;
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_READ, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -464,9 +455,6 @@ public:
             return rusty::Result<txn_readTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_readTypedFuture, rrr::i32>::Ok(txn_readTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<txn_readTypedFuture> await_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_txn_read(req, __fu_attr__));
     }
     rusty::Result<RpcTxnReadResponse, rrr::i32> txn_read(const RpcTxnReadRequest& req) {
         auto __typed_fu_result__ = this->async_txn_read(req);
@@ -500,9 +488,6 @@ public:
             RpcTxnNewOrderResponse __typed_resp__;
             return rusty::Result<RpcTxnNewOrderResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<txn_new_orderTypedFuture, rrr::i32> async_txn_new_order(const RpcTxnNewOrderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_NEW_ORDER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -512,9 +497,6 @@ public:
             return rusty::Result<txn_new_orderTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_new_orderTypedFuture, rrr::i32>::Ok(txn_new_orderTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<txn_new_orderTypedFuture> await_txn_new_order(const RpcTxnNewOrderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_txn_new_order(req, __fu_attr__));
     }
     rusty::Result<RpcTxnNewOrderResponse, rrr::i32> txn_new_order(const RpcTxnNewOrderRequest& req) {
         auto __typed_fu_result__ = this->async_txn_new_order(req);
@@ -548,9 +530,6 @@ public:
             RpcTxnPaymentResponse __typed_resp__;
             return rusty::Result<RpcTxnPaymentResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<txn_paymentTypedFuture, rrr::i32> async_txn_payment(const RpcTxnPaymentRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_PAYMENT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -560,9 +539,6 @@ public:
             return rusty::Result<txn_paymentTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_paymentTypedFuture, rrr::i32>::Ok(txn_paymentTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<txn_paymentTypedFuture> await_txn_payment(const RpcTxnPaymentRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_txn_payment(req, __fu_attr__));
     }
     rusty::Result<RpcTxnPaymentResponse, rrr::i32> txn_payment(const RpcTxnPaymentRequest& req) {
         auto __typed_fu_result__ = this->async_txn_payment(req);
@@ -596,9 +572,6 @@ public:
             RpcTxnDeliveryResponse __typed_resp__;
             return rusty::Result<RpcTxnDeliveryResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<txn_deliveryTypedFuture, rrr::i32> async_txn_delivery(const RpcTxnDeliveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_DELIVERY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -608,9 +581,6 @@ public:
             return rusty::Result<txn_deliveryTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_deliveryTypedFuture, rrr::i32>::Ok(txn_deliveryTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<txn_deliveryTypedFuture> await_txn_delivery(const RpcTxnDeliveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_txn_delivery(req, __fu_attr__));
     }
     rusty::Result<RpcTxnDeliveryResponse, rrr::i32> txn_delivery(const RpcTxnDeliveryRequest& req) {
         auto __typed_fu_result__ = this->async_txn_delivery(req);
@@ -644,9 +614,6 @@ public:
             RpcTxnOrderStatusResponse __typed_resp__;
             return rusty::Result<RpcTxnOrderStatusResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<txn_order_statusTypedFuture, rrr::i32> async_txn_order_status(const RpcTxnOrderStatusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_ORDER_STATUS, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -656,9 +623,6 @@ public:
             return rusty::Result<txn_order_statusTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_order_statusTypedFuture, rrr::i32>::Ok(txn_order_statusTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<txn_order_statusTypedFuture> await_txn_order_status(const RpcTxnOrderStatusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_txn_order_status(req, __fu_attr__));
     }
     rusty::Result<RpcTxnOrderStatusResponse, rrr::i32> txn_order_status(const RpcTxnOrderStatusRequest& req) {
         auto __typed_fu_result__ = this->async_txn_order_status(req);
@@ -692,9 +656,6 @@ public:
             RpcTxnStockLevelResponse __typed_resp__;
             return rusty::Result<RpcTxnStockLevelResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<txn_stock_levelTypedFuture, rrr::i32> async_txn_stock_level(const RpcTxnStockLevelRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_STOCK_LEVEL, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
@@ -704,9 +665,6 @@ public:
             return rusty::Result<txn_stock_levelTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_stock_levelTypedFuture, rrr::i32>::Ok(txn_stock_levelTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<txn_stock_levelTypedFuture> await_txn_stock_level(const RpcTxnStockLevelRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_txn_stock_level(req, __fu_attr__));
     }
     rusty::Result<RpcTxnStockLevelResponse, rrr::i32> txn_stock_level(const RpcTxnStockLevelRequest& req) {
         auto __typed_fu_result__ = this->async_txn_stock_level(req);

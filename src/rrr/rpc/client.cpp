@@ -940,96 +940,10 @@ void Future::safe_release(rusty::Arc<Future> fu) {
 }
 /*RUSTYCPP:GEN-END id=client.future*/
 
-// @safe - Awaiter for generated typed RPC futures.
-// co_await returns the same typed resolve() result as sync wrappers.
-template<typename TypedFuture>
-class TypedFutureAwaiter {
-    static_assert(
-        std::is_same_v<
-            decltype(std::declval<const TypedFuture&>().raw_future()),
-            rusty::Arc<Future>>,
-        "TypedFuture must expose raw_future() returning rusty::Arc<rrr::Future>");
-
-    using ResolveResult = decltype(std::declval<const TypedFuture&>().resolve());
-
-public:
-    explicit TypedFutureAwaiter(TypedFuture typed_future)
-        : typed_future_(std::move(typed_future)) { }
-
-    bool await_ready() const {
-        return typed_future_.ready();
-    }
-
-    bool await_suspend(std::coroutine_handle<> handle) const {
-        auto* ctx = rusty::current_context();
-        if (ctx != nullptr && ctx->waker != nullptr) {
-            auto waker = *(ctx->waker);
-            return typed_future_.raw_future()->add_completion_callback(
-                [waker]() mutable { waker.wake(); });
-        }
-        return typed_future_.raw_future()->add_completion_callback(
-            [handle]() mutable { handle.resume(); });
-    }
-
-    ResolveResult await_resume() const {
-        return typed_future_.resolve();
-    }
-
-private:
-    TypedFuture typed_future_;
-};
-
-// @safe - Helper to build TypedFutureAwaiter with type deduction.
-template<typename TypedFuture>
-TypedFutureAwaiter<TypedFuture> make_typed_future_awaitable(TypedFuture typed_future) {
-    return TypedFutureAwaiter<TypedFuture>(std::move(typed_future));
-}
-
-// @safe - Awaiter for Result<TypedFuture, i32> returned by async_* proxy methods.
-// This allows `co_await proxy.await_xxx(req)` and preserves immediate send errors.
-template<typename TypedFuture>
-class TypedFutureResultAwaiter {
-    using ResolveResult = decltype(std::declval<const TypedFuture&>().resolve());
-
-public:
-    explicit TypedFutureResultAwaiter(rusty::Result<TypedFuture, i32> typed_future_result)
-        : typed_future_result_(std::move(typed_future_result)) { }
-
-    bool await_ready() const {
-        return typed_future_result_.is_err() || typed_future_result_.unwrap().ready();
-    }
-
-    bool await_suspend(std::coroutine_handle<> handle) const {
-        if (typed_future_result_.is_err()) {
-            return false;
-        }
-        auto* ctx = rusty::current_context();
-        if (ctx != nullptr && ctx->waker != nullptr) {
-            auto waker = *(ctx->waker);
-            return typed_future_result_.unwrap().raw_future()->add_completion_callback(
-                [waker]() mutable { waker.wake(); });
-        }
-        return typed_future_result_.unwrap().raw_future()->add_completion_callback(
-            [handle]() mutable { handle.resume(); });
-    }
-
-    ResolveResult await_resume() const {
-        if (typed_future_result_.is_err()) {
-            return ResolveResult::Err(typed_future_result_.unwrap_err());
-        }
-        return typed_future_result_.unwrap().resolve();
-    }
-
-private:
-    rusty::Result<TypedFuture, i32> typed_future_result_;
-};
-
-// @safe - Helper to build TypedFutureResultAwaiter with type deduction.
-template<typename TypedFuture>
-TypedFutureResultAwaiter<TypedFuture> make_typed_future_result_awaitable(
-    rusty::Result<TypedFuture, i32> typed_future_result) {
-    return TypedFutureResultAwaiter<TypedFuture>(std::move(typed_future_result));
-}
+// (The RPC co_await feature is removed: the TypedFutureAwaiter /
+//  TypedFutureResultAwaiter pair and their factories are gone, and
+//  rpcgen no longer emits `operator co_await` / `await_*` wrappers.
+//  Callers use the sync wrappers or async_* + callbacks.)
 
 // Type alias for Arc weak reference to ClientConnection
 using WeakClientConnection = rusty::sync::Weak<ClientConnection>;

@@ -249,10 +249,6 @@ def emit_typed_proxy_future_wrapper(func, f):
                     f.writeln("rrr::Deserialize_::deserialize(__typed_resp__.%s, __reply_ar__);" % field_name)
             f.writeln("return %s::Ok(__typed_resp__);" % result_type)
         f.writeln("}")
-        f.writeln("auto operator co_await() const {")
-        with f.indent():
-            f.writeln("return rrr::make_typed_future_awaitable(*this);")
-        f.writeln("}")
     f.writeln("};")
 
 def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
@@ -282,15 +278,6 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
         if len(typed_async_call_params) == 0:
             f.writeln("(void)req;")
         f.writeln("return %s::Ok(%s(__fu_result__.unwrap()));" % (result_type, wrapper_name))
-    f.writeln("}")
-
-def emit_typed_proxy_await_signature(func, f):
-    request_struct_name = typed_request_struct_name(func)
-    wrapper_name = typed_proxy_future_wrapper_name(func)
-
-    f.writeln("rrr::TypedFutureResultAwaiter<%s> await_%s(const %s& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (wrapper_name, func.name, request_struct_name))
-    with f.indent():
-        f.writeln("return rrr::make_typed_future_result_awaitable(this->async_%s(req, __fu_attr__));" % func.name)
     f.writeln("}")
 
 def emit_service_and_proxy(service, f, rpc_table, archive=False):
@@ -536,7 +523,6 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                     typed_async_call_params += "req.%s" % field_name,
                 emit_typed_proxy_future_wrapper(func, f)
                 emit_typed_proxy_async_signature(service, func, typed_async_call_params, f)
-                emit_typed_proxy_await_signature(func, f)
                 emit_typed_proxy_sync_signature(func, f)
             else:
                 async_func_params = []
