@@ -1062,7 +1062,7 @@ uint64_t clientconn_monotonic_ms_now();
 template<typename F>
 FutureResult clientconn_request_via_channel(const ClientConnection& conn, i32 rpc_id, const FutureAttr& attr, F write_fn);
 template<typename F>
-FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id, const RequestOptions& options, const FutureAttr& attr, F&& write_fn);
+FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id, const RequestOptions& options, const FutureAttr& attr, F write_fn);
 template<typename F>
 rusty::Result<rusty::Unit, i32> clientconn_request_async(const ClientConnection& conn, i32 rpc_id, F write_fn, AsyncReplyCallback on_reply);
 bool operator==(const rusty::Arc<ClientConnection>& lhs, const rusty::Arc<ClientConnection>& rhs);
@@ -3923,171 +3923,325 @@ uint64_t clientconn_monotonic_ms_now() {
 // Contains syscalls, raw pointers, and other unsafe operations
 
 
-// @unsafe - Attempts to reconnect to the last connected address
-int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete) {
-  // Reset the abort latch before delegating (folded in from the former
-  // const `reconnect` facade): the Client::reconnect path needs a stale
-  // abort=true from a prior close() cleared, and the close-fan-out spawn
-  // path only reaches here with abort already false, so the reset is a
-  // no-op there. `reconnect_` is a mutable atomic, so const self suffices.
-  self.reconnect_.reconnect_abort_.store(false, rusty::sync::atomic::Ordering::Release);
-  auto complete_callback = [&](int result) -> int {
-    if (on_complete) on_complete(result == 0);
-    return result;
-  };
+// Attempts to reconnect to the last connected address. Authored as
+// inline Rust DSL — the four helper lambdas here capture the enclosing
+// scope BY REFERENCE, which non-move DSL closures now lower to
+// (`[&]`), so the historical "closure-capture-by-ref" floor is gone.
+// The param is named `self_`, not `self`: a DSL param named `self` is
+// swallowed into a receiver and the body would emit `this->`.
+#if RUSTYCPP_RUST
+fn clientconn_reconnect(self_: &ClientConnection, on_complete: OnReconnectCompleteCallbackFn) -> i32 {
+    // Reset the abort latch before delegating (folded in from the former
+    // const `reconnect` facade): the Client::reconnect path needs a stale
+    // abort=true from a prior close() cleared, and the close-fan-out spawn
+    // path only reaches here with abort already false, so the reset is a
+    // no-op there. `reconnect_` is a mutable atomic, so const self suffices.
+    unsafe { self_.reconnect_.reconnect_abort_.store(false, rusty::sync::atomic::Ordering::Release); }
 
-  if (self.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire)) {
-    return complete_callback(ECANCELED);
-  }
+    let complete_callback = |result: i32| -> i32 {
+        if on_complete {
+            on_complete(result == 0i32);
+        }
+        result
+    };
 
-  auto wait_for_inflight_reconnect = [&]() -> int {
-    while (self.reconnect_.reconnecting_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      if (self.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire)) {
-        return ECANCELED;
-      }
-      if (self.state_machine_.is_connected()) {
-        return 0;
-      }
-      Time::sleep(5 * 1000);
+    let aborted: bool = unsafe { self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire) };
+    if aborted {
+        return complete_callback(ECANCELED);
     }
 
-    if (self.state_machine_.is_connected()) {
-      return 0;
-    }
-    return INT_MIN;
-  };
+    let wait_for_inflight_reconnect = || -> i32 {
+        loop {
+            let busy: bool = unsafe { self_.reconnect_.reconnecting_.load(rusty::sync::atomic::Ordering::Acquire) };
+            if !busy {
+                break;
+            }
+            let cancel: bool = unsafe { self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire) };
+            if cancel {
+                return ECANCELED;
+            }
+            if self_.state_machine_.is_connected() {
+                return 0i32;
+            }
+            Time::sleep(5000u64);
+        }
+        if self_.state_machine_.is_connected() {
+            return 0i32;
+        }
+        INT_MIN
+    };
 
-  if (self.reconnect_.reconnecting_.load(rusty::sync::atomic::Ordering::Acquire)) {
-    int waited = wait_for_inflight_reconnect();
-    if (waited != INT_MIN) {
-      return complete_callback(waited);
-    }
-  }
-
-  // Check if we have an address to reconnect to
-  if (self.reconnect_address_.get().empty()) {
-    Log_error("rrr::ClientConnection: no address to reconnect to");
-    return complete_callback(EINVAL);
-  }
-
-  // Can only reconnect from FAILED or DISCONNECTED state
-  if (!self.state_machine_.can_connect()) {
-    Log_error("rrr::ClientConnection: cannot reconnect from state {}",
-              connection_state_to_string(self.state_machine_.state()));
-    return complete_callback(EINVAL);
-  }
-
-  while (true) {
-    bool expected = false;
-    if (self.reconnect_.reconnecting_.compare_exchange(expected, true, rusty::sync::atomic::Ordering::AcqRel, rusty::sync::atomic::Ordering::Acquire).is_ok()) {
-      break;
+    let reconnecting: bool = unsafe { self_.reconnect_.reconnecting_.load(rusty::sync::atomic::Ordering::Acquire) };
+    if reconnecting {
+        let waited: i32 = wait_for_inflight_reconnect();
+        if waited != INT_MIN {
+            return complete_callback(waited);
+        }
     }
 
-    int waited = wait_for_inflight_reconnect();
-    if (waited != INT_MIN) {
-      return complete_callback(waited);
-    }
-  }
-  self.invoke_reconnecting_callback();
-
-  auto complete_reconnect = [&](bool success, int result) -> int {
-    self.reconnect_.reconnecting_.store(false, rusty::sync::atomic::Ordering::Release);
-    self.invoke_reconnected_callback(success);
-
-    if (success) {
-      Log_info("rrr::ClientConnection: reconnected to {}", self.reconnect_address_.get().c_str());
-
-      // Record reconnection in metrics
-      self.metrics_.record_reconnect();
-
-      // Sweep the disconnect-buffering queue. Entries that ran past
-      // their TTL while the connection was down resolve their
-      // futures with `kRequestQueueExpiredError` and bump
-      // `queue_dropped_requests`. Non-stale entries remain in the
-      // queue for a future replay path.
-      self.pending_queue_.expire_stale();
-      return complete_callback(0);
-    } else {
-      if (result == ECANCELED) {
-        Log_debug("rrr::ClientConnection: reconnect cancelled for {}",
-                  self.reconnect_address_.get().c_str());
-      } else {
-        Log_error("rrr::ClientConnection: reconnection failed to {}: {}",
-                  self.reconnect_address_.get().c_str(), result);
-      }
-      return complete_callback(result);
-    }
-  };
-
-  auto reconnect_once = [&]() -> int {
-    if (self.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      return ECANCELED;
-    }
-    // 4g3c2: `socket_ = -1` reset removed. socket_ is unused in
-    // channel mode (the channel proxy's TcpConnection owns the fd);
-    // the `connect()` call below routes through `connect_via_factory`
-    // which produces a fresh proxy + fresh fd internally.
-    // @unsafe { connect drives the state machine and the socket; it is
-    // const-callable because that state is interior-mutable }
-    return self.connect(reinterpret_cast<const int8_t*>(self.reconnect_address_.get().c_str()));
-  };
-
-  if (self.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire)) {
-    return complete_reconnect(false, ECANCELED);
-  }
-
-  // Another reconnect attempt can complete between the pre-CAS state check and
-  // this thread acquiring reconnect ownership.
-  if (self.state_machine_.is_connected()) {
-    return complete_reconnect(true, 0);
-  }
-
-  if (!self.state_machine_.can_connect()) {
-    return complete_reconnect(false, EINVAL);
-  }
-
-  // First attempt happens immediately.
-  int result = reconnect_once();
-  if (result == 0) {
-    return complete_reconnect(true, 0);
-  }
-
-  // Follow configured backoff/retry policy for subsequent attempts.
-  const ReconnectPolicy policy = self.reconnect_policy_.get();
-  auto calc = ReconnectCalculator::new_(policy);
-  while (calc.should_retry()) {
-    if (self.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      return complete_reconnect(false, ECANCELED);
+    // Check if we have an address to reconnect to
+    if self_.reconnect_address_.get().empty() {
+        Log_error("rrr::ClientConnection: no address to reconnect to");
+        return complete_callback(EINVAL);
     }
 
-    uint32_t delay_ms = calc.next_delay_ms();
-    if (delay_ms > 0) {
-      Time::sleep(static_cast<uint64_t>(delay_ms) * 1000);
+    // Can only reconnect from FAILED or DISCONNECTED state
+    if !self_.state_machine_.can_connect() {
+        Log_error("rrr::ClientConnection: cannot reconnect from state {}",
+                  connection_state_to_string(self_.state_machine_.state()));
+        return complete_callback(EINVAL);
     }
 
-    if (self.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire)) {
-      return complete_reconnect(false, ECANCELED);
+    loop {
+        let mut expected: bool = false;
+        let won: bool = unsafe {
+            self_.reconnect_.reconnecting_.compare_exchange(expected, true,
+                rusty::sync::atomic::Ordering::AcqRel,
+                rusty::sync::atomic::Ordering::Acquire).is_ok()
+        };
+        if won {
+            break;
+        }
+        let waited: i32 = wait_for_inflight_reconnect();
+        if waited != INT_MIN {
+            return complete_callback(waited);
+        }
+    }
+    self_.invoke_reconnecting_callback();
+
+    let complete_reconnect = |success: bool, result: i32| -> i32 {
+        unsafe { self_.reconnect_.reconnecting_.store(false, rusty::sync::atomic::Ordering::Release); }
+        self_.invoke_reconnected_callback(success);
+
+        if success {
+            Log_info("rrr::ClientConnection: reconnected to {}", self_.reconnect_address_.get().c_str());
+
+            // Record reconnection in metrics
+            self_.metrics_.record_reconnect();
+
+            // Sweep the disconnect-buffering queue. Entries that ran past
+            // their TTL while the connection was down resolve their
+            // futures with `kRequestQueueExpiredError` and bump
+            // `queue_dropped_requests`. Non-stale entries remain in the
+            // queue for a future replay path.
+            self_.pending_queue_.expire_stale();
+            return complete_callback(0i32);
+        }
+        if result == ECANCELED {
+            Log_debug("rrr::ClientConnection: reconnect cancelled for {}",
+                      self_.reconnect_address_.get().c_str());
+        } else {
+            Log_error("rrr::ClientConnection: reconnection failed to {}: {}",
+                      self_.reconnect_address_.get().c_str(), result);
+        }
+        complete_callback(result)
+    };
+
+    let reconnect_once = || -> i32 {
+        let cancel: bool = unsafe { self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire) };
+        if cancel {
+            return ECANCELED;
+        }
+        // 4g3c2: `socket_ = -1` reset removed. socket_ is unused in
+        // channel mode (the channel proxy's TcpConnection owns the fd);
+        // the `connect()` call below routes through `connect_via_factory`
+        // which produces a fresh proxy + fresh fd internally.
+        self_.connect(self_.reconnect_address_.get().c_str() as *const i8)
+    };
+
+    let abort_now: bool = unsafe { self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire) };
+    if abort_now {
+        return complete_reconnect(false, ECANCELED);
     }
 
-    // Another path may have re-established connection while sleeping.
-    if (self.state_machine_.is_connected()) {
-      return complete_reconnect(true, 0);
+    // Another reconnect attempt can complete between the pre-CAS state check and
+    // this thread acquiring reconnect ownership.
+    if self_.state_machine_.is_connected() {
+        return complete_reconnect(true, 0i32);
     }
 
-    if (!self.state_machine_.can_connect()) {
-      return complete_reconnect(false, EINVAL);
+    if !self_.state_machine_.can_connect() {
+        return complete_reconnect(false, EINVAL);
     }
 
-    Log_debug("rrr::ClientConnection: reconnect retry #{} to {}",
-              calc.retry_count(), self.reconnect_address_.get().c_str());
-    result = reconnect_once();
-    if (result == 0) {
-      return complete_reconnect(true, 0);
+    // First attempt happens immediately.
+    let mut result: i32 = reconnect_once();
+    if result == 0i32 {
+        return complete_reconnect(true, 0i32);
     }
-  }
 
-  return complete_reconnect(false, result);
+    // Follow configured backoff/retry policy for subsequent attempts.
+    let policy: ReconnectPolicy = self_.reconnect_policy_.get();
+    let mut calc = ReconnectCalculator::new(policy);
+    while calc.should_retry() {
+        let cancel: bool = unsafe { self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire) };
+        if cancel {
+            return complete_reconnect(false, ECANCELED);
+        }
+
+        let delay_ms: u32 = calc.next_delay_ms();
+        if delay_ms > 0u32 {
+            Time::sleep((delay_ms as u64) * 1000u64);
+        }
+
+        let cancel2: bool = unsafe { self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire) };
+        if cancel2 {
+            return complete_reconnect(false, ECANCELED);
+        }
+
+        // Another path may have re-established connection while sleeping.
+        if self_.state_machine_.is_connected() {
+            return complete_reconnect(true, 0i32);
+        }
+
+        if !self_.state_machine_.can_connect() {
+            return complete_reconnect(false, EINVAL);
+        }
+
+        Log_debug("rrr::ClientConnection: reconnect retry #{} to {}",
+                  calc.retry_count(), self_.reconnect_address_.get().c_str());
+        result = reconnect_once();
+        if result == 0i32 {
+            return complete_reconnect(true, 0i32);
+        }
+    }
+
+    complete_reconnect(false, result)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.25 version=1 rust_sha256=d149599f3f813fa9f7ae57908f48cc8c9a0ee7c7b7c35390050bd0bb3927959d*/
+int32_t clientconn_reconnect(const ClientConnection& self_, OnReconnectCompleteCallbackFn on_complete) {
+    // @unsafe
+    {
+        self_.reconnect_.reconnect_abort_.store(false, rusty::sync::atomic::Ordering::Release);
+    }
+    const auto complete_callback = [&](int32_t result) -> int32_t {
+if (on_complete) {
+    on_complete(rusty::detail::deref_if_pointer_like(result) == static_cast<int32_t>(0));
+}
+return std::move(result);
+};
+    const bool aborted = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+    if (aborted) {
+        return complete_callback(ECANCELED);
+    }
+    const auto wait_for_inflight_reconnect = [&]() -> int32_t {
+while (true) {
+    const bool busy = self_.reconnect_.reconnecting_.load(rusty::sync::atomic::Ordering::Acquire);
+    if (!busy) {
+        break;
+    }
+    const bool cancel = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+    if (cancel) {
+        return ECANCELED;
+    }
+    if (self_.state_machine_.is_connected()) {
+        return static_cast<int32_t>(0);
+    }
+    Time::sleep(static_cast<uint64_t>(5000));
+}
+if (self_.state_machine_.is_connected()) {
+    return static_cast<int32_t>(0);
+}
+return INT_MIN;
+};
+    const bool reconnecting = self_.reconnect_.reconnecting_.load(rusty::sync::atomic::Ordering::Acquire);
+    if (reconnecting) {
+        const int32_t waited = wait_for_inflight_reconnect();
+        if (rusty::detail::deref_if_pointer_like(waited) != rusty::detail::deref_if_pointer_like(INT_MIN)) {
+            return complete_callback(std::move(waited));
+        }
+    }
+    if (self_.reconnect_address_.get().empty()) {
+        Log_error("rrr::ClientConnection: no address to reconnect to");
+        return complete_callback(EINVAL);
+    }
+    if (rusty::detail::rust_not(self_.state_machine_.can_connect())) {
+        Log_error("rrr::ClientConnection: cannot reconnect from state {}", connection_state_to_string(self_.state_machine_.state()));
+        return complete_callback(EINVAL);
+    }
+    while (true) {
+        bool expected = false;
+        const bool won = self_.reconnect_.reconnecting_.compare_exchange(std::move(expected), true, rusty::sync::atomic::Ordering::AcqRel, rusty::sync::atomic::Ordering::Acquire).is_ok();
+        if (won) {
+            break;
+        }
+        const int32_t waited = wait_for_inflight_reconnect();
+        if (rusty::detail::deref_if_pointer_like(waited) != rusty::detail::deref_if_pointer_like(INT_MIN)) {
+            return complete_callback(std::move(waited));
+        }
+    }
+    self_.invoke_reconnecting_callback();
+    const auto complete_reconnect = [&](bool success, int32_t result) -> int32_t {
+// @unsafe
+{
+    self_.reconnect_.reconnecting_.store(false, rusty::sync::atomic::Ordering::Release);
+}
+self_.invoke_reconnected_callback(std::move(success));
+if (success) {
+    Log_info("rrr::ClientConnection: reconnected to {}", self_.reconnect_address_.get().c_str());
+    self_.metrics_.record_reconnect();
+    self_.pending_queue_.expire_stale();
+    return complete_callback(static_cast<int32_t>(0));
+}
+if (rusty::detail::deref_if_pointer_like(result) == rusty::detail::deref_if_pointer_like(ECANCELED)) {
+    Log_debug("rrr::ClientConnection: reconnect cancelled for {}", self_.reconnect_address_.get().c_str());
+} else {
+    Log_error("rrr::ClientConnection: reconnection failed to {}: {}", self_.reconnect_address_.get().c_str(), std::move(result));
+}
+return complete_callback(std::move(result));
+};
+    const auto reconnect_once = [&]() -> int32_t {
+const bool cancel = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+if (cancel) {
+    return ECANCELED;
+}
+return self_.connect(rusty::detail::ptr_cast<const int8_t*>(self_.reconnect_address_.get().c_str()));
+};
+    const bool abort_now = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+    if (abort_now) {
+        return complete_reconnect(false, ECANCELED);
+    }
+    if (self_.state_machine_.is_connected()) {
+        return complete_reconnect(true, static_cast<int32_t>(0));
+    }
+    if (rusty::detail::rust_not(self_.state_machine_.can_connect())) {
+        return complete_reconnect(false, EINVAL);
+    }
+    int32_t result = reconnect_once();
+    if (rusty::detail::deref_if_pointer_like(result) == static_cast<int32_t>(0)) {
+        return complete_reconnect(true, static_cast<int32_t>(0));
+    }
+    ReconnectPolicy policy = self_.reconnect_policy_.get();
+    auto calc = ReconnectCalculator::new_(std::move(policy));
+    while (calc.should_retry()) {
+        const bool cancel = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+        if (cancel) {
+            return complete_reconnect(false, ECANCELED);
+        }
+        const uint32_t delay_ms = calc.next_delay_ms();
+        if (rusty::detail::deref_if_pointer_like(delay_ms) > static_cast<uint32_t>(0)) {
+            Time::sleep(((static_cast<uint64_t>(delay_ms))) * static_cast<uint64_t>(1000));
+        }
+        const bool cancel2 = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+        if (cancel2) {
+            return complete_reconnect(false, ECANCELED);
+        }
+        if (self_.state_machine_.is_connected()) {
+            return complete_reconnect(true, static_cast<int32_t>(0));
+        }
+        if (rusty::detail::rust_not(self_.state_machine_.can_connect())) {
+            return complete_reconnect(false, EINVAL);
+        }
+        Log_debug("rrr::ClientConnection: reconnect retry #{} to {}", calc.retry_count(), self_.reconnect_address_.get().c_str());
+        result = reconnect_once();
+        if (rusty::detail::deref_if_pointer_like(result) == static_cast<int32_t>(0)) {
+            return complete_reconnect(true, static_cast<int32_t>(0));
+        }
+    }
+    return complete_reconnect(false, std::move(result));
+}
+/*RUSTYCPP:GEN-END id=client.25*/
 
 
 
@@ -4406,174 +4560,329 @@ rusty::Result<rusty::Unit, int32_t> clientconn_request_async(const ClientConnect
 }
 /*RUSTYCPP:GEN-END id=client.24*/
 
-// @unsafe - Same as request_via_channel, plus serialize-once for safe
-// retry replay + an async retry/backoff spawn. Extracted from the inline
+// Two @unsafe kernels for the DSL below. Neither is about the retry
+// logic — one hosts a PREPROCESSOR conditional (no DSL spelling) and
+// the other builds a std::span over a borrowed reply buffer.
+
+// @unsafe - BinaryWriteArchive is a hand-written type with a real C++
+// constructor; the DSL's `T::new(...)` spelling looks for a static
+// `new_` factory, so construction goes through this one-liner.
+inline BinaryWriteArchive make_write_archive(BufferSink* sink) {
+  return BinaryWriteArchive(make_sink_proxy(sink));
+}
+
+// @unsafe - `#if EWOULDBLOCK != EAGAIN` cannot appear in a DSL body.
+// Captures nothing; pure classification of an errno.
+inline TimeoutType classify_request_failure(int err) {
+  if (err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET ||
+      err == ECONNABORTED || err == EHOSTUNREACH || err == ENETUNREACH) {
+    return TimeoutType::CONNECT_TIMEOUT;
+  }
+  if (err == ETIMEDOUT || err == EAGAIN
+#if EWOULDBLOCK != EAGAIN
+      || err == EWOULDBLOCK
+#endif
+  ) {
+    return TimeoutType::REQUEST_TIMEOUT;
+  }
+  return TimeoutType::NONE;
+}
+
+// @unsafe - two simultaneous RefCell borrows plus a std::span built from
+// `body.data() + src.pos()`; pointer arithmetic and span have no DSL
+// form. Copies the attempt's unread reply region into the coordinator
+// future's buffer. Takes REFERENCES, not pointers: `&local` lowers to a
+// pointer for ordinary locals but collapses to the handle itself for a
+// pointer-like local such as Arc.
+inline void request_copy_reply(const rusty::Arc<Future>& final_fu,
+                               const rusty::Arc<Future>& attempt_fu) {
+  auto attempt_reply = attempt_fu->reply_.borrow_mut();
+  size_t reply_size = attempt_reply->src.remaining();
+  if (reply_size > 0) {
+    reply_buffer_fill(
+        *final_fu->reply_.borrow_mut(),
+        std::span<const std::uint8_t>(
+            attempt_reply->body.data() + attempt_reply->src.pos(), reply_size));
+  }
+}
+
+// Same as request_via_channel, plus serialize-once for safe retry replay
+// and an async retry/backoff spawn. Extracted from the inline
 // request_with_options(rpc_id, options, attr, write_fn) template method.
-// KERNEL by verdict (2026-08-03 sweep): std::chrono steady_clock/
-// duration_cast (no DSL spelling), a preprocessor conditional INSIDE the
-// spawned lambda (#if EWOULDBLOCK != EAGAIN), reinterpret_cast string
-// build of the replay payload, and reference-capturing helper lambdas
-// (finish_terminal et al.) mutating spawn-locals across the retry loop —
-// four floors at once; not a candidate until chrono + non-move-closure
-// state capture have DSL routes.
-template<typename F>
-FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id,
-                                             const RequestOptions& options,
-                                             const FutureAttr& attr, F&& write_fn) {
+//
+// Authored as inline Rust DSL. The 2026-08-03 "KERNEL by verdict" note
+// listed four floors; three have since dissolved and the fourth moved:
+// std::chrono is gone from this file (Time::now/Time::sleep), non-move
+// closures now lower to real `[&]` captures (which is what
+// finish_terminal/set_terminal_timeout need to mutate `retry_count`
+// across the retry loop), the replay payload stays a Vec<u8> so the
+// reinterpret_cast string build disappears, and the preprocessor
+// conditional lives in the classify_request_failure kernel above.
+//
+// Idiom note: a callable argument must be passed through a NAMED
+// `&mut` binding (`let ar_ref: &mut BinaryWriteArchive = &mut ar;`) —
+// spelling `write_fn(&mut ar)` lowers to a POINTER argument, which will
+// not bind to the `BinaryWriteArchive&` the callables take.
+#if RUSTYCPP_RUST
+fn clientconn_request_with_options<F>(self_: &ClientConnection, rpc_id: i32,
+                                      options: &RequestOptions,
+                                      attr: &FutureAttr, write_fn: F) -> FutureResult {
     // Serialize args once so retries can replay identical payload safely.
-    BufferSink args_sink;
-    static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
-                  "request_with_options write_fn must accept BinaryWriteArchive&");
-    BinaryWriteArchive ar(make_sink_proxy(&args_sink));
-    write_fn(ar);
-    std::string args_bytes(reinterpret_cast<const char*>(args_sink.bytes.data()),
-                           args_sink.bytes.len());
+    let mut args_sink: BufferSink = Default::default();
+    let mut ar: BinaryWriteArchive = make_write_archive(&mut args_sink);
+    let ar_ref: &mut BinaryWriteArchive = &mut ar;
+    write_fn(ar_ref);
+    // Keep the replay payload as bytes (was a reinterpret_cast'd
+    // std::string round-trip).
+    let args_bytes: rusty::Vec<u8> = args_sink.bytes.clone();
 
     // Non-idempotent operations must never be retried even if max_retries is set.
-    RequestOptions effective_options = options;
-    if (!effective_options.idempotent) {
-        effective_options.max_retries = 0;
+    let mut effective_options: RequestOptions = *options;
+    if !effective_options.idempotent {
+        effective_options.max_retries = 0u16;
     }
 
     // Return a coordinator future immediately; internal attempts run async.
-    auto final_fu = Future::create(self.xid_counter_.next(1), attr);
-    RequestOptions waiter_options = effective_options;
-    waiter_options.timeout_ms = 0;  // Internal attempts own timeout behavior.
-    final_fu->set_options(waiter_options);
+    let final_fu: rusty::Arc<Future> = Future::create(self_.xid_counter_.next(1), *attr);
+    let mut waiter_options: RequestOptions = effective_options;
+    waiter_options.timeout_ms = 0u64;  // Internal attempts own timeout behavior.
+    (*final_fu).set_options(waiter_options);
 
-    auto weak_conn = self.weak_self_;
-    rusty::thread::spawn([weak_conn, rpc_id, effective_options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
-        const uint64_t start_us = Time::now(true);
-        uint16_t retry_count = 0;
+    let weak_conn = self_.weak_self_.clone();
+    // The spawned closure MOVES what it captures, so the coordinator
+    // future needs its own handle: without this clone the `move ||`
+    // capture leaves the `Ok(final_fu)` below returning a moved-from
+    // (null) Arc. The hand-written original captured `final_fu` by copy.
+    let final_fu_task: rusty::Arc<Future> = final_fu.clone();
+    rusty::thread::spawn(move || {
+        let start_us: u64 = Time::now(true);
+        let mut retry_count: u16 = 0u16;
 
-        auto classify_request_failure = [](int err) -> TimeoutType {
-            if (err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET ||
-                err == ECONNABORTED || err == EHOSTUNREACH || err == ENETUNREACH) {
-                return TimeoutType::CONNECT_TIMEOUT;
-            }
-            if (err == ETIMEDOUT || err == EAGAIN
-#if EWOULDBLOCK != EAGAIN
-                || err == EWOULDBLOCK
-#endif
-            ) {
-                return TimeoutType::REQUEST_TIMEOUT;
-            }
-            return TimeoutType::NONE;
-        };
-
-        auto finish_terminal = [&](int err, TimeoutType timeout_type) {
-            auto conn_opt = weak_conn.upgrade();
-            if (conn_opt.is_some()) {
-                auto conn = conn_opt.unwrap();
-                if (timeout_type == TimeoutType::CONNECT_TIMEOUT ||
-                    timeout_type == TimeoutType::REQUEST_TIMEOUT ||
-                    timeout_type == TimeoutType::RESPONSE_TIMEOUT ||
-                    timeout_type == TimeoutType::TOTAL_TIMEOUT) {
-                    conn->metrics_.record_request_timeout();
-                } else if (err != 0) {
-                    conn->metrics_.record_request_failed();
+        let finish_terminal = |err: i32, timeout_type: TimeoutType| {
+            let conn_opt = weak_conn.upgrade();
+            if conn_opt.is_some() {
+                let conn = conn_opt.unwrap();
+                if timeout_type == TimeoutType::CONNECT_TIMEOUT
+                    || timeout_type == TimeoutType::REQUEST_TIMEOUT
+                    || timeout_type == TimeoutType::RESPONSE_TIMEOUT
+                    || timeout_type == TimeoutType::TOTAL_TIMEOUT {
+                    (*conn).metrics_.record_request_timeout();
+                } else if err != 0i32 {
+                    (*conn).metrics_.record_request_failed();
                 }
             }
-            if (timeout_type != TimeoutType::NONE) {
-                auto state_guard = final_fu->state_.lock().unwrap();
+            if timeout_type != TimeoutType::NONE {
+                let mut state_guard = (*final_fu_task).state_.lock().unwrap();
                 (*state_guard).timed_out = true;
             }
-            final_fu->error_code_.set(err);
-            final_fu->timeout_type_.set(timeout_type);
-            final_fu->retry_count_.set(retry_count);
-            final_fu->notify_ready(final_fu);
+            (*final_fu_task).error_code_.set(err);
+            (*final_fu_task).timeout_type_.set(timeout_type);
+            (*final_fu_task).retry_count_.set(retry_count);
+            (*final_fu_task).notify_ready(final_fu_task.clone());
         };
 
-        auto set_terminal_timeout = [&](TimeoutType timeout_type) {
+        let set_terminal_timeout = |timeout_type: TimeoutType| {
             finish_terminal(ETIMEDOUT, timeout_type);
         };
 
-        while (true) {
-            uint64_t elapsed_ms = (Time::now(true) - start_us) / 1000;
-            if (effective_options.is_total_timeout_exceeded(elapsed_ms)) {
+        loop {
+            let elapsed_ms: u64 = (Time::now(true) - start_us) / 1000u64;
+            if effective_options.is_total_timeout_exceeded(elapsed_ms) {
                 set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
                 return;
             }
 
-            auto conn_opt = weak_conn.upgrade();
-            if (conn_opt.is_none()) {
+            let conn_opt = weak_conn.upgrade();
+            if conn_opt.is_none() {
                 finish_terminal(ENOTCONN, TimeoutType::CONNECT_TIMEOUT);
                 return;
             }
 
-            auto conn = conn_opt.unwrap();
-            auto attempt_result = conn->request(rpc_id, FutureAttr(), [&](BinaryWriteArchive& m) {
-                if (!args_bytes.empty()) {
-                    m.write_bytes(reinterpret_cast<const std::uint8_t*>(args_bytes.data()), args_bytes.size());
+            let conn = conn_opt.unwrap();
+            let replay = |m: &mut BinaryWriteArchive| {
+                if !args_bytes.is_empty() {
+                    (*m).write_bytes(args_bytes.as_ptr(), args_bytes.len());
                 }
-            });
-            if (attempt_result.is_err()) {
-                int err = attempt_result.unwrap_err();
+            };
+            // (Default::default() infers only in typed-let position, not
+            // as a bare argument.)
+            let empty_attr: FutureAttr = Default::default();
+            let attempt_result = (*conn).request(rpc_id, empty_attr, replay);
+            if attempt_result.is_err() {
+                let err: i32 = attempt_result.unwrap_err();
                 finish_terminal(err, classify_request_failure(err));
                 return;
             }
 
-            auto attempt_fu = attempt_result.unwrap();
-            RequestOptions attempt_options = effective_options;
-            if (effective_options.total_timeout_ms > 0) {
-                uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_ms);
-                if (remaining_ms == 0) {
-                    conn->handle_free(attempt_fu->xid_);
+            let attempt_fu: rusty::Arc<Future> = attempt_result.unwrap();
+            let mut attempt_options: RequestOptions = effective_options;
+            if effective_options.total_timeout_ms > 0u64 {
+                let remaining_ms: u64 = effective_options.remaining_time_ms(elapsed_ms);
+                if remaining_ms == 0u64 {
+                    (*conn).handle_free((*attempt_fu).xid_);
                     set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
                     return;
                 }
-                if (attempt_options.timeout_ms == 0 || attempt_options.timeout_ms > remaining_ms) {
+                if attempt_options.timeout_ms == 0u64 || attempt_options.timeout_ms > remaining_ms {
                     attempt_options.timeout_ms = remaining_ms;
                 }
             }
-            attempt_fu->set_options(attempt_options);
-            if (attempt_fu->wait_with_options()) {
-                final_fu->error_code_.set(attempt_fu->error_code_.get());
-                final_fu->retry_count_.set(retry_count);
-                if (attempt_fu->error_code_.get() == 0) {
-                    auto attempt_reply = attempt_fu->reply_.borrow_mut();
-                    size_t reply_size = attempt_reply->src.remaining();
-                    if (reply_size > 0) {
-                        reply_buffer_fill(
-                            *final_fu->reply_.borrow_mut(),
-                            std::span<const std::uint8_t>(
-                                attempt_reply->body.data() + attempt_reply->src.pos(),
-                                reply_size));
-                    }
+            (*attempt_fu).set_options(attempt_options);
+            if (*attempt_fu).wait_with_options() {
+                (*final_fu_task).error_code_.set((*attempt_fu).error_code_.get());
+                (*final_fu_task).retry_count_.set(retry_count);
+                if (*attempt_fu).error_code_.get() == 0i32 {
+                    request_copy_reply(&final_fu_task, &attempt_fu);
                 }
-                final_fu->notify_ready(final_fu);
+                (*final_fu_task).notify_ready(final_fu_task.clone());
                 return;
             }
 
             // Timed-out attempts are no longer useful; release pending map slot.
-            conn->handle_free(attempt_fu->xid_);
+            (*conn).handle_free((*attempt_fu).xid_);
 
-            if (!effective_options.can_retry(retry_count)) {
-                set_terminal_timeout(attempt_fu->get_timeout_type());
+            if !effective_options.can_retry(retry_count) {
+                set_terminal_timeout((*attempt_fu).get_timeout_type());
                 return;
             }
 
-            conn->metrics_.record_retry_attempt();
-            uint64_t backoff_delay_ms = effective_options.calculate_delay_ms(retry_count);
-            if (backoff_delay_ms > 0) {
-                if (effective_options.total_timeout_ms > 0) {
-                    uint64_t elapsed_before_sleep = (Time::now(true) - start_us) / 1000;
-                    uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_before_sleep);
-                    if (remaining_ms == 0 || backoff_delay_ms >= remaining_ms) {
+            (*conn).metrics_.record_retry_attempt();
+            let backoff_delay_ms: u64 = effective_options.calculate_delay_ms(retry_count);
+            if backoff_delay_ms > 0u64 {
+                if effective_options.total_timeout_ms > 0u64 {
+                    let elapsed_before_sleep: u64 = (Time::now(true) - start_us) / 1000u64;
+                    let remaining_ms: u64 = effective_options.remaining_time_ms(elapsed_before_sleep);
+                    if remaining_ms == 0u64 || backoff_delay_ms >= remaining_ms {
                         set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
                         return;
                     }
                 }
-                Time::sleep(backoff_delay_ms * 1000);
+                Time::sleep(backoff_delay_ms * 1000u64);
             }
 
-            retry_count++;
-            final_fu->retry_count_.set(retry_count);
+            retry_count += 1u16;
+            (*final_fu_task).retry_count_.set(retry_count);
         }
     }).detach();
 
-    return FutureResult::Ok(final_fu);
+    FutureResult::Ok(final_fu)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.33 version=1 rust_sha256=17a5cefdf1ff88050af680503977cda43cb6698e3c2309c4a87cc5bcf870ca76*/
+template<typename F>
+FutureResult clientconn_request_with_options(const ClientConnection& self_, int32_t rpc_id, const RequestOptions& options, const FutureAttr& attr, F write_fn) {
+    BufferSink args_sink = rusty::default_like<BufferSink>();
+    BinaryWriteArchive ar = make_write_archive(&args_sink);
+    BinaryWriteArchive& ar_ref = ar;
+    write_fn(ar_ref);
+    rusty::Vec<uint8_t> args_bytes = rusty::clone(args_sink.bytes);
+    RequestOptions effective_options = options;
+    if (rusty::detail::rust_not(effective_options.idempotent)) {
+        effective_options.max_retries = static_cast<uint16_t>(0);
+    }
+    rusty::Arc<Future> final_fu = Future::create(self_.xid_counter_.next(1), attr);
+    RequestOptions waiter_options = effective_options;
+    waiter_options.timeout_ms = static_cast<uint64_t>(0);
+    ((rusty::detail::deref_if_pointer_like(final_fu))).set_options(std::move(waiter_options));
+    auto weak_conn = rusty::clone(self_.weak_self_);
+    rusty::Arc<Future> final_fu_task = rusty::clone(final_fu);
+    rusty::thread::spawn([=, args_bytes = std::move(args_bytes), effective_options = std::move(effective_options), final_fu_task = std::move(final_fu_task), rpc_id = std::move(rpc_id), weak_conn = std::move(weak_conn)]() mutable {
+const uint64_t start_us = Time::now(true);
+uint16_t retry_count = static_cast<uint16_t>(0);
+const auto finish_terminal = [&](int32_t err, TimeoutType timeout_type) {
+auto conn_opt = weak_conn.upgrade();
+if (conn_opt.is_some()) {
+    const auto conn = conn_opt.unwrap();
+    if ((((rusty::detail::deref_if_pointer_like(timeout_type) == rusty::clone(TimeoutType::CONNECT_TIMEOUT)) || (rusty::detail::deref_if_pointer_like(timeout_type) == rusty::clone(TimeoutType::REQUEST_TIMEOUT))) || (rusty::detail::deref_if_pointer_like(timeout_type) == rusty::clone(TimeoutType::RESPONSE_TIMEOUT))) || (rusty::detail::deref_if_pointer_like(timeout_type) == rusty::clone(TimeoutType::TOTAL_TIMEOUT))) {
+        (rusty::detail::deref_if_pointer_like(conn)).metrics_.record_request_timeout();
+    } else if (rusty::detail::deref_if_pointer_like(err) != static_cast<int32_t>(0)) {
+        (rusty::detail::deref_if_pointer_like(conn)).metrics_.record_request_failed();
+    }
+}
+if (rusty::detail::deref_if_pointer_like(timeout_type) != rusty::clone(TimeoutType::NONE)) {
+    auto&& state_guard = rusty::deref_call((rusty::detail::deref_if_pointer_like(final_fu_task)).state_.lock(), rusty::detail::__mdisp_unwrap{});
+    (rusty::detail::deref_if_pointer_like(state_guard)).timed_out = true;
+}
+(rusty::detail::deref_if_pointer_like(final_fu_task)).error_code_.set(std::move(err));
+(rusty::detail::deref_if_pointer_like(final_fu_task)).timeout_type_.set(std::move(timeout_type));
+(rusty::detail::deref_if_pointer_like(final_fu_task)).retry_count_.set(std::move(retry_count));
+((rusty::detail::deref_if_pointer_like(final_fu_task))).notify_ready(rusty::clone(final_fu_task));
+};
+const auto set_terminal_timeout = [&](TimeoutType timeout_type) {
+finish_terminal(ETIMEDOUT, std::move(timeout_type));
+};
+while (true) {
+    const uint64_t elapsed_ms = ((Time::now(true) - rusty::detail::deref_if_pointer_like(start_us))) / static_cast<uint64_t>(1000);
+    if (effective_options.is_total_timeout_exceeded(std::move(elapsed_ms))) {
+        set_terminal_timeout(rusty::clone(rusty::clone(TimeoutType::TOTAL_TIMEOUT)));
+        return;
+    }
+    auto conn_opt = weak_conn.upgrade();
+    if (conn_opt.is_none()) {
+        finish_terminal(ENOTCONN, rusty::clone(rusty::clone(TimeoutType::CONNECT_TIMEOUT)));
+        return;
+    }
+    const auto conn = conn_opt.unwrap();
+    const auto replay = [&](BinaryWriteArchive& m) {
+if (rusty::detail::rust_not(rusty::is_empty(args_bytes))) {
+    ((m)).write_bytes(rusty::as_ptr(args_bytes), rusty::len(args_bytes));
+}
+};
+    const FutureAttr empty_attr = rusty::default_like<FutureAttr>();
+    auto attempt_result = ((rusty::detail::deref_if_pointer_like(conn))).request(std::move(rpc_id), std::move(empty_attr), std::move(replay));
+    if (attempt_result.is_err()) {
+        const int32_t err = attempt_result.unwrap_err();
+        finish_terminal(std::move(err), classify_request_failure(std::move(err)));
+        return;
+    }
+    const rusty::Arc<Future> attempt_fu = attempt_result.unwrap();
+    RequestOptions attempt_options = effective_options;
+    if (rusty::detail::deref_if_pointer_like(effective_options.total_timeout_ms) > static_cast<uint64_t>(0)) {
+        uint64_t remaining_ms = effective_options.remaining_time_ms(std::move(elapsed_ms));
+        if (rusty::detail::deref_if_pointer_like(remaining_ms) == static_cast<uint64_t>(0)) {
+            ((rusty::detail::deref_if_pointer_like(conn))).handle_free((rusty::detail::deref_if_pointer_like(attempt_fu)).xid_);
+            set_terminal_timeout(rusty::clone(rusty::clone(TimeoutType::TOTAL_TIMEOUT)));
+            return;
+        }
+        if ((rusty::detail::deref_if_pointer_like(attempt_options.timeout_ms) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(attempt_options.timeout_ms) > rusty::detail::deref_if_pointer_like(remaining_ms))) {
+            attempt_options.timeout_ms = std::move(remaining_ms);
+        }
+    }
+    ((rusty::detail::deref_if_pointer_like(attempt_fu))).set_options(std::move(attempt_options));
+    if (((rusty::detail::deref_if_pointer_like(attempt_fu))).wait_with_options()) {
+        (rusty::detail::deref_if_pointer_like(final_fu_task)).error_code_.set((rusty::detail::deref_if_pointer_like(attempt_fu)).error_code_.get());
+        (rusty::detail::deref_if_pointer_like(final_fu_task)).retry_count_.set(std::move(retry_count));
+        if ((rusty::detail::deref_if_pointer_like(attempt_fu)).error_code_.get() == static_cast<int32_t>(0)) {
+            request_copy_reply(final_fu_task, attempt_fu);
+        }
+        ((rusty::detail::deref_if_pointer_like(final_fu_task))).notify_ready(rusty::clone(final_fu_task));
+        return;
+    }
+    ((rusty::detail::deref_if_pointer_like(conn))).handle_free((rusty::detail::deref_if_pointer_like(attempt_fu)).xid_);
+    if (rusty::detail::rust_not(effective_options.can_retry(std::move(retry_count)))) {
+        set_terminal_timeout(((rusty::detail::deref_if_pointer_like(attempt_fu))).get_timeout_type());
+        return;
+    }
+    (rusty::detail::deref_if_pointer_like(conn)).metrics_.record_retry_attempt();
+    const uint64_t backoff_delay_ms = effective_options.calculate_delay_ms(std::move(retry_count));
+    if (rusty::detail::deref_if_pointer_like(backoff_delay_ms) > static_cast<uint64_t>(0)) {
+        if (rusty::detail::deref_if_pointer_like(effective_options.total_timeout_ms) > static_cast<uint64_t>(0)) {
+            const uint64_t elapsed_before_sleep = ((Time::now(true) - rusty::detail::deref_if_pointer_like(start_us))) / static_cast<uint64_t>(1000);
+            const uint64_t remaining_ms = effective_options.remaining_time_ms(std::move(elapsed_before_sleep));
+            if ((rusty::detail::deref_if_pointer_like(remaining_ms) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(backoff_delay_ms) >= rusty::detail::deref_if_pointer_like(remaining_ms))) {
+                set_terminal_timeout(rusty::clone(rusty::clone(TimeoutType::TOTAL_TIMEOUT)));
+                return;
+            }
+        }
+        Time::sleep(rusty::detail::deref_if_pointer_like(backoff_delay_ms) * static_cast<uint64_t>(1000));
+    }
+    retry_count += static_cast<uint16_t>(1);
+    (rusty::detail::deref_if_pointer_like(final_fu_task)).retry_count_.set(std::move(retry_count));
+}
+}).detach();
+    return FutureResult::Ok(std::move(final_fu));
+}
+/*RUSTYCPP:GEN-END id=client.33*/
 
 // Dispatch one frame body through the bound channel proxy.
 //

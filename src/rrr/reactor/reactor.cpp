@@ -5142,61 +5142,90 @@ rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self, rusty::Fu
  * @param func
  * @return
  */
-// @safe - Creates and runs a fiber using safe helper functions
-// KERNEL by verdict (reactor slice 2b): orchestration dominated by
-// Rc<Fiber> arrow-method calls (run/continue_/finished/status) where
-// the DSL's last-use move-insertion mis-handles the repeatedly-passed
-// Rc, plus Reactor being a hand-written class (a DSL `self` param
-// emits `this->` with no receiver). Converting would need per-call
-// clone-guards + a member-shim dance for zero borrow-check gain.
-rusty::Rc<Fiber> reactor_create_run_fiber_impl(const Reactor& self, rusty::Function<void()> func) {
-  return reactor_create_run_fiber_at_impl(self, std::move(func), "", 0);
+// Creates and runs a fiber. Authored as inline Rust DSL.
+//
+// The old "KERNEL by verdict (reactor slice 2b)" note claimed the DSL's
+// last-use move-insertion mis-handled the repeatedly-passed Rc. Probing
+// showed that only happens on input real Rust would reject: the three
+// members here already take `&Rc<Fiber>` / `&mut Rc<Fiber>`, so passing
+// borrows emits exactly ONE std::move (the return) with no clone-guards.
+// The `self` param is named `self_` so it stays a real parameter instead
+// of becoming a receiver.
+#if RUSTYCPP_RUST
+fn reactor_create_run_fiber_impl(self_: &Reactor, func: FiberFn) -> rusty::Rc<Fiber> {
+    reactor_create_run_fiber_at_impl(self_, func, "", 0i64)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.51 version=1 rust_sha256=e687f569e16abbab9288bce73508a127526902db0d93314ad27ce20edc69b219*/
+rusty::Rc<Fiber> reactor_create_run_fiber_impl(const Reactor& self_, FiberFn func) {
+    return reactor_create_run_fiber_at_impl(self_, std::move(func), "", static_cast<int64_t>(0));
+}
+/*RUSTYCPP:GEN-END id=reactor.51*/
 
-rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line) {
-  // Step 1: Get or create a fiber
-  auto fiber = reactor_get_or_create_fiber_impl(self, std::move(func), file, line);
+#if RUSTYCPP_RUST
+fn reactor_create_run_fiber_at_impl(self_: &Reactor, func: FiberFn, file: SrcFileCStr, line: i64) -> rusty::Rc<Fiber> {
+    // Step 1: Get or create a fiber
+    let mut fiber = reactor_get_or_create_fiber_impl(self_, func, file, line);
 
-  // @unsafe
-  {
-    self.n_busy_fibers_.set(self.n_busy_fibers_.get() + 1);
-  }
+    self_.n_busy_fibers_.set(self_.n_busy_fibers_.get() + 1i64);
 
-  // Step 2: Save current running fiber context (for nesting)
-  auto old_fiber = self.save_running_fiber();
+    // Step 2: Save current running fiber context (for nesting)
+    let old_fiber = self_.save_running_fiber();
 
-  // Step 3: Set this as the running fiber
-  self.set_running_fiber(fiber);
+    // Step 3: Set this as the running fiber
+    self_.set_running_fiber(&fiber);
 
-  // Step 4: Register in the active fibers set
-  self.register_fiber(fiber);
+    // Step 4: Register in the active fibers set
+    self_.register_fiber(&fiber);
 
-  // Step 5: Run the fiber
-  // @unsafe
-  {
-    auto status = fiber->status_.get();
-    if (status == Fiber::INIT) {
-      fiber->run();
+    // Step 5: Run the fiber
+    let status = (*fiber).status_.get();
+    if status == FiberStatus::INIT {
+        (*fiber).run();
     } else {
-      verify(status == Fiber::RECYCLED);
-      fiber->continue_();
+        verify(status == FiberStatus::RECYCLED);
+        (*fiber).continue_();
     }
-    if (fiber->finished()) {
-      self.recycle(fiber);
+    if (*fiber).finished() {
+        // Named binding: `&mut local` lowers to a POINTER, which will not
+        // bind to recycle's `Rc<Fiber>&`; a typed `&mut` binding lowers
+        // to a reference.
+        let fiber_ref: &mut rusty::Rc<Fiber> = &mut fiber;
+        self_.recycle(fiber_ref);
     }
-  }
 
-  // Step 6: Process events
-  // @unsafe
-  {
-    self.run_loop(false, true);
-  }
+    // Step 6: Process events
+    self_.run_loop(false, true);
 
-  // Step 7: Restore previous running fiber
-  self.restore_running_fiber(std::move(old_fiber));
+    // Step 7: Restore previous running fiber
+    self_.restore_running_fiber(old_fiber);
 
-  return fiber;
+    fiber
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.52 version=1 rust_sha256=2048534e4ce67222ba4694da7eec436b82f5c7944568646debaec68e393adbe6*/
+rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self_, FiberFn func, SrcFileCStr file, int64_t line) {
+    auto fiber = reactor_get_or_create_fiber_impl(self_, std::move(func), std::move(file), std::move(line));
+    self_.n_busy_fibers_.set(self_.n_busy_fibers_.get() + static_cast<int64_t>(1));
+    const auto old_fiber = self_.save_running_fiber();
+    self_.set_running_fiber(fiber);
+    self_.register_fiber(fiber);
+    const auto status = (rusty::detail::deref_if_pointer_like(fiber)).status_.get();
+    if (rusty::detail::deref_if_pointer_like(status) == rusty::clone(FiberStatus::INIT)) {
+        ((rusty::detail::deref_if_pointer_like(fiber))).run();
+    } else {
+        verify(rusty::detail::deref_if_pointer_like(status) == rusty::clone(FiberStatus::RECYCLED));
+        ((rusty::detail::deref_if_pointer_like(fiber))).continue_();
+    }
+    if (((rusty::detail::deref_if_pointer_like(fiber))).finished()) {
+        rusty::Rc<Fiber>& fiber_ref = fiber;
+        self_.recycle(fiber_ref);
+    }
+    self_.run_loop(false, true);
+    self_.restore_running_fiber(std::move(old_fiber));
+    return std::move(fiber);
+}
+/*RUSTYCPP:GEN-END id=reactor.52*/
 
 // @unsafe - Uses RefCell::borrow_mut (not borrow-checked)
 // KERNEL by verdict: first pass derefs shared_ptr<EventPollable> to
