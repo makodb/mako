@@ -2542,7 +2542,6 @@ if(BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
     target_compile_options(test_rpc_log_storage PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_log_storage
-        txlog_core
         ${RPC_TEST_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}

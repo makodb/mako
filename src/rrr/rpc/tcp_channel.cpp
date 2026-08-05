@@ -1573,11 +1573,14 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
 /*RUSTYCPP:GEN-END id=tcp_channel.handle_read*/
 
 // @unsafe - per-poll-thread recv scratch (single-threaded per
-// connection by the poll contract; thread_local keeps 64 KiB off the
-// hot stack and out of the DSL's grammar).
+// connection by the poll contract). Allocate lazily so poll threads which
+// never receive TCP data do not reserve this 64 KiB buffer.
 RecvScratch* tcpconn_scratch() {
-    static thread_local RecvScratch s;
-    return &s;
+    static thread_local std::unique_ptr<RecvScratch> scratch;
+    if (!scratch) {
+        scratch = std::make_unique<RecvScratch>();
+    }
+    return scratch.get();
 }
 
 // @unsafe - recv(2) into the scratch.

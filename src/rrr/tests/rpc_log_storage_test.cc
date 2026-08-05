@@ -11,7 +11,6 @@
 
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/raft/memory_log_storage.hpp"
-#include "deptran/classic/tpc_command.h"  // TpcEmptyCommand for nested-command tests
 #include "../rrr.hpp"
 
 import std;
@@ -19,6 +18,20 @@ import rusty;
 
 using namespace rrr;
 using namespace janus::raft;
+
+// This test only needs one concrete member of the closed MakoCommands set to
+// exercise LogEntry's command-carrying wire shape. Defining its empty payload
+// locally keeps the lightweight unit test independent of txlog_core, which
+// otherwise pulls RocksDB and its compression-library dependency graph into
+// the process merely for janus::TpcEmptyCommand.
+namespace janus {
+class TpcEmptyCommand
+    : public rrr::Serializable<TpcEmptyCommand, MakoCommands> {
+ public:
+  void save(BinaryWriteArchive&) const {}
+  void load(BinaryReadArchive&) {}
+};
+}  // namespace janus
 
 // ============================================================================
 // LogEntry Tests
@@ -50,11 +63,8 @@ TEST_F(LogEntryTest, ConstructionWithSlotAndTerm) {
 }
 
 TEST_F(LogEntryTest, FullConstruction) {
-    // 2 step 2.5: use TpcEmptyCommand (a real Serializable in
-    // MakoCommands) as the carried payload instead of a Marshallable
-    // test fixture; the test exercises LogEntry's command-carrying
-    // shape, the choice of T doesn't matter beyond "is a valid
-    // Command payload".
+    // The test-local MakoCommands member exercises LogEntry's command-carrying
+    // shape without linking the production transaction command library.
     auto cmd = rusty::Arc<janus::TpcEmptyCommand>::make();
     LogEntry entry = LogEntry::with_command(10, 3, cmd, true);
 
