@@ -2305,7 +2305,7 @@ class RaftServer : public TxLogServer {
   /**
    * Check if a server is a learner (being caught up, not yet in quorum).
    */
-  // @unsafe - Read-only lookup on std::set
+  // @unsafe - Read-only lookup on the Rusty membership set.
   bool IsLearner(siteid_t id) const { return learners().contains(id); }
 
   /**

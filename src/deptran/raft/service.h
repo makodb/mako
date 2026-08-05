@@ -9,7 +9,6 @@
 #include "../command_marshaler.h"
 #include "../rcc_rpc.h"
 #include "server.h"
-#include <map>
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
