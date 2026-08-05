@@ -1578,7 +1578,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
   for (const auto& entry : cmds) {
     batch_data.AddEntry(entry.first, entry.second);
   }
-  janus::Command cmd_deputy = rusty::Arc<KeyCmdBatchData>::make(std::move(batch_data));
+  janus::Command cmd_deputy = janus::Command::pack_aliased(rusty::Arc<KeyCmdBatchData>::make(std::move(batch_data)));
   
   // Log_info("[JETPACK-DEBUG] Broadcasting RecordCmd to {} sites, need {} votes", proxies.size(), n/2+1);
   

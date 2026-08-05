@@ -67,7 +67,7 @@ rusty::Arc<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
   vec_piece.sp_vec_piece_data_ =
       std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
   vec_piece.is_recovery_command_ = recovery;
-  commit.cmd_ = rusty::Arc<janus::VecPieceData>::make(std::move(vec_piece));
+  commit.cmd_ = janus::Command::pack_aliased(rusty::Arc<janus::VecPieceData>::make(std::move(vec_piece)));
 
   janus::ViewData view_data;
   view_data.view_.n_ = 3;
@@ -251,11 +251,11 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
   janus::HeartBeatLog nested;
   nested.leader_id = 77;
   nested.epoch = 0;
-  batch.AddEntry(1001, janus::Command{rusty::Arc<janus::HeartBeatLog>::make(
-                           std::move(nested))});
+  batch.AddEntry(1001, janus::Command::pack_aliased(rusty::Arc<janus::HeartBeatLog>::make(
+                           std::move(nested))));
 
-  janus::Command batch_envelope{
-      rusty::Arc<janus::KeyCmdBatchData>::make(std::move(batch))};
+  janus::Command batch_envelope = janus::Command::pack_aliased(
+      rusty::Arc<janus::KeyCmdBatchData>::make(std::move(batch)));
   EXPECT_EQ(batch_envelope.kind_, janus::KeyCmdBatchData::static_kind());
   const auto decoded_batch =
       marshallable_cast<janus::KeyCmdBatchData>(batch_envelope);

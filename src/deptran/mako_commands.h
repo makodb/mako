@@ -26,6 +26,8 @@
 // receiver may not know about every possible carried type at compile
 // time), use `rrr::AnyMessage` instead — see `rrr/misc/any_message.hpp`.
 
+#include <rusty/arc.hpp>
+
 #include "rrr/misc/serializable.hpp"
 #include "rrr/misc/serializable_envelope.hpp"
 
@@ -97,6 +99,33 @@ using MakoCommands = rrr::TypeList<
 // (`[v32 kind][payload bytes]`), so call-site migrations from
 // MarshallDeputy → Command are pure C++ API changes with no on-the-
 // wire impact for matched kind→type mappings.
-using Command = rrr::SerializableEnvelope<MakoCommands>;
+// `Command` is a thin deptran-local subclass rather than a plain alias.
+// rrr::SerializableEnvelope is now generated from the inline-Rust DSL,
+// and a generated struct cannot host a templated converting constructor
+// or a templated operator= (no Rust trait maps to either). Both are pure
+// call-site ergonomics — `Command cmd = rusty::Arc<T>::make(...)` at 61
+// deptran sites — so they live here, on deptran's side of the boundary,
+// instead of pinning 20 hand-written lines inside rrr. Adds no data
+// members (so slicing to the base is harmless) and no virtuals; the base
+// remains deducible for marshallable_cast/serialize/deserialize.
+class Command : public rrr::SerializableEnvelope<MakoCommands> {
+ public:
+  using Base = rrr::SerializableEnvelope<MakoCommands>;
+
+  Command() = default;
+  // Adopt a base-typed envelope (Base::pack/pack_aliased return Base).
+  Command(const Base& base) : Base(base) {}
+  Command(Base&& base) : Base(std::move(base)) {}
+
+  // Aliased packing: the envelope retains the caller's Arc<T>.
+  template <typename T>
+  Command(rusty::Arc<T> sp) : Base(Base::template pack_aliased<T>(std::move(sp))) {}
+
+  template <typename T>
+  Command& operator=(rusty::Arc<T> sp) {
+    Base::operator=(Base::template pack_aliased<T>(std::move(sp)));
+    return *this;
+  }
+};
 
 }  // namespace janus

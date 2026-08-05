@@ -4,6 +4,12 @@ module;
 
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
+// Reachability: this file's GEN names rusty::ptr::null/null_mut,
+// rusty::detail::deref_if_pointer_like + rust_not, and rusty::clone.
+// A GMF must include what its own GEN names.
+#include <rusty/move.hpp>
+#include <rusty/ptr.hpp>
+#include <rusty/slice.hpp>
 
 export module rrr.serializable_envelope;
 
@@ -23,209 +29,329 @@ import rrr.serializable;
 export namespace rrr {
 
 
-// @safe - see file header.
+// @unsafe kernels for the DSL class below. Each is a construct the DSL
+// genuinely cannot express, kept minimal so the envelope's SHAPE stays
+// in Rust: C++ template metaprogramming (the TypeList membership
+// static_assert), the RTTI downcast, the const-escape that backs the
+// historical `T* unpack()` contract, and the four archive/registry
+// steps that touch v32 + the serde free functions. Signature rule: a
+// DSL `&mut` PARAMETER passes through as a C++ reference (the archives),
+// while `&mut local` lowers to a pointer (the proxy).
+
+// @unsafe - C++ TMP; `TypeList::template contains<T>()` has no Rust analogue.
+template<typename TypeList, typename T>
+constexpr void envelope_assert_in_type_list() {
+  static_assert(TypeList::template contains<T>(),
+                "SerializableEnvelope: T is not in TypeList. "
+                "Add T to the TypeList declaration.");
+}
+
+// @unsafe - RTTI downcast to the holder for T (nullptr on miss).
+template<typename T>
+inline const details::SerializableSharedPtrHolder<T>* envelope_holder_of(
+    const SerializableBase* base) {
+  return dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(base);
+}
+
+// @unsafe - mutable escape from the const-view Arc. Backs the non-const
+// `T* unpack()` overload's historical contract; new code should prefer
+// the const overload or unpack_shared.
+template<typename T>
+inline T* envelope_holder_ptr_mut(
+    const details::SerializableSharedPtrHolder<T>* h) {
+  return const_cast<details::SerializableSharedPtrHolder<T>*>(h)->ptr.as_ptr();
+}
+
+// @unsafe - v32 construction + the Serialize_/Deserialize_ free functions.
+inline void envelope_write_kind(int32_t kind, BinaryWriteArchive& ar) {
+  rrr::Serialize_::serialize(v32(kind), ar);
+}
+inline int32_t envelope_read_kind(BinaryReadArchive& ar) {
+  v32 kind_v;
+  rrr::Deserialize_::deserialize(kind_v, ar);
+  return kind_v.get();
+}
+
+// @unsafe - virtual dispatch through the held base pointer.
+inline void envelope_base_save(const SerializableBase* base,
+                               BinaryWriteArchive& ar) {
+  base->save(ar);
+}
+// @unsafe - unique-owner mutation window: the proxy is factory-fresh
+// (strong_count 1); a shared proxy here would panic loudly.
+inline void envelope_proxy_load(SerializableProxy* proxy,
+                                BinaryReadArchive& ar) {
+  proxy->get_mut().unwrap().load(ar);
+}
+
+// @safe - see file header. Authored as inline Rust DSL; the
+// `#if RUSTYCPP_RUST` block is the source of truth and the transpiler
+// regenerates the GEN block below it.
+//
+// TWO impl blocks by design: Rust forbids duplicate method names, but
+// inline-rust merges every impl in a block into one C++ struct, which
+// is how `unpack<T>()` keeps its const/non-const overload PAIR (and so
+// its exact historical call-site contract: `const T*` from a const
+// envelope, `T*` from a mutable one).
+#if RUSTYCPP_RUST
+pub struct SerializableEnvelope<TypeList> {
+    // Public `kind_` field — cached snapshot of `inner_->kind()`,
+    // refreshed by every state-changing entry point, so the
+    // `cmd.kind_ == X` direct-field access pattern keeps compiling.
+    kind_: i32,
+    inner_: rusty::Option<SerializableProxy>,
+}
+
+impl<TypeList> SerializableEnvelope<TypeList> {
+    // #[cpp_ctor] (not the usual `new_` factory) because the DSL has no
+    // default field initializers: the emitted struct would otherwise
+    // leave `kind_` indeterminate under `Command cmd;`, and 24 such
+    // default-constructions live in GENERATED rcc_rpc.h.
+    #[cpp_ctor]
+    fn new() -> SerializableEnvelope<TypeList> {
+        SerializableEnvelope { kind_: 0i32, inner_: None }
+    }
+
+    // Borrow the held base pointer (null when empty). Const-only — the
+    // Arc is const-view; mutation goes through the load() window.
+    fn base_ptr(&self) -> *const SerializableBase {
+        if self.inner_.is_none() {
+            return core::ptr::null();
+        }
+        self.inner_.as_ref().unwrap().get()
+    }
+
+    fn refresh_kind(&mut self) {
+        if self.inner_.is_none() {
+            self.kind_ = 0i32;
+            return;
+        }
+        let b = self.base_ptr();
+        self.kind_ = unsafe { (*b).kind() };
+    }
+
+    fn has_value(&self) -> bool {
+        self.inner_.is_some()
+    }
+
+    fn kind(&self) -> i32 {
+        if self.inner_.is_none() {
+            return 0i32;
+        }
+        let b = self.base_ptr();
+        unsafe { (*b).kind() }
+    }
+
+    // VALUE-SEMANTIC: stores a fresh Arc<T> holding a copy of `value`.
+    // Internally identical to pack_aliased(Arc<T>::make(value)) — gives
+    // unpack_shared<T> proper refcounted ownership at the cost of one
+    // extra heap allocation per pack.
+    fn pack<T>(value: &T) -> SerializableEnvelope<TypeList> {
+        envelope_assert_in_type_list::<TypeList, T>();
+        SerializableEnvelope::<TypeList>::pack_aliased::<T>(rusty::Arc::<T>::make(*value))
+    }
+
+    // ALIASED: the proxy retains the caller's Arc<T>. Mutations through
+    // the caller's handle stay visible to the encoded payload;
+    // unpack<T>() aliases the same instance and unpack_shared<T>()
+    // returns a refcount-shared Arc<T>.
+    fn pack_aliased<T>(sp: rusty::Arc<T>) -> SerializableEnvelope<TypeList> {
+        envelope_assert_in_type_list::<TypeList, T>();
+        let mut env: SerializableEnvelope<TypeList> = Default::default();
+        env.inner_ = Some(
+            rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp));
+        env.refresh_kind();
+        env
+    }
+
+    // INVARIANT: `inner_` is always holder-shaped — every construction
+    // path and every SerializableRegistry factory wraps the payload in a
+    // SerializableSharedPtrHolder<T>, so one downcast suffices with no
+    // direct-SerializableBase fallback.
+    fn unpack<T>(&self) -> *const T {
+        envelope_assert_in_type_list::<TypeList, T>();
+        let h = envelope_holder_of::<T>(self.base_ptr());
+        if h.is_null() {
+            return core::ptr::null();
+        }
+        unsafe { (*h).ptr.get() }
+    }
+
+    // Recover the payload as a refcount-shared Arc<T> (for pack_aliased
+    // envelopes this shares the caller's original Arc; for pack
+    // envelopes the envelope-owned copy). None on empty or mismatch.
+    fn unpack_shared<T>(&self) -> rusty::Option<rusty::Arc<T>> {
+        envelope_assert_in_type_list::<TypeList, T>();
+        let h = envelope_holder_of::<T>(self.base_ptr());
+        if h.is_null() {
+            return None;
+        }
+        Some(unsafe { (*h).ptr.clone() })
+    }
+
+    fn is_a<T>(&self) -> bool {
+        let p: *const T = self.unpack::<T>();
+        !p.is_null()
+    }
+
+    // Wire format: [v32 kind] [payload bytes] — same as MarshallDeputy post-L9.
+    fn save(&self, ar: &mut BinaryWriteArchive) {
+        verify(self.has_value());
+        let b = self.base_ptr();
+        envelope_write_kind(unsafe { (*b).kind() }, ar);
+        envelope_base_save(b, ar);
+    }
+
+    fn load(&mut self, ar: &mut BinaryReadArchive) {
+        let kind: i32 = envelope_read_kind(ar);
+        let mut proxy: SerializableProxy = SerializableRegistry::create(kind);
+        envelope_proxy_load(&mut proxy, ar);
+        self.inner_ = Some(proxy);
+        self.refresh_kind();
+    }
+}
+
+// The non-const half of the unpack overload pair (see the note above).
+impl<TypeList> SerializableEnvelope<TypeList> {
+    fn unpack<T>(&mut self) -> *mut T {
+        envelope_assert_in_type_list::<TypeList, T>();
+        let h = envelope_holder_of::<T>(self.base_ptr());
+        if h.is_null() {
+            return core::ptr::null_mut();
+        }
+        envelope_holder_ptr_mut::<T>(h)
+    }
+}
+
+// Identity comparison. Empty envelopes are equal iff both are empty;
+// non-empty ones iff they wrap the same SerializableBase instance — so
+// two pack_aliased(sp) envelopes from one source compare equal, while
+// pack(v) copies own their own holder and compare unequal.
+// (operator!= is gone: C++20 synthesizes it from operator==.)
+impl<TypeList> PartialEq for SerializableEnvelope<TypeList> {
+    fn eq(&self, other: &SerializableEnvelope<TypeList>) -> bool {
+        if self.inner_.is_none() && other.inner_.is_none() {
+            return true;
+        }
+        if self.inner_.is_none() || other.inner_.is_none() {
+            return false;
+        }
+        self.base_ptr() == other.base_ptr()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.1 version=1 rust_sha256=c5351a4d5f60a2219b4671c4385703fc0943fa8057485d50d8da322ca5c81f7a*/
 template<typename TypeList>
-class SerializableEnvelope {
- public:
-  SerializableEnvelope() = default;
+struct SerializableEnvelope;
 
-  // Templated ctor for `Arc<T>` where T is in TypeList.  Stores an
-  // aliased Arc<T> inside the proxy — `unpack_shared<T>()` returns a
-  // refcount-shared copy of the same Arc<T>, and the underlying T
-  // outlives any envelope copy via the Arc's refcount.
-  template<typename T>
-  SerializableEnvelope(rusty::Arc<T> sp) {
-    static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope(Arc<T>): T is not in TypeList. "
-                  "Add T to the TypeList declaration.");
-    inner_ = rusty::Option<SerializableProxy>(
-        rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
-            std::move(sp)));
-    refresh_kind();
-  }
+template<typename TypeList>
+struct SerializableEnvelope {
+    int32_t kind_;
+    rusty::Option<SerializableProxy> inner_;
 
-  // Templated assignment: same aliased-storage semantics.
-  template<typename T>
-  SerializableEnvelope& operator=(rusty::Arc<T> sp) {
-    static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope::operator=(Arc<T>): T is not "
-                  "in TypeList.");
-    inner_ = rusty::Option<SerializableProxy>(
-        rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
-            std::move(sp)));
-    refresh_kind();
-    return *this;
-  }
-
-  // -- Factories ---------------------------------------------------------
-  // VALUE-SEMANTIC: stores a fresh shared_ptr<T> holding a copy of
-  // `value`.  Internally identical to `pack_aliased(make_shared<T>(value))`
-  // — gives `unpack_shared<T>` proper refcounted ownership at the
-  // cost of one extra heap allocation per pack.  Callers don't see
-  // the shared_ptr directly.
-  template<typename T>
-  static SerializableEnvelope pack(const T& value) {
-    static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope::pack<T>: T is not in TypeList.");
-    SerializableEnvelope env;
-    env.inner_ = rusty::Option<SerializableProxy>(
-        rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
-            rusty::Arc<T>::make(value)));
-    env.refresh_kind();
-    return env;
-  }
-
-  // ALIASED: proxy retains the caller's `shared_ptr<T>`. Mutations
-  // through the caller's pointer remain visible to the encoded
-  // payload; `unpack<T>()` returns a pointer aliasing the same
-  // instance.  `unpack_shared<T>()` returns a refcount-shared
-  // shared_ptr<T>.
-  template<typename T>
-  static SerializableEnvelope pack_aliased(rusty::Arc<T> sp) {
-    static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope::pack_aliased<T>: T is not in "
-                  "TypeList.");
-    SerializableEnvelope env;
-    env.inner_ = rusty::Option<SerializableProxy>(
-        rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
-            std::move(sp)));
-    env.refresh_kind();
-    return env;
-  }
-
-  // -- Typed accessors ---------------------------------------------------
-  // INVARIANT: `inner_` is always holder-shaped — every construction
-  // path above and every SerializableRegistry factory wraps the payload
-  // in a SerializableSharedPtrHolder<T>; no proxy IS its payload
-  // directly. The accessors below rely on this: one holder downcast,
-  // no direct-SerializableBase fallback.
-  // Recover the carried payload as a `T*`, or nullptr if the carried
-  // type is not T (or the envelope is empty). Aliases the envelope-
-  // owned T.
-  // @unsafe - dynamic_cast through `inner_.get()` returning raw `T*`.
-  template<typename T>
-  T* unpack() {
-    static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope::unpack<T>: T is not in TypeList.");
-    // @unsafe - as_ptr(): mutable escape from the const-view Arc. The
-    // non-const unpack keeps its historical T* contract; new code
-    // should prefer the const overload or unpack_shared.
-    if (auto* h = holder_of<T>()) {
-      return const_cast<details::SerializableSharedPtrHolder<T>*>(h)
-          ->ptr.as_ptr();
+    SerializableEnvelope()
+        : kind_(static_cast<int32_t>(0))
+        , inner_(rusty::Option<SerializableProxy>{rusty::None})
+    {}
+    const SerializableBase* base_ptr() const {
+        if (this->inner_.is_none()) {
+            return rusty::ptr::null();
+        }
+        return this->inner_.as_ref().unwrap().get();
     }
-    return nullptr;
-  }
-
-  // @unsafe - dynamic_cast through the held base pointer.
-  template<typename T>
-  const T* unpack() const {
-    static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope::unpack<T>: T is not in TypeList.");
-    if (auto* h = holder_of<T>()) {
-      return h->ptr.get();
+    void refresh_kind() {
+        if (this->inner_.is_none()) {
+            this->kind_ = static_cast<int32_t>(0);
+            return;
+        }
+        const auto b = this->base_ptr();
+        this->kind_ = ((*b)).kind();
     }
-    return nullptr;
-  }
-
-  // Recover the carried payload as a refcount-shared `Arc<T>` (for
-  // `pack_aliased` envelopes this shares the caller's original Arc;
-  // for `pack` envelopes the envelope-owned copy). None on empty or
-  // type mismatch. (Arc access is const-view by design, so a single
-  // Option<Arc<T>> return serves both const and non-const callers —
-  // no Arc<const T> variant.)
-  // @unsafe - dynamic_cast through the held base pointer.
-  template<typename T>
-  rusty::Option<rusty::Arc<T>> unpack_shared() const {
-    static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope::unpack_shared<T>: T is not in TypeList.");
-    if (auto* h = holder_of<T>()) {
-      return rusty::Option<rusty::Arc<T>>(h->ptr.clone());
+    bool has_value() const {
+        return this->inner_.is_some();
     }
-    return rusty::Option<rusty::Arc<T>>(rusty::None);
-  }
-
-  // @unsafe - dispatches to const-unpack which dynamic_casts to raw `const T*`.
-  // True iff the carried payload is a T.
-  template<typename T>
-  bool is_a() const {
-    static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope::is_a<T>: T is not in TypeList.");
-    return unpack<T>() != nullptr;
-  }
-
-  // -- Discriminator + state ---------------------------------------------
-  int32_t kind() const {
-    return inner_.is_some() ? base_ptr()->kind() : 0;
-  }
-
-  bool has_value() const noexcept { return inner_.is_some(); }
-  explicit operator bool() const noexcept { return has_value(); }
-
-  // Identity comparison.  For empty envelopes: equal iff both empty.
-  // For non-empty: equal iff they wrap the same SerializableBase
-  // instance — i.e., copies sharing the same shared_ptr refcount.
-  // Two `pack_aliased(sp)` envelopes copied from the same source
-  // share a holder and thus compare equal; `pack(v)` copies own
-  // their own holder and compare unequal.
-  bool operator==(const SerializableEnvelope& other) const noexcept {
-    if (inner_.is_none() && other.inner_.is_none()) return true;
-    if (inner_.is_none() || other.inner_.is_none()) return false;
-    return base_ptr() == other.base_ptr();
-  }
-  bool operator!=(const SerializableEnvelope& other) const noexcept {
-    return !(*this == other);
-  }
-
-  // -- Wire ops ----------------------------------------------------------
-  // Wire format: [v32 kind] [payload bytes].  Same as MarshallDeputy
-  // post-L9.
-  // @unsafe - Marshal `operator<<` chain on the binary archive.
-  void save(BinaryWriteArchive& ar) const {
-    verify(has_value() &&
-           "SerializableEnvelope::save: empty envelope cannot be encoded.");
-    rrr::Serialize_::serialize(v32(base_ptr()->kind()), ar);
-    base_ptr()->save(ar);
-  }
-
-  // @unsafe - Marshal `operator>>` chain on the binary archive.
-  void load(BinaryReadArchive& ar) {
-    v32 kind_v;
-    rrr::Deserialize_::deserialize(kind_v, ar);
-    auto proxy = SerializableRegistry::create(kind_v.get());
-    // @unsafe - unique-owner mutation window: the proxy is factory-
-    // fresh (strong_count 1); a shared proxy here would panic loudly.
-    proxy.get_mut().unwrap().load(ar);
-    inner_ = rusty::Option<SerializableProxy>(std::move(proxy));
-    refresh_kind();
-  }
-
- public:
-  // Public `kind_` field — cached snapshot of `inner_->kind()`.
-  // Refreshed by every state-changing entry point.  Lets
-  // `cmd.kind_ == X` direct-field access patterns continue to compile.
-  int32_t kind_{0};
-
- private:
-  void refresh_kind() noexcept {
-    kind_ = inner_.is_some() ? base_ptr()->kind() : 0;
-  }
-
-  // Borrow the held base pointer (nullptr when empty). Const-only —
-  // the Arc is const-view; mutation goes through the load() window.
-  const SerializableBase* base_ptr() const noexcept {
-    return inner_.is_some() ? std::as_const(inner_).unwrap().get() : nullptr;
-  }
-
-  // Downcast the held proxy to the holder for T (nullptr on miss).
-  template<typename T>
-  const details::SerializableSharedPtrHolder<T>* holder_of() const {
-    return dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(
-        base_ptr());
-  }
-
-  rusty::Option<SerializableProxy> inner_{rusty::None};
+    int32_t kind() const {
+        if (this->inner_.is_none()) {
+            return static_cast<int32_t>(0);
+        }
+        const auto b = this->base_ptr();
+        // @unsafe
+        {
+            return ((*b)).kind();
+        }
+    }
+    template<typename T>
+    static SerializableEnvelope<TypeList> pack(const T& value) {
+        envelope_assert_in_type_list<TypeList, T>();
+        return SerializableEnvelope<TypeList>::pack_aliased(rusty::Arc<T>::make(value));
+    }
+    template<typename T>
+    static SerializableEnvelope<TypeList> pack_aliased(rusty::Arc<T> sp) {
+        envelope_assert_in_type_list<TypeList, T>();
+        SerializableEnvelope<TypeList> env = rusty::default_like<SerializableEnvelope<TypeList>>();
+        env.inner_ = rusty::Option<SerializableProxy>(rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(sp)));
+        env.refresh_kind();
+        return std::move(env);
+    }
+    template<typename T>
+    std::add_pointer_t<std::add_const_t<T>> unpack() const {
+        envelope_assert_in_type_list<TypeList, T>();
+        const auto h = envelope_holder_of<T>(this->base_ptr());
+        if ((h == nullptr)) {
+            return rusty::ptr::null();
+        }
+        // @unsafe
+        {
+            return (rusty::detail::deref_if_pointer_like(h)).ptr.get();
+        }
+    }
+    template<typename T>
+    rusty::Option<rusty::Arc<T>> unpack_shared() const {
+        envelope_assert_in_type_list<TypeList, T>();
+        const auto h = envelope_holder_of<T>(this->base_ptr());
+        if ((h == nullptr)) {
+            return rusty::Option<rusty::Arc<T>>{rusty::None};
+        }
+        return rusty::Option<rusty::Arc<T>>(rusty::clone((rusty::detail::deref_if_pointer_like(h)).ptr));
+    }
+    template<typename T>
+    bool is_a() const {
+        const std::add_pointer_t<std::add_const_t<T>> p = this->template unpack<T>();
+        return rusty::detail::rust_not((p == nullptr));
+    }
+    void save(BinaryWriteArchive& ar) const {
+        verify(this->has_value());
+        const auto b = this->base_ptr();
+        envelope_write_kind(((*b)).kind(), ar);
+        envelope_base_save(b, ar);
+    }
+    void load(BinaryReadArchive& ar) {
+        int32_t kind = envelope_read_kind(ar);
+        SerializableProxy proxy = SerializableRegistry::create(std::move(kind));
+        envelope_proxy_load(&proxy, ar);
+        this->inner_ = rusty::Option<SerializableProxy>(std::move(proxy));
+        this->refresh_kind();
+    }
+    template<typename T>
+    std::add_pointer_t<T> unpack() {
+        envelope_assert_in_type_list<TypeList, T>();
+        const auto h = envelope_holder_of<T>(this->base_ptr());
+        if ((h == nullptr)) {
+            return rusty::ptr::null_mut();
+        }
+        return envelope_holder_ptr_mut<T>(std::move(h));
+    }
+    bool operator==(const SerializableEnvelope<TypeList>& other) const {
+        if (this->inner_.is_none() && other.inner_.is_none()) {
+            return true;
+        }
+        if (this->inner_.is_none() || other.inner_.is_none()) {
+            return false;
+        }
+        return this->base_ptr() == other.base_ptr();
+    }
 };
+/*RUSTYCPP:GEN-END id=serializable_envelope.1*/
 
 // Migration compat: `marshallable_cast<T>` overload for envelopes.
 // Returns Option<Arc<T>> — None on empty envelope / type mismatch.

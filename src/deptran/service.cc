@@ -873,7 +873,7 @@ void ClassicServiceImpl::JetpackPullCmd(const epoch_t& jepoch,
   // Fill-then-wrap: handler fills a local, packed after completion.
   KeyCmdBatchData batch_result;
   dtxn_sched()->OnJetpackPullCmd(jepoch, oepoch, keys, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, batch_result);
-  *cmd_batch = rusty::Arc<KeyCmdBatchData>::make(std::move(batch_result));
+  *cmd_batch = janus::Command::pack_aliased(rusty::Arc<KeyCmdBatchData>::make(std::move(batch_result)));
   defer.reply();
 
 }
@@ -945,7 +945,7 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
                                               janus::Command* reply_new_view,
                                               janus::Command* cmd, 
                                               rrr::DeferredReply defer) {
-  *cmd = rusty::Arc<TpcCommitCommand>::make();
+  *cmd = janus::Command::pack_aliased(rusty::Arc<TpcCommitCommand>::make());
   dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view);
   defer.reply();
 }

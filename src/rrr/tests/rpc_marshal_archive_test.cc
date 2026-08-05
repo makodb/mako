@@ -1171,8 +1171,9 @@ using EnvelopeTestList = TypeList<TypeListFactoryAlpha,
 
 TEST(SerializableEnvelope, DefaultConstructedIsEmpty) {
   SerializableEnvelope<EnvelopeTestList> env;
+  // (the redundant `explicit operator bool` was removed with the DSL
+  // conversion — no trait maps to it and it had zero production callers)
   EXPECT_FALSE(env.has_value());
-  EXPECT_FALSE(static_cast<bool>(env));
   EXPECT_EQ(env.kind(), 0);
   // unpack on empty returns nullptr.
   EXPECT_EQ(env.unpack<TypeListFactoryAlpha>(), nullptr);

@@ -544,7 +544,7 @@ int Witness::remove(const janus::Command& cmd_env) {
     verify(cmds.is_some());
     int total_removed = 0;
     for (auto& c: cmds.unwrap()->cmds_) {
-      SimpleRWCommand parsed_cmd{janus::Command{c.clone()}};
+      SimpleRWCommand parsed_cmd{janus::Command::pack_aliased(c.clone())};
       bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
       if (removed) {
         witness_size_distribution_.mid_time_append(--witness_size_);
@@ -555,7 +555,7 @@ int Witness::remove(const janus::Command& cmd_env) {
 #ifdef WITNESS_LOG_DEBUG
       // c is Arc<TpcCommitCommand>; wraps into Command via the
       // templated Arc ctor (explicit clone per repo convention).
-      witness_log_.push_back(WitnessLog(1, janus::Command{c.clone()}, removed, witness_size_));
+      witness_log_.push_back(WitnessLog(1, janus::Command::pack_aliased(c.clone()), removed, witness_size_));
 #endif
     }
     return total_removed;
@@ -575,7 +575,7 @@ bool Witness::has_appeared(const janus::Command& cmd_env) {
     verify(cmds.is_some());
     bool all_has_appeared = true;
     for (auto& c: cmds.unwrap()->cmds_) {
-      SimpleRWCommand parsed_cmd{janus::Command{c.clone()}};
+      SimpleRWCommand parsed_cmd{janus::Command::pack_aliased(c.clone())};
       uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
       if (!candidates_[parsed_cmd.key_].has_appeared(cmd_id)) {
         all_has_appeared = false;
