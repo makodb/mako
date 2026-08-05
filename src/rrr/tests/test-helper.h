@@ -11,7 +11,8 @@
 template <class T>
 void report_qps(const char* action, T n_ops, double duration) {
     base::Log_info("{}: {} ops, took {:.2f} sec, qps={}",
-        action, n_ops, duration, base::format_decimal(T(n_ops / duration)).c_str());
+        action, n_ops, duration,
+        base::format_thousands(static_cast<double>(n_ops / duration)).c_str());
 }
 
 

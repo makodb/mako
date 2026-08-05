@@ -4,6 +4,8 @@ module;
 #include <rusty/function.hpp>
 #include <rusty/sys/process.hpp>
 #include <rusty/sys/time.hpp>
+// Reachability: format_thousands' GEN names rusty::detail::deref_if_pointer_like.
+#include <rusty/slice.hpp>
 
 #include <limits.h>
 #include <stdio.h>
@@ -202,53 +204,64 @@ void OneTimeJob::Work() {
 /*RUSTYCPP:GEN-END id=misc.one_time_job*/
 
 
-// Relocated from the deleted rrr.strop module (its only live symbols;
-// startswith/endswith/strsplit were dead and went with the module).
-// @unsafe - OVERLOADED NAME (double/int pair). Rust has no function
-// overloading, so the two cannot coexist as one DSL fn (7.24a); route
-// is callsite_rewrite (test-helper + memdb re-export are the only
-// consumers).
-std::string format_decimal(double val) {
-    std::ostringstream o;
-    o.precision(2);
-    o << std::fixed << val;
-    std::string s(o.str());
-    std::string str;
-    size_t idx = 0;
-    while (idx < s.size()) {
-        if (s[idx] == '.') {
+// Thousands-grouped 2-decimal formatter (was the strop format_decimal
+// double/int overload pair; the int overload had zero callers and Rust
+// has no overloading, so one DSL fn under a new name serves the single
+// consumer, test-helper's report_qps).
+#if RUSTYCPP_RUST
+fn format_thousands(val: f64) -> std::string {
+    let s: std::string = format!("{:.2}", val);
+    let mut dot: usize = 0usize;
+    while dot < s.size() {
+        if s[dot] == '.' {
             break;
         }
-        idx++;
+        dot += 1usize;
     }
-    str.reserve(s.size() + 16);
-    for (size_t i = 0; i < idx; i++) {
-        if ((idx - i) % 3 == 0 && i != 0 && s[i - 1] != '-') {
-            str += ',';
+    let mut out: std::string = format!("");
+    let mut i: usize = 0usize;
+    while i < dot {
+        if (dot - i) % 3usize == 0usize && i != 0usize && s[i - 1usize] != '-' {
+            out.push_back(',');
         }
-        str += s[i];
+        out.push_back(s[i]);
+        i += 1usize;
     }
-    str += s.substr(idx);
-    if (str == "-0.00") {
-        str = "0.00";
+    out += s.substr(dot);
+    if out == "-0.00" {
+        return format!("0.00");
     }
-    return str;
+    out
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=misc.4 version=1 rust_sha256=3635c241e419471cb8d61493e4db5f3155a4276bf8b731505905edcbd18f86d9*/
+std::string format_thousands(double val);
 
-std::string format_decimal(int val) {
-    std::ostringstream o;
-    o << val;
-    std::string s(o.str());
-    std::string str;
-    str.reserve(s.size() + 8);
-    for (size_t i = 0; i < s.size(); i++) {
-        if ((s.size() - i) % 3 == 0 && i != 0 && s[i - 1] != '-') {
-            str += ',';
+std::string format_thousands(double val) {
+    const std::string s = std::format("{:.2f}", val);
+    size_t dot = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(dot) < s.size()) {
+        if (s[dot] == U'.') {
+            break;
         }
-        str += s[i];
+        dot += static_cast<size_t>(1);
     }
-    return str;
+    std::string out = std::format("");
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(dot)) {
+        if ((((((rusty::detail::deref_if_pointer_like(dot) - rusty::detail::deref_if_pointer_like(i))) % static_cast<size_t>(3)) == static_cast<size_t>(0)) && (rusty::detail::deref_if_pointer_like(i) != static_cast<size_t>(0))) && (s[rusty::detail::deref_if_pointer_like(i) - static_cast<size_t>(1)] != U'-')) {
+            out.push_back(U',');
+        }
+        out.push_back(s[i]);
+        i += static_cast<size_t>(1);
+    }
+    out += s.substr(std::move(dot));
+    if (out == "-0.00") {
+        return std::format("0.00");
+    }
+    return std::move(out);
 }
+/*RUSTYCPP:GEN-END id=misc.4*/
 
 } // export namespace rrr
 
