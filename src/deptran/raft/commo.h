@@ -40,14 +40,14 @@ enum class NotifyRestartStatus {
 };
 
 // @unsafe - inherits from non-@interface base QuorumEvent
-class RaftVoteQuorumEvent: public QuorumEventWrapper {
+class RaftVoteQuorumEvent: public QuorumEventBase {
  private:
   // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
   std::set<siteid_t> spec_voters_;
   std::mutex voters_mtx_;
 
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   // @safe
   bool HasAcceptedValue() {
     return false;

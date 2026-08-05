@@ -129,36 +129,26 @@ using ShutdownHook = rusty::Function<void()>;
  * For the request object, the marshal only contains <arg1>..<argN>,
  * other fields are already consumed.
  */
-// Pending-request counter helpers. The counter is an Arc-shared
-// rusty::sync::atomic; its ops are const (Rust's &self), so bumping
-// needs a const_cast (the const is Arc's shared-ownership const, not the
-// atomic's — atomics are interior-mutable). These two are the only
-// places the counter moves.
-// @safe - rusty::sync::atomic ops are const (Rust's &self), so the shared
-// Arc view is enough; the const_cast this used to need is gone.
-inline void pending_guard_acquire(const rusty::Arc<rusty::sync::atomic::AtomicI32>& counter) {
-    if (counter.is_valid()) {
-        counter.get()->fetch_add(1, rusty::sync::atomic::Ordering::Relaxed);
-    }
-}
-// @unsafe - mirror of pending_guard_acquire; runs from PendingRequestGuard's
-// drop. Takes a pointer because the DSL lowers `&self.field` to `&this->field`
-// (an address-of), whereas a `&T` param (acquire's caller) lowers to a reference.
-inline void pending_guard_release(const rusty::Arc<rusty::sync::atomic::AtomicI32>* counter) {
-    if (counter->is_valid()) {
-        counter->get()->fetch_sub(1, rusty::sync::atomic::Ordering::Relaxed);
-    }
-}
-
 // @safe - RAII guard for one in-flight request: decrements the shared
 // pending-request counter on drop. The matching increment is done at the
 // guard's single construction site (`Request::attach_pending_guard`).
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block is the
 // source of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block with the C++ struct + destructor.
-// (The DSL emits a copyable struct since the Arc field is copyable; the
-// guard is only ever boxed and moved — never copied — so the original's
-// deleted copy ctor is not load-bearing.)
+//
+// The counter is an Arc-shared `rusty::sync::atomic::AtomicI32`; atomic
+// ops are const (Rust's `&self`), so the shared Arc view is enough. The
+// two hand-written `pending_guard_acquire` / `pending_guard_release`
+// shims that used to live here are GONE — probe-verified, the DSL keeps
+// `self.pending_counter.is_valid()` an Arc dot-call while
+// `self.pending_counter.fetch_sub(..)` auto-arrows to
+// `pending_counter->fetch_sub(..)`, exactly the lowering
+// `Server::decrement_pending` already relies on. So the "&self.field
+// lowers to a pointer, hence a pointer-taking release shim" workaround
+// dissolves: nothing needs to be passed at all.
+//
+// `impl Drop` makes the emitted struct move-only (copy ctor deleted),
+// matching how the guard is used — only ever boxed and moved.
 #if RUSTYCPP_RUST
 struct PendingRequestGuard {
     pending_counter: rusty::Arc<rusty::sync::atomic::AtomicI32>,
@@ -166,11 +156,13 @@ struct PendingRequestGuard {
 
 impl Drop for PendingRequestGuard {
     fn drop(&mut self) {
-        pending_guard_release(&self.pending_counter);
+        if self.pending_counter.is_valid() {
+            self.pending_counter.fetch_sub(1i32, rusty::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.pending_guard version=1 rust_sha256=574c3120408a5e3fbdd024cd070db6352638343560d2f03ae615c51bcae2f4ed*/
+/*RUSTYCPP:GEN-BEGIN id=server.pending_guard version=1 rust_sha256=8f165530f62974a82b335fb863241fca728d4612a8f1601cada63c402c5e6104*/
 struct PendingRequestGuard;
 
 struct PendingRequestGuard {
@@ -203,7 +195,9 @@ struct PendingRequestGuard {
 
 PendingRequestGuard::~PendingRequestGuard() noexcept(false) {
     if (_rusty_forgotten) { return; }
-    pending_guard_release(&this->pending_counter);
+    if (this->pending_counter.is_valid()) {
+        this->pending_counter->fetch_sub(static_cast<int32_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    }
 }
 /*RUSTYCPP:GEN-END id=server.pending_guard*/
 
@@ -235,13 +229,13 @@ struct Request {
 impl Request {
     fn attach_pending_guard(&mut self, counter: &rusty::Arc<rusty::sync::atomic::AtomicI32>) {
         if self.pending_guard.is_none() && counter.is_valid() {
-            pending_guard_acquire(counter);
+            counter.fetch_add(1i32, rusty::sync::atomic::Ordering::Relaxed);
             self.pending_guard = rusty::Some(rusty::make_box::<PendingRequestGuard>(counter.clone()));
         }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.request version=1 rust_sha256=27de6493b0c289aae05d0eeadf949726306af32842dab10517c614005ceb4dc8*/
+/*RUSTYCPP:GEN-BEGIN id=server.request version=1 rust_sha256=88cbb52b4b7ce92056535e16eb87eb9a3bbe49f8c22e43361f798782e7053a5f*/
 struct Request;
 
 struct Request {
@@ -256,7 +250,7 @@ struct Request {
 
 void Request::attach_pending_guard(const rusty::Arc<rusty::sync::atomic::AtomicI32>& counter) {
     if (this->pending_guard.is_none() && counter.is_valid()) {
-        pending_guard_acquire(counter);
+        counter->fetch_add(static_cast<int32_t>(1), rusty::sync::atomic::Ordering::Relaxed);
         this->pending_guard = rusty::Option<rusty::Box<PendingRequestGuard>>(rusty::make_box<PendingRequestGuard>(rusty::clone(counter)));
     }
 }
@@ -1296,15 +1290,6 @@ inline void server_invoke_shutdown_hook_safely(ShutdownHook& hook) {
     }
 }
 
-// @safe - Iterate over each registered service and invoke the
-// callback. Lives here as a free function template so the DSL's
-// `for_each_service<F>` can delegate without trying to emit the
-// `auto guard = ...borrow_mut(); (*guard)->method()` double-deref
-// (which the transpiler currently mishandles, see comments above).
-// Forward-declared here; defined after the DSL emits the Server
-// struct so the body can access Server's fields.
-template<typename F>
-inline void server_for_each_service_impl(const Server& self, F&& callback);
 
 // `Server` — RPC server facade. Authored as inline Rust DSL: the
 // `#if RUSTYCPP_RUST` block below is the source of truth; the
@@ -1330,9 +1315,9 @@ inline void server_for_each_service_impl(const Server& self, F&& callback);
 //     `wait_for_shutdown`, `add_shutdown_hook`, `stop_accepting`,
 //     `drain`, `graceful_shutdown`, `get_bound_port`) are translated
 //     into the DSL block.
-//   * `for_each_service<F>` (template) and `reg_service_typed<T>`
-//     (template) stay OUTSIDE the DSL as hand-written templates —
-//     the DSL grammar can't express template methods.
+//   * `for_each_service<F>` and `reg_service_typed<T>` are DSL member
+//     templates — a DSL `fn f<T>(..)` emits a real `template<typename T>`
+//     method, so neither stays hand-written.
 //
 // @safe - Methods that genuinely cross into unsafe ops (socket I/O via the
 // channel-layer's TcpListener, Pthread primitives, raw
@@ -1719,11 +1704,18 @@ impl Server {
     }
 
     fn for_each_service<F>(&self, callback: F) {
-        server_for_each_service_impl(self, callback);
+        let n: usize = self.ctx_field.as_ref().unwrap().services.size();
+        let mut i: usize = 0usize;
+        while i < n {
+            let mut guard = self.ctx_field.as_ref().unwrap().services[i].borrow_mut();
+            let svc: &mut Service = &mut **guard;
+            callback(*svc);
+            i += 1usize;
+        }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=1c45e56316695e92e162bf8637719ff9b65ceef837f804e31ec8088b64484cae*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=92da00c251efdd409263f50b41b131e14622938545797b8564cd51c71b3f0190*/
 struct ChannelSconns;
 struct Server;
 
@@ -2050,27 +2042,17 @@ void Server::reg_service_typed(rusty::Box<T> svc) {
 
 template<typename F>
 void Server::for_each_service(F callback) const {
-    server_for_each_service_impl((*this), std::move(callback));
+    const size_t n = (*this->ctx_field.as_ref().unwrap()).services.size();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        auto&& guard = (*this->ctx_field.as_ref().unwrap()).services[i].borrow_mut();
+        Service& svc = rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer_like(guard));
+        callback(svc);
+        i += static_cast<size_t>(1);
+    }
 }
 /*RUSTYCPP:GEN-END id=server.1*/
 
-// Body of the for_each_service helper. Defined after the GEN block
-// so it can refer to Server's fields directly. The DSL's
-// `for_each_service<F>` member template delegates here. Iterates
-// over the immutable `services` Vec inside `ctx_field`, dereferencing
-// the `Box<Service>` to pass each Service& to the callback.
-//
-// (Previously called the now-removed `__get_service__()` method, whose
-// default impl + sole override both just returned `*this` — equivalent
-// to dereferencing the Box directly.)
-template<typename F>
-inline void server_for_each_service_impl(const Server& self, F&& callback) {
-    auto& ctx = self.ctx_field.as_ref().unwrap();
-    for (size_t i = 0; i < ctx->services.size(); ++i) {
-        auto guard = ctx->services[i].borrow_mut();
-        callback(**guard);
-    }
-}
 
 
 }  // export namespace rrr

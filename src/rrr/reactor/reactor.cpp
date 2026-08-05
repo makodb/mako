@@ -3608,7 +3608,8 @@ enum class QuorumPolicy : int {
 // @unsafe C++ kernels the DSL calls: `quorum_event_finalize` (spawns a fiber
 // with a move-capturing closure) and `quorum_event_is_slow` (reads/clears the
 // reactor's shared slow_ flag). Construction goes through `quorum_event_make`
-// (wired into rrr::event_make). The owning QuorumEventWrapper is unchanged.
+// (wired into rrr::event_make). The owning QuorumEventWrapper is now DSL too
+// (below), with a QuorumEventBase construction shim in deptran/communicator.h.
 
 // The finalize callback type: the DSL cannot parse a bare fn-type template
 // argument as a field/param signature, so alias it outside the block (the
@@ -3956,48 +3957,175 @@ rusty::Option<rusty::Rc<Fiber>> QuorumEvent::upgrade_fiber() const {
 
 // Composition base for the per-protocol quorum events (flattening S3b).
 // The former `class XQuorumEvent : public QuorumEvent` subclasses become
-// `class XQuorumEvent : public QuorumEventWrapper` — they OWN the reactor-
-// registered QuorumEvent instead of BEING it, so nothing outside rrr
-// inherits the event type (a hard requirement for flattening QuorumEvent
-// to an inline-Rust DSL struct, which cannot be a base class). The wrapper
-// itself is not an Event and is never registered; waiting/voting forward
-// to the owned, registered `q_`.
+// `class XQuorumEvent : public QuorumEventBase` — the 4-line deptran-local
+// shim in src/deptran/communicator.h that adapts the DSL factory below to a
+// real 2-arg base constructor. They OWN the reactor-registered QuorumEvent
+// instead of BEING it, so nothing outside rrr inherits the event type (a hard
+// requirement for flattening QuorumEvent to an inline-Rust DSL struct, which
+// cannot be a base class). The wrapper itself is not an Event and is never
+// registered; waiting/voting forward to the owned, registered `q_`.
 //
 // Field access through a wrapper goes via `q()`:  e->timeouted_  becomes
 // e->q().timeouted_. The common verb surface is forwarded so method call
 // sites compile unchanged. `q_` is set once at construction and never
 // reseated.
-class QuorumEventWrapper {
- public:
-  rusty::Arc<QuorumEvent> q_;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block. Only
+// inherent impls, so the emitted struct stays a copyable aggregate that
+// hand-written C++ still derives from. Two deliberate, benign widenings vs.
+// the former hand-written class:
+//   * every method is emitted `const` (the Arc is a const view and every
+//     QuorumEvent mutation goes through Cell::set / RefCell, both const), so
+//     the old const/non-const `q()` pair collapses into the single
+//     `const QuorumEvent& q() const` that serves both call shapes;
+//   * `test()` now returns QuorumEvent::test()'s bool instead of void —
+//     every call site discards it.
+#if RUSTYCPP_RUST
+struct QuorumEventWrapper {
+    q_: rusty::Arc<QuorumEvent>,
+}
 
-  QuorumEventWrapper(int n_total, int quorum)
-      : q_(create_sp_quorum_event(n_total, quorum)) {}
+impl QuorumEventWrapper {
+    fn new(n_total: i32, quorum: i32) -> QuorumEventWrapper {
+        QuorumEventWrapper { q_: create_sp_quorum_event(n_total, quorum) }
+    }
+    fn q(&self) -> &QuorumEvent {
+        &(*self.q_)
+    }
+    fn wait(&self) {
+        (*self.q_).wait()
+    }
+    fn wait_timeout(&self, timeout: u64) {
+        (*self.q_).wait_timeout(timeout)
+    }
+    fn log(&self) {
+        (*self.q_).log()
+    }
+    fn get_fiber_id(&self) -> u64 {
+        (*self.q_).get_fiber_id()
+    }
+    fn vote_yes(&self) {
+        (*self.q_).vote_yes()
+    }
+    fn vote_no(&self) {
+        (*self.q_).vote_no()
+    }
+    fn yes(&self) -> bool {
+        (*self.q_).yes()
+    }
+    fn no(&self) -> bool {
+        (*self.q_).no()
+    }
+    fn is_ready(&self) -> bool {
+        (*self.q_).is_ready()
+    }
+    fn is_slow(&self) -> bool {
+        (*self.q_).is_slow()
+    }
+    fn test(&self) -> bool {
+        (*self.q_).test()
+    }
+    fn add_xid(&self, site: u16, xid: rrr::i64) {
+        (*self.q_).add_xid(site, xid)
+    }
+    fn remove_xid(&self, site: u16) {
+        (*self.q_).remove_xid(site)
+    }
+    fn finalize(&self, timeout: u64, f: QuorumFinalizeFn) {
+        (*self.q_).finalize(timeout, f)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.36 version=1 rust_sha256=07fabcd3811b39c7816349d8e616b394da47b85192c0829831b78890f8108e3a*/
+struct QuorumEventWrapper;
 
-  // Arc is const-view; every QuorumEvent field mutation now goes
-  // through Cell::set / RefCell (both const), so a const ref suffices.
-  const QuorumEvent& q() { return *q_; }
-  const QuorumEvent& q() const { return *q_; }
+struct QuorumEventWrapper {
+    rusty::Arc<QuorumEvent> q_;
 
-  // Forwarded verb surface (matches the former inherited methods):
-  void wait() { q_->wait(); }
-  void wait_timeout(uint64_t timeout) { q_->wait_timeout(timeout); }
-  void log() { q_->log(); }
-  uint64_t get_fiber_id() { return q_->get_fiber_id(); }
-  void vote_yes() { q_->vote_yes(); }
-  void vote_no() { q_->vote_no(); }
-  bool yes() { return q_->yes(); }
-  bool no() { return q_->no(); }
-  bool is_ready() { return q_->is_ready(); }
-  bool is_slow() { return q_->is_slow(); }
-  void test() { q_->test(); }
-  void add_xid(uint16_t site, rrr::i64 xid) { q_->add_xid(site, xid); }
-  void remove_xid(uint16_t site) { q_->remove_xid(site); }
-  void finalize(uint64_t timeout,
-                rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> f) {
-    q_->finalize(timeout, std::move(f));
-  }
+    static QuorumEventWrapper new_(int32_t n_total, int32_t quorum);
+    const QuorumEvent& q() const;
+    void wait() const;
+    void wait_timeout(uint64_t timeout) const;
+    void log() const;
+    uint64_t get_fiber_id() const;
+    void vote_yes() const;
+    void vote_no() const;
+    bool yes() const;
+    bool no() const;
+    bool is_ready() const;
+    bool is_slow() const;
+    bool test() const;
+    void add_xid(uint16_t site, rrr::i64 xid) const;
+    void remove_xid(uint16_t site) const;
+    void finalize(uint64_t timeout, QuorumFinalizeFn f) const;
 };
+
+
+QuorumEventWrapper QuorumEventWrapper::new_(int32_t n_total, int32_t quorum) {
+    return QuorumEventWrapper{.q_ = create_sp_quorum_event(std::move(n_total), std::move(quorum))};
+}
+
+const QuorumEvent& QuorumEventWrapper::q() const {
+    return (rusty::detail::deref_if_pointer_like(this->q_));
+}
+
+void QuorumEventWrapper::wait() const {
+    ((rusty::detail::deref_if_pointer_like(this->q_))).wait();
+}
+
+void QuorumEventWrapper::wait_timeout(uint64_t timeout) const {
+    ((rusty::detail::deref_if_pointer_like(this->q_))).wait_timeout(std::move(timeout));
+}
+
+void QuorumEventWrapper::log() const {
+    ((rusty::detail::deref_if_pointer_like(this->q_))).log();
+}
+
+uint64_t QuorumEventWrapper::get_fiber_id() const {
+    return ((rusty::detail::deref_if_pointer_like(this->q_))).get_fiber_id();
+}
+
+void QuorumEventWrapper::vote_yes() const {
+    ((rusty::detail::deref_if_pointer_like(this->q_))).vote_yes();
+}
+
+void QuorumEventWrapper::vote_no() const {
+    ((rusty::detail::deref_if_pointer_like(this->q_))).vote_no();
+}
+
+bool QuorumEventWrapper::yes() const {
+    return ((rusty::detail::deref_if_pointer_like(this->q_))).yes();
+}
+
+bool QuorumEventWrapper::no() const {
+    return ((rusty::detail::deref_if_pointer_like(this->q_))).no();
+}
+
+bool QuorumEventWrapper::is_ready() const {
+    return ((rusty::detail::deref_if_pointer_like(this->q_))).is_ready();
+}
+
+bool QuorumEventWrapper::is_slow() const {
+    return ((rusty::detail::deref_if_pointer_like(this->q_))).is_slow();
+}
+
+bool QuorumEventWrapper::test() const {
+    return ((rusty::detail::deref_if_pointer_like(this->q_))).test();
+}
+
+void QuorumEventWrapper::add_xid(uint16_t site, rrr::i64 xid) const {
+    ((rusty::detail::deref_if_pointer_like(this->q_))).add_xid(std::move(site), std::move(xid));
+}
+
+void QuorumEventWrapper::remove_xid(uint16_t site) const {
+    ((rusty::detail::deref_if_pointer_like(this->q_))).remove_xid(std::move(site));
+}
+
+void QuorumEventWrapper::finalize(uint64_t timeout, QuorumFinalizeFn f) const {
+    ((rusty::detail::deref_if_pointer_like(this->q_))).finalize(std::move(timeout), std::move(f));
+}
+/*RUSTYCPP:GEN-END id=reactor.36*/
 
 }  // export namespace janus
 

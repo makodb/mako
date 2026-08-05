@@ -1986,25 +1986,56 @@ int64_t tcpconn_send_bytes(const TcpConnection& conn, TcpOutBuf& buf, size_t off
                   buf.size() - offset, MSG_NOSIGNAL);
 }
 
-// @unsafe - iterator surgery: drop the sent prefix.
-void tcpconn_trim_sent(TcpOutBuf& buf, size_t offset) {
-    if (offset == 0) return;
-    if (offset == buf.size()) {
+// Post-drain buffer accounting. Both halves were once labeled
+// "iterator surgery" kernels, but a vector erase-range lowers verbatim
+// through the DSL and the rest is plain control flow over `offset` /
+// `buf.size()`, so both are DSL now. `buf` stays a `&mut` parameter,
+// which lowers back to `TcpOutBuf&`, leaving the forward declarations
+// and the drain-loop call sites untouched.
+// @safe - prefix accounting over the outbound buffer, no raw pointers.
+#if RUSTYCPP_RUST
+// Drop the prefix that send(2) actually accepted.
+fn tcpconn_trim_sent(buf: &mut TcpOutBuf, offset: usize) {
+    if offset == 0 {
+        return;
+    }
+    if offset == buf.size() {
         buf.clear();
     } else {
-        buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(offset));
+        buf.erase(buf.begin(), buf.begin() + offset);
     }
 }
 
-// @unsafe - hard-error cleanup: drop the sent prefix, or everything
-// when nothing was sent (the connection is dead).
-void tcpconn_drop_after_error(TcpOutBuf& buf, size_t offset) {
-    if (offset > 0) {
-        buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(offset));
+// Hard-error cleanup: drop the sent prefix, or everything when nothing
+// was sent (the connection is dead).
+fn tcpconn_drop_after_error(buf: &mut TcpOutBuf, offset: usize) {
+    if offset > 0 {
+        buf.erase(buf.begin(), buf.begin() + offset);
     } else {
         buf.clear();
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.23 version=1 rust_sha256=1ff20928d528a28e0773aed211b9c4f21621834f327d0a49859ebd1410532799*/
+void tcpconn_trim_sent(TcpOutBuf& buf, size_t offset) {
+    if (rusty::detail::deref_if_pointer_like(offset) == static_cast<size_t>(0)) {
+        return;
+    }
+    if (rusty::detail::deref_if_pointer_like(offset) == buf.size()) {
+        buf.clear();
+    } else {
+        buf.erase(buf.begin(), buf.begin() + rusty::detail::deref_if_pointer_like(offset));
+    }
+}
+
+void tcpconn_drop_after_error(TcpOutBuf& buf, size_t offset) {
+    if (rusty::detail::deref_if_pointer_like(offset) > 0) {
+        buf.erase(buf.begin(), buf.begin() + rusty::detail::deref_if_pointer_like(offset));
+    } else {
+        buf.clear();
+    }
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.23*/
 
 // @unsafe - fires the on_closed callback (once) under the spinlock.
 #if RUSTYCPP_RUST

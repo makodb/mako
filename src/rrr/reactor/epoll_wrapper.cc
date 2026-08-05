@@ -3,6 +3,8 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/refcell.hpp>
+// Reachability: this file's GEN names rusty::as_mut_ptr.
+#include <rusty/array.hpp>
 #include <rusty/slice.hpp>
 #include <rusty/os/fd.hpp>
 
@@ -135,12 +137,33 @@ inline void epoll_bump_remove_count() { epoll_remove_count++; }
 // a real C++ template member. (Dropped vs the old class: the unused
 // `volatile bool* pause/stop` back-pointers, the six dead stat counters, and
 // the never-called nullary `Wait()` overload.)
-// @unsafe - kevent / epoll_wait blocking syscall + raw `evlist[max_nev]`
-// stack buffer + dispatch into the caller-supplied handler.
+
+// `epoll_wait_impl<F>` — one poll pass: drain the ready set and hand each
+// (fd, ready_events) pair to the caller's handler. It has to stay in the
+// module INTERFACE — it is a template, and templates cannot move to an
+// implementation unit — so this is the one place where the platform
+// #ifdef survives the sys-module split.
+//
+// The Linux branch is inline-Rust DSL. The old "KERNEL: platform #ifdef +
+// syscall + hot-path template dispatch" verdict was wrong on all three
+// counts: only ONE branch is platform-specific (so the #ifdef moves out
+// of the body and wraps two definitions); a syscall is an ordinary C call
+// from a DSL body, exactly as every body in epoll_platform_linux.cc
+// already does; and a DSL `fn f<F>(..)` emits a REAL `template<typename
+// F>` — no rusty::Function, no type erasure, no indirect call, so the
+// single hot call site (reactor.cpp's poll loop) still inlines the
+// handler.
+//
+// The kqueue branch stays hand-written C++ because it cannot be compiled,
+// let alone tested, on this platform — the same rule
+// epoll_platform_kqueue.cc is held to. Convert it alongside a macOS build.
+#ifdef USE_KQUEUE
+// @unsafe - kevent blocking syscall + raw `evlist[max_nev]` stack buffer +
+// dispatch into the caller-supplied handler. APPLE-ONLY: not compiled or
+// verified on Linux CI.
 template<typename ReadyHandler>
 inline void epoll_wait_impl(int32_t poll_fd, ReadyHandler on_ready) {
     const int max_nev = 100;
-#ifdef USE_KQUEUE
     struct kevent evlist[max_nev];
     struct timespec timeout;
     timeout.tv_sec = 0;
@@ -163,28 +186,84 @@ inline void epoll_wait_impl(int32_t poll_fd, ReadyHandler on_ready) {
         on_ready(static_cast<int>(evlist[i].ident), ready_events);
       }
     }
-
-#else
-    struct epoll_event evlist[max_nev];
-    int timeout = 1;
-    int nev = epoll_wait(poll_fd, evlist, max_nev, timeout);
-    for (int i = 0; i < nev; i++) {
-      int ready_events = 0;
-      if (evlist[i].events & EPOLLIN) {
-        ready_events |= PollReady::READABLE;
-      }
-      if (evlist[i].events & EPOLLOUT) {
-        ready_events |= PollReady::WRITABLE;
-      }
-      if (evlist[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
-        ready_events |= PollReady::ERROR;
-      }
-      if (ready_events != 0) {
-        on_ready(evlist[i].data.fd, ready_events);
-      }
-    }
-#endif
 }
+#else
+// @unsafe - epoll_wait blocking syscall, called route-2 (`unsafe { .. }`)
+// from the DSL body below.
+//
+// Lowering notes (probed, then runtime-checked against a real epoll fd):
+//   * `[epoll_event; 100]` lowers to `std::array<epoll_event, 100>`, and
+//     `Default::default()` in typed-let position to
+//     `rusty::default_like<..>()` — so the 100-entry event buffer needs
+//     no zeroing kernel. `evlist.as_mut_ptr()` lowers to the free fn
+//     `rusty::as_mut_ptr(evlist)`, which is why the GMF includes
+//     <rusty/array.hpp> (a GMF must include what its own GEN names).
+//     Indexing lowers to bounds-checked `.at(idx)`: one compare per ready
+//     event, against a blocking syscall — not a hot-path concern.
+//   * the loop counter MUST stay `i32`, matching epoll_wait's SIGNED
+//     return. With a `usize` counter and `nev as usize`, the error return
+//     (-1 on EINTR/EBADF) becomes SIZE_MAX and the loop spins forever
+//     over uninitialised events; the signed form reproduces the old
+//     `for (int i = 0; i < nev; i++)` exactly. Verified: nev < 0 returns
+//     with zero handler calls.
+//   * 100 is spelled twice (array extent and epoll_wait's maxevents)
+//     because a DSL array extent must be a literal; it replaces the old
+//     `const int max_nev = 100`.
+#if RUSTYCPP_RUST
+fn epoll_wait_impl<F>(poll_fd: i32, on_ready: F) {
+    let mut evlist: [epoll_event; 100] = Default::default();
+    let nev: i32 = unsafe { epoll_wait(poll_fd, evlist.as_mut_ptr(), 100, 1) };
+    let mut i: i32 = 0;
+    while i < nev {
+        let idx: usize = i as usize;
+        let events: u32 = evlist[idx].events;
+        let mut ready_events: i32 = 0;
+        if (events & EPOLLIN) != 0 {
+            ready_events |= PollReady::READABLE;
+        }
+        if (events & EPOLLOUT) != 0 {
+            ready_events |= PollReady::WRITABLE;
+        }
+        if (events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) != 0 {
+            ready_events |= PollReady::ERROR;
+        }
+        if ready_events != 0 {
+            on_ready(evlist[idx].data.fd, ready_events);
+        }
+        i += 1;
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll_wrapper.2 version=1 rust_sha256=fd694ed9769ec0f5b512fde118db7233d7049837c483c8e66256eac9a4a328d9*/
+template<typename F>
+void epoll_wait_impl(int32_t poll_fd, F on_ready);
+
+template<typename F>
+void epoll_wait_impl(int32_t poll_fd, F on_ready) {
+    std::array<epoll_event, 100> evlist = rusty::default_like<std::array<epoll_event, 100>>();
+    const int32_t nev = epoll_wait(std::move(poll_fd), rusty::as_mut_ptr(evlist), 100, 1);
+    int32_t i = static_cast<int32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(nev)) {
+        const size_t idx = static_cast<size_t>(i);
+        const uint32_t events = evlist.at(idx).events;
+        int32_t ready_events = static_cast<int32_t>(0);
+        if (((rusty::detail::deref_if_pointer_like(events) & rusty::detail::deref_if_pointer_like(EPOLLIN))) != static_cast<uint32_t>(0)) {
+            ready_events |= PollReady::READABLE;
+        }
+        if (((rusty::detail::deref_if_pointer_like(events) & rusty::detail::deref_if_pointer_like(EPOLLOUT))) != static_cast<uint32_t>(0)) {
+            ready_events |= PollReady::WRITABLE;
+        }
+        if (((rusty::detail::deref_if_pointer_like(events) & (((rusty::detail::deref_if_pointer_like(EPOLLERR) | rusty::detail::deref_if_pointer_like(EPOLLHUP)) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP))))) != static_cast<uint32_t>(0)) {
+            ready_events |= PollReady::ERROR;
+        }
+        if (rusty::detail::deref_if_pointer_like(ready_events) != static_cast<int32_t>(0)) {
+            on_ready(evlist.at(idx).data.fd, std::move(ready_events));
+        }
+        i += 1;
+    }
+}
+/*RUSTYCPP:GEN-END id=epoll_wrapper.2*/
+#endif
 
 //
 // @safe - see comment above.

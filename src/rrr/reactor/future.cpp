@@ -34,6 +34,9 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
+// Reachability: the GEN'd `.clone()` on the Option<Arc<...>> state lowers
+// to rusty::clone (without this it resolves to glibc ::clone).
+#include <rusty/move.hpp>
 // rusty::detail::deref_if_pointer_like / rust_not, which the GEN'd `(*ev)`
 // and `!` lower through (same GMF include as rrr.fiber's).
 #include <rusty/slice.hpp>
@@ -271,38 +274,82 @@ struct FiberFuture {
 };
 /*RUSTYCPP:GEN-END id=future.fiber_future*/
 
-// @unsafe - shares the promise's BoxEvent into a new FiberFuture; throws on a
-// second retrieval. The state clone is the only @unsafe step (Arc refcount).
-template <typename T>
-FiberFuture<T> fiber_promise_get_future(FiberPromise<T>& self) {
-  if (self.future_retrieved_.get()) {
-    throw std::logic_error("FiberFuture already retrieved from FiberPromise");
-  }
-  self.future_retrieved_.set(true);
-  FiberFuture<T> f;
-  f.state_ = self.state_.clone();
-  return f;
+// =============================================================================
+// Hand-off + convenience factories
+// =============================================================================
+//
+// `fiber_promise_get_future` lives down here, after FiberFuture's GEN block,
+// because it needs FiberFuture to be a complete type; the declaration near the
+// top of the file is what lets `FiberPromise::get_future` (defined earlier)
+// call it. All three bodies are plain control flow, so all three are DSL —
+// three lowerings worth knowing:
+//   * `Default::default()` in typed-let position becomes
+//     `rusty::default_like<V>()`. Neither struct has a `default_()` static
+//     (both keep a real `#[cpp_ctor]` constructor), so it falls through to
+//     `V{}` — value-init through that constructor, i.e. exactly the old
+//     `FiberFuture<T> f;`. No construction kernel is needed.
+//   * `.clone()` becomes `rusty::clone(...)`, which routes through
+//     `Option::clone` to an Arc refcount bump. That name lives in
+//     <rusty/move.hpp>, which is why the GMF includes it.
+//   * `let mut` is load-bearing on every binding that is moved out at the end:
+//     a plain `let` emits a `const` local, and `std::move` on a const
+//     move-only local degrades to a (deleted) copy.
+//
+// @safe - the Arc share is a refcount bump through Option::clone; the
+// retrieval guard is the same one-shot check the hand-written version had.
+#if RUSTYCPP_RUST
+// Throws on a second retrieval, then shares the promise's BoxEvent into a
+// fresh (default-constructed, therefore None-state) FiberFuture. `assert!`
+// emits `if (!cond) throw`, so the condition is the inverse of the old guard.
+fn fiber_promise_get_future<T>(self_: &mut FiberPromise<T>) -> FiberFuture<T> {
+    assert!(!self_.future_retrieved_.get(), "FiberFuture already retrieved from FiberPromise");
+    self_.future_retrieved_.set(true);
+    let mut f: FiberFuture<T> = Default::default();
+    f.state_ = self_.state_.clone();
+    f
 }
 
-// =============================================================================
-// Convenience Factory Functions
-// =============================================================================
+// Create a FiberPromise/FiberFuture pair in one call. The `std::pair` return
+// survives the DSL verbatim, so tests/fiber_test.cc's structured binding needs
+// no edit.
+fn make_promise<T>() -> std::pair<FiberPromise<T>, FiberFuture<T>> {
+    let mut promise: FiberPromise<T> = Default::default();
+    let mut future: FiberFuture<T> = promise.get_future();
+    std::make_pair(promise, future)
+}
 
-// @safe - create a FiberPromise/FiberFuture pair in one call.
-template <typename T>
+// Create a FiberFuture that is immediately ready with `value`.
+fn make_ready_future<T>(value: T) -> FiberFuture<T> {
+    let mut promise: FiberPromise<T> = Default::default();
+    let mut future: FiberFuture<T> = promise.get_future();
+    promise.set_value(&value);
+    future
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=future.3 version=1 rust_sha256=63a2f3f46f3897da0883b7673398ce8a52bc8f04d4c36878fd3a27b83d109861*/
+template<typename T>
+FiberFuture<T> fiber_promise_get_future(FiberPromise<T>& self_) {
+    if (!(rusty::detail::rust_not(self_.future_retrieved_.get()))) { throw std::logic_error("FiberFuture already retrieved from FiberPromise"); }
+    self_.future_retrieved_.set(true);
+    FiberFuture<T> f = rusty::default_like<FiberFuture<T>>();
+    f.state_ = rusty::clone(self_.state_);
+    return std::move(f);
+}
+
+template<typename T>
 std::pair<FiberPromise<T>, FiberFuture<T>> make_promise() {
-  FiberPromise<T> promise;
-  FiberFuture<T> future = promise.get_future();
-  return {std::move(promise), std::move(future)};
+    FiberPromise<T> promise = rusty::default_like<FiberPromise<T>>();
+    FiberFuture<T> future = promise.get_future();
+    return std::make_pair(std::move(promise), std::move(future));
 }
 
-// @safe - create a FiberFuture that is immediately ready with `value`.
-template <typename T>
+template<typename T>
 FiberFuture<T> make_ready_future(T value) {
-  FiberPromise<T> promise;
-  FiberFuture<T> future = promise.get_future();
-  promise.set_value(value);
-  return future;
+    FiberPromise<T> promise = rusty::default_like<FiberPromise<T>>();
+    FiberFuture<T> future = promise.get_future();
+    promise.set_value(value);
+    return std::move(future);
 }
+/*RUSTYCPP:GEN-END id=future.3*/
 
 }  // export namespace rrr

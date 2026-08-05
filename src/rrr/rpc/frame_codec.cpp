@@ -689,38 +689,80 @@ void fsr_compact_if_needed(FrameStreamReader& self) {
 
 }  // namespace
 
-// @safe-ish - peeks via `cursor_.fill_buf()` (span); advances the read
-// offset via `cursor_.consume(total)` instead of `read_pos_ += total`.
-// @unsafe - stays a kernel for a NON-OBVIOUS reason: the EXPORT BOUNDARY.
-// Its body is DSL-expressible (tried and verified: fill_buf() binds to a
-// `let`, FrameHeader is a two-field DSL struct, and the peek out-param
-// works as `&header`). But inlining it into the DSL method
-// FrameStreamReader::consume_frame moves this call to
-// fsr_compact_if_needed UP into `export namespace rrr` (lines 26-524),
-// while that kernel is defined in the non-exported `namespace rrr` below.
-// A forward declaration inside the export block is itself exported and
-// does not match a non-exported definition, so it COMPILES and then fails
-// to LINK ("undefined reference to rrr::fsr_compact_if_needed").
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
 //
-// Fixing it means exporting the kernel (a module API change) or
-// restructuring the namespace blocks -- both larger than the 15 lines.
-// Attempted and reverted; see playbook §7.34. Do not retry without
-// deciding on one of those two.
-void fsr_consume_frame(FrameStreamReader& self) {
-    const std::span<const std::uint8_t> rem = self.cursor_.fill_buf();
-    if (rem.size() < kFrameHeaderSize) return;
-
-    FrameHeader header;
-    if (frame_codec_peek_header(rem, header)
-        != FrameDecodeStatus::Complete) {
+// This is the free function `FrameStreamReader::consume_frame` forwards
+// to, and it stays a free function ON PURPOSE. The note that used to sit
+// here called the body un-convertible because of the EXPORT BOUNDARY:
+// inlining it into the DSL method hoists its `fsr_compact_if_needed` call
+// up into `export namespace rrr`, where that non-exported kernel is not
+// the same entity -- it compiles and then fails to link (playbook 7.34).
+// That argument only ever applied to INLINING. Converting the body IN
+// PLACE keeps the call site down here in the impl namespace beside the
+// kernel, so the boundary is never crossed and the method keeps its
+// one-line forwarder. (Once fsr_compact_if_needed itself becomes a DSL
+// method on the struct, the two can be merged and this block folded into
+// FrameStreamReader::consume_frame.)
+//
+// `header_ref` is a NAMED BINDING for the same reason as in next_frame:
+// frame_codec_peek_header lives in a DIFFERENT `#if RUSTYCPP_RUST` block,
+// so a bare `&mut header` argument would lower to a POINTER and would not
+// bind to its `FrameHeader&` parameter. `self_` by contrast is a `&mut`
+// PARAMETER, which lowers to a C++ reference, so it passes straight
+// through to fsr_compact_if_needed with no binding dance.
+//
+// @safe - peeks via `cursor_.fill_buf()` (a `std::span`) and advances the
+// read offset via `cursor_.consume(total)`; no raw pointers and no
+// `buf_.data() + read_pos_` arithmetic. The hand-written version left
+// `FrameHeader header;` uninitialized; the DSL zero-initializes it, which
+// is the same observable behaviour (peek_header fills both fields before
+// anything reads them) and strictly safer.
+#if RUSTYCPP_RUST
+fn fsr_consume_frame(self_: &mut FrameStreamReader) {
+    let rem: &[u8] = self_.cursor_.fill_buf();
+    if rem.len() < kFrameHeaderSize {
         return;
     }
-    const std::size_t total = static_cast<std::size_t>(header.total_frame_size());
-    if (rem.size() < total) return;
 
-    self.cursor_.consume(total);
-    fsr_compact_if_needed(self);
+    let mut header: FrameHeader = FrameHeader {
+        payload_size: 0,
+        extended_header_flag: false,
+    };
+    let header_ref: &mut FrameHeader = &mut header;
+    if frame_codec_peek_header(rem, header_ref) != FrameDecodeStatus::Complete {
+        return;
+    }
+
+    let total: usize = header.total_frame_size() as usize;
+    if rem.len() < total {
+        return;
+    }
+
+    self_.cursor_.consume(total);
+    fsr_compact_if_needed(self_);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.10 version=1 rust_sha256=2823155c543f91643249d5f237dabeec00634064f5ade9ceb3b0d4d5dfcb048b*/
+void fsr_consume_frame(FrameStreamReader& self_) {
+    const std::span<const uint8_t> rem = self_.cursor_.fill_buf();
+    if (rusty::len(rem) < rusty::detail::deref_if_pointer_like(kFrameHeaderSize)) {
+        return;
+    }
+    FrameHeader header = FrameHeader{.payload_size = 0, .extended_header_flag = false};
+    FrameHeader& header_ref = header;
+    if (frame_codec_peek_header(rem, header_ref) != rusty::detail::deref_if_pointer_like(FrameDecodeStatus_Complete())) {
+        return;
+    }
+    const size_t total = static_cast<size_t>(header.total_frame_size());
+    if (rusty::len(rem) < rusty::detail::deref_if_pointer_like(total)) {
+        return;
+    }
+    self_.cursor_.consume(std::move(total));
+    fsr_compact_if_needed(self_);
+}
+/*RUSTYCPP:GEN-END id=frame_codec.10*/
 
 
 }  // namespace rrr
