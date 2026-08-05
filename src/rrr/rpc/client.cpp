@@ -556,13 +556,8 @@ FutureAttr FutureAttr::new_(FutureCallback cb) {
 // overload (the dead `Future*` overload is dropped; the `FutureResult`
 // callers now `(void)`-discard).
 
-// @safe - the one irreducible std::chrono interop point: build the
-// `std::chrono::duration<double>` that rusty::Condvar::wait_timeout_while
-// requires. Minimized to a single expression so the rest of timed_wait can
-// live in the DSL.
-inline std::chrono::duration<double> fut_secs(double sec) {
-  return std::chrono::duration<double>(sec);
-}
+// (fut_secs is gone: rusty::Condvar::wait_timeout_us_while takes a plain
+//  microsecond count, so std::chrono never appears in rrr code.)
 
 #if RUSTYCPP_RUST
 struct FutureState {
@@ -628,8 +623,8 @@ impl Future {
 
     fn timed_wait(&self, sec: f64) {
         let guard = self.state_.lock().unwrap();
-        let duration = fut_secs(sec);
-        let mut result = self.ready_cond_.wait_timeout_while(guard, duration, |s| !s.ready && !s.timed_out).unwrap();
+        let micros: u64 = (sec * 1000000.0) as u64;
+        let mut result = self.ready_cond_.wait_timeout_us_while(guard, micros, |s| !s.ready && !s.timed_out).unwrap();
         let mut guard = result.0;
         let condition_became_false: bool = result.1;
         if !condition_became_false && !(*guard).ready {
@@ -742,7 +737,7 @@ impl Future {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=b22eaab88dcd6f184fc4c68c7b5ed9ec91d069477ee3b2e0a4798fc77f6fd49d*/
+/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=ea710e217ac6301cf4b96dc998143e584687bc8640671c87b081c84dee6ba9fe*/
 struct FutureState;
 struct Future;
 
@@ -827,8 +822,8 @@ void Future::wait() const {
 
 void Future::timed_wait(double sec) const {
     auto guard = this->state_.lock().unwrap();
-    const auto duration = fut_secs(std::move(sec));
-    auto result = this->ready_cond_.wait_timeout_while(std::move(guard), std::move(duration), [&](auto&& s) { return rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ready); }) { return (__r.ready); } else if constexpr (requires { (__r.ready_field); }) { return (__r.ready_field); } else if constexpr (requires { ((*__r).ready); }) { return ((*__r).ready); } else { return ((*__r).ready_field); } }(s)) && rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.timed_out); }) { return (__r.timed_out); } else if constexpr (requires { (__r.timed_out_field); }) { return (__r.timed_out_field); } else if constexpr (requires { ((*__r).timed_out); }) { return ((*__r).timed_out); } else { return ((*__r).timed_out_field); } }(s)); }).unwrap();
+    const uint64_t micros = rusty::float_to_int_cast<uint64_t>((rusty::detail::deref_if_pointer_like(sec) * 1000000.0));
+    auto result = this->ready_cond_.wait_timeout_us_while(std::move(guard), std::move(micros), [&](auto&& s) { return rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ready); }) { return (__r.ready); } else if constexpr (requires { (__r.ready_field); }) { return (__r.ready_field); } else if constexpr (requires { ((*__r).ready); }) { return ((*__r).ready); } else { return ((*__r).ready_field); } }(s)) && rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.timed_out); }) { return (__r.timed_out); } else if constexpr (requires { (__r.timed_out_field); }) { return (__r.timed_out_field); } else if constexpr (requires { ((*__r).timed_out); }) { return ((*__r).timed_out); } else { return ((*__r).timed_out_field); } }(s)); }).unwrap();
     auto guard_shadow1 = std::move(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(result)));
     const bool condition_became_false = rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(result));
     if (!condition_became_false && rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(guard_shadow1)).ready)) {
@@ -3953,7 +3948,7 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
       if (self.state_machine_.is_connected()) {
         return 0;
       }
-      rusty::thread::sleep(std::chrono::milliseconds(5));
+      Time::sleep(5 * 1000);
     }
 
     if (self.state_machine_.is_connected()) {
@@ -4067,7 +4062,7 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
 
     uint32_t delay_ms = calc.next_delay_ms();
     if (delay_ms > 0) {
-      rusty::thread::sleep(std::chrono::milliseconds(delay_ms));
+      Time::sleep(static_cast<uint64_t>(delay_ms) * 1000);
     }
 
     if (self.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire)) {
@@ -4448,7 +4443,7 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
 
     auto weak_conn = self.weak_self_;
     rusty::thread::spawn([weak_conn, rpc_id, effective_options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
-        auto start_time = std::chrono::steady_clock::now();
+        const uint64_t start_us = Time::now(true);
         uint16_t retry_count = 0;
 
         auto classify_request_failure = [](int err) -> TimeoutType {
@@ -4494,9 +4489,7 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
         };
 
         while (true) {
-            auto now = std::chrono::steady_clock::now();
-            uint64_t elapsed_ms = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count());
+            uint64_t elapsed_ms = (Time::now(true) - start_us) / 1000;
             if (effective_options.is_total_timeout_exceeded(elapsed_ms)) {
                 set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
                 return;
@@ -4564,17 +4557,14 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
             uint64_t backoff_delay_ms = effective_options.calculate_delay_ms(retry_count);
             if (backoff_delay_ms > 0) {
                 if (effective_options.total_timeout_ms > 0) {
-                    auto before_sleep = std::chrono::steady_clock::now();
-                    uint64_t elapsed_before_sleep = static_cast<uint64_t>(
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                            before_sleep - start_time).count());
+                    uint64_t elapsed_before_sleep = (Time::now(true) - start_us) / 1000;
                     uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_before_sleep);
                     if (remaining_ms == 0 || backoff_delay_ms >= remaining_ms) {
                         set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
                         return;
                     }
                 }
-                rusty::thread::sleep(std::chrono::milliseconds(backoff_delay_ms));
+                Time::sleep(backoff_delay_ms * 1000);
             }
 
             retry_count++;

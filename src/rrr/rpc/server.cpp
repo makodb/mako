@@ -1112,11 +1112,11 @@ rusty::Option<rusty::Arc<PollThread>> server_resolve_poll_thread(rusty::Option<r
 // Two micro-kernels: a steady-clock read and a random_device draw. Both
 // are std objects the DSL grammar cannot construct; everything built ON
 // them (the mix, the mask, the zero guard) is DSL below.
-// @unsafe - std::chrono::steady_clock.
+// @safe - rrr's own clock (Time::now microseconds, scaled to the nano
+// range the id-mix historically used; entropy comes from the
+// random_u64 mix, not clock granularity). std::chrono is gone.
 inline uint64_t server_now_nanos() {
-    auto now = std::chrono::steady_clock::now().time_since_epoch();
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+    return Time::now(true) * 1000;
 }
 
 // @unsafe - constructs a std::random_device and draws from it.
