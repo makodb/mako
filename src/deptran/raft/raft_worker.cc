@@ -16,6 +16,7 @@
 #include <rusty/slice.hpp>
 
 import std;
+import rusty;
 
 // @external: {
 //   Log_info: [safe, (...) -> void]
@@ -344,19 +345,20 @@ void RaftWorker::SetupBase() {
         return;
       }
       // Notify all partitions that currently have callback registrations.
-      std::set<uint32_t> par_ids;
+      auto par_ids = rusty::BTreeSet<uint32_t>::new_();
       for (const auto& kv : leader_callbacks_by_partition_) {
         par_ids.insert(kv.first);
       }
       for (const auto& kv : follower_callbacks_by_partition_) {
         par_ids.insert(kv.first);
       }
-      if (raft_worker_should_notify_default_partition(!par_ids.empty())) {
+      if (raft_worker_should_notify_default_partition(!par_ids.is_empty())) {
         uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
         NotifyRaftLeaderChange(par_id, leader);
       } else {
-        for (uint32_t pid : par_ids) {
-          NotifyRaftLeaderChange(pid, leader);
+        auto iter = par_ids.iter();
+        for (auto pid = iter.next(); pid.is_some(); pid = iter.next()) {
+          NotifyRaftLeaderChange(pid.unwrap(), leader);
         }
       }
     });
@@ -679,8 +681,9 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   }
 
   // Use a simple incrementing tx_id (in production this would be a global txn ID)
-  static std::atomic<txnid_t> next_tx_id{1};
-  txnid_t tx_id = next_tx_id.fetch_add(1);
+  static rusty::sync::atomic::Atomic<txnid_t> next_tx_id{1};
+  txnid_t tx_id = next_tx_id.fetch_add(
+      1, rusty::sync::atomic::Ordering::Relaxed);
 
   // Use the production helper to create proper TpcCommitCommand{cmd_=VecPieceData}
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);

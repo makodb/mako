@@ -14,6 +14,8 @@
 #include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
 
+import rusty;
+
 // @external: {
 //   verify: [safe, (bool) -> void],
 //   clock_gettime: [safe, (int, timespec*) -> int],
@@ -129,7 +131,8 @@ class RaftServiceImpl : public RaftService {
   // @unsafe - stores borrowed service pointers; registry does not own entries.
   // The map and its synchronization live in one Rusty mutex so callers cannot
   // access the registry outside its lock scope.
-  static rusty::Mutex<std::map<siteid_t, RaftServiceImpl*>> service_registry_;
+  static rusty::Mutex<rusty::BTreeMap<siteid_t, RaftServiceImpl*>>
+      service_registry_;
 
   // @unsafe - borrowed server pointer, site id, and restart poll-thread handle
   // live in a DSL core. Static registry and RPC overrides stay as C++ bridge

@@ -360,8 +360,9 @@ RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) {
 // rebuilding the RPC service or poll thread.
 // =====================================================================
 
-rusty::Mutex<std::map<siteid_t, RaftServiceImpl*>>
-    RaftServiceImpl::service_registry_{std::map<siteid_t, RaftServiceImpl*>{}};
+rusty::Mutex<rusty::BTreeMap<siteid_t, RaftServiceImpl*>>
+    RaftServiceImpl::service_registry_{
+        rusty::BTreeMap<siteid_t, RaftServiceImpl*>::new_()};
 
 // @unsafe - C-style cast from scheduler base to borrowed RaftServer pointer.
 // The service stores the pointer atomically but does not own the server.
@@ -373,7 +374,7 @@ RaftServiceImpl::RaftServiceImpl(TxLogServer *sched, rusty::Arc<rrr::PollThread>
   RaftServer* svr = (RaftServer*)sched;
   {
     auto registry = service_registry_.lock().unwrap();
-    (*registry)[state_core_.site_id()] = this;
+    registry->insert(state_core_.site_id(), this);
   }
   struct timespec curr_time;
   clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
@@ -382,11 +383,11 @@ RaftServiceImpl::RaftServiceImpl(TxLogServer *sched, rusty::Arc<rrr::PollThread>
 
 void RaftServiceImpl::UpdateServer(siteid_t site_id, RaftServer* new_svr) {
   auto registry = service_registry_.lock().unwrap();
-  auto it = registry->find(site_id);
-  if (it != registry->end()) {
+  auto service = registry->get(site_id);
+  if (service.is_some()) {
     // Publish a borrowed server pointer for future RPC handlers. nullptr is
     // intentional during Kill(); handlers then return disconnected defaults.
-    it->second->state_core_.set_server(new_svr);
+    service.unwrap()->state_core_.set_server(new_svr);
     Log_info("[RAFT-SERVICE] UpdateServer: site {} -> {}", site_id, (void*)new_svr);
   } else {
     Log_warn("[RAFT-SERVICE] UpdateServer: site {} not found in registry", site_id);
@@ -402,11 +403,11 @@ RaftServer* RaftServiceImpl::GetServer() {
 rusty::Option<rusty::Arc<rrr::PollThread>>
 RaftServiceImpl::GetPollThread(siteid_t site_id) {
   auto registry = service_registry_.lock().unwrap();
-  auto it = registry->find(site_id);
+  auto service = registry->get(site_id);
   if (raft_service_poll_thread_available(
-          it != registry->end(),
-          it != registry->end() && it->second->state_core_.has_poll_thread())) {
-    return it->second->state_core_.clone_poll_thread();
+          service.is_some(),
+          service.is_some() && service.unwrap()->state_core_.has_poll_thread())) {
+    return service.unwrap()->state_core_.clone_poll_thread();
   }
   return rusty::None;
 }
