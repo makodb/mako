@@ -2815,6 +2815,9 @@ if(BUILD_TESTS)
     # nontxnPut/Insert/Remove RPCs + remoteGet end-to-end over the
     # loopback fake transport.
     add_executable(test_mako_nontxn_distributed tests/test_mako_nontxn_distributed.cc)
+    # Out-of-tree build dirs have no ./src or ../src — bake the source root.
+    target_compile_definitions(test_mako_nontxn_distributed PRIVATE
+        MAKO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     target_include_directories(test_mako_nontxn_distributed PRIVATE
         ${TEST_INCLUDE_DIRS}
         ${GTEST_INCLUDE_DIRS}

@@ -55,6 +55,12 @@ mbta_ordered_index* g_server_tbl = nullptr;  // is_remote=false → local store
 
 std::string config_path() {
     const char* candidates[] = {
+#ifdef MAKO_SOURCE_DIR
+        // Out-of-tree build dirs (the pristine gate tree) resolve via the
+        // baked source root; the relative forms only work when the build
+        // dir nests inside the source tree.
+        MAKO_SOURCE_DIR "/src/mako/config/local-shards2-warehouses1.yml",
+#endif
         "./src/mako/config/local-shards2-warehouses1.yml",   // repo root
         "../src/mako/config/local-shards2-warehouses1.yml",  // build dir
     };
