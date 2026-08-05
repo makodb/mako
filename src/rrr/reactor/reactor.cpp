@@ -2740,11 +2740,13 @@ Reactor::~Reactor() noexcept(false) {
 
 // ==== Member templates hoisted out of `class Reactor` (Goal 0 Stage A:
 // a DSL struct's GEN cannot mix in hand-written members, so the class's
-// template members become free function templates; they stay hand-written
-// C++ and remain in the variadic rewrite backlog). ====
+// template members become free function templates). ====
 
 // @safe - Arc::make is @safe in the library. Hoisted out of `class Reactor`
-// (was the private member template `make_arc`).
+// (was the private member template `make_arc`). Still hand-written: a
+// variadic perfect-forwarding parameter pack has no DSL spelling, so this
+// one stays in the variadic rewrite backlog. Its remaining callers are in
+// reactor_spawn_stackless_task_impl (the Task<void> sibling below).
 template <typename U, typename... Args>
 inline rusty::Arc<U> reactor_make_arc(Args&&... args) {
   return rusty::Arc<U>::make(std::forward<Args>(args)...);
@@ -2753,64 +2755,188 @@ inline rusty::Arc<U> reactor_make_arc(Args&&... args) {
 // @safe - Spawn a stackless task with a completion callback when ready.
 // Hoisted out of `class Reactor` (member template; a DSL struct's GEN is
 // fully generated so hand-written members cannot remain). Behaviour is
-// identical; `self` replaces the implicit `this`.
-template <typename T, typename OnReady>
-inline void reactor_spawn_stackless_task_with_result(const Reactor& self, rusty::Task<T> task, OnReady on_ready) {
-  constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
-  struct EarlyWakeState {
-    explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
-    const Reactor* reactor;
-    mutable std::atomic<size_t> idx{kUnregisteredSlot};
-    mutable std::atomic<bool> pending_wake{false};
-  };
-
-  // SAFETY: shared state is heap-owned; reactor outlives callback execution.
-  auto early_wake = reactor_make_arc<EarlyWakeState>(&self);
-
-  rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
-    size_t idx = early_wake->idx.load(std::memory_order_acquire);
-    if (idx == kUnregisteredSlot) {
-      early_wake->pending_wake.store(true, std::memory_order_release);
-      return;
+// identical to the former member; `self_` replaces the implicit `this`.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block. A
+// two-parameter DSL generic fn lowers to the same `template <typename T,
+// typename OnReady>`, and the two fn-body-local structs lower verbatim
+// (hoisted to the top of the emitted body, where they can still name the
+// enclosing template's T / OnReady — which is exactly why neither carries
+// generic parameters of its own: a local struct with its own <T, OnReady>
+// emits a non-template declaration against a templated use site).
+//
+// Four things read differently from the hand-written original; each is
+// forced by a lowering rule, not by choice:
+//   * the parameter is `self_` — a DSL parameter literally named `self` is
+//     swallowed into a receiver and the body emits `this->`.
+//   * `std::atomic` + `std::memory_order` become
+//     `rusty::sync::atomic::{AtomicUsize,AtomicBool}` + `Ordering::*`
+//     (`exchange` is spelled `swap`). That also DELETES the `mutable` on
+//     both wake-state fields: rusty's atomic load/store/swap are already
+//     const, so they reach through `Arc::operator->`'s `const T*`.
+//   * the two genuinely mutable fields (the Task and the callback) become
+//     `RefCell` — the DSL's only interior mutability for move-only types.
+//     The emitted poller closure captures `state` by value and is NOT
+//     `mutable`, so every access through it is const. The task borrow is
+//     scoped so that no borrow is held while `on_ready` runs, matching the
+//     original (which held none).
+//   * `early_wake` is `.clone()`d into each closure: a DSL `move ||`
+//     closure MOVES its captures, and this body reads `early_wake` again
+//     after registering the poller.
+// `usize::MAX` lowers to `std::numeric_limits<size_t>::max()`, so
+// kUnregisteredSlot stays a plain function-local (no namespace-scope hoist
+// is needed, and the Task<void> sibling's own copy is untouched).
+#if RUSTYCPP_RUST
+fn reactor_spawn_stackless_task_with_result<T, OnReady>(self_: &Reactor, task: rusty::Task<T>, on_ready: OnReady) {
+    // SAFETY: shared state is heap-owned; the reactor outlives callback
+    // execution. Both counters are atomic because the waker may fire from
+    // another thread.
+    struct EarlyWakeState {
+        reactor: *const Reactor,
+        idx: rusty::sync::atomic::AtomicUsize,
+        pending_wake: rusty::sync::atomic::AtomicBool
     }
-    early_wake->reactor->enqueue_stackless_task(idx);
-  }};
-  rusty::Context early_ctx{&early_waker};
-  auto early_poll = task.poll(early_ctx);
-  if (early_poll.is_ready()) {
-    on_ready(std::move(early_poll.value));
-    return;
-  }
-
-  struct TaskState {
-    mutable rusty::Task<T> task;
-    mutable rusty::Option<OnReady> on_ready;
-    rusty::Arc<EarlyWakeState> early_wake;
-
-    TaskState(rusty::Task<T> t, OnReady cb, rusty::Arc<EarlyWakeState> ew)
-        : task(std::move(t)), on_ready(std::move(cb)), early_wake(std::move(ew)) {}
-  };
-
-  // SAFETY: TaskState is only accessed through the Arc captured by the poller.
-  auto state = reactor_make_arc<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
-  auto idx = self.register_stackless_poller([state](rusty::Context& ctx) mutable {
-    auto poll_result = state->task.poll(ctx);
-    if (!poll_result.is_ready()) {
-      return false;
+    // SAFETY: TaskState is only reached through the Arc captured by the
+    // poller closure.
+    struct TaskState {
+        task: rusty::RefCell<rusty::Task<T>>,
+        on_ready: rusty::RefCell<rusty::Option<OnReady>>
     }
-    state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
-    if (state->on_ready.is_some()) {
-      // unwrap() consumes: moves out and sets to None in one step.
-      auto cb = state->on_ready.unwrap();
-      cb(std::move(poll_result.value));
+
+    let kUnregisteredSlot: usize = usize::MAX;
+    let rp: *const Reactor = &raw const self_;
+    let seed = EarlyWakeState {
+        reactor: rp,
+        idx: rusty::sync::atomic::AtomicUsize::new(kUnregisteredSlot),
+        pending_wake: rusty::sync::atomic::AtomicBool::new(false)
+    };
+    let early_wake: rusty::Arc<EarlyWakeState> = rusty::Arc::<EarlyWakeState>::make(seed);
+
+    // Each `move ||` closure gets its own clone; early_wake is read again
+    // after the poller is registered.
+    let ew_waker = early_wake.clone();
+    let mut early_waker = rusty::Waker {
+        wake_fn: move || {
+            let slot = ew_waker.idx.load(rusty::sync::atomic::Ordering::Acquire);
+            if slot == kUnregisteredSlot {
+                ew_waker.pending_wake.store(true, rusty::sync::atomic::Ordering::Release);
+            } else {
+                (*ew_waker.reactor).enqueue_stackless_task(slot);
+            }
+        }
+    };
+    let wp: *mut rusty::Waker = &raw mut early_waker;
+    let mut early_ctx = rusty::Context { waker: wp };
+    // Named binding: a bare `&mut local` argument lowers to a pointer, and a
+    // last-use local argument is std::move()d — neither binds
+    // `Task::poll(rusty::Context&)`. An annotated `&mut` let emits a real
+    // C++ reference.
+    let ectx: &mut rusty::Context = &mut early_ctx;
+    let mut early_poll = task.poll(ectx);
+    if early_poll.is_ready() {
+        on_ready(early_poll.value);
+        return;
     }
-    return true;
-  });
-  state->early_wake->idx.store(idx, std::memory_order_release);
-  if (state->early_wake->pending_wake.exchange(false, std::memory_order_acq_rel)) {
-    self.enqueue_stackless_task(idx);
-  }
+
+    let ts = TaskState {
+        task: rusty::RefCell::<rusty::Task<T>>::new(task),
+        on_ready: rusty::RefCell::<rusty::Option<OnReady>>::new(rusty::Some(on_ready))
+    };
+    let state: rusty::Arc<TaskState> = rusty::Arc::<TaskState>::make(ts);
+    let ew_poll = early_wake.clone();
+    let idx = self_.register_stackless_poller(move |ctx: &mut rusty::Context| -> bool {
+        // Scoped so the task borrow is released before on_ready runs.
+        let mut poll_result: rusty::Poll<T> = rusty::Poll::<T>::pending();
+        {
+            let tguard = state.task.borrow_mut();
+            poll_result = (*tguard).poll(ctx);
+        }
+        if !poll_result.is_ready() {
+            return false;
+        }
+        ew_poll.idx.store(kUnregisteredSlot, rusty::sync::atomic::Ordering::Release);
+        // take() moves the callback out and leaves None, so it fires once.
+        let mut cb: rusty::Option<OnReady> = None;
+        {
+            let cbguard = state.on_ready.borrow_mut();
+            cb = (*cbguard).take();
+        }
+        if cb.is_some() {
+            let mut f = cb.unwrap();
+            f(poll_result.value);
+        }
+        true
+    });
+    early_wake.idx.store(idx, rusty::sync::atomic::Ordering::Release);
+    if early_wake.pending_wake.swap(false, rusty::sync::atomic::Ordering::AcqRel) {
+        self_.enqueue_stackless_task(idx);
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.27 version=1 rust_sha256=d4ccf3448df318d9e5f90dd4096bf126a37ee2c7d83e5e8511903ffa1d3cd837*/
+template<typename T, typename OnReady>
+void reactor_spawn_stackless_task_with_result(const Reactor& self_, rusty::Task<T> task, OnReady on_ready) {
+    struct EarlyWakeState {
+        const Reactor* reactor;
+        rusty::sync::atomic::AtomicUsize idx;
+        rusty::sync::atomic::AtomicBool pending_wake;
+    };
+    struct TaskState {
+        rusty::RefCell<rusty::Task<T>> task;
+        rusty::RefCell<rusty::Option<OnReady>> on_ready;
+    };
+    size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
+    const Reactor* rp = &self_;
+    auto seed = EarlyWakeState{.reactor = rp, .idx = rusty::sync::atomic::AtomicUsize::new_(std::move(kUnregisteredSlot)), .pending_wake = rusty::sync::atomic::AtomicBool::new_(false)};
+    const rusty::Arc<EarlyWakeState> early_wake = rusty::Arc<EarlyWakeState>::make(std::move(seed));
+    auto ew_waker = rusty::clone(early_wake);
+    auto early_waker = rusty::Waker{.wake_fn = [=, ew_waker = std::move(ew_waker), kUnregisteredSlot = std::move(kUnregisteredSlot)]() {
+const auto slot = (*ew_waker).idx.load(rusty::sync::atomic::Ordering::Acquire);
+if (rusty::detail::deref_if_pointer_like(slot) == rusty::detail::deref_if_pointer_like(kUnregisteredSlot)) {
+    (*ew_waker).pending_wake.store(true, rusty::sync::atomic::Ordering::Release);
+} else {
+    ((*(*ew_waker).reactor)).enqueue_stackless_task(std::move(slot));
+}
+}};
+    rusty::Waker* wp = &early_waker;
+    auto early_ctx = rusty::Context{.waker = wp};
+    rusty::Context& ectx = early_ctx;
+    auto early_poll = task.poll(ectx);
+    if (early_poll.is_ready()) {
+        on_ready(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.value); }) { return (__r.value); } else if constexpr (requires { (__r.value_field); }) { return (__r.value_field); } else if constexpr (requires { ((*__r).value); }) { return ((*__r).value); } else { return ((*__r).value_field); } }(early_poll)));
+        return;
+    }
+    auto ts = TaskState{.task = rusty::RefCell<rusty::Task<T>>::new_(std::move(task)), .on_ready = rusty::RefCell<rusty::Option<OnReady>>::new_(rusty::Option<OnReady>(std::move(on_ready)))};
+    rusty::Arc<TaskState> state = rusty::Arc<TaskState>::make(std::move(ts));
+    auto ew_poll = rusty::clone(early_wake);
+    const auto idx = self_.register_stackless_poller([=, ew_poll = std::move(ew_poll), kUnregisteredSlot = std::move(kUnregisteredSlot), state = std::move(state)](rusty::Context& ctx) -> bool {
+rusty::Poll<T> poll_result = rusty::Poll<T>::pending();
+{
+    auto tguard = (*state).task.borrow_mut();
+    poll_result = ((*tguard)).poll(ctx);
+}
+if (rusty::detail::rust_not(poll_result.is_ready())) {
+    return false;
+}
+(*ew_poll).idx.store(std::move(kUnregisteredSlot), rusty::sync::atomic::Ordering::Release);
+rusty::Option<OnReady> cb = rusty::Option<OnReady>{rusty::None};
+{
+    auto cbguard = (*state).on_ready.borrow_mut();
+    cb = ((*cbguard)).take();
+}
+if (cb.is_some()) {
+    OnReady f = cb.unwrap();
+    f(std::move(poll_result.value));
+}
+return true;
+});
+    (*early_wake).idx.store(std::move(idx), rusty::sync::atomic::Ordering::Release);
+    if ((*early_wake).pending_wake.swap(false, rusty::sync::atomic::Ordering::AcqRel)) {
+        self_.enqueue_stackless_task(std::move(idx));
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.27*/
 
 // @unsafe - Creates std::shared_ptr<Event> with perfect forwarding and polymorphism support
 // SAFETY: Uses std::shared_ptr for mutable access and polymorphism. Lifetime is safe because:
@@ -5471,93 +5597,250 @@ rusty::Rc<rusty::RefCell<PollThreadWorker>> pollworker_create(PollCmdReceiver re
 }
 /*RUSTYCPP:GEN-END id=reactor.37*/
 
-void pollworker_poll_loop(PollThreadWorker& self) {
-  Log_debug("[poll_loop] Starting poll loop");
-  while (!self.stop_) {
-    pollworker_trigger_job(self);
-
-    // Wait for events (epoll_wait with short timeout)
-    // Dispatch through proxy storage by fd; no Pollable* userdata assumptions.
-    self.poll_.Wait([&self](int fd, int ready_events) {
-      auto poll_opt = self.fd_to_pollable_.get(fd);
-      if (poll_opt.is_none()) {
-        return;
-      }
-      auto& poll = poll_opt.unwrap();
-
-      if (ready_events & PollReady::READABLE) {
-        poll->handle_read();
-      }
-      if (ready_events & PollReady::WRITABLE) {
-        int new_mode = poll->handle_write();
-        if (new_mode != PollMode::NO_CHANGE) {
-          pollworker_do_update_mode(self, fd, new_mode);
-        }
-      }
-      if (ready_events & PollReady::ERROR) {
-        poll->handle_error();
-      }
-    });
-
-    // Process commands from channel (non-blocking try_recv)
-    pollworker_process_commands(self);
-
-    pollworker_trigger_job(self);
-
-    // Process deferred removals
-    pollworker_process_pending_removals(self);
-
-    pollworker_trigger_job(self);
-    Reactor::get_reactor()->run_loop(false, true);
-
-    // Check for pending write updates (set by end_reply() during fiber execution)
-    // @unsafe - reads a pollable's interior-mutable pending_write_update_
-    // flag through the shared Arc; no cast is involved.
-    for (auto [fd, poll] : self.fd_to_pollable_) {
-      if (poll->check_pending_write_update()) {
-        pollworker_do_update_mode(self, fd, PollMode::READ | PollMode::WRITE);
-      }
-    }
-
-    // Check for pollables closed by handle_error() and remove them
-    // This prevents fd reuse issues when old connection is closed but not removed
-    rusty::Vec<int> closed_fds;
-    for (auto [fd, poll] : self.fd_to_pollable_) {
-      if (poll->is_closed()) {
-        closed_fds.push(fd);
-      }
-    }
-    for (int fd : closed_fds) {
-      auto proxy_opt = self.fd_to_pollable_.get(fd);
-      if (proxy_opt.is_some()) {
-        // Remove from epoll if still registered
-        if (self.mode_.contains_key(fd)) {
-          self.poll_.Remove(fd);
-        }
-
-        // Invoke close callback before erasing map entry so cleanup hooks run.
-        // HashMap::get now returns Option<V&>; unwrap() is already the
-        // PollableProxy reference, no extra deref.
-        proxy_opt.unwrap()->close();
-
-        self.fd_to_pollable_.remove(fd);
-        self.mode_.remove(fd);
-      }
-    }
-  }
-
-  Log_debug("[poll_loop] Exited while loop (self.stop_=true), starting cleanup");
-  // Shutdown cleanup - remove all registered pollables
+// @unsafe { PAIR-YIELDING MAP ITERATION — the one wall left in poll_loop.
+// `for (auto [fd, poll] : self.fd_to_pollable_)` destructures the
+// `std::tuple<const K&, V&>` hashbrown's stl_iter_t yields, and the DSL
+// has no spelling for that binding (same wall as quorum_collect_dangling).
+// Copying just the KEY SET out is enough: with an indexable `Vec<i32>` in
+// hand, all three of poll_loop's map sweeps become plain DSL loops that
+// re-`get()` the proxy per fd, so every virtual dispatch and every policy
+// decision stays in the DSL body. Same shape as pollworker_take_removals.
+// Cost is one Vec<int> plus one hash lookup per registered fd per poll
+// iteration, against an epoll_wait syscall and the same N virtual calls
+// the two hand-written sweeps already made. }
+rusty::Vec<int> pollworker_snapshot_fds(PollThreadWorker& self) {
+  rusty::Vec<int> fds;
   for (auto [fd, poll] : self.fd_to_pollable_) {
-    if (self.mode_.contains_key(fd)) {
-      self.poll_.Remove(fd);
-    }
+    fds.push(fd);
   }
-  self.fd_to_pollable_.clear();
-  self.mode_.clear();
-  self.pending_remove_.clear();
-  Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
+  return fds;
 }
+
+// The poll thread's main loop as inline Rust DSL. The structure is
+// unchanged from the hand-written original: epoll_wait -> channel
+// commands -> deferred removals -> reactor run_loop -> pending-write
+// sweep -> closed-pollable sweep, then a shutdown pass that unregisters
+// everything and drops the maps.
+//
+// Lowering notes (each one was a stated blocker that has since expired):
+//   * the `Wait` callback is a plain (non-`move`) DSL closure, so it
+//     emits a by-reference `[&]` lambda — exactly the capture the old
+//     hand-written `[&self]` had, and the only capture that is correct
+//     here (the worker outlives the call).
+//   * `PollMode::` / `PollReady::` are namespace constants, not DSL
+//     enums, so they lower as plain paths (no variant-call trap).
+//   * reaching a virtual through the map needs the named-Box binding
+//     `let p: &mut Box<PollableBase> = opt.unwrap();` so the call lowers
+//     to `->` instead of copying the move-only Box (playbook §7.13, the
+//     idiom pollworker_close_proxy_of already ships).
+//   * the three `for (auto [fd, poll] : ...)` sweeps are replaced by
+//     index loops over the pollworker_snapshot_fds kernel above; the
+//     `w.fd_to_pollable_.get(fd)` re-lookup is what makes each sweep
+//     robust against an entry the previous sweep already erased.
+// NOTE the pre-seeded block id below: a new DSL block in this file
+// auto-numbers into an id an existing block already holds (§7.32).
+#if RUSTYCPP_RUST
+fn pollworker_poll_loop(w: &mut PollThreadWorker) {
+    Log_debug("[poll_loop] Starting poll loop");
+    while !w.stop_ {
+        pollworker_trigger_job(w);
+
+        // Wait for events (epoll_wait with short timeout). Dispatch
+        // through proxy storage by fd; no Pollable* userdata assumptions.
+        w.poll_.Wait(|fd: i32, ready_events: i32| {
+            let poll_opt = w.fd_to_pollable_.get(fd);
+            if poll_opt.is_none() {
+                return;
+            }
+            let p: &mut Box<PollableBase> = poll_opt.unwrap();
+
+            if (ready_events & PollReady::READABLE) != 0i32 {
+                p.handle_read();
+            }
+            if (ready_events & PollReady::WRITABLE) != 0i32 {
+                let new_mode = p.handle_write();
+                if new_mode != PollMode::NO_CHANGE {
+                    pollworker_do_update_mode(w, fd, new_mode);
+                }
+            }
+            if (ready_events & PollReady::ERROR) != 0i32 {
+                p.handle_error();
+            }
+        });
+
+        // Process commands from the channel (non-blocking try_recv).
+        pollworker_process_commands(w);
+        pollworker_trigger_job(w);
+        // Process deferred removals.
+        pollworker_process_pending_removals(w);
+        pollworker_trigger_job(w);
+        let reactor = Reactor::get_reactor();
+        (*reactor).run_loop(false, true);
+
+        // One key snapshot serves both sweeps below: neither of them
+        // adds an fd to fd_to_pollable_ (do_update_mode only touches
+        // mode_/poll_), so the key set cannot grow in between.
+        let fds = pollworker_snapshot_fds(w);
+
+        // Check for pending write updates (set by end_reply() during
+        // fiber execution). Reads a pollable's interior-mutable
+        // pending_write_update_ flag through the shared Arc; no cast.
+        let mut i: usize = 0;
+        while i < fds.len() {
+            let fd = fds[i];
+            let opt = w.fd_to_pollable_.get(fd);
+            if opt.is_some() {
+                let p: &mut Box<PollableBase> = opt.unwrap();
+                if p.check_pending_write_update() {
+                    pollworker_do_update_mode(w, fd, PollMode::READ | PollMode::WRITE);
+                }
+            }
+            i += 1;
+        }
+
+        // Check for pollables closed by handle_error() and remove them.
+        // This prevents fd reuse issues when an old connection is closed
+        // but not removed. Collect first, mutate second — close() can
+        // re-enter, so the scan must not be mutating as it goes.
+        let mut closed_fds: Vec<i32> = Vec::new();
+        let mut j: usize = 0;
+        while j < fds.len() {
+            let fd = fds[j];
+            let opt = w.fd_to_pollable_.get(fd);
+            if opt.is_some() {
+                let p: &mut Box<PollableBase> = opt.unwrap();
+                if p.is_closed() {
+                    closed_fds.push(fd);
+                }
+            }
+            j += 1;
+        }
+        let mut n: usize = 0;
+        while n < closed_fds.len() {
+            let fd = closed_fds[n];
+            let proxy_opt = w.fd_to_pollable_.get(fd);
+            if proxy_opt.is_some() {
+                // Remove from epoll if still registered.
+                if w.mode_.contains_key(fd) {
+                    w.poll_.Remove(fd);
+                }
+                // Invoke the close callback before erasing the map entry
+                // so cleanup hooks run.
+                let p: &mut Box<PollableBase> = proxy_opt.unwrap();
+                p.close();
+                w.fd_to_pollable_.remove(fd);
+                w.mode_.remove(fd);
+            }
+            n += 1;
+        }
+    }
+
+    Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
+    // Shutdown cleanup — unregister all remaining pollables. Only the
+    // keys matter here, so the proxies are never touched.
+    let rest = pollworker_snapshot_fds(w);
+    let mut k: usize = 0;
+    while k < rest.len() {
+        let fd = rest[k];
+        if w.mode_.contains_key(fd) {
+            w.poll_.Remove(fd);
+        }
+        k += 1;
+    }
+    w.fd_to_pollable_.clear();
+    w.mode_.clear();
+    w.pending_remove_.clear();
+    Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.pollworker_poll_loop version=1 rust_sha256=60dfdf154f3ff1a5806dec7fe7b4b23dee82ce58342ad4e9833acd1416282547*/
+void pollworker_poll_loop(PollThreadWorker& w) {
+    Log_debug("[poll_loop] Starting poll loop");
+    while (rusty::detail::rust_not(w.stop_)) {
+        pollworker_trigger_job(w);
+        w.poll_.Wait([&](int32_t fd, int32_t ready_events) {
+auto poll_opt = w.fd_to_pollable_.get(std::move(fd));
+if (poll_opt.is_none()) {
+    return;
+}
+rusty::Box<PollableBase>& p = poll_opt.unwrap();
+if (((rusty::detail::deref_if_pointer_like(ready_events) & PollReady::READABLE)) != static_cast<int32_t>(0)) {
+    p->handle_read();
+}
+if (((rusty::detail::deref_if_pointer_like(ready_events) & PollReady::WRITABLE)) != static_cast<int32_t>(0)) {
+    const auto new_mode = p->handle_write();
+    if (rusty::detail::deref_if_pointer_like(new_mode) != rusty::clone(PollMode::NO_CHANGE)) {
+        pollworker_do_update_mode(w, std::move(fd), std::move(new_mode));
+    }
+}
+if (((rusty::detail::deref_if_pointer_like(ready_events) & PollReady::ERROR)) != static_cast<int32_t>(0)) {
+    p->handle_error();
+}
+});
+        pollworker_process_commands(w);
+        pollworker_trigger_job(w);
+        pollworker_process_pending_removals(w);
+        pollworker_trigger_job(w);
+        const auto reactor = Reactor::get_reactor();
+        ((rusty::detail::deref_if_pointer_like(reactor))).run_loop(false, true);
+        const auto fds = pollworker_snapshot_fds(w);
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len(fds)) {
+            const auto fd = fds[i];
+            auto opt = w.fd_to_pollable_.get(std::move(fd));
+            if (opt.is_some()) {
+                rusty::Box<PollableBase>& p = opt.unwrap();
+                if (p->check_pending_write_update()) {
+                    pollworker_do_update_mode(w, std::move(fd), rusty::clone(PollMode::READ) | rusty::clone(PollMode::WRITE));
+                }
+            }
+            i += 1;
+        }
+        rusty::Vec<int32_t> closed_fds = rusty::Vec<int32_t>::new_();
+        size_t j = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(j) < rusty::len(fds)) {
+            auto fd = fds[j];
+            auto opt = w.fd_to_pollable_.get(std::move(fd));
+            if (opt.is_some()) {
+                rusty::Box<PollableBase>& p = opt.unwrap();
+                if (p->is_closed()) {
+                    closed_fds.push(std::move(fd));
+                }
+            }
+            j += 1;
+        }
+        size_t n = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(n) < rusty::len(closed_fds)) {
+            const auto fd = closed_fds[n];
+            auto proxy_opt = w.fd_to_pollable_.get(std::move(fd));
+            if (proxy_opt.is_some()) {
+                if (w.mode_.contains_key(std::move(fd))) {
+                    w.poll_.Remove(std::move(fd));
+                }
+                rusty::Box<PollableBase>& p = proxy_opt.unwrap();
+                p->close();
+                w.fd_to_pollable_.remove(std::move(fd));
+                w.mode_.remove(std::move(fd));
+            }
+            n += 1;
+        }
+    }
+    Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
+    const auto rest = pollworker_snapshot_fds(w);
+    size_t k = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(k) < rusty::len(rest)) {
+        const auto fd = rest[k];
+        if (w.mode_.contains_key(std::move(fd))) {
+            w.poll_.Remove(std::move(fd));
+        }
+        k += 1;
+    }
+    w.fd_to_pollable_.clear();
+    w.mode_.clear();
+    w.pending_remove_.clear();
+    Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
+}
+/*RUSTYCPP:GEN-END id=reactor.pollworker_poll_loop*/
 
 // @unsafe - calls try_recv and std::visit
 void pollworker_process_commands(PollThreadWorker& self) {

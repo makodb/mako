@@ -363,8 +363,6 @@ struct FrameStreamReader;
 // Definitions in the impl namespace at the bottom of this file.
 void fsr_append(FrameStreamReader& self, const std::uint8_t* data,
                 std::size_t size);
-FrameDecodeStatus fsr_next_frame(const FrameStreamReader& self,
-                                 FrameView& out_view);
 void fsr_consume_frame(FrameStreamReader& self);
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
@@ -409,11 +407,46 @@ impl FrameStreamReader {
     //   - `Malformed`       — header decoded to a negative payload size;
     //                         caller should treat the stream as
     //                         corrupted and call `reset()`.
-    // @unsafe - the free fn stores a zero-copy raw payload pointer into
-    // the out FrameView.
+    //
+    // The unread bytes are peeked via `cursor_.fill_buf()`, which lowers
+    // to a `std::span<const uint8_t>` — no `buf_.data() + read_pos_`
+    // arithmetic. `header_ref` is a NAMED BINDING on purpose: a bare
+    // `&mut header` argument lowers to a POINTER, which will not bind to
+    // the `FrameHeader&` parameter of frame_codec_peek_header (that
+    // callee lives in its own `#if RUSTYCPP_RUST` block).
+    // @unsafe - the lone unsafety left is storing the zero-copy
+    // `rem.as_ptr() + kFrameHeaderSize` payload pointer into the out
+    // FrameView, which is inherent to FrameView being a view, not an
+    // owner.
     fn next_frame(&self, out_view: &mut FrameView) -> FrameDecodeStatus {
-        fsr_next_frame(self, out_view)
+        let rem: &[u8] = self.cursor_.fill_buf();
+
+        let mut header: FrameHeader = FrameHeader {
+            payload_size: 0,
+            extended_header_flag: false,
+        };
+        let header_ref: &mut FrameHeader = &mut header;
+        let header_status: FrameDecodeStatus = frame_codec_peek_header(rem, header_ref);
+        if header_status != FrameDecodeStatus::Complete {
+            return header_status;
+        }
+
+        let total: usize = header.total_frame_size() as usize;
+        if rem.len() < total {
+            return FrameDecodeStatus::NeedMoreBytes;
+        }
+
+        // Read `payload_size` BEFORE the `out_view.header` store: the GEN
+        // emits `std::move(header)` there, so nothing may read `header`
+        // afterwards (harmless for this POD, but the ordering keeps the
+        // generated C++ honest).
+        let psize: usize = header.payload_size as usize;
+        out_view.header = header;
+        out_view.payload = unsafe { rusty::ptr::add(rem.as_ptr(), kFrameHeaderSize) };
+        out_view.payload_size = psize;
+        FrameDecodeStatus::Complete
     }
+
 
     // Drop the most recently peeked frame from the buffer. Must be
     // preceded by a `Complete` from `next_frame`. Calling without a
@@ -439,7 +472,7 @@ impl FrameStreamReader {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=frame_codec.frame_stream_reader version=1 rust_sha256=261c2ae9373c4fdb641b9b741b60a85e57923e8f9646d69afa82e8ecdca57065*/
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.frame_stream_reader version=1 rust_sha256=ea41ca80ed9f1602ede081428f5d877602ea15231869d51b1b41e39fd937c9ac*/
 struct FrameStreamReader;
 
 struct FrameStreamReader {
@@ -465,7 +498,23 @@ void FrameStreamReader::append(const uint8_t* data, size_t size) {
 }
 
 FrameDecodeStatus FrameStreamReader::next_frame(FrameView& out_view) const {
-    return fsr_next_frame((*this), out_view);
+    FrameView* out_view_shadow1 = &out_view;
+    const std::span<const uint8_t> rem = this->cursor_.fill_buf();
+    FrameHeader header = FrameHeader{.payload_size = 0, .extended_header_flag = false};
+    FrameHeader& header_ref = header;
+    FrameDecodeStatus header_status = frame_codec_peek_header(rem, header_ref);
+    if (rusty::detail::deref_if_pointer_like(header_status) != rusty::detail::deref_if_pointer_like(FrameDecodeStatus_Complete())) {
+        return std::move(header_status);
+    }
+    const size_t total = static_cast<size_t>(header.total_frame_size());
+    if (rusty::len(rem) < rusty::detail::deref_if_pointer_like(total)) {
+        return FrameDecodeStatus_NeedMoreBytes();
+    }
+    size_t psize = static_cast<size_t>(header.payload_size);
+    (*out_view_shadow1).header = std::move(header);
+    (*out_view_shadow1).payload = rusty::ptr::add(rusty::as_ptr(rem), std::move(kFrameHeaderSize));
+    (*out_view_shadow1).payload_size = std::move(psize);
+    return FrameDecodeStatus_Complete();
 }
 
 void FrameStreamReader::consume_frame() {
@@ -516,57 +565,93 @@ constexpr size_t kCompactThresholdBytes = static_cast<size_t>(64) * static_cast<
 // frame_codec_encode_into
 // ---------------------------------------------------------------------------
 
-// DEFERRED — the last hand-written function in this file, blocked on a
-// data-structure migration rather than on anything about the codec.
+// Authored as inline Rust DSL. The `(const uint8_t* payload, i32
+// payload_size)` half stays a raw pointer + count: unlike
+// write_header/peek_header it cannot collapse into a slice, because the
+// callers hand over a borrowed `ChannelFrame` payload pointer they do
+// not own.
 //
-// The `(const uint8_t* payload, i32 payload_size)` half is the same
-// slice-in-disguise that write_header/peek_header turned out to be, and
-// converts the same way. The blocker is `out`: a DSL `&mut Vec<u8>`
-// lowers to `rusty::Vec<uint8_t>&`, which is the transpiled rustc Vec,
-// NOT `std::vector`. Every caller passes `std::vector<std::uint8_t>`
-// (`TcpOutBuf`, and `rusty::Mutex<std::vector<uint8_t>> outbound_`).
+// The `out` half needs no data-structure migration (an earlier note here
+// claimed it was blocked on one). A DSL parameter spelled
+// `out: &mut std::vector<u8>` lowers VERBATIM to `std::vector<uint8_t>&`
+// — `rusty::Vec` never enters the picture — so the exported declaration
+// above and every caller (`tcpconn_send_frame`'s
+// `rusty::Mutex<std::vector<u8>>` guard plus the three test files) stay
+// untouched, and tcp_channel keeps its iterator-pair `erase` drain.
 //
-// So the rule-2 rewrite here is not a call-site edit, it is migrating
-// the transport's outbound buffer type. `rusty::Vec` does offer
-// data()/size()/clear()/resize(n, v), but tcp_channel drains that buffer
-// with `buf.erase(buf.begin(), buf.begin() + offset)` — iterator-pair
-// erase, which rustc's Vec does not have (it has `drain`). Converting
-// therefore means rewriting the drain path on the hot outbound path of a
-// branch whose stated Goal 1 is performance parity, which deserves its
-// own change with its own measurements — not a side effect of porting a
-// codec function.
-//
-// Enabling unit: migrate TcpOutBuf -> rusty::Vec<uint8_t> (drain via
-// `drain`), then this function converts mechanically.
+// Two lowerings carry the rest: `&mut out[prev_size..]` becomes
+// `rusty::slice_from(out, prev_size)`, which is the same
+// `std::span<uint8_t>` subspan the hand-written version built for
+// write_header; and `ptr::copy_nonoverlapping` becomes
+// `rusty::ptr::copy_nonoverlapping`, which is a `memcpy` for trivially
+// copyable elements.
 //
 // @unsafe - see export declaration: raw `const uint8_t*` payload +
-// `out.data() + offset` arithmetic + memcpy.
-bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
-                             const std::uint8_t* payload,
-                             std::int32_t payload_size,
-                             bool extended_header_flag) {
-    if (payload_size < 0)                          return false;
-    if (payload_size > kMaxFramePayloadSize)       return false;
-    if (payload == nullptr && payload_size > 0)    return false;
+// `out.as_mut_ptr() + offset` arithmetic + the payload copy.
+#if RUSTYCPP_RUST
+fn frame_codec_encode_into(out: &mut std::vector<u8>,
+                           payload: *const u8,
+                           payload_size: i32,
+                           extended_header_flag: bool) -> bool {
+    if payload_size < 0 {
+        return false;
+    }
+    if payload_size > kMaxFramePayloadSize {
+        return false;
+    }
+    if payload.is_null() && payload_size > 0 {
+        return false;
+    }
 
-    const std::size_t prev_size = out.size();
-    const std::size_t needed =
-        kFrameHeaderSize + static_cast<std::size_t>(payload_size);
+    let prev_size: usize = out.len();
+    let needed: usize = kFrameHeaderSize + (payload_size as usize);
     out.resize(prev_size + needed);
 
-    if (!frame_codec_write_header(std::span<std::uint8_t>(out).subspan(prev_size),
-                                  payload_size,
-                                  extended_header_flag)) {
+    if !frame_codec_write_header(&mut out[prev_size..], payload_size,
+                                 extended_header_flag) {
         out.resize(prev_size);
         return false;
     }
-    if (payload_size > 0) {
-        std::memcpy(out.data() + prev_size + kFrameHeaderSize,
-                    payload,
-                    static_cast<std::size_t>(payload_size));
+    if payload_size > 0 {
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                payload,
+                out.as_mut_ptr().add(prev_size + kFrameHeaderSize),
+                payload_size as usize);
+        }
+    }
+    true
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.9 version=1 rust_sha256=079c975f8f087e0210b345d7347c895ede6f4bd150488d24ff5d8fe7c1dece75*/
+bool frame_codec_encode_into(std::vector<uint8_t>& out, const uint8_t* payload, int32_t payload_size, bool extended_header_flag);
+
+bool frame_codec_encode_into(std::vector<uint8_t>& out, const uint8_t* payload, int32_t payload_size, bool extended_header_flag) {
+    if (rusty::detail::deref_if_pointer_like(payload_size) < 0) {
+        return false;
+    }
+    if (rusty::detail::deref_if_pointer_like(payload_size) > rusty::detail::deref_if_pointer_like(kMaxFramePayloadSize)) {
+        return false;
+    }
+    if ((payload == nullptr) && (rusty::detail::deref_if_pointer_like(payload_size) > 0)) {
+        return false;
+    }
+    const size_t prev_size = rusty::len(out);
+    const size_t needed = rusty::detail::deref_if_pointer_like(kFrameHeaderSize) + ((static_cast<size_t>(payload_size)));
+    out.resize(rusty::detail::deref_if_pointer_like(prev_size) + rusty::detail::deref_if_pointer_like(needed));
+    if (rusty::detail::rust_not(frame_codec_write_header(rusty::slice_from(out, prev_size), std::move(payload_size), std::move(extended_header_flag)))) {
+        out.resize(std::move(prev_size));
+        return false;
+    }
+    if (rusty::detail::deref_if_pointer_like(payload_size) > 0) {
+        // @unsafe
+        {
+            rusty::ptr::copy_nonoverlapping(payload, rusty::ptr::add(rusty::as_mut_ptr(out), rusty::detail::deref_if_pointer_like(prev_size) + rusty::detail::deref_if_pointer_like(kFrameHeaderSize)), static_cast<size_t>(payload_size));
+        }
     }
     return true;
 }
+/*RUSTYCPP:GEN-END id=frame_codec.9*/
 
 // ---------------------------------------------------------------------------
 // FrameStreamReader
@@ -582,32 +667,6 @@ void fsr_append(FrameStreamReader& self, const std::uint8_t* data,
     buf.insert(buf.end(), data, data + size);
 }
 
-// @safe-ish - peeks the unread bytes via `cursor_.fill_buf()` (a span,
-// no `buf_.data() + read_pos_` arithmetic). The lone @unsafe is storing
-// the zero-copy `span.data() + kFrameHeaderSize` payload pointer into the
-// out FrameView (inherent to FrameView being a view, not an owner).
-FrameDecodeStatus fsr_next_frame(const FrameStreamReader& self,
-                                 FrameView& out_view) {
-    const std::span<const std::uint8_t> rem = self.cursor_.fill_buf();
-
-    FrameHeader header;
-    const FrameDecodeStatus header_status =
-        frame_codec_peek_header(rem, header);
-    if (header_status != FrameDecodeStatus::Complete) {
-        return header_status;
-    }
-
-    const std::size_t total = static_cast<std::size_t>(header.total_frame_size());
-    if (rem.size() < total) {
-        return FrameDecodeStatus::NeedMoreBytes;
-    }
-
-    out_view.header       = header;
-    // @unsafe { zero-copy view: span -> raw payload pointer }
-    out_view.payload      = rem.data() + kFrameHeaderSize;
-    out_view.payload_size = static_cast<std::size_t>(header.payload_size);
-    return FrameDecodeStatus::Complete;
-}
 
 namespace {
 
