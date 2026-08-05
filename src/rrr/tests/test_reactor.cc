@@ -381,8 +381,12 @@ TEST_F(ReactorTest, ReactorCreation) {
 TEST_F(ReactorTest, EventCreation) {
     auto reactor = Reactor::get_reactor();
     
-    // Use IntEvent which has the set method
-    auto& event = reactor_create_event<IntEvent>();
+    // Use IntEvent which has the set method. (Typed factory + explicit
+    // non-prunable pin — the old reactor_create_event<Ev>& helper died
+    // with the event_make dispatcher; this was its only call site.)
+    auto sp_event_pin = create_sp_int_event(1);
+    sp_event_pin->set_prunable(false);
+    auto& event = *sp_event_pin;
     EXPECT_FALSE(event.is_ready());
 
     // Trigger the event
@@ -448,7 +452,7 @@ TEST_F(ReactorTest, QuorumEvent) {
     auto reactor = Reactor::get_reactor();
     
     // QuorumEvent needs total count and quorum
-    auto sp_event = create_sp_quorum_event(3, 2);  // 3 total, need 2 votes
+    auto sp_event = janus::create_sp_quorum_event(3, 2);  // 3 total, need 2 votes
     
     EXPECT_FALSE(sp_event->is_ready());
     

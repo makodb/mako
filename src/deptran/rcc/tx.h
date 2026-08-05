@@ -134,8 +134,8 @@ class RccTx: public Tx, public Vertex<RccTx> {
     bool waiting_all_anc_committing_{false};
     SharedIntEvent wait_all_anc_commit_done_{};
     bool __debug_local_validated_foreign_{false};
-    rusty::Arc<BoxEvent<int>> local_validated_{reactor_create_sp_event<BoxEvent<int>>()};
-    rusty::Arc<BoxEvent<int>> global_validated_{reactor_create_sp_event<BoxEvent<int>>()};
+    rusty::Arc<BoxEvent<int>> local_validated_{create_sp_box_event<int>()};
+    rusty::Arc<BoxEvent<int>> global_validated_{create_sp_box_event<int>()};
     rusty::Arc<IntEvent> fully_dispatched_{create_sp_int_event(1)};
 //  bool fully_dispatched_{false};
     vector<SimpleCommand> dreqs_ = {};
