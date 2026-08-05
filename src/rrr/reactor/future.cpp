@@ -19,9 +19,13 @@
 //
 // The state is a `rusty::Option<rusty::Arc<BoxEvent<T>>>` (nullable: a
 // default/moved-from handle is `None`; the reactor hands out `Arc` from
-// `create_sp_event`). Every operation that drives `->set` / `->wait` /
-// `->get` is an `@unsafe` Arc deref (through a const-view handle), so each
-// lives in a generic free function below rather than in the DSL struct body.
+// `create_sp_event`). The `set` / `wait` / `get` Arc derefs live in the DSL
+// method bodies themselves: `let ev = self.state_.as_ref().unwrap()` binds
+// the handle as a C++ reference (no refcount churn) and `(*ev).m()` lowers
+// through `rusty::detail::deref_if_pointer_like` onto BoxEvent's (all-const)
+// methods. Spelling that deref is mandatory, not cosmetic: `get`/`set` also
+// name members of `Arc` itself, so a bare `ev.get()` binds to the HANDLE
+// (`Arc::get()` returns a pointer) instead of to the event.
 module;
 
 #include <cstddef>
@@ -30,6 +34,9 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
+// rusty::detail::deref_if_pointer_like / rust_not, which the GEN'd `(*ev)`
+// and `!` lower through (same GMF include as rrr.fiber's).
+#include <rusty/slice.hpp>
 
 export module rrr.future;
 
@@ -49,14 +56,14 @@ template <typename T>
 struct FiberFuture;
 
 // =============================================================================
-// @unsafe free functions backing the Arc-deref method bodies.
+// @unsafe helpers the DSL bodies call.
 //
-// Pointer parameters (`const rusty::Option<rusty::Arc<BoxEvent<T>>>* state`)
-// are deliberate: the DSL lowers `&self.state_` to `&this->state_`, i.e. an
-// address-of yielding a pointer. Events are const-view Arc handles — every
-// BoxEvent method reached through `(*state).as_ref().unwrap()->…` is already
-// `const` (set/wait/get and the `is_set_` Cell), so no const_cast is needed
-// (unlike the old const FiberFuture::get shim).
+// Construction and hand-off only: the two state factories the DSL
+// constructors call, plus `fiber_promise_get_future` (defined after
+// FiberFuture). The state accessors that used to live here — set_value /
+// is_ready / get / wait_for / valid — are now the DSL method bodies; the
+// note that once explained their pointer parameters described a transpiler
+// limitation that no longer exists.
 // =============================================================================
 
 // @unsafe - constructs a BoxEvent<T> as an Arc via Reactor internals.
@@ -69,64 +76,6 @@ rusty::Arc<BoxEvent<T>> fiber_make_state() {
 template <typename T>
 rusty::Option<rusty::Arc<BoxEvent<T>>> fiber_null_state() {
   return rusty::None;
-}
-
-// @unsafe - Arc deref through `(*state).as_ref().unwrap()->is_set_.get()` /
-// `->set(value)`. Takes the value by `const T&` (BoxEvent::set copies
-// regardless), so there is no extra copy for lvalue callers.
-template <typename T>
-void fiber_promise_set_value(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state, const T& value) {
-  if (state->is_none()) {
-    throw std::logic_error("FiberPromise has no state (moved-from?)");
-  }
-  if ((*state).as_ref().unwrap()->is_set_.get()) {
-    throw std::logic_error("FiberPromise value already set");
-  }
-  (*state).as_ref().unwrap()->set(value);
-}
-
-// @unsafe - Arc deref through `(*state).as_ref().unwrap()->is_set_.get()`.
-template <typename T>
-bool fiber_promise_is_ready(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
-  return state->is_some() && (*state).as_ref().unwrap()->is_set_.get();
-}
-
-// @unsafe - blocks in `wait()` then returns a copy of the shared value.
-template <typename T>
-T fiber_future_get(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
-  if (state->is_none()) {
-    throw std::logic_error("FiberFuture has no state (invalid or moved-from?)");
-  }
-  if (!(*state).as_ref().unwrap()->is_set_.get()) {
-    (*state).as_ref().unwrap()->wait();
-  }
-  return (*state).as_ref().unwrap()->get();
-}
-
-// @unsafe - bounded wait; Arc deref through `(*state).as_ref().unwrap()->wait_timeout(timeout_us)`.
-// `timeout_us == 0` blocks indefinitely (Event::wait's default).
-template <typename T>
-bool fiber_future_wait_for(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state, uint64_t timeout_us) {
-  if (state->is_none()) {
-    return false;
-  }
-  if ((*state).as_ref().unwrap()->is_set_.get()) {
-    return true;
-  }
-  (*state).as_ref().unwrap()->wait_timeout(timeout_us);
-  return (*state).as_ref().unwrap()->is_set_.get();
-}
-
-// @unsafe - Arc deref through `(*state).as_ref().unwrap()->is_set_.get()`.
-template <typename T>
-bool fiber_future_is_ready(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
-  return state->is_some() && (*state).as_ref().unwrap()->is_set_.get();
-}
-
-// @safe - presence check on the shared state (Option is_some, no deref).
-template <typename T>
-bool fiber_future_valid(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
-  return state->is_some();
 }
 
 // @unsafe - throws if already retrieved, then shares the state into a fresh
@@ -166,16 +115,25 @@ impl<T> FiberPromise<T> {
         fiber_promise_get_future(self)
     }
 
+    // Each `assert!` emits `if (!cond) throw std::logic_error(msg)`, so the
+    // conditions are the inverse of the old guards' throw tests.
     fn set_value(&mut self, value: &T) {
-        fiber_promise_set_value(&self.state_, value);
+        assert!(self.state_.is_some(), "FiberPromise has no state (moved-from?)");
+        let ev = self.state_.as_ref().unwrap();
+        assert!(!(*ev).is_set_.get(), "FiberPromise value already set");
+        (*ev).set(value);
     }
 
     fn is_ready(&self) -> bool {
-        fiber_promise_is_ready(&self.state_)
+        if self.state_.is_none() {
+            return false;
+        }
+        let ev = self.state_.as_ref().unwrap();
+        (*ev).is_set_.get()
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=future.fiber_promise version=1 rust_sha256=8a5a93c7106ab1f3f75bef45dace581e334f58a7ba23d67fcb1981b77abff2e4*/
+/*RUSTYCPP:GEN-BEGIN id=future.fiber_promise version=1 rust_sha256=b3f8bef10415547a9342bc7d849b6558ea023cfb55290a00adb0273f492b65dd*/
 template<typename T>
 struct FiberPromise;
 
@@ -192,10 +150,17 @@ struct FiberPromise {
         return fiber_promise_get_future((*this));
     }
     void set_value(const T& value) {
-        fiber_promise_set_value(&this->state_, value);
+        if (!(this->state_.is_some())) { throw std::logic_error("FiberPromise has no state (moved-from?)"); }
+        auto& ev = this->state_.as_ref().unwrap();
+        if (!(rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(ev)).is_set_.get()))) { throw std::logic_error("FiberPromise value already set"); }
+        ((rusty::detail::deref_if_pointer_like(ev))).set(std::move(value));
     }
     bool is_ready() const {
-        return fiber_promise_is_ready(&this->state_);
+        if (this->state_.is_none()) {
+            return false;
+        }
+        auto& ev = this->state_.as_ref().unwrap();
+        return (rusty::detail::deref_if_pointer_like(ev)).is_set_.get();
     }
 };
 /*RUSTYCPP:GEN-END id=future.fiber_promise*/
@@ -226,23 +191,42 @@ impl<T> FiberFuture<T> {
     }
 
     fn get(&mut self) -> T {
-        fiber_future_get(&self.state_)
+        assert!(self.state_.is_some(), "FiberFuture has no state (invalid or moved-from?)");
+        let ev = self.state_.as_ref().unwrap();
+        if !(*ev).is_set_.get() {
+            (*ev).wait();
+        }
+        (*ev).get()
     }
 
+    // `timeout_us == 0` blocks indefinitely (Event::wait's default).
     fn wait_for(&mut self, timeout_us: u64) -> bool {
-        fiber_future_wait_for(&self.state_, timeout_us)
+        if self.state_.is_none() {
+            return false;
+        }
+        let ev = self.state_.as_ref().unwrap();
+        if (*ev).is_set_.get() {
+            return true;
+        }
+        (*ev).wait_timeout(timeout_us);
+        (*ev).is_set_.get()
     }
 
     fn is_ready(&self) -> bool {
-        fiber_future_is_ready(&self.state_)
+        if self.state_.is_none() {
+            return false;
+        }
+        let ev = self.state_.as_ref().unwrap();
+        (*ev).is_set_.get()
     }
 
+    // Presence check on the shared state (Option is_some, no deref).
     fn valid(&self) -> bool {
-        fiber_future_valid(&self.state_)
+        self.state_.is_some()
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=future.fiber_future version=1 rust_sha256=460e6ad6219c674869c16a1d8ab1c4f080ded853de712f930a7c13ff950d2cc9*/
+/*RUSTYCPP:GEN-BEGIN id=future.fiber_future version=1 rust_sha256=4b5a5ae1f5da3e75d52aaa00257da747cf1527406ecd2ad509a3ea725fcf47cd*/
 template<typename T>
 struct FiberFuture;
 
@@ -256,16 +240,33 @@ struct FiberFuture {
         , nc_(rusty::Cell<bool>::new_(false))
     {}
     T get() {
-        return fiber_future_get(&this->state_);
+        if (!(this->state_.is_some())) { throw std::logic_error("FiberFuture has no state (invalid or moved-from?)"); }
+        auto& ev = this->state_.as_ref().unwrap();
+        if (rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(ev)).is_set_.get())) {
+            ((rusty::detail::deref_if_pointer_like(ev))).wait();
+        }
+        return ((rusty::detail::deref_if_pointer_like(ev))).get();
     }
     bool wait_for(uint64_t timeout_us) {
-        return fiber_future_wait_for(&this->state_, std::move(timeout_us));
+        if (this->state_.is_none()) {
+            return false;
+        }
+        auto& ev = this->state_.as_ref().unwrap();
+        if ((rusty::detail::deref_if_pointer_like(ev)).is_set_.get()) {
+            return true;
+        }
+        ((rusty::detail::deref_if_pointer_like(ev))).wait_timeout(std::move(timeout_us));
+        return (rusty::detail::deref_if_pointer_like(ev)).is_set_.get();
     }
     bool is_ready() const {
-        return fiber_future_is_ready(&this->state_);
+        if (this->state_.is_none()) {
+            return false;
+        }
+        auto& ev = this->state_.as_ref().unwrap();
+        return (rusty::detail::deref_if_pointer_like(ev)).is_set_.get();
     }
     bool valid() const {
-        return fiber_future_valid(&this->state_);
+        return this->state_.is_some();
     }
 };
 /*RUSTYCPP:GEN-END id=future.fiber_future*/

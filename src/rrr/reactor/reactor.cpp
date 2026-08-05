@@ -85,6 +85,7 @@ RUSTY_METHOD_DISPATCH(get_self)
 RUSTY_METHOD_DISPATCH(insert)
 RUSTY_METHOD_DISPATCH(is_composite_event)
 RUSTY_METHOD_DISPATCH(is_ready)
+RUSTY_METHOD_DISPATCH(pop)
 RUSTY_METHOD_DISPATCH(push_back)
 RUSTY_METHOD_DISPATCH(retain)
 RUSTY_METHOD_DISPATCH(set_self)
@@ -4833,16 +4834,46 @@ inline void stackless_profile_report_periodic() {
 
 }  // namespace
 
-// Shim for the DSL enqueue path (declared, exported, above the Reactor DSL
-// block). Defined OUTSIDE the anonymous namespace -- inside it the
-// definition has internal linkage and never matches the exported
-// declaration (gate32's 108 undefined-reference link failures). The
-// anon-namespace globals it reads are still visible here in-TU.
-void stackless_profile_note_enqueue() {
-  if (stackless_profile_enabled()) {
-    g_stackless_profile.enqueue_calls.fetch_add(1, std::memory_order_relaxed);
-  }
+// Stackless-profile observability shims for the DSL enqueue / poll /
+// register paths (declared, exported, above the Reactor DSL block).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` blocks below are
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` blocks.
+//
+// LINKAGE (load-bearing): these must stay OUTSIDE the anonymous
+// namespace -- inside it the definition has internal linkage and never
+// matches the exported declaration (gate32's 108 undefined-reference
+// link failures). The transpiler emits each GEN block in place, so
+// authoring the DSL here -- after `}  // namespace` -- keeps the
+// generated definitions at `rrr` scope with external linkage. The
+// anon-namespace `stackless_profile_enabled()`, `g_stackless_profile`,
+// `stackless_profile_update_max_slots()` and
+// `stackless_profile_report_periodic()` that these bodies read are
+// still visible here in-TU.
+//
+// No atomic kernel is needed: `std::memory_order_relaxed` lowers
+// through the DSL verbatim as a path expression, so the raw
+// `std::atomic<T>::fetch_add` calls are spellable directly and the
+// counters stay `std::atomic` (no change to
+// `stackless_profile_update_max_slots`'s CAS loop or to
+// `stackless_profile_report_periodic`'s loads).
+#if RUSTYCPP_RUST
+fn stackless_profile_note_enqueue() {
+    if stackless_profile_enabled() {
+        g_stackless_profile.enqueue_calls.fetch_add(1u64, std::memory_order_relaxed);
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.46 version=1 rust_sha256=3474b14e3d48e546e146af23db08036c518d5f04227f6665f77f629dc137cf0b*/
+void stackless_profile_note_enqueue();
+
+void stackless_profile_note_enqueue() {
+    if (stackless_profile_enabled()) {
+        g_stackless_profile.enqueue_calls.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.46*/
 
 // Poll-one micro-kernel: the Waker/Context wiring the DSL cannot spell
 // (reference arguments to struct literals mangle). The loop and slot
@@ -4858,30 +4889,71 @@ bool reactor_poll_one(const Reactor& self, size_t idx, rusty::Function<bool(rust
   return (*poll_fn)(ctx);
 }
 
-// Ready-count + periodic-report shims for the DSL poll loop.
+// Ready-count + periodic-report shims for the DSL poll loop (same
+// linkage note as above).
+#if RUSTYCPP_RUST
+fn stackless_profile_note_poll_ready() {
+    if stackless_profile_enabled() {
+        g_stackless_profile.poll_ready.fetch_add(1u64, std::memory_order_relaxed);
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.47 version=1 rust_sha256=d42741455c92befd982ebb885b3482e307bb5fc0198dc1460ddb51da85a2d9a1*/
+void stackless_profile_note_poll_ready();
+
 void stackless_profile_note_poll_ready() {
-  if (stackless_profile_enabled()) {
-    g_stackless_profile.poll_ready.fetch_add(1, std::memory_order_relaxed);
-  }
+    if (stackless_profile_enabled()) {
+        g_stackless_profile.poll_ready.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
+    }
 }
+/*RUSTYCPP:GEN-END id=reactor.47*/
+
+#if RUSTYCPP_RUST
+fn stackless_profile_report_periodic_shim() {
+    stackless_profile_report_periodic();
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.48 version=1 rust_sha256=6fbe17a6ea4929baafeb0b27bfa835405ce2ea9ba42814a89f65fc9cc9083645*/
+void stackless_profile_report_periodic_shim();
+
 void stackless_profile_report_periodic_shim() {
-  stackless_profile_report_periodic();
+    stackless_profile_report_periodic();
 }
+/*RUSTYCPP:GEN-END id=reactor.48*/
 
 // Register-path profile shim (same linkage note as above).
-void stackless_profile_note_register(size_t scanned, bool reuse, size_t slots_now) {
-  if (!stackless_profile_enabled()) {
-    return;
-  }
-  g_stackless_profile.reg_calls.fetch_add(1, std::memory_order_relaxed);
-  g_stackless_profile.reg_scan_steps.fetch_add(scanned, std::memory_order_relaxed);
-  if (reuse) {
-    g_stackless_profile.reg_reuse.fetch_add(1, std::memory_order_relaxed);
-  } else {
-    g_stackless_profile.reg_new.fetch_add(1, std::memory_order_relaxed);
-    stackless_profile_update_max_slots(slots_now);
-  }
+#if RUSTYCPP_RUST
+fn stackless_profile_note_register(scanned: usize, reuse: bool, slots_now: usize) {
+    if !stackless_profile_enabled() {
+        return;
+    }
+    g_stackless_profile.reg_calls.fetch_add(1u64, std::memory_order_relaxed);
+    g_stackless_profile.reg_scan_steps.fetch_add(scanned, std::memory_order_relaxed);
+    if reuse {
+        g_stackless_profile.reg_reuse.fetch_add(1u64, std::memory_order_relaxed);
+    } else {
+        g_stackless_profile.reg_new.fetch_add(1u64, std::memory_order_relaxed);
+        stackless_profile_update_max_slots(slots_now);
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.49 version=1 rust_sha256=027d4ce12e93a70d345a9cbebc04d41d1960977283a72a38d2b3a4a52ec14209*/
+void stackless_profile_note_register(size_t scanned, bool reuse, size_t slots_now);
+
+void stackless_profile_note_register(size_t scanned, bool reuse, size_t slots_now) {
+    if (rusty::detail::rust_not(stackless_profile_enabled())) {
+        return;
+    }
+    g_stackless_profile.reg_calls.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
+    g_stackless_profile.reg_scan_steps.fetch_add(std::move(scanned), std::memory_order_relaxed);
+    if (reuse) {
+        g_stackless_profile.reg_reuse.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
+    } else {
+        g_stackless_profile.reg_new.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
+        stackless_profile_update_max_slots(std::move(slots_now));
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.49*/
 
 
 // sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
@@ -5091,39 +5163,79 @@ void reactor_tls_set_running(const rusty::Rc<Fiber>& fiber) {
 // Helper functions for create_run_fiber
 // =============================================================================
 
-// @safe -Gets a recycled fiber or creates a new one
-rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line) {
-  // @unsafe
-  {
-    auto available_guard = self.available_fibers_.borrow_mut();
-    if (REUSING_FIBER && available_guard->size() > 0) {
-      self.n_idle_fibers_.set(self.n_idle_fibers_.get() - 1);
-      auto fiber = available_guard->back().clone();
-      available_guard->pop();
-      // Use Cell/RefCell for interior mutability (safe: single-threaded)
-      const auto& fiber_ref = *fiber;
-      fiber_ref.id.set(fiber_next_global_id());
-      *fiber_ref.func_.borrow_mut() = std::move(func);
-      // Keep the existing task/stack so continue_() can resume from the fiber's yield point.
-      verify((*fiber_ref.fiber_task_.borrow()).is_some());
-      fiber_ref.status_.set(Fiber::RECYCLED);
-      return fiber;
+// Gets a recycled fiber or creates a new one. Authored as inline Rust DSL;
+// no kernel is needed — the whole body lowers.
+//
+// Two probe-established points worth keeping:
+//  * `available_guard.pop().unwrap()` replaces the old `back().clone()` +
+//    `pop()` pair. The ported rustc `Vec::pop()` has Rust semantics (drops
+//    the length, `ptr::read`s the last slot out, hands back `Option<T>`), so
+//    the element taken and the resulting vector are identical to before —
+//    only the transient refcount bump from the clone disappears.
+//  * This fn returns a CLASS type, so an unqualified `Log_debug(...)` is
+//    mis-qualified by the lowering as `rusty::Rc<Fiber>::Log_debug`. It is
+//    spelled `rrr::Log_debug` for that reason (the counters are logged as
+//    i64/i32 now instead of via the old `(int)` / `(long long)` casts —
+//    `{}` formats them the same).
+// The `self` param is named `self_` so it stays a real parameter instead of
+// becoming a receiver, matching the sibling helpers below.
+#if RUSTYCPP_RUST
+fn reactor_get_or_create_fiber_impl(self_: &Reactor, func: FiberFn, file: SrcFileCStr, line: i64) -> rusty::Rc<Fiber> {
+    let mut available_guard = self_.available_fibers_.borrow_mut();
+    if REUSING_FIBER && available_guard.len() > 0usize {
+        self_.n_idle_fibers_.set(self_.n_idle_fibers_.get() - 1i64);
+        let fiber: rusty::Rc<Fiber> = available_guard.pop().unwrap();
+        // Cell/RefCell interior mutability re-stamps the recycled fiber
+        // through the shared handle (safe: single-threaded).
+        (*fiber).id.set(fiber_next_global_id());
+        *(*fiber).func_.borrow_mut() = func;
+        // Keep the existing task/stack so continue_() can resume from the
+        // fiber's yield point.
+        verify((*(*fiber).fiber_task_.borrow()).is_some());
+        (*fiber).status_.set(FiberStatus::RECYCLED);
+        return fiber;
     } else {
-      auto fiber = rusty::Rc<Fiber>::make(std::move(func));
-      self.n_created_fibers_.set(self.n_created_fibers_.get() + 1);
-      if (self.n_created_fibers_.get() % 1024 == 0) {
-        Log_debug("created {}, busy {}, idle {} fibers on server {}, recent {}:{}",
-                 (int)self.n_created_fibers_.get(),
-                 (int)self.n_busy_fibers_.get(),
-                 (int)self.n_idle_fibers_.get(),
-                 self.server_id_.get(),
-                 file,
-                 (long long)line);
-      }
-      return fiber;
+        let fiber: rusty::Rc<Fiber> = rusty::Rc::<Fiber>::make(func);
+        self_.n_created_fibers_.set(self_.n_created_fibers_.get() + 1i64);
+        if self_.n_created_fibers_.get() % 1024i64 == 0i64 {
+            unsafe {
+                rrr::Log_debug("created {}, busy {}, idle {} fibers on server {}, recent {}:{}",
+                               self_.n_created_fibers_.get(),
+                               self_.n_busy_fibers_.get(),
+                               self_.n_idle_fibers_.get(),
+                               self_.server_id_.get(),
+                               file,
+                               line);
+            }
+        }
+        return fiber;
     }
-  }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.55 version=1 rust_sha256=cd87e5ac7cca32cb077881929983521d6df1a5474b34872d7d99bf6861154572*/
+rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self_, FiberFn func, SrcFileCStr file, int64_t line) {
+    auto&& available_guard = self_.available_fibers_.borrow_mut();
+    if (rusty::detail::deref_if_pointer_like(REUSING_FIBER) && (rusty::len(available_guard) > static_cast<size_t>(0))) {
+        self_.n_idle_fibers_.set(self_.n_idle_fibers_.get() - static_cast<int64_t>(1));
+        rusty::Rc<Fiber> fiber = rusty::deref_call(available_guard, rusty::detail::__mdisp_pop{}).unwrap();
+        (rusty::detail::deref_if_pointer_like(fiber)).id.set(fiber_next_global_id());
+        rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(fiber)).func_.borrow_mut()) = std::move(func);
+        verify(((rusty::detail::deref_if_pointer_like(rusty::borrow((rusty::detail::deref_if_pointer_like(fiber)).fiber_task_)))).is_some());
+        (rusty::detail::deref_if_pointer_like(fiber)).status_.set(rusty::clone(rusty::clone(FiberStatus::RECYCLED)));
+        return std::move(fiber);
+    } else {
+        rusty::Rc<Fiber> fiber = rusty::Rc<Fiber>::make(std::move(func));
+        self_.n_created_fibers_.set(self_.n_created_fibers_.get() + static_cast<int64_t>(1));
+        if ((self_.n_created_fibers_.get() % static_cast<int64_t>(1024)) == static_cast<int64_t>(0)) {
+            // @unsafe
+            {
+                rrr::Log_debug("created {}, busy {}, idle {} fibers on server {}, recent {}:{}", self_.n_created_fibers_.get(), self_.n_busy_fibers_.get(), self_.n_idle_fibers_.get(), self_.server_id_.get(), std::move(file), std::move(line));
+            }
+        }
+        return std::move(fiber);
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.55*/
 
 // @safe - 1-line shims into the DSL TLS helpers above.
 // @safe -Registers a fiber in the active set
@@ -5480,37 +5592,54 @@ void pollworker_process_commands(PollThreadWorker& self) {
   }
 }
 
-// @safe - rusty::BTreeSet::clone/clear/insert and rusty::Arc are @safe;
-// only the raw `Job*` extraction + virtual dispatch escapes into inner
-// @unsafe blocks.
-void pollworker_trigger_job(PollThreadWorker& self) {
-  // Copy jobs to process (in case jobs modify the set).
-  std::set<rusty::Arc<Job>> jobs_exec = self.jobs_;
-  self.jobs_.clear();
+// 1-line arrow kernels for the trigger pass: rusty::Arc hands out a
+// `const Job*` only, so reaching the non-const virtuals needs a
+// const_cast, and Fiber::create_run is a function template. Neither
+// arrow crosses into the DSL.
 
-  for (const auto& job : jobs_exec) {
-    bool ready;
-    // @unsafe { const_cast<Job*> + virtual Ready() dispatch }
-    {
-      Job* job_ptr = const_cast<Job*>(job.get());
-      ready = job_ptr->Ready();
-    }
-    if (ready) {
-      // Capture job by value to keep the Arc alive.
-      Fiber::create_run([job]() {
-        // @unsafe { const_cast<Job*> + virtual Work() dispatch }
-        {
-          Job* job_ptr = const_cast<Job*>(job.get());
-          job_ptr->Work();
-        }
-      });
-      // Don't re-add ready jobs that were executed.
-    } else {
-      // Re-add jobs that aren't ready yet - they should be checked again later.
-      self.jobs_.insert(job);
-    }
-  }
+// @unsafe { const_cast<Job*> + virtual Ready() dispatch }
+bool job_ready(const rusty::Arc<Job>& job) {
+  return const_cast<Job*>(job.get())->Ready();
 }
+
+// @unsafe { Fiber::create_run<Func> + const_cast<Job*> + virtual Work()
+// dispatch. The lambda captures the Arc BY VALUE so the job outlives
+// the trigger pass that spawned it. }
+void job_spawn_work(const rusty::Arc<Job>& job) {
+  Fiber::create_run([job]() { const_cast<Job*>(job.get())->Work(); });
+}
+
+// Job trigger pass: run every ready job on a fiber, requeue the rest.
+// `jobs_` is a std::set with no drain(), so mem::take moves the whole
+// set out and leaves an empty one behind — same net effect as the old
+// copy-then-clear, and equally necessary: a Work() body may re-add jobs
+// while the pass is in flight, so the pass must not iterate `jobs_`.
+#if RUSTYCPP_RUST
+fn pollworker_trigger_job(w: &mut PollThreadWorker) {
+    let jobs_exec = core::mem::take(&mut w.jobs_);
+    for job in jobs_exec.iter() {
+        if job_ready(job) {
+            // Ready jobs ran (or are running) — do NOT re-add them.
+            job_spawn_work(job);
+        } else {
+            // Not ready yet — check again on the next pass.
+            w.jobs_.insert(job);
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.59 version=1 rust_sha256=600ba3f0da805b47c38b584c3140b7169a1afa1fcd4b26f22e4b3a02700e97b0*/
+void pollworker_trigger_job(PollThreadWorker& w) {
+    const auto jobs_exec = rusty::mem::take(w.jobs_);
+    for (auto&& job : rusty::for_in(rusty::iter(jobs_exec))) {
+        if (job_ready(std::move(job))) {
+            job_spawn_work(std::move(job));
+        } else {
+            w.jobs_.insert(std::move(job));
+        }
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.59*/
 
 // The poll-worker command handlers — registration policy, deferred
 // removal, close, interest updates, job set — as inline Rust DSL. The
