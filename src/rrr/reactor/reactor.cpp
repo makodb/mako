@@ -127,17 +127,49 @@ inline thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_f
 // `wp_fiber_` is a weak ref because an Event usually lives on a fiber stack and
 // must not keep its owning fiber alive.
 // Event status machine, hoisted out of `class Event` (flattening S4 prep):
-// the flat DSL structs each carry a `status_: Cell<EventStatus>`, and a
-// DSL `#[repr(i32)] enum` lowers to exactly this `enum class` shape. All
-// call sites already spell `EventStatus::X` (S2).
-enum class EventStatus : int32_t {
-  INIT = 0,
-  WAIT = 1,
-  READY = 2,
-  DONE = 3,
-  TIMEOUT = 4,
-  DEBUG = 5,
+// the flat DSL structs each carry a `status_: Cell<EventStatus>`.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The emitted `enum class EventStatus`
+// carries no fixed underlying type, i.e. `int` -- the same layout the
+// former `: int32_t` spelling gave on every target we build. External call
+// sites keep writing `EventStatus::X`; DSL bodies in THIS file now lower to
+// the generated `constexpr EventStatus_X()` accessors, which fold away.
+#if RUSTYCPP_RUST
+#[repr(i32)]
+enum EventStatus {
+    INIT = 0,
+    WAIT = 1,
+    READY = 2,
+    DONE = 3,
+    TIMEOUT = 4,
+    DEBUG = 5,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.1 version=1 rust_sha256=76b532362758c9878092bb559507b13a4b0b423e66fa1a5eea58d6d19d3ee38b*/
+enum class EventStatus;
+constexpr EventStatus EventStatus_INIT();
+constexpr EventStatus EventStatus_WAIT();
+constexpr EventStatus EventStatus_READY();
+constexpr EventStatus EventStatus_DONE();
+constexpr EventStatus EventStatus_TIMEOUT();
+constexpr EventStatus EventStatus_DEBUG();
+
+enum class EventStatus {
+    INIT = 0,
+    WAIT = 1,
+    READY = 2,
+    DONE = 3,
+    TIMEOUT = 4,
+    DEBUG = 5
 };
+inline constexpr EventStatus EventStatus_INIT() { return EventStatus::INIT; }
+inline constexpr EventStatus EventStatus_WAIT() { return EventStatus::WAIT; }
+inline constexpr EventStatus EventStatus_READY() { return EventStatus::READY; }
+inline constexpr EventStatus EventStatus_DONE() { return EventStatus::DONE; }
+inline constexpr EventStatus EventStatus_TIMEOUT() { return EventStatus::TIMEOUT; }
+inline constexpr EventStatus EventStatus_DEBUG() { return EventStatus::DEBUG; }
+/*RUSTYCPP:GEN-END id=reactor.1*/
 
 using EventTestFn = rusty::Function<bool(int) const>;
 #if RUSTYCPP_RUST
@@ -524,7 +556,7 @@ fn boxevent_clear<Type>(ev: &BoxEvent<Type>) {
 /*RUSTYCPP:GEN-BEGIN id=reactor.5 version=1 rust_sha256=ff451405ec517e52a229208d518da0b88d55c87938395b0a477a061caf9aae1a*/
 template<typename Type>
 rusty::Arc<BoxEvent<Type>> boxevent_make() {
-    auto sp = rusty::Arc<BoxEvent<Type>>::make(std::conditional_t<true, rusty::Cell<EventStatus>, Type>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, std::conditional_t<true, rusty::Cell<bool>, Type>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::RefCell<Type>::new_(rusty::default_like<Type>()), std::conditional_t<true, rusty::Cell<bool>, Type>::new_(false));
+    auto sp = rusty::Arc<BoxEvent<Type>>::make(std::conditional_t<true, rusty::Cell<EventStatus>, Type>::new_(rusty::clone(rusty::clone(EventStatus_INIT()))), rusty::thread::current_id(), EventState{}, std::conditional_t<true, rusty::Cell<bool>, Type>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::RefCell<Type>::new_(rusty::default_like<Type>()), std::conditional_t<true, rusty::Cell<bool>, Type>::new_(false));
     event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
     return std::move(sp);
 }
@@ -1502,7 +1534,7 @@ bool WaitAll::test() const {
 
 bool WaitAll::is_ready() const {
     for (auto&& e : rusty::for_in(rusty::iter(this->events_.borrow()))) {
-        if (!(((rusty::detail::deref_if_pointer_like(e))).is_ready() || (((rusty::detail::deref_if_pointer_like(e))).status() == rusty::clone(EventStatus::DONE)))) {
+        if (!(((rusty::detail::deref_if_pointer_like(e))).is_ready() || (((rusty::detail::deref_if_pointer_like(e))).status() == rusty::clone(EventStatus_DONE())))) {
             return false;
         }
     }
@@ -1692,26 +1724,77 @@ class Reactor;
  */
 // @safe
 // Fiber status machine, hoisted to namespace scope (same shape/reason as
-// EventStatus: a foreign C++ enum is path-addressable from the DSL,
-// while a DSL-defined enum hits the variant-call trap). `using enum`
-// inside the class keeps the historical `Fiber::INIT` spellings valid.
-enum class FiberStatus : int32_t {
-  INIT = 0,
-  STARTED,
-  PAUSED,
-  RESUMED,
-  FINISHED,
-  FINALIZING,
-  RECYCLED
+// EventStatus). Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block
+// below is the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. (The old note here claimed a
+// DSL-defined enum "hits the variant-call trap" -- disproven: the emitted
+// form is a plain `enum class` plus `constexpr FiberStatus_X()` accessors,
+// and the default underlying type is `int`, matching the former
+// `: int32_t`.) `using enum FiberStatus` inside the class keeps the
+// historical `Fiber::INIT` spellings valid, and those paths are NOT
+// rewritten by the transpiler because `Fiber` is not the enum's name.
+#if RUSTYCPP_RUST
+#[repr(i32)]
+enum FiberStatus {
+    INIT = 0,
+    STARTED = 1,
+    PAUSED = 2,
+    RESUMED = 3,
+    FINISHED = 4,
+    FINALIZING = 5,
+    RECYCLED = 6,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.18 version=1 rust_sha256=6007c4fe40b7ba6273f1da0e7fb8fb540b5af01d5dfbcfdb0ac391b7a02baf3c*/
+enum class FiberStatus;
+constexpr FiberStatus FiberStatus_INIT();
+constexpr FiberStatus FiberStatus_STARTED();
+constexpr FiberStatus FiberStatus_PAUSED();
+constexpr FiberStatus FiberStatus_RESUMED();
+constexpr FiberStatus FiberStatus_FINISHED();
+constexpr FiberStatus FiberStatus_FINALIZING();
+constexpr FiberStatus FiberStatus_RECYCLED();
+
+enum class FiberStatus {
+    INIT = 0,
+    STARTED = 1,
+    PAUSED = 2,
+    RESUMED = 3,
+    FINISHED = 4,
+    FINALIZING = 5,
+    RECYCLED = 6
 };
+inline constexpr FiberStatus FiberStatus_INIT() { return FiberStatus::INIT; }
+inline constexpr FiberStatus FiberStatus_STARTED() { return FiberStatus::STARTED; }
+inline constexpr FiberStatus FiberStatus_PAUSED() { return FiberStatus::PAUSED; }
+inline constexpr FiberStatus FiberStatus_RESUMED() { return FiberStatus::RESUMED; }
+inline constexpr FiberStatus FiberStatus_FINISHED() { return FiberStatus::FINISHED; }
+inline constexpr FiberStatus FiberStatus_FINALIZING() { return FiberStatus::FINALIZING; }
+inline constexpr FiberStatus FiberStatus_RECYCLED() { return FiberStatus::RECYCLED; }
+/*RUSTYCPP:GEN-END id=reactor.18*/
 
 // The per-thread fiber id counter (was Fiber::global_id, a static
 // thread_local member; hoisted to namespace TLS — the
 // g_current_poll_worker precedent) plus its post-increment kernel for
 // the ctor's id stamp.
 inline thread_local uint64_t g_fiber_global_id = 0;
-// @unsafe - TLS post-increment.
-inline uint64_t fiber_next_global_id() { return g_fiber_global_id++; }
+// @unsafe { post-increments the namespace-scope thread_local counter }
+#if RUSTYCPP_RUST
+fn fiber_next_global_id() -> u64 {
+    let r = g_fiber_global_id;
+    g_fiber_global_id = r + 1u64;
+    r
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.41 version=1 rust_sha256=a6fa4669ca1a3b0235ef99b539927802208c96aaca605a9ac58cbe8495b221f1*/
+uint64_t fiber_next_global_id();
+
+uint64_t fiber_next_global_id() {
+    auto r = std::move(g_fiber_global_id);
+    g_fiber_global_id = rusty::detail::deref_if_pointer_like(r) + static_cast<uint64_t>(1);
+    return std::move(r);
+}
+/*RUSTYCPP:GEN-END id=reactor.41*/
 
 // DSL-support aliases: the grammar cannot spell fn-type template args.
 using FiberFn = rusty::Function<void()>;
@@ -1904,7 +1987,11 @@ inline thread_local std::size_t reactor_prune_hwm_th_ = 64;
 // further down (the DSL method cannot name the later-defined global).
 void stackless_profile_note_enqueue();
 void stackless_profile_note_register(size_t scanned, bool reuse, size_t slots_now);
-bool reactor_poll_one(const Reactor& self, size_t idx, rusty::Function<bool(rusty::Context&)>* poll_fn);
+// Spelling `rusty::Function<...>` inline as a DSL parameter type is a parse
+// error, so reactor_poll_one's third parameter names this alias (same type
+// as StacklessTaskEntry::poll_once).
+using StacklessPollFn = rusty::Function<bool(rusty::Context&)>;
+bool reactor_poll_one(const Reactor& self, size_t idx, StacklessPollFn* poll_fn);
 void stackless_profile_note_poll_ready();
 void stackless_profile_report_periodic_shim();
 
@@ -2253,9 +2340,9 @@ impl Reactor {
                 }
                 if runnable {
                     did_work = true;
-                    // Waker + Context wiring stays a kernel: reference
-                    // arguments to struct literals mangle in the DSL
-                    // (docs 7.56 sibling note).
+                    // reactor_poll_one is DSL now; it still takes the poll
+                    // fn by raw pointer, which is exactly what a `&raw mut`
+                    // argument lowers to.
                     let ready = reactor_poll_one(self, idx, &raw mut poll_fn);
                     {
                         let mut tasks_guard = self.stackless_tasks_.borrow_mut();
@@ -2323,7 +2410,7 @@ impl Drop for Reactor {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=76daac0af7c559891da57fbb172542ba980905aa2fb7aeb6b9d0fb45fd93ce56*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=fc451312f9aa130b8687c16016a45776125f392d7e6584e3e1d79125aca47247*/
 struct Reactor;
 
 struct Reactor {
@@ -2443,13 +2530,13 @@ void Reactor::run_loop(bool infinite, bool do_check_timeout) const {
                 }
                 const auto n_before = rusty::len(ready_events);
                 ready_events.append(waiting_guard->extract_if([=](const rusty::Arc<EventPollable>& ev) -> bool {
-return ((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus::READY);
+return ((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus_READY());
 }));
                 if (rusty::len(ready_events) > rusty::detail::deref_if_pointer_like(n_before)) {
                     found_ready_events = true;
                 }
                 waiting_guard->retain([=](const rusty::Arc<EventPollable>& ev) -> bool {
-return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(EventStatus::DONE);
+return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(EventStatus_DONE());
 });
             }
             {
@@ -2462,13 +2549,13 @@ return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(Eve
                 }
                 const auto n_before = rusty::len(ready_events);
                 ready_events.append(composite_guard->extract_if([=](const rusty::Arc<EventPollable>& ev) -> bool {
-return ((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus::READY);
+return ((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus_READY());
 }));
                 if (rusty::len(ready_events) > rusty::detail::deref_if_pointer_like(n_before)) {
                     found_ready_events = true;
                 }
                 composite_guard->retain([=](const rusty::Arc<EventPollable>& ev) -> bool {
-return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(EventStatus::DONE);
+return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(EventStatus_DONE());
 });
             }
             if (do_check_timeout) {
@@ -2483,7 +2570,7 @@ return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(Eve
                 while (rusty::detail::deref_if_pointer_like(i) < rusty::len(ready_events)) {
                     const auto ev = rusty::clone(ready_events[i]);
                     i += static_cast<size_t>(1);
-                    if (((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(EventStatus::DONE)) {
+                    if (((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(EventStatus_DONE())) {
                         auto option_fiber = ((rusty::detail::deref_if_pointer_like(ev))).upgrade_fiber();
                         if (option_fiber.is_some()) {
                             const auto fiber = option_fiber.unwrap();
@@ -2494,10 +2581,10 @@ return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(Eve
                             }
                             if (known) {
                                 verify([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.status_); }) { return (__r.status_); } else if constexpr (requires { (__r.status__field); }) { return (__r.status__field); } else if constexpr (requires { ((*__r).status_); }) { return ((*__r).status_); } else { return ((*__r).status__field); } }(fiber).get() == rusty::clone(Fiber::PAUSED));
-                                if (((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus::READY)) {
-                                    ((rusty::detail::deref_if_pointer_like(ev))).set_status(rusty::clone(rusty::clone(EventStatus::DONE)));
+                                if (((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus_READY())) {
+                                    ((rusty::detail::deref_if_pointer_like(ev))).set_status(rusty::clone(rusty::clone(EventStatus_DONE())));
                                 } else {
-                                    verify(((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus::TIMEOUT));
+                                    verify(((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus_TIMEOUT()));
                                 }
                                 this->continue_fiber(fiber);
                             }
@@ -2708,14 +2795,14 @@ void Reactor::check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_ev
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(guard)) {
         const auto event = rusty::clone((rusty::detail::deref_if_pointer_like(guard))[i]);
-        if (((rusty::detail::deref_if_pointer_like(event))).status() == rusty::clone(EventStatus::WAIT)) {
+        if (((rusty::detail::deref_if_pointer_like(event))).status() == rusty::clone(EventStatus_WAIT())) {
             const auto wakeup_time = ((rusty::detail::deref_if_pointer_like(event))).wakeup_time();
             verify(rusty::detail::deref_if_pointer_like(wakeup_time) > static_cast<uint64_t>(0));
             if (rusty::detail::deref_if_pointer_like(time_now) >= (static_cast<int64_t>(wakeup_time))) {
                 if (((rusty::detail::deref_if_pointer_like(event))).is_ready()) {
-                    ((rusty::detail::deref_if_pointer_like(event))).set_status(rusty::clone(rusty::clone(EventStatus::READY)));
+                    ((rusty::detail::deref_if_pointer_like(event))).set_status(rusty::clone(rusty::clone(EventStatus_READY())));
                 } else {
-                    ((rusty::detail::deref_if_pointer_like(event))).set_status(rusty::clone(rusty::clone(EventStatus::TIMEOUT)));
+                    ((rusty::detail::deref_if_pointer_like(event))).set_status(rusty::clone(rusty::clone(EventStatus_TIMEOUT())));
                 }
             }
         }
@@ -2723,10 +2810,10 @@ void Reactor::check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_ev
     }
     ready_events.append(rusty::deref_call(guard, rusty::detail::__mdisp_extract_if{}, [=](const rusty::Arc<EventPollable>& sp) -> bool {
 const auto status = ((rusty::detail::deref_if_pointer_like(sp))).status();
-return (rusty::detail::deref_if_pointer_like(status) == rusty::clone(EventStatus::READY)) || (rusty::detail::deref_if_pointer_like(status) == rusty::clone(EventStatus::TIMEOUT));
+return (rusty::detail::deref_if_pointer_like(status) == rusty::clone(EventStatus_READY())) || (rusty::detail::deref_if_pointer_like(status) == rusty::clone(EventStatus_TIMEOUT()));
 }));
     rusty::deref_call(guard, rusty::detail::__mdisp_retain{}, [=](const rusty::Arc<EventPollable>& sp) -> bool {
-return ((rusty::detail::deref_if_pointer_like(sp))).status() != rusty::clone(EventStatus::DONE);
+return ((rusty::detail::deref_if_pointer_like(sp))).status() != rusty::clone(EventStatus_DONE());
 });
 }
 
@@ -3064,12 +3151,22 @@ inline rusty::Arc<Ev> reactor_create_sp_event(Args&&... args) {  // @unsafe
 }
 
 // BoxEvent<T> creation (the old dispatcher's is_box_event branch, now an
-// honest 1-line template — BoxEvent's aggregate seeding lives in
-// boxevent_make<T>).
-template <typename T>
-inline rusty::Arc<BoxEvent<T>> create_sp_box_event() {  // @unsafe
-  return reactor_setup_sp_event<BoxEvent<T>>(boxevent_make<T>());
+// honest 1-line generic -- BoxEvent's aggregate seeding lives in
+// boxevent_make<T>). A DSL `fn f<T>` emits a real `template<typename T>`,
+// so the ~12 deptran call sites are untouched.
+// @unsafe { reactor_setup_sp_event stamps the freshly-minted Arc through
+//           get_mut() and installs the self weak-ref }
+#if RUSTYCPP_RUST
+fn create_sp_box_event<T>() -> Arc<BoxEvent<T>> {
+    reactor_setup_sp_event::<BoxEvent<T>>(boxevent_make::<T>())
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.42 version=1 rust_sha256=185041ca732aa131ec2c5045aecef199f8ff06e2e11eb22bc1e97823137fe571*/
+template<typename T>
+rusty::Arc<BoxEvent<T>> create_sp_box_event() {
+    return reactor_setup_sp_event<BoxEvent<T>>(boxevent_make<T>());
+}
+/*RUSTYCPP:GEN-END id=reactor.42*/
 
 // (reactor_create_event<Ev>& is gone — its only call site now pins a
 //  typed factory's Arc with set_prunable(false) directly.)
@@ -3264,12 +3361,22 @@ void PollThreadWorker::update_mode(Pollable& poll, int32_t new_mode) {
 }
 /*RUSTYCPP:GEN-END id=reactor.poll_thread_worker*/
 
-// @safe - Check if the current thread is a poll thread.
-// @unsafe - doubly blocked: reads the impl-namespace `thread_local`
-// g_current_poll_worker (§7.20), and the `!= nullptr` test would emit a
-// non-existent `nullptr_` (§7.31 -- `.is_null()` is the DSL spelling, but
-// the static read blocks it anyway).
-inline bool pollworker_is_on_poll_thread() { return g_current_poll_worker != nullptr; }
+// @safe - Check if the current thread is a poll thread. Both blockers the
+// old comment cited have expired: a DSL body CAN read a namespace-scope
+// `thread_local` raw pointer, and `.is_null()` lowers to a plain
+// `== nullptr` test (no `nullptr_`).
+#if RUSTYCPP_RUST
+fn pollworker_is_on_poll_thread() -> bool {
+    !g_current_poll_worker.is_null()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.43 version=1 rust_sha256=1509dddc81622acb38bc65958150ba8cf8e9706289579ee0422d9f72043bc4e6*/
+bool pollworker_is_on_poll_thread();
+
+bool pollworker_is_on_poll_thread() {
+    return rusty::detail::rust_not((g_current_poll_worker == nullptr));
+}
+/*RUSTYCPP:GEN-END id=reactor.43*/
 
 // =============================================================================
 // PollThread - Handle for controlling the poll thread
@@ -3590,13 +3697,43 @@ using rrr::event_test_impl;
 //                     committed_seen_ (a committed reply obviates the
 //                     quorum), then falls back to DEFAULT's shape.
 //   ALWAYS_READY    — (CopilotFake) no quorum semantics at all.
-enum class QuorumPolicy : int {
-  DEFAULT = 0,
-  ALL_NO = 1,
-  LEADER_AND = 2,
-  COMMITTED_SHORT = 3,
-  ALWAYS_READY = 4,
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The emitted `enum class QuorumPolicy`
+// takes the default `int` underlying type -- exactly what the former
+// `: int` spelling gave -- so the deptran call sites
+// (`q().policy_.set(QuorumPolicy::ALL_NO)` and friends) are untouched.
+#if RUSTYCPP_RUST
+#[repr(i32)]
+enum QuorumPolicy {
+    DEFAULT = 0,
+    ALL_NO = 1,
+    LEADER_AND = 2,
+    COMMITTED_SHORT = 3,
+    ALWAYS_READY = 4,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.44 version=1 rust_sha256=128d4ad4314a9e9dda82fe04b9b69a948d07e3d404940eb6c2ffa3163ec8938d*/
+enum class QuorumPolicy;
+constexpr QuorumPolicy QuorumPolicy_DEFAULT();
+constexpr QuorumPolicy QuorumPolicy_ALL_NO();
+constexpr QuorumPolicy QuorumPolicy_LEADER_AND();
+constexpr QuorumPolicy QuorumPolicy_COMMITTED_SHORT();
+constexpr QuorumPolicy QuorumPolicy_ALWAYS_READY();
+
+enum class QuorumPolicy {
+    DEFAULT = 0,
+    ALL_NO = 1,
+    LEADER_AND = 2,
+    COMMITTED_SHORT = 3,
+    ALWAYS_READY = 4
 };
+inline constexpr QuorumPolicy QuorumPolicy_DEFAULT() { return QuorumPolicy::DEFAULT; }
+inline constexpr QuorumPolicy QuorumPolicy_ALL_NO() { return QuorumPolicy::ALL_NO; }
+inline constexpr QuorumPolicy QuorumPolicy_LEADER_AND() { return QuorumPolicy::LEADER_AND; }
+inline constexpr QuorumPolicy QuorumPolicy_COMMITTED_SHORT() { return QuorumPolicy::COMMITTED_SHORT; }
+inline constexpr QuorumPolicy QuorumPolicy_ALWAYS_READY() { return QuorumPolicy::ALWAYS_READY; }
+/*RUSTYCPP:GEN-END id=reactor.44*/
 
 // FLATTENED (S4): QuorumEvent is now an inline-Rust DSL struct that derives
 // EventPollable via `#[cpp_inherit]` — the `Arc<QuorumEvent> ->
@@ -3684,7 +3821,7 @@ impl QuorumEvent {
         self.n_voted_yes_.set(self.n_voted_yes_.get() + 1);
         event_test_impl(self);
         let fe = self.finalize_event_.clone();
-        if (*fe).status_.get() != EventStatus::TIMEOUT && (*fe).status_.get() != EventStatus::DONE {
+        if (*fe).status_.get() != rrr::EventStatus::TIMEOUT && (*fe).status_.get() != rrr::EventStatus::DONE {
             (*fe).set(self.n_voted_yes_.get() + self.n_voted_no_.get());
         }
     }
@@ -3692,7 +3829,7 @@ impl QuorumEvent {
         self.n_voted_no_.set(self.n_voted_no_.get() + 1);
         event_test_impl(self);
         let fe = self.finalize_event_.clone();
-        if (*fe).status_.get() != EventStatus::TIMEOUT && (*fe).status_.get() != EventStatus::DONE {
+        if (*fe).status_.get() != rrr::EventStatus::TIMEOUT && (*fe).status_.get() != rrr::EventStatus::DONE {
             (*fe).set(self.n_voted_yes_.get() + self.n_voted_no_.get());
         }
     }
@@ -3767,7 +3904,7 @@ impl EventPollable for QuorumEvent {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.quorum_event version=1 rust_sha256=b4a1ee9c2e71a307974f3f62652465e3b24b823075b9a1002d41aeeb480cdbe3*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.quorum_event version=1 rust_sha256=55c3c980234798f8f2eb82d32dd527e591afcda35c1aee548f28dc853d4a02bd*/
 struct QuorumEvent;
 
 struct QuorumEvent : public EventPollable {
@@ -3836,19 +3973,19 @@ void QuorumEvent::finalize(uint64_t timeout, QuorumFinalizeFn finalize_func) con
 
 bool QuorumEvent::yes() const {
     auto base = this->n_voted_yes_.get() >= rusty::detail::deref_if_pointer_like(this->quorum_);
-    if (this->policy_.get() == rusty::clone(QuorumPolicy::LEADER_AND)) {
+    if (this->policy_.get() == rusty::clone(QuorumPolicy_LEADER_AND())) {
         return rusty::detail::deref_if_pointer_like(base) && (this->n_leader_yes_.get() >= this->num_leader_.get());
     }
     return std::move(base);
 }
 
 bool QuorumEvent::no() const {
-    if (this->policy_.get() == rusty::clone(QuorumPolicy::ALL_NO)) {
+    if (this->policy_.get() == rusty::clone(QuorumPolicy_ALL_NO())) {
         return this->n_voted_no_.get() == rusty::detail::deref_if_pointer_like(this->n_total_);
     }
     verify(rusty::detail::deref_if_pointer_like(this->n_total_) >= rusty::detail::deref_if_pointer_like(this->quorum_));
     auto base = this->n_voted_no_.get() > ((rusty::detail::deref_if_pointer_like(this->n_total_) - rusty::detail::deref_if_pointer_like(this->quorum_)));
-    if (this->policy_.get() == rusty::clone(QuorumPolicy::LEADER_AND)) {
+    if (this->policy_.get() == rusty::clone(QuorumPolicy_LEADER_AND())) {
         return rusty::detail::deref_if_pointer_like(base) || (this->n_leader_no_.get() > 0);
     }
     return std::move(base);
@@ -3858,7 +3995,7 @@ void QuorumEvent::vote_yes() const {
     this->n_voted_yes_.set(this->n_voted_yes_.get() + static_cast<int32_t>(1));
     event_test_impl((*this));
     const auto fe = rusty::clone(this->finalize_event_);
-    if (((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(EventStatus::TIMEOUT)) && ((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(EventStatus::DONE))) {
+    if (((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(rrr::EventStatus_TIMEOUT())) && ((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(rrr::EventStatus_DONE()))) {
         ((rusty::detail::deref_if_pointer_like(fe))).set(this->n_voted_yes_.get() + this->n_voted_no_.get());
     }
 }
@@ -3867,7 +4004,7 @@ void QuorumEvent::vote_no() const {
     this->n_voted_no_.set(this->n_voted_no_.get() + static_cast<int32_t>(1));
     event_test_impl((*this));
     const auto fe = rusty::clone(this->finalize_event_);
-    if (((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(EventStatus::TIMEOUT)) && ((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(EventStatus::DONE))) {
+    if (((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(rrr::EventStatus_TIMEOUT())) && ((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(rrr::EventStatus_DONE()))) {
         ((rusty::detail::deref_if_pointer_like(fe))).set(this->n_voted_yes_.get() + this->n_voted_no_.get());
     }
 }
@@ -3906,13 +4043,13 @@ bool QuorumEvent::test() const {
 
 bool QuorumEvent::is_ready() const {
     const auto p = this->policy_.get();
-    if (rusty::detail::deref_if_pointer_like(p) == rusty::clone(QuorumPolicy::ALWAYS_READY)) {
+    if (rusty::detail::deref_if_pointer_like(p) == rusty::clone(QuorumPolicy_ALWAYS_READY())) {
         return true;
     }
-    if (rusty::detail::deref_if_pointer_like(p) == rusty::clone(QuorumPolicy::ALL_NO)) {
+    if (rusty::detail::deref_if_pointer_like(p) == rusty::clone(QuorumPolicy_ALL_NO())) {
         return this->yes() || this->no();
     }
-    if (rusty::detail::deref_if_pointer_like(p) == rusty::clone(QuorumPolicy::COMMITTED_SHORT)) {
+    if (rusty::detail::deref_if_pointer_like(p) == rusty::clone(QuorumPolicy_COMMITTED_SHORT())) {
         if (this->timeouted_.get()) {
             return true;
         }
@@ -4247,11 +4384,11 @@ void event_wait_impl(const W& ev, uint64_t timeout) {
     verify(sp_reactor_th_.is_some());
     const auto reactor_th = rusty::clone(sp_reactor_th_.as_ref().unwrap());
     verify((rusty::detail::deref_if_pointer_like(reactor_th)).thread_id_.get() == rusty::thread::current_id());
-    if (ev.status_.get() == rusty::clone(EventStatus::DONE)) {
+    if (ev.status_.get() == rusty::clone(EventStatus_DONE())) {
         return;
     }
     if (rusty::deref_call(ev, rusty::detail::__mdisp_is_ready{})) {
-        ev.status_.set(rusty::clone(rusty::clone(EventStatus::DONE)));
+        ev.status_.set(rusty::clone(rusty::clone(EventStatus_DONE())));
         return;
     } else {
         auto fiber_opt = Fiber::current_fiber();
@@ -4268,7 +4405,7 @@ void event_wait_impl(const W& ev, uint64_t timeout) {
             rusty::deref_call((rusty::detail::deref_if_pointer_like(reactor_rc)).timeout_events_.borrow_mut(), rusty::detail::__mdisp_push_back{}, rusty::deref_call(ev, rusty::detail::__mdisp_get_self{}).unwrap());
         }
         rusty::detail::deref_if_pointer_like(ev.state_.wp_fiber_.borrow_mut()) = std::conditional_t<true, ::rusty::port::rc::Rc<Fiber>, W>::downgrade(rusty::clone(fiber));
-        ev.status_.set(rusty::clone(rusty::clone(EventStatus::WAIT)));
+        ev.status_.set(rusty::clone(rusty::clone(EventStatus_WAIT())));
         const auto fiber_status = (rusty::detail::deref_if_pointer_like(fiber)).status_.get();
         verify((rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(Fiber::FINISHED)) && (rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(Fiber::RECYCLED)));
         ((rusty::detail::deref_if_pointer_like(fiber))).yield_();
@@ -4329,26 +4466,26 @@ template<typename W>
 bool event_test_impl(const W& ev) {
     verify(ev.state_.__debug_creator);
     if (rusty::deref_call(ev, rusty::detail::__mdisp_is_ready{})) {
-        if (ev.status_.get() == rusty::clone(EventStatus::INIT)) {
-            ev.status_.set(rusty::clone(rusty::clone(EventStatus::DONE)));
-        } else if (ev.status_.get() == rusty::clone(EventStatus::WAIT)) {
+        if (ev.status_.get() == rusty::clone(EventStatus_INIT())) {
+            ev.status_.set(rusty::clone(rusty::clone(EventStatus_DONE())));
+        } else if (ev.status_.get() == rusty::clone(EventStatus_WAIT())) {
             if (rusty::thread::current_id() == rusty::detail::deref_if_pointer_like(ev.owner_thread_)) {
                 const auto option_fiber = rusty::deref_call(rusty::borrow(ev.state_.wp_fiber_), rusty::detail::__mdisp_upgrade{});
                 verify(option_fiber.is_some());
-                verify(ev.status_.get() != rusty::clone(EventStatus::DEBUG));
+                verify(ev.status_.get() != rusty::clone(EventStatus_DEBUG()));
             }
-            ev.status_.set(rusty::clone(rusty::clone(EventStatus::READY)));
-        } else if (ev.status_.get() == rusty::clone(EventStatus::READY)) {
+            ev.status_.set(rusty::clone(rusty::clone(EventStatus_READY())));
+        } else if (ev.status_.get() == rusty::clone(EventStatus_READY())) {
             Log_debug("event status ready, triggered?");
-        } else if (ev.status_.get() == rusty::clone(EventStatus::DONE)) {
-        } else if (ev.status_.get() == rusty::clone(EventStatus::TIMEOUT)) {
+        } else if (ev.status_.get() == rusty::clone(EventStatus_DONE())) {
+        } else if (ev.status_.get() == rusty::clone(EventStatus_TIMEOUT())) {
         } else {
             verify(0);
         }
         return true;
     } else {
-        if (ev.status_.get() == rusty::clone(EventStatus::DONE)) {
-            ev.status_.set(rusty::clone(rusty::clone(EventStatus::INIT)));
+        if (ev.status_.get() == rusty::clone(EventStatus_DONE())) {
+            ev.status_.set(rusty::clone(rusty::clone(EventStatus_INIT())));
         }
     }
     return false;
@@ -4431,7 +4568,7 @@ fn never_event_make() -> Arc<NeverEvent> {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=reactor.19 version=1 rust_sha256=dcf171ad810f03fdb53d9fbbee59cb455e8fd685ecd8e85eee9bf7732dac065e*/
 rusty::Arc<NeverEvent> never_event_make() {
-    auto sp = rusty::Arc<NeverEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>());
+    auto sp = rusty::Arc<NeverEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus_INIT()))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>());
     event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
     return std::move(sp);
 }
@@ -4458,7 +4595,7 @@ fn timeout_event_make(wait_us: u64) -> Arc<TimeoutEvent> {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=reactor.20 version=1 rust_sha256=019ef05ec016e8a5f5727a02ea265bd283f4fdcf798a5fc6996be21925f6c9a6*/
 rusty::Arc<TimeoutEvent> timeout_event_make(uint64_t wait_us) {
-    auto sp = rusty::Arc<TimeoutEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), Time::now(true) + rusty::detail::deref_if_pointer_like(wait_us), std::move(wait_us));
+    auto sp = rusty::Arc<TimeoutEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus_INIT()))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), Time::now(true) + rusty::detail::deref_if_pointer_like(wait_us), std::move(wait_us));
     event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
     return std::move(sp);
 }
@@ -4485,7 +4622,7 @@ fn int_event_make(target: i32) -> Arc<IntEvent> {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=reactor.21 version=1 rust_sha256=86a25dfd2b425c608b5aff36d8bdc2aec61e0b78096d66f64fd02af0d4456812*/
 rusty::Arc<IntEvent> int_event_make(int32_t target) {
-    auto sp = rusty::Arc<IntEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(std::move(target)));
+    auto sp = rusty::Arc<IntEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus_INIT()))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(std::move(target)));
     event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
     return std::move(sp);
 }
@@ -4522,7 +4659,7 @@ rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPo
     rusty::Vec<rusty::Arc<EventPollable>> events = rusty::Vec<rusty::Arc<EventPollable>>::new_();
     events.push(std::move(a));
     events.push(std::move(b));
-    auto sp = rusty::Arc<WaitAny>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), std::move(events));
+    auto sp = rusty::Arc<WaitAny>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus_INIT()))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), std::move(events));
     event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
     return std::move(sp);
 }
@@ -4549,7 +4686,7 @@ fn waitall_make() -> Arc<WaitAll> {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=reactor.22 version=1 rust_sha256=5863d50f57ab83757887c8720481329e39577b09f1bc7c95d0239e2f2a72ce34*/
 rusty::Arc<WaitAll> waitall_make() {
-    auto sp = rusty::Arc<WaitAll>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>());
+    auto sp = rusty::Arc<WaitAll>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus_INIT()))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>());
     event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
     return std::move(sp);
 }
@@ -4587,7 +4724,7 @@ rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>
     for (auto&& ev : rusty::for_in(rusty::iter(evs))) {
         events.push(rusty::clone(ev));
     }
-    auto sp = rusty::Arc<WaitAll>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>(std::move(events)));
+    auto sp = rusty::Arc<WaitAll>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus_INIT()))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>(std::move(events)));
     event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
     return std::move(sp);
 }
@@ -4623,7 +4760,7 @@ int32_t shared_int_event_set(SharedIntEvent& sie, int32_t v) {
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len((*sie_shadow1).events_)) {
         const rusty::Arc<IntEvent>& ev = (*sie_shadow1).events_[i];
-        if ((rusty::detail::deref_if_pointer_like(ev)).status_.get() <= rusty::clone(EventStatus::WAIT)) {
+        if ((rusty::detail::deref_if_pointer_like(ev)).status_.get() <= rusty::clone(EventStatus_WAIT())) {
             if ((rusty::detail::deref_if_pointer_like(ev)).target_.get() <= rusty::detail::deref_if_pointer_like(v)) {
                 ((rusty::detail::deref_if_pointer_like(ev))).set(std::move(v));
             }
@@ -4674,7 +4811,7 @@ bool shared_int_event_wait_until_gte(SharedIntEvent& sie, int32_t x, int32_t tim
     (rusty::detail::deref_if_pointer_like(ev)).target_.set(std::move(x));
     sie.events_.push(rusty::clone(ev));
     ((rusty::detail::deref_if_pointer_like(ev))).wait_timeout(static_cast<uint64_t>(timeout));
-    bool if_timeout = (rusty::detail::deref_if_pointer_like(ev)).status_.get() == rusty::clone(EventStatus::TIMEOUT);
+    bool if_timeout = (rusty::detail::deref_if_pointer_like(ev)).status_.get() == rusty::clone(EventStatus_TIMEOUT());
     const IntEvent* ev_ptr = int_event_raw_ptr(std::move(ev));
     sie.events_.retain([=, ev_ptr = std::move(ev_ptr)](const rusty::Arc<IntEvent>& item) {
 return int_event_raw_ptr(item) != ev_ptr;
@@ -4832,7 +4969,7 @@ void fiber_run_wrapper(const Fiber& fb, fiber_yield_t* y) {
         verify(fiber_fn_present(&fb.func_));
         fiber_fn_invoke(&fb.func_);
         fiber_fn_clear(&fb.func_);
-        fb.status_.set(rusty::clone(rusty::clone(FiberStatus::FINISHED)));
+        fb.status_.set(rusty::clone(rusty::clone(FiberStatus_FINISHED())));
         if (fb.needs_finalize_.get()) {
             Log_info("Warning: We did not deal with backlog issues");
             fb.needs_finalize_.set(false);
@@ -4869,8 +5006,8 @@ void fiber_run(const Fiber& fb) {
         auto&& tguard = rusty::borrow(fb.fiber_task_);
         verify(((rusty::detail::deref_if_pointer_like(tguard))).is_none());
     }
-    verify(fb.status_.get() == rusty::clone(FiberStatus::INIT));
-    fb.status_.set(rusty::clone(rusty::clone(FiberStatus::STARTED)));
+    verify(fb.status_.get() == rusty::clone(FiberStatus_INIT()));
+    fb.status_.set(rusty::clone(rusty::clone(FiberStatus_STARTED())));
     const auto sz = reactor_live_fiber_count();
     verify(rusty::detail::deref_if_pointer_like(sz) > static_cast<size_t>(0));
     Fiber* self_ptr = fiber_self_mut(fb);
@@ -4901,8 +5038,8 @@ void fiber_do_yield(const Fiber& fb) {
     fiber_yield_t* const y = fb.fiber_yield_.get();
     verify(rusty::detail::rust_not((y == nullptr)));
     const auto s = fb.status_.get();
-    verify(((rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus::STARTED)) || (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus::RESUMED))) || (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus::FINALIZING)));
-    fb.status_.set(rusty::clone(rusty::clone(FiberStatus::PAUSED)));
+    verify(((rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus_STARTED())) || (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus_RESUMED()))) || (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus_FINALIZING())));
+    fb.status_.set(rusty::clone(rusty::clone(FiberStatus_PAUSED())));
     reactor_dec_active_fibers();
     fiber_yield_invoke_ptr(y);
 }
@@ -4925,12 +5062,12 @@ fn fiber_do_continue(fb: &Fiber) {
 /*RUSTYCPP:GEN-BEGIN id=reactor.fiber_do_continue version=1 rust_sha256=56342c24888c2de5ee84c086ca431c815bc725377b5ab265d1a597e70b5d5590*/
 void fiber_do_continue(const Fiber& fb) {
     const auto s = fb.status_.get();
-    verify((rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus::PAUSED)) || (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus::RECYCLED)));
+    verify((rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus_PAUSED())) || (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus_RECYCLED())));
     {
         auto&& tguard = rusty::borrow(fb.fiber_task_);
         verify(((rusty::detail::deref_if_pointer_like(tguard))).is_some());
     }
-    fb.status_.set(rusty::clone(rusty::clone(FiberStatus::RESUMED)));
+    fb.status_.set(rusty::clone(rusty::clone(FiberStatus_RESUMED())));
     fiber_task_invoke(&fb.fiber_task_);
 }
 /*RUSTYCPP:GEN-END id=reactor.fiber_do_continue*/
@@ -4944,7 +5081,7 @@ fn fiber_is_finished(fb: &Fiber) -> bool {
 /*RUSTYCPP:GEN-BEGIN id=reactor.fiber_is_finished version=1 rust_sha256=3e09f5a973271dd7f2b023950bc6a4842dec3b515088729332087c2cdf6da192*/
 bool fiber_is_finished(const Fiber& fb) {
     const auto s = fb.status_.get();
-    return (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus::FINISHED)) || (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus::RECYCLED));
+    return (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus_FINISHED())) || (rusty::detail::deref_if_pointer_like(s) == rusty::clone(FiberStatus_RECYCLED()));
 }
 /*RUSTYCPP:GEN-END id=reactor.fiber_is_finished*/
 
@@ -4989,13 +5126,21 @@ inline bool stackless_profile_enabled() {
   return enabled;
 }
 
-// Type aliases — the DSL grammar can't parse `std::atomic<...>` itself,
-// so we hide the template behind typedefs (same pattern as Server's
-// `ServerPendingRequestsAtomic`). C++20 guarantees `std::atomic<T>{}`
-// zero-initializes integer T, so the previous brace-init `{0}` is the
-// same as default-construction; the DSL aggregate emit relies on that.
-using StacklessProfileCountU64 = std::atomic<uint64_t>;
-using StacklessProfileCountUsize = std::atomic<size_t>;
+// Type aliases for the profile counters (the DSL grammar can't parse a
+// `std::atomic<...>` template-id in field position, so the struct names
+// these -- same pattern as Server's `ServerPendingRequestsAtomic`).
+//
+// These are rusty atomics rather than `std::atomic` so that the max-slots
+// update is a single `fetch_max` call: `rusty::sync::atomic::Atomic<T>`
+// already implements fetch_max AS the compare-exchange loop, and the DSL
+// cannot emit a hand-written one (the in/out `expected` argument gets
+// std::move()d). Consequently every read/write below passes
+// `rusty::sync::atomic::Ordering::*`, not `std::memory_order_*`. Each
+// counter default-constructs to 0, and `g_stackless_profile` has static
+// storage duration, so it is zero-initialized before any dynamic
+// initializer can observe it.
+using StacklessProfileCountU64 = rusty::sync::atomic::AtomicU64;
+using StacklessProfileCountUsize = rusty::sync::atomic::AtomicUsize;
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -5039,17 +5184,25 @@ struct StacklessProfileCounters {
 
 StacklessProfileCounters g_stackless_profile;
 
-inline void stackless_profile_update_max_slots(size_t slots) {
-  size_t old = g_stackless_profile.max_slots.load(std::memory_order_relaxed);
-  while (slots > old &&
-         !g_stackless_profile.max_slots.compare_exchange_weak(
-             old, slots, std::memory_order_relaxed, std::memory_order_relaxed)) {
-  }
+// The 7-line compare_exchange_weak loop collapsed into one call:
+// `rusty::sync::atomic::Atomic<T>::fetch_max` IS that CAS loop.
+#if RUSTYCPP_RUST
+fn stackless_profile_update_max_slots(slots: usize) {
+    g_stackless_profile.max_slots.fetch_max(slots, rusty::sync::atomic::Ordering::Relaxed);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.54 version=1 rust_sha256=fe02a3d961397f029359c037da46b3e9465c25970a79dc891adf2c15af0742d4*/
+void stackless_profile_update_max_slots(size_t slots);
+
+void stackless_profile_update_max_slots(size_t slots) {
+    g_stackless_profile.max_slots.fetch_max(std::move(slots), rusty::sync::atomic::Ordering::Relaxed);
+}
+/*RUSTYCPP:GEN-END id=reactor.54*/
 
 // @unsafe - FUNCTION-LOCAL STATIC (`static thread_local uint64_t
-// last_report_us`, §7.24b) plus raw std::atomic / std::memory_order on the
-// profile counters. Both keep this out of the DSL.
+// last_report_us`, §7.24b). That is now the ONLY thing keeping this body
+// out of the DSL: the profile counters became rusty atomics, so the loads
+// below are ordinary `Ordering::Relaxed` calls.
 inline void stackless_profile_report_periodic() {
   if (!stackless_profile_enabled()) {
     return;
@@ -5065,14 +5218,15 @@ inline void stackless_profile_report_periodic() {
   }
   last_report_us = now_us;
 
-  uint64_t reg_calls = g_stackless_profile.reg_calls.load(std::memory_order_relaxed);
-  uint64_t reg_scans = g_stackless_profile.reg_scan_steps.load(std::memory_order_relaxed);
-  uint64_t reg_reuse = g_stackless_profile.reg_reuse.load(std::memory_order_relaxed);
-  uint64_t reg_new = g_stackless_profile.reg_new.load(std::memory_order_relaxed);
-  uint64_t poll_calls = g_stackless_profile.poll_calls.load(std::memory_order_relaxed);
-  uint64_t poll_ready = g_stackless_profile.poll_ready.load(std::memory_order_relaxed);
-  uint64_t enqueue_calls = g_stackless_profile.enqueue_calls.load(std::memory_order_relaxed);
-  size_t max_slots = g_stackless_profile.max_slots.load(std::memory_order_relaxed);
+  using rusty::sync::atomic::Ordering;
+  uint64_t reg_calls = g_stackless_profile.reg_calls.load(Ordering::Relaxed);
+  uint64_t reg_scans = g_stackless_profile.reg_scan_steps.load(Ordering::Relaxed);
+  uint64_t reg_reuse = g_stackless_profile.reg_reuse.load(Ordering::Relaxed);
+  uint64_t reg_new = g_stackless_profile.reg_new.load(Ordering::Relaxed);
+  uint64_t poll_calls = g_stackless_profile.poll_calls.load(Ordering::Relaxed);
+  uint64_t poll_ready = g_stackless_profile.poll_ready.load(Ordering::Relaxed);
+  uint64_t enqueue_calls = g_stackless_profile.enqueue_calls.load(Ordering::Relaxed);
+  size_t max_slots = g_stackless_profile.max_slots.load(Ordering::Relaxed);
 
   double avg_scan = (reg_calls > 0) ? static_cast<double>(reg_scans) / static_cast<double>(reg_calls) : 0.0;
   Log_info("[async-prof] reg_calls={} avg_scan={:.2f} reuse={} new={} max_slots={} poll_calls={} poll_ready={} enqueue_calls={}",
@@ -5106,58 +5260,87 @@ inline void stackless_profile_report_periodic() {
 // `stackless_profile_report_periodic()` that these bodies read are
 // still visible here in-TU.
 //
-// No atomic kernel is needed: `std::memory_order_relaxed` lowers
-// through the DSL verbatim as a path expression, so the raw
-// `std::atomic<T>::fetch_add` calls are spellable directly and the
-// counters stay `std::atomic` (no change to
-// `stackless_profile_update_max_slots`'s CAS loop or to
-// `stackless_profile_report_periodic`'s loads).
+// The counters are rusty atomics now (see the typedefs above), so these
+// bodies pass `rusty::sync::atomic::Ordering::Relaxed`; that path
+// expression lowers verbatim, exactly as `std::memory_order_relaxed` did.
 #if RUSTYCPP_RUST
 fn stackless_profile_note_enqueue() {
     if stackless_profile_enabled() {
-        g_stackless_profile.enqueue_calls.fetch_add(1u64, std::memory_order_relaxed);
+        g_stackless_profile.enqueue_calls.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.46 version=1 rust_sha256=3474b14e3d48e546e146af23db08036c518d5f04227f6665f77f629dc137cf0b*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.46 version=1 rust_sha256=06a55092e9f41728dad2dc3a288ea59117b71f2fdbb37b1237102433841b4622*/
 void stackless_profile_note_enqueue();
 
 void stackless_profile_note_enqueue() {
     if (stackless_profile_enabled()) {
-        g_stackless_profile.enqueue_calls.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
+        g_stackless_profile.enqueue_calls.fetch_add(static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
     }
 }
 /*RUSTYCPP:GEN-END id=reactor.46*/
 
-// Poll-one micro-kernel: the Waker/Context wiring the DSL cannot spell
-// (reference arguments to struct literals mangle). The loop and slot
-// bookkeeping around it are DSL (Reactor::process_stackless_tasks).
-bool reactor_poll_one(const Reactor& self, size_t idx, rusty::Function<bool(rusty::Context&)>* poll_fn) {
-  if (stackless_profile_enabled()) {
-    g_stackless_profile.poll_calls.fetch_add(1, std::memory_order_relaxed);
-  }
-  rusty::Waker waker{[rp = &self, idx]() {
-    rp->enqueue_stackless_task(idx);
-  }};
-  rusty::Context ctx{&waker};
-  return (*poll_fn)(ctx);
+// The "Waker/Context wiring the DSL cannot spell" objection expired:
+// rusty::Waker and rusty::Context are plain aggregates, so struct literals
+// over them lower fine. Two shapes are load-bearing here:
+//   * the waker pointer must go through `let wp: *mut rusty::Waker` --
+//     writing `rusty::Context { waker: &waker }` silently drops the `&`;
+//   * the poll call must go through the named `let ctx_ref: &mut ...`
+//     binding -- a bare `&mut ctx` argument lowers to a POINTER, which
+//     will not bind the `rusty::Function<bool(rusty::Context&)>` operand.
+// The loop and slot bookkeeping around this live in the DSL
+// Reactor::process_stackless_tasks.
+#if RUSTYCPP_RUST
+fn reactor_poll_one(r: &Reactor, idx: usize, poll_fn: *mut StacklessPollFn) -> bool {
+    if stackless_profile_enabled() {
+        g_stackless_profile.poll_calls.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
+    }
+    // Raw back-pointer, not the reference itself: a `move ||` closure
+    // captures BY VALUE and Reactor is non-copyable. The waker never
+    // outlives this call.
+    let rp: *const Reactor = &raw const r;
+    let mut waker = rusty::Waker {
+        wake_fn: move || {
+            (*rp).enqueue_stackless_task(idx);
+        }
+    };
+    let wp: *mut rusty::Waker = &raw mut waker;
+    let mut ctx = rusty::Context { waker: wp };
+    let ctx_ref: &mut rusty::Context = &mut ctx;
+    (*poll_fn)(ctx_ref)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.56 version=1 rust_sha256=fed3cb716f10732f71866e0f615048ecb66962c1720f5fedc64ab69cfd1336d7*/
+bool reactor_poll_one(const Reactor& r, size_t idx, StacklessPollFn* poll_fn) {
+    if (stackless_profile_enabled()) {
+        g_stackless_profile.poll_calls.fetch_add(static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    }
+    const Reactor* rp = &r;
+    auto waker = rusty::Waker{.wake_fn = [=, idx = std::move(idx), rp = std::move(rp)]() {
+((*rp)).enqueue_stackless_task(std::move(idx));
+}};
+    rusty::Waker* wp = &waker;
+    auto ctx = rusty::Context{.waker = wp};
+    rusty::Context& ctx_ref = ctx;
+    return (*poll_fn)(ctx_ref);
+}
+/*RUSTYCPP:GEN-END id=reactor.56*/
 
 // Ready-count + periodic-report shims for the DSL poll loop (same
 // linkage note as above).
 #if RUSTYCPP_RUST
 fn stackless_profile_note_poll_ready() {
     if stackless_profile_enabled() {
-        g_stackless_profile.poll_ready.fetch_add(1u64, std::memory_order_relaxed);
+        g_stackless_profile.poll_ready.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.47 version=1 rust_sha256=d42741455c92befd982ebb885b3482e307bb5fc0198dc1460ddb51da85a2d9a1*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.47 version=1 rust_sha256=f4cdd57b76e6146f1c08a12071df68bc99d29cb07aee642a202ba792a75726e0*/
 void stackless_profile_note_poll_ready();
 
 void stackless_profile_note_poll_ready() {
     if (stackless_profile_enabled()) {
-        g_stackless_profile.poll_ready.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
+        g_stackless_profile.poll_ready.fetch_add(static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
     }
 }
 /*RUSTYCPP:GEN-END id=reactor.47*/
@@ -5181,29 +5364,29 @@ fn stackless_profile_note_register(scanned: usize, reuse: bool, slots_now: usize
     if !stackless_profile_enabled() {
         return;
     }
-    g_stackless_profile.reg_calls.fetch_add(1u64, std::memory_order_relaxed);
-    g_stackless_profile.reg_scan_steps.fetch_add(scanned, std::memory_order_relaxed);
+    g_stackless_profile.reg_calls.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
+    g_stackless_profile.reg_scan_steps.fetch_add(scanned, rusty::sync::atomic::Ordering::Relaxed);
     if reuse {
-        g_stackless_profile.reg_reuse.fetch_add(1u64, std::memory_order_relaxed);
+        g_stackless_profile.reg_reuse.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
     } else {
-        g_stackless_profile.reg_new.fetch_add(1u64, std::memory_order_relaxed);
+        g_stackless_profile.reg_new.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
         stackless_profile_update_max_slots(slots_now);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.49 version=1 rust_sha256=027d4ce12e93a70d345a9cbebc04d41d1960977283a72a38d2b3a4a52ec14209*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.49 version=1 rust_sha256=def337a95497345eac0c06f9ea7a86e9618e4b281386284067f44b8e49167659*/
 void stackless_profile_note_register(size_t scanned, bool reuse, size_t slots_now);
 
 void stackless_profile_note_register(size_t scanned, bool reuse, size_t slots_now) {
     if (rusty::detail::rust_not(stackless_profile_enabled())) {
         return;
     }
-    g_stackless_profile.reg_calls.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
-    g_stackless_profile.reg_scan_steps.fetch_add(std::move(scanned), std::memory_order_relaxed);
+    g_stackless_profile.reg_calls.fetch_add(static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    g_stackless_profile.reg_scan_steps.fetch_add(std::move(scanned), rusty::sync::atomic::Ordering::Relaxed);
     if (reuse) {
-        g_stackless_profile.reg_reuse.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
+        g_stackless_profile.reg_reuse.fetch_add(static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
     } else {
-        g_stackless_profile.reg_new.fetch_add(static_cast<uint64_t>(1), std::memory_order_relaxed);
+        g_stackless_profile.reg_new.fetch_add(static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
         stackless_profile_update_max_slots(std::move(slots_now));
     }
 }
@@ -5241,14 +5424,26 @@ rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
   return fiber_current_fiber();
 }
 
-// @unsafe - Creates and runs a new fiber with rusty::Rc ownership
+// @unsafe - Creates and runs a new fiber with rusty::Rc ownership.
+// The static member delegates to a DSL free fn (same split as
+// current_fiber/sleep above). `const char*` is spelled with the file's
+// SrcFileCStr alias -- `*const i8` would emit `const int8_t*`, a distinct
+// type that will not bind a `const char*` argument.
+#if RUSTYCPP_RUST
+fn fiber_create_run_impl(func: FiberFn, file: SrcFileCStr, line: i64) -> rusty::Rc<Fiber> {
+    let reactor_rc = Reactor::get_reactor();
+    reactor_create_run_fiber_at_impl(&*reactor_rc, func, file, line)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.61 version=1 rust_sha256=69c5f6d097c4e68bc8138513fc434512f2e5c73c1d8fc1dd1341245de9bbd346*/
+rusty::Rc<Fiber> fiber_create_run_impl(FiberFn func, SrcFileCStr file, int64_t line) {
+    const auto reactor_rc = Reactor::get_reactor();
+    return reactor_create_run_fiber_at_impl(rusty::detail::deref_if_pointer_like(reactor_rc), std::move(func), std::move(file), std::move(line));
+}
+/*RUSTYCPP:GEN-END id=reactor.61*/
 rusty::Rc<Fiber>
 Fiber::create_run_impl(rusty::Function<void()> func, const char* file, int64_t line) {
-  auto reactor_rc = Reactor::get_reactor();
-  // Rc gives const access, create_run_fiber is const (safe: thread-local, single owner)
-  auto fiber = reactor_create_run_fiber_at_impl(*reactor_rc, std::move(func), file, line);
-  // some events might be triggered in the last fiber.
-  return fiber;
+  return fiber_create_run_impl(std::move(func), file, line);
 }
 
 // The static member delegates to the DSL free fn (§7.59 turbofish
@@ -5475,7 +5670,7 @@ rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self_, FiberFn 
         (rusty::detail::deref_if_pointer_like(fiber)).id.set(fiber_next_global_id());
         rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(fiber)).func_.borrow_mut()) = std::move(func);
         verify(((rusty::detail::deref_if_pointer_like(rusty::borrow((rusty::detail::deref_if_pointer_like(fiber)).fiber_task_)))).is_some());
-        (rusty::detail::deref_if_pointer_like(fiber)).status_.set(rusty::clone(rusty::clone(FiberStatus::RECYCLED)));
+        (rusty::detail::deref_if_pointer_like(fiber)).status_.set(rusty::clone(rusty::clone(FiberStatus_RECYCLED())));
         return std::move(fiber);
     } else {
         rusty::Rc<Fiber> fiber = rusty::Rc<Fiber>::make(std::move(func));
@@ -5577,10 +5772,10 @@ rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self_, FiberFn 
     self_.set_running_fiber(fiber);
     self_.register_fiber(fiber);
     const auto status = (rusty::detail::deref_if_pointer_like(fiber)).status_.get();
-    if (rusty::detail::deref_if_pointer_like(status) == rusty::clone(FiberStatus::INIT)) {
+    if (rusty::detail::deref_if_pointer_like(status) == rusty::clone(FiberStatus_INIT())) {
         ((rusty::detail::deref_if_pointer_like(fiber))).run();
     } else {
-        verify(rusty::detail::deref_if_pointer_like(status) == rusty::clone(FiberStatus::RECYCLED));
+        verify(rusty::detail::deref_if_pointer_like(status) == rusty::clone(FiberStatus_RECYCLED()));
         ((rusty::detail::deref_if_pointer_like(fiber))).continue_();
     }
     if (((rusty::detail::deref_if_pointer_like(fiber))).finished()) {
@@ -6479,7 +6674,7 @@ using rrr::EventStatus;
 #if RUSTYCPP_RUST
 fn quorum_event_make(n_total: i32, quorum: i32) -> Arc<QuorumEvent> {
     let sp = rusty::Arc::<QuorumEvent>::make(
-        rusty::Cell::<EventStatus>::new(EventStatus::INIT),      // status_
+        rusty::Cell::<EventStatus>::new(rrr::EventStatus::INIT),      // status_
         rusty::thread::current_id(),                             // owner_thread_
         EventState {},                                           // state_
         rusty::Cell::<bool>::new(true),                          // prunable_
@@ -6509,9 +6704,9 @@ fn create_sp_quorum_event(n_total: i32, quorum: i32) -> Arc<QuorumEvent> {
     reactor_setup_sp_event::<QuorumEvent>(quorum_event_make(n_total, quorum))
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.38 version=1 rust_sha256=c7aa4da431fa22efbac530766bd123c7a88587984319613c1d420a2771cf0cf4*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.38 version=1 rust_sha256=04df3a715f2309fdb6137888bf0396e12c0d50c627d8b437203d41ed37ce4b9c*/
 rusty::Arc<QuorumEvent> quorum_event_make(int32_t n_total, int32_t quorum) {
-    auto sp = rusty::Arc<QuorumEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>>(rusty::HashMap<uint16_t, rrr::i64>()), std::move(n_total), std::move(quorum), rusty::Cell<QuorumPolicy>::new_(rusty::clone(rusty::clone(QuorumPolicy::DEFAULT))), rusty::Cell<bool>::new_(false), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)), rusty::Cell<bool>::new_(false), rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(-1)), rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(18446744073709551615)), rrr::create_sp_int_event(std::move(n_total)));
+    auto sp = rusty::Arc<QuorumEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(rrr::EventStatus_INIT()))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>>(rusty::HashMap<uint16_t, rrr::i64>()), std::move(n_total), std::move(quorum), rusty::Cell<QuorumPolicy>::new_(rusty::clone(rusty::clone(QuorumPolicy_DEFAULT()))), rusty::Cell<bool>::new_(false), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)), rusty::Cell<bool>::new_(false), rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(-1)), rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(18446744073709551615)), rrr::create_sp_int_event(std::move(n_total)));
     event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
     return std::move(sp);
 }
@@ -6554,7 +6749,7 @@ fn quorum_event_finalize(qe: &QuorumEvent, timeout: u64,
         (*final_ev).wait_timeout(timeout);
         // A: by the time this fires, the quorum event could have been
         // freed. Avoid touching qe_ptr or its members after this line.
-        if (*final_ev).status_.get() == EventStatus::TIMEOUT {
+        if (*final_ev).status_.get() == rrr::EventStatus::TIMEOUT {
             // Didn't receive all RPC replies.
             let dr: &mut QuorumDanglingVec = &mut dangling_rpc;
             let _ret = finalize_func(dr);
@@ -6564,7 +6759,7 @@ fn quorum_event_finalize(qe: &QuorumEvent, timeout: u64,
             // queues forever at broadcast rate. Mark it DONE here (we
             // run on the owner thread) so the next pass evicts and
             // prune can free it.
-            (*final_ev).status_.set(EventStatus::DONE);
+            (*final_ev).status_.set(rrr::EventStatus::DONE);
         }
     });
 }
@@ -6579,17 +6774,17 @@ fn quorum_event_is_slow(_qe: &QuorumEvent) -> bool {
     result
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.39 version=1 rust_sha256=7657756df74da09ca97fc48f45485e795773b8c7cc77072e3d97dd2417cac3f7*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.39 version=1 rust_sha256=4f7bcbb304bfc65da1a49e471b0f1d83f0dca8671c938f4dcf9a9a19b4e57584*/
 void quorum_event_finalize(const QuorumEvent& qe, uint64_t timeout, QuorumFinalizeFn finalize_func) {
     const QuorumEvent* qe_ptr = &qe;
     Fiber::create_run([=, finalize_func = std::move(finalize_func), qe_ptr = std::move(qe_ptr), timeout = std::move(timeout)]() mutable {
 const auto final_ev = rusty::clone((*qe_ptr).finalize_event_);
 QuorumDanglingVec dangling_rpc = quorum_collect_dangling(qe_ptr);
 ((rusty::detail::deref_if_pointer_like(final_ev))).wait_timeout(std::move(timeout));
-if ((rusty::detail::deref_if_pointer_like(final_ev)).status_.get() == rusty::clone(EventStatus::TIMEOUT)) {
+if ((rusty::detail::deref_if_pointer_like(final_ev)).status_.get() == rusty::clone(rrr::EventStatus_TIMEOUT())) {
     QuorumDanglingVec& dr = dangling_rpc;
     const auto _ret = finalize_func(dr);
-    (rusty::detail::deref_if_pointer_like(final_ev)).status_.set(rusty::clone(rusty::clone(EventStatus::DONE)));
+    (rusty::detail::deref_if_pointer_like(final_ev)).status_.set(rusty::clone(rusty::clone(rrr::EventStatus_DONE())));
 }
 });
 }

@@ -64,6 +64,7 @@ import rrr.threading;
 // TcpConnection, its two adapters, TcpFactory, and the adapter set.
 /*RUSTYCPP:GEN-DISPATCH-BEGIN*/
 namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(append)
 RUSTY_METHOD_DISPATCH(consume_frame)
 RUSTY_METHOD_DISPATCH(reset)
 RUSTY_METHOD_DISPATCH(unwrap)
@@ -1191,10 +1192,21 @@ bool TcpListenerPollableShim::is_closed() const {
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.listener_shims*/
 
-inline ChannelListenerProxy make_tcp_listener_channel_proxy(
-    rusty::Arc<TcpListener> listener) {
-    return rusty::make_box<TcpListenerChannelShim>(std::move(listener));
+// The channel-facade proxy maker — same one-line shape as its four
+// siblings (GEN ids tcp_channel.5 / .6 / .9 / .14). The `inline` is
+// dropped: this is a module-purview definition with external linkage,
+// and its only callers are `tcp_factory_make_listener` and the
+// listener unit test.
+#if RUSTYCPP_RUST
+fn make_tcp_listener_channel_proxy(listener: rusty::Arc<TcpListener>) -> ChannelListenerProxy {
+    Box::new(TcpListenerChannelShim { listener_: listener })
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.15 version=1 rust_sha256=a1ac836dc5b49703593f26baccd32c06d172d4b1869cecb80b3f77e4907a136f*/
+ChannelListenerProxy make_tcp_listener_channel_proxy(rusty::Arc<TcpListener> listener) {
+    return rusty::Box<TcpListenerChannelShim>::new_(TcpListenerChannelShim(std::move(listener)));
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.15*/
 
 #if RUSTYCPP_RUST
 fn make_tcp_listener_pollable_proxy(listener: rusty::Arc<TcpListener>) -> PollableProxy {
@@ -1425,13 +1437,38 @@ constexpr size_t kRecvScratchBytes = static_cast<size_t>(64) * static_cast<size_
 // Outbound byte buffer alias so the DSL can spell the parameter type.
 using TcpOutBuf = std::vector<std::uint8_t>;
 ChannelError tcpconn_drain_outbound_locked(const TcpConnection& conn, TcpOutBuf& buf);
-// Stack scratch for the recv drain (the DSL has no local arrays; the
-// C-array field decays at the kernel call site; guaranteed RVO makes
-// the factory return copy-free).
-struct RecvScratch { std::uint8_t arr[kRecvScratchBytes]; };
+// Stack scratch for the recv drain. The struct itself is DSL — a
+// fixed-size field lowers to `std::array<uint8_t, kRecvScratchBytes>`
+// — but the thread_local slot below stays a kernel: a DSL
+// `#[thread_local] static` emits a plain `extern RecvScratch SCRATCH;`
+// ahead of the `inline thread_local` definition, which every compiler
+// rejects ("thread-local declaration follows non-thread-local
+// declaration" — the thread-local-static-fwd-decl blocker).
+#if RUSTYCPP_RUST
+struct RecvScratch {
+    arr: [u8; kRecvScratchBytes],
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.16 version=1 rust_sha256=4fe588d858c47b734682e4f0d22af0f5fee2dd9e125354fa16d2c52749f0dd32*/
+struct RecvScratch;
+
+struct RecvScratch {
+    std::array<uint8_t, rusty::sanitize_array_capacity<kRecvScratchBytes>()> arr;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
+};
+/*RUSTYCPP:GEN-END id=tcp_channel.16*/
 RecvScratch* tcpconn_scratch();
 int64_t      tcpconn_recv_bytes(const TcpConnection& conn, RecvScratch* s);
-FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView* v);
+// By reference, not by pointer: `tcpconn_next_frame` is DSL now (it
+// lives in the tcp_channel.handle_read block) and a DSL `&mut`
+// PARAMETER lowers to a C++ reference. Keeping this declaration is also
+// load-bearing for a second reason: it is the only plain-C++ mention of
+// `FrameDecodeStatus` in the file, and without one the transpiler
+// lowers `FrameDecodeStatus::Complete` in handle_read as a nullary
+// variant CALL (`::Complete()`), which does not compile.
+FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView& v);
 void         tcpconn_append_inbound(const TcpConnection& conn, std::size_t n);
 void         tcpconn_consume_inbound(const TcpConnection& conn);
 void         tcpconn_reset_inbound(const TcpConnection& conn);
@@ -1615,13 +1652,23 @@ void tcpconn_reset_fd(const TcpConnection& conn) {
 // @safe - peeks the outbound queue length under the spinlock.
 
 
-// @unsafe - recv(2) syscall into a raw `char` scratch buffer +
+// @unsafe - recv(2) syscall into the scratch buffer +
 // FrameStreamReader::append / next_frame / consume_frame are all
 // @unsafe + raw `uint8_t*` payload pointers stored on the FrameView.
 // Read-readiness: drain recv(2) into the frame reader (edge-trigger
-// safe), then dispatch complete frames — all DSL; the syscall, the
-// scratch buffer, and the small POD builders live in kernels.
+// safe), then dispatch complete frames — all DSL; only the thread_local
+// scratch slot is still a kernel.
+//
+// `tcpconn_next_frame` is deliberately IN THIS BLOCK: a `&mut v`
+// argument lowers to a C++ reference only when the callee is declared
+// in the same `#if RUSTYCPP_RUST` block; across blocks it emits `&v`
+// (a pointer), which will not bind the `FrameView&` parameter.
 #if RUSTYCPP_RUST
+fn tcpconn_next_frame(conn: &TcpConnection, v: &mut FrameView) -> FrameDecodeStatus {
+    let g = conn.inbound_.borrow();
+    (*g).next_frame(v)
+}
+
 fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
     if conn.closed_.get() {
         return false;
@@ -1668,7 +1715,10 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
     while decoding {
         let mut v: FrameView = Default::default();
         let s = tcpconn_next_frame(conn, &mut v);
-        if s == FrameDecodeStatus::Complete {
+        // `as i32` on both sides forces PATH lowering: a bare
+        // `FrameDecodeStatus::Complete` is emitted as a nullary variant
+        // ACCESSOR call, which does not exist for this foreign C++ enum.
+        if (s as i32) == (FrameDecodeStatus::Complete as i32) {
             let cf = ChannelFrame { payload: v.payload, size: v.payload_size };
             {
                 let mut guard = conn.on_frame_.lock().unwrap();
@@ -1677,7 +1727,7 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
                 }
             }
             tcpconn_consume_inbound(conn);
-        } else if s == FrameDecodeStatus::NeedMoreBytes {
+        } else if (s as i32) == (FrameDecodeStatus::NeedMoreBytes as i32) {
             decoding = false;
         } else {
             // Malformed inbound stream.
@@ -1697,7 +1747,12 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
     any_progress
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_read version=1 rust_sha256=0a9f9cd82cdfa7eec33669e9c9df0b123743e056812b7884a668f99d4b56dad0*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_read version=1 rust_sha256=132ae68190a8a61908c1d0fb83ddd95f099a456e36d04f83fd1477468d5b7107*/
+FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView& v) {
+    auto&& g = rusty::borrow(conn.inbound_);
+    return ((rusty::detail::deref_if_pointer_like(g))).next_frame(v);
+}
+
 bool tcpconn_handle_read(const TcpConnection& conn) {
     if (conn.closed_.get()) {
         return false;
@@ -1740,8 +1795,8 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
     auto decoding = true;
     while (decoding) {
         FrameView v = rusty::default_like<FrameView>();
-        const auto s = tcpconn_next_frame(conn, &v);
-        if (rusty::detail::deref_if_pointer_like(s) == rusty::detail::deref_if_pointer_like(FrameDecodeStatus::Complete)) {
+        const auto s = tcpconn_next_frame(conn, v);
+        if (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(FrameDecodeStatus::Complete)))) {
             const auto cf = ChannelFrame{.payload = std::move(v.payload), .size = std::move(v.payload_size)};
             {
                 auto&& guard = rusty::deref_call(conn.on_frame_.lock(), rusty::detail::__mdisp_unwrap{});
@@ -1750,7 +1805,7 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
                 }
             }
             tcpconn_consume_inbound(conn);
-        } else if (rusty::detail::deref_if_pointer_like(s) == rusty::detail::deref_if_pointer_like(FrameDecodeStatus::NeedMoreBytes)) {
+        } else if (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(FrameDecodeStatus::NeedMoreBytes)))) {
             decoding = false;
         } else {
             {
@@ -1778,22 +1833,23 @@ RecvScratch* tcpconn_scratch() {
     return &s;
 }
 
-// @unsafe - recv(2) into the scratch.
-int64_t tcpconn_recv_bytes(const TcpConnection& conn, RecvScratch* s) {
-    return ::recv(conn.fd_.as_raw_fd(), s->arr, sizeof(s->arr), 0);
-}
-
-// @unsafe - RefCell arrow into the frame reader (append the scratch
-// prefix that recv filled).
-void tcpconn_append_inbound(const TcpConnection& conn, std::size_t n) {
-    conn.inbound_.borrow_mut()->append(tcpconn_scratch()->arr, n);
-}
-
-// @unsafe - RefCell arrows into the frame reader.
-FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView* v) {
-    return conn.inbound_.borrow()->next_frame(*v);
-}
+// @unsafe - recv(2) into the scratch, plus the RefCell arrows into the
+// frame reader. All DSL: the scratch pointer stays a `*mut RecvScratch`
+// parameter (a DSL raw-pointer param lowers verbatim to `RecvScratch*`),
+// so the recv signature and its `tcpconn_scratch()` call site are
+// unchanged; `sizeof(s->arr)` becomes the constant because the field is
+// a `std::array` now.
 #if RUSTYCPP_RUST
+fn tcpconn_recv_bytes(conn: &TcpConnection, s: *mut RecvScratch) -> i64 {
+    unsafe { recv(conn.fd_.as_raw_fd(), (*s).arr.data(), kRecvScratchBytes, 0i32) }
+}
+
+fn tcpconn_append_inbound(conn: &TcpConnection, n: usize) {
+    let s = tcpconn_scratch();
+    let mut guard = conn.inbound_.borrow_mut();
+    guard.append((*s).arr.data(), n);
+}
+
 fn tcpconn_consume_inbound(conn: &TcpConnection) {
     let mut guard = conn.inbound_.borrow_mut();
     guard.consume_frame();
@@ -1804,7 +1860,20 @@ fn tcpconn_reset_inbound(conn: &TcpConnection) {
     guard.reset();
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.13 version=1 rust_sha256=0317def90e6a944dc338fde6c6ce54481f1c9df9c90b0d730bef6b8262963d17*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.13 version=1 rust_sha256=299a7ad14c319411ef1ef3bbe87698448195f1a4466cadcee190262403ec47ac*/
+int64_t tcpconn_recv_bytes(const TcpConnection& conn, RecvScratch* s) {
+    // @unsafe
+    {
+        return recv(conn.fd_.as_raw_fd(), (*s).arr.data(), std::move(kRecvScratchBytes), static_cast<int32_t>(0));
+    }
+}
+
+void tcpconn_append_inbound(const TcpConnection& conn, size_t n) {
+    const auto s = tcpconn_scratch();
+    auto&& guard = conn.inbound_.borrow_mut();
+    rusty::deref_call(guard, rusty::detail::__mdisp_append{}, (rusty::detail::deref_if_pointer_like(s)).arr.data(), std::move(n));
+}
+
 void tcpconn_consume_inbound(const TcpConnection& conn) {
     auto&& guard = conn.inbound_.borrow_mut();
     rusty::deref_call(guard, rusty::detail::__mdisp_consume_frame{});
@@ -1980,11 +2049,27 @@ ChannelError tcpconn_drain_outbound_locked(const TcpConnection& conn, TcpOutBuf&
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.drain*/
 
-// @unsafe - send(2) with raw pointer arithmetic into the buffer.
-int64_t tcpconn_send_bytes(const TcpConnection& conn, TcpOutBuf& buf, size_t offset) {
-    return ::send(conn.fd_.as_raw_fd(), buf.data() + offset,
-                  buf.size() - offset, MSG_NOSIGNAL);
+// @unsafe - send(2) into the outbound buffer. DSL: the pointer
+// arithmetic is `rusty::ptr::add` and the `&mut TcpOutBuf` PARAMETER
+// lowers back to `TcpOutBuf&`, so the forward declaration and the
+// drain-loop call site (which passes its own `&mut` param through) are
+// untouched — no block co-location needed.
+#if RUSTYCPP_RUST
+fn tcpconn_send_bytes(conn: &TcpConnection, buf: &mut TcpOutBuf, offset: usize) -> i64 {
+    unsafe {
+        send(conn.fd_.as_raw_fd(), rusty::ptr::add(buf.data(), offset),
+             buf.size() - offset, MSG_NOSIGNAL)
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.24 version=1 rust_sha256=6fe3c1561fe1797ccdc7fb2a5b395d860a7cb522dbede8160537af8192fc64d3*/
+int64_t tcpconn_send_bytes(const TcpConnection& conn, TcpOutBuf& buf, size_t offset) {
+    // @unsafe
+    {
+        return send(conn.fd_.as_raw_fd(), rusty::ptr::add(buf.data(), std::move(offset)), buf.size() - rusty::detail::deref_if_pointer_like(offset), MSG_NOSIGNAL);
+    }
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.24*/
 
 // Post-drain buffer accounting. Both halves were once labeled
 // "iterator surgery" kernels, but a vector erase-range lowers verbatim
@@ -2185,20 +2270,55 @@ int32_t set_nonblocking_fd(int32_t fd) {
 // classify-and-wrap kernel. Returns 1 accepted (out->proxy filled),
 // 0 retriable/no-work, 2 nonblock-config failure (out->ch filled),
 // -1 hard error (out->ch + out->msg filled).
+#if RUSTYCPP_RUST
 struct AcceptStep {
-    ChannelError ch = ChannelError::None;
+    ch: ChannelError,
+    msg: std::string,
+    proxy: Option<ChannelConnectionProxy>,
+}
+
+// The DSL has no default field initializers, so the old `ch =
+// ChannelError::None` member init moves into the factory — both
+// construction sites already go through it.
+fn tcplistener_accept_step_new() -> AcceptStep {
+    let msg: std::string = Default::default();
+    AcceptStep {
+        ch: ChannelError_None(),
+        msg: msg,
+        proxy: None,
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.29 version=1 rust_sha256=0a5191903b0bffce838e0eba5a847e2352268518b55e28a5c6f38fc009c267f9*/
+struct AcceptStep;
+AcceptStep tcplistener_accept_step_new();
+
+struct AcceptStep {
+    ChannelError ch;
     std::string msg;
     rusty::Option<ChannelConnectionProxy> proxy;
 };
-AcceptStep tcplistener_accept_step_new();
+
+AcceptStep tcplistener_accept_step_new() {
+    std::string msg = rusty::default_like<std::string>();
+    return AcceptStep{.ch = ChannelError_None(), .msg = std::move(msg), .proxy = rusty::Option<ChannelConnectionProxy>{rusty::None}};
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.29*/
 int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out);
-ChannelConnectionProxy tcplistener_take_proxy(AcceptStep* s);
 bool tcplistener_is_bound(const TcpListener& self);
 
 // The accept LOOP policy — progress accounting, retriable break,
 // nonblock-failure skip, hard-error close, on_accept dispatch — as
-// DSL over the step kernel.
+// DSL over the step kernel. `tcplistener_take_proxy` lives in THIS
+// block so its `&mut step` argument lowers to a reference; the
+// `tcplistener_accept_step` kernel is hand C++ outside the block, so
+// the `&mut step` there still lowers to the pointer it expects
+// (probe-verified: the rule is per-callee, not per-call-site).
 #if RUSTYCPP_RUST
+fn tcplistener_take_proxy(s: &mut AcceptStep) -> ChannelConnectionProxy {
+    s.proxy.take().unwrap()
+}
+
 fn tcplistener_handle_read(lst: &TcpListener) -> bool {
     if lst.closed_.get() {
         return false;
@@ -2238,7 +2358,11 @@ fn tcplistener_handle_read(lst: &TcpListener) -> bool {
     any_progress
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener_read version=1 rust_sha256=080592ac95bc87701ff3d161936f2b63f6914e3fc7abfe2ded3a1edacda11472*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener_read version=1 rust_sha256=78d155dde08732cff336b4189984d42f08e6599dd4d858c95c8ab0166790e07d*/
+ChannelConnectionProxy tcplistener_take_proxy(AcceptStep& s) {
+    return s.proxy.take().unwrap();
+}
+
 bool tcplistener_handle_read(const TcpListener& lst) {
     if (lst.closed_.get()) {
         return false;
@@ -2255,7 +2379,7 @@ bool tcplistener_handle_read(const TcpListener& lst) {
             any_progress = true;
             auto&& guard = rusty::deref_call(lst.on_accept_.lock(), rusty::detail::__mdisp_unwrap{});
             if (rusty::detail::deref_if_pointer_like(guard)) {
-                (rusty::detail::deref_if_pointer_like(guard))(tcplistener_take_proxy(&step));
+                (rusty::detail::deref_if_pointer_like(guard))(tcplistener_take_proxy(rusty::detail::deref_if_pointer_like(step)));
             }
         } else if (rusty::detail::deref_if_pointer_like(rc) == 0) {
             accepting = false;
@@ -2279,9 +2403,7 @@ bool tcplistener_handle_read(const TcpListener& lst) {
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.listener_read*/
 
-// @unsafe - value-init factory + move-out helper for the DSL.
-AcceptStep tcplistener_accept_step_new() { return AcceptStep{}; }
-ChannelConnectionProxy tcplistener_take_proxy(AcceptStep* s) { return s->proxy.take().unwrap(); }
+
 
 // @unsafe - const method on the foreign rusty::net::TcpListener field.
 #if RUSTYCPP_RUST
@@ -2433,53 +2555,58 @@ ChannelError connect_errno_to_channel_error(int32_t err) {
 /*RUSTYCPP:GEN-END id=tcp_channel.11*/
 }  // namespace
 
-// @unsafe - socket(2) / connect(2) / setsockopt(2) / fcntl(2) syscalls
-// + reinterpret_cast<sockaddr*> on the sockaddr_in + PollThread::
-// add_proxy is @unsafe + raw fd handling.
-// KERNEL by verdict (TCP sweep): unlike the accept loop, connect has
-// no loop/callback POLICY separable from its syscall sequence — the
-// socket/nonblock/EINPROGRESS/select/SO_ERROR ladder with
-// close-on-every-error IS the body. A DSL shell over one fat step
-// kernel would be cosmetic fragmentation (anti-fragmentation rule).
-// The socket/connect/select ladder lives in srpc_connect.c now (plain
-// C, Goal-0 C demotion — this surface will never be Rust). This shim
-// converts the C++ boundary types: SocketAddrV4 in, ChannelError out.
+// The socket/connect/select ladder lives in srpc_connect.c (plain C,
+// Goal-0 C demotion — that surface will never be Rust). Everything on
+// the C++ side of it is DSL now: the boundary shim below converts the
+// types (SocketAddrV4 in, ChannelError out) and shares a block with its
+// only caller, because a DSL `&mut err` ARGUMENT lowers to a reference
+// only within one `#if RUSTYCPP_RUST` block (across blocks it emits a
+// pointer, which will not bind the `ChannelError&` parameter).
 // C return contract: >=0 fd; -1 errno in *out_errno; -2 timeout;
 // -3 self-connect guard (reported as ConnectionRefused so callers
 // retry like a not-yet-up server).
 extern "C" int32_t srpc_tcp_connect_socket(uint32_t addr_be, uint16_t port_be,
                                            int32_t timeout_ms, int32_t* out_errno);
 
-int32_t tcp_factory_connect_socket(rusty::net::SocketAddrV4 peer,
-                                   int32_t connect_timeout_ms,
-                                   ChannelError* err_out) {
-    sockaddr_in sa = rusty::net::sockaddr_in_from_socket_addr_v4(peer);
-    int32_t err_no = 0;
-    int32_t fd = srpc_tcp_connect_socket(sa.sin_addr.s_addr, sa.sin_port,
-                                         connect_timeout_ms, &err_no);
-    if (fd >= 0) {
-        return fd;
-    }
-    if (fd == -2) {
-        *err_out = ChannelError::Timeout;
-    } else if (fd == -3) {
-        *err_out = ChannelError::ConnectionRefused;
-    } else {
-        *err_out = connect_errno_to_channel_error(err_no);
-    }
-    return -1;
-}
-
-// Parse head + connection build/wiring as DSL over the syscall kernel.
-// The old tail's `const_cast<TcpConnection&>(*conn.get())` becomes the
-// get_mut mint window (the Arc is freshly minted and uniquely owned).
-// The poll thread is wired into the connection BEFORE the channel
-// proxy is handed back, so any user-thread `send_frame` can post
-// `update_mode` actively (no lost-wake-up race against
+// Parse head + connection build/wiring as DSL over the C connect
+// ladder. The old tail's `const_cast<TcpConnection&>(*conn.get())` is
+// the get_mut mint window (the Arc is freshly minted and uniquely
+// owned). The poll thread is wired into the connection BEFORE the
+// channel proxy is handed back, so any user-thread `send_frame` can
+// post `update_mode` actively (no lost-wake-up race against
 // `pending_write_update_`); the channel proxy keeps one Arc, the
 // pollable proxy another, so the connection survives until both
 // layers release.
+//
+// @unsafe - drives the C socket/connect/select ladder and
+// PollThread::add_proxy.
 #if RUSTYCPP_RUST
+fn tcp_factory_connect_socket(peer: rusty::net::SocketAddrV4,
+                              connect_timeout_ms: i32,
+                              err_out: &mut ChannelError) -> i32 {
+    let sa = rusty::net::sockaddr_in_from_socket_addr_v4(peer);
+    let mut err_no: i32 = 0;
+    let fd = srpc_tcp_connect_socket(sa.sin_addr.s_addr, sa.sin_port,
+                                     connect_timeout_ms, &raw mut err_no);
+    if fd >= 0i32 {
+        return fd;
+    }
+    // Each ChannelError is hoisted into a local instead of being written
+    // straight into the deref: a factory call whose assignment target is
+    // `*err_out` mis-resolves as `ChannelError::ChannelError_Timeout()`.
+    if fd == -2i32 {
+        let ch = ChannelError_Timeout();
+        *err_out = ch;
+    } else if fd == -3i32 {
+        let ch = ChannelError_ConnectionRefused();
+        *err_out = ch;
+    } else {
+        let ch = connect_errno_to_channel_error(err_no);
+        *err_out = ch;
+    }
+    -1i32
+}
+
 fn tcp_factory_connect(fac: &TcpFactory, addr: std::string_view) -> ConnectResult {
     let parse_result = rusty::net::socket_addr_v4_from_str(addr);
     if parse_result.is_err() {
@@ -2491,7 +2618,7 @@ fn tcp_factory_connect(fac: &TcpFactory, addr: std::string_view) -> ConnectResul
     let mut err: ChannelError = ChannelError_None();
     let fd = tcp_factory_connect_socket(parse_result.unwrap(),
                                         fac.connect_timeout_ms_,
-                                        &raw mut err);
+                                        &mut err);
     if fd < 0i32 {
         return ConnectResult { connection: None, error: err };
     }
@@ -2512,14 +2639,35 @@ fn tcp_factory_connect(fac: &TcpFactory, addr: std::string_view) -> ConnectResul
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.25 version=1 rust_sha256=3891ea53fc0276750c765c9a18afb52425b59a5c5a31ab7790a7902ce2028bfe*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.25 version=1 rust_sha256=1464827dc5a88e76484d4beabe1dbade82c3a9e0307be488420b846cb617000c*/
+int32_t tcp_factory_connect_socket(rusty::net::SocketAddrV4 peer, int32_t connect_timeout_ms, ChannelError& err_out) {
+    ChannelError* err_out_shadow1 = &err_out;
+    const auto sa = rusty::net::sockaddr_in_from_socket_addr_v4(std::move(peer));
+    int32_t err_no = static_cast<int32_t>(0);
+    auto fd = srpc_tcp_connect_socket(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.sin_addr); }) { return (__r.sin_addr); } else if constexpr (requires { (__r.sin_addr_field); }) { return (__r.sin_addr_field); } else if constexpr (requires { ((*__r).sin_addr); }) { return ((*__r).sin_addr); } else { return ((*__r).sin_addr_field); } }(sa).s_addr), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.sin_port); }) { return (__r.sin_port); } else if constexpr (requires { (__r.sin_port_field); }) { return (__r.sin_port_field); } else if constexpr (requires { ((*__r).sin_port); }) { return ((*__r).sin_port); } else { return ((*__r).sin_port_field); } }(sa)), std::move(connect_timeout_ms), &err_no);
+    if (rusty::detail::deref_if_pointer_like(fd) >= static_cast<int32_t>(0)) {
+        return std::move(fd);
+    }
+    if (rusty::detail::deref_if_pointer_like(fd) == static_cast<int32_t>(-2)) {
+        auto ch = ChannelError_Timeout();
+        *err_out_shadow1 = ch;
+    } else if (rusty::detail::deref_if_pointer_like(fd) == static_cast<int32_t>(-3)) {
+        auto ch = ChannelError_ConnectionRefused();
+        *err_out_shadow1 = ch;
+    } else {
+        auto ch = connect_errno_to_channel_error(std::move(err_no));
+        *err_out_shadow1 = ch;
+    }
+    return static_cast<int32_t>(-1);
+}
+
 ConnectResult tcp_factory_connect(const TcpFactory& fac, std::string_view addr) {
     auto parse_result = rusty::net::socket_addr_v4_from_str(std::move(addr));
     if (parse_result.is_err()) {
         return ConnectResult{.connection = rusty::None, .error = ChannelError_AddressInvalid()};
     }
     ChannelError err = ChannelError_None();
-    auto fd = tcp_factory_connect_socket(parse_result.unwrap(), fac.connect_timeout_ms_, &err);
+    auto fd = tcp_factory_connect_socket(parse_result.unwrap(), fac.connect_timeout_ms_, err);
     if (rusty::detail::deref_if_pointer_like(fd) < static_cast<int32_t>(0)) {
         return ConnectResult{.connection = rusty::None, .error = std::move(err)};
     }

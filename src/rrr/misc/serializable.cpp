@@ -623,10 +623,6 @@ inline SourceProxy make_source_proxy(FdSource* source) {
 struct BinaryWriteArchive;
 struct BinaryReadArchive;
 
-// Byte kernels for the DSL archives below (Box-proxy arrow calls).
-void bwa_write_bytes(BinaryWriteArchive& self, const std::uint8_t* p, std::size_t n);
-bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p, std::size_t n);
-
 // `BinaryWriteArchive` — the wire-format encoder over a type-erased
 // SinkProxy. Authored as inline Rust DSL: the `#if RUSTYCPP_RUST`
 // block below is the source of truth; the transpiler regenerates the
@@ -649,12 +645,19 @@ struct BinaryWriteArchive {
 
 impl BinaryWriteArchive {
     // Emit raw bytes (used for unstructured payloads).
+    // @unsafe - virtual write through the type-erased sink proxy.
+    // The explicit `(*self.sink_)` deref is LOAD-BEARING: SinkProxy is a
+    // hand-written C++ alias, so the transpiler cannot see the Box
+    // behind it and a bare `self.sink_.write_bytes(..)` lowers to a `.`
+    // member access on the handle (which does not compile). The deref
+    // lowers through rusty::detail::deref_if_pointer_like, i.e. exactly
+    // the `(*sink_).write_bytes(..)` the old kernel spelled `sink_->`.
     fn write_bytes(&mut self, p: *const u8, n: usize) {
-        bwa_write_bytes(self, p, n)
+        (*self.sink_).write_bytes(p, n)
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.write_archive version=1 rust_sha256=7dded1c21502d9a4f7a9fe3a23e4aaddbd833fc70037dfe7b45d91c2a8784c02*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.write_archive version=1 rust_sha256=e49ee402ee8c5c3907a942a481a9883606b167645f256c5a8999bbddf42fcb6e*/
 struct BinaryWriteArchive;
 
 struct BinaryWriteArchive {
@@ -665,7 +668,7 @@ struct BinaryWriteArchive {
 
 
 void BinaryWriteArchive::write_bytes(const uint8_t* p, size_t n) {
-    bwa_write_bytes((*this), p, std::move(n));
+    ((rusty::detail::deref_if_pointer_like(this->sink_))).write_bytes(p, std::move(n));
 }
 /*RUSTYCPP:GEN-END id=serializable.write_archive*/
 
@@ -775,8 +778,46 @@ impl Serialize for f64 {
         }
     }
 }
+
+// ---- Variable-length byte sequences: v64 length prefix + raw bytes.
+// BOTH leaves carry the body (rather than std::string forwarding to a
+// std::string_view temporary, as the old hand pair did): a
+// `std::string_view{self}` conversion has no DSL spelling. The wire
+// bytes are identical either way.
+//
+// `self.data() as *const u8` lowers to
+// rusty::detail::ptr_cast<const uint8_t*>, replacing the hand
+// reinterpret_cast. The length write MUST be QUALIFIED — unqualified
+// lookup inside the generated namespace finds the sibling it just
+// emitted and stops (the same hazard the placement note at the
+// WireSerialize block below documents).
+//
+// Only behavioural delta vs. the deleted hand overloads: string_view
+// goes from by-value to `const std::string_view&`. Identical semantics
+// at every call site (all five in tests/wire_golden_translated_test.cc
+// pass rvalues, which bind to const&).
+impl Serialize for std::string_view {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.size() as i64);
+        Serialize_::serialize(v_len, ar);
+        if self.size() > 0usize {
+            let p: *const u8 = self.data() as *const u8;
+            ar.write_bytes(p, self.size());
+        }
+    }
+}
+impl Serialize for std::string {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.size() as i64);
+        Serialize_::serialize(v_len, ar);
+        if self.size() > 0usize {
+            let p: *const u8 = self.data() as *const u8;
+            ar.write_bytes(p, self.size());
+        }
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=1c03eccea53c5ff40cee1e490f75758d22ba3957d5cb346765e81d3914dcbc13*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=b7d7a93866e206d1f251949253daae336e76e48057a86c3d682c663ea09aa480*/
 class Serialize;
 
 // Extension trait free-function forward declarations
@@ -803,6 +844,10 @@ namespace rusty_ext {
 
     void serialize(const double& self_, BinaryWriteArchive& ar);
 
+    void serialize(const std::string_view& self_, BinaryWriteArchive& ar);
+
+    void serialize(const std::string& self_, BinaryWriteArchive& ar);
+
 }
 
 
@@ -848,6 +893,14 @@ namespace Serialize_ {
 using namespace Serialize_;
 namespace Serialize_ {
     void serialize(const double& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const std::string_view& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const std::string& self_, BinaryWriteArchive& ar);
 }
 using namespace Serialize_;
 class Serialize {
@@ -887,6 +940,10 @@ template <class U> class SerializeAdapterRefMut;
 // trait impl for `u64` lowered via the Serialize_ free functions above
 
 // trait impl for `f64` lowered via the Serialize_ free functions above
+
+// trait impl for `std::string_view` lowered via the Serialize_ free functions above
+
+// trait impl for `std::string` lowered via the Serialize_ free functions above
 
 // Extension trait Serialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
@@ -982,6 +1039,26 @@ namespace rusty_ext {
         {
             const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<double>());
+        }
+    }
+
+    void serialize(const std::string_view& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        if (self_.size() > static_cast<size_t>(0)) {
+            const uint8_t* p = rusty::detail::ptr_cast<const uint8_t*>(self_.data());
+            ar.write_bytes(p, self_.size());
+        }
+    }
+
+    void serialize(const std::string& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        if (self_.size() > static_cast<size_t>(0)) {
+            const uint8_t* p = rusty::detail::ptr_cast<const uint8_t*>(self_.data());
+            ar.write_bytes(p, self_.size());
         }
     }
 
@@ -1328,6 +1405,68 @@ public:
     }
 };
 
+template <>
+class SerializeAdapter<std::string_view> final : public Serialize {
+    std::string_view value_;
+public:
+    SerializeAdapter(std::string_view v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<std::string_view> final : public Serialize {
+    const std::string_view& value_;
+public:
+    explicit SerializeAdapterRef(const std::string_view& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<std::string_view> final : public Serialize {
+    std::string_view& value_;
+public:
+    explicit SerializeAdapterRefMut(std::string_view& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapter<std::string> final : public Serialize {
+    std::string value_;
+public:
+    SerializeAdapter(std::string v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<std::string> final : public Serialize {
+    const std::string& value_;
+public:
+    explicit SerializeAdapterRef(const std::string& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<std::string> final : public Serialize {
+    std::string& value_;
+public:
+    explicit SerializeAdapterRefMut(std::string& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
 
 // UFCS trait migration: free functions for `impl Serialize for ...`
 namespace Serialize_ {
@@ -1457,6 +1596,32 @@ namespace Serialize_ {
     }
 
 }
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const std::string_view& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        if (self_.size() > static_cast<size_t>(0)) {
+            const uint8_t* p = rusty::detail::ptr_cast<const uint8_t*>(self_.data());
+            ar.write_bytes(p, self_.size());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const std::string& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(self_.size()));
+        Serialize_::serialize(v_len, ar);
+        if (self_.size() > static_cast<size_t>(0)) {
+            const uint8_t* p = rusty::detail::ptr_cast<const uint8_t*>(self_.data());
+            ar.write_bytes(p, self_.size());
+        }
+    }
+
+}
 /*RUSTYCPP:GEN-END id=serializable.serialize_trait*/
 
 // ---- Fixed-width primitives. ------------------------------------------
@@ -1465,20 +1630,12 @@ namespace Serialize_ {
 // makes the byte view explicit (the previous `const void*` form
 // hid it behind implicit conversion).
 
-// ---- Serde-trait leaf kernels: varints + strings. Hand-written byte
-// kernels (like the containers below); encode goes through the DSL
-// SparseInt::dump statics (u8 buffers).
+// The std::string / std::string_view leaves moved into the Serialize
+// trait DSL block above (`impl Serialize for std::string{,_view}`),
+// which lowers straight into this namespace and declares both
+// overloads at the top of its GEN. Serialize_ reopens here only to
+// carry the generic ADL bridge below.
 namespace Serialize_ {
-inline void serialize(std::string_view self_, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(self_.size())};
-  serialize(v_len, ar);
-  if (self_.size() > 0) {
-    ar.write_bytes(reinterpret_cast<const uint8_t*>(self_.data()), self_.size());
-  }
-}
-inline void serialize(const std::string& self_, BinaryWriteArchive& ar) {
-  serialize(std::string_view{self_}, ar);
-}
 // Generic bridge: any type is trait-serializable. A migrated type resolves to
 // its specific (more-specialized) overload above; anything else falls through
 // to its operator<< here. This is what lets `serialize(field, ar)` work for
@@ -1533,11 +1690,11 @@ template<class K, class V> inline void serialize(const std::map<K, V>& v, Binary
 template<class K, class V> inline void serialize(const rusty::HashMap<K, V>& v, BinaryWriteArchive& ar);
 template<class K, class V> inline void serialize(const std::unordered_map<K, V>& v, BinaryWriteArchive& ar);
 
-template<class T1, class T2>
-inline void serialize(const std::pair<T1, T2>& v, BinaryWriteArchive& ar) {
-  serialize(v.first, ar);
-  serialize(v.second, ar);
-}
+// std::pair's body moved into the WireSerialize DSL block below; its
+// 1-line forwarder now sits just after the WireSerialize_ forward
+// declarations, because a qualified callee must be declared before the
+// forwarder template is defined. (The Serialize_ fwd-decl at the top of
+// this namespace block still covers nested-container resolution.)
 
 // Bodies moved to the WireSerialize DSL block below (impl<T>-for-
 // container trait lowering, same as std::list); these 1-line
@@ -1559,8 +1716,14 @@ template<class K, class V> void serialize(const std::map<K, V>& self_, BinaryWri
 template<class K, class V> void serialize(const std::unordered_map<K, V>& self_, BinaryWriteArchive& ar);
 template<class T> void serialize(const rusty::BTreeSet<T>& self_, BinaryWriteArchive& ar);
 template<class K, class V> void serialize(const rusty::BTreeMap<K, V>& self_, BinaryWriteArchive& ar);
+template<class T1, class T2> void serialize(const std::pair<T1, T2>& self_, BinaryWriteArchive& ar);
 }
 namespace Serialize_ {
+template<class T1, class T2>
+inline void serialize(const std::pair<T1, T2>& v, BinaryWriteArchive& ar) {
+  WireSerialize_::serialize(v, ar);
+}
+
 template<class T>
 inline void serialize(const rusty::Vec<T>& v, BinaryWriteArchive& ar) {
   WireSerialize_::serialize(v, ar);
@@ -1707,8 +1870,69 @@ impl<K, V> WireSerialize for rusty::BTreeMap<K, V> {
         }
     }
 }
+
+// The two hashbrown write bodies, same explicit-iterator shape as the
+// B-tree pair above. HashSet has no const begin()/end() of its own, so
+// it walks the underlying HashMap field: `self.map.iter()` lowers to
+// `rusty::iter(self_.map)`, whose next() yields
+// Option<tuple<const T&, const monostate&>> — hence the `kv.0`.
+//
+// WARNING (unchanged by this conversion): ANY hashbrown enumeration
+// (iter()/begin()/drain()) routes through the `rusty::iter(table)`
+// dispatcher in slice.hpp, whose return-type name crashes clang-22's
+// Itanium mangler (SIGSEGV in mangleSourceName). These two templates
+// MUST therefore stay UNINSTANTIATED — no production code serializes a
+// rusty::HashSet/HashMap today, and the DECODER side (insert-only) is
+// crash-free and is what the RustyHashSetPrimitives /
+// RustyHashMapPrimitives tests exercise. If that ever changes, the
+// encoder needs a mangler-safe enumeration path (or a fixed toolchain).
+impl<T> WireSerialize for rusty::HashSet<T> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.len() as i64);
+        Serialize_::serialize(v_len, ar);
+        let mut it = self.map.iter();
+        loop {
+            let e = it.next();
+            if e.is_none() {
+                break;
+            }
+            let kv = e.unwrap();
+            Serialize_::serialize(kv.0, ar);
+        }
+    }
+}
+
+impl<K, V> WireSerialize for rusty::HashMap<K, V> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let v_len: rrr::v64 = rrr::v64::new(self.len() as i64);
+        Serialize_::serialize(v_len, ar);
+        let mut it = self.iter();
+        loop {
+            let e = it.next();
+            if e.is_none() {
+                break;
+            }
+            let kv = e.unwrap();
+            Serialize_::serialize(kv.0, ar);
+            Serialize_::serialize(kv.1, ar);
+        }
+    }
+}
+
+// std::pair: write first then second, no length prefix (each side
+// already knows the type and consumes its own bytes). It lives in THIS
+// block, not the earlier Serialize trait block, because its element
+// calls must see the whole container overload set — the qualified
+// `Serialize_::serialize` candidate set is frozen at the point of
+// definition, and the container fwd-decls only exist from line ~1524.
+impl<T1, T2> WireSerialize for std::pair<T1, T2> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        Serialize_::serialize(self.first, ar);
+        Serialize_::serialize(self.second, ar);
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.wire_ser version=1 rust_sha256=d2f4076328f9ebc2e2a9a0bb4f8e1c062a07ac0c2a3b6905675bdda5fb0bca95*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.wire_ser version=1 rust_sha256=5bcd6d25d861ee10eaebe2501870a10a2da89b7ab7ea46fff41de6c352d90f38*/
 class WireSerialize;
 
 // Extension trait free-function forward declarations
@@ -1740,6 +1964,15 @@ namespace rusty_ext {
     template<typename K, typename V>
     void serialize(const rusty::BTreeMap<K, V>& self_, BinaryWriteArchive& ar);
 
+    template<typename T>
+    void serialize(const rusty::HashSet<T>& self_, BinaryWriteArchive& ar);
+
+    template<typename K, typename V>
+    void serialize(const rusty::HashMap<K, V>& self_, BinaryWriteArchive& ar);
+
+    template<typename T1, typename T2>
+    void serialize(const std::pair<T1, T2>& self_, BinaryWriteArchive& ar);
+
 }
 
 
@@ -1786,6 +2019,21 @@ using namespace WireSerialize_;
 namespace WireSerialize_ {
     template<typename K, typename V>
     void serialize(const rusty::BTreeMap<K, V>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const rusty::HashSet<T>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename K, typename V>
+    void serialize(const rusty::HashMap<K, V>& self_, BinaryWriteArchive& ar);
+}
+using namespace WireSerialize_;
+namespace WireSerialize_ {
+    template<typename T1, typename T2>
+    void serialize(const std::pair<T1, T2>& self_, BinaryWriteArchive& ar);
 }
 using namespace WireSerialize_;
 class WireSerialize {
@@ -1821,6 +2069,12 @@ template <class U> class WireSerializeAdapterRefMut;
 // trait impl for `rusty::BTreeSet` lowered via the WireSerialize_ free functions above
 
 // trait impl for `rusty::BTreeMap` lowered via the WireSerialize_ free functions above
+
+// trait impl for `rusty::HashSet` lowered via the WireSerialize_ free functions above
+
+// trait impl for `rusty::HashMap` lowered via the WireSerialize_ free functions above
+
+// trait impl for `std::pair` lowered via the WireSerialize_ free functions above
 
 // Extension trait WireSerialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
@@ -1932,6 +2186,46 @@ namespace rusty_ext {
         }
     }
 
+    template<typename T>
+    void serialize(const rusty::HashSet<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        auto it = rusty::iter(self_.map);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            const auto kv = e.unwrap();
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+        }
+    }
+
+    template<typename K, typename V>
+    void serialize(const rusty::HashMap<K, V>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        auto it = rusty::iter(self_);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            const auto kv = e.unwrap();
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+        }
+    }
+
+    template<typename T1, typename T2>
+    void serialize(const std::pair<T1, T2>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        Serialize_::serialize(self_.first, ar);
+        Serialize_::serialize(self_.second, ar);
+    }
+
 }
 
 // TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::list<T>>`
@@ -1943,6 +2237,9 @@ namespace rusty_ext {
 // TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::unordered_map<K, V>>`
 // TODO(interface_traits): skipped generic impl `WireSerializeAdapter<rusty::BTreeSet<T>>`
 // TODO(interface_traits): skipped generic impl `WireSerializeAdapter<rusty::BTreeMap<K, V>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<rusty::HashSet<T>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<rusty::HashMap<K, V>>`
+// TODO(interface_traits): skipped generic impl `WireSerializeAdapter<std::pair<T1, T2>>`
 
 // UFCS trait migration: free functions for `impl WireSerialize for ...`
 namespace WireSerialize_ {
@@ -2079,6 +2376,55 @@ namespace WireSerialize_ {
     }
 
 }
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename T>
+    void serialize(const rusty::HashSet<T>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        auto it = rusty::iter(self_.map);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            const auto kv = e.unwrap();
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename K, typename V>
+    void serialize(const rusty::HashMap<K, V>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
+        Serialize_::serialize(v_len, ar);
+        auto it = rusty::iter(self_);
+        while (true) {
+            auto e = it.next();
+            if (e.is_none()) {
+                break;
+            }
+            const auto kv = e.unwrap();
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl WireSerialize for ...`
+namespace WireSerialize_ {
+    template<typename T1, typename T2>
+    void serialize(const std::pair<T1, T2>& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        Serialize_::serialize(self_.first, ar);
+        Serialize_::serialize(self_.second, ar);
+    }
+
+}
 /*RUSTYCPP:GEN-END id=serializable.wire_ser*/
 
 namespace Serialize_ {
@@ -2104,24 +2450,12 @@ inline void serialize(const std::set<T>& v, BinaryWriteArchive& ar) {
   WireSerialize_::serialize(v, ar);
 }
 
+// The hashbrown write bodies moved into the WireSerialize DSL block
+// above (which carries the full clang-22 mangler warning); these are
+// now 1-line forwarders like every other container here.
 template<class T>
 inline void serialize(const rusty::HashSet<T>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-  serialize(v_len, ar);
-  // HashSet wraps a HashMap<T, monostate>; walk the underlying map's const
-  // Rust iterator (HashSet's own begin()/end() is non-const). next() yields
-  // Option<tuple<const T&, ...>>.
-  // WARNING: ANY hashbrown enumeration (iter()/begin()/drain()) routes
-  // through the `rusty::iter(table)` lambda in slice.hpp, whose return-type
-  // name crashes clang-22's Itanium mangler (SIGSEGV in mangleSourceName).
-  // So this overload MUST NOT be instantiated on clang-22 — there is no
-  // crash-free way to enumerate a hashbrown table there. No production code
-  // serializes a rusty::HashSet today; if that changes, the encoder needs a
-  // mangler-safe enumeration path (or a fixed toolchain). See the
-  // RustyHashSetPrimitives test for the decoder-only workaround.
-  auto __it = v.map.iter();
-  for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
-    serialize(std::get<0>(std::move(__e).unwrap()), ar);
+  WireSerialize_::serialize(v, ar);
 }
 
 template<class T>
@@ -2141,18 +2475,7 @@ inline void serialize(const std::map<K, V>& v, BinaryWriteArchive& ar) {
 
 template<class K, class V>
 inline void serialize(const rusty::HashMap<K, V>& v, BinaryWriteArchive& ar) {
-  rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-  serialize(v_len, ar);
-  // rusty HashMap has no const begin()/end(); iterate via the Rust iterator.
-  // iter().next() yields Option<std::tuple<const K&, const V&>>.
-  // WARNING: like rusty::HashSet above, hashbrown enumeration crashes
-  // clang-22's name mangler — do not instantiate this overload on clang-22.
-  auto __it = v.iter();
-  for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
-    auto kv = std::move(__e).unwrap();
-    serialize(std::get<0>(kv), ar);
-    serialize(std::get<1>(kv), ar);
-  }
+  WireSerialize_::serialize(v, ar);
 }
 
 template<class K, class V>
@@ -2195,8 +2518,14 @@ struct BinaryReadArchive {
 
 impl BinaryReadArchive {
     // Read into raw bytes; false if the source ran out.
+    // @unsafe - virtual read through the type-erased source proxy.
+    // The explicit `(*self.source_)` deref is load-bearing for exactly
+    // the same reason as BinaryWriteArchive::write_bytes above:
+    // SourceProxy is a hand-written C++ alias, so the transpiler cannot
+    // see the Box behind it and would emit a `.` on the handle.
     fn read_exact(&mut self, p: *mut u8, n: usize) -> bool {
-        bra_read_exact(self, p, n)
+        let got: usize = (*self.source_).read_bytes(p, n);
+        got == n
     }
     // Read exactly n bytes or abort — the operator>> truncation contract
     // (short reads at this layer are programming errors, not recoverable).
@@ -2206,7 +2535,7 @@ impl BinaryReadArchive {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.read_archive version=1 rust_sha256=59c8686129a09ffcb6f6fb74eb086ff01f9ea8bb79f11e1078df41d7bc82ea3b*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.read_archive version=1 rust_sha256=00a1b72ca3ebcf830123d455ada1edca2614d3f827a2030f3db9222aef419e1c*/
 struct BinaryReadArchive;
 
 struct BinaryReadArchive {
@@ -2218,7 +2547,8 @@ struct BinaryReadArchive {
 
 
 bool BinaryReadArchive::read_exact(uint8_t* p, size_t n) {
-    return bra_read_exact((*this), p, std::move(n));
+    const size_t got = ((rusty::detail::deref_if_pointer_like(this->source_))).read_bytes(p, std::move(n));
+    return rusty::detail::deref_if_pointer_like(got) == rusty::detail::deref_if_pointer_like(n);
 }
 
 void BinaryReadArchive::read_or_abort(uint8_t* p, size_t n) {
@@ -2226,20 +2556,7 @@ void BinaryReadArchive::read_or_abort(uint8_t* p, size_t n) {
 }
 /*RUSTYCPP:GEN-END id=serializable.read_archive*/
 
-// ---- Archive byte kernels (Box-proxy arrow boundary) -----------------
 
-// @unsafe - virtual write through the type-erased sink proxy.
-inline void bwa_write_bytes(BinaryWriteArchive& self, const std::uint8_t* p,
-                            std::size_t n) {
-  self.sink_->write_bytes(p, n);
-}
-
-// @unsafe - virtual read through the type-erased source proxy.
-inline bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p,
-                           std::size_t n) {
-  std::size_t got = self.source_->read_bytes(p, n);
-  return got == n;
-}
 
 // ---- Serde-style Deserialize trait (wire migration). ------------------
 // Value-side deserialization: each type reads itself from a
@@ -2257,7 +2574,10 @@ inline bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p,
 // beats template; partial ordering beats plain T&), so this reproduces
 // exactly what the old bodies' unqualified lookup found.
 namespace Deserialize_ {
-inline void deserialize(std::string& self_, BinaryReadArchive& ar);
+// Non-inline: the string leaf is now DSL-generated below and the GEN
+// emits a non-inline definition (an inline-first declaration would
+// silently make the whole function inline).
+void deserialize(std::string& self_, BinaryReadArchive& ar);
 template<typename T>
 inline void deserialize(T& v, BinaryReadArchive& ar);
 }
@@ -2357,6 +2677,27 @@ impl Deserialize for f64 {
         unsafe {
             let p: *mut u8 = (self as *mut f64) as *mut u8;
             ar.read_or_abort(p, std::mem::size_of::<f64>());
+        }
+    }
+}
+
+// Read-side mirror of the string serialize leaf: v64 length prefix,
+// resize, then read the bytes straight into the string's buffer.
+// @unsafe { writing into std::string's internal buffer }
+// `self.data() as *mut u8` picks the C++17 non-const data() overload
+// (the receiver is `std::string&`) and lowers to
+// rusty::detail::ptr_cast<uint8_t*>, replacing the old
+// `reinterpret_cast<uint8_t*>(&self_[0])`. verify() keeps the
+// abort-on-truncation contract the hand kernel had.
+impl Deserialize for std::string {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut v_len = v64::new(0i64);
+        Deserialize_::deserialize(&mut v_len, ar);
+        let len: usize = v_len.get() as usize;
+        self.resize(len);
+        if len > 0usize {
+            let p: *mut u8 = self.data() as *mut u8;
+            verify(ar.read_exact(p, len));
         }
     }
 }
@@ -2563,7 +2904,7 @@ impl<K, V> Deserialize for std::unordered_map<K, V> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=9bbaa27e5e3e9d5025dae8faf15ce213041bc18abc8bc42ee7c44d27aa790bf7*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=3f6114c1e568643726db9031951ce65e6c45f4047ae5310e8747c0b4b230a453*/
 class Deserialize;
 
 // Extension trait free-function forward declarations
@@ -2589,6 +2930,8 @@ namespace rusty_ext {
     void deserialize(uint64_t& self_, BinaryReadArchive& ar);
 
     void deserialize(double& self_, BinaryReadArchive& ar);
+
+    void deserialize(std::string& self_, BinaryReadArchive& ar);
 
     template<typename T1, typename T2>
     void deserialize(std::pair<T1, T2>& self_, BinaryReadArchive& ar);
@@ -2671,6 +3014,10 @@ namespace Deserialize_ {
 using namespace Deserialize_;
 namespace Deserialize_ {
     void deserialize(double& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(std::string& self_, BinaryReadArchive& ar);
 }
 using namespace Deserialize_;
 namespace Deserialize_ {
@@ -2770,6 +3117,8 @@ template <class U> class DeserializeAdapterRefMut;
 // trait impl for `u64` lowered via the Deserialize_ free functions above
 
 // trait impl for `f64` lowered via the Deserialize_ free functions above
+
+// trait impl for `std::string` lowered via the Deserialize_ free functions above
 
 // trait impl for `std::pair` lowered via the Deserialize_ free functions above
 
@@ -2897,6 +3246,18 @@ namespace rusty_ext {
         {
             uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<double>());
+        }
+    }
+
+    void deserialize(std::string& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        const size_t len = static_cast<size_t>(v_len.get());
+        self_.resize(std::move(len));
+        if (rusty::detail::deref_if_pointer_like(len) > static_cast<size_t>(0)) {
+            uint8_t* const p = rusty::detail::ptr_cast<uint8_t*>(self_.data());
+            verify(ar.read_exact(p, std::move(len)));
         }
     }
 
@@ -3436,6 +3797,37 @@ public:
     }
 };
 
+template <>
+class DeserializeAdapter<std::string> final : public Deserialize {
+    std::string value_;
+public:
+    DeserializeAdapter(std::string v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<std::string> final : public Deserialize {
+    const std::string& value_;
+public:
+    explicit DeserializeAdapterRef(const std::string& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<std::string> final : public Deserialize {
+    std::string& value_;
+public:
+    explicit DeserializeAdapterRefMut(std::string& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
 // TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::pair<T1, T2>>`
 // TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::Vec<T>>`
 // TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::vector<T>>`
@@ -3581,6 +3973,21 @@ namespace Deserialize_ {
         {
             uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<double>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(std::string& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto v_len = v64::new_(static_cast<int64_t>(0));
+        Deserialize_::deserialize(v_len, ar);
+        const size_t len = static_cast<size_t>(v_len.get());
+        self_.resize(std::move(len));
+        if (rusty::detail::deref_if_pointer_like(len) > static_cast<size_t>(0)) {
+            uint8_t* const p = rusty::detail::ptr_cast<uint8_t*>(self_.data());
+            verify(ar.read_exact(p, std::move(len)));
         }
     }
 
@@ -3822,18 +4229,11 @@ namespace Deserialize_ {
 // `Marshal::read` contract — short reads at the boundary are
 // programming errors at this layer, not recoverable conditions).
 
-// ---- Serde-trait leaf kernels (read side): varints + strings. ----------
+// The std::string leaf moved into the Deserialize trait DSL block
+// above (`impl Deserialize for std::string`), which lowers straight
+// into this namespace. Deserialize_ reopens here only to carry the
+// generic ADL bridge below.
 namespace Deserialize_ {
-inline void deserialize(std::string& self_, BinaryReadArchive& ar) {
-  rrr::v64 v_len{0};
-  deserialize(v_len, ar);
-  auto len = static_cast<size_t>(v_len.get());
-  self_.resize(len);
-  if (len > 0) {
-    // @unsafe { writing into string's internal buffer via &self_[0] }
-    verify(ar.read_exact(reinterpret_cast<uint8_t*>(&self_[0]), len));
-  }
-}
 // Generic bridge (read side): mirror of the serialize catch-all.
 // Phase 8 endgame: ADL dispatch via poisoned decoy (see the serialize
 // catch-all for the full rationale).
@@ -3976,9 +4376,11 @@ namespace details {
 //     construction site adopts an existing Arc<T> via the synthesized
 //     fieldwise ctor.
 //   * rusty::Arc IS in the transpiler's auto-deref set, so save/kind
-//     dispatch directly through the field; only load keeps a kernel
-//     (Arc grants const-only access — T::load needs the unique-owner
-//     get_mut() escape, which has no DSL spelling).
+//     dispatch directly through the field (`self.ptr.save(ar)` lowers
+//     to `this->ptr->save(ar)`), while the Arc HANDLE method get_mut()
+//     correctly stays a `.` call — so `load` needs no kernel either.
+//     (The old "get_mut() has no DSL spelling" note was wrong at pin
+//     da6e9bf4: `self.ptr.get_mut().unwrap().load(ar)` lowers verbatim.)
 #if RUSTYCPP_RUST
 struct SerializableSharedPtrHolder<T> {
     ptr: Arc<T>,
@@ -3989,15 +4391,19 @@ impl<T> SerializableBase for SerializableSharedPtrHolder<T> {
     fn save(&self, ar: &mut BinaryWriteArchive) {
         self.ptr.save(ar)
     }
+    // @unsafe - unique-owner mutation window: load always runs on a
+    // factory-fresh proxy (registry create -> strong_count 1), so
+    // get_mut() is Some; a shared proxy here would be a bug and panics
+    // loudly instead of silently mutating shared state.
     fn load(&mut self, ar: &mut BinaryReadArchive) {
-        holder_load(self, ar)
+        self.ptr.get_mut().unwrap().load(ar)
     }
     fn kind(&self) -> i32 {
         self.ptr.kind()
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.shared_ptr_holder version=1 rust_sha256=352273da3183f75aa659c5868747306f95efc1770fdfa66b4c32f8843fac426b*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.shared_ptr_holder version=1 rust_sha256=f9923424bb2e555bb678cb6f74c62c51ec3ecbe45fccbc02a1585d91b6dccbf8*/
 template<typename T>
 struct SerializableSharedPtrHolder;
 
@@ -4012,7 +4418,7 @@ struct SerializableSharedPtrHolder : public SerializableBase {
         this->ptr->save(ar);
     }
     void load(BinaryReadArchive& ar) {
-        holder_load((*this), ar);
+        this->ptr.get_mut().unwrap().load(ar);
     }
     int32_t kind() const {
         return this->ptr->kind();
@@ -4023,15 +4429,7 @@ struct SerializableSharedPtrHolder : public SerializableBase {
 };
 /*RUSTYCPP:GEN-END id=serializable.shared_ptr_holder*/
 
-// @unsafe - unique-owner mutation window: load always runs on a
-// factory-fresh proxy (registry create -> strong_count 1), so
-// get_mut() is Some; a shared proxy here would be a bug and panics
-// loudly instead of silently mutating shared state.
-template<typename T>
-inline void holder_load(SerializableSharedPtrHolder<T>& self,
-                        BinaryReadArchive& ar) {
-  self.ptr.get_mut().unwrap().load(ar);
-}
+
 
 }  // namespace details
 
@@ -4085,10 +4483,10 @@ inline SerializableProxy make_serializable_proxy(Args&&... args) {
 
 // Factory registry: maps int32_t kind tags to factories that produce
 // fresh SerializableProxy instances. Authored as inline Rust DSL
-// (statics on an empty struct; the generic reg<T> delegates to a
-// template free fn — T is non-deducible, so it is declared before the
-// GEN block). The factory-map singleton + rusty::Mutex live in the impl
-// kernels below unchanged.
+// (statics on an empty struct; the generic reg<T> now carries its own
+// body — a DSL generic emits a real template<typename T>). The
+// factory-map singleton + rusty::Mutex live in the impl kernels below
+// unchanged.
 using SerializableRegistryFactory = rusty::Function<SerializableProxy()>;
 
 struct SerializableRegistry;
@@ -4097,15 +4495,25 @@ bool serializable_registry_is_registered_impl(int32_t kind);
 void serializable_registry_clear_impl();
 void serializable_registry_register_factory(int32_t kind,
                                             SerializableRegistryFactory factory);
-template<class T> int serializable_registry_reg(int32_t kind);
 
 #if RUSTYCPP_RUST
 struct SerializableRegistry {}
 
 impl SerializableRegistry {
     // Register T under `kind` (returns 0 for static-initializer use).
+    // The factory closure captures NOTHING — it only names T — so the
+    // `[&]` lambda the DSL emits cannot dangle even though the
+    // rusty::Function it becomes is stored in a process-wide map that
+    // outlives this call. DO NOT introduce a captured local here
+    // without re-checking that; a by-reference capture would dangle.
+    // The proxy is holder-shaped so SerializableEnvelope::load gives
+    // unpack_shared<T> a refcount-shared Arc<T>.
     fn reg<T>(kind: i32) -> i32 {
-        serializable_registry_reg::<T>(kind)
+        serializable_registry_register_factory(kind, || -> SerializableProxy {
+            let sp: Arc<T> = rusty::Arc::<T>::make();
+            rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp)
+        });
+        0i32
     }
 
     // Create a fresh proxy for the given kind; aborts if unregistered.
@@ -4123,7 +4531,7 @@ impl SerializableRegistry {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.registry version=1 rust_sha256=0825f31f594471e8211386988da76a6ed2b7efbea76faff6a2ecf0fafc2bf203*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.registry version=1 rust_sha256=473d135505ad5c3b514224349bc2c441f01fb78b57d6f78e2a3dc69d1373b538*/
 struct SerializableRegistry;
 
 struct SerializableRegistry {
@@ -4141,7 +4549,11 @@ struct SerializableRegistry {
 
 template<typename T>
 int32_t SerializableRegistry::reg(int32_t kind) {
-    return serializable_registry_reg<T>(std::move(kind));
+    serializable_registry_register_factory(std::move(kind), [&]() -> SerializableProxy {
+rusty::Arc<T> sp = rusty::Arc<T>::make();
+return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(sp));
+});
+    return static_cast<int32_t>(0);
 }
 
 SerializableProxy SerializableRegistry::create(int32_t kind) {
@@ -4157,20 +4569,7 @@ void SerializableRegistry::clear_for_testing() {
 }
 /*RUSTYCPP:GEN-END id=serializable.registry*/
 
-// The no-arg reg<T>() (kind = T::static_kind()) can't live in the DSL
-// (a Rust impl can't overload `reg`); it keeps its call-site spelling
-// as a template free fn on the class via this shim.
-template<class T>
-inline int serializable_registry_reg(int32_t kind) {
-  serializable_registry_register_factory(kind, []() -> SerializableProxy {
-    // Holder-shaped proxy so SerializableEnvelope::load gives
-    // unpack_shared<T> a refcount-shared Arc<T>.
-    auto sp = rusty::Arc<T>::make();
-    return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
-        std::move(sp));
-  });
-  return 0;
-}
+
 
 // ---------------------------------------------------------------------------
 // Layer 5: declaration-order kind tags via a central TypeList.
