@@ -2992,10 +2992,10 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // Discard log entries covered by the snapshot
   // ============================================================================
   // Remove all log entries up to and including last_included_index
-  std::vector<slotid_t> to_erase;
+  rusty::Vec<slotid_t> to_erase = rusty::Vec<slotid_t>::new_();
   for (auto& kv : raft_logs_) {
     if (kv.first <= last_included_index) {
-      to_erase.push_back(kv.first);
+      to_erase.push(kv.first);
     }
   }
   for (auto slot : to_erase) {
@@ -3714,7 +3714,7 @@ void RaftServer::CheckAndPromoteLearners() {
     return;
   }
 
-  std::vector<siteid_t> to_promote;
+  rusty::Vec<siteid_t> to_promote = rusty::Vec<siteid_t>::new_();
   auto learner_iter = learners().iter();
   for (auto learner = learner_iter.next(); learner.is_some();
        learner = learner_iter.next()) {
@@ -3724,7 +3724,7 @@ void RaftServer::CheckAndPromoteLearners() {
       // Learner is caught up if within the configured threshold of leader's log
       if (it->second >= lastLogIndex ||
           (lastLogIndex - it->second) <= membership_core_.catchup_threshold()) {
-        to_promote.push_back(learner_id);
+        to_promote.push(learner_id);
       }
     }
   }
