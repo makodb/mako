@@ -436,9 +436,6 @@ def verify_alpha_proxy_block(block: str) -> None:
         "            rrr::Deserialize_::deserialize(__typed_resp__.msg, __reply_ar__);\n"
         "            return rusty::Result<RpcPingResponse, rrr::i32>::Ok(__typed_resp__);\n"
         "        }\n"
-        "        auto operator co_await() const {\n"
-        "            return rrr::make_typed_future_awaitable(*this);\n"
-        "        }\n"
         "    };",
     )
     assert_contains(
@@ -455,12 +452,6 @@ def verify_alpha_proxy_block(block: str) -> None:
     )
     assert_contains(
         block,
-        "rrr::TypedFutureResultAwaiter<pingTypedFuture> await_ping(const RpcPingRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
-        "        return rrr::make_typed_future_result_awaitable(this->async_ping(req, __fu_attr__));\n"
-        "    }",
-    )
-    assert_contains(
-        block,
         "rusty::Result<nopTypedFuture, rrr::i32> async_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
         "        auto __fu_result__ = __cl__->request(AlphaService::NOP, __fu_attr__, [](rrr::BinaryWriteArchive&) {});\n"
         "        if (__fu_result__.is_err()) {\n"
@@ -468,12 +459,6 @@ def verify_alpha_proxy_block(block: str) -> None:
         "        }\n"
         "        (void)req;\n"
         "        return rusty::Result<nopTypedFuture, rrr::i32>::Ok(nopTypedFuture(__fu_result__.unwrap()));\n"
-        "    }",
-    )
-    assert_contains(
-        block,
-        "rrr::TypedFutureResultAwaiter<nopTypedFuture> await_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
-        "        return rrr::make_typed_future_result_awaitable(this->async_nop(req, __fu_attr__));\n"
         "    }",
     )
     assert_contains(
@@ -486,12 +471,6 @@ def verify_alpha_proxy_block(block: str) -> None:
         "            return rusty::Result<streamTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
         "        }\n"
         "        return rusty::Result<streamTypedFuture, rrr::i32>::Ok(streamTypedFuture(__fu_result__.unwrap()));\n"
-        "    }",
-    )
-    assert_contains(
-        block,
-        "rrr::TypedFutureResultAwaiter<streamTypedFuture> await_stream(const RpcStreamRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
-        "        return rrr::make_typed_future_result_awaitable(this->async_stream(req, __fu_attr__));\n"
         "    }",
     )
     assert_contains(
@@ -582,9 +561,6 @@ def verify_beta_proxy_block(block: str) -> None:
         "            rrr::Deserialize_::deserialize(__typed_resp__.echoed, __reply_ar__);\n"
         "            return rusty::Result<RpcPingResponse, rrr::i32>::Ok(__typed_resp__);\n"
         "        }\n"
-        "        auto operator co_await() const {\n"
-        "            return rrr::make_typed_future_awaitable(*this);\n"
-        "        }\n"
         "    };",
     )
     assert_contains(
@@ -597,12 +573,6 @@ def verify_beta_proxy_block(block: str) -> None:
             "            return rusty::Result<pingTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
         "        }\n"
         "        return rusty::Result<pingTypedFuture, rrr::i32>::Ok(pingTypedFuture(__fu_result__.unwrap()));\n"
-        "    }",
-    )
-    assert_contains(
-        block,
-        "rrr::TypedFutureResultAwaiter<pingTypedFuture> await_ping(const RpcPingRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
-        "        return rrr::make_typed_future_result_awaitable(this->async_ping(req, __fu_attr__));\n"
         "    }",
     )
     assert_contains(
