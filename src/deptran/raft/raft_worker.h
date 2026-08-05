@@ -205,18 +205,17 @@ private:
   std::deque<RaftWorkerPendingLog> submit_queue_;
   std::mutex submit_mutex_;
   std::condition_variable submit_cv_;
-  std::atomic<bool> submit_thread_stop_{false};
+  rusty::sync::atomic::AtomicBool submit_thread_stop_{false};
   bool submit_thread_started_{false};
   std::thread submit_thread_;
   RaftWorkerStateCore state_core_;
 
 public:
   // Statistics
-  // Keep these atomics hand-written: they are cross-thread counters/flags, not
-  // Cell candidates. Cell would not preserve atomicity.
-  std::atomic<int> n_current{0};   // Current in-flight requests
-  std::atomic<int> n_submit{0};    // Total submitted
-  std::atomic<int> n_tot{0};       // Total processed
+  // Cross-thread counters retain atomic semantics through Rusty atomics.
+  rusty::sync::atomic::AtomicI32 n_current{0};  // Current in-flight requests
+  rusty::sync::atomic::AtomicI32 n_submit{0};   // Total submitted
+  rusty::sync::atomic::AtomicI32 n_tot{0};      // Total processed
   // removed old submit counter
   // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
   // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`

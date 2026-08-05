@@ -6564,7 +6564,7 @@ int RaftLabTest::testAddServerBasic(void) {
 
   // 1. Verify initial config size matches NSERVERS
   auto& initial_config = server->GetCurrentConfig();
-  size_t initial_size = initial_config.size();
+  size_t initial_size = initial_config.len();
   Assert2(initial_size == NSERVERS,
           "Initial config size should be %d, got %zu", NSERVERS, initial_size);
   Log_info("TEST 73: Initial config size verified: {}", initial_size);
@@ -6579,7 +6579,7 @@ int RaftLabTest::testAddServerBasic(void) {
   siteid_t new_server_id = 9999;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->current_config().count(new_server_id) == 0,
+    Assert2(!server->current_config().contains(new_server_id),
             "Server %d should not already be in config", new_server_id);
     server->current_config().insert(new_server_id);
     server->membership_core_.set_config_change_pending(true);
@@ -6589,13 +6589,13 @@ int RaftLabTest::testAddServerBasic(void) {
 
   // 4. Verify config grew by 1
   auto& updated_config = server->GetCurrentConfig();
-  Assert2(updated_config.size() == initial_size + 1,
+  Assert2(updated_config.len() == initial_size + 1,
           "Config size should be %zu after add, got %zu",
-          initial_size + 1, updated_config.size());
-  Log_info("TEST 73: Config size after add: {}", updated_config.size());
+          initial_size + 1, updated_config.len());
+  Log_info("TEST 73: Config size after add: {}", updated_config.len());
 
   // 5. Verify new server is in config
-  Assert2(updated_config.count(new_server_id) > 0,
+  Assert2(updated_config.contains(new_server_id),
           "New server %d should be in config", new_server_id);
 
   // 6. Verify quorum updated
@@ -6613,7 +6613,7 @@ int RaftLabTest::testAddServerBasic(void) {
   // Reset config to original to not break subsequent operations
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config().erase(new_server_id);
+    server->current_config().remove(new_server_id);
     server->membership_core_.set_config_change_pending(false);
   }
 
@@ -6650,7 +6650,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
     server->membership_core_.set_config_change_pending(false);  // Clear so we can do remove
   }
 
-  size_t size_before = server->GetCurrentConfig().size();
+  size_t size_before = server->GetCurrentConfig().len();
   Assert2(size_before == NSERVERS + 1,
           "Config should be %d after adding fake server, got %zu",
           NSERVERS + 1, size_before);
@@ -6659,21 +6659,21 @@ int RaftLabTest::testRemoveServerBasic(void) {
   // Remove the extra server
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->current_config().count(extra_server_id) > 0,
+    Assert2(server->current_config().contains(extra_server_id),
             "Extra server should be in config before remove");
-    server->current_config().erase(extra_server_id);
+    server->current_config().remove(extra_server_id);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
   Log_info("TEST 74: Removed server {} from config", extra_server_id);
 
   // Verify config shrunk by 1
-  Assert2(server->GetCurrentConfig().size() == size_before - 1,
+  Assert2(server->GetCurrentConfig().len() == size_before - 1,
           "Config size should be %zu after remove, got %zu",
-          size_before - 1, server->GetCurrentConfig().size());
+          size_before - 1, server->GetCurrentConfig().len());
 
   // Verify removed server is not in config
-  Assert2(server->GetCurrentConfig().count(extra_server_id) == 0,
+  Assert2(!server->GetCurrentConfig().contains(extra_server_id),
           "Removed server %d should not be in config", extra_server_id);
 
   // Verify quorum updated (back to NSERVERS)
@@ -6741,7 +6741,7 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
     Assert2(!server->membership_core_.config_change_pending(),
             "Pending flag should be cleared");
     // Now a new change should be allowed
-    server->current_config().erase(static_cast<siteid_t>(7777));
+    server->current_config().remove(static_cast<siteid_t>(7777));
     server->membership_core_.set_config_change_pending(true);
   }
   Assert2(server->membership_core_.config_change_pending(),
@@ -6768,9 +6768,9 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   for (int i = 0; i < NSERVERS; i++) {
     auto s = config_->GetServer(i);
     if (s != nullptr) {
-      Assert2(s->GetCurrentConfig().size() == NSERVERS,
+      Assert2(s->GetCurrentConfig().len() == NSERVERS,
               "Server %d config size should be %d, got %zu",
-              i, NSERVERS, s->GetCurrentConfig().size());
+              i, NSERVERS, s->GetCurrentConfig().len());
     }
   }
   Log_info("TEST 75: All servers have correct initial config size");
@@ -6809,22 +6809,22 @@ int RaftLabTest::testNewServerCatchUp(void) {
   Log_info("TEST 76: Committed entries at indices {} and {}", idx1, idx2);
 
   // 2. Record initial state
-  size_t initial_config_size = server->GetCurrentConfig().size();
+  size_t initial_config_size = server->GetCurrentConfig().len();
   Assert2(initial_config_size == NSERVERS,
           "Initial config size should be %d, got %zu", NSERVERS, initial_config_size);
-  Assert2(server->GetLearners().empty(),
+  Assert2(server->GetLearners().is_empty(),
           "No learners initially");
   Log_info("TEST 76: Initial config size={}, learners={}",
-           initial_config_size, server->GetLearners().size());
+           initial_config_size, server->GetLearners().len());
 
   // 3. Add a fake server as learner via direct manipulation (simulating OnAddServer)
   siteid_t new_server_id = 8888;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     // Verify not already present
-    Assert2(server->current_config().count(new_server_id) == 0,
+    Assert2(!server->current_config().contains(new_server_id),
             "New server should not already be in config");
-    Assert2(server->learners().count(new_server_id) == 0,
+    Assert2(!server->learners().contains(new_server_id),
             "New server should not already be a learner");
 
     // Add as learner (mimicking what OnAddServer now does)
@@ -6841,15 +6841,15 @@ int RaftLabTest::testNewServerCatchUp(void) {
   // 4. Verify the server is in learners_ but NOT in current_config_
   Assert2(server->IsLearner(new_server_id),
           "New server should be a learner");
-  Assert2(server->GetCurrentConfig().count(new_server_id) == 0,
+  Assert2(!server->GetCurrentConfig().contains(new_server_id),
           "New server should NOT be in current_config_ yet");
-  Assert2(server->GetCurrentConfig().size() == initial_config_size,
+  Assert2(server->GetCurrentConfig().len() == initial_config_size,
           "Config size should be unchanged while server is learner");
   Assert2(server->membership_core_.config_change_pending(),
           "config change should be pending");
   Log_info("TEST 76: Verified learner state - learner={}, in_config={}",
            server->IsLearner(new_server_id),
-           (int)(server->GetCurrentConfig().count(new_server_id) > 0));
+           static_cast<int>(server->GetCurrentConfig().contains(new_server_id)));
 
   // 5. Quorum should NOT include the learner
   size_t quorum_with_learner = server->GetQuorumSize();
@@ -6865,7 +6865,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
   }
   Assert2(server->IsLearner(new_server_id),
           "Learner should NOT be promoted yet (match_index=0, far behind)");
-  Assert2(server->GetCurrentConfig().count(new_server_id) == 0,
+  Assert2(!server->GetCurrentConfig().contains(new_server_id),
           "Learner should NOT be in config yet");
   Log_info("TEST 76: Correctly not promoted when far behind");
 
@@ -6889,14 +6889,14 @@ int RaftLabTest::testNewServerCatchUp(void) {
   // 9. Verify promotion: moved from learners_ to current_config_
   Assert2(!server->IsLearner(new_server_id),
           "Server should no longer be a learner after promotion");
-  Assert2(server->GetCurrentConfig().count(new_server_id) > 0,
+  Assert2(server->GetCurrentConfig().contains(new_server_id),
           "Server should be in current_config_ after promotion");
-  Assert2(server->GetCurrentConfig().size() == initial_config_size + 1,
+  Assert2(server->GetCurrentConfig().len() == initial_config_size + 1,
           "Config size should have grown by 1 after promotion");
   Assert2(!server->membership_core_.config_change_pending(),
           "config change should not be pending after promotion");
   Log_info("TEST 76: Promoted! config_size={}, quorum={}",
-           server->GetCurrentConfig().size(), server->GetQuorumSize());
+           server->GetCurrentConfig().len(), server->GetQuorumSize());
 
   // 10. Verify quorum updated after promotion
   size_t new_quorum = server->GetQuorumSize();
@@ -6931,7 +6931,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
   }
   Assert2(!server->IsLearner(new_server_id2),
           "Second learner should be promoted (at threshold boundary)");
-  Assert2(server->GetCurrentConfig().count(new_server_id2) > 0,
+  Assert2(server->GetCurrentConfig().contains(new_server_id2),
           "Second learner should be in current_config_ after promotion");
   Log_info("TEST 76: Second learner promoted at threshold boundary");
 
@@ -6974,9 +6974,9 @@ int RaftLabTest::testNewServerCatchUp(void) {
   // Cleanup: remove fake servers from config to avoid breaking subsequent operations
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config().erase(new_server_id);
-    server->current_config().erase(new_server_id2);
-    server->learners().erase(new_server_id3);
+    server->current_config().remove(new_server_id);
+    server->current_config().remove(new_server_id2);
+    server->learners().remove(new_server_id3);
     server->match_index_.erase(new_server_id);
     server->match_index_.erase(new_server_id2);
     server->match_index_.erase(new_server_id3);
@@ -7023,7 +7023,7 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   Log_info("TEST 77: Committed 5 entries");
 
   // 2. Record initial state
-  size_t initial_config_size = server->GetCurrentConfig().size();
+  size_t initial_config_size = server->GetCurrentConfig().len();
   Assert2(initial_config_size == NSERVERS,
           "Initial config should be %d, got %zu", NSERVERS, initial_config_size);
   size_t initial_quorum = server->GetQuorumSize();
@@ -7044,9 +7044,9 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   // 4. Verify learner state
   Assert2(server->IsLearner(new_server_id),
           "Server 999 should be a learner");
-  Assert2(server->GetCurrentConfig().count(new_server_id) == 0,
+  Assert2(!server->GetCurrentConfig().contains(new_server_id),
           "Server 999 should NOT be in current_config_ yet");
-  Assert2(server->GetCurrentConfig().size() == initial_config_size,
+  Assert2(server->GetCurrentConfig().len() == initial_config_size,
           "Config size should be unchanged while learner");
   Log_info("TEST 77: Server 999 added as learner, next_index/match_index initialized");
 
@@ -7065,11 +7065,11 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   // 7. Verify promotion: in current_config_, not in learners_
   Assert2(!server->IsLearner(new_server_id),
           "Server 999 should no longer be a learner after promotion");
-  Assert2(server->GetCurrentConfig().count(new_server_id) > 0,
+  Assert2(server->GetCurrentConfig().contains(new_server_id),
           "Server 999 should be in current_config_ after promotion");
-  Assert2(server->GetCurrentConfig().size() == initial_config_size + 1,
+  Assert2(server->GetCurrentConfig().len() == initial_config_size + 1,
           "Config should grow to %zu, got %zu",
-          initial_config_size + 1, server->GetCurrentConfig().size());
+          initial_config_size + 1, server->GetCurrentConfig().len());
 
   // 8. Verify quorum: 6 servers -> quorum = 4
   size_t expected_quorum = (initial_config_size + 1) / 2 + 1;
@@ -7078,12 +7078,12 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
           "Quorum should be %zu for 6-server config, got %zu",
           expected_quorum, actual_quorum);
   Log_info("TEST 77: Promoted! config_size={}, quorum={}",
-           server->GetCurrentConfig().size(), actual_quorum);
+           server->GetCurrentConfig().len(), actual_quorum);
 
   // Cleanup
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config().erase(new_server_id);
+    server->current_config().remove(new_server_id);
     server->match_index_.erase(new_server_id);
     server->next_index_.erase(new_server_id);
     server->membership_core_.set_config_change_pending(false);
@@ -7130,7 +7130,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
     server->current_config().insert(fake2);
   }
 
-  size_t size_with_extras = server->GetCurrentConfig().size();
+  size_t size_with_extras = server->GetCurrentConfig().len();
   Assert2(size_with_extras == NSERVERS + 2,
           "Config should be %d after adding fakes, got %zu", NSERVERS + 2, size_with_extras);
   size_t quorum_with_extras = server->GetQuorumSize();
@@ -7140,13 +7140,13 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   // 3. Remove fake1 via config manipulation (simulating OnRemoveServer)
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config().erase(fake1);
+    server->current_config().remove(fake1);
     server->membership_core_.set_config_change_pending(true);
     server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
 
   // 4. Verify config shrinks
-  size_t size_after_remove = server->GetCurrentConfig().size();
+  size_t size_after_remove = server->GetCurrentConfig().len();
   Assert2(size_after_remove == NSERVERS + 1,
           "Config should be %d after remove, got %zu", NSERVERS + 1, size_after_remove);
 
@@ -7167,7 +7167,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   // Remove fake2 to restore config
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config().erase(fake2);
+    server->current_config().remove(fake2);
   }
 
   // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
@@ -7230,11 +7230,11 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   // 4. Verify learner tracking state is consistent
   Assert2(server->IsLearner(new_server_id),
           "Server 997 should still be a learner");
-  Assert2(server->GetCurrentConfig().count(new_server_id) == 0,
+  Assert2(!server->GetCurrentConfig().contains(new_server_id),
           "Server 997 should NOT be in current_config_");
-  Assert2(server->GetCurrentConfig().size() == NSERVERS,
+  Assert2(server->GetCurrentConfig().len() == NSERVERS,
           "Config size should still be %d, got %zu",
-          NSERVERS, server->GetCurrentConfig().size());
+          NSERVERS, server->GetCurrentConfig().len());
 
   // 5. Verify quorum was never affected by learner
   Assert2(server->GetQuorumSize() == (NSERVERS / 2 + 1),
@@ -7245,7 +7245,7 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   // Cleanup
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners().erase(new_server_id);
+    server->learners().remove(new_server_id);
     server->match_index_.erase(new_server_id);
     server->next_index_.erase(new_server_id);
     server->membership_core_.set_config_change_pending(false);
@@ -7327,7 +7327,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   // Cleanup old leader's pending state (it may rejoin as follower)
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->learners().erase(fake_server);
+    server->learners().remove(fake_server);
     server->match_index_.erase(fake_server);
     server->next_index_.erase(fake_server);
     server->membership_core_.set_config_change_pending(false);
@@ -7387,7 +7387,7 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   }
   Assert2(!server->IsLearner(server2),
           "Server 994 should NOT have been added as learner");
-  Assert2(server->GetCurrentConfig().count(server2) == 0,
+  Assert2(!server->GetCurrentConfig().contains(server2),
           "Server 994 should NOT be in config");
   Log_info("TEST 81: Second AddServer (994) correctly rejected");
 
@@ -7399,7 +7399,7 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   }
   Assert2(!server->IsLearner(server1),
           "Server 995 should be promoted");
-  Assert2(server->GetCurrentConfig().count(server1) > 0,
+  Assert2(server->GetCurrentConfig().contains(server1),
           "Server 995 should be in current_config_");
   Assert2(!server->membership_core_.config_change_pending(),
           "config change should not be pending after promotion");
@@ -7425,8 +7425,8 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   // Cleanup
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config().erase(server1);
-    server->learners().erase(server2);
+    server->current_config().remove(server1);
+    server->learners().remove(server2);
     server->match_index_.erase(server1);
     server->match_index_.erase(server2);
     server->next_index_.erase(server1);

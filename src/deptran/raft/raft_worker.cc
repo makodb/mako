@@ -565,7 +565,7 @@ void RaftWorker::StartSubmitThread() {
   if (!raft_worker_should_start_submit_thread(submit_thread_started_)) {
     return;
   }
-  submit_thread_stop_ = false;
+  submit_thread_stop_.store(false, rusty::sync::atomic::Ordering::Release);
   submit_thread_started_ = true;
   // @unsafe
   { // 'this' pointer passed to std::thread constructor
@@ -580,14 +580,14 @@ void RaftWorker::StopSubmitThread() {
   }
   {
     std::lock_guard<std::mutex> lock(submit_mutex_);
-    submit_thread_stop_ = true;
+    submit_thread_stop_.store(true, rusty::sync::atomic::Ordering::Release);
   }
   submit_cv_.notify_all();
   if (submit_thread_.joinable()) {
     submit_thread_.join();
   }
   submit_thread_started_ = false;
-  submit_thread_stop_ = false;
+  submit_thread_stop_.store(false, rusty::sync::atomic::Ordering::Release);
 
   std::deque<RaftWorkerPendingLog> remaining;
   {
@@ -602,7 +602,8 @@ void RaftWorker::StopSubmitThread() {
 // @unsafe
 void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch_size) {
   if (!raft_worker_should_enqueue(
-          submit_thread_started_, submit_thread_stop_.load())) {
+          submit_thread_started_,
+          submit_thread_stop_.load(rusty::sync::atomic::Ordering::Acquire))) {
     // @unsafe
     { // const char* propagation to Submit
       Submit(log, len, par_id);
@@ -696,7 +697,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   }
 
   if (raft_worker_should_count_submission(true, appended)) {
-    n_tot++;
+    n_tot.fetch_add(1, rusty::sync::atomic::Ordering::Relaxed);
   }
   }
 }
@@ -704,7 +705,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
 // @safe
 void RaftWorker::IncSubmit() {
   // @unsafe
-  { n_submit++; }
+  { n_submit.fetch_add(1, rusty::sync::atomic::Ordering::Relaxed); }
 }
 
 // @unsafe
@@ -712,7 +713,8 @@ void RaftWorker::WaitForSubmit() {
   std::unique_lock<std::mutex> lock(condition_mutex_);
   // Wait logic - can be enhanced with condition variable if needed
   // For now, simple busy wait
-  while (raft_worker_wait_for_submit(n_submit.load(), tot_num)) {
+  while (raft_worker_wait_for_submit(
+      n_submit.load(rusty::sync::atomic::Ordering::Acquire), tot_num)) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   lock.unlock();
@@ -1001,14 +1003,16 @@ void RaftWorker::SubmitLoop() {
       // @unsafe
       { // operator bool on std::atomic<bool>
         return raft_worker_submit_loop_should_wake(
-            submit_thread_stop_.load(), submit_queue_.empty());
+            submit_thread_stop_.load(rusty::sync::atomic::Ordering::Acquire),
+            submit_queue_.empty());
       }
     });
     bool should_stop = false;
     // @unsafe
     { // operator bool on std::atomic<bool>
       should_stop = raft_worker_submit_loop_should_stop(
-          submit_thread_stop_.load(), submit_queue_.empty());
+          submit_thread_stop_.load(rusty::sync::atomic::Ordering::Acquire),
+          submit_queue_.empty());
     }
     if (should_stop) {
       break;
