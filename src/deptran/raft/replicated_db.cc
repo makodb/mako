@@ -243,20 +243,22 @@ bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
     return false;
   }
 
-  // Block until committed using atomic flag
-  // @unsafe - atomic operations and callback registration
-  std::atomic<int> committed{0};  // 0=pending, 1=success, -1=rolled back
+  // Block until committed using a Rusty atomic flag.
+  rusty::sync::atomic::AtomicI32 committed{0};  // 0=pending, 1=success, -1=rolled back
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
     committed.store(replicated_db_commit_callback_state(
-        status == CommitStatus::ROLLEDBACK));
+        status == CommitStatus::ROLLEDBACK),
+        rusty::sync::atomic::Ordering::Release);
   });
 
   // Poll until callback fires
-  while (replicated_db_commit_pending(committed.load())) {
+  while (replicated_db_commit_pending(
+      committed.load(rusty::sync::atomic::Ordering::Acquire))) {
     usleep(100);  // 100us poll interval
   }
 
-  return replicated_db_commit_succeeded(committed.load());
+  return replicated_db_commit_succeeded(
+      committed.load(rusty::sync::atomic::Ordering::Acquire));
 }
 
 // @unsafe - Submits DELETE command through Raft, blocks until committed
@@ -272,19 +274,21 @@ bool ReplicatedDB::Delete(const std::string& key) {
     return false;
   }
 
-  // Block until committed using atomic flag
-  // @unsafe - atomic operations and callback registration
-  std::atomic<int> committed{0};
+  // Block until committed using a Rusty atomic flag.
+  rusty::sync::atomic::AtomicI32 committed{0};
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
     committed.store(replicated_db_commit_callback_state(
-        status == CommitStatus::ROLLEDBACK));
+        status == CommitStatus::ROLLEDBACK),
+        rusty::sync::atomic::Ordering::Release);
   });
 
-  while (replicated_db_commit_pending(committed.load())) {
+  while (replicated_db_commit_pending(
+      committed.load(rusty::sync::atomic::Ordering::Acquire))) {
     usleep(100);
   }
 
-  return replicated_db_commit_succeeded(committed.load());
+  return replicated_db_commit_succeeded(
+      committed.load(rusty::sync::atomic::Ordering::Acquire));
 }
 
 // @unsafe - Submits BATCH command through Raft, blocks until committed
@@ -300,19 +304,21 @@ bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
     return false;
   }
 
-  // Block until committed using atomic flag
-  // @unsafe - atomic operations and callback registration
-  std::atomic<int> committed{0};
+  // Block until committed using a Rusty atomic flag.
+  rusty::sync::atomic::AtomicI32 committed{0};
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
     committed.store(replicated_db_commit_callback_state(
-        status == CommitStatus::ROLLEDBACK));
+        status == CommitStatus::ROLLEDBACK),
+        rusty::sync::atomic::Ordering::Release);
   });
 
-  while (replicated_db_commit_pending(committed.load())) {
+  while (replicated_db_commit_pending(
+      committed.load(rusty::sync::atomic::Ordering::Acquire))) {
     usleep(100);
   }
 
-  return replicated_db_commit_succeeded(committed.load());
+  return replicated_db_commit_succeeded(
+      committed.load(rusty::sync::atomic::Ordering::Acquire));
 }
 
 // @unsafe - Direct RocksDB read (stale read, no Raft involvement)

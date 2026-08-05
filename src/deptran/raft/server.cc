@@ -1545,10 +1545,10 @@ void RaftServer::HeartbeatLoop() {
       // ========================================================================
       // PHASE 1: Send all AppendEntries RPCs in PARALLEL (non-blocking)
       // ========================================================================
-      // Use unique_ptr to ensure stable memory addresses for the callback pointers.
+      // Rusty boxes ensure stable memory addresses for the callback pointers.
       // The async RPC callback writes to ret_status/ret_term/ret_last_log_index,
       // so these must remain at fixed addresses until the RPC completes.
-      std::vector<std::unique_ptr<RaftServerPendingAppendEntries>> pending_rpcs;
+      rusty::Vec<rusty::Box<RaftServerPendingAppendEntries>> pending_rpcs;
 
       for (auto it = next_index_.begin(); it != next_index_.end(); it++) {
         auto site_id = it->first;
@@ -1714,7 +1714,7 @@ void RaftServer::HeartbeatLoop() {
         }
 
         // Create pending RPC context
-        auto pending = std::make_unique<RaftServerPendingAppendEntries>();
+        auto pending = rusty::Box<RaftServerPendingAppendEntries>::emplace();
         pending->follower_id = site_id;
         pending->cmd = cmd;
         pending->sent_term = term;
@@ -1734,7 +1734,7 @@ void RaftServer::HeartbeatLoop() {
                                               cmd,
                                               cmdLogTerm);
 
-        pending_rpcs.push_back(std::move(pending));
+        pending_rpcs.push(std::move(pending));
       }
 
       // ========================================================================
@@ -1749,7 +1749,7 @@ void RaftServer::HeartbeatLoop() {
           break;  // Stop processing if we lost leadership
         }
 
-        auto& pending = *pending_ptr;  // Dereference unique_ptr for cleaner access
+        auto& pending = *pending_ptr;  // Dereference Rusty box for cleaner access
         auto& resp = *pending.response;  // Access response data
 
         resp.event->wait_timeout(PER_RPC_TIMEOUT);

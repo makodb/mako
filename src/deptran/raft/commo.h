@@ -12,6 +12,8 @@
 #include <rusty/mutex.hpp>
 #include <rusty/slice.hpp>
 
+import rusty;
+
 // @external: {
 //   Log_info: [safe, (...) -> void],
 //   Log_debug: [safe, (...) -> void],
@@ -115,7 +117,8 @@ inline bool commo_quorum_should_advance_term(uint64_t term, uint64_t highest_ter
 class RaftVoteQuorumEvent: public QuorumEventWrapper {
  private:
   // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
-  rusty::Mutex<std::set<siteid_t>> spec_voters_{std::set<siteid_t>{}};
+  rusty::Mutex<rusty::BTreeSet<siteid_t>> spec_voters_{
+      rusty::BTreeSet<siteid_t>::new_()};
 
  public:
   using QuorumEventWrapper::QuorumEventWrapper;
@@ -156,7 +159,12 @@ class RaftVoteQuorumEvent: public QuorumEventWrapper {
   // @unsafe - Get the set of sites that voted yes (memory votes)
   std::set<siteid_t> GetSpecVoters() {
     auto voters = spec_voters_.lock().unwrap();
-    return *voters;
+    std::set<siteid_t> result;
+    auto iter = voters->iter();
+    for (auto voter = iter.next(); voter.is_some(); voter = iter.next()) {
+      result.insert(voter.unwrap());
+    }
+    return result;
   }
 };
 
