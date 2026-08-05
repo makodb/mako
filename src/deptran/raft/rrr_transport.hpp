@@ -19,7 +19,6 @@
  */
 
 #include <cstdint>
-#include <memory>
 #include <utility>
 
 #include "transport.hpp"

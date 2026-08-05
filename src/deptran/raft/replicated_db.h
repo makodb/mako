@@ -9,8 +9,6 @@
 #include "rusty/slice.hpp"
 #include <string>
 #include <vector>
-#include <atomic>
-#include <functional>
 #include <rocksdb/c.h>
 #include "lz4.h"
 
