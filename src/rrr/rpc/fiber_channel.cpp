@@ -91,11 +91,10 @@ export namespace rrr {
  * is the source of truth; the transpiler regenerates the matching
  * `RUSTYCPP:GEN-BEGIN ... END` block. The field was a
  * `std::vector<uint8_t>` before the migration; the DSL `Vec<u8>`
- * lowers to `rusty::Vec<uint8_t>` (the transpiled rustc Vec), which
- * is move-only and doesn't expose `.assign()`. The one call site in
- * `FiberChannel::on_inbound_frame` flipped from a `.assign(p, p+n)`
- * iterator-range build to a `reserve` + `memcpy` + `set_len` triple
- * to fit the rusty::Vec API.
+ * lowers to `rusty::Vec<uint8_t>` (the transpiled rustc Vec), which is
+ * move-only and doesn't expose `.assign()`. Its one producer,
+ * `fiberchannel_owned_copy`, fills it with `extend_from_slice` over a
+ * borrowed `&[u8]` view of the transport pointer.
  */
 #if RUSTYCPP_RUST
 struct OwnedFrame {
@@ -449,18 +448,39 @@ void fiberchannel_signal_pending_recv(FiberChannel& self);
 // @unsafe - `ch_->set_on_*({})` detach driven through the proxy deref. This
 // is the former `~FiberChannel`, now reached via `impl Drop`.
 
-// @unsafe - raw `const uint8_t*` + `memcpy` + `set_len` byte-copy
-// (rusty::Vec has no `.assign(iter, iter)` so we reserve, memcpy, then
-// commit the new length).
-OwnedFrame fiberchannel_owned_copy(const ChannelFrame& f) {
-    OwnedFrame copy;
-    if (f.size > 0) {
-        copy.bytes.reserve(f.size);
-        std::memcpy(copy.bytes.data(), f.payload, f.size);
-        copy.bytes.set_len(f.size);
+// Authored as inline Rust DSL. The note that used to sit here — "rusty::Vec
+// has no `.assign(iter, iter)` so we reserve, memcpy, then commit the new
+// length" — is obsolete: `extend_from_slice` over a
+// `core::slice::from_raw_parts` view lowers to
+// `bytes.extend_from_slice(rusty::from_raw_parts(f.payload, f.size))`, the
+// exact shape inmemory_channel_send_frame already ships (GEN id
+// inmemory_channel.14).
+//
+// This also fixes a latent bug: the hand-written body never null-checked
+// `f.payload`, so a `{nullptr, n}` frame memcpy'd from a null source. The
+// guard below matches the in-memory path.
+//
+// @unsafe - builds a borrowed `&[u8]` over the transport's raw
+// `const uint8_t*` payload. Inherent boundary: the ChannelFrame contract
+// pins those bytes for the duration of the on_frame callback.
+#if RUSTYCPP_RUST
+fn fiberchannel_owned_copy(f: &ChannelFrame) -> OwnedFrame {
+    let mut bytes: Vec<u8> = Vec::new();
+    if f.size > 0usize && !f.payload.is_null() {
+        bytes.extend_from_slice(unsafe { core::slice::from_raw_parts(f.payload, f.size) });
     }
-    return copy;
+    OwnedFrame { bytes: bytes }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.3 version=1 rust_sha256=b4868c6f449e0ca6c7b80eea9b6d9dcd35fe9d53b9b885c55d4f7fab3fbce9c9*/
+OwnedFrame fiberchannel_owned_copy(const ChannelFrame& f) {
+    rusty::Vec<uint8_t> bytes = rusty::Vec<uint8_t>::new_();
+    if ((rusty::detail::deref_if_pointer_like(f.size) > static_cast<size_t>(0)) && rusty::detail::rust_not((f.payload == nullptr))) {
+        bytes.extend_from_slice(rusty::from_raw_parts(f.payload, f.size));
+    }
+    return OwnedFrame{.bytes = std::move(bytes)};
+}
+/*RUSTYCPP:GEN-END id=fiber_channel.3*/
 
 // Authored as inline Rust DSL.
 //
@@ -557,10 +577,14 @@ void fiberchannel_close(FiberChannel& self_) {
 // Reactor template factory + Arc hand-off.
 #if RUSTYCPP_RUST
 fn fiberchannel_make_event() -> rusty::Arc<IntEvent> {
-    reactor_create_sp_event::<IntEvent>()
+    // The TYPED factory, not the generic reactor_create_sp_event<Ev>:
+    // the generic one forwards an EMPTY pack to Arc<IntEvent>::make(),
+    // i.e. `new IntEvent()`, and the DSL-generated IntEvent has only its
+    // 7-field ctor. It would also silently drop the target=1 seeding.
+    create_sp_int_event(1)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.7 version=1 rust_sha256=eafafcf1d751d7eeb0b16ae684b65754096cdf30bea85048dd93f47b7101a7ae*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.7 version=1 rust_sha256=4a84ad46610dd938314bd052de6f8bef13dc8cc8e5af155587ab7e71b2d7f0b9*/
 rusty::Arc<IntEvent> fiberchannel_make_event() {
     return create_sp_int_event(1);
 }
