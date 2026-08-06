@@ -29,10 +29,10 @@ environmental (e.g. a platform we cannot build here), see the row note.
 
 | Route | Lines | Items |
 |---|---:|---:|
-| Convertible now (no transpiler work) | 1076 (~1,140 landed) | 85 (75 landed, 10 reclassified/blocked, 0 open) |
+| Convertible now (no transpiler work) | 1076 (**all resolved**) | 85 (76 landed, 9 reclassified, 0 open) |
 | Blocked on a named transpiler feature | 111 | 11 |
-| Deletable (dead / forwarders) | 103 | 20 |
-| Demote to plain C | 83 | 6 |
+| Deletable (dead / forwarders) | 103 (79 open) | 20 (2 landed) |
+| Demote to plain C | 83 (6 of 6 items landed) | 6 |
 | Permanent kernels (justified) | 669 | 58 |
 | Module scaffolding (definitional) | 1147 | 77 |
 | **Total** | **3189** | **257** |
@@ -81,7 +81,7 @@ Each row's *first step* is the idiom to use. These are ordered by size.
 | [x] | `rpc/server.cpp` | `server_wait_for_shutdown_impl` | 1163 | 9 | The stated cause ("DSL grammar can't express the wait-while lambda binding") is EXPIRED: probeA lowered the verbatim body to `guard = cond->wait_while(std::move(guard), [&](ShutdownState& s) { return rusty::detail::rust_not(s.shutdown); }).unwrap();`. Keep it a DSL free fn taking `&rusty::Mutex<ShutdownState>` / `&rusty::Box<rusty::Condvar>` — `Server::wait_for_shutdown` already passes `self.field` args as plain lvalues (GEN line 1883), so the call site is unchanged. |  **← LANDED (batch 5A)**
 | [x] | `misc/any_message.cpp` | `anymessage_pack_as<T>` | 290 | 9 | The only anymessage_* template with no RTTI; probeC lowered the generic plus the designated-initializer struct literal. Required idiom/trap: annotate the local as the BASE type — `let payload: rusty::Arc<SerializableBase> = rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(val);` — otherwise `rusty::Some(payload)` CTAD-deduces `Option<Arc<Holder<T>>>` and will not initialize the `Option<SerializableProxy>` field (annotated-let emits the declared type, proven at server.cpp:1979). |  **← LANDED (batch 5A)**
 | [x] | `rpc/frame_codec.cpp` | `fsr_compact_if_needed` | 620 | 9 | Becomes `fn compact_if_needed(&mut self)` on the struct. Probe-verified body: read position, early-return under threshold, then compact IN PLACE with `unsafe { core::ptr::copy(rusty::ptr::add(base, read_pos), base, remaining) }` (lowers to rusty::ptr::copy = memmove) + `buf.resize(remaining)` + `self.cursor_.set_position(0)`. That avoids both the fresh-vector allocation the current code does and the need for a C++ Cursor-reconstruction helper. |  **← LANDED (batch 5A)**
-| [~] | `rpc/fiber_channel.cpp` | `fiberchannel_owned_copy` **← DEFERRED: converting `OwnedFrame` to a DSL struct makes its implicit copy ctor instantiate `Vec<u8>::clone()`, which cascades into an unrelated `rrr::IntEvent` ctor error in arc.hpp. Needs its own investigation.** | 455 | 9 | The only real hand-written function left in the file. The stated blocker ("rusty::Vec has no .assign(iter,iter) so we reserve+memcpy+set_len") is obsolete: the exact replacement idiom already ships in this repo at inmemory_channel.cpp:1166 -> GEN 1226, `bytes.extend_from_slice(unsafe { core::slice::from_raw_parts(f.payload, f.size) })` (I re-probed it against a `&mut rusty::Vec<u8>` receiver: lowers to `buf.extend_from_slice(rusty::from_raw_parts(data, size))`). OwnedFrame::bytes is already rusty::Vec<u8>, so: `let mut v: Vec<u8> = Vec::new(); if f.size > 0usize && !f.payload.is_null() { v.extend_from_slice(...) } OwnedFrame { bytes: v }`. Bonus: it fixes a latent bug — the current code reserve()s but never checks payload for null, unlike the inmemory path. |
+| [x] | `rpc/fiber_channel.cpp` | `fiberchannel_owned_copy`  **← LANDED: the deferral was a MISDIAGNOSIS. The `Vec<u8>::clone` / OwnedFrame instantiation chain in the compiler output was an unrelated (successful) series printed next to the real error, which was `Arc<IntEvent>::make<>()` with an EMPTY pack — a sibling edit had replaced `create_sp_int_event(1)` with the generic `reactor_create_sp_event<IntEvent>()`. IntEvent has only its 7-field ctor.**
 | [x] | `reactor/reactor.cpp` | `enum class FiberStatus` | 1697 | 9 | Same probe-verified `#[repr(i32)] enum` idiom as EventStatus; the in-file comment claiming a DSL enum "hits the variant-call trap" is stale. Caveat: `using enum FiberStatus;` inside class Fiber (line 1776) must survive, so convert the enum but leave the compat spellings on the Fiber shell. |  **← LANDED (batch 5B/5C)**
 | [x] | `misc/serializable.cpp` | `serializable_registry_reg<T>` | 4163 | 8 | PROBE-VERIFIED (p6_closure.cpp): `fn reg<T>(kind: i32) -> i32 { register_factory(kind, \|\| -> Proxy { let sp = rusty::Arc::<T>::make(); sp }); 0i32 }` transpiles — generic free fn -> template, turbofish `rusty::Arc::<T>::make()` -> `rusty::Arc<T>::make()`, closure -> a `[&]` lambda returning by value. Safe here ONLY because this lambda captures nothing (it names just T); the resulting rusty::Function is stored in a process-wide map, so if a future body ever captures a local the [&] would dangle — assert that in the DSL comment. Merging this into the SerializableRegistry DSL block also removes the fwd decl at 4100. Note the 4160-4162 comment refers to a no-arg reg<T>() overload that no longer exists in this file. |  **← LANDED (batch 5B/5C)**
 | [x] | `reactor/reactor.cpp` | `reactor_poll_one` | 4850 | 8 | The in-file comment's stated cause ("reference arguments to struct literals mangle") is EXPIRED. Probe-verified idiom: `let mut waker = rusty::Waker { wake_fn: move \|\| { r.enqueue_stackless_task(idx); } };` then `let wp: *mut rusty::Waker = &raw mut waker;` then `let mut ctx = rusty::Context { waker: wp };` — emits exactly `rusty::Waker{.wake_fn = [&]…}` / `rusty::Waker* wp = &waker;` / `rusty::Context{.waker = wp}` (both are plain aggregates, async.hpp:50/55). Do NOT write `rusty::Context { waker: &waker }` — the `&` is silently dropped. Residue: the final `(*poll_fn)(ctx)` — a DSL `&mut ctx` arg emits `&ctx` (a pointer) which will not bind the `rusty::Function<bool(rusty::Context&)>` parameter, so keep a 1-line `poll_fn_call(fn*, Context*)` kernel. |  **← LANDED (batch 5B/5C)**
@@ -179,12 +179,12 @@ Each row's *first step* is the idiom to use. These are ordered by size.
 
 | ✓ | File | Symbol | Line | Lines | Note |
 |---|---|---|---:|---:|---|
-| [ ] | `misc/rand.cpp` | `seed plumbing cluster (randgen_seed_key, randgen_seed_key_once, randgen_delete_key_once, srpc_rdtsc bridge + randgen_rdtsc, randgen_create_key, randgen_delete_key, randgen_get_seed, thread_local randgen_seed)` | 238 | 26 | Nothing here touches a C++ type: pthread_key_create(&key, free), pthread_getspecific returning void*, malloc, raw `unsigned int*`, a `#if defined(__APPLE__)\|\|defined(__clang__)` split, and a thread_local seed. This file ALREADY set the precedent — the rdtsc read was demoted to srpc_timing.c and is reached back through `extern "C" std::uint64_t srpc_rdtsc(void)` at line 248. Move the whole seed store into an srpc_rand.c next to it and the C++ side keeps one extern "C" decl. Note the clang branch means the thread_local path at line 277 is dead on this toolchain. |
-| [ ] | `misc/serializable.cpp` | `fd_source_read` | 578 | 15 | Mirror of fd_sink_write: ::read() EINTR-retry full-read ladder with short-read-at-EOF. Same demotion (`size_t fd_read_upto(int fd, void* p, size_t n)`), same verify()->abort() note. Do both in one commit; they share a C file. |
-| [ ] | `misc/serializable.cpp` | `fd_sink_write` | 481 | 14 | ::write() EINTR-retry full-write ladder over a non-owned fd. No C++ type is needed: takes FdSink& only to read `.fd_`, so it demotes to `int fd_write_all(int fd, const void* p, size_t n)` in a .c file, with the DSL passing self.fd_. The only C++ dependency is `verify()` (a macro that aborts) — replace with abort()/assert on the C side. |
-| [ ] | `misc/rand.cpp` | `randgen_rand_raw` | 284 | 12 | `rand_r(seed)` over the pthread-keyed / thread_local seed, again #ifdef-split. Signature is `int()` — no C++ types cross. Demote in the same srpc_rand.c TU as the seed cluster above; the DSL statics keep calling it by name. Cannot be split from that cluster (it dereferences the raw seed pointer). |
+| [x] | `misc/rand.cpp` | `seed plumbing cluster (randgen_seed_key, randgen_seed_key_once, randgen_delete_key_once, srpc_rdtsc bridge + randgen_rdtsc, randgen_create_key, randgen_delete_key, randgen_get_seed, thread_local randgen_seed)` | 238 | 26 | Nothing here touches a C++ type: pthread_key_create(&key, free), pthread_getspecific returning void*, malloc, raw `unsigned int*`, a `#if defined(__APPLE__)\|\|defined(__clang__)` split, and a thread_local seed. This file ALREADY set the precedent — the rdtsc read was demoted to srpc_timing.c and is reached back through `extern "C" std::uint64_t srpc_rdtsc(void)` at line 248. Move the whole seed store into an srpc_rand.c next to it and the C++ side keeps one extern "C" decl. Note the clang branch means the thread_local path at line 277 is dead on this toolchain. |  **← LANDED (C demotion)**
+| [x] | `misc/serializable.cpp` | `fd_source_read` | 578 | 15 | Mirror of fd_sink_write: ::read() EINTR-retry full-read ladder with short-read-at-EOF. Same demotion (`size_t fd_read_upto(int fd, void* p, size_t n)`), same verify()->abort() note. Do both in one commit; they share a C file. |  **← LANDED (C demotion)**
+| [x] | `misc/serializable.cpp` | `fd_sink_write` | 481 | 14 | ::write() EINTR-retry full-write ladder over a non-owned fd. No C++ type is needed: takes FdSink& only to read `.fd_`, so it demotes to `int fd_write_all(int fd, const void* p, size_t n)` in a .c file, with the DSL passing self.fd_. The only C++ dependency is `verify()` (a macro that aborts) — replace with abort()/assert on the C side. |  **← LANDED (C demotion)**
+| [x] | `misc/rand.cpp` | `randgen_rand_raw` | 284 | 12 | `rand_r(seed)` over the pthread-keyed / thread_local seed, again #ifdef-split. Signature is `int()` — no C++ types cross. Demote in the same srpc_rand.c TU as the seed cluster above; the DSL statics keep calling it by name. Cannot be split from that cluster (it dereferences the raw seed pointer). |  **← LANDED (C demotion)**
 | [x] | `rpc/utils.cpp` | `set_nonblocking` | 171 | 11 | fcntl(F_GETFL)/fcntl(F_SETFL, ret\|O_NONBLOCK) — C macros the DSL has no access to (same reason UINT64_MAX is spelled as a literal in load_balancer.cpp) over an `int fd, bool` signature with no C++ types. srpc_net.c already exists in this file's orbit (it owns srpc_find_open_port); this is a 10-line addition to it and the C++ side keeps one extern "C" decl. |  **← LANDED (batch 5A)**
-| [ ] | `misc/rand.cpp` | `randgen_destroy` | 310 | 5 | `pthread_once(&randgen_delete_key_once, randgen_delete_key)` under the same platform #ifdef. Pure C teardown of the C seed store — belongs in the same srpc_rand.c as its state. |
+| [x] | `misc/rand.cpp` | `randgen_destroy` | 310 | 5 | `pthread_once(&randgen_delete_key_once, randgen_delete_key)` under the same platform #ifdef. Pure C teardown of the C seed store — belongs in the same srpc_rand.c as its state. |  **← LANDED (C demotion)**
 
 ## Permanent kernels (justified) — 669 lines, 58 items
 
@@ -376,7 +376,11 @@ Each row's *first step* is the idiom to use. These are ordered by size.
 | batch 5B — reactor.cpp: 3 enum hoists + poll_one + 5 more | 130 | (batch 5B) | the 3 hoisted enums became `#[repr(i32)]` DSL enums |
 | batch 5C — serializable.cpp (7 items) + tcp_channel.cpp (6 of 8) | 114 | (batch 5C) | includes the string serialize leaves on every RPC path; `test_wire_golden` + marshal/archive suites verify byte-exactness |
 
-Running total: **~1,140 lines** of hand-written C++ removed from `src/rrr`
+| C demotion — `misc/srpc_rand.c` + `misc/srpc_io.c` | 65 | (c-demote) | the pthread-keyed PRNG seed store and the two fd EINTR ladders; C++ keeps 4 two-line shims so every call site and test is unchanged |
+
+| `rpc/fiber_channel.cpp` `fiberchannel_owned_copy` + `make_event` | 12 | (debt) | the deferred item; see the row note — it was never an OwnedFrame/template problem |
+
+Running total: **~1,217 lines** of hand-written C++ removed from `src/rrr`
 since the inventory was taken (batch 1: 397, batch 2: ~102, batch 3: 143,
 batch 4: 102, batch 5A: 157, batch 5B: 130, batch 5C: 114).
 
@@ -422,6 +426,16 @@ to discover.
 - **Reaching a `BoxEvent` behind `Option<Arc<...>>` needs an explicit
   deref**: `let ev = self.state_.as_ref().unwrap(); (*ev).get()`. The
   naive chained `.get()` binds `Arc::get` and returns a pointer.
+- **Read clang's instantiation notes bottom-up and do not assume the
+  adjacent chain is causal.** A long `Vec<T>::clone` note series sitting
+  directly above an error can belong to an entirely different,
+  successful instantiation. Find the `error:` line's OWN "requested
+  here" chain before theorising.
+- **`reactor_create_sp_event<Ev>()` is the GENERIC registration
+  template**, and forwards its pack to `Arc<Ev>::make(...)`. DSL-emitted
+  event structs have only a fieldwise ctor, so calling it with no
+  arguments is a hard error. Use the typed factory
+  (`create_sp_int_event(target)` and friends).
 - **A foreign C++ enum can still be mis-lowered as a DSL variant
   ACCESSOR** (`FrameDecodeStatus::Complete()` — a call to something that
   is not a function). Force path lowering by comparing through casts:
