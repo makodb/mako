@@ -410,14 +410,29 @@ struct AnyMessageRegistryMap {
 };
 /*RUSTYCPP:GEN-END id=any_message.1*/
 
-// @unsafe - FUNCTION-LOCAL STATIC, not DSL-expressible (§7.24b). Also
-// returns a reference to it, which the DSL cannot spell either.
-rusty::Mutex<AnyMessageRegistryMap>& registry() {
-  // rusty::Mutex has no default ctor (unlike the retired SpinMutex), so seed
-  // it with an empty registry map explicitly.
-  static rusty::Mutex<AnyMessageRegistryMap> r{AnyMessageRegistryMap{}};
-  return r;
+// @unsafe - Returns a reference into a process-wide static singleton; the
+// caller treats the returned reference as `'static`-lifetime, which
+// rusty-cpp doesn't model.
+//
+// Authored as inline Rust DSL: the Meyers-singleton shape IS expressible —
+// `static NAME: T = init;` lowers to a block-scope C++ static, and the
+// `&mut NAME` TAIL expression lowers to a plain `return NAME;` (spelling
+// `return NAME;` in the DSL instead emits `return std::move(NAME)`, which
+// would gut the process-lifetime object on the first call). rusty::Mutex
+// has no default ctor (unlike the retired SpinMutex), so it is seeded with
+// an empty registry map explicitly.
+#if RUSTYCPP_RUST
+fn registry() -> &mut rusty::Mutex<AnyMessageRegistryMap> {
+    static R: rusty::Mutex<AnyMessageRegistryMap> = rusty::Mutex::new(AnyMessageRegistryMap {});
+    &mut R
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=any_message.5 version=1 rust_sha256=8411f2bc9c0188bd0f70ab448aedabdae86bf878ac0331205d1503f849e88dc9*/
+rusty::Mutex<AnyMessageRegistryMap>& registry() {
+    static rusty::Mutex<AnyMessageRegistryMap> R = rusty::Mutex<AnyMessageRegistryMap>::new_(AnyMessageRegistryMap{});
+    return R;
+}
+/*RUSTYCPP:GEN-END id=any_message.5*/
 
 }  // namespace
 

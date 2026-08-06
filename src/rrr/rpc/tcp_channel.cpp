@@ -673,32 +673,113 @@ namespace rrr {
 // TcpListener DSL block whose listen() calls it); previously lived in
 // the impl-side anonymous namespace, but an exported inline method
 // cannot name an internal-linkage helper.
-// KERNEL by probe (arc cycle 9): foreign NESTED enum paths
-// (rusty::io::Error::Kind::X) in DSL comparison position get the
-// variant-call lowering (X() — invalid); only same-file DSL enums
-// compare cleanly. This mapper therefore stays hand-written C++.
-// @unsafe kernel by verdict: a match/comparison over rusty::io::Error::Kind
-// is not DSL-expressible today -- ANY qualified C++ enum-class variant path
-// (Kind::ConnectionRefused) emits a nullary variant CALL (Kind::ConnectionRefused()),
-// the DSL-enum factory convention misapplied to a plain C++ enum. Same trap
-// family as the docs 7.51-era notes; needs a transpiler-side "is this a DSL
-// enum" check before appending parens.
-ChannelError io_kind_to_channel_error(rusty::io::Error::Kind kind) {
-    switch (kind) {
-        case rusty::io::Error::Kind::ConnectionRefused: return ChannelError::ConnectionRefused;
-        case rusty::io::Error::Kind::ConnectionReset:
-        case rusty::io::Error::Kind::ConnectionAborted:
-        case rusty::io::Error::Kind::NotConnected:
-        case rusty::io::Error::Kind::BrokenPipe:        return ChannelError::ConnectionReset;
-        case rusty::io::Error::Kind::TimedOut:          return ChannelError::Timeout;
-        case rusty::io::Error::Kind::AddrInUse:         return ChannelError::AddressInUse;
-        case rusty::io::Error::Kind::AddrNotAvailable:  return ChannelError::AddressInvalid;
-        case rusty::io::Error::Kind::InvalidInput:      return ChannelError::AddressInvalid;
-        case rusty::io::Error::Kind::PermissionDenied:  return ChannelError::PermissionDenied;
-        case rusty::io::Error::Kind::WouldBlock:        return ChannelError::WouldBlock;
-        default:                                        return ChannelError::Internal;
+//
+// DSL now. The old "foreign nested enum paths are not DSL-expressible"
+// verdict was really about the EXPECTED-TYPE position: a bare
+// `rusty::io::Error::Kind::X` written straight into a comparison or a
+// `return` picked up the DSL-enum variant-ACCESSOR lowering (`X()`),
+// which does not exist for a plain C++ enum class. Hoisting each variant
+// into an UNTYPED `let` first drops the expected type, so the path goes
+// through ordinary path emission and lowers verbatim. Probe-verified
+// against a file containing no plain-C++ declaration of either enum --
+// i.e. exactly what this TU sees for the imported `ChannelError`.
+//
+// Kept as an if-chain rather than a `match`: a `match` puts the variants
+// back into PATTERN position, which is the (still real) cross-module
+// data-enum defect. Arm order and grouping are unchanged from the old
+// `switch`, and the bare `e_internal` tail is the old `default:`.
+#if RUSTYCPP_RUST
+fn io_kind_to_channel_error(kind: rusty::io::Error::Kind) -> ChannelError {
+    let k_refused = rusty::io::Error::Kind::ConnectionRefused;
+    let k_reset = rusty::io::Error::Kind::ConnectionReset;
+    let k_aborted = rusty::io::Error::Kind::ConnectionAborted;
+    let k_not_connected = rusty::io::Error::Kind::NotConnected;
+    let k_broken_pipe = rusty::io::Error::Kind::BrokenPipe;
+    let k_timed_out = rusty::io::Error::Kind::TimedOut;
+    let k_addr_in_use = rusty::io::Error::Kind::AddrInUse;
+    let k_addr_not_avail = rusty::io::Error::Kind::AddrNotAvailable;
+    let k_invalid_input = rusty::io::Error::Kind::InvalidInput;
+    let k_perm_denied = rusty::io::Error::Kind::PermissionDenied;
+    let k_would_block = rusty::io::Error::Kind::WouldBlock;
+
+    let e_refused = ChannelError_ConnectionRefused();
+    let e_reset = ChannelError_ConnectionReset();
+    let e_timeout = ChannelError_Timeout();
+    let e_addr_in_use = ChannelError_AddressInUse();
+    let e_addr_invalid = ChannelError_AddressInvalid();
+    let e_perm_denied = ChannelError_PermissionDenied();
+    let e_would_block = ChannelError_WouldBlock();
+    let e_internal = ChannelError_Internal();
+
+    if kind == k_refused {
+        return e_refused;
     }
+    if kind == k_reset || kind == k_aborted || kind == k_not_connected || kind == k_broken_pipe {
+        return e_reset;
+    }
+    if kind == k_timed_out {
+        return e_timeout;
+    }
+    if kind == k_addr_in_use {
+        return e_addr_in_use;
+    }
+    if kind == k_addr_not_avail || kind == k_invalid_input {
+        return e_addr_invalid;
+    }
+    if kind == k_perm_denied {
+        return e_perm_denied;
+    }
+    if kind == k_would_block {
+        return e_would_block;
+    }
+    e_internal
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.7 version=1 rust_sha256=eff1e922f1c6a7bd0d4742593f248ffbddc12b09ac3a382a8ead8e49750a55b6*/
+ChannelError io_kind_to_channel_error(rusty::io::Error::Kind kind) {
+    const auto k_refused = rusty::io::Error::Kind::ConnectionRefused;
+    const auto k_reset = rusty::io::Error::Kind::ConnectionReset;
+    const auto k_aborted = rusty::io::Error::Kind::ConnectionAborted;
+    const auto k_not_connected = rusty::io::Error::Kind::NotConnected;
+    const auto k_broken_pipe = rusty::io::Error::Kind::BrokenPipe;
+    const auto k_timed_out = rusty::io::Error::Kind::TimedOut;
+    const auto k_addr_in_use = rusty::io::Error::Kind::AddrInUse;
+    const auto k_addr_not_avail = rusty::io::Error::Kind::AddrNotAvailable;
+    const auto k_invalid_input = rusty::io::Error::Kind::InvalidInput;
+    const auto k_perm_denied = rusty::io::Error::Kind::PermissionDenied;
+    const auto k_would_block = rusty::io::Error::Kind::WouldBlock;
+    auto e_refused = ChannelError_ConnectionRefused();
+    auto e_reset = ChannelError_ConnectionReset();
+    auto e_timeout = ChannelError_Timeout();
+    auto e_addr_in_use = ChannelError_AddressInUse();
+    auto e_addr_invalid = ChannelError_AddressInvalid();
+    auto e_perm_denied = ChannelError_PermissionDenied();
+    auto e_would_block = ChannelError_WouldBlock();
+    auto e_internal = ChannelError_Internal();
+    if (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_refused)) {
+        return std::move(e_refused);
+    }
+    if ((((rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_reset)) || (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_aborted))) || (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_not_connected))) || (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_broken_pipe))) {
+        return std::move(e_reset);
+    }
+    if (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_timed_out)) {
+        return std::move(e_timeout);
+    }
+    if (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_addr_in_use)) {
+        return std::move(e_addr_in_use);
+    }
+    if ((rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_addr_not_avail)) || (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_invalid_input))) {
+        return std::move(e_addr_invalid);
+    }
+    if (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_perm_denied)) {
+        return std::move(e_perm_denied);
+    }
+    if (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(k_would_block)) {
+        return std::move(e_would_block);
+    }
+    return std::move(e_internal);
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.7*/
 }  // namespace rrr
 export namespace rrr {
 
@@ -1463,11 +1544,12 @@ RecvScratch* tcpconn_scratch();
 int64_t      tcpconn_recv_bytes(const TcpConnection& conn, RecvScratch* s);
 // By reference, not by pointer: `tcpconn_next_frame` is DSL now (it
 // lives in the tcp_channel.handle_read block) and a DSL `&mut`
-// PARAMETER lowers to a C++ reference. Keeping this declaration is also
-// load-bearing for a second reason: it is the only plain-C++ mention of
-// `FrameDecodeStatus` in the file, and without one the transpiler
-// lowers `FrameDecodeStatus::Complete` in handle_read as a nullary
-// variant CALL (`::Complete()`), which does not compile.
+// PARAMETER lowers to a C++ reference. (This declaration used to carry a
+// second job -- being the only plain-C++ mention of `FrameDecodeStatus`,
+// without which the transpiler mis-lowered `FrameDecodeStatus::Complete`
+// as a nullary variant CALL. That reason is stale: handle_read now hoists
+// the variant into an untyped `let`, which path-lowers with no plain-C++
+// mention in the file at all. Probe-verified.)
 FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView& v);
 void         tcpconn_append_inbound(const TcpConnection& conn, std::size_t n);
 void         tcpconn_consume_inbound(const TcpConnection& conn);
@@ -1711,14 +1793,18 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
         }
     }
 
+    // Foreign-enum variants hoisted into UNTYPED `let`s: dropping the
+    // expected type routes them through ordinary PATH emission, so the
+    // comparison is a plain `s == st_complete`. (The old `(s as i32) ==
+    // (X as i32)` double-cast dodged the same variant-ACCESSOR
+    // mis-lowering, but hid what was being compared.)
+    let st_complete = FrameDecodeStatus::Complete;
+    let st_need_more = FrameDecodeStatus::NeedMoreBytes;
     let mut decoding = true;
     while decoding {
         let mut v: FrameView = Default::default();
         let s = tcpconn_next_frame(conn, &mut v);
-        // `as i32` on both sides forces PATH lowering: a bare
-        // `FrameDecodeStatus::Complete` is emitted as a nullary variant
-        // ACCESSOR call, which does not exist for this foreign C++ enum.
-        if (s as i32) == (FrameDecodeStatus::Complete as i32) {
+        if s == st_complete {
             let cf = ChannelFrame { payload: v.payload, size: v.payload_size };
             {
                 let mut guard = conn.on_frame_.lock().unwrap();
@@ -1727,7 +1813,7 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
                 }
             }
             tcpconn_consume_inbound(conn);
-        } else if (s as i32) == (FrameDecodeStatus::NeedMoreBytes as i32) {
+        } else if s == st_need_more {
             decoding = false;
         } else {
             // Malformed inbound stream.
@@ -1747,7 +1833,7 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
     any_progress
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_read version=1 rust_sha256=132ae68190a8a61908c1d0fb83ddd95f099a456e36d04f83fd1477468d5b7107*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_read version=1 rust_sha256=8591705f5dab2a5574c7bea73a4988507973252b5f6d20e4145bf3a199620373*/
 FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView& v) {
     auto&& g = rusty::borrow(conn.inbound_);
     return ((rusty::detail::deref_if_pointer_like(g))).next_frame(v);
@@ -1792,11 +1878,13 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
             }
         }
     }
+    const auto st_complete = FrameDecodeStatus::Complete;
+    const auto st_need_more = FrameDecodeStatus::NeedMoreBytes;
     auto decoding = true;
     while (decoding) {
         FrameView v = rusty::default_like<FrameView>();
         const auto s = tcpconn_next_frame(conn, v);
-        if (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(FrameDecodeStatus::Complete)))) {
+        if (rusty::detail::deref_if_pointer_like(s) == rusty::detail::deref_if_pointer_like(st_complete)) {
             const auto cf = ChannelFrame{.payload = std::move(v.payload), .size = std::move(v.payload_size)};
             {
                 auto&& guard = rusty::deref_call(conn.on_frame_.lock(), rusty::detail::__mdisp_unwrap{});
@@ -1805,7 +1893,7 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
                 }
             }
             tcpconn_consume_inbound(conn);
-        } else if (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(FrameDecodeStatus::NeedMoreBytes)))) {
+        } else if (rusty::detail::deref_if_pointer_like(s) == rusty::detail::deref_if_pointer_like(st_need_more)) {
             decoding = false;
         } else {
             {

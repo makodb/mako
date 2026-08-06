@@ -358,12 +358,49 @@ inline size_t buffer_source_read(BufferSource& self, void* p, size_t n) {
 // and forward `write` / `read` through it.
 //
 // Lifetime: the proxy must not outlive `*sink` / `*source`.
-inline SinkProxy make_sink_proxy(BufferSink* sink) {
-  return rusty::make_box<SinkBaseAdapterRefMut<BufferSink>>(*sink);
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Two spellings here are LOAD-BEARING:
+//
+//   * The erasure is spelled EXPLICITLY as `rusty::make_box` with a
+//     turbofish naming the *RefMut* adapter. A plain `Box::new(sink)`
+//     over a borrow lowers to the OWNING `SinkBaseAdapter<BufferSink>`,
+//     which would COPY the sink — every byte written through the proxy
+//     would land in the copy and the caller's `BufferSink::bytes` would
+//     stay empty. There is no borrowed-trait-object coercion in the
+//     DSL, so the adapter must be named.
+//
+//   * The parameter is a RAW POINTER (`*mut BufferSink`), not `&mut`,
+//     so the emitted signature stays exactly
+//     `make_sink_proxy(BufferSink*)` — byte-identical to what the ~369
+//     `make_*_proxy(&x)` call sites already spell (including the DSL
+//     callers in client.cpp / server.cpp, which pass `&raw mut x`).
+//
+// The FdSink / FdSource overloads of these same two names live in a
+// SECOND DSL block further down, beside FdSink/FdSource: Rust has no
+// function overloading, so they cannot share this block — but each
+// block emits a plain C++ free function, and those overload normally.
+#if RUSTYCPP_RUST
+fn make_sink_proxy(sink: *mut BufferSink) -> Box<SinkBase> {
+    rusty::make_box::<SinkBaseAdapterRefMut<BufferSink>>(*sink)
 }
-inline SourceProxy make_source_proxy(BufferSource* source) {
-  return rusty::make_box<SourceBaseAdapterRefMut<BufferSource>>(*source);
+
+fn make_source_proxy(source: *mut BufferSource) -> Box<SourceBase> {
+    rusty::make_box::<SourceBaseAdapterRefMut<BufferSource>>(*source)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.5 version=1 rust_sha256=5397c9e0938504bb3cb5d7c11106a3f80c35af60fd8f55ce6eed62b8f4c03fe7*/
+rusty::Box<SinkBase> make_sink_proxy(BufferSink* sink) {
+    return rusty::make_box<SinkBaseAdapterRefMut<BufferSink>>(*sink);
+}
+
+rusty::Box<SourceBase> make_source_proxy(BufferSource* source) {
+    return rusty::make_box<SourceBaseAdapterRefMut<BufferSource>>(*source);
+}
+/*RUSTYCPP:GEN-END id=serializable.5*/
 
 // ---------------------------------------------------------------------------
 // File descriptor Sink / Source.
@@ -576,12 +613,35 @@ inline size_t fd_source_read(FdSource& self, void* p, size_t n) {
     return srpc_fd_read_upto(self.fd_, p, n);
 }
 
-inline SinkProxy make_sink_proxy(FdSink* sink) {
-  return rusty::make_box<SinkBaseAdapterRefMut<FdSink>>(*sink);
+// The FdSink / FdSource half of the make_*_proxy overload set — same
+// DSL spelling as the BufferSink / BufferSource block above
+// (raw-pointer parameter + explicit
+// `rusty::make_box::<...BaseAdapterRefMut<T>>` erasure, both
+// load-bearing for the same reasons documented there).
+//
+// This is a SEPARATE `#if RUSTYCPP_RUST` block purely because Rust has
+// no function overloading and these two fns reuse the names above. The
+// transpiler ids and hashes blocks independently, so two blocks in one
+// file may define same-named fns; each emits an ordinary C++ free
+// function and the four overload exactly as they did by hand.
+#if RUSTYCPP_RUST
+fn make_sink_proxy(sink: *mut FdSink) -> Box<SinkBase> {
+    rusty::make_box::<SinkBaseAdapterRefMut<FdSink>>(*sink)
 }
-inline SourceProxy make_source_proxy(FdSource* source) {
-  return rusty::make_box<SourceBaseAdapterRefMut<FdSource>>(*source);
+
+fn make_source_proxy(source: *mut FdSource) -> Box<SourceBase> {
+    rusty::make_box::<SourceBaseAdapterRefMut<FdSource>>(*source)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.8 version=1 rust_sha256=41b4f1fc68626277166cf5e6af3c0eb1f41bf63b7655f7ac5521f5b3a9c7cbce*/
+rusty::Box<SinkBase> make_sink_proxy(FdSink* sink) {
+    return rusty::make_box<SinkBaseAdapterRefMut<FdSink>>(*sink);
+}
+
+rusty::Box<SourceBase> make_source_proxy(FdSource* source) {
+    return rusty::make_box<SourceBaseAdapterRefMut<FdSource>>(*source);
+}
+/*RUSTYCPP:GEN-END id=serializable.8*/
 
 // ---------------------------------------------------------------------------
 // Layer 3: Binary archive — knows the wire format.
@@ -4704,12 +4764,26 @@ struct SerializableRegistryMap {
 // doesn't express. Marked @unsafe rather than @safe so the analyzer doesn't
 // demand a `@lifetime: () -> &'a where 'a: 'static` annotation it can't yet
 // model.
-rusty::Mutex<SerializableRegistryMap>& registry() {
-  // rusty::Mutex has no default ctor (unlike the retired SpinMutex), so seed
-  // it with an empty registry map explicitly.
-  static rusty::Mutex<SerializableRegistryMap> r{SerializableRegistryMap{}};
-  return r;
+//
+// Authored as inline Rust DSL: the Meyers-singleton shape IS expressible —
+// `static NAME: T = init;` lowers to a block-scope C++ static, and the
+// `&mut NAME` TAIL expression lowers to a plain `return NAME;` (spelling
+// `return NAME;` in the DSL instead emits `return std::move(NAME)`, which
+// would gut the process-lifetime object on the first call). rusty::Mutex
+// has no default ctor (unlike the retired SpinMutex), so it is seeded with
+// an empty registry map explicitly.
+#if RUSTYCPP_RUST
+fn registry() -> &mut rusty::Mutex<SerializableRegistryMap> {
+    static R: rusty::Mutex<SerializableRegistryMap> = rusty::Mutex::new(SerializableRegistryMap {});
+    &mut R
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.18 version=1 rust_sha256=49f8745b3588459aaeb3f9b7a87779db671a3cda43b00e14c67ac03a06a153f1*/
+rusty::Mutex<SerializableRegistryMap>& registry() {
+    static rusty::Mutex<SerializableRegistryMap> R = rusty::Mutex<SerializableRegistryMap>::new_(SerializableRegistryMap{});
+    return R;
+}
+/*RUSTYCPP:GEN-END id=serializable.18*/
 
 }  // namespace
 

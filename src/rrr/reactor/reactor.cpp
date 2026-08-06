@@ -35,6 +35,7 @@ module;
 #include <sys/times.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <rusty/arc.hpp>
@@ -5110,13 +5111,44 @@ void Fiber::do_finalize() { fiber_do_finalize(*this); }
 
 namespace {
 
-inline bool stackless_profile_enabled() {
-  static bool enabled = []() {
-    const char* env = std::getenv("MAKO_ASYNC_PROFILE");
-    return env != nullptr && env[0] != '\0' && env[0] != '0';
-  }();
-  return enabled;
+// @unsafe { ::getenv walks the raw process environment }
+// The env probe is the one genuine kernel here: `getenv` plus a raw
+// `const char*` walk. Pulling it out of the old lambda-IIFE lets the
+// enclosing decision function be plain DSL.
+bool stackless_profile_env() {
+  const char* env = ::getenv("MAKO_ASYNC_PROFILE");
+  return env != nullptr && env[0] != '\0' && env[0] != '0';
 }
+
+// The "function-local static" blocker on this function has expired: a
+// fn-body `static` lowers to a real C++ magic static
+// (`static bool ENABLED = stackless_profile_env();`), so the lazy,
+// thread-safe, init-once semantics every profile shim depends on are
+// preserved exactly -- the only change is that the initializer is now a
+// named kernel instead of an inline lambda.
+//
+// LOAD-BEARING: the body must end with the bare name as a TAIL
+// EXPRESSION. Spelling `return ENABLED;` emits
+// `return std::move(ENABLED);`, which moves out of a process-lifetime
+// object and guts it after the first call.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+fn stackless_profile_enabled() -> bool {
+    static ENABLED: bool = stackless_profile_env();
+    ENABLED
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.53 version=1 rust_sha256=c5435df018cfed2e1aa41c03d34c24c2e948cadb18f1a2df6b6628266b3f3255*/
+bool stackless_profile_enabled();
+
+bool stackless_profile_enabled() {
+    static bool ENABLED = stackless_profile_env();
+    return ENABLED;
+}
+/*RUSTYCPP:GEN-END id=reactor.53*/
 
 // Type aliases for the profile counters (the DSL grammar can't parse a
 // `std::atomic<...>` template-id in field position, so the struct names
@@ -5191,46 +5223,91 @@ void stackless_profile_update_max_slots(size_t slots) {
 }
 /*RUSTYCPP:GEN-END id=reactor.54*/
 
-// @unsafe - FUNCTION-LOCAL STATIC (`static thread_local uint64_t
-// last_report_us`, §7.24b). That is now the ONLY thing keeping this body
-// out of the DSL: the profile counters became rusty atomics, so the loads
-// below are ordinary `Ordering::Relaxed` calls.
-inline void stackless_profile_report_periodic() {
-  if (!stackless_profile_enabled()) {
-    return;
-  }
-  static thread_local uint64_t last_report_us = 0;
-  uint64_t now_us = Time::now(true);
-  if (last_report_us == 0) {
+// The "function-local static" blocker on this function has expired: a
+// fn-body `#[thread_local] static mut` lowers to a real
+// `static thread_local uint64_t last_report_us = 0;`.
+//
+// LOAD-BEARING: the transpiler HOISTS that declaration to the top of the
+// emitted body, ABOVE the `stackless_profile_enabled()` guard. That is
+// harmless here only because the initializer is the constant `0` --
+// constant-initialized TLS, so nothing dynamic runs on the disabled
+// path. Do not give this static a non-constant initializer.
+//
+// The counters are rusty atomics, so the loads below are ordinary
+// `Ordering::Relaxed` calls (spelled with the full path, as everywhere
+// else in this file). The `static_cast<unsigned long long>` wrappers on
+// the log arguments are gone: they existed only to feed a printf-style
+// `%llu`, and `std::format` renders `uint64_t` / `size_t` identically
+// without them.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+fn stackless_profile_report_periodic() {
+    if !stackless_profile_enabled() {
+        return;
+    }
+    #[thread_local] static mut last_report_us: u64 = 0;
+    let now_us: u64 = Time::now(true);
+    if last_report_us == 0u64 {
+        last_report_us = now_us;
+        return;
+    }
+    if now_us - last_report_us < 1000000u64 {
+        return;
+    }
     last_report_us = now_us;
-    return;
-  }
-  if (now_us - last_report_us < 1000000) {
-    return;
-  }
-  last_report_us = now_us;
 
-  using rusty::sync::atomic::Ordering;
-  uint64_t reg_calls = g_stackless_profile.reg_calls.load(Ordering::Relaxed);
-  uint64_t reg_scans = g_stackless_profile.reg_scan_steps.load(Ordering::Relaxed);
-  uint64_t reg_reuse = g_stackless_profile.reg_reuse.load(Ordering::Relaxed);
-  uint64_t reg_new = g_stackless_profile.reg_new.load(Ordering::Relaxed);
-  uint64_t poll_calls = g_stackless_profile.poll_calls.load(Ordering::Relaxed);
-  uint64_t poll_ready = g_stackless_profile.poll_ready.load(Ordering::Relaxed);
-  uint64_t enqueue_calls = g_stackless_profile.enqueue_calls.load(Ordering::Relaxed);
-  size_t max_slots = g_stackless_profile.max_slots.load(Ordering::Relaxed);
+    let reg_calls: u64 = g_stackless_profile.reg_calls.load(rusty::sync::atomic::Ordering::Relaxed);
+    let reg_scans: u64 = g_stackless_profile.reg_scan_steps.load(rusty::sync::atomic::Ordering::Relaxed);
+    let reg_reuse: u64 = g_stackless_profile.reg_reuse.load(rusty::sync::atomic::Ordering::Relaxed);
+    let reg_new: u64 = g_stackless_profile.reg_new.load(rusty::sync::atomic::Ordering::Relaxed);
+    let poll_calls: u64 = g_stackless_profile.poll_calls.load(rusty::sync::atomic::Ordering::Relaxed);
+    let poll_ready: u64 = g_stackless_profile.poll_ready.load(rusty::sync::atomic::Ordering::Relaxed);
+    let enqueue_calls: u64 = g_stackless_profile.enqueue_calls.load(rusty::sync::atomic::Ordering::Relaxed);
+    let max_slots: usize = g_stackless_profile.max_slots.load(rusty::sync::atomic::Ordering::Relaxed);
 
-  double avg_scan = (reg_calls > 0) ? static_cast<double>(reg_scans) / static_cast<double>(reg_calls) : 0.0;
-  log_line(Log::INFO, 0, nullptr, std::format("[async-prof] reg_calls={} avg_scan={:.2f} reuse={} new={} max_slots={} poll_calls={} poll_ready={} enqueue_calls={}",
-           static_cast<unsigned long long>(reg_calls),
-           avg_scan,
-           static_cast<unsigned long long>(reg_reuse),
-           static_cast<unsigned long long>(reg_new),
-           max_slots,
-           static_cast<unsigned long long>(poll_calls),
-           static_cast<unsigned long long>(poll_ready),
-           static_cast<unsigned long long>(enqueue_calls)));
+    let mut avg_scan: f64 = 0.0f64;
+    if reg_calls > 0u64 {
+        avg_scan = (reg_scans as f64) / (reg_calls as f64);
+    }
+    log_line(Log::INFO, 0i32, core::ptr::null(), std::format("[async-prof] reg_calls={} avg_scan={:.2f} reuse={} new={} max_slots={} poll_calls={} poll_ready={} enqueue_calls={}",
+        reg_calls, avg_scan, reg_reuse, reg_new, max_slots, poll_calls, poll_ready, enqueue_calls));
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.57 version=1 rust_sha256=4b7ceb069de858bd99d79a7d0d65fbe5c8c6181c6218199eb95000ecf9ddf533*/
+void stackless_profile_report_periodic();
+
+void stackless_profile_report_periodic() {
+    static thread_local uint64_t last_report_us = static_cast<uint64_t>(0);
+    if (rusty::detail::rust_not(stackless_profile_enabled())) {
+        return;
+    }
+    uint64_t now_us = Time::now(true);
+    if (rusty::detail::deref_if_pointer_like(last_report_us) == static_cast<uint64_t>(0)) {
+        last_report_us = std::move(now_us);
+        return;
+    }
+    if ((rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(last_report_us)) < static_cast<uint64_t>(1000000)) {
+        return;
+    }
+    last_report_us = std::move(now_us);
+    const uint64_t reg_calls = g_stackless_profile.reg_calls.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t reg_scans = g_stackless_profile.reg_scan_steps.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t reg_reuse = g_stackless_profile.reg_reuse.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t reg_new = g_stackless_profile.reg_new.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t poll_calls = g_stackless_profile.poll_calls.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t poll_ready = g_stackless_profile.poll_ready.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t enqueue_calls = g_stackless_profile.enqueue_calls.load(rusty::sync::atomic::Ordering::Relaxed);
+    const size_t max_slots = g_stackless_profile.max_slots.load(rusty::sync::atomic::Ordering::Relaxed);
+    double avg_scan = 0.0;
+    if (rusty::detail::deref_if_pointer_like(reg_calls) > static_cast<uint64_t>(0)) {
+        avg_scan = ((static_cast<double>(reg_scans))) / ((static_cast<double>(reg_calls)));
+    }
+    log_line(rusty::clone(rusty::clone(Log::INFO)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[async-prof] reg_calls={} avg_scan={:.2f} reuse={} new={} max_slots={} poll_calls={} poll_ready={} enqueue_calls={}", std::move(reg_calls), std::move(avg_scan), std::move(reg_reuse), std::move(reg_new), std::move(max_slots), std::move(poll_calls), std::move(poll_ready), std::move(enqueue_calls)));
+}
+/*RUSTYCPP:GEN-END id=reactor.57*/
 
 }  // namespace
 

@@ -35,15 +35,15 @@ using CpuPid = pid_t;
 
 struct CPUInfo;
 
-// Backing free fn for the DSL `cpu_stat` below — owns the OnceCell
-// singleton and the sampling machinery (syscalls + /proc parsing, all
-// #ifdef-split by platform, not DSL-expressible). Definitions in the
-// impl namespace at the bottom of this file.
+// Backing free fns for the DSL `cpu_stat` below. `cpuinfo_cpu_stat` is
+// itself DSL — it owns the OnceCell singleton, and a function-local
+// static IS expressible in the DSL (`static NAME: T = init;`). The rest
+// are the sampling kernels (syscalls + /proc parsing, all #ifdef-split by
+// platform). Definitions in the impl namespace at the bottom of this file.
 rusty::Vec<double> cpuinfo_cpu_stat();
 struct CPUInfo;
 void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks);
 std::string cpuinfo_read_proc(const std::string& path);
-std::string cpuinfo_empty_string();
 unsigned long cpuinfo_parse_ulong(const std::string& tok);
 std::string cpuinfo_net_path(const std::string& pid);
 std::string cpuinfo_stat_path(const std::string& pid);
@@ -276,7 +276,7 @@ fn cpuinfo_nth_line(content: &std::string, n: i32) -> std::string {
     while k < n {
         let nl = content.find("\n", pos);
         if nl == std::string::npos {
-            return cpuinfo_empty_string();
+            return std::string();
         }
         pos = nl + 1;
         k += 1;
@@ -300,15 +300,15 @@ fn cpuinfo_nth_field(line: &std::string, n: i32) -> std::string {
             return line.substr(pos, end - pos);
         }
         if end == std::string::npos {
-            return cpuinfo_empty_string();
+            return std::string();
         }
         pos = line.find_first_not_of(" ", end);
         k += 1;
     }
-    cpuinfo_empty_string()
+    std::string()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cpuinfo.string_helpers version=1 rust_sha256=16af2185742570e264f4c6b4164f3586b12d9ac5b68a47910b19929ea2b5ffd1*/
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.string_helpers version=1 rust_sha256=e3013e6103e65d5e8f9d8ec49871e430be656eefe398632fb94c10e2d4c443a7*/
 std::string cpuinfo_nth_line(const std::string& content, int32_t n);
 std::string cpuinfo_nth_field(const std::string& line, int32_t n);
 
@@ -318,7 +318,7 @@ std::string cpuinfo_nth_line(const std::string& content, int32_t n) {
     while (rusty::detail::deref_if_pointer_like(k) < rusty::detail::deref_if_pointer_like(n)) {
         const auto nl = content.find("\n", std::move(pos));
         if (rusty::detail::deref_if_pointer_like(nl) == rusty::detail::deref_if_pointer_like(std::string::npos)) {
-            return cpuinfo_empty_string();
+            return std::string();
         }
         pos = rusty::detail::deref_if_pointer_like(nl) + static_cast<size_t>(1);
         rusty::detail::deref_if_pointer_like(k) += 1;
@@ -342,12 +342,12 @@ std::string cpuinfo_nth_field(const std::string& line, int32_t n) {
             return line.substr(std::move(pos), rusty::detail::deref_if_pointer_like(end) - rusty::detail::deref_if_pointer_like(pos));
         }
         if (rusty::detail::deref_if_pointer_like(end) == rusty::detail::deref_if_pointer_like(std::string::npos)) {
-            return cpuinfo_empty_string();
+            return std::string();
         }
         pos = line.find_first_not_of(" ", std::move(end));
         rusty::detail::deref_if_pointer_like(k) += 1;
     }
-    return cpuinfo_empty_string();
+    return std::string();
 }
 /*RUSTYCPP:GEN-END id=cpuinfo.string_helpers*/
 
@@ -546,9 +546,6 @@ std::string cpuinfo_read_proc(const std::string& path) {
 }
 /*RUSTYCPP:GEN-END id=cpuinfo.read_proc*/
 
-// @unsafe - trivial factory for the DSL.
-std::string cpuinfo_empty_string() { return std::string(); }
-
 // @unsafe - strtoul over the token bytes (empty token parses to 0,
 // replacing the legacy strtoul(NULL) crash on short input).
 unsigned long cpuinfo_parse_ulong(const std::string& tok) {
@@ -608,21 +605,37 @@ void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks) {
 }
 /*RUSTYCPP:GEN-END id=cpuinfo.6*/
 
-// @safe - Rust-idiomatic singleton accessor.
+// @unsafe - Rust-idiomatic singleton accessor. Dereferences the raw
+// pointer `OnceCell::get_mut()` hands back (non-null immediately after
+// get_or_init, which rusty-cpp cannot prove).
 //
 // Equivalent in Rust:
 //   static CPU_INFO: OnceLock<CpuInfo> = OnceLock::new();
 //   pub fn cpu_stat() -> Vec<f64> {
 //       CPU_INFO.get_or_init(CpuInfo::new).get_cpu_stat()
 //   }
-// @unsafe - FUNCTION-LOCAL STATIC (`static rusty::OnceCell<CPUInfo>`).
-// The DSL has no construct for a static declared inside a function body
-// (§7.24b); hoisting it to namespace scope would change lifetime, so it
-// stays a kernel.
-rusty::Vec<double> cpuinfo_cpu_stat() {
-    static rusty::OnceCell<CPUInfo> inst;
-    inst.get_or_init([]() -> CPUInfo { return cpuinfo_new(); });
-    return inst.get_mut()->get_cpu_stat();
+//
+// Authored as inline Rust DSL: the function-local static IS expressible
+// (`static NAME: T = init;` lowers to a block-scope C++ static). OnceCell
+// is non-copyable AND non-movable, so it is value-initialized with an empty
+// struct literal — the emitted `= rusty::OnceCell<CPUInfo>{}` is copy-init
+// from a prvalue of the same type, i.e. guaranteed elision, no move ctor
+// required. `get_mut()` returns a RAW pointer, hence the explicit deref.
+#if RUSTYCPP_RUST
+fn cpuinfo_cpu_stat() -> Vec<f64> {
+    static inst: rusty::OnceCell<CPUInfo> = rusty::OnceCell::<CPUInfo> {};
+    inst.get_or_init(|| cpuinfo_new());
+    (*inst.get_mut()).get_cpu_stat()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.7 version=1 rust_sha256=e80ab216873c88412d503dda6f73f84e3e772388130f289c931ce54ab1a5f8fc*/
+rusty::Vec<double> cpuinfo_cpu_stat();
+
+rusty::Vec<double> cpuinfo_cpu_stat() {
+    static rusty::OnceCell<CPUInfo> inst = rusty::OnceCell<CPUInfo>{};
+    inst.get_or_init([&]() { return cpuinfo_new(); });
+    return ((rusty::detail::deref_if_pointer_like(inst.get_mut()))).get_cpu_stat();
+}
+/*RUSTYCPP:GEN-END id=cpuinfo.7*/
 
 }  // namespace rrr
