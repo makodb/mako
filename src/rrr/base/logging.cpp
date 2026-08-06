@@ -238,13 +238,19 @@ void log_sink_write(const std::string& line) {
 }
 
 // @unsafe - raw pointer scan; returns an owned copy.
+// The strrchr scan lives in srpc_base.c now (plain C, Goal-0 C
+// demotion); it returns a pointer INTO the caller's buffer. Only the
+// std::string construction -- a C++ type, so it cannot cross -- stays.
+extern "C" const char* srpc_path_basename(const char* path);
+
+// @unsafe - reinterpret_cast off the int8_t* wire type, then a
+// converting std::string ctor over the C-returned interior pointer.
 std::string log_basename(const int8_t* fpath) {
-    if (fpath == nullptr) {
+    const char* base = srpc_path_basename(reinterpret_cast<const char*>(fpath));
+    if (base == nullptr) {
         return std::string("<unknown>");
     }
-    const char* p = reinterpret_cast<const char*>(fpath);
-    const char* base = strrchr(p, '/');
-    return std::string(base != nullptr ? base + 1 : p);
+    return std::string(base);
 }
 
 // The timestamp formatter (time/localtime_r/gettimeofday + raw digit

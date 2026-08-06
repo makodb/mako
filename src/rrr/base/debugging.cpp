@@ -76,29 +76,13 @@ namespace rrr {
 
 #ifdef __APPLE__
 
-// @unsafe - backtrace/backtrace_symbols, fprintf, raw `char**`,
-// `free(str_frames)`. In-process libc only.
+// The macOS stack-trace printer moved to srpc_base.c (plain C): it is
+// pure libc over a caller-owned FILE*, with no C++ type in sight.
+extern "C" void srpc_print_stack_trace(FILE* fp);
+
+// @unsafe - thin shim over the C kernel.
 void print_stack_trace(FILE* fp) {
-    const int max_trace = 1024;
-    void* callstack[max_trace];
-    memset(callstack, 0, sizeof(callstack));
-    int frames = backtrace(callstack, max_trace);
-
-    char **str_frames = backtrace_symbols(callstack, frames);
-    if (str_frames == nullptr) {
-        fprintf(fp, "  *** failed to obtain stack trace!\n");
-        return;
-    }
-
-    fprintf(fp, "  *** begin stack trace ***\n");
-    for (int i = 0; i < frames - 1; i++) {
-        // In-process symbols only (backtrace_symbols); no external
-        // binaries are executed for symbol resolution.
-        fprintf(fp, "%s\n", str_frames[i]);
-    }
-    fprintf(fp, "  ***  end stack trace  ***\n");
-
-    free(str_frames);
+    srpc_print_stack_trace(fp);
 }
 
 #else // no __APPLE__
@@ -203,22 +187,27 @@ std::string bt_render(const BtCapture& cap) {
 
 // @unsafe - backtrace/backtrace_symbols raw `char**` + free. Drops the
 // last frame (the pre-reshape loop ran to `frames - 1`).
+// The execinfo pair and its malloc'd `char**` ownership contract live in
+// srpc_base.c now (plain C, Goal-0 C demotion), which keeps
+// <execinfo.h>, the raw char** and the free() out of this TU. Only the
+// walk into the Vec stays here -- rusty::Vec<std::string> is a C++ type,
+// so it cannot cross the C boundary, and the RENDERING is already DSL.
+extern "C" int srpc_backtrace_capture(char*** out_syms);
+extern "C" void srpc_backtrace_free(char** syms);
+
+// @unsafe - walks the C-owned symbol array into the Vec.
 BtCapture bt_capture() {
     BtCapture cap = BtCapture::new_();
-    const int max_trace = 1024;
-    void* callstack[max_trace];
-    memset(callstack, 0, sizeof(callstack));
-    int frames = backtrace(callstack, max_trace);
-
-    char** str_frames = backtrace_symbols(callstack, frames);
-    if (str_frames == nullptr) {
+    char** str_frames = nullptr;
+    int frames = srpc_backtrace_capture(&str_frames);
+    if (frames < 0) {
         return cap;
     }
     cap.ok = true;
     for (int i = 0; i < frames - 1; i++) {
         cap.symbols.push(std::string(str_frames[i]));
     }
-    free(str_frames);
+    srpc_backtrace_free(str_frames);
     return cap;
 }
 

@@ -18,12 +18,16 @@ import rrr.debugging;
 
 namespace rrr {
 
-// @unsafe - zeroed epoll_event factory for the DSL bodies below
-// (struct-fill / memset has no DSL spelling).
+// The zeroed-epoll_event factory lives in srpc_epoll.c now (plain C,
+// Goal-0 C demotion): memset-then-fill has no DSL spelling and needs no
+// C++ either, and `struct epoll_event` is a libc POD so returning one by
+// value is ABI-identical across the boundary.
+extern "C" struct epoll_event srpc_epoll_event_zeroed(void);
+
+// @unsafe - thin shim over the C kernel, keeping the name the DSL bodies
+// below already call.
 inline struct epoll_event epoll_event_zeroed() {
-    struct epoll_event ev;
-    memset(&ev, 0, sizeof(ev));
-    return ev;
+    return srpc_epoll_event_zeroed();
 }
 
 // The Linux epoll_ctl(ADD) body — registration flags, EEXIST
