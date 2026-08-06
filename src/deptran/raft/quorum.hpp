@@ -28,7 +28,6 @@
 #include <cstdint>
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
@@ -155,16 +154,11 @@ class RaftQuorum {
   }
 
   // @safe - drain the accumulated (siteid, reply) pairs.
-  std::vector<std::pair<siteid_t, Reply>> collect() {
+  rusty::Vec<std::pair<siteid_t, Reply>> collect() {
     auto guard = replies_.lock().unwrap();
     auto replies = std::move(*guard);
     *guard = rusty::Vec<std::pair<siteid_t, Reply>>::new_();
-    std::vector<std::pair<siteid_t, Reply>> out;
-    out.reserve(replies.size());
-    for (auto& reply : replies) {
-      out.push_back(std::move(reply));
-    }
-    return out;
+    return replies;
   }
 
   // @safe - non-blocking diagnostic count.

@@ -779,18 +779,19 @@ void RaftServer::StartApplyFiber() {
 void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit) {
   // apply_queue_ now holds Command — direct copy from
   // RaftData::log_ (also Command after prep2).
-  std::vector<std::pair<slotid_t, Command>> batch;
+  rusty::Vec<std::pair<slotid_t, Command>> batch =
+      rusty::Vec<std::pair<slotid_t, Command>>::new_();
   slotid_t first_missing = 0;
   for (slotid_t id = old_commit + 1; id <= new_commit; id++) {
     auto it = raft_logs_.find(id);
     if (it != raft_logs_.end() && it->second && it->second->log_.has_value()) {
-      batch.emplace_back(id, it->second->log_);
+      batch.push({id, it->second->log_});
     } else {
       first_missing = id;
       break;  // Gap in log — stop here
     }
   }
-  if (!batch.empty()) {
+  if (!batch.is_empty()) {
     std::lock_guard<std::mutex> lock(apply_queue_mtx_);
     for (auto& entry : batch) {
       apply_queue_.push_back(std::move(entry));

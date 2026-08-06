@@ -632,19 +632,11 @@ class RaftCommo : public Communicator {
 
 friend class RaftProxy;
  private:
-  // NotifyRestart status tracking for each peer.
-  // @unsafe - guarded by std::mutex outside RustyCpp borrow checking.
-  RaftCommoNotifyRestartCore notify_restart_core_;
-  std::mutex notify_restart_mtx_;
+  // NotifyRestart status tracking for each peer.  The map remains a C++ map
+  // until its iterator-heavy retry paths are migrated as one unit, but its
+  // synchronization is now Rusty-owned and every access takes a scoped guard.
+  rusty::Mutex<RaftCommoNotifyRestartCore> notify_restart_core_;
   RaftCommoIdentityCore identity_core_;
-
-  std::map<siteid_t, NotifyRestartStatus>& notify_restart_statuses() {
-    return notify_restart_core_.statuses_mut();
-  }
-
-  const std::map<siteid_t, NotifyRestartStatus>& notify_restart_statuses() const {
-    return notify_restart_core_.statuses();
-  }
 
  public:
 #ifdef RAFT_TEST_CORO
@@ -781,8 +773,8 @@ friend class RaftProxy;
    * Peers in DOWN state are skipped (they will reconnect when they restart).
    * Peers in ACKNOWLEDGED state are skipped (already done).
    */
-  // @unsafe - retries legacy async RPCs and reads/writes notify_restart_statuses()
-  // under std::mutex.
+  // @unsafe - retries legacy async RPCs; restart-status access is guarded by
+  // rusty::Mutex.
   void RetryPendingNotifyRestart();
 
   /**
@@ -798,8 +790,7 @@ friend class RaftProxy;
    *
    * @return true if any peer is still in PENDING state
    */
-  // @unsafe - reads notify_restart_statuses() under std::mutex, which is outside
-  // RustyCpp borrow checking.
+  // @safe - reads restart status through a scoped Rusty mutex guard.
   bool HasPendingNotifyRestart();
 
   /**

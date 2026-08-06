@@ -68,7 +68,7 @@ TEST(RaftQuorumTest, EmptyCollectIsEmpty) {
   auto reactor = ::rrr::Reactor::get_reactor();
   RaftQuorum<int> q(3, 2);
   auto drained = q.collect();
-  EXPECT_TRUE(drained.empty());
+  EXPECT_TRUE(drained.is_empty());
   EXPECT_EQ(q.received(), 0);
 }
 
@@ -214,7 +214,7 @@ TEST(RaftQuorumTest, CollectIsOneShot_SecondCallReturnsEmpty) {
   EXPECT_EQ(first.size(), 2u);
 
   auto second = q.collect();  // already drained
-  EXPECT_TRUE(second.empty());
+  EXPECT_TRUE(second.is_empty());
 
   // received() reflects history, not collect state.
   EXPECT_EQ(q.received(), 2);
