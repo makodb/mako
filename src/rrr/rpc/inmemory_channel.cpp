@@ -1458,13 +1458,13 @@ fn inmemory_factory_connect(fac: &InMemoryFactory, addr: std::string_view) -> Co
 #endif
 /*RUSTYCPP:GEN-BEGIN id=inmemory_channel.17 version=1 rust_sha256=862fc4f0698a96e3e9ab789758d72c2b664713d78073318b9b9cd548a93ad0f3*/
 ConnectResult inmemory_factory_connect(const InMemoryFactory& fac, std::string_view addr) {
-    static rusty::sync::atomic::AtomicU64 CLIENT_COUNTER = AtomicU64::new_(0);
     const std::string addr_str = std::format("{}" , addr);
     auto listener_opt = ((rusty::detail::deref_if_pointer_like(fac.switchboard_))).find_listener(std::move(addr_str));
     if (listener_opt.is_none()) {
         return ConnectResult{.connection = rusty::None, .error = ChannelError_ConnectionRefused()};
     }
     const auto listener = listener_opt.unwrap();
+    static rusty::sync::atomic::AtomicU64 CLIENT_COUNTER = AtomicU64::new_(0);
     const uint64_t client_id = CLIENT_COUNTER.fetch_add(static_cast<uint64_t>(1), Ordering::Relaxed);
     const std::string client_address = std::format("inmemory://client-{}" , client_id);
     auto client_opt = inmemory_listener_accept_for_connect((rusty::detail::deref_if_pointer_like(listener)), std::move(client_address));

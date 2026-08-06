@@ -112,9 +112,25 @@ class Fiber;
 // scope (not class-static) so the DSL singleton/save/restore logic can
 // name them; `inline` keeps vague linkage (same clang-21 dup-symbol
 // rationale as the former class members).
-inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_{};
-inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_{};
-inline thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_{};
+#if RUSTYCPP_RUST
+#[thread_local]
+static mut sp_reactor_th_: rusty::Option<rusty::Rc<Reactor>> = rusty::Option::<rusty::Rc<Reactor>>::None;
+#[thread_local]
+static mut sp_disk_reactor_th_: rusty::Option<rusty::Rc<Reactor>> = rusty::Option::<rusty::Rc<Reactor>>::None;
+#[thread_local]
+static mut sp_running_fiber_th_: rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> = rusty::RefCell::new(rusty::Option::<rusty::Rc<Fiber>>::None);
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.2 version=1 rust_sha256=b64414e2cb3324a5b183b51a39d90fbba21ef13633609662fdcafff284f3b186*/
+extern thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_;
+extern thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_;
+extern thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_;
+
+inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_ = rusty::Option<rusty::Rc<Reactor>>{rusty::None};
+
+inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_ = rusty::Option<rusty::Rc<Reactor>>{rusty::None};
+
+inline thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_ = rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>>::new_(rusty::Option<rusty::Rc<Fiber>>{rusty::None});
+/*RUSTYCPP:GEN-END id=reactor.2*/
 
 
 // `EventState` — the cleanly-DSL-able portion of an Event's data, factored out
@@ -1778,7 +1794,15 @@ inline constexpr FiberStatus FiberStatus_RECYCLED() { return FiberStatus::RECYCL
 // thread_local member; hoisted to namespace TLS — the
 // g_current_poll_worker precedent) plus its post-increment kernel for
 // the ctor's id stamp.
-inline thread_local uint64_t g_fiber_global_id = 0;
+#if RUSTYCPP_RUST
+#[thread_local]
+static mut g_fiber_global_id: u64 = 0;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.45 version=1 rust_sha256=578336901e3e008135ed0798dfa190e5fec457cbe86db0b99903b646757a7041*/
+extern thread_local uint64_t g_fiber_global_id;
+
+inline thread_local uint64_t g_fiber_global_id = static_cast<uint64_t>(0);
+/*RUSTYCPP:GEN-END id=reactor.45*/
 // @unsafe { post-increments the namespace-scope thread_local counter }
 #if RUSTYCPP_RUST
 fn fiber_next_global_id() -> u64 {
@@ -1976,13 +2000,31 @@ struct StacklessTaskEntry {
 // sp_reactor_th_ / g_current_poll_worker). `reactor_clients_th_` is the
 // old `Reactor::clients_`, still consumed by deptran/communicator.cc;
 // `dangling_ips_` was dead and is deleted.
-inline thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> reactor_clients_th_{};
+#if RUSTYCPP_RUST
+#[thread_local]
+static mut reactor_clients_th_: rusty::HashMap<std::string, rusty::Vec<PollableProxy>> = rusty::HashMap::<std::string, rusty::Vec<PollableProxy>>::new();
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.50 version=1 rust_sha256=a0087a39b5a2b8beff6d62355134d719d0dbe2bca6a55741c1f36c4195648f24*/
+extern thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> reactor_clients_th_;
+
+inline thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> reactor_clients_th_ = rusty::HashMap<std::string, rusty::Vec<PollableProxy>>();
+/*RUSTYCPP:GEN-END id=reactor.50*/
 
 // Amortized-prune high-water mark, hoisted out of
-// reactor_prune_finished_events_impl (a function-local static is not
-// DSL-expressible; a namespace thread_local is just a global the DSL
-// reads and assigns).
-inline thread_local std::size_t reactor_prune_hwm_th_ = 64;
+// reactor_prune_finished_events_impl. (The old note here said a
+// function-local static "is not DSL-expressible" -- that was never true;
+// see the tracker's idioms. A namespace thread_local is kept because the
+// value is shared across the whole file, not because a local was
+// impossible.)
+#if RUSTYCPP_RUST
+#[thread_local]
+static mut reactor_prune_hwm_th_: usize = 64usize;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.58 version=1 rust_sha256=7b9485d87176dbd77774f7b7cafb0cc476c96d3259154aaf02b232ce3b25efae*/
+extern thread_local size_t reactor_prune_hwm_th_;
+
+inline thread_local size_t reactor_prune_hwm_th_ = static_cast<size_t>(64);
+/*RUSTYCPP:GEN-END id=reactor.58*/
 
 // Stackless-profile observability shim, defined next to g_stackless_profile
 // further down (the DSL method cannot name the later-defined global).
@@ -3269,7 +3311,15 @@ export namespace rrr {
 // poll_loop in pollthread_create's spawn lambda). Namespace-scope:
 // a DSL struct cannot carry static data. `inline` keeps vague linkage.
 class PollThreadWorker;
-inline thread_local PollThreadWorker* g_current_poll_worker = nullptr;
+#if RUSTYCPP_RUST
+#[thread_local]
+static mut g_current_poll_worker: *mut PollThreadWorker = core::ptr::null_mut();
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.60 version=1 rust_sha256=cf21adaa5dfba5be843570257794b9ec5fc01b65352deba6c9b89f7e99db3e57*/
+extern thread_local PollThreadWorker* g_current_poll_worker;
+
+inline thread_local PollThreadWorker* g_current_poll_worker = rusty::ptr::null_mut();
+/*RUSTYCPP:GEN-END id=reactor.60*/
 
 // Field-type aliases for the DSL (angle-bracketed args).
 using PollCmdReceiver = rusty::sync::mpsc::Receiver<PollCommand>;
