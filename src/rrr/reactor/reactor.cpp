@@ -3222,73 +3222,73 @@ class PollThreadWorker;
 // `PollableProxy = rusty::Box<PollableBase>` using-alias in
 // `rrr.pollable_proxy` keeps backward-compatible with prior call sites.
 #if RUSTYCPP_RUST
-struct CmdAddPollable { pollable: Box<PollableBase> }
-struct CmdRemovePollable { fd: i32 }
-struct CmdClosePollable { fd: i32 }
-struct CmdUpdateMode { fd: i32, new_mode: i32 }
-struct CmdAddJob { job: Arc<Job> }
-struct CmdRemoveJob { job: Arc<Job> }
-struct CmdShutdown {}
+pub enum PollCommand {
+    AddPollable { pollable: Box<PollableBase> },
+    RemovePollable { fd: i32 },
+    ClosePollable { fd: i32 },
+    UpdateMode { fd: i32, new_mode: i32 },
+    AddJob { job: Arc<Job> },
+    RemoveJob { job: Arc<Job> },
+    Shutdown,
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.poll_cmds version=1 rust_sha256=322b492b439ebf16ebbdfa4e0177a363ef006de129416083fa97070e3002de7f*/
-struct CmdAddPollable;
-struct CmdRemovePollable;
-struct CmdClosePollable;
-struct CmdUpdateMode;
-struct CmdAddJob;
-struct CmdRemoveJob;
-struct CmdShutdown;
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_cmds version=1 rust_sha256=1f731da7278a0257428df0b7442676810ae656ca09e9a861499fc7a802bd8e49*/
+struct PollCommand_AddPollable;
+struct PollCommand_RemovePollable;
+struct PollCommand_ClosePollable;
+struct PollCommand_UpdateMode;
+struct PollCommand_AddJob;
+struct PollCommand_RemoveJob;
+struct PollCommand_Shutdown;
+using PollCommand = std::variant<PollCommand_AddPollable, PollCommand_RemovePollable, PollCommand_ClosePollable, PollCommand_UpdateMode, PollCommand_AddJob, PollCommand_RemoveJob, PollCommand_Shutdown>;
 
-struct CmdAddPollable {
+// Algebraic data type
+struct PollCommand_AddPollable {
     rusty::Box<PollableBase> pollable;
 };
-
-struct CmdRemovePollable {
+struct PollCommand_RemovePollable {
     int32_t fd;
     // Rust derives Send/Sync from the field types; C++ cannot see them.
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
 };
-
-struct CmdClosePollable {
+struct PollCommand_ClosePollable {
     int32_t fd;
     // Rust derives Send/Sync from the field types; C++ cannot see them.
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
 };
-
-struct CmdUpdateMode {
+struct PollCommand_UpdateMode {
     int32_t fd;
     int32_t new_mode;
     // Rust derives Send/Sync from the field types; C++ cannot see them.
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
 };
-
-struct CmdAddJob {
+struct PollCommand_AddJob {
     rusty::Arc<Job> job;
 };
-
-struct CmdRemoveJob {
+struct PollCommand_RemoveJob {
     rusty::Arc<Job> job;
 };
-
-struct CmdShutdown {
-    // Rust derives Send/Sync from the field types; C++ cannot see them.
-    static constexpr bool is_send = true;
-    static constexpr bool is_sync = true;
-};
+struct PollCommand_Shutdown { static constexpr bool is_send = true; static constexpr bool is_sync = true; };
+PollCommand_AddPollable AddPollable(rusty::Box<PollableBase> pollable);
+PollCommand_RemovePollable RemovePollable(int32_t fd);
+PollCommand_ClosePollable ClosePollable(int32_t fd);
+PollCommand_UpdateMode UpdateMode(int32_t fd, int32_t new_mode);
+PollCommand_AddJob AddJob(rusty::Arc<Job> job);
+PollCommand_RemoveJob RemoveJob(rusty::Arc<Job> job);
+PollCommand_Shutdown Shutdown();
+using PollCommand = std::variant<PollCommand_AddPollable, PollCommand_RemovePollable, PollCommand_ClosePollable, PollCommand_UpdateMode, PollCommand_AddJob, PollCommand_RemoveJob, PollCommand_Shutdown>;
+PollCommand_AddPollable AddPollable(rusty::Box<PollableBase> pollable) { return PollCommand_AddPollable{.pollable = std::forward<rusty::Box<PollableBase>>(pollable)};  }
+PollCommand_RemovePollable RemovePollable(int32_t fd) { return PollCommand_RemovePollable{.fd = std::forward<int32_t>(fd)};  }
+PollCommand_ClosePollable ClosePollable(int32_t fd) { return PollCommand_ClosePollable{.fd = std::forward<int32_t>(fd)};  }
+PollCommand_UpdateMode UpdateMode(int32_t fd, int32_t new_mode) { return PollCommand_UpdateMode{.fd = std::forward<int32_t>(fd), .new_mode = std::forward<int32_t>(new_mode)};  }
+PollCommand_AddJob AddJob(rusty::Arc<Job> job) { return PollCommand_AddJob{.job = std::forward<rusty::Arc<Job>>(job)};  }
+PollCommand_RemoveJob RemoveJob(rusty::Arc<Job> job) { return PollCommand_RemoveJob{.job = std::forward<rusty::Arc<Job>>(job)};  }
+PollCommand_Shutdown Shutdown() { return PollCommand_Shutdown{};  }
 /*RUSTYCPP:GEN-END id=reactor.poll_cmds*/
 
-using PollCommand = std::variant<
-    CmdAddPollable,
-    CmdRemovePollable,
-    CmdClosePollable,
-    CmdUpdateMode,
-    CmdAddJob,
-    CmdRemoveJob,
-    CmdShutdown
->;
 
 }  // export namespace rrr
 
@@ -3493,7 +3493,7 @@ impl PollThread {
             return;
         }
         log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] Sending CmdShutdown"));
-        self.sender_.send(CmdShutdown {});
+        self.sender_.send(PollCommand::Shutdown);
         log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] CmdShutdown sent"));
         // Thread-safe read of the poll thread's id.
         let current_tid = rusty::thread::current_id();
@@ -3522,34 +3522,34 @@ impl PollThread {
     }
 
     fn add_proxy(&self, poll: PollableProxy) {
-        self.sender_.send(CmdAddPollable { pollable: poll });
+        self.sender_.send(PollCommand::AddPollable { pollable: poll });
     }
 
     fn remove(&self, poll: &mut Pollable) {
-        self.sender_.send(CmdRemovePollable { fd: poll.fd() });
+        self.sender_.send(PollCommand::RemovePollable { fd: poll.fd() });
     }
 
     // fd-keyed variant (remove only reads .fd() anyway); lets
     // shim-only callers avoid the Pollable base entirely.
     fn remove_fd(&self, fd: i32) {
-        self.sender_.send(CmdRemovePollable { fd: fd });
+        self.sender_.send(PollCommand::RemovePollable { fd: fd });
     }
 
     // Thread-safe close: removes from epoll, closes socket, drops
     // proxy ownership.
     fn request_close(&self, fd: i32) {
-        self.sender_.send(CmdClosePollable { fd: fd });
+        self.sender_.send(PollCommand::ClosePollable { fd: fd });
     }
 
     fn update_mode(&self, fd: i32, new_mode: i32) {
-        let result = self.sender_.send(CmdUpdateMode { fd: fd, new_mode: new_mode });
+        let result = self.sender_.send(PollCommand::UpdateMode { fd: fd, new_mode: new_mode });
         if result.is_err() {
             unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("PollThread::update_mode: send failed! Channel disconnected?")); }
         }
     }
 
     fn add(&self, job: Arc<Job>) {
-        self.sender_.send(CmdAddJob { job: job });
+        self.sender_.send(PollCommand::AddJob { job: job });
     }
 
     // For testing — worker state is not reachable across the channel.
@@ -3564,7 +3564,7 @@ impl Drop for PollThread {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=e3d5804b89cc50758f023d5d0f8d70c4e3d72b3ff769e8f573fcdbbdf390ff46*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=e9b09a245d98f364afc4319ef61d7b219f544d9f253c2ebf476fe5d8a08cfc38*/
 struct PollThread;
 
 struct PollThread {
@@ -3616,7 +3616,7 @@ void PollThread::shutdown() const {
         return;
     }
     log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] Sending CmdShutdown"));
-    this->sender_.send(CmdShutdown{});
+    this->sender_.send(PollCommand_Shutdown{});
     log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] CmdShutdown sent"));
     const auto current_tid = rusty::thread::current_id();
     const auto poll_tid = u64_to_thread_id(this->poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
@@ -3641,23 +3641,23 @@ void PollThread::shutdown() const {
 }
 
 void PollThread::add_proxy(PollableProxy poll) const {
-    this->sender_.send(CmdAddPollable{.pollable = std::move(poll)});
+    this->sender_.send(PollCommand_AddPollable{.pollable = std::move(poll)});
 }
 
 void PollThread::remove(Pollable& poll) const {
-    this->sender_.send(CmdRemovePollable{.fd = poll.fd()});
+    this->sender_.send(PollCommand_RemovePollable{.fd = poll.fd()});
 }
 
 void PollThread::remove_fd(int32_t fd) const {
-    this->sender_.send(CmdRemovePollable{.fd = std::move(fd)});
+    this->sender_.send(PollCommand_RemovePollable{.fd = std::move(fd)});
 }
 
 void PollThread::request_close(int32_t fd) const {
-    this->sender_.send(CmdClosePollable{.fd = std::move(fd)});
+    this->sender_.send(PollCommand_ClosePollable{.fd = std::move(fd)});
 }
 
 void PollThread::update_mode(int32_t fd, int32_t new_mode) const {
-    const auto result = this->sender_.send(CmdUpdateMode{.fd = std::move(fd), .new_mode = std::move(new_mode)});
+    const auto result = this->sender_.send(PollCommand_UpdateMode{.fd = std::move(fd), .new_mode = std::move(new_mode)});
     if (result.is_err()) {
         // @unsafe
         {
@@ -3667,7 +3667,7 @@ void PollThread::update_mode(int32_t fd, int32_t new_mode) const {
 }
 
 void PollThread::add(rusty::Arc<Job> job) const {
-    this->sender_.send(CmdAddJob{.job = std::move(job)});
+    this->sender_.send(PollCommand_AddJob{.job = std::move(job)});
 }
 
 int32_t PollThread::get_remove_count() const {
@@ -6285,37 +6285,100 @@ if (((rusty::detail::deref_if_pointer_like(ready_events) & PollReady::ERROR)) !=
 /*RUSTYCPP:GEN-END id=reactor.pollworker_poll_loop*/
 
 // @unsafe - calls try_recv and std::visit
-void pollworker_process_commands(PollThreadWorker& self) {
-  // Non-blocking receive: process all pending commands
-  int cmd_count = 0;
-  while (true) {
-    auto result = self.receiver_.try_recv();
-    if (result.is_err()) {
-      // Empty or disconnected - either way, stop processing
-      break;
+// Non-blocking receive: drain every pending command.
+//
+// The seven-arm dispatch is a DSL `match` over the PollCommand enum now.
+// It could not be before: a struct-variant arm bound its payload
+// `const auto&`, so handing the move-only `Box<PollableBase>` (or the
+// `Arc<Job>`) to a handler hit the deleted copy constructor. Fixed in
+// rusty-cpp bf5fc12c -- bindings are `auto&&`, which is `const F&` under
+// a const visit parameter and `F&` under the mutable one, so `match &mut`
+// finally means what Rust means by it.
+#if RUSTYCPP_RUST
+fn pollworker_process_commands(self_: &mut PollThreadWorker) {
+    loop {
+        let result = self_.receiver_.try_recv();
+        if result.is_err() {
+            // Empty or disconnected -- either way, stop draining.
+            break;
+        }
+        let mut cmd = result.unwrap();
+        match &mut cmd {
+            PollCommand::AddPollable { pollable } => {
+                pollworker_do_add_pollable(self_, pollable);
+            }
+            PollCommand::RemovePollable { fd } => {
+                pollworker_do_remove_pollable(self_, fd);
+            }
+            PollCommand::ClosePollable { fd } => {
+                pollworker_do_close_pollable(self_, fd);
+            }
+            PollCommand::UpdateMode { fd, new_mode } => {
+                pollworker_do_update_mode(self_, fd, new_mode);
+            }
+            PollCommand::AddJob { job } => {
+                pollworker_do_add_job(self_, job);
+            }
+            PollCommand::RemoveJob { job } => {
+                pollworker_do_remove_job(self_, job);
+            }
+            PollCommand::Shutdown => {
+                self_.stop_ = true;
+            }
+        }
     }
-    cmd_count++;
-    auto cmd = result.unwrap();
-    std::visit([&self](auto&& arg) {
-      using T = std::decay_t<decltype(arg)>;
-      if constexpr (std::is_same_v<T, CmdAddPollable>) {
-        pollworker_do_add_pollable(self, std::move(arg.pollable));
-      } else if constexpr (std::is_same_v<T, CmdRemovePollable>) {
-        pollworker_do_remove_pollable(self, arg.fd);
-      } else if constexpr (std::is_same_v<T, CmdClosePollable>) {
-        pollworker_do_close_pollable(self, arg.fd);
-      } else if constexpr (std::is_same_v<T, CmdUpdateMode>) {
-        pollworker_do_update_mode(self, arg.fd, arg.new_mode);
-      } else if constexpr (std::is_same_v<T, CmdAddJob>) {
-        pollworker_do_add_job(self, std::move(arg.job));
-      } else if constexpr (std::is_same_v<T, CmdRemoveJob>) {
-        pollworker_do_remove_job(self, std::move(arg.job));
-      } else if constexpr (std::is_same_v<T, CmdShutdown>) {
-        self.stop_ = true;
-      }
-    }, cmd);
-  }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.78 version=1 rust_sha256=1756965547c09088f825ff15321b420a13cb8acfe79895edd57dae741cdf117e*/
+template<class... Ts>
+struct overloaded : Ts... { using Ts::operator()...; };
+template<class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
+
+void pollworker_process_commands(PollThreadWorker& self_) {
+    PollThreadWorker* self__shadow1 = &self_;
+    while (true) {
+        auto result = (*self__shadow1).receiver_.try_recv();
+        if (result.is_err()) {
+            break;
+        }
+        auto cmd = result.unwrap();
+        {
+            auto&& _m = cmd;
+            std::visit(overloaded {
+                [&](std::variant_alternative_t<0, rusty::detail::variant_underlying_type_t<decltype(rusty::detail::deref_if_pointer(_m))>>& _v) {
+                    auto&& pollable = _v.pollable;
+                    pollworker_do_add_pollable(*self__shadow1, std::move(pollable));
+                },
+                [&](std::variant_alternative_t<1, rusty::detail::variant_underlying_type_t<decltype(rusty::detail::deref_if_pointer(_m))>>& _v) {
+                    auto&& fd = _v.fd;
+                    pollworker_do_remove_pollable(*self__shadow1, std::move(fd));
+                },
+                [&](std::variant_alternative_t<2, rusty::detail::variant_underlying_type_t<decltype(rusty::detail::deref_if_pointer(_m))>>& _v) {
+                    auto&& fd = _v.fd;
+                    pollworker_do_close_pollable(*self__shadow1, std::move(fd));
+                },
+                [&](std::variant_alternative_t<3, rusty::detail::variant_underlying_type_t<decltype(rusty::detail::deref_if_pointer(_m))>>& _v) {
+                    auto&& fd = _v.fd;
+                    auto&& new_mode = _v.new_mode;
+                    pollworker_do_update_mode(*self__shadow1, std::move(fd), std::move(new_mode));
+                },
+                [&](std::variant_alternative_t<4, rusty::detail::variant_underlying_type_t<decltype(rusty::detail::deref_if_pointer(_m))>>& _v) {
+                    auto&& job = _v.job;
+                    pollworker_do_add_job(*self__shadow1, std::move(job));
+                },
+                [&](std::variant_alternative_t<5, rusty::detail::variant_underlying_type_t<decltype(rusty::detail::deref_if_pointer(_m))>>& _v) {
+                    auto&& job = _v.job;
+                    pollworker_do_remove_job(*self__shadow1, std::move(job));
+                },
+                [&](std::variant_alternative_t<6, rusty::detail::variant_underlying_type_t<decltype(rusty::detail::deref_if_pointer(_m))>>&) {
+                    (*self__shadow1).stop_ = true;
+                },
+            }, rusty::detail::deref_if_pointer(_m));
+        }
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.78*/
 
 // 1-line arrow kernels for the trigger pass: rusty::Arc hands out a
 // `const Job*` only, so reaching the non-const virtuals needs a
