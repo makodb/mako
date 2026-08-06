@@ -125,12 +125,14 @@ void         tcpconn_handle_error(const TcpConnection& self);
 // Default-value factories for TcpConnection's #[cpp_ctor] literal: a
 // bare Default::default() mis-infers in THIS ctor's field positions
 // (works in TcpListener's — parameterized-ctor inference gap), and
-// #[cpp_ctor] bodies must stay pure literals, so typed lets can't help.
-// tcpconn_default_inbound died (FrameStreamReader::new() lowers fine).
-inline std::vector<std::uint8_t> tcpconn_empty_buf()        { return {}; }
-inline OnFrameCallback           tcpconn_default_on_frame() { return OnFrameCallback{}; }
-inline OnClosedCallback          tcpconn_default_on_closed(){ return OnClosedCallback{}; }
-inline OnErrorCallback           tcpconn_default_on_error() { return OnErrorCallback{}; }
+// (The four tcpconn_default_* helpers that used to live here are gone: a
+// bare `Default::default()` field initializer now infers the FIELD's type
+// inside a parameterized #[cpp_ctor]. It used to infer the ctor's
+// PARAMETER type, because an explicit `Owner::method(..)` call borrowed
+// argument hints from any same-named method -- here the enclosing ctor.
+// Fixed in rusty-cpp 916b4991; the explicit `rusty::Mutex::<T>::new(..)`
+// turbofish at the call sites is still required, since the outer type
+// argument is a separate inference path.)
 
 // One side of a connected stream socket. The fd is taken by ownership at
 // construction and RAII-closed by the `OwnedFd` field; the connection is
@@ -173,15 +175,15 @@ impl TcpConnection {
             fd_: rusty::os::fd::OwnedFd::from_raw_fd(fd),
             peer_address_: peer_address,
             outbound_high_water_: kTcpConnectionOutboundHighWaterDefault,
-            outbound_: rusty::Mutex::<std::vector<u8>>::new(tcpconn_empty_buf()),
+            outbound_: rusty::Mutex::<std::vector<u8>>::new(Default::default()),
             inbound_: RefCell::new(FrameStreamReader::new()),
             closed_: Cell::new(false),
             on_closed_fired_: Cell::new(false),
             pending_write_update_: Cell::new(false),
             poll_thread_: None,
-            on_frame_: rusty::Mutex::<OnFrameCallback>::new(tcpconn_default_on_frame()),
-            on_closed_: rusty::Mutex::<OnClosedCallback>::new(tcpconn_default_on_closed()),
-            on_error_: rusty::Mutex::<OnErrorCallback>::new(tcpconn_default_on_error()),
+            on_frame_: rusty::Mutex::<OnFrameCallback>::new(Default::default()),
+            on_closed_: rusty::Mutex::<OnClosedCallback>::new(Default::default()),
+            on_error_: rusty::Mutex::<OnErrorCallback>::new(Default::default()),
         }
     }
 
@@ -268,7 +270,7 @@ impl TcpConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=fef3dd0297308772d5cff2343b6d361cd6f17ee3497bea50c11b1a4520410cac*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=507a31d0ba9ede2f0fa4d18f9beb1b7ebca9ec25db7def479f7e3339e264ed05*/
 struct TcpConnection;
 
 struct TcpConnection {
@@ -310,15 +312,15 @@ TcpConnection::TcpConnection(int32_t fd, std::string peer_address)
     : fd_(rusty::os::fd::OwnedFd::from_raw_fd(std::move(fd)))
     , peer_address_(std::move(peer_address))
     , outbound_high_water_(kTcpConnectionOutboundHighWaterDefault)
-    , outbound_(rusty::Mutex<std::vector<uint8_t>>::new_(tcpconn_empty_buf()))
+    , outbound_(rusty::Mutex<std::vector<uint8_t>>::new_(rusty::default_like<std::vector<uint8_t>>()))
     , inbound_(rusty::RefCell<FrameStreamReader>::new_(FrameStreamReader::new_()))
     , closed_(rusty::Cell<bool>::new_(false))
     , on_closed_fired_(rusty::Cell<bool>::new_(false))
     , pending_write_update_(rusty::Cell<bool>::new_(false))
     , poll_thread_(rusty::Option<rusty::Arc<PollThread>>{rusty::None})
-    , on_frame_(rusty::Mutex<OnFrameCallback>::new_(tcpconn_default_on_frame()))
-    , on_closed_(rusty::Mutex<OnClosedCallback>::new_(tcpconn_default_on_closed()))
-    , on_error_(rusty::Mutex<OnErrorCallback>::new_(tcpconn_default_on_error()))
+    , on_frame_(rusty::Mutex<OnFrameCallback>::new_(rusty::default_like<OnFrameCallback>()))
+    , on_closed_(rusty::Mutex<OnClosedCallback>::new_(rusty::default_like<OnClosedCallback>()))
+    , on_error_(rusty::Mutex<OnErrorCallback>::new_(rusty::default_like<OnErrorCallback>()))
 {}
 
 void TcpConnection::set_outbound_high_water(size_t bytes) {
@@ -820,7 +822,7 @@ impl TcpListener {
             poll_thread_: None,
             self_weak_: None,
             on_accept_: rusty::Mutex::<OnAcceptCallback>::new(Default::default()),
-            on_error_: rusty::Mutex::<OnErrorCallback>::new(tcpconn_default_on_error()),
+            on_error_: rusty::Mutex::<OnErrorCallback>::new(Default::default()),
         }
     }
 
@@ -954,7 +956,7 @@ impl TcpListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=5ec5e9087bcc3f2c0cae06b9ba4b850d0f6da00b6f5441588b490788fece3426*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=e3b5f94302de2fb4a74397b85007ae87d4067aabe238bfeb4c1c1c34d1c4b1fc*/
 struct TcpListener;
 
 struct TcpListener {
@@ -994,7 +996,7 @@ TcpListener::TcpListener()
     , poll_thread_(rusty::Option<rusty::Arc<PollThread>>{rusty::None})
     , self_weak_(rusty::Option<rusty::sync::Weak<TcpListener>>{rusty::None})
     , on_accept_(rusty::Mutex<OnAcceptCallback>::new_(rusty::default_like<OnAcceptCallback>()))
-    , on_error_(rusty::Mutex<OnErrorCallback>::new_(tcpconn_default_on_error()))
+    , on_error_(rusty::Mutex<OnErrorCallback>::new_(rusty::default_like<OnErrorCallback>()))
 {}
 
 ChannelError TcpListener::listen(std::string_view addr) const {
