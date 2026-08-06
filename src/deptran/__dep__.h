@@ -68,6 +68,8 @@ using namespace std;
 
 // misc helper files
 #include "rrr/rrr.hpp"
+// The variadic Log_* wrappers now live outside src/rrr (see the header).
+#include "rrr_log.h"
 
 using namespace rrr;
 

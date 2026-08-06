@@ -13,6 +13,9 @@ module;
 // Reachability: get_host_name's GEN names `rusty::is_empty`.
 #include <rusty/array.hpp>
 #include <rusty/slice.hpp>
+// Reachability: the rrr-internal log sites now call log_line directly, and
+// its GEN names rusty::clone on the level constant.
+#include <rusty/rusty.hpp>
 #include <rusty/sys/env.hpp>
 
 #include <fcntl.h>
@@ -204,23 +207,23 @@ extern "C" int srpc_find_open_port(void);
 fn find_open_port() -> i32 {
     let port: i32 = srpc_find_open_port();
     if port > 0 {
-        Log_info("Found open port: {}", port);
+        log_line(Log::INFO, 0i32, core::ptr::null(), std::format("Found open port: {}", port));
         return port;
     }
-    Log_error("Failed to find open port.");
+    log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("Failed to find open port."));
     -1
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=utils.find_open_port version=1 rust_sha256=fc379891cf1ccbfda3351de49a83403a1fd697f98512072477fd3eee1a86f4d9*/
+/*RUSTYCPP:GEN-BEGIN id=utils.find_open_port version=1 rust_sha256=0ef5721588cc4e59b0ab5238d3ab1bc0a4702b6802096578cdd78dd1aaf87b63*/
 int32_t find_open_port();
 
 int32_t find_open_port() {
     int32_t port = srpc_find_open_port();
     if (rusty::detail::deref_if_pointer_like(port) > 0) {
-        Log_info("Found open port: {}", std::move(port));
+        log_line(rusty::clone(rusty::clone(Log::INFO)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Found open port: {}", std::move(port)));
         return std::move(port);
     }
-    Log_error("Failed to find open port.");
+    log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Failed to find open port."));
     return -1;
 }
 /*RUSTYCPP:GEN-END id=utils.find_open_port*/
@@ -236,19 +239,19 @@ fn get_host_name() -> std::string {
         // rrr:: qualification dodges a transpiler defect: a fn returning
         // std::string mis-resolves UNQUALIFIED free-fn calls against the
         // return type (emitted std::string::Log_error). Upstream fix queued.
-        rrr::Log_error("Failed to get hostname.");
+        rrr::log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("Failed to get hostname."));
     }
     name
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=utils.2 version=1 rust_sha256=934302266624fc179dd92173399a674dd5953ab379bade70cc8f5151d172335b*/
+/*RUSTYCPP:GEN-BEGIN id=utils.2 version=1 rust_sha256=51c931b9171ea5f69825daf9a8f7d8be7648a054e187b8d02515a2738ad15aca*/
 std::string get_host_name();
 
 std::string get_host_name() {
     std::string name = rusty::sys::env::hostname();
     const bool missing = rusty::is_empty(name);
     if (missing) {
-        rrr::Log_error("Failed to get hostname.");
+        rrr::log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Failed to get hostname."));
     }
     return std::move(name);
 }

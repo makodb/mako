@@ -6,6 +6,8 @@
 #include "memdb/row.h"
 #include "memdb/schema.h"
 #include "memdb/txn.h"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 
 template <class T>

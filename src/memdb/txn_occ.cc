@@ -8,6 +8,8 @@
 #include "txn.h"
 #include "txn_2pl.h"
 #include "txn_occ.h"
+// the variadic Log_* wrappers live outside src/rrr now
+#include "rrr_log.h"
 
 import std;
 

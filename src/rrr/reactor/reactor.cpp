@@ -2228,8 +2228,8 @@ impl Reactor {
     }
 
     fn display_waiting_ev(&self) {
-        Log_info("waiting_events_: {}, composite_events_: {}",
-                 self.waiting_events_.borrow().len(), self.composite_events_.borrow().len());
+        log_line(Log::INFO, 0i32, core::ptr::null(), std::format("waiting_events_: {}, composite_events_: {}",
+                 self.waiting_events_.borrow().len(), self.composite_events_.borrow().len()));
     }
 
     fn register_fiber(&self, fiber: &rusty::Rc<Fiber>) {
@@ -2238,8 +2238,8 @@ impl Reactor {
         let mut guard = self.fibers_.borrow_mut();
         let inserted = guard.insert(fiber.clone()).second;
         if !inserted {
-            unsafe { Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!"); }
-            unsafe { Log_error("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", guard.size(), REUSING_FIBER); }
+            unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!")); }
+            unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", guard.size(), REUSING_FIBER)); }
         }
         verify(inserted);
         verify(guard.size() > 0usize);
@@ -2404,13 +2404,13 @@ impl Reactor {
 
 impl Drop for Reactor {
     fn drop(&mut self) {
-        Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
-                  self.all_events_.borrow().len(), self.fibers_.borrow().size());
-        Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
+                  self.all_events_.borrow().len(), self.fibers_.borrow().size()));
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[Reactor::~Reactor] Destructor body complete, about to destroy member variables"));
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=fc451312f9aa130b8687c16016a45776125f392d7e6584e3e1d79125aca47247*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=b5f1f8299db22f7d3c200e65ee52dca37d97262fcdc95f291a6579c80476ea7b*/
 struct Reactor;
 
 struct Reactor {
@@ -2655,7 +2655,7 @@ void Reactor::continue_fiber(const rusty::Rc<Fiber>& fiber) const {
 }
 
 void Reactor::display_waiting_ev() const {
-    Log_info("waiting_events_: {}, composite_events_: {}", rusty::len(this->waiting_events_.borrow()), rusty::len(this->composite_events_.borrow()));
+    log_line(rusty::clone(rusty::clone(Log::INFO)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("waiting_events_: {}, composite_events_: {}", rusty::len(this->waiting_events_.borrow()), rusty::len(this->composite_events_.borrow())));
 }
 
 void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
@@ -2664,11 +2664,11 @@ void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
     if (rusty::detail::rust_not(inserted)) {
         // @unsafe
         {
-            Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!");
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!"));
         }
         // @unsafe
         {
-            Log_error("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", rusty::deref_call(guard, rusty::detail::__mdisp_size{}), REUSING_FIBER);
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", rusty::deref_call(guard, rusty::detail::__mdisp_size{}), REUSING_FIBER));
         }
     }
     verify(std::move(inserted));
@@ -2819,8 +2819,8 @@ return ((rusty::detail::deref_if_pointer_like(sp))).status() != rusty::clone(Eve
 
 Reactor::~Reactor() noexcept(false) {
     if (_rusty_forgotten) { return; }
-    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}", rusty::len(this->all_events_.borrow()), this->fibers_.borrow()->size());
-    Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}", rusty::len(this->all_events_.borrow()), this->fibers_.borrow()->size()));
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[Reactor::~Reactor] Destructor body complete, about to destroy member variables"));
 }
 /*RUSTYCPP:GEN-END id=reactor.15*/
 
@@ -3436,38 +3436,38 @@ impl PollThread {
     // Explicit shutdown: send CmdShutdown, join unless self-join.
     fn shutdown(&self) {
         let main_tid: i64 = unsafe { syscall(SYS_gettid) };
-        Log_debug("[PollThread::shutdown] Called from TID={}", main_tid as i32);
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] Called from TID={}", main_tid as i32));
         if self.shutdown_called_.swap(true) {
-            Log_debug("[PollThread::shutdown] Already called, returning");
+            log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] Already called, returning"));
             return;
         }
-        Log_debug("[PollThread::shutdown] Sending CmdShutdown");
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] Sending CmdShutdown"));
         self.sender_.send(CmdShutdown {});
-        Log_debug("[PollThread::shutdown] CmdShutdown sent");
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] CmdShutdown sent"));
         // Thread-safe read of the poll thread's id.
         let current_tid = rusty::thread::current_id();
         let poll_tid = u64_to_thread_id(
             self.poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
         if current_tid == poll_tid {
-            Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
+            log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] Called from poll thread, skipping join"));
             return;
         }
-        Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] Acquiring join_handle lock..."));
         // Scoped so the guard drops BEFORE the "Released" log below, as the
         // C++ block did.
         {
             let mut guard = self.join_handle_.lock().unwrap();
-            Log_debug("[PollThread::shutdown] join_handle lock acquired");
+            log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] join_handle lock acquired"));
             if (*guard).is_some() {
-                Log_debug("[PollThread::shutdown] Calling thread.join()...");
+                log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] Calling thread.join()..."));
                 (*guard).take().unwrap().join();
-                Log_debug("[PollThread::shutdown] thread.join() completed!");
+                log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] thread.join() completed!"));
             } else {
-                Log_debug("[PollThread::shutdown] join_handle is None, thread already joined");
+                log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] join_handle is None, thread already joined"));
             }
         }
-        Log_debug("[PollThread::shutdown] Released join_handle lock");
-        Log_debug("[PollThread::shutdown] Complete");
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] Released join_handle lock"));
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::shutdown] Complete"));
     }
 
     fn add_proxy(&self, poll: PollableProxy) {
@@ -3493,7 +3493,7 @@ impl PollThread {
     fn update_mode(&self, fd: i32, new_mode: i32) {
         let result = self.sender_.send(CmdUpdateMode { fd: fd, new_mode: new_mode });
         if result.is_err() {
-            unsafe { Log_error("PollThread::update_mode: send failed! Channel disconnected?"); }
+            unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("PollThread::update_mode: send failed! Channel disconnected?")); }
         }
     }
 
@@ -3513,7 +3513,7 @@ impl Drop for PollThread {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=71ba4dfeb8629bff1325aaddd1cc943302bfd07265293f1612c4ea1fcba134bb*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=e3d5804b89cc50758f023d5d0f8d70c4e3d72b3ff769e8f573fcdbbdf390ff46*/
 struct PollThread;
 
 struct PollThread {
@@ -3559,34 +3559,34 @@ rusty::Arc<PollThread> PollThread::create() {
 
 void PollThread::shutdown() const {
     const int64_t main_tid = syscall(SYS_gettid);
-    Log_debug("[PollThread::shutdown] Called from TID={}", static_cast<int32_t>(main_tid));
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] Called from TID={}", static_cast<int32_t>(main_tid)));
     if (this->shutdown_called_.swap(true)) {
-        Log_debug("[PollThread::shutdown] Already called, returning");
+        log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] Already called, returning"));
         return;
     }
-    Log_debug("[PollThread::shutdown] Sending CmdShutdown");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] Sending CmdShutdown"));
     this->sender_.send(CmdShutdown{});
-    Log_debug("[PollThread::shutdown] CmdShutdown sent");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] CmdShutdown sent"));
     const auto current_tid = rusty::thread::current_id();
     const auto poll_tid = u64_to_thread_id(this->poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
     if (rusty::detail::deref_if_pointer_like(current_tid) == rusty::detail::deref_if_pointer_like(poll_tid)) {
-        Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
+        log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] Called from poll thread, skipping join"));
         return;
     }
-    Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] Acquiring join_handle lock..."));
     {
         auto guard = this->join_handle_.lock().unwrap();
-        Log_debug("[PollThread::shutdown] join_handle lock acquired");
+        log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] join_handle lock acquired"));
         if (((rusty::detail::deref_if_pointer_like(guard))).is_some()) {
-            Log_debug("[PollThread::shutdown] Calling thread.join()...");
+            log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] Calling thread.join()..."));
             ((rusty::detail::deref_if_pointer_like(guard))).take().unwrap().join();
-            Log_debug("[PollThread::shutdown] thread.join() completed!");
+            log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] thread.join() completed!"));
         } else {
-            Log_debug("[PollThread::shutdown] join_handle is None, thread already joined");
+            log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] join_handle is None, thread already joined"));
         }
     }
-    Log_debug("[PollThread::shutdown] Released join_handle lock");
-    Log_debug("[PollThread::shutdown] Complete");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] Released join_handle lock"));
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::shutdown] Complete"));
 }
 
 void PollThread::add_proxy(PollableProxy poll) const {
@@ -3610,7 +3610,7 @@ void PollThread::update_mode(int32_t fd, int32_t new_mode) const {
     if (result.is_err()) {
         // @unsafe
         {
-            Log_error("PollThread::update_mode: send failed! Channel disconnected?");
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("PollThread::update_mode: send failed! Channel disconnected?"));
         }
     }
 }
@@ -4433,7 +4433,7 @@ fn event_test_impl<W>(ev: &W) -> bool {
             }
             ev.status_.set(EventStatus::READY);
         } else if ev.status_.get() == EventStatus::READY {
-            Log_debug("event status ready, triggered?");
+            log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("event status ready, triggered?"));
         } else if ev.status_.get() == EventStatus::DONE {
             // do nothing
         } else if ev.status_.get() == EventStatus::TIMEOUT {
@@ -4450,7 +4450,7 @@ fn event_test_impl<W>(ev: &W) -> bool {
     false
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.12 version=1 rust_sha256=6b878e0df1b9513246de90e18b8e92999fa8a1faf47c7d256d8c6274fbd92b95*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.12 version=1 rust_sha256=d895a772427dbef023fede7843e9b6b2e09b6dfba0e592ec3936dea9528d820b*/
 template<typename W>
 bool event_test_impl(const W& ev);
 
@@ -4468,7 +4468,7 @@ bool event_test_impl(const W& ev) {
             }
             ev.status_.set(rusty::clone(rusty::clone(EventStatus_READY())));
         } else if (ev.status_.get() == rusty::clone(EventStatus_READY())) {
-            Log_debug("event status ready, triggered?");
+            log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("event status ready, triggered?"));
         } else if (ev.status_.get() == rusty::clone(EventStatus_DONE())) {
         } else if (ev.status_.get() == rusty::clone(EventStatus_TIMEOUT())) {
         } else {
@@ -4943,7 +4943,7 @@ fn fiber_run_wrapper(fb: &Fiber, y: *mut fiber_yield_t) {
         fiber_fn_clear(&fb.func_);
         fb.status_.set(FiberStatus::FINISHED);
         if fb.needs_finalize_.get() {
-            Log_info("Warning: We did not deal with backlog issues");
+            log_line(Log::INFO, 0i32, core::ptr::null(), std::format("Warning: We did not deal with backlog issues"));
             fb.needs_finalize_.set(false);
         }
         reactor_dec_active_fibers();
@@ -4951,7 +4951,7 @@ fn fiber_run_wrapper(fb: &Fiber, y: *mut fiber_yield_t) {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.fiber_run_wrapper version=1 rust_sha256=45d3d7eba0a299575b482375907abd0d17bb642a5a89ded727af9d29d4dc75e5*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.fiber_run_wrapper version=1 rust_sha256=54973f94e8e72901f128839ad3bb6ba50c6e80cac4e111700df5632f82746c5e*/
 void fiber_run_wrapper(const Fiber& fb, fiber_yield_t* y) {
     fb.fiber_yield_.set(std::move(y));
     verify(fiber_fn_present(&fb.func_));
@@ -4963,7 +4963,7 @@ void fiber_run_wrapper(const Fiber& fb, fiber_yield_t* y) {
         fiber_fn_clear(&fb.func_);
         fb.status_.set(rusty::clone(rusty::clone(FiberStatus_FINISHED())));
         if (fb.needs_finalize_.get()) {
-            Log_info("Warning: We did not deal with backlog issues");
+            log_line(rusty::clone(rusty::clone(Log::INFO)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Warning: We did not deal with backlog issues"));
             fb.needs_finalize_.set(false);
         }
         reactor_dec_active_fibers();
@@ -5221,7 +5221,7 @@ inline void stackless_profile_report_periodic() {
   size_t max_slots = g_stackless_profile.max_slots.load(Ordering::Relaxed);
 
   double avg_scan = (reg_calls > 0) ? static_cast<double>(reg_scans) / static_cast<double>(reg_calls) : 0.0;
-  Log_info("[async-prof] reg_calls={} avg_scan={:.2f} reuse={} new={} max_slots={} poll_calls={} poll_ready={} enqueue_calls={}",
+  log_line(Log::INFO, 0, nullptr, std::format("[async-prof] reg_calls={} avg_scan={:.2f} reuse={} new={} max_slots={} poll_calls={} poll_ready={} enqueue_calls={}",
            static_cast<unsigned long long>(reg_calls),
            avg_scan,
            static_cast<unsigned long long>(reg_reuse),
@@ -5229,7 +5229,7 @@ inline void stackless_profile_report_periodic() {
            max_slots,
            static_cast<unsigned long long>(poll_calls),
            static_cast<unsigned long long>(poll_ready),
-           static_cast<unsigned long long>(enqueue_calls));
+           static_cast<unsigned long long>(enqueue_calls)));
 }
 
 }  // namespace
@@ -5494,26 +5494,26 @@ rusty::Rc<Reactor> reactor_make() {
 #if RUSTYCPP_RUST
 fn reactor_log_create(disk: bool) {
     if disk {
-        Log_debug("create a disk fiber scheduler");
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("create a disk fiber scheduler"));
         return;
     }
-    Log_debug("create a fiber scheduler");
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("create a fiber scheduler"));
     if !REUSING_FIBER {
-        Log_warn("reusing fiber not enabled!");
+        log_line(Log::WARN, 0i32, core::ptr::null(), std::format("reusing fiber not enabled!"));
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.35 version=1 rust_sha256=dac19153cefa676827fb3a8bfe668677987f64674b47cbcb0bbf087fd285b959*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.35 version=1 rust_sha256=effe655df364599d8131ba7a66560a7a92a3d2cf5520105fa9a55f960c96d80e*/
 void reactor_log_create(bool disk);
 
 void reactor_log_create(bool disk) {
     if (disk) {
-        Log_debug("create a disk fiber scheduler");
+        log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("create a disk fiber scheduler"));
         return;
     }
-    Log_debug("create a fiber scheduler");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("create a fiber scheduler"));
     if (rusty::detail::rust_not(REUSING_FIBER)) {
-        Log_warn("reusing fiber not enabled!");
+        log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("reusing fiber not enabled!"));
     }
 }
 /*RUSTYCPP:GEN-END id=reactor.35*/
@@ -5613,7 +5613,7 @@ void reactor_tls_set_running(const rusty::Rc<Fiber>& fiber) {
 //    the length, `ptr::read`s the last slot out, hands back `Option<T>`), so
 //    the element taken and the resulting vector are identical to before —
 //    only the transient refcount bump from the clone disappears.
-//  * This fn returns a CLASS type, so an unqualified `Log_debug(...)` is
+//  * This fn returns a CLASS type, so an unqualified `log_line(Log::DEBUG, 0, nullptr, std::format(...))` is
 //    mis-qualified by the lowering as `rusty::Rc<Fiber>::Log_debug`. It is
 //    spelled `rrr::Log_debug` for that reason (the counters are logged as
 //    i64/i32 now instead of via the old `(int)` / `(long long)` casts —
@@ -5640,20 +5640,20 @@ fn reactor_get_or_create_fiber_impl(self_: &Reactor, func: FiberFn, file: SrcFil
         self_.n_created_fibers_.set(self_.n_created_fibers_.get() + 1i64);
         if self_.n_created_fibers_.get() % 1024i64 == 0i64 {
             unsafe {
-                rrr::Log_debug("created {}, busy {}, idle {} fibers on server {}, recent {}:{}",
+                rrr::log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("created {}, busy {}, idle {} fibers on server {}, recent {}:{}",
                                self_.n_created_fibers_.get(),
                                self_.n_busy_fibers_.get(),
                                self_.n_idle_fibers_.get(),
                                self_.server_id_.get(),
                                file,
-                               line);
+                               line));
             }
         }
         return fiber;
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.55 version=1 rust_sha256=cd87e5ac7cca32cb077881929983521d6df1a5474b34872d7d99bf6861154572*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.55 version=1 rust_sha256=510bcef67003e249de1a971430cbf39fd9576cd79ae693aefde3b5c5b3989cb9*/
 rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self_, FiberFn func, SrcFileCStr file, int64_t line) {
     auto&& available_guard = self_.available_fibers_.borrow_mut();
     if (rusty::detail::deref_if_pointer_like(REUSING_FIBER) && (rusty::len(available_guard) > static_cast<size_t>(0))) {
@@ -5670,7 +5670,7 @@ rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self_, FiberFn 
         if ((self_.n_created_fibers_.get() % static_cast<int64_t>(1024)) == static_cast<int64_t>(0)) {
             // @unsafe
             {
-                rrr::Log_debug("created {}, busy {}, idle {} fibers on server {}, recent {}:{}", self_.n_created_fibers_.get(), self_.n_busy_fibers_.get(), self_.n_idle_fibers_.get(), self_.server_id_.get(), std::move(file), std::move(line));
+                rrr::log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("created {}, busy {}, idle {} fibers on server {}, recent {}:{}", self_.n_created_fibers_.get(), self_.n_busy_fibers_.get(), self_.n_idle_fibers_.get(), self_.server_id_.get(), std::move(file), std::move(line)));
             }
         }
         return std::move(fiber);
@@ -5956,7 +5956,7 @@ rusty::Vec<int> pollworker_snapshot_fds(PollThreadWorker& self) {
 // auto-numbers into an id an existing block already holds (§7.32).
 #if RUSTYCPP_RUST
 fn pollworker_poll_loop(w: &mut PollThreadWorker) {
-    Log_debug("[poll_loop] Starting poll loop");
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[poll_loop] Starting poll loop"));
     while !w.stop_ {
         pollworker_trigger_job(w);
 
@@ -6050,7 +6050,7 @@ fn pollworker_poll_loop(w: &mut PollThreadWorker) {
         }
     }
 
-    Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[poll_loop] Exited while loop (stop_=true), starting cleanup"));
     // Shutdown cleanup — unregister all remaining pollables. Only the
     // keys matter here, so the proxies are never touched.
     let rest = pollworker_snapshot_fds(w);
@@ -6065,12 +6065,12 @@ fn pollworker_poll_loop(w: &mut PollThreadWorker) {
     w.fd_to_pollable_.clear();
     w.mode_.clear();
     w.pending_remove_.clear();
-    Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[poll_loop] Cleanup complete, poll_loop exiting"));
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.pollworker_poll_loop version=1 rust_sha256=60dfdf154f3ff1a5806dec7fe7b4b23dee82ce58342ad4e9833acd1416282547*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.pollworker_poll_loop version=1 rust_sha256=482a03960f026206117e86d78777e452c268e0ea8fc83703b831401da1d37db8*/
 void pollworker_poll_loop(PollThreadWorker& w) {
-    Log_debug("[poll_loop] Starting poll loop");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[poll_loop] Starting poll loop"));
     while (rusty::detail::rust_not(w.stop_)) {
         pollworker_trigger_job(w);
         w.poll_.Wait([&](int32_t fd, int32_t ready_events) {
@@ -6140,7 +6140,7 @@ if (((rusty::detail::deref_if_pointer_like(ready_events) & PollReady::ERROR)) !=
             n += 1;
         }
     }
-    Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[poll_loop] Exited while loop (stop_=true), starting cleanup"));
     const auto rest = pollworker_snapshot_fds(w);
     size_t k = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(k) < rusty::len(rest)) {
@@ -6153,7 +6153,7 @@ if (((rusty::detail::deref_if_pointer_like(ready_events) & PollReady::ERROR)) !=
     w.fd_to_pollable_.clear();
     w.mode_.clear();
     w.pending_remove_.clear();
-    Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[poll_loop] Cleanup complete, poll_loop exiting"));
 }
 /*RUSTYCPP:GEN-END id=reactor.pollworker_poll_loop*/
 
@@ -6547,17 +6547,17 @@ rusty::Arc<PollThread> pollthread_create() {
 #if RUSTYCPP_RUST
 fn pollthread_drop(pt: &PollThread) {
     let tid: i64 = unsafe { syscall(SYS_gettid) };
-    Log_debug("[PollThread::~PollThread] Destructor called from TID={}", tid as i32);
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::~PollThread] Destructor called from TID={}", tid as i32));
     pt.shutdown();
-    Log_debug("[PollThread::~PollThread] Destructor complete");
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[PollThread::~PollThread] Destructor complete"));
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.pollthread_drop version=1 rust_sha256=7e16d65337680fee3f4e12decbc58faaf2f1a2143c44a83a053a8644c330056c*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.pollthread_drop version=1 rust_sha256=d997d493e9ba232af8440e612512bc2690aa85273c4756a0315120c6b7610429*/
 void pollthread_drop(const PollThread& pt) {
     const int64_t tid = syscall(SYS_gettid);
-    Log_debug("[PollThread::~PollThread] Destructor called from TID={}", static_cast<int32_t>(tid));
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::~PollThread] Destructor called from TID={}", static_cast<int32_t>(tid)));
     pt.shutdown();
-    Log_debug("[PollThread::~PollThread] Destructor complete");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[PollThread::~PollThread] Destructor complete"));
 }
 /*RUSTYCPP:GEN-END id=reactor.pollthread_drop*/
 

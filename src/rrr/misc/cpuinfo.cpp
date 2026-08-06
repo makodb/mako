@@ -570,7 +570,7 @@ CPUInfo cpuinfo_new() {
     const auto mem_info = rusty::sys::process::sysinfo();
     // `mem_info.total_ram_bytes` is already scaled by mem_unit.
     info.total_mem = static_cast<long long>(mem_info.total_ram_bytes / 1024);
-    Log_debug("total amount of ram is: {}", info.total_mem);
+    log_line(Log::DEBUG, 0, nullptr, std::format("total amount of ram is: {}", info.total_mem));
 
     info.page_size = rusty::sys::process::sysconf(_SC_PAGE_SIZE) / 1024;
 
@@ -597,14 +597,14 @@ CPUInfo cpuinfo_new() {
 // @unsafe - Log_debug varargs shim for the DSL delta method.
 #if RUSTYCPP_RUST
 fn cpuinfo_log_ticks(last_ticks: clock_t, ticks: clock_t) {
-    Log_debug("ticks: {} -> {}", last_ticks, ticks);
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("ticks: {} -> {}", last_ticks, ticks));
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cpuinfo.6 version=1 rust_sha256=4e9ad4cc0dc6dddf006301b929b8df3001b822af0a4d07b3a1a345c7a7649742*/
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.6 version=1 rust_sha256=3363f45e1f7e40f4bea593b9dcafa09fb5ac2e2de59b9f2645c000211bb3dae3*/
 void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks);
 
 void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks) {
-    Log_debug("ticks: {} -> {}", std::move(last_ticks), std::move(ticks));
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("ticks: {} -> {}", std::move(last_ticks), std::move(ticks)));
 }
 /*RUSTYCPP:GEN-END id=cpuinfo.6*/
 

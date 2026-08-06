@@ -23,6 +23,8 @@
 
 #include "log_storage.hpp"
 #include "rrr/rrr.hpp"
+// the variadic Log_* wrappers live outside src/rrr now
+#include "rrr_log.h"
 
 namespace janus {
 namespace raft {

@@ -2,6 +2,8 @@
 #include "client_service.h"
 #include "mako/lib/common.h"
 #include "rrr/rrr.hpp"
+// the variadic Log_* wrappers live outside src/rrr now
+#include "rrr_log.h"
 
 namespace mako {
 

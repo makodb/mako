@@ -7,6 +7,8 @@
 #include "../rrr.hpp"
 #include "mako/varint.h"
 #include "mako/macros.h"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 import std;
 

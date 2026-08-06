@@ -3,6 +3,8 @@
 
 #include "deptran/all.h"
 #include "time.h"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 using namespace rococo;
 using namespace rrr;

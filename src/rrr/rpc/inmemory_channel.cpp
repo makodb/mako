@@ -675,7 +675,7 @@ impl InMemoryListener {
                 return ChannelError_AddressInUse();
             }
             if self.self_weak_.is_none() {
-                Log_error("rrr::InMemoryListener::listen: self_weak_ not set (caller must call set_self_weak before listen)");
+                log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("rrr::InMemoryListener::listen: self_weak_ not set (caller must call set_self_weak before listen)"));
                 return ChannelError_Internal();
             }
             (*guard).local_address = std::string(addr);
@@ -730,7 +730,7 @@ impl InMemoryListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.listener version=1 rust_sha256=6219059593e8d8f53d52250e100821b0c64197cecc766f4c02c2f28ace25fb98*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.listener version=1 rust_sha256=54ea0bd0a56a3d0a0096f28a4e764020f38221dea48524e8863c66d922edcb6c*/
 struct InMemoryListener;
 
 struct InMemoryListener {
@@ -767,7 +767,7 @@ ChannelError InMemoryListener::listen(std::string_view addr) const {
             return ChannelError_AddressInUse();
         }
         if (this->self_weak_.is_none()) {
-            Log_error("rrr::InMemoryListener::listen: self_weak_ not set (caller must call set_self_weak before listen)");
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::InMemoryListener::listen: self_weak_ not set (caller must call set_self_weak before listen)"));
             return ChannelError_Internal();
         }
         (*guard).local_address = std::string(std::move(addr));

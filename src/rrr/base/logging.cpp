@@ -110,36 +110,16 @@ void log_line(int32_t level, int32_t line, const int8_t* file, const std::string
 // only format when enabled. No varargs, no vsnprintf — the printf-era
 // va_list surface is gone. (line=0/file=nullptr preserves the prior
 // behavior; the Log_* helpers never captured call-site __LINE__.)
-template <typename... Args>
-inline void Log_debug(std::format_string<Args...> fmt, Args&&... args) {
-    if (Log::DEBUG <= Log::level_now())
-        log_line(Log::DEBUG, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
-}
-
-template <typename... Args>
-inline void Log_info(std::format_string<Args...> fmt, Args&&... args) {
-    if (Log::INFO <= Log::level_now())
-        log_line(Log::INFO, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
-}
-
-template <typename... Args>
-inline void Log_warn(std::format_string<Args...> fmt, Args&&... args) {
-    if (Log::WARN <= Log::level_now())
-        log_line(Log::WARN, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
-}
-
-template <typename... Args>
-inline void Log_error(std::format_string<Args...> fmt, Args&&... args) {
-    if (Log::ERROR <= Log::level_now())
-        log_line(Log::ERROR, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
-}
-
-// @safe - fatal always formats, emits, then aborts.
-template <typename... Args>
-inline void Log_fatal(std::format_string<Args...> fmt, Args&&... args) {
-    log_line(Log::FATAL, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
-    ::abort();
-}
+// The five variadic `Log_*` wrappers moved OUT of src/rrr to
+// src/rrr_log.h. A parameter pack is the one construct no transpiler fix
+// can reach (Rust has no variadic-generics grammar), so rather than pin
+// un-DSL-able C++ here, the wrapper sits on the consumer's side of the
+// boundary — the same move as janus::Command and janus::QuorumEventBase.
+//
+// Everything that is actual logging LOGIC stays here and is DSL:
+// log_level_tag and log_line below. rrr-internal callers use log_line
+// directly, e.g.
+//     log_line(Log::INFO, 0, nullptr, std::format("...", args));
 
 // ---------------------------------------------------------------------------
 // Micro-kernels: the irreducible C surface (each a few lines, each @unsafe).

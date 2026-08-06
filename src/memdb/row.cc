@@ -2,6 +2,8 @@
 #include "row.h"
 #include "schema.h"
 #include "table.h"
+// the variadic Log_* wrappers live outside src/rrr now
+#include "rrr_log.h"
 
 namespace mdb {
 

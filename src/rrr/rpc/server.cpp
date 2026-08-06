@@ -576,7 +576,7 @@ impl ServerConnection {
     fn close(&self) {
         if self.status_.get() == ServerConnStatus::CONNECTED {
             self.status_.set(ServerConnStatus::CLOSED);
-            Log_debug("server@{} close ServerConnection", self.ctx_.addr.c_str());
+            log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("server@{} close ServerConnection", self.ctx_.addr.c_str()));
             // Tear down the channel proxy. Idempotent per channel-layer contract.
             let mut guard = self.channel_proxy_.lock().unwrap();
             if (*guard).is_some() {
@@ -637,8 +637,8 @@ impl ServerConnection {
                     return;
                 }
                 let sconn = sconn_opt.unwrap();
-                Log_warn("rrr::ServerConnection: channel error {}: {}",
-                         channel_error_to_string(err), msg);
+                log_line(Log::WARN, 0i32, core::ptr::null(), std::format("rrr::ServerConnection: channel error {}: {}",
+                         channel_error_to_string(err), msg));
                 (*sconn).close();
             });
         }
@@ -651,7 +651,7 @@ impl ServerConnection {
 
     fn run_async(&self, f: rusty::Function<dyn FnMut()>) -> i32 {
         if !f {
-            Log_warn("rrr::ServerConnection::run_async called with empty callback");
+            log_line(Log::WARN, 0i32, core::ptr::null(), std::format("rrr::ServerConnection::run_async called with empty callback"));
             return EINVAL;
         }
         f();
@@ -659,7 +659,7 @@ impl ServerConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=c2bf67870cd84340a0ca1e2aa6933e506acc50fcd4512ee39211344bb524824b*/
+/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=c796671286e5465081483a267c4d4f7fbea70bf80d37ba60cf1a877a0f8353c8*/
 enum class ServerConnStatus;
 constexpr ServerConnStatus ServerConnStatus_CONNECTED();
 constexpr ServerConnStatus ServerConnStatus_CLOSED();
@@ -724,7 +724,7 @@ void ServerConnection::reply(const Request& req, int32_t error_code, ServerReply
 void ServerConnection::close() const {
     if (this->status_.get() == rusty::clone(ServerConnStatus_CONNECTED())) {
         this->status_.set(rusty::clone(rusty::clone(ServerConnStatus_CLOSED())));
-        Log_debug("server@{} close ServerConnection", (*this->ctx_).addr.c_str());
+        log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("server@{} close ServerConnection", (*this->ctx_).addr.c_str()));
         auto guard = this->channel_proxy_.lock().unwrap();
         if (((*guard)).is_some()) {
             rusty::Box<ChannelConnectionBase>& proxy = ((*guard)).as_mut().unwrap();
@@ -764,7 +764,7 @@ if (sconn_opt.is_none()) {
     return;
 }
 const auto sconn = sconn_opt.unwrap();
-Log_warn("rrr::ServerConnection: channel error {}: {}", channel_error_to_string(std::move(err)), std::move(msg));
+log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::ServerConnection: channel error {}: {}", channel_error_to_string(std::move(err)), std::move(msg)));
 ((rusty::detail::deref_if_pointer_like(sconn))).close();
 });
     }
@@ -777,7 +777,7 @@ Log_warn("rrr::ServerConnection: channel error {}: {}", channel_error_to_string(
 
 int32_t ServerConnection::run_async(rusty::Function<void()> f) const {
     if (rusty::detail::rust_not(f)) {
-        Log_warn("rrr::ServerConnection::run_async called with empty callback");
+        log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::ServerConnection::run_async called with empty callback"));
         return EINVAL;
     }
     f();
@@ -863,7 +863,7 @@ impl DeferredReply {
     fn reply(&mut self) {
         let cb_opt = self.archive_reply_field.take();
         if cb_opt.is_none() {
-            unsafe { Log_warn("DeferredReply::reply() called multiple times, ignoring") };
+            unsafe { log_line(Log::WARN, 0i32, core::ptr::null(), std::format("DeferredReply::reply() called multiple times, ignoring")) };
             return;
         }
         // `mut` is redundant in Rust (a non-mut binding can still be moved
@@ -881,13 +881,13 @@ impl DeferredReply {
             let sconn = sconn_opt.unwrap();
             (*sconn).reply(&*self.req_field, 0, cb);
         } else {
-            unsafe { Log_debug("Connection closed before reply sent, dropping reply") };
+            unsafe { log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("Connection closed before reply sent, dropping reply")) };
         }
     }
 
     fn reply_error(&mut self, error_code: i32) {
         if self.archive_reply_field.take().is_none() {
-            unsafe { Log_warn("DeferredReply::reply_error() called multiple times, ignoring") };
+            unsafe { log_line(Log::WARN, 0i32, core::ptr::null(), std::format("DeferredReply::reply_error() called multiple times, ignoring")) };
             return;
         }
         let sconn_opt = self.weak_sconn_field.upgrade();
@@ -896,7 +896,7 @@ impl DeferredReply {
             let mut no_writer: ServerReplyFn = Default::default();
             (*sconn).reply(&*self.req_field, error_code, no_writer);
         } else {
-            unsafe { Log_debug("Connection closed before error reply sent, dropping reply") };
+            unsafe { log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("Connection closed before error reply sent, dropping reply")) };
         }
     }
 }
@@ -909,7 +909,7 @@ impl Drop for DeferredReply {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deferred_reply.0 version=1 rust_sha256=4105a49cd117308bd0a5af707bec71427dddb51693e9a1d39d26147bb754ddd5*/
+/*RUSTYCPP:GEN-BEGIN id=deferred_reply.0 version=1 rust_sha256=0d7b1dd4ec445d2703e9e53ac0e578f13d2936e40781c415ec6a98b7af080862*/
 struct DeferredReply;
 
 struct DeferredReply {
@@ -958,7 +958,7 @@ void DeferredReply::reply() {
     if (cb_opt.is_none()) {
         // @unsafe
         {
-            Log_warn("DeferredReply::reply() called multiple times, ignoring");
+            log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("DeferredReply::reply() called multiple times, ignoring"));
         }
         return;
     }
@@ -970,7 +970,7 @@ void DeferredReply::reply() {
     } else {
         // @unsafe
         {
-            Log_debug("Connection closed before reply sent, dropping reply");
+            log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Connection closed before reply sent, dropping reply"));
         }
     }
 }
@@ -979,7 +979,7 @@ void DeferredReply::reply_error(int32_t error_code) {
     if (this->archive_reply_field.take().is_none()) {
         // @unsafe
         {
-            Log_warn("DeferredReply::reply_error() called multiple times, ignoring");
+            log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("DeferredReply::reply_error() called multiple times, ignoring"));
         }
         return;
     }
@@ -991,7 +991,7 @@ void DeferredReply::reply_error(int32_t error_code) {
     } else {
         // @unsafe
         {
-            Log_debug("Connection closed before error reply sent, dropping reply");
+            log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Connection closed before error reply sent, dropping reply"));
         }
     }
 }
@@ -1121,10 +1121,10 @@ fn server_now_nanos() -> u64 {
 // written kernel spelled, including the std::move onto the guard.
 fn server_wait_for_shutdown_impl(state: &rusty::Mutex<ShutdownState>,
                                  cond: &rusty::Box<rusty::Condvar>) {
-    Log_debug("Server::wait_for_shutdown");
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("Server::wait_for_shutdown"));
     let mut guard = state.lock().unwrap();
     guard = cond.wait_while(guard, |s: &mut ShutdownState| { !s.shutdown }).unwrap();
-    Log_debug("Server::wait_for_shutdown - done");
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("Server::wait_for_shutdown - done"));
 }
 
 fn server_generate_instance_id() -> u64 {
@@ -1138,11 +1138,11 @@ fn server_generate_instance_id() -> u64 {
     if id == 0 {
         id = 1;
     }
-    Log_debug("Server: generated instance_id={}", id);
+    log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("Server: generated instance_id={}", id));
     id
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.instance_id version=1 rust_sha256=ee19c1f1f32e117de7acfb4ab825310d7f6f69d541ec3c9de0430d5624e39fb3*/
+/*RUSTYCPP:GEN-BEGIN id=server.instance_id version=1 rust_sha256=2630e3dade75e8bc023f1108dec11bc38c1138701ec98619286e912661ff163c*/
 uint64_t server_now_nanos();
 uint64_t server_generate_instance_id();
 
@@ -1151,12 +1151,12 @@ uint64_t server_now_nanos() {
 }
 
 void server_wait_for_shutdown_impl(const rusty::Mutex<ShutdownState>& state, const rusty::Box<rusty::Condvar>& cond) {
-    Log_debug("Server::wait_for_shutdown");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::wait_for_shutdown"));
     auto guard = state.lock().unwrap();
     guard = cond->wait_while(std::move(guard), [&](ShutdownState& s) {
 return rusty::detail::rust_not(s.shutdown);
 }).unwrap();
-    Log_debug("Server::wait_for_shutdown - done");
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::wait_for_shutdown - done"));
 }
 
 uint64_t server_generate_instance_id() {
@@ -1167,7 +1167,7 @@ uint64_t server_generate_instance_id() {
     if (rusty::detail::deref_if_pointer_like(id) == static_cast<uint64_t>(0)) {
         id = static_cast<uint64_t>(1);
     }
-    Log_debug("Server: generated instance_id={}", std::move(id));
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server: generated instance_id={}", std::move(id)));
     return std::move(id);
 }
 /*RUSTYCPP:GEN-END id=server.instance_id*/
@@ -1197,48 +1197,48 @@ fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
     let current_phase = phase.get();
     if current_phase != ShutdownPhase::RUNNING
         && current_phase != ShutdownPhase::STOP_ACCEPTING {
-        Log_debug("Server::drain: already past the draining phases ({})",
-                  shutdown_phase_to_string(current_phase));
+        log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("Server::drain: already past the draining phases ({})",
+                  shutdown_phase_to_string(current_phase)));
         return pending.load(rusty::sync::atomic::Ordering::Relaxed) == 0;
     }
-    Log_info("Server::drain: transitioning to DRAINING, pending={}",
-             pending.load(rusty::sync::atomic::Ordering::Relaxed));
+    log_line(Log::INFO, 0i32, core::ptr::null(), std::format("Server::drain: transitioning to DRAINING, pending={}",
+             pending.load(rusty::sync::atomic::Ordering::Relaxed)));
     phase.set(ShutdownPhase::DRAINING);
     let start_us = rusty::sys::time::clock_monotonic_us();
     let timeout_us = timeout_ms * 1000;
     while pending.load(rusty::sync::atomic::Ordering::Relaxed) > 0 {
         let elapsed_us = rusty::sys::time::clock_monotonic_us() - start_us;
         if elapsed_us >= timeout_us {
-            Log_warn("Server::drain: timeout after {} ms, pending={}",
-                     timeout_ms, pending.load(rusty::sync::atomic::Ordering::Relaxed));
+            log_line(Log::WARN, 0i32, core::ptr::null(), std::format("Server::drain: timeout after {} ms, pending={}",
+                     timeout_ms, pending.load(rusty::sync::atomic::Ordering::Relaxed)));
             return false;
         }
         rusty::sys::time::sleep_us(1000);
     }
-    Log_info("Server::drain: completed, all requests drained");
+    log_line(Log::INFO, 0i32, core::ptr::null(), std::format("Server::drain: completed, all requests drained"));
     true
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=afcb7cf50ff0752ee6763e5799ae881e622d61214de63f6f313ea29a8ba35aa4*/
+/*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=3950048bc0100400dc4662418d26c28a22bcc9936a52860259424b848edacf66*/
 bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc<ServerPendingRequestsAtomic>& pending, uint64_t timeout_ms) {
     const auto current_phase = phase.get();
     if ((rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase_RUNNING())) && (rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase_STOP_ACCEPTING()))) {
-        Log_debug("Server::drain: already past the draining phases ({})", shutdown_phase_to_string(std::move(current_phase)));
+        log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::drain: already past the draining phases ({})", shutdown_phase_to_string(std::move(current_phase))));
         return pending->load(rusty::sync::atomic::Ordering::Relaxed) == 0;
     }
-    Log_info("Server::drain: transitioning to DRAINING, pending={}", pending->load(rusty::sync::atomic::Ordering::Relaxed));
+    log_line(rusty::clone(rusty::clone(Log::INFO)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::drain: transitioning to DRAINING, pending={}", pending->load(rusty::sync::atomic::Ordering::Relaxed)));
     phase.set(rusty::clone(rusty::clone(ShutdownPhase_DRAINING())));
     const auto start_us = rusty::sys::time::clock_monotonic_us();
     const auto timeout_us = rusty::detail::deref_if_pointer_like(timeout_ms) * 1000;
     while (pending->load(rusty::sync::atomic::Ordering::Relaxed) > 0) {
         const auto elapsed_us = rusty::sys::time::clock_monotonic_us() - rusty::detail::deref_if_pointer_like(start_us);
         if (rusty::detail::deref_if_pointer_like(elapsed_us) >= rusty::detail::deref_if_pointer_like(timeout_us)) {
-            Log_warn("Server::drain: timeout after {} ms, pending={}", std::move(timeout_ms), pending->load(rusty::sync::atomic::Ordering::Relaxed));
+            log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::drain: timeout after {} ms, pending={}", std::move(timeout_ms), pending->load(rusty::sync::atomic::Ordering::Relaxed)));
             return false;
         }
         rusty::sys::time::sleep_us(1000);
     }
-    Log_info("Server::drain: completed, all requests drained");
+    log_line(rusty::clone(rusty::clone(Log::INFO)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::drain: completed, all requests drained"));
     return true;
 }
 /*RUSTYCPP:GEN-END id=server.drain_impl*/
@@ -1253,18 +1253,18 @@ inline void server_invoke_shutdown_hook_safely(ShutdownHook& hook);
 // order here would alter shutdown semantics, not just style.
 #if RUSTYCPP_RUST
 fn server_run_shutdown_hooks(hooks: &rusty::Mutex<Vec<ShutdownHook>>) {
-    unsafe { Log_info("Server::graceful_shutdown: transitioning to CLOSING, executing hooks"); }
+    unsafe { log_line(Log::INFO, 0i32, core::ptr::null(), std::format("Server::graceful_shutdown: transitioning to CLOSING, executing hooks")); }
     let mut guard = hooks.lock().unwrap();
     for hook in &mut (*guard) {
         server_invoke_shutdown_hook_safely(&mut hook);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.14 version=1 rust_sha256=74a440e25f3b0d260ae7615c8a926d95b4f578b5c7a105af84d7de89e4f4b206*/
+/*RUSTYCPP:GEN-BEGIN id=server.14 version=1 rust_sha256=08dd52a27dda1fcb7aa71e16c2c31e9b2af0ad6c57faa4f240f348a9fa3a0ae2*/
 void server_run_shutdown_hooks(const rusty::Mutex<rusty::Vec<ShutdownHook>>& hooks) {
     // @unsafe
     {
-        Log_info("Server::graceful_shutdown: transitioning to CLOSING, executing hooks");
+        log_line(rusty::clone(rusty::clone(Log::INFO)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::graceful_shutdown: transitioning to CLOSING, executing hooks"));
     }
     auto guard = hooks.lock().unwrap();
     for (auto&& hook : rusty::for_in(rusty::iter_mut((*guard)))) {
@@ -1293,9 +1293,9 @@ inline void server_invoke_shutdown_hook_safely(ShutdownHook& hook) {
     try {
         hook();
     } catch (const std::exception& e) {
-        Log_error("Server::graceful_shutdown: hook threw exception: {}", e.what());
+        log_line(Log::ERROR, 0, nullptr, std::format("Server::graceful_shutdown: hook threw exception: {}", e.what()));
     } catch (...) {
-        Log_error("Server::graceful_shutdown: hook threw unknown exception");
+        log_line(Log::ERROR, 0, nullptr, std::format("Server::graceful_shutdown: hook threw unknown exception"));
     }
 }
 
@@ -1565,7 +1565,7 @@ impl Server {
     // outlives its listener; the callback dies with the listener).
     fn start(&mut self, bind_addr: *const i8) -> i32 {
         if bind_addr.is_null() {
-            Log_error("rrr::Server::start: bind_addr is NULL!");
+            log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("rrr::Server::start: bind_addr is NULL!"));
             return -1;
         }
         let addr_str: std::string = server_dsl_addr_to_string(bind_addr);
@@ -1607,8 +1607,8 @@ impl Server {
                 factory.make_listener()
             };
             if listener_opt.is_none() {
-                Log_error("rrr::Server::start: factory->make_listener() returned a null proxy (factory backend={})",
-                          "unknown");
+                log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("rrr::Server::start: factory->make_listener() returned a null proxy (factory backend={})",
+                          "unknown"));
                 self.ctx_field = None;
                 return -1;
             }
@@ -1656,8 +1656,8 @@ impl Server {
                     }
                 });
                 ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
-                    Log_warn("rrr::Server: channel listener error {}: {}",
-                             channel_error_to_string(err), msg);
+                    log_line(Log::WARN, 0i32, core::ptr::null(), std::format("rrr::Server: channel listener error {}: {}",
+                             channel_error_to_string(err), msg));
                 });
             }
 
@@ -1666,8 +1666,8 @@ impl Server {
                 ch2.listen(addr_str.clone())
             };
             if listen_err != ChannelError::None {
-                Log_error("rrr::Server::start: channel listener failed to bind {}: {}",
-                          addr_str, channel_error_to_string(listen_err));
+                log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("rrr::Server::start: channel listener failed to bind {}: {}",
+                          addr_str, channel_error_to_string(listen_err)));
                 self.ctx_field = None;
                 return -1;
             }
@@ -1695,12 +1695,12 @@ impl Server {
         // no Rust counterpart, so it lowers as a plain member call.
         let colon = local.find_last_of(":");
         if colon == std::string::npos {
-            Log_error("Server::get_bound_port: malformed local_address {}", local.c_str());
+            log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("Server::get_bound_port: malformed local_address {}", local.c_str()));
             return -1;
         }
         let parsed = server_parse_port(local.substr(colon + 1));
         if parsed.is_none() {
-            Log_error("Server::get_bound_port: failed to parse port from {}", local.c_str());
+            log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("Server::get_bound_port: failed to parse port from {}", local.c_str()));
             return -1;
         }
         parsed.unwrap()
@@ -1724,7 +1724,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=92da00c251efdd409263f50b41b131e14622938545797b8564cd51c71b3f0190*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=8cf2e1a10acd208fb69628a9e9d5de6df40b8d67891d3ec42059e6d5e6e67f14*/
 struct ChannelSconns;
 struct Server;
 
@@ -1954,10 +1954,10 @@ std::string Server::addr() const {
 
 int32_t Server::start(const int8_t* bind_addr) {
     if ((bind_addr == nullptr)) {
-        Log_error("rrr::Server::start: bind_addr is NULL!");
+        log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::Server::start: bind_addr is NULL!"));
         return -1;
     }
-    std::string addr_str = server_dsl_addr_to_string(bind_addr);
+    const std::string addr_str = server_dsl_addr_to_string(bind_addr);
     rusty::Vec<ServiceProxy> pending = rusty::mem::take(this->pending_services_field);
     rusty::Vec<rusty::RefCell<ServiceProxy>> wrapped_services = rusty::Vec<rusty::RefCell<ServiceProxy>>::new_();
     for (auto&& svc : rusty::for_in(pending.drain(rusty::range_full()))) {
@@ -1972,7 +1972,7 @@ int32_t Server::start(const int8_t* bind_addr) {
         auto listener_opt = [&]() { rusty::Box<ChannelFactoryBase>& factory = this->channel_factory_field.as_mut().unwrap();
 return factory->make_listener(); }();
         if (listener_opt.is_none()) {
-            Log_error("rrr::Server::start: factory->make_listener() returned a null proxy (factory backend={})", "unknown");
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::Server::start: factory->make_listener() returned a null proxy (factory backend={})", "unknown"));
             this->ctx_field = rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None};
             return -1;
         }
@@ -2006,13 +2006,13 @@ rusty::Arc<ServerConnection> sconn = rusty::Arc<ServerConnection>::make(rusty::c
 }
 });
             ch->set_on_error([=](ChannelError err, std::string_view msg) {
-Log_warn("rrr::Server: channel listener error {}: {}", channel_error_to_string(std::move(err)), std::move(msg));
+log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::Server: channel listener error {}: {}", channel_error_to_string(std::move(err)), std::move(msg)));
 });
         }
         const auto listen_err = [&]() { rusty::Box<ChannelListenerBase>& ch2 = listener;
 return ch2->listen(rusty::clone(addr_str)); }();
         if (rusty::detail::deref_if_pointer_like(listen_err) != rusty::detail::deref_if_pointer_like(ChannelError::None)) {
-            Log_error("rrr::Server::start: channel listener failed to bind {}: {}", std::move(addr_str), channel_error_to_string(std::move(listen_err)));
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::Server::start: channel listener failed to bind {}: {}", std::move(addr_str), channel_error_to_string(std::move(listen_err))));
             this->ctx_field = rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None};
             return -1;
         }
@@ -2031,12 +2031,12 @@ int32_t Server::get_bound_port() const {
     const std::string local = listener->local_address();
     const auto colon = local.find_last_of(":");
     if (rusty::detail::deref_if_pointer_like(colon) == rusty::detail::deref_if_pointer_like(std::string::npos)) {
-        Log_error("Server::get_bound_port: malformed local_address {}", local.c_str());
+        log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::get_bound_port: malformed local_address {}", local.c_str()));
         return -1;
     }
     auto parsed = server_parse_port(local.substr(rusty::detail::deref_if_pointer_like(colon) + 1));
     if (parsed.is_none()) {
-        Log_error("Server::get_bound_port: failed to parse port from {}", local.c_str());
+        log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::get_bound_port: failed to parse port from {}", local.c_str()));
         return -1;
     }
     return parsed.unwrap();
@@ -2205,7 +2205,7 @@ fn sconn_decode_request_and_dispatch(sconn: &ServerConnection,
     // is no valid xid to reply against. v64 is 1-8 bytes; an empty
     // body means there is no xid at all.
     if (*req_box).src.remaining() == 0usize {
-        Log_warn("rrr::ServerConnection: empty channel-mode request frame, dropping");
+        log_line(Log::WARN, 0i32, core::ptr::null(), std::format("rrr::ServerConnection: empty channel-mode request frame, dropping"));
         return;
     }
     let mut header_ar = BinaryReadArchive {
@@ -2247,8 +2247,8 @@ fn sconn_decode_request_and_dispatch(sconn: &ServerConnection,
             }
         }
         if !surpress_warning {
-            Log_warn("rrr::ServerConnection: no handler for rpc_id = {} (channel-mode dispatch)",
-                     rpc_id);
+            log_line(Log::WARN, 0i32, core::ptr::null(), std::format("rrr::ServerConnection: no handler for rpc_id = {} (channel-mode dispatch)",
+                     rpc_id));
         }
         let mut empty_fn3: ServerReplyFn = Default::default();
         sconn_reply((*sconn), (*req_box), ENOENT, empty_fn3);
@@ -2274,7 +2274,7 @@ fn sconn_decode_request_and_dispatch(sconn: &ServerConnection,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.19 version=1 rust_sha256=f3f11ccb67fb1cf6a46da5ddf6d59285b8986ac853947d1a9181f43ded37a31f*/
+/*RUSTYCPP:GEN-BEGIN id=server.19 version=1 rust_sha256=ae79afac57a969fcb91a4534ab1a037980554734547d49ea2455126759c79b30*/
 extern rusty::Mutex<rusty::HashSet<int32_t>> g_rpc_id_missing;
 
 inline rusty::Mutex<rusty::HashSet<int32_t>> g_rpc_id_missing = rusty::Mutex<rusty::HashSet<int32_t>>::new_(rusty::HashSet<int32_t>::new_());
@@ -2294,7 +2294,7 @@ void sconn_decode_request_and_dispatch(const ServerConnection& sconn, const uint
         request_fill_body(rusty::detail::deref_if_pointer_like(req_box), rusty::from_raw_parts(bytes, std::move(size)));
     }
     if ((rusty::detail::deref_if_pointer_like(req_box)).src.remaining() == static_cast<size_t>(0)) {
-        Log_warn("rrr::ServerConnection: empty channel-mode request frame, dropping");
+        log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::ServerConnection: empty channel-mode request frame, dropping"));
         return;
     }
     auto header_ar = BinaryReadArchive{.source_ = make_source_proxy(&(rusty::detail::deref_if_pointer_like(req_box)).src)};
@@ -2329,7 +2329,7 @@ void sconn_decode_request_and_dispatch(const ServerConnection& sconn, const uint
             }
         }
         if (rusty::detail::rust_not(surpress_warning)) {
-            Log_warn("rrr::ServerConnection: no handler for rpc_id = {} (channel-mode dispatch)", std::move(rpc_id));
+            log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::ServerConnection: no handler for rpc_id = {} (channel-mode dispatch)", std::move(rpc_id)));
         }
         ServerReplyFn empty_fn3 = rusty::default_like<ServerReplyFn>();
         sconn_reply((sconn), (rusty::detail::deref_if_pointer_like(req_box)), ENOENT, std::move(empty_fn3));
@@ -2385,7 +2385,7 @@ fn sconn_dispatch_response_frame_via_channel(sconn: &ServerConnection,
     {
         let guard = sconn.channel_proxy_.lock().unwrap();
         if (*guard).is_none() {
-            Log_warn("rrr::ServerConnection::dispatch_response_frame_via_channel: channel mode flipped on but proxy is unbound (race?). Dropping reply.");
+            log_line(Log::WARN, 0i32, core::ptr::null(), std::format("rrr::ServerConnection::dispatch_response_frame_via_channel: channel mode flipped on but proxy is unbound (race?). Dropping reply."));
             return;
         }
         conn_ptr = sconn_proxy_ptr((*guard));
@@ -2394,13 +2394,13 @@ fn sconn_dispatch_response_frame_via_channel(sconn: &ServerConnection,
     let _ = (*conn_ptr).send_frame(frame);
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.18 version=1 rust_sha256=da0590086c4d614906eabbdb2084968f03a5c4af4499fca1187881dac72e21b8*/
+/*RUSTYCPP:GEN-BEGIN id=server.18 version=1 rust_sha256=9fe9d5d1deb78bf9a023ccd7ef2fe41f3c470ece8483dc9e863adc683bdd42db*/
 void sconn_dispatch_response_frame_via_channel(const ServerConnection& sconn, const uint8_t* bytes, size_t size) {
     ChannelConnectionBase* conn_ptr = rusty::ptr::null_mut();
     {
         const auto&& guard = rusty::deref_call(sconn.channel_proxy_.lock(), rusty::detail::__mdisp_unwrap{});
         if (((rusty::detail::deref_if_pointer_like(guard))).is_none()) {
-            Log_warn("rrr::ServerConnection::dispatch_response_frame_via_channel: channel mode flipped on but proxy is unbound (race?). Dropping reply.");
+            log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::ServerConnection::dispatch_response_frame_via_channel: channel mode flipped on but proxy is unbound (race?). Dropping reply."));
             return;
         }
         conn_ptr = sconn_proxy_ptr((rusty::detail::deref_if_pointer_like(guard)));
