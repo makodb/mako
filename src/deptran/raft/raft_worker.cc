@@ -12,8 +12,11 @@
 #include "../paxos/commo.h"   // PaxosStatus enum reused by Mako watermark callbacks
 #include "../classic/tpc_command.h"  // TpcCommitCommand for batch optimization
 #include "../procedure.h"            // VecPieceData and SimpleCommand
+#include <rusty/rusty.hpp>
+#include <rusty/slice.hpp>
 
 import std;
+import rusty;
 
 // @external: {
 //   Log_info: [safe, (...) -> void]
@@ -44,12 +47,253 @@ import std;
 
 namespace janus {
 
+// @safe - scalar queue/partition/callback decisions only. Thread creation,
+// condition variables, callback invocation, malloc/memcpy, and Raft submission
+// stay in the hand-written C++ worker body.
+#if RUSTYCPP_RUST
+pub fn raft_worker_should_start_submit_thread(started: bool) -> bool {
+    !started
+}
+
+pub fn raft_worker_should_stop_submit_thread(started: bool) -> bool {
+    started
+}
+
+pub fn raft_worker_should_enqueue(started: bool,
+                                  stop_requested: bool) -> bool {
+    started && !stop_requested
+}
+
+pub fn raft_worker_batch_limit(batch_size: i32) -> i32 {
+    if batch_size < 1 {
+        1
+    } else {
+        batch_size
+    }
+}
+
+pub fn raft_worker_wait_for_submit(submitted: i32, total: i32) -> bool {
+    submitted < total
+}
+
+pub fn raft_worker_queue_has_work(queue_empty: bool) -> bool {
+    !queue_empty
+}
+
+pub fn raft_worker_submit_loop_should_wake(stop_requested: bool,
+                                           queue_empty: bool) -> bool {
+    stop_requested || !queue_empty
+}
+
+pub fn raft_worker_submit_loop_should_stop(stop_requested: bool,
+                                           queue_empty: bool) -> bool {
+    stop_requested && queue_empty
+}
+
+pub fn raft_worker_submit_loop_should_take(queue_empty: bool,
+                                           batch_size: i32,
+                                           limit: i32) -> bool {
+    !queue_empty && batch_size < limit
+}
+
+pub fn raft_worker_partition_matches(handles_all_partitions: bool,
+                                     worker_partition: u32,
+                                     requested_partition: u32) -> bool {
+    handles_all_partitions || worker_partition == requested_partition
+}
+
+pub fn raft_worker_can_register_callback(has_scheduler: bool) -> bool {
+    has_scheduler
+}
+
+pub fn raft_worker_leader_flag_from_bool(is_leader: bool) -> i32 {
+    if is_leader {
+        1
+    } else {
+        0
+    }
+}
+
+pub fn raft_worker_is_leader_flag_set(is_leader: i32) -> bool {
+    is_leader != 0
+}
+
+pub fn raft_worker_should_notify_default_partition(has_registered_partitions: bool) -> bool {
+    !has_registered_partitions
+}
+
+pub fn raft_worker_partition_callback_available(found: bool,
+                                                has_callback: bool) -> bool {
+    found && has_callback
+}
+
+pub fn raft_worker_global_callback_available(has_callback: bool) -> bool {
+    has_callback
+}
+
+pub fn raft_worker_has_command_payload(has_value: bool) -> bool {
+    has_value
+}
+
+pub fn raft_worker_should_buffer_unreplayed(status: i32,
+                                            safety_fail_status: i32,
+                                            len: i32) -> bool {
+    status == safety_fail_status && len > 0
+}
+
+pub fn raft_worker_pending_log_is_current(request_epoch: i32,
+                                          current_epoch: i32) -> bool {
+    request_epoch == current_epoch
+}
+
+pub fn raft_worker_leadership_changed(previous_is_leader: bool,
+                                      current_is_leader: bool) -> bool {
+    previous_is_leader != current_is_leader
+}
+
+pub fn raft_worker_should_count_submission(server_available: bool,
+                                           appended: bool) -> bool {
+    server_available && appended
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.small_helpers version=1 rust_sha256=d5ef3893ed056f764577b488ab5bfeec982e49d24f96254ba805626c97d8b994*/
+bool raft_worker_should_start_submit_thread(bool started);
+bool raft_worker_should_stop_submit_thread(bool started);
+bool raft_worker_should_enqueue(bool started, bool stop_requested);
+int32_t raft_worker_batch_limit(int32_t batch_size);
+bool raft_worker_wait_for_submit(int32_t submitted, int32_t total);
+bool raft_worker_queue_has_work(bool queue_empty);
+bool raft_worker_submit_loop_should_wake(bool stop_requested, bool queue_empty);
+bool raft_worker_submit_loop_should_stop(bool stop_requested, bool queue_empty);
+bool raft_worker_submit_loop_should_take(bool queue_empty, int32_t batch_size, int32_t limit);
+bool raft_worker_partition_matches(bool handles_all_partitions, uint32_t worker_partition, uint32_t requested_partition);
+bool raft_worker_can_register_callback(bool has_scheduler);
+int32_t raft_worker_leader_flag_from_bool(bool is_leader);
+bool raft_worker_is_leader_flag_set(int32_t is_leader);
+bool raft_worker_should_notify_default_partition(bool has_registered_partitions);
+bool raft_worker_partition_callback_available(bool found, bool has_callback);
+bool raft_worker_global_callback_available(bool has_callback);
+bool raft_worker_has_command_payload(bool has_value);
+bool raft_worker_should_buffer_unreplayed(int32_t status, int32_t safety_fail_status, int32_t len);
+bool raft_worker_pending_log_is_current(int32_t request_epoch, int32_t current_epoch);
+bool raft_worker_leadership_changed(bool previous_is_leader, bool current_is_leader);
+bool raft_worker_should_count_submission(bool server_available, bool appended);
+
+bool raft_worker_should_start_submit_thread(bool started) {
+    return !started;
+}
+
+bool raft_worker_should_stop_submit_thread(bool started) {
+    return std::move(started);
+}
+
+bool raft_worker_should_enqueue(bool started, bool stop_requested) {
+    return rusty::detail::deref_if_pointer_like(started) && !stop_requested;
+}
+
+int32_t raft_worker_batch_limit(int32_t batch_size) {
+    if (rusty::detail::deref_if_pointer_like(batch_size) < 1) {
+        return static_cast<int32_t>(1);
+    } else {
+        return std::move(batch_size);
+    }
+}
+
+bool raft_worker_wait_for_submit(int32_t submitted, int32_t total) {
+    return rusty::detail::deref_if_pointer_like(submitted) < rusty::detail::deref_if_pointer_like(total);
+}
+
+bool raft_worker_queue_has_work(bool queue_empty) {
+    return !queue_empty;
+}
+
+bool raft_worker_submit_loop_should_wake(bool stop_requested, bool queue_empty) {
+    return rusty::detail::deref_if_pointer_like(stop_requested) || !queue_empty;
+}
+
+bool raft_worker_submit_loop_should_stop(bool stop_requested, bool queue_empty) {
+    return rusty::detail::deref_if_pointer_like(stop_requested) && rusty::detail::deref_if_pointer_like(queue_empty);
+}
+
+bool raft_worker_submit_loop_should_take(bool queue_empty, int32_t batch_size, int32_t limit) {
+    return !queue_empty && (rusty::detail::deref_if_pointer_like(batch_size) < rusty::detail::deref_if_pointer_like(limit));
+}
+
+bool raft_worker_partition_matches(bool handles_all_partitions, uint32_t worker_partition, uint32_t requested_partition) {
+    return rusty::detail::deref_if_pointer_like(handles_all_partitions) || (rusty::detail::deref_if_pointer_like(worker_partition) == rusty::detail::deref_if_pointer_like(requested_partition));
+}
+
+bool raft_worker_can_register_callback(bool has_scheduler) {
+    return std::move(has_scheduler);
+}
+
+int32_t raft_worker_leader_flag_from_bool(bool is_leader) {
+    if (is_leader) {
+        return static_cast<int32_t>(1);
+    } else {
+        return static_cast<int32_t>(0);
+    }
+}
+
+bool raft_worker_is_leader_flag_set(int32_t is_leader) {
+    return rusty::detail::deref_if_pointer_like(is_leader) != static_cast<int32_t>(0);
+}
+
+bool raft_worker_should_notify_default_partition(bool has_registered_partitions) {
+    return !has_registered_partitions;
+}
+
+bool raft_worker_partition_callback_available(bool found, bool has_callback) {
+    return rusty::detail::deref_if_pointer_like(found) && rusty::detail::deref_if_pointer_like(has_callback);
+}
+
+bool raft_worker_global_callback_available(bool has_callback) {
+    return std::move(has_callback);
+}
+
+bool raft_worker_has_command_payload(bool has_value) {
+    return std::move(has_value);
+}
+
+bool raft_worker_should_buffer_unreplayed(int32_t status, int32_t safety_fail_status, int32_t len) {
+    return (rusty::detail::deref_if_pointer_like(status) == rusty::detail::deref_if_pointer_like(safety_fail_status)) && (rusty::detail::deref_if_pointer_like(len) > 0);
+}
+
+bool raft_worker_pending_log_is_current(int32_t request_epoch, int32_t current_epoch) {
+    return rusty::detail::deref_if_pointer_like(request_epoch) == rusty::detail::deref_if_pointer_like(current_epoch);
+}
+
+bool raft_worker_leadership_changed(bool previous_is_leader, bool current_is_leader) {
+    return rusty::detail::deref_if_pointer_like(previous_is_leader) != rusty::detail::deref_if_pointer_like(current_is_leader);
+}
+
+bool raft_worker_should_count_submission(bool server_available, bool appended) {
+    return rusty::detail::deref_if_pointer_like(server_available) && rusty::detail::deref_if_pointer_like(appended);
+}
+/*RUSTYCPP:GEN-END id=raft_worker.small_helpers*/
+
 // @safe
-RaftWorker::RaftWorker() = default;
+RaftWorker::RaftWorker()
+    : state_core_(RaftWorkerStateCore::new_()) {}
 
 // @unsafe - cleanup operations are bounded
 RaftWorker::~RaftWorker() {
   StopSubmitThread();
+
+  // Safety-failed payloads are copied into these legacy raw-pointer queues.
+  // A callback may consume entries during normal operation; release only the
+  // entries still owned by this worker at shutdown.
+  const auto clear_unreplayed = [](auto& queue) {
+    while (!queue.empty()) {
+      std::free(const_cast<char*>(std::get<4>(queue.front())));
+      queue.pop();
+    }
+  };
+  clear_unreplayed(un_replay_logs_);
+  for (auto& [partition_id, queue] : un_replay_logs_by_partition_) {
+    (void)partition_id;
+    clear_unreplayed(queue);
+  }
 
   // Shutdown PollThreadWorkers if we own them
   if (svr_poll_thread_worker_.is_some()) {
@@ -90,24 +334,31 @@ void RaftWorker::SetupBase() {
 
   if (auto raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
     raft_server->RegisterLeaderChangeCallback([this](bool leader) {
+      bool leadership_changed = false;
       {
         std::lock_guard<std::recursive_mutex> guard(election_state_lock);
-        is_leader = leader ? 1 : 0;
+        bool previous_leader = raft_worker_is_leader_flag_set(state_core_.is_leader());
+        leadership_changed = raft_worker_leadership_changed(previous_leader, leader);
+        state_core_.set_is_leader(raft_worker_leader_flag_from_bool(leader));
+      }
+      if (!leadership_changed) {
+        return;
       }
       // Notify all partitions that currently have callback registrations.
-      std::set<uint32_t> par_ids;
+      auto par_ids = rusty::BTreeSet<uint32_t>::new_();
       for (const auto& kv : leader_callbacks_by_partition_) {
         par_ids.insert(kv.first);
       }
       for (const auto& kv : follower_callbacks_by_partition_) {
         par_ids.insert(kv.first);
       }
-      if (par_ids.empty()) {
+      if (raft_worker_should_notify_default_partition(!par_ids.is_empty())) {
         uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
         NotifyRaftLeaderChange(par_id, leader);
       } else {
-        for (uint32_t pid : par_ids) {
-          NotifyRaftLeaderChange(pid, leader);
+        auto iter = par_ids.iter();
+        for (auto pid = iter.next(); pid.is_some(); pid = iter.next()) {
+          NotifyRaftLeaderChange(pid.unwrap(), leader);
         }
       }
     });
@@ -119,7 +370,7 @@ void RaftWorker::SetupBase() {
   }
 }
 
-// @unsafe - uses new to allocate raw pointers (manual memory management)
+// @unsafe - creates owned RPC server and registers legacy service proxies
 void RaftWorker::SetupService() {
   // Create RPC server and register Raft service
   std::string bind_addr = site_info_->GetBindAddress();
@@ -131,7 +382,8 @@ void RaftWorker::SetupService() {
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
   // Create RPC server first (before registering services)
-  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_worker.clone())));
+  rpc_server_ = rusty::Some(rusty::Box<rrr::Server>::emplace(
+      rrr::Server::new_(rusty::Some(poll_worker.clone()))));
 
   // Create and register Raft services (ownership transferred to rpc_server_)
   if (rep_frame_ != nullptr) {
@@ -139,26 +391,30 @@ void RaftWorker::SetupService() {
                                                    rep_sched_,
                                                    poll_worker);
     for (auto& svc : services) {
-      rpc_server_->reg_service_proxy(std::move(svc));
+      rpc_server_.as_mut().unwrap()->reg_service_proxy(std::move(svc));
     }
   }
 
   // Start RPC server
-  int ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
+  int ret = rpc_server_.as_mut().unwrap()->start(
+      reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
     Log_fatal("Raft server launch failed at {}", bind_addr.c_str());
   }
 }
 
-// @safe - pointer dereferences are bounded, external calls marked @external
+// @unsafe - borrows/creates RaftFrame-owned communicator and wires it into the
+// borrowed RaftServer.
 void RaftWorker::SetupCommo() {
-  // Create Raft communicator
+  // Borrow/create the RaftFrame-owned communicator.
   verify(rep_frame_ != nullptr);
   verify(rep_sched_ != nullptr);
 
   // @unsafe
   { // rep_frame_-> pointer dereference, Option::clone
-    // Use clone() to preserve svr_poll_thread_worker_ for later use by GetPollThreadWorker()
+    // CreateCommo returns a borrowed pointer to RaftFrame::commo_; RaftWorker
+    // must not delete it. Use clone() to preserve svr_poll_thread_worker_ for
+    // later use by GetPollThreadWorker().
     rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
   }
 
@@ -168,7 +424,7 @@ void RaftWorker::SetupCommo() {
   }
 }
 
-// @unsafe - uses new to allocate raw pointers (manual memory management)
+// @unsafe - creates owned heartbeat/control RPC server
 void RaftWorker::SetupHeartbeat() {
   auto config = Config::GetConfig();
   bool hb = config->do_heart_beat();
@@ -181,57 +437,50 @@ void RaftWorker::SetupHeartbeat() {
   // ServerControlServiceImpl ctor 3rd
   // `Recorder*` parameter removed; updated call site to 2 args.
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
+  hb_rpc_server_ = rusty::Some(rusty::Box<rrr::Server>::emplace(
+      rrr::Server::new_(rusty::Some(
+          svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()))));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
-  hb_rpc_server_->reg_service_typed(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), 5));
+  hb_rpc_server_.as_mut().unwrap()->reg_service_typed(
+      rusty::make_box<ServerControlServiceImpl>(
+          server_status_.as_ref().unwrap().clone(), 5));
 
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = site_info_->GetHostAddr(CtrlPortDelta);
 
-  hb_rpc_server_->start(reinterpret_cast<const int8_t*>(addr_port.c_str()));
+  hb_rpc_server_.as_mut().unwrap()->start(
+      reinterpret_cast<const int8_t*>(addr_port.c_str()));
 }
 
-// @unsafe - uses delete, raw pointers, Option<Arc<PollThread>>
+// @unsafe - resets owned RPC servers and clears borrowed protocol pointers
 void RaftWorker::ShutDown() {
   Log_info("[RAFT-WORKER-SHUTDOWN] entering");
 
-  // Signal poll threads to stop BEFORE deleting servers.
-  // This allows Reactor::Loop() to exit, which unblocks server connection cleanup.
-  Log_info("[RAFT-WORKER-SHUTDOWN] signaling poll threads to stop");
-  if (svr_poll_thread_worker_.is_some()) {
-    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
-  }
-  if (svr_hb_poll_thread_worker_g.is_some()) {
-    svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
+  if (rpc_server_.is_some()) {
+    Log_info("[RAFT-WORKER-SHUTDOWN] clearing rpc_server_");
+    rpc_server_ = rusty::None;
   }
 
-  if (rpc_server_) {
-    Log_info("[RAFT-WORKER-SHUTDOWN] deleting rpc_server_");
-    delete rpc_server_;
-    rpc_server_ = nullptr;
-  }
-
-  if (hb_rpc_server_) {
-    delete hb_rpc_server_;  // Server destructor cleans up owned services
-    hb_rpc_server_ = nullptr;
+  if (hb_rpc_server_.is_some()) {
+    hb_rpc_server_ = rusty::None;  // Server destructor cleans up owned services
     server_status_ = rusty::None;
   }
 
-  // Services are now owned by rpc_server_ and deleted with it
+  // Services are owned by rpc_server_ and destroyed with it.
 
   StopSubmitThread();
 
-  if (rep_sched_) {
-    delete rep_sched_;
-    rep_sched_ = nullptr;
-  }
+  // rep_sched_ is borrowed from RaftFrame::svr_; RaftWorker must not delete it.
+  rep_sched_ = nullptr;
+  // rep_commo_ is borrowed from RaftFrame::commo_; RaftWorker must not delete it.
+  rep_commo_ = nullptr;
 
-  // IMPORTANT: Shutdown poll threads AFTER servers are destroyed.
-  // Server::~Server() enqueues remove commands to the poll thread; keeping the
-  // poll thread alive allows it to drain those commands and drop the final
-  // references so sconns_ctr_ reaches zero.
+  // Server::~Server() enqueues remove commands to the poll thread; keep the
+  // poll thread alive until both servers are destroyed so it can drain those
+  // commands and drop the final references before joining.
+  Log_info("[RAFT-WORKER-SHUTDOWN] signaling poll threads to stop");
   Log_info("[RAFT-WORKER-SHUTDOWN] shutting down poll threads");
   if (svr_poll_thread_worker_.is_some()) {
     auto& poll_thread = svr_poll_thread_worker_.as_ref().unwrap();
@@ -252,11 +501,11 @@ void RaftWorker::ShutDown() {
 void RaftWorker::WaitForShutdown() {
   StopSubmitThread();
 
-  if (hb_rpc_server_) {
+  if (hb_rpc_server_.is_some()) {
     // @unsafe
     { // hb_rpc_server_-> raw pointer dereference
-      hb_rpc_server_->do_shutdown();
-      hb_rpc_server_->wait_for_shutdown();
+      hb_rpc_server_.as_mut().unwrap()->do_shutdown();
+      hb_rpc_server_.as_mut().unwrap()->wait_for_shutdown();
     }
   }
 }
@@ -266,12 +515,12 @@ bool RaftWorker::IsLeader(uint32_t par_id) {
   verify(rep_frame_ != nullptr);
   verify(rep_frame_->site_info_ != nullptr);
 
-  if (!handles_all_partitions_) {
+  if (!raft_worker_partition_matches(handles_all_partitions_,
+                                     rep_frame_->site_info_->partition_id_,
+                                     par_id)) {
     // @unsafe
     { // rep_frame_->site_info_-> pointer dereference chain
-      if (rep_frame_->site_info_->partition_id_ != par_id) {
-        return false;
-      }
+      return false;
     }
   }
 
@@ -283,7 +532,7 @@ bool RaftWorker::IsLeader(uint32_t par_id) {
     }
   }
 
-  return false;
+  return raft_worker_is_leader_flag_set(state_core_.is_leader());
 }
 
 // @unsafe - uses raw pointers, dynamic_cast
@@ -300,24 +549,23 @@ siteid_t RaftWorker::GetLeaderHint() {
 
 // @unsafe - pointer dereferences are bounded
 bool RaftWorker::IsPartition(uint32_t par_id) {
-  if (handles_all_partitions_) {
-    return true;
-  }
   // Multi-group mode: each worker owns exactly one partition.
   verify(rep_frame_ != nullptr);
   verify(rep_frame_->site_info_ != nullptr);
   // @unsafe
   { // rep_frame_->site_info_-> pointer dereference chain
-    return rep_frame_->site_info_->partition_id_ == par_id;
+    return raft_worker_partition_matches(handles_all_partitions_,
+                                         rep_frame_->site_info_->partition_id_,
+                                         par_id);
   }
 }
 
 // @unsafe
 void RaftWorker::StartSubmitThread() {
-  if (submit_thread_started_) {
+  if (!raft_worker_should_start_submit_thread(submit_thread_started_)) {
     return;
   }
-  submit_thread_stop_ = false;
+  submit_thread_stop_.store(false, rusty::sync::atomic::Ordering::Release);
   submit_thread_started_ = true;
   // @unsafe
   { // 'this' pointer passed to std::thread constructor
@@ -327,21 +575,21 @@ void RaftWorker::StartSubmitThread() {
 
 // @unsafe
 void RaftWorker::StopSubmitThread() {
-  if (!submit_thread_started_) {
+  if (!raft_worker_should_stop_submit_thread(submit_thread_started_)) {
     return;
   }
   {
     std::lock_guard<std::mutex> lock(submit_mutex_);
-    submit_thread_stop_ = true;
+    submit_thread_stop_.store(true, rusty::sync::atomic::Ordering::Release);
   }
   submit_cv_.notify_all();
   if (submit_thread_.joinable()) {
     submit_thread_.join();
   }
   submit_thread_started_ = false;
-  submit_thread_stop_ = false;
+  submit_thread_stop_.store(false, rusty::sync::atomic::Ordering::Release);
 
-  std::deque<PendingLog> remaining;
+  std::deque<RaftWorkerPendingLog> remaining;
   {
     std::lock_guard<std::mutex> lock(submit_mutex_);
     remaining.swap(submit_queue_);
@@ -353,7 +601,9 @@ void RaftWorker::StopSubmitThread() {
 
 // @unsafe
 void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch_size) {
-  if (!submit_thread_started_) {
+  if (!raft_worker_should_enqueue(
+          submit_thread_started_,
+          submit_thread_stop_.load(rusty::sync::atomic::Ordering::Acquire))) {
     // @unsafe
     { // const char* propagation to Submit
       Submit(log, len, par_id);
@@ -361,16 +611,20 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
     return;
   }
 
-  PendingLog entry;
+  RaftWorkerPendingLog entry;
   // @unsafe
   { // std::string::assign from raw const char* pointer
     entry.payload.assign(log, len);
   }
   entry.par_id = par_id;
+  {
+    std::lock_guard<std::recursive_mutex> state_lock(election_state_lock);
+    entry.epoch = CurrentEpoch();
+  }
 
   {
     std::lock_guard<std::mutex> lock(submit_mutex_);
-    batch_limit_ = std::max(batch_size, 1);
+    state_core_.set_batch_limit(raft_worker_batch_limit(batch_size));
     submit_queue_.push_back(std::move(entry));
   }
   submit_cv_.notify_one();
@@ -428,8 +682,9 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   }
 
   // Use a simple incrementing tx_id (in production this would be a global txn ID)
-  static std::atomic<txnid_t> next_tx_id{1};
-  txnid_t tx_id = next_tx_id.fetch_add(1);
+  static rusty::sync::atomic::Atomic<txnid_t> next_tx_id{1};
+  txnid_t tx_id = next_tx_id.fetch_add(
+      1, rusty::sync::atomic::Ordering::Relaxed);
 
   // Use the production helper to create proper TpcCommitCommand{cmd_=VecPieceData}
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
@@ -440,15 +695,17 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   if (!appended) {
     return;
   }
-  }
 
-  n_tot++;
+  if (raft_worker_should_count_submission(true, appended)) {
+    n_tot.fetch_add(1, rusty::sync::atomic::Ordering::Relaxed);
+  }
+  }
 }
 
 // @safe
 void RaftWorker::IncSubmit() {
   // @unsafe
-  { n_submit++; }
+  { n_submit.fetch_add(1, rusty::sync::atomic::Ordering::Relaxed); }
 }
 
 // @unsafe
@@ -456,7 +713,8 @@ void RaftWorker::WaitForSubmit() {
   std::unique_lock<std::mutex> lock(condition_mutex_);
   // Wait logic - can be enhanced with condition variable if needed
   // For now, simple busy wait
-  while (n_submit < tot_num) {
+  while (raft_worker_wait_for_submit(
+      n_submit.load(rusty::sync::atomic::Ordering::Acquire), tot_num)) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   lock.unlock();
@@ -464,7 +722,7 @@ void RaftWorker::WaitForSubmit() {
   while (true) {
     {
       std::lock_guard<std::mutex> qlock(submit_mutex_);
-      if (submit_queue_.empty()) {
+      if (!raft_worker_queue_has_work(submit_queue_.empty())) {
         break;
       }
     }
@@ -473,12 +731,14 @@ void RaftWorker::WaitForSubmit() {
 }
 
 // @unsafe
-void RaftWorker::register_apply_callback(std::function<void(const char*, int)> cb) {
-  // @unsafe
-  { this->callback_ = cb; }
+void RaftWorker::register_apply_callback(rusty::Function<void(const char*, int)> cb) {
+  // @unsafe - stores move-only legacy callback for later invocation.
+  {
+    this->callback_ = std::move(cb);
+  }
 
   // Guard against accessing scheduler during shutdown
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip apply callback registration");
     return;
   }
@@ -494,12 +754,14 @@ void RaftWorker::register_apply_callback(std::function<void(const char*, int)> c
 
 // @unsafe
 void RaftWorker::register_apply_callback_par_id(
-    std::function<void(const char*&, int, int)> cb) {
-  // @unsafe
-  { this->callback_par_id_ = cb; }
+    rusty::Function<void(const char*&, int, int)> cb) {
+  // @unsafe - stores move-only legacy callback for later invocation.
+  {
+    this->callback_par_id_ = std::move(cb);
+  }
 
   // Guard against accessing scheduler during shutdown
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip apply callback registration");
     return;
   }
@@ -514,14 +776,14 @@ void RaftWorker::register_apply_callback_par_id(
 }
 
 // @unsafe
-void RaftWorker::register_leader_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
+void RaftWorker::register_leader_callback_par_id_return(watermark_callback_t cb) {
   // @unsafe
-  { this->leader_callback_par_id_return_ = cb; }
+  {
+  this->leader_callback_par_id_return_ = std::move(cb);
+  }
 
   // Guard against accessing scheduler during shutdown
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition {}",
              site_info_ ? site_info_->partition_id_ : -1);
     return;
@@ -542,14 +804,14 @@ void RaftWorker::register_leader_callback_par_id_return(
 }
 
 // @unsafe
-void RaftWorker::register_follower_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
+void RaftWorker::register_follower_callback_par_id_return(watermark_callback_t cb) {
   // @unsafe
-  { this->follower_callback_par_id_return_ = cb; }
+  {
+    this->follower_callback_par_id_return_ = std::move(cb);
+  }
 
   // Guard against accessing scheduler during shutdown
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition {}",
              site_info_ ? site_info_->partition_id_ : -1);
     return;
@@ -569,11 +831,9 @@ void RaftWorker::register_follower_callback_par_id_return(
 }
 
 // @unsafe - delegates to register_follower_callback_par_id_return
-void RaftWorker::register_apply_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
+void RaftWorker::register_apply_callback_par_id_return(watermark_callback_t cb) {
   Log_warn("[RAFT-CALLBACK] Using deprecated register_apply_callback_par_id_return - use register_leader/follower_callback_par_id_return instead");
-  register_follower_callback_par_id_return(cb);
+  register_follower_callback_par_id_return(std::move(cb));
 }
 
 // @unsafe - external calls marked @external [safe], malloc/memcpy in @unsafe blocks
@@ -582,7 +842,7 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 
   // @unsafe
   { // null check on Command envelope
-    if (!md.has_value()) {
+    if (!raft_worker_has_command_payload(md.has_value())) {
       Log_error("Received null command in Next()");
       return status;
     }
@@ -650,11 +910,13 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
   watermark_callback_t* active_callback_ptr = nullptr;
   auto& cb_map = am_leader ? leader_callbacks_by_partition_ : follower_callbacks_by_partition_;
   auto cb_it = cb_map.find(par_id);
-  if (cb_it != cb_map.end() && cb_it->second) {
+  if (raft_worker_partition_callback_available(
+          cb_it != cb_map.end(),
+          cb_it != cb_map.end() && static_cast<bool>(cb_it->second))) {
     active_callback_ptr = &cb_it->second;
   } else {
     auto& global_cb = am_leader ? leader_callback_par_id_return_ : follower_callback_par_id_return_;
-    if (global_cb) {
+    if (raft_worker_global_callback_available(static_cast<bool>(global_cb))) {
       active_callback_ptr = &global_cb;
     }
   }
@@ -676,7 +938,8 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
   status = encoded_value % 10;
   uint32_t timestamp = encoded_value / 10;
 
-  if (status == janus::PaxosStatus::STATUS_SAFETY_FAIL && len > 0) {
+  if (raft_worker_should_buffer_unreplayed(
+          status, janus::PaxosStatus::STATUS_SAFETY_FAIL, len)) {
       char* dest = static_cast<char*>(malloc(len));
       verify(dest != nullptr);
       memcpy(dest, log, len);
@@ -694,9 +957,9 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 // SINGLE-RAFT: Per-partition callback registration methods
 // @unsafe
 void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
-  leader_callbacks_by_partition_[par_id] = cb;
+  leader_callbacks_by_partition_[par_id] = std::move(cb);
 
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition {}", par_id);
     return;
   }
@@ -714,9 +977,9 @@ void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, waterma
 
 // @unsafe
 void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
-  follower_callbacks_by_partition_[par_id] = cb;
+  follower_callbacks_by_partition_[par_id] = std::move(cb);
 
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition {}", par_id);
     return;
   }
@@ -739,28 +1002,43 @@ void RaftWorker::SubmitLoop() {
     submit_cv_.wait(lock, [&] {
       // @unsafe
       { // operator bool on std::atomic<bool>
-        return submit_thread_stop_ || !submit_queue_.empty();
+        return raft_worker_submit_loop_should_wake(
+            submit_thread_stop_.load(rusty::sync::atomic::Ordering::Acquire),
+            submit_queue_.empty());
       }
     });
     bool should_stop = false;
     // @unsafe
     { // operator bool on std::atomic<bool>
-      should_stop = submit_thread_stop_ && submit_queue_.empty();
+      should_stop = raft_worker_submit_loop_should_stop(
+          submit_thread_stop_.load(rusty::sync::atomic::Ordering::Acquire),
+          submit_queue_.empty());
     }
     if (should_stop) {
       break;
     }
 
-    int limit = std::max(batch_limit_, 1);
-    std::vector<PendingLog> batch;
+    int limit = raft_worker_batch_limit(state_core_.batch_limit());
+    std::vector<RaftWorkerPendingLog> batch;
     batch.reserve(limit);
-    while (!submit_queue_.empty() && static_cast<int>(batch.size()) < limit) {
+    while (raft_worker_submit_loop_should_take(
+        submit_queue_.empty(), static_cast<int>(batch.size()), limit)) {
       batch.push_back(std::move(submit_queue_.front()));
       submit_queue_.pop_front();
     }
     lock.unlock();
 
     for (auto& entry : batch) {
+      int current_epoch;
+      {
+        std::lock_guard<std::recursive_mutex> state_lock(election_state_lock);
+        current_epoch = CurrentEpoch();
+      }
+      if (!raft_worker_pending_log_is_current(entry.epoch, current_epoch)) {
+        Log_debug("[RAFT-WORKER] Dropping stale queued entry: epoch={} current_epoch={} partition={}",
+                  entry.epoch, current_epoch, entry.par_id);
+        continue;
+      }
       Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id);
     }
 

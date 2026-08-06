@@ -8,10 +8,13 @@
 #include <deque>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/cell.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <rusty/option.hpp>
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
+#include <rusty/function.hpp>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -59,11 +62,28 @@ class ReplicatedDB;
  * - HigherTerm: Saw higher term from another server.
  *   Entries may still be valid, no automatic rollback notification.
  */
+#if RUSTYCPP_RUST
+pub enum StepDownReason {
+    UnsecuredFailure,
+    SecuredFailure,
+    HigherTerm,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=258d018ce58e8adb11536a93cbb5afb4bdf975e92088befcc4a110b7537276a7*/
+enum class StepDownReason;
+inline constexpr StepDownReason StepDownReason_UnsecuredFailure();
+inline constexpr StepDownReason StepDownReason_SecuredFailure();
+inline constexpr StepDownReason StepDownReason_HigherTerm();
+
 enum class StepDownReason {
-  UnsecuredFailure,  // Lost spec quorum while unsecured
-  SecuredFailure,    // Lost quorum but was secured
-  HigherTerm         // Saw higher term from another server
+    UnsecuredFailure,
+    SecuredFailure,
+    HigherTerm
 };
+inline constexpr StepDownReason StepDownReason_UnsecuredFailure() { return StepDownReason::UnsecuredFailure; }
+inline constexpr StepDownReason StepDownReason_SecuredFailure() { return StepDownReason::SecuredFailure; }
+inline constexpr StepDownReason StepDownReason_HigherTerm() { return StepDownReason::HigherTerm; }
+/*RUSTYCPP:GEN-END id=server.1*/
 
 /**
  * CommitStatus - Notification status for client callbacks
@@ -73,41 +93,528 @@ enum class StepDownReason {
  * - DURABLE: Entry reached disk quorum with secured leader, guaranteed
  * - ROLLEDBACK: Entry will not commit (leader stepped down gracefully)
  */
+#if RUSTYCPP_RUST
+pub enum CommitStatus {
+    SPECULATIVE,
+    DURABLE,
+    ROLLEDBACK,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.2 version=1 rust_sha256=c556ede4067b5cb3936397f9027b1a2b153fa316d70eb7ebe5be557414044b09*/
+enum class CommitStatus;
+inline constexpr CommitStatus CommitStatus_SPECULATIVE();
+inline constexpr CommitStatus CommitStatus_DURABLE();
+inline constexpr CommitStatus CommitStatus_ROLLEDBACK();
+
 enum class CommitStatus {
-  SPECULATIVE,  // Entry reached memory quorum
-  DURABLE,      // Entry reached disk quorum with secured leader
-  ROLLEDBACK    // Entry will not commit (best-effort notification)
+    SPECULATIVE,
+    DURABLE,
+    ROLLEDBACK
 };
+inline constexpr CommitStatus CommitStatus_SPECULATIVE() { return CommitStatus::SPECULATIVE; }
+inline constexpr CommitStatus CommitStatus_DURABLE() { return CommitStatus::DURABLE; }
+inline constexpr CommitStatus CommitStatus_ROLLEDBACK() { return CommitStatus::ROLLEDBACK; }
+/*RUSTYCPP:GEN-END id=server.2*/
 
-// @safe - data struct with shared_ptr fields (shared_ptr marked @external)
-//
-// polymorphic command fields
-// (`accepted_cmd_` / `committed_cmd_` / `log_`) migrated from
-// `shared_ptr<Marshallable>` to `janus::Command`.  Internal storage
-// inside Command remains `shared_ptr<Marshallable>` (boundary calls
-// to APIs still taking `shared_ptr<Marshallable>` use
-// `cmd.inner_marshallable()`).  Wire format unchanged.  See
-// `docs/dev/l10-unblock-plan.md`.
+// @safe - pure enum/index predicates over copied values. RaftServer owns the
+// locks, callbacks, persistence, and state transitions; these helpers only
+// name scalar decisions used by those hand-C++ paths.
+#if RUSTYCPP_RUST
+pub fn server_step_down_reason_is_unsecured_failure(reason: StepDownReason) -> bool {
+    reason == StepDownReason::UnsecuredFailure
+}
+
+pub fn server_step_down_reason_is_secured_failure(reason: StepDownReason) -> bool {
+    reason == StepDownReason::SecuredFailure
+}
+
+pub fn server_step_down_reason_is_higher_term(reason: StepDownReason) -> bool {
+    reason == StepDownReason::HigherTerm
+}
+
+pub fn server_commit_status_is_durable(status: CommitStatus) -> bool {
+    status == CommitStatus::DURABLE
+}
+
+pub fn server_log_index_at_or_below(index: u64, boundary: u64) -> bool {
+    index <= boundary
+}
+
+pub fn server_log_index_above(index: u64, boundary: u64) -> bool {
+    index > boundary
+}
+
+pub fn server_preferred_leader_is_configured(preferred_leader_site_id: i32) -> bool {
+    preferred_leader_site_id != -1
+}
+
+pub fn server_site_is_preferred_leader(site_id: u16,
+                                       preferred_leader_site_id: u16,
+                                       invalid_site_id: u16) -> bool {
+    preferred_leader_site_id != invalid_site_id && site_id == preferred_leader_site_id
+}
+
+pub fn server_leadership_monitor_should_start(is_preferred_leader: bool,
+                                              is_leader: bool,
+                                              looping: bool) -> bool {
+    !is_preferred_leader && is_leader && looping
+}
+
+pub fn server_leadership_transfer_preconditions_allow(is_leader: bool,
+                                                       is_preferred_leader: bool,
+                                                       preferred_configured: bool,
+                                                       transferring: bool) -> bool {
+    is_leader && !is_preferred_leader && preferred_configured && !transferring
+}
+
+pub fn server_preferred_replica_is_caught_up(preferred_match_index: u64,
+                                             commit_index: u64) -> bool {
+    preferred_match_index >= commit_index
+}
+
+pub fn server_local_commit_has_caught_up(local_commit_index: u64,
+                                         leader_commit_index: u64) -> bool {
+    local_commit_index >= leader_commit_index
+}
+
+pub fn server_election_timeout_has_fired(is_leader: bool,
+                                         time_elapsed: u64,
+                                         election_timeout: u64) -> bool {
+    !is_leader && time_elapsed > election_timeout
+}
+
+pub fn server_leadership_stable_window_elapsed(time_as_leader: u64,
+                                               min_stable_time: u64) -> bool {
+    time_as_leader >= min_stable_time
+}
+
+pub fn server_random_range_needs_swap(min_value: u64, max_value: u64) -> bool {
+    max_value < min_value
+}
+
+pub fn server_random_range_is_single_point(min_value: u64, max_value: u64) -> bool {
+    max_value == min_value
+}
+
+pub fn server_random_range_cap(range: u64, max_range: u64) -> u64 {
+    if range > max_range {
+        max_range
+    } else {
+        range
+    }
+}
+
+pub fn server_election_in_startup_grace_period(current_time: u64,
+                                               startup_timestamp: u64,
+                                               grace_period: u64) -> bool {
+    (current_time - startup_timestamp) < grace_period
+}
+
+pub fn server_vote_term_is_stale(candidate_term: u64, current_term: u64) -> bool {
+    candidate_term < current_term
+}
+
+pub fn server_vote_is_already_granted_to_other(candidate_term: u64,
+                                                current_term: u64,
+                                                voted_for: i32,
+                                                candidate_id: i32) -> bool {
+    candidate_term == current_term && voted_for != -1 && voted_for != candidate_id
+}
+
+pub fn server_vote_is_idempotent(candidate_term: u64,
+                                 current_term: u64,
+                                 voted_for: i32,
+                                 candidate_id: i32) -> bool {
+    candidate_term == current_term && voted_for == candidate_id
+}
+
+pub fn server_candidate_log_is_at_least(candidate_term: u64,
+                                        current_term: u64,
+                                        candidate_index: u64,
+                                        current_index: u64) -> bool {
+    candidate_term > current_term ||
+        (candidate_term == current_term && candidate_index >= current_index)
+}
+
+pub fn server_vote_request_is_eligible(candidate_term: u64,
+                                       current_term: u64,
+                                       voted_for: i32,
+                                       candidate_id: i32,
+                                       candidate_last_term: u64,
+                                       local_last_term: u64,
+                                       candidate_last_index: u64,
+                                       local_last_index: u64) -> bool {
+    candidate_term >= current_term &&
+        !(candidate_term == current_term &&
+          voted_for != -1 &&
+          voted_for != candidate_id) &&
+        (candidate_last_term > local_last_term ||
+         (candidate_last_term == local_last_term &&
+          candidate_last_index >= local_last_index))
+}
+
+pub fn server_append_term_is_acceptable(leader_term: u64, follower_term: u64) -> bool {
+    leader_term >= follower_term
+}
+
+pub fn server_append_prefix_is_compacted_miss(prev_index: u64,
+                                              min_active_slot: u64,
+                                              snapshot_index: u64) -> bool {
+    prev_index != 0 && prev_index < min_active_slot && prev_index != snapshot_index
+}
+
+pub fn server_append_index_is_acceptable(prev_index: u64,
+                                         last_log_index: u64,
+                                         compacted_prefix_miss: bool) -> bool {
+    prev_index <= last_log_index && !compacted_prefix_miss
+}
+
+pub fn server_append_prev_term_is_acceptable(prev_index: u64,
+                                             local_prev_term: u64,
+                                             leader_prev_term: u64) -> bool {
+    prev_index == 0 || local_prev_term == leader_prev_term
+}
+
+pub fn server_append_backoff_next_index(next_index: u64,
+                                         follower_last_log_index: u64) -> u64 {
+    if follower_last_log_index > 0 && follower_last_log_index + 1 < next_index {
+        follower_last_log_index + 1
+    } else if follower_last_log_index > 0 &&
+              follower_last_log_index + 1 == next_index &&
+              next_index > 1 {
+        next_index - 1
+    } else if next_index > 10 {
+        next_index / 2
+    } else if next_index > 1 {
+        next_index - 1
+    } else {
+        1
+    }
+}
+
+pub fn server_append_request_is_acceptable(leader_term: u64,
+                                           follower_term: u64,
+                                           prev_index: u64,
+                                           last_log_index: u64,
+                                           compacted_prefix_miss: bool,
+                                           local_prev_term: u64,
+                                           leader_prev_term: u64) -> bool {
+    leader_term >= follower_term &&
+        prev_index <= last_log_index &&
+        !compacted_prefix_miss &&
+        (prev_index == 0 || local_prev_term == leader_prev_term)
+}
+
+pub fn server_commit_index_clamp(candidate_index: u64, last_log_index: u64) -> u64 {
+    if candidate_index > last_log_index {
+        last_log_index
+    } else {
+        candidate_index
+    }
+}
+
+pub fn server_commit_index_should_advance(candidate_index: u64,
+                                          current_commit_index: u64,
+                                          candidate_term: u64,
+                                          current_term: u64) -> bool {
+    candidate_index > current_commit_index && candidate_term == current_term
+}
+
+pub fn server_log_entry_is_current_term(entry_term: u64, current_term: u64) -> bool {
+    entry_term == current_term
+}
+
+pub fn server_snapshot_index_is_available(execute_index: u64) -> bool {
+    execute_index != 0
+}
+
+pub fn server_snapshot_is_due(snapshot_index: u64,
+                              execute_index: u64,
+                              snapshot_threshold: u64) -> bool {
+    snapshot_index < execute_index &&
+        (execute_index - snapshot_index) > snapshot_threshold
+}
+
+pub fn server_compaction_index_clamp(candidate_index: u64,
+                                     commit_index: u64) -> u64 {
+    if candidate_index > commit_index {
+        commit_index
+    } else {
+        candidate_index
+    }
+}
+
+pub fn server_leadership_transition_to_leader(new_is_leader: bool,
+                                              previous_is_leader: bool) -> bool {
+    new_is_leader && !previous_is_leader
+}
+
+pub fn server_leadership_transition_to_follower(new_is_leader: bool,
+                                                previous_is_leader: bool) -> bool {
+    !new_is_leader && previous_is_leader
+}
+
+pub fn server_observed_higher_term(observed_term: u64, current_term: u64) -> bool {
+    observed_term > current_term
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=e374eb34aafc3b7598bb1e67edf4867159be348f5348a976aab99234f4ab05ba*/
+inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
+inline bool server_log_index_above(uint64_t index, uint64_t boundary);
+inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id);
+inline bool server_site_is_preferred_leader(uint16_t site_id, uint16_t preferred_leader_site_id, uint16_t invalid_site_id);
+inline bool server_leadership_monitor_should_start(bool is_preferred_leader, bool is_leader, bool looping);
+inline bool server_leadership_transfer_preconditions_allow(bool is_leader, bool is_preferred_leader, bool preferred_configured, bool transferring);
+inline bool server_preferred_replica_is_caught_up(uint64_t preferred_match_index, uint64_t commit_index);
+inline bool server_local_commit_has_caught_up(uint64_t local_commit_index, uint64_t leader_commit_index);
+inline bool server_election_timeout_has_fired(bool is_leader, uint64_t time_elapsed, uint64_t election_timeout);
+inline bool server_leadership_stable_window_elapsed(uint64_t time_as_leader, uint64_t min_stable_time);
+inline bool server_random_range_needs_swap(uint64_t min_value, uint64_t max_value);
+inline bool server_random_range_is_single_point(uint64_t min_value, uint64_t max_value);
+inline uint64_t server_random_range_cap(uint64_t range, uint64_t max_range);
+inline bool server_election_in_startup_grace_period(uint64_t current_time, uint64_t startup_timestamp, uint64_t grace_period);
+inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term);
+inline bool server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
+inline bool server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
+inline bool server_candidate_log_is_at_least(uint64_t candidate_term, uint64_t current_term, uint64_t candidate_index, uint64_t current_index);
+inline bool server_vote_request_is_eligible(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id, uint64_t candidate_last_term, uint64_t local_last_term, uint64_t candidate_last_index, uint64_t local_last_index);
+inline bool server_append_term_is_acceptable(uint64_t leader_term, uint64_t follower_term);
+inline bool server_append_prefix_is_compacted_miss(uint64_t prev_index, uint64_t min_active_slot, uint64_t snapshot_index);
+inline bool server_append_index_is_acceptable(uint64_t prev_index, uint64_t last_log_index, bool compacted_prefix_miss);
+inline bool server_append_prev_term_is_acceptable(uint64_t prev_index, uint64_t local_prev_term, uint64_t leader_prev_term);
+inline uint64_t server_append_backoff_next_index(uint64_t next_index, uint64_t follower_last_log_index);
+inline bool server_append_request_is_acceptable(uint64_t leader_term, uint64_t follower_term, uint64_t prev_index, uint64_t last_log_index, bool compacted_prefix_miss, uint64_t local_prev_term, uint64_t leader_prev_term);
+inline uint64_t server_commit_index_clamp(uint64_t candidate_index, uint64_t last_log_index);
+inline bool server_commit_index_should_advance(uint64_t candidate_index, uint64_t current_commit_index, uint64_t candidate_term, uint64_t current_term);
+inline bool server_log_entry_is_current_term(uint64_t entry_term, uint64_t current_term);
+inline bool server_snapshot_index_is_available(uint64_t execute_index);
+inline bool server_snapshot_is_due(uint64_t snapshot_index, uint64_t execute_index, uint64_t snapshot_threshold);
+inline uint64_t server_compaction_index_clamp(uint64_t candidate_index, uint64_t commit_index);
+inline bool server_leadership_transition_to_leader(bool new_is_leader, bool previous_is_leader);
+inline bool server_leadership_transition_to_follower(bool new_is_leader, bool previous_is_leader);
+inline bool server_observed_higher_term(uint64_t observed_term, uint64_t current_term);
+
+inline bool server_step_down_reason_is_unsecured_failure(StepDownReason reason) {
+    return reason == StepDownReason::UnsecuredFailure;
+}
+
+inline bool server_step_down_reason_is_secured_failure(StepDownReason reason) {
+    return reason == StepDownReason::SecuredFailure;
+}
+
+inline bool server_step_down_reason_is_higher_term(StepDownReason reason) {
+    return reason == StepDownReason::HigherTerm;
+}
+
+inline bool server_commit_status_is_durable(CommitStatus status) {
+    return status == CommitStatus::DURABLE;
+}
+
+inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary) {
+    return index <= boundary;
+}
+
+inline bool server_log_index_above(uint64_t index, uint64_t boundary) {
+    return index > boundary;
+}
+
+inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id) {
+    return rusty::detail::deref_if_pointer_like(preferred_leader_site_id) != -1;
+}
+
+inline bool server_site_is_preferred_leader(uint16_t site_id, uint16_t preferred_leader_site_id, uint16_t invalid_site_id) {
+    return (rusty::detail::deref_if_pointer_like(preferred_leader_site_id) != rusty::detail::deref_if_pointer_like(invalid_site_id)) && (rusty::detail::deref_if_pointer_like(site_id) == rusty::detail::deref_if_pointer_like(preferred_leader_site_id));
+}
+
+inline bool server_leadership_monitor_should_start(bool is_preferred_leader, bool is_leader, bool looping) {
+    return (!is_preferred_leader && rusty::detail::deref_if_pointer_like(is_leader)) && rusty::detail::deref_if_pointer_like(looping);
+}
+
+inline bool server_leadership_transfer_preconditions_allow(bool is_leader, bool is_preferred_leader, bool preferred_configured, bool transferring) {
+    return ((rusty::detail::deref_if_pointer_like(is_leader) && !is_preferred_leader) && rusty::detail::deref_if_pointer_like(preferred_configured)) && !transferring;
+}
+
+inline bool server_preferred_replica_is_caught_up(uint64_t preferred_match_index, uint64_t commit_index) {
+    return rusty::detail::deref_if_pointer_like(preferred_match_index) >= rusty::detail::deref_if_pointer_like(commit_index);
+}
+
+inline bool server_local_commit_has_caught_up(uint64_t local_commit_index, uint64_t leader_commit_index) {
+    return rusty::detail::deref_if_pointer_like(local_commit_index) >= rusty::detail::deref_if_pointer_like(leader_commit_index);
+}
+
+inline bool server_election_timeout_has_fired(bool is_leader, uint64_t time_elapsed, uint64_t election_timeout) {
+    return !is_leader && (rusty::detail::deref_if_pointer_like(time_elapsed) > rusty::detail::deref_if_pointer_like(election_timeout));
+}
+
+inline bool server_leadership_stable_window_elapsed(uint64_t time_as_leader, uint64_t min_stable_time) {
+    return rusty::detail::deref_if_pointer_like(time_as_leader) >= rusty::detail::deref_if_pointer_like(min_stable_time);
+}
+
+inline bool server_random_range_needs_swap(uint64_t min_value, uint64_t max_value) {
+    return rusty::detail::deref_if_pointer_like(max_value) < rusty::detail::deref_if_pointer_like(min_value);
+}
+
+inline bool server_random_range_is_single_point(uint64_t min_value, uint64_t max_value) {
+    return rusty::detail::deref_if_pointer_like(max_value) == rusty::detail::deref_if_pointer_like(min_value);
+}
+
+inline uint64_t server_random_range_cap(uint64_t range, uint64_t max_range) {
+    if (rusty::detail::deref_if_pointer_like(range) > rusty::detail::deref_if_pointer_like(max_range)) {
+        return std::move(max_range);
+    } else {
+        return std::move(range);
+    }
+}
+
+inline bool server_election_in_startup_grace_period(uint64_t current_time, uint64_t startup_timestamp, uint64_t grace_period) {
+    return ((rusty::detail::deref_if_pointer_like(current_time) - rusty::detail::deref_if_pointer_like(startup_timestamp))) < rusty::detail::deref_if_pointer_like(grace_period);
+}
+
+inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term) {
+    return rusty::detail::deref_if_pointer_like(candidate_term) < rusty::detail::deref_if_pointer_like(current_term);
+}
+
+inline bool server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id) {
+    return ((rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(voted_for) != -1)) && (rusty::detail::deref_if_pointer_like(voted_for) != rusty::detail::deref_if_pointer_like(candidate_id));
+}
+
+inline bool server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id) {
+    return (rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(voted_for) == rusty::detail::deref_if_pointer_like(candidate_id));
+}
+
+inline bool server_candidate_log_is_at_least(uint64_t candidate_term, uint64_t current_term, uint64_t candidate_index, uint64_t current_index) {
+    return (rusty::detail::deref_if_pointer_like(candidate_term) > rusty::detail::deref_if_pointer_like(current_term)) || (((rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(candidate_index) >= rusty::detail::deref_if_pointer_like(current_index))));
+}
+
+inline bool server_vote_request_is_eligible(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id, uint64_t candidate_last_term, uint64_t local_last_term, uint64_t candidate_last_index, uint64_t local_last_index) {
+    return ((rusty::detail::deref_if_pointer_like(candidate_term) >= rusty::detail::deref_if_pointer_like(current_term)) && !(((rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(voted_for) != -1)) && (rusty::detail::deref_if_pointer_like(voted_for) != rusty::detail::deref_if_pointer_like(candidate_id)))) && (((rusty::detail::deref_if_pointer_like(candidate_last_term) > rusty::detail::deref_if_pointer_like(local_last_term)) || (((rusty::detail::deref_if_pointer_like(candidate_last_term) == rusty::detail::deref_if_pointer_like(local_last_term)) && (rusty::detail::deref_if_pointer_like(candidate_last_index) >= rusty::detail::deref_if_pointer_like(local_last_index))))));
+}
+
+inline bool server_append_term_is_acceptable(uint64_t leader_term, uint64_t follower_term) {
+    return rusty::detail::deref_if_pointer_like(leader_term) >= rusty::detail::deref_if_pointer_like(follower_term);
+}
+
+inline bool server_append_prefix_is_compacted_miss(uint64_t prev_index, uint64_t min_active_slot, uint64_t snapshot_index) {
+    return ((rusty::detail::deref_if_pointer_like(prev_index) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(prev_index) < rusty::detail::deref_if_pointer_like(min_active_slot))) && (rusty::detail::deref_if_pointer_like(prev_index) != rusty::detail::deref_if_pointer_like(snapshot_index));
+}
+
+inline bool server_append_index_is_acceptable(uint64_t prev_index, uint64_t last_log_index, bool compacted_prefix_miss) {
+    return (rusty::detail::deref_if_pointer_like(prev_index) <= rusty::detail::deref_if_pointer_like(last_log_index)) && !compacted_prefix_miss;
+}
+
+inline bool server_append_prev_term_is_acceptable(uint64_t prev_index, uint64_t local_prev_term, uint64_t leader_prev_term) {
+    return (rusty::detail::deref_if_pointer_like(prev_index) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(local_prev_term) == rusty::detail::deref_if_pointer_like(leader_prev_term));
+}
+
+inline uint64_t server_append_backoff_next_index(uint64_t next_index, uint64_t follower_last_log_index) {
+    if ((rusty::detail::deref_if_pointer_like(follower_last_log_index) > 0) && ((rusty::detail::deref_if_pointer_like(follower_last_log_index) + 1) < rusty::detail::deref_if_pointer_like(next_index))) {
+        return rusty::detail::deref_if_pointer_like(follower_last_log_index) + static_cast<uint64_t>(1);
+    } else if (((rusty::detail::deref_if_pointer_like(follower_last_log_index) > 0) && ((rusty::detail::deref_if_pointer_like(follower_last_log_index) + static_cast<uint64_t>(1)) == rusty::detail::deref_if_pointer_like(next_index))) && (rusty::detail::deref_if_pointer_like(next_index) > 1)) {
+        return rusty::detail::deref_if_pointer_like(next_index) - static_cast<uint64_t>(1);
+    } else if (rusty::detail::deref_if_pointer_like(next_index) > 10) {
+        return rusty::detail::deref_if_pointer_like(next_index) / static_cast<uint64_t>(2);
+    } else if (rusty::detail::deref_if_pointer_like(next_index) > 1) {
+        return rusty::detail::deref_if_pointer_like(next_index) - static_cast<uint64_t>(1);
+    } else {
+        return static_cast<uint64_t>(1);
+    }
+}
+
+inline bool server_append_request_is_acceptable(uint64_t leader_term, uint64_t follower_term, uint64_t prev_index, uint64_t last_log_index, bool compacted_prefix_miss, uint64_t local_prev_term, uint64_t leader_prev_term) {
+    return (((rusty::detail::deref_if_pointer_like(leader_term) >= rusty::detail::deref_if_pointer_like(follower_term)) && (rusty::detail::deref_if_pointer_like(prev_index) <= rusty::detail::deref_if_pointer_like(last_log_index))) && !compacted_prefix_miss) && (((rusty::detail::deref_if_pointer_like(prev_index) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(local_prev_term) == rusty::detail::deref_if_pointer_like(leader_prev_term))));
+}
+
+inline uint64_t server_commit_index_clamp(uint64_t candidate_index, uint64_t last_log_index) {
+    if (rusty::detail::deref_if_pointer_like(candidate_index) > rusty::detail::deref_if_pointer_like(last_log_index)) {
+        return std::move(last_log_index);
+    } else {
+        return std::move(candidate_index);
+    }
+}
+
+inline bool server_commit_index_should_advance(uint64_t candidate_index, uint64_t current_commit_index, uint64_t candidate_term, uint64_t current_term) {
+    return (rusty::detail::deref_if_pointer_like(candidate_index) > rusty::detail::deref_if_pointer_like(current_commit_index)) && (rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term));
+}
+
+inline bool server_log_entry_is_current_term(uint64_t entry_term, uint64_t current_term) {
+    return rusty::detail::deref_if_pointer_like(entry_term) == rusty::detail::deref_if_pointer_like(current_term);
+}
+
+inline bool server_snapshot_index_is_available(uint64_t execute_index) {
+    return rusty::detail::deref_if_pointer_like(execute_index) != static_cast<uint64_t>(0);
+}
+
+inline bool server_snapshot_is_due(uint64_t snapshot_index, uint64_t execute_index, uint64_t snapshot_threshold) {
+    return (rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(execute_index)) && (((rusty::detail::deref_if_pointer_like(execute_index) - rusty::detail::deref_if_pointer_like(snapshot_index))) > rusty::detail::deref_if_pointer_like(snapshot_threshold));
+}
+
+inline uint64_t server_compaction_index_clamp(uint64_t candidate_index, uint64_t commit_index) {
+    if (rusty::detail::deref_if_pointer_like(candidate_index) > rusty::detail::deref_if_pointer_like(commit_index)) {
+        return std::move(commit_index);
+    } else {
+        return std::move(candidate_index);
+    }
+}
+
+inline bool server_leadership_transition_to_leader(bool new_is_leader, bool previous_is_leader) {
+    return rusty::detail::deref_if_pointer_like(new_is_leader) && !previous_is_leader;
+}
+
+inline bool server_leadership_transition_to_follower(bool new_is_leader, bool previous_is_leader) {
+    return !new_is_leader && rusty::detail::deref_if_pointer_like(previous_is_leader);
+}
+
+inline bool server_observed_higher_term(uint64_t observed_term, uint64_t current_term) {
+    return rusty::detail::deref_if_pointer_like(observed_term) > rusty::detail::deref_if_pointer_like(current_term);
+}
+/*RUSTYCPP:GEN-END id=server.scalar_helpers*/
+
+// @safe - value state for one Raft log instance. Command retains its existing
+// polymorphic storage boundary; the RaftData layout itself is DSL-owned.
+#if RUSTYCPP_RUST
+pub struct RaftData {
+    max_ballot_seen_: u64,
+    max_ballot_accepted_: u64,
+    accepted_cmd_: Command,
+    committed_cmd_: Command,
+    term: u64,
+    log_: Command,
+    prevTerm: u64,
+    slot_id: u64,
+    ballot: u64,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.4 version=1 rust_sha256=39c863730749d05e1d0b19708840cbcfe15b5b8aa19054d2feafb495343d9f4d*/
+struct RaftData;
+
 struct RaftData {
-  ballot_t max_ballot_seen_ = 0;
-  ballot_t max_ballot_accepted_ = 0;
-  Command accepted_cmd_{};
-  Command committed_cmd_{};
-
-  ballot_t term;
-  Command log_{};
-
-	//for retries
-	ballot_t prevTerm;
-	slotid_t slot_id;
-	ballot_t ballot;
+    uint64_t max_ballot_seen_;
+    uint64_t max_ballot_accepted_;
+    Command accepted_cmd_;
+    Command committed_cmd_;
+    uint64_t term;
+    Command log_;
+    uint64_t prevTerm;
+    uint64_t slot_id;
+    uint64_t ballot;
 };
+/*RUSTYCPP:GEN-END id=server.4*/
 
 // @safe - simple POD struct
+#if RUSTYCPP_RUST
+pub struct KeyValue {
+    key: i32,
+    value: i32,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.3 version=1 rust_sha256=8fbf17da15ef0ea0f533c3d6b345b770b027c42155db17045c72e6a3de5ab946*/
+struct KeyValue;
+
 struct KeyValue {
-	int key;
-	i32 value;
+    int32_t key;
+    int32_t value;
 };
+/*RUSTYCPP:GEN-END id=server.3*/
 
 #ifdef RAFT_TEST_CORO
 #define HEARTBEAT_INTERVAL 100000
@@ -115,8 +622,798 @@ struct KeyValue {
 #define HEARTBEAT_INTERVAL 5000
 #endif
 
+#if RUSTYCPP_RUST
+pub struct RaftServerTuningCore {
+    snapshot_threshold_: rusty::Cell<u64>,
+    heartbeat_interval_us_: rusty::Cell<u64>,
+    log_retention_window_: rusty::Cell<u64>,
+}
 
-// @unsafe - inherits from non-@interface TxLogServer (individual methods are @safe)
+impl RaftServerTuningCore {
+    // @safe
+    fn new(snapshot_threshold: u64,
+           heartbeat_interval_us: u64,
+           log_retention_window: u64) -> RaftServerTuningCore {
+        RaftServerTuningCore {
+            snapshot_threshold_: rusty::Cell::<u64>::new_(snapshot_threshold),
+            heartbeat_interval_us_: rusty::Cell::<u64>::new_(heartbeat_interval_us),
+            log_retention_window_: rusty::Cell::<u64>::new_(log_retention_window),
+        }
+    }
+
+    // @safe
+    fn snapshot_threshold(&self) -> u64 {
+        self.snapshot_threshold_.get()
+    }
+
+    // @safe
+    fn set_snapshot_threshold(&mut self, value: u64) {
+        self.snapshot_threshold_.set(value)
+    }
+
+    // @safe
+    fn heartbeat_interval_us(&self) -> u64 {
+        self.heartbeat_interval_us_.get()
+    }
+
+    // @safe
+    fn set_heartbeat_interval_us(&mut self, value: u64) {
+        self.heartbeat_interval_us_.set(value)
+    }
+
+    // @safe
+    fn log_retention_window(&self) -> u64 {
+        self.log_retention_window_.get()
+    }
+
+    // @safe
+    fn set_log_retention_window(&mut self, value: u64) {
+        if value > 0 {
+            self.log_retention_window_.set(value)
+        } else {
+            self.log_retention_window_.set(1)
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.tuning_core version=1 rust_sha256=40c0db522565bc12f46be992fa3cb36781213528778be653292489659121332f*/
+struct RaftServerTuningCore;
+
+struct RaftServerTuningCore {
+    rusty::Cell<uint64_t> snapshot_threshold_;
+    rusty::Cell<uint64_t> heartbeat_interval_us_;
+    rusty::Cell<uint64_t> log_retention_window_;
+
+    static RaftServerTuningCore new_(uint64_t snapshot_threshold, uint64_t heartbeat_interval_us, uint64_t log_retention_window);
+    uint64_t snapshot_threshold() const;
+    void set_snapshot_threshold(uint64_t value);
+    uint64_t heartbeat_interval_us() const;
+    void set_heartbeat_interval_us(uint64_t value);
+    uint64_t log_retention_window() const;
+    void set_log_retention_window(uint64_t value);
+};
+
+
+inline RaftServerTuningCore RaftServerTuningCore::new_(uint64_t snapshot_threshold, uint64_t heartbeat_interval_us, uint64_t log_retention_window) {
+    return RaftServerTuningCore{.snapshot_threshold_ = rusty::Cell<uint64_t>::new_(std::move(snapshot_threshold)), .heartbeat_interval_us_ = rusty::Cell<uint64_t>::new_(std::move(heartbeat_interval_us)), .log_retention_window_ = rusty::Cell<uint64_t>::new_(std::move(log_retention_window))};
+}
+
+inline uint64_t RaftServerTuningCore::snapshot_threshold() const {
+    return this->snapshot_threshold_.get();
+}
+
+inline void RaftServerTuningCore::set_snapshot_threshold(uint64_t value) {
+    this->snapshot_threshold_.set(std::move(value));
+}
+
+inline uint64_t RaftServerTuningCore::heartbeat_interval_us() const {
+    return this->heartbeat_interval_us_.get();
+}
+
+inline void RaftServerTuningCore::set_heartbeat_interval_us(uint64_t value) {
+    this->heartbeat_interval_us_.set(std::move(value));
+}
+
+inline uint64_t RaftServerTuningCore::log_retention_window() const {
+    return this->log_retention_window_.get();
+}
+
+inline void RaftServerTuningCore::set_log_retention_window(uint64_t value) {
+    if (rusty::detail::deref_if_pointer_like(value) > 0) {
+        this->log_retention_window_.set(std::move(value));
+    } else {
+        this->log_retention_window_.set(static_cast<uint64_t>(1));
+    }
+}
+/*RUSTYCPP:GEN-END id=server.tuning_core*/
+
+#if RUSTYCPP_RUST
+pub struct RaftServerLeadershipCore {
+    preferred_leader_site_id_: rusty::Cell<u16>,
+    leader_last_commit_index_: rusty::Cell<u64>,
+    transferring_leadership_: rusty::Cell<bool>,
+    leadership_transfer_start_time_: rusty::Cell<u64>,
+    startup_timestamp_: rusty::Cell<u64>,
+}
+
+impl RaftServerLeadershipCore {
+    // @safe
+    fn new(invalid_site_id: u16) -> RaftServerLeadershipCore {
+        RaftServerLeadershipCore {
+            preferred_leader_site_id_: rusty::Cell::<u16>::new_(invalid_site_id),
+            leader_last_commit_index_: rusty::Cell::<u64>::new_(0),
+            transferring_leadership_: rusty::Cell::<bool>::new_(false),
+            leadership_transfer_start_time_: rusty::Cell::<u64>::new_(0),
+            startup_timestamp_: rusty::Cell::<u64>::new_(0),
+        }
+    }
+
+    // @safe
+    fn preferred_leader_site_id(&self) -> u16 {
+        self.preferred_leader_site_id_.get()
+    }
+
+    // @safe
+    fn set_preferred_leader_site_id(&mut self, site_id: u16) {
+        self.preferred_leader_site_id_.set(site_id)
+    }
+
+    // @safe
+    fn leader_last_commit_index(&self) -> u64 {
+        self.leader_last_commit_index_.get()
+    }
+
+    // @safe
+    fn set_leader_last_commit_index(&mut self, index: u64) {
+        self.leader_last_commit_index_.set(index)
+    }
+
+    // @safe
+    fn is_transferring_leadership(&self) -> bool {
+        self.transferring_leadership_.get()
+    }
+
+    // @safe
+    fn clear_transfer(&mut self) {
+        self.transferring_leadership_.set(false)
+    }
+
+    // @safe
+    fn start_transfer(&mut self, timestamp: u64) {
+        self.transferring_leadership_.set(true);
+        self.leadership_transfer_start_time_.set(timestamp)
+    }
+
+    // @safe
+    fn leadership_transfer_start_time(&self) -> u64 {
+        self.leadership_transfer_start_time_.get()
+    }
+
+    // @safe
+    fn startup_timestamp(&self) -> u64 {
+        self.startup_timestamp_.get()
+    }
+
+    // @safe
+    fn set_startup_timestamp(&mut self, timestamp: u64) {
+        self.startup_timestamp_.set(timestamp)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.leadership_core version=1 rust_sha256=70a75dedd306f9ce05ebc075ed897bbcd407530b1536005726fed302f766b581*/
+struct RaftServerLeadershipCore;
+
+struct RaftServerLeadershipCore {
+    rusty::Cell<uint16_t> preferred_leader_site_id_;
+    rusty::Cell<uint64_t> leader_last_commit_index_;
+    rusty::Cell<bool> transferring_leadership_;
+    rusty::Cell<uint64_t> leadership_transfer_start_time_;
+    rusty::Cell<uint64_t> startup_timestamp_;
+
+    static RaftServerLeadershipCore new_(uint16_t invalid_site_id);
+    uint16_t preferred_leader_site_id() const;
+    void set_preferred_leader_site_id(uint16_t site_id);
+    uint64_t leader_last_commit_index() const;
+    void set_leader_last_commit_index(uint64_t index);
+    bool is_transferring_leadership() const;
+    void clear_transfer();
+    void start_transfer(uint64_t timestamp);
+    uint64_t leadership_transfer_start_time() const;
+    uint64_t startup_timestamp() const;
+    void set_startup_timestamp(uint64_t timestamp);
+};
+
+
+inline RaftServerLeadershipCore RaftServerLeadershipCore::new_(uint16_t invalid_site_id) {
+    return RaftServerLeadershipCore{.preferred_leader_site_id_ = rusty::Cell<uint16_t>::new_(std::move(invalid_site_id)), .leader_last_commit_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .transferring_leadership_ = rusty::Cell<bool>::new_(false), .leadership_transfer_start_time_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .startup_timestamp_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0))};
+}
+
+inline uint16_t RaftServerLeadershipCore::preferred_leader_site_id() const {
+    return this->preferred_leader_site_id_.get();
+}
+
+inline void RaftServerLeadershipCore::set_preferred_leader_site_id(uint16_t site_id) {
+    this->preferred_leader_site_id_.set(std::move(site_id));
+}
+
+inline uint64_t RaftServerLeadershipCore::leader_last_commit_index() const {
+    return this->leader_last_commit_index_.get();
+}
+
+inline void RaftServerLeadershipCore::set_leader_last_commit_index(uint64_t index) {
+    this->leader_last_commit_index_.set(std::move(index));
+}
+
+inline bool RaftServerLeadershipCore::is_transferring_leadership() const {
+    return this->transferring_leadership_.get();
+}
+
+inline void RaftServerLeadershipCore::clear_transfer() {
+    this->transferring_leadership_.set(false);
+}
+
+inline void RaftServerLeadershipCore::start_transfer(uint64_t timestamp) {
+    this->transferring_leadership_.set(true);
+    this->leadership_transfer_start_time_.set(std::move(timestamp));
+}
+
+inline uint64_t RaftServerLeadershipCore::leadership_transfer_start_time() const {
+    return this->leadership_transfer_start_time_.get();
+}
+
+inline uint64_t RaftServerLeadershipCore::startup_timestamp() const {
+    return this->startup_timestamp_.get();
+}
+
+inline void RaftServerLeadershipCore::set_startup_timestamp(uint64_t timestamp) {
+    this->startup_timestamp_.set(std::move(timestamp));
+}
+/*RUSTYCPP:GEN-END id=server.leadership_core*/
+
+#if RUSTYCPP_RUST
+pub struct RaftServerMembershipCore {
+    current_config_: rusty::BTreeSet<u16>,
+    learners_: rusty::BTreeSet<u16>,
+    config_change_pending_: rusty::Cell<bool>,
+    pending_config_index_: rusty::Cell<u64>,
+    catchup_threshold_: rusty::Cell<u64>,
+}
+
+impl RaftServerMembershipCore {
+    // @safe
+    fn new() -> RaftServerMembershipCore {
+        RaftServerMembershipCore {
+            current_config_: rusty::BTreeSet::<u16>::new_(),
+            learners_: rusty::BTreeSet::<u16>::new_(),
+            config_change_pending_: rusty::Cell::<bool>::new_(false),
+            pending_config_index_: rusty::Cell::<u64>::new_(0),
+            catchup_threshold_: rusty::Cell::<u64>::new_(100),
+        }
+    }
+
+    // @safe
+    fn config_change_pending(&self) -> bool {
+        self.config_change_pending_.get()
+    }
+
+    // @safe
+    fn set_config_change_pending(&mut self, value: bool) {
+        self.config_change_pending_.set(value)
+    }
+
+    // @safe
+    fn pending_config_index(&self) -> u64 {
+        self.pending_config_index_.get()
+    }
+
+    // @safe
+    fn set_pending_config_index(&mut self, index: u64) {
+        self.pending_config_index_.set(index)
+    }
+
+    // @safe
+    fn catchup_threshold(&self) -> u64 {
+        self.catchup_threshold_.get()
+    }
+
+    // @safe
+    fn set_catchup_threshold(&mut self, threshold: u64) {
+        self.catchup_threshold_.set(threshold)
+    }
+
+    // @safe
+    fn current_config(&self) -> &rusty::BTreeSet<u16> {
+        &self.current_config_
+    }
+
+    // @safe
+    fn current_config_mut(&mut self) -> &mut rusty::BTreeSet<u16> {
+        &mut self.current_config_
+    }
+
+    // @safe
+    fn learners(&self) -> &rusty::BTreeSet<u16> {
+        &self.learners_
+    }
+
+    // @safe
+    fn learners_mut(&mut self) -> &mut rusty::BTreeSet<u16> {
+        &mut self.learners_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.membership_core version=1 rust_sha256=304ae7688cb24313bbe68e11d215c6703ecb57f7a367fd85f66627ff8c8672fb*/
+struct RaftServerMembershipCore;
+
+struct RaftServerMembershipCore {
+    rusty::BTreeSet<uint16_t> current_config_;
+    rusty::BTreeSet<uint16_t> learners_;
+    rusty::Cell<bool> config_change_pending_;
+    rusty::Cell<uint64_t> pending_config_index_;
+    rusty::Cell<uint64_t> catchup_threshold_;
+
+    static RaftServerMembershipCore new_();
+    bool config_change_pending() const;
+    void set_config_change_pending(bool value);
+    uint64_t pending_config_index() const;
+    void set_pending_config_index(uint64_t index);
+    uint64_t catchup_threshold() const;
+    void set_catchup_threshold(uint64_t threshold);
+    const rusty::BTreeSet<uint16_t>& current_config() const;
+    rusty::BTreeSet<uint16_t>& current_config_mut();
+    const rusty::BTreeSet<uint16_t>& learners() const;
+    rusty::BTreeSet<uint16_t>& learners_mut();
+};
+
+
+RaftServerMembershipCore RaftServerMembershipCore::new_() {
+    return RaftServerMembershipCore{.current_config_ = rusty::BTreeSet<uint16_t>::new_(), .learners_ = rusty::BTreeSet<uint16_t>::new_(), .config_change_pending_ = rusty::Cell<bool>::new_(false), .pending_config_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .catchup_threshold_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(100))};
+}
+
+bool RaftServerMembershipCore::config_change_pending() const {
+    return this->config_change_pending_.get();
+}
+
+void RaftServerMembershipCore::set_config_change_pending(bool value) {
+    this->config_change_pending_.set(std::move(value));
+}
+
+uint64_t RaftServerMembershipCore::pending_config_index() const {
+    return this->pending_config_index_.get();
+}
+
+void RaftServerMembershipCore::set_pending_config_index(uint64_t index) {
+    this->pending_config_index_.set(std::move(index));
+}
+
+uint64_t RaftServerMembershipCore::catchup_threshold() const {
+    return this->catchup_threshold_.get();
+}
+
+void RaftServerMembershipCore::set_catchup_threshold(uint64_t threshold) {
+    this->catchup_threshold_.set(std::move(threshold));
+}
+
+const rusty::BTreeSet<uint16_t>& RaftServerMembershipCore::current_config() const {
+    return this->current_config_;
+}
+
+rusty::BTreeSet<uint16_t>& RaftServerMembershipCore::current_config_mut() {
+    return this->current_config_;
+}
+
+const rusty::BTreeSet<uint16_t>& RaftServerMembershipCore::learners() const {
+    return this->learners_;
+}
+
+rusty::BTreeSet<uint16_t>& RaftServerMembershipCore::learners_mut() {
+    return this->learners_;
+}
+/*RUSTYCPP:GEN-END id=server.membership_core*/
+
+#if RUSTYCPP_RUST
+pub struct RaftServerSpeculativeCore {
+    secured_leader_: rusty::Cell<bool>,
+    secured_log_index_: rusty::Cell<u64>,
+    spec_commit_index_: rusty::Cell<u64>,
+    last_spec_notified_index_: rusty::Cell<u64>,
+    last_durable_notified_index_: rusty::Cell<u64>,
+}
+
+impl RaftServerSpeculativeCore {
+    // @safe
+    fn new() -> RaftServerSpeculativeCore {
+        RaftServerSpeculativeCore {
+            secured_leader_: rusty::Cell::<bool>::new_(false),
+            secured_log_index_: rusty::Cell::<u64>::new_(0),
+            spec_commit_index_: rusty::Cell::<u64>::new_(0),
+            last_spec_notified_index_: rusty::Cell::<u64>::new_(0),
+            last_durable_notified_index_: rusty::Cell::<u64>::new_(0),
+        }
+    }
+
+    // @safe
+    fn secured_leader(&self) -> bool {
+        self.secured_leader_.get()
+    }
+
+    // @safe
+    fn set_secured_leader(&mut self, value: bool) {
+        self.secured_leader_.set(value)
+    }
+
+    // @safe
+    fn secured_log_index(&self) -> u64 {
+        self.secured_log_index_.get()
+    }
+
+    // @safe
+    fn set_secured_log_index(&mut self, index: u64) {
+        self.secured_log_index_.set(index)
+    }
+
+    // @safe
+    fn spec_commit_index(&self) -> u64 {
+        self.spec_commit_index_.get()
+    }
+
+    // @safe
+    fn set_spec_commit_index(&mut self, index: u64) {
+        self.spec_commit_index_.set(index)
+    }
+
+    // @safe
+    fn last_spec_notified_index(&self) -> u64 {
+        self.last_spec_notified_index_.get()
+    }
+
+    // @safe
+    fn set_last_spec_notified_index(&mut self, index: u64) {
+        self.last_spec_notified_index_.set(index)
+    }
+
+    // @safe
+    fn last_durable_notified_index(&self) -> u64 {
+        self.last_durable_notified_index_.get()
+    }
+
+    // @safe
+    fn set_last_durable_notified_index(&mut self, index: u64) {
+        self.last_durable_notified_index_.set(index)
+    }
+
+    // @safe
+    fn should_advance_spec_commit(&self, candidate_index: u64) -> bool {
+        candidate_index > self.spec_commit_index_.get()
+    }
+
+    // @safe
+    fn should_become_secured(&self, durable_vote_count: u64, quorum: u64) -> bool {
+        !self.secured_leader_.get() && durable_vote_count >= quorum
+    }
+
+    // @safe
+    fn should_advance_secured_index(&self, candidate_index: u64) -> bool {
+        candidate_index > self.secured_log_index_.get()
+    }
+
+    // @safe
+    fn should_step_down_for_quorum_loss(&self,
+                                        speculative_vote_count: u64,
+                                        durable_vote_count: u64,
+                                        quorum: u64) -> bool {
+        !self.secured_leader_.get() &&
+            durable_vote_count < quorum &&
+            speculative_vote_count < quorum
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.8 version=1 rust_sha256=058ca109a0e53c007a1f17470cf071a893982e8778362b23d59a8703325c41c5*/
+struct RaftServerSpeculativeCore;
+
+struct RaftServerSpeculativeCore {
+    rusty::Cell<bool> secured_leader_;
+    rusty::Cell<uint64_t> secured_log_index_;
+    rusty::Cell<uint64_t> spec_commit_index_;
+    rusty::Cell<uint64_t> last_spec_notified_index_;
+    rusty::Cell<uint64_t> last_durable_notified_index_;
+
+    static RaftServerSpeculativeCore new_();
+    bool secured_leader() const;
+    void set_secured_leader(bool value);
+    uint64_t secured_log_index() const;
+    void set_secured_log_index(uint64_t index);
+    uint64_t spec_commit_index() const;
+    void set_spec_commit_index(uint64_t index);
+    uint64_t last_spec_notified_index() const;
+    void set_last_spec_notified_index(uint64_t index);
+    uint64_t last_durable_notified_index() const;
+    void set_last_durable_notified_index(uint64_t index);
+    bool should_advance_spec_commit(uint64_t candidate_index) const;
+    bool should_become_secured(uint64_t durable_vote_count, uint64_t quorum) const;
+    bool should_advance_secured_index(uint64_t candidate_index) const;
+    bool should_step_down_for_quorum_loss(uint64_t speculative_vote_count, uint64_t durable_vote_count, uint64_t quorum) const;
+};
+
+
+inline RaftServerSpeculativeCore RaftServerSpeculativeCore::new_() {
+    return RaftServerSpeculativeCore{.secured_leader_ = rusty::Cell<bool>::new_(false), .secured_log_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .spec_commit_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .last_spec_notified_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .last_durable_notified_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0))};
+}
+
+inline bool RaftServerSpeculativeCore::secured_leader() const {
+    return this->secured_leader_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_secured_leader(bool value) {
+    this->secured_leader_.set(std::move(value));
+}
+
+inline uint64_t RaftServerSpeculativeCore::secured_log_index() const {
+    return this->secured_log_index_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_secured_log_index(uint64_t index) {
+    this->secured_log_index_.set(std::move(index));
+}
+
+inline uint64_t RaftServerSpeculativeCore::spec_commit_index() const {
+    return this->spec_commit_index_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_spec_commit_index(uint64_t index) {
+    this->spec_commit_index_.set(std::move(index));
+}
+
+inline uint64_t RaftServerSpeculativeCore::last_spec_notified_index() const {
+    return this->last_spec_notified_index_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_last_spec_notified_index(uint64_t index) {
+    this->last_spec_notified_index_.set(std::move(index));
+}
+
+inline uint64_t RaftServerSpeculativeCore::last_durable_notified_index() const {
+    return this->last_durable_notified_index_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_last_durable_notified_index(uint64_t index) {
+    this->last_durable_notified_index_.set(std::move(index));
+}
+
+inline bool RaftServerSpeculativeCore::should_advance_spec_commit(uint64_t candidate_index) const {
+    return rusty::detail::deref_if_pointer_like(candidate_index) > this->spec_commit_index_.get();
+}
+
+inline bool RaftServerSpeculativeCore::should_become_secured(uint64_t durable_vote_count, uint64_t quorum) const {
+    return !this->secured_leader_.get() && (rusty::detail::deref_if_pointer_like(durable_vote_count) >= rusty::detail::deref_if_pointer_like(quorum));
+}
+
+inline bool RaftServerSpeculativeCore::should_advance_secured_index(uint64_t candidate_index) const {
+    return rusty::detail::deref_if_pointer_like(candidate_index) > this->secured_log_index_.get();
+}
+
+inline bool RaftServerSpeculativeCore::should_step_down_for_quorum_loss(uint64_t speculative_vote_count, uint64_t durable_vote_count, uint64_t quorum) const {
+    return (!this->secured_leader_.get() && (rusty::detail::deref_if_pointer_like(durable_vote_count) < rusty::detail::deref_if_pointer_like(quorum))) && (rusty::detail::deref_if_pointer_like(speculative_vote_count) < rusty::detail::deref_if_pointer_like(quorum));
+}
+/*RUSTYCPP:GEN-END id=server.8*/
+
+#if RUSTYCPP_RUST
+pub struct RaftServerVoteCore {
+    vote_for_: rusty::Cell<i32>,
+    init_: rusty::Cell<bool>,
+    is_leader_: rusty::Cell<bool>,
+    current_leader_id_: rusty::Cell<i32>,
+    req_voting_: rusty::Cell<bool>,
+}
+
+impl RaftServerVoteCore {
+    // @safe
+    fn new(invalid_site_id: i32) -> RaftServerVoteCore {
+        RaftServerVoteCore {
+            vote_for_: rusty::Cell::<i32>::new_(invalid_site_id),
+            init_: rusty::Cell::<bool>::new_(false),
+            is_leader_: rusty::Cell::<bool>::new_(false),
+            current_leader_id_: rusty::Cell::<i32>::new_(invalid_site_id),
+            req_voting_: rusty::Cell::<bool>::new_(false),
+        }
+    }
+
+    // @safe
+    fn vote_for(&self) -> i32 {
+        self.vote_for_.get()
+    }
+
+    // @safe
+    fn set_vote_for(&mut self, site_id: i32) {
+        self.vote_for_.set(site_id)
+    }
+
+    // @safe
+    fn init(&self) -> bool {
+        self.init_.get()
+    }
+
+    // @safe
+    fn set_init(&mut self, value: bool) {
+        self.init_.set(value)
+    }
+
+    // @safe
+    fn is_leader(&self) -> bool {
+        self.is_leader_.get()
+    }
+
+    // @safe
+    fn set_is_leader(&mut self, value: bool) {
+        self.is_leader_.set(value)
+    }
+
+    // @safe
+    fn current_leader_id(&self) -> i32 {
+        self.current_leader_id_.get()
+    }
+
+    // @safe
+    fn set_current_leader_id(&mut self, site_id: i32) {
+        self.current_leader_id_.set(site_id)
+    }
+
+    // @safe
+    fn req_voting(&self) -> bool {
+        self.req_voting_.get()
+    }
+
+    // @safe
+    fn set_req_voting(&mut self, value: bool) {
+        self.req_voting_.set(value)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.9 version=1 rust_sha256=9b89d13c04efbd18786e17742749966fd681744d35855db0ab74b66b21732eeb*/
+struct RaftServerVoteCore;
+
+struct RaftServerVoteCore {
+    rusty::Cell<int32_t> vote_for_;
+    rusty::Cell<bool> init_;
+    rusty::Cell<bool> is_leader_;
+    rusty::Cell<int32_t> current_leader_id_;
+    rusty::Cell<bool> req_voting_;
+
+    static RaftServerVoteCore new_(int32_t invalid_site_id);
+    int32_t vote_for() const;
+    void set_vote_for(int32_t site_id);
+    bool init() const;
+    void set_init(bool value);
+    bool is_leader() const;
+    void set_is_leader(bool value);
+    int32_t current_leader_id() const;
+    void set_current_leader_id(int32_t site_id);
+    bool req_voting() const;
+    void set_req_voting(bool value);
+};
+
+
+inline RaftServerVoteCore RaftServerVoteCore::new_(int32_t invalid_site_id) {
+    return RaftServerVoteCore{.vote_for_ = rusty::Cell<int32_t>::new_(std::move(invalid_site_id)), .init_ = rusty::Cell<bool>::new_(false), .is_leader_ = rusty::Cell<bool>::new_(false), .current_leader_id_ = rusty::Cell<int32_t>::new_(std::move(invalid_site_id)), .req_voting_ = rusty::Cell<bool>::new_(false)};
+}
+
+inline int32_t RaftServerVoteCore::vote_for() const {
+    return this->vote_for_.get();
+}
+
+inline void RaftServerVoteCore::set_vote_for(int32_t site_id) {
+    this->vote_for_.set(std::move(site_id));
+}
+
+inline bool RaftServerVoteCore::init() const {
+    return this->init_.get();
+}
+
+inline void RaftServerVoteCore::set_init(bool value) {
+    this->init_.set(std::move(value));
+}
+
+inline bool RaftServerVoteCore::is_leader() const {
+    return this->is_leader_.get();
+}
+
+inline void RaftServerVoteCore::set_is_leader(bool value) {
+    this->is_leader_.set(std::move(value));
+}
+
+inline int32_t RaftServerVoteCore::current_leader_id() const {
+    return this->current_leader_id_.get();
+}
+
+inline void RaftServerVoteCore::set_current_leader_id(int32_t site_id) {
+    this->current_leader_id_.set(std::move(site_id));
+}
+
+inline bool RaftServerVoteCore::req_voting() const {
+    return this->req_voting_.get();
+}
+
+inline void RaftServerVoteCore::set_req_voting(bool value) {
+    this->req_voting_.set(std::move(value));
+}
+/*RUSTYCPP:GEN-END id=server.9*/
+
+#if RUSTYCPP_RUST
+pub struct RaftServerSnapshotProgressCore {
+    snapshot_index_: rusty::Cell<u64>,
+    snapshot_term_: rusty::Cell<u64>,
+}
+
+impl RaftServerSnapshotProgressCore {
+    // @safe
+    fn new() -> RaftServerSnapshotProgressCore {
+        RaftServerSnapshotProgressCore {
+            snapshot_index_: rusty::Cell::<u64>::new_(0),
+            snapshot_term_: rusty::Cell::<u64>::new_(0),
+        }
+    }
+
+    // @safe
+    fn snapshot_index(&self) -> u64 {
+        self.snapshot_index_.get()
+    }
+
+    // @safe
+    fn set_snapshot_index(&mut self, index: u64) {
+        self.snapshot_index_.set(index)
+    }
+
+    // @safe
+    fn snapshot_term(&self) -> u64 {
+        self.snapshot_term_.get()
+    }
+
+    // @safe
+    fn set_snapshot_term(&mut self, term: u64) {
+        self.snapshot_term_.set(term)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.10 version=1 rust_sha256=a9ea7a8b097f26cdbb5f8edba54c4265d9e0ef27c869c1db960affe67c763d30*/
+struct RaftServerSnapshotProgressCore;
+
+struct RaftServerSnapshotProgressCore {
+    rusty::Cell<uint64_t> snapshot_index_;
+    rusty::Cell<uint64_t> snapshot_term_;
+
+    static RaftServerSnapshotProgressCore new_();
+    uint64_t snapshot_index() const;
+    void set_snapshot_index(uint64_t index);
+    uint64_t snapshot_term() const;
+    void set_snapshot_term(uint64_t term);
+};
+
+
+inline RaftServerSnapshotProgressCore RaftServerSnapshotProgressCore::new_() {
+    return RaftServerSnapshotProgressCore{.snapshot_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .snapshot_term_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0))};
+}
+
+inline uint64_t RaftServerSnapshotProgressCore::snapshot_index() const {
+    return this->snapshot_index_.get();
+}
+
+inline void RaftServerSnapshotProgressCore::set_snapshot_index(uint64_t index) {
+    this->snapshot_index_.set(std::move(index));
+}
+
+inline uint64_t RaftServerSnapshotProgressCore::snapshot_term() const {
+    return this->snapshot_term_.get();
+}
+
+inline void RaftServerSnapshotProgressCore::set_snapshot_term(uint64_t term) {
+    this->snapshot_term_.set(std::move(term));
+}
+/*RUSTYCPP:GEN-END id=server.10*/
+
+// @unsafe - large stateful Raft core. Phase 3 extracted pure election, append,
+// commit, snapshot, and leadership predicates; raw frame/commo pointers,
+// threading/atomics, storage, callbacks, and consensus orchestration remain
+// hand-written boundaries.
 class RaftServer : public TxLogServer {
   friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
   friend class RaftLabTest;     // Allow test cases to access private members for verification
@@ -124,21 +1421,26 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   // LOG PERSISTENCE
   // ============================================================================
-  std::shared_ptr<janus::raft::LogStorage> log_storage_;  // Optional persistent storage
+  // @unsafe - optional shared storage backend. Kept as std::shared_ptr
+  // because storage implementations are polymorphic legacy boundaries.
+  std::shared_ptr<janus::raft::LogStorage> log_storage_;
   bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
 
   // ============================================================================
   // SNAPSHOT SUPPORT
   // ============================================================================
-  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
-  uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
+  // @unsafe - optional shared snapshot backend; polymorphic and file/RocksDB
+  // backed implementations remain outside early DSL migration.
+  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;
+  RaftServerTuningCore tuning_core_;
 
   // State machine snapshot callbacks (set by ReplicatedDB or other state machines)
-  // @unsafe - std::function holds non-borrow-checked closures
-  std::function<std::string()> create_sm_snapshot_cb_;
-  std::function<void(const std::string&)> load_sm_snapshot_cb_;
+  // @safe - stores move-only RustyCpp callbacks for later invocation
+  rusty::Function<std::string()> create_sm_snapshot_cb_;
+  rusty::Function<void(const std::string&)> load_sm_snapshot_cb_;
 
-  // Optional replicated DB (created when MAKO_REPLICATED_DB=1 env var is set)
+  // Optional replicated DB (created when MAKO_REPLICATED_DB=1 env var is set).
+  // @unsafe - shared state-machine adapter that wraps RocksDB C handles.
   std::shared_ptr<ReplicatedDB> replicated_db_;
 
   // @unsafe - Initializes snapshot manager from environment config
@@ -170,8 +1472,13 @@ class RaftServer : public TxLogServer {
 
   // ============================================================================
 
+  // Replication index state. Keep std containers here until RaftServer is
+  // split into smaller DSL candidates; these maps participate in quorum and
+  // heartbeat logic across many methods.
   std::map<siteid_t, uint64_t> match_index_{};
   std::map<siteid_t, uint64_t> next_index_{};
+  // @unsafe - election/heartbeat timer threads are hard-deferred threading
+  // state; joined/stopped manually by RaftServer teardown.
   std::vector<std::thread> timer_threads_ = {};
   // @unsafe - uses raw pointer parameter for thread signaling
   void timer_thread(bool *vote) ;
@@ -180,32 +1487,27 @@ class RaftServer : public TxLogServer {
   // @safe - logging calls wrapped in @unsafe blocks in implementation
   void LogTermChange(const char* reason, uint64_t old_term, uint64_t new_term, siteid_t source = INVALID_SITEID);
   bool stop_ = false ;
-  siteid_t vote_for_ = INVALID_SITEID ;
-  bool init_ = false ;
-  bool is_leader_ = false ;
-  siteid_t current_leader_id_ = INVALID_SITEID ;  // Last known leader (self if leader, sender of AppendEntries otherwise)
-  slotid_t snapidx_ = 0 ;
-  ballot_t snapterm_ = 0 ;
+  RaftServerVoteCore vote_core_;
+  RaftServerSnapshotProgressCore snapshot_progress_core_;
   int32_t wait_int_ = 100000 ;
   bool disconnected_ = false;
-  bool req_voting_ = false ;
   bool in_applying_logs_ = false ;
+  // @unsafe - cross-thread apply signal; keep atomic semantics.
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
 #ifdef RAFT_TEST_CORO
   bool failover_{true} ;
 #else
   bool failover_{true} ;
 #endif
+  // @unsafe - cross-thread timer batching counter; not a Cell candidate.
   atomic<int64_t> counter_{0};
   const char *filename = "/db/data.txt";
 
   bool looping_ = false;
   bool heartbeat_ = true;
   bool heartbeat_setup_ = false;
-  uint64_t heartbeat_interval_us_ = HEARTBEAT_INTERVAL;  // Runtime-configurable heartbeat interval (microseconds)
-  uint64_t log_retention_window_ = 5000;  // Configurable log retention window (entries to keep after compaction)
 	enum { STOPPED, RUNNING } status_;
-	std::function<void(bool)> leader_change_cb_{};
+	rusty::Function<void(bool)> leader_change_cb_;
 
   // ============================================================================
   // PREFERRED REPLICA SYSTEM - Leadership Transfer
@@ -220,13 +1522,12 @@ class RaftServer : public TxLogServer {
   //    - Preferred replica starts election and becomes leader
   // 4. All operations maintain Raft safety guarantees (no data loss)
 
-  siteid_t preferred_leader_site_id_ = INVALID_SITEID;     // Site ID of preferred leader
-  uint64_t leader_last_commit_index_ = 0;                   // Leader's commit index (from heartbeats)
-  bool transferring_leadership_ = false;                    // True when transfer in progress
-  uint64_t leadership_transfer_start_time_ = 0;             // When transfer started (for timeout)
+  RaftServerLeadershipCore leadership_core_;
+  // @unsafe - leadership monitor thread coordination; hard-deferred. The
+  // monitor thread captures `this` and is coordinated manually during
+  // leadership transfer and shutdown.
   std::atomic<bool> leadership_monitor_stop_{false};       // Signal to stop monitoring thread
   std::thread leadership_monitor_thread_;                   // Background thread monitoring for transfer
-  uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
 
   // ============================================================================
   // SPECULATIVE REPLICATION STATE
@@ -235,63 +1536,44 @@ class RaftServer : public TxLogServer {
   // quorum) for both leadership and log entries. See docs/dev/phase1_speculative_state_plan.md
 
   // Leader security status - true when durable vote quorum achieved
-  // When securedLeader_ = true, a quorum has votedFor = me on disk,
+  // When secured, a quorum has votedFor = me on disk,
   // so no other candidate can win election in this term.
-  bool securedLeader_ = false;
+  RaftServerSpeculativeCore speculative_core_;
 
   // Vote tracking for current term (as candidate/leader)
   std::set<siteid_t> specVoters_;     // servers that have memory-voted for us
   std::set<siteid_t> durableVoters_;  // servers that have durably-voted for us
-
-  // Log commit tracking
-  // Invariant: securedLogIndex_ <= specCommitIndex_ <= lastLogIndex
-  uint64_t securedLogIndex_ = 0;      // highest index with durable ack quorum
-  uint64_t specCommitIndex_ = 0;      // highest index with memory ack quorum
 
   // Acknowledgment tracking per log index
   // Key: log index, Value: set of nodes that have acked at that level
   std::map<uint64_t, std::set<siteid_t>> memoryAcks_;   // track memory acks per index
   std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
 
-  // @unsafe - Thread completion flag wrapping std::atomic<bool> for use with rusty::Arc.
-  // Arc only provides const access, so the atomic must be mutable to allow store().
-  // Uses C++ mutable for interior mutability (analogous to UnsafeCell in Rust).
-  struct AtomicFlag {
-    mutable std::atomic<bool> value{false}; // @unsafe { mutable field for interior mutability }
-    explicit AtomicFlag(bool v) : value(v) {}
-    void set(bool v, std::memory_order order = std::memory_order_release) const {
-      value.store(v, order);
-    }
-    bool get(std::memory_order order = std::memory_order_acquire) const {
-      return value.load(order);
-    }
-  };
-
   // @safe - Tracked async persistence threads (joined in destructor to prevent UAF)
   // Each entry pairs a thread with a completion flag. The lambda sets the flag to true
   // when done, allowing us to prune finished threads at each new insertion to prevent
   // unbounded growth of thread handles.
+  // @unsafe - async persistence thread registry; uses std::thread plus the
+  // RustyCpp AtomicBool completion flag to avoid use-after-free on shutdown.
   std::mutex async_threads_mtx_;
-  std::vector<std::pair<std::thread, rusty::Arc<AtomicFlag>>> async_threads_;
+  std::vector<std::pair<std::thread,
+                        rusty::Arc<rusty::sync::atomic::AtomicBool>>> async_threads_;
 
   // Client notification callbacks
   // Key: log index, Value: callback to notify on commit status change
   // Callbacks are invoked with: SPECULATIVE (memory quorum), DURABLE (disk quorum),
   // or ROLLEDBACK (leader stepped down gracefully)
-  std::map<uint64_t, std::function<void(CommitStatus)>> pendingCallbacks_;
-  uint64_t lastSpecNotifiedIndex_ = 0;    // last index notified with SPECULATIVE
-  uint64_t lastDurableNotifiedIndex_ = 0; // last index notified with DURABLE
+  // @safe - move-only callbacks stored by log index for later notification.
+  std::map<uint64_t, rusty::Function<void(CommitStatus)>> pendingCallbacks_;
 
   // ============================================================================
   // MEMBERSHIP CONFIGURATION TRACKING
   // ============================================================================
   // Tracks the active set of replicas in this partition. Initialized from the
   // static partition config in Setup(), then modified by AddServer/RemoveServer.
-  // All quorum calculations should use current_config_.size() instead of the
+  // All quorum calculations should use current_config().len() instead of the
   // static Config::GetConfig()->GetPartitionSize().
-  std::set<siteid_t> current_config_;          // Active replica set (site IDs)
-  bool config_change_pending_ = false;         // True when a config entry is in-flight
-  uint64_t pending_config_index_ = 0;          // Log index of pending config entry
+  RaftServerMembershipCore membership_core_;
 
   // ============================================================================
   // LEARNER / NEW SERVER CATCH-UP TRACKING
@@ -300,16 +1582,30 @@ class RaftServer : public TxLogServer {
   // entries via HeartbeatLoop (they are added to next_index_/match_index_)
   // but do NOT count towards quorum for commit index calculation.
   // Once a learner's match_index_ is within catchup_threshold_ of the
-  // leader's lastLogIndex, it is promoted to a full member in current_config_.
-  std::set<siteid_t> learners_;               // Servers being caught up (not yet in quorum)
-  uint64_t catchup_threshold_ = 100;          // Entries within lastLogIndex to consider "caught up"
+  // leader's lastLogIndex, it is promoted to a full member in current_config().
+
+  rusty::BTreeSet<siteid_t>& current_config() {
+    return membership_core_.current_config_mut();
+  }
+
+  const rusty::BTreeSet<siteid_t>& current_config() const {
+    return membership_core_.current_config();
+  }
+
+  rusty::BTreeSet<siteid_t>& learners() {
+    return membership_core_.learners_mut();
+  }
+
+  const rusty::BTreeSet<siteid_t>& learners() const {
+    return membership_core_.learners();
+  }
 
   // @safe - simple comparison of member fields
   bool AmIPreferredLeader() const {
     // @unsafe
     {
-      return preferred_leader_site_id_ != INVALID_SITEID &&
-             site_id_ == preferred_leader_site_id_;
+      siteid_t preferred = leadership_core_.preferred_leader_site_id();
+      return server_site_is_preferred_leader(site_id_, preferred, INVALID_SITEID);
     }
   }
 
@@ -317,7 +1613,8 @@ class RaftServer : public TxLogServer {
   bool HaveCaughtUp() const {
     // We've caught up if our commitIndex >= leader's last known commitIndex
     // Note: leader_last_commit_index_ is updated from AppendEntries heartbeats
-    return commitIndex >= leader_last_commit_index_;
+    return server_local_commit_has_caught_up(
+        commitIndex, leadership_core_.leader_last_commit_index());
   }
 
   // ============================================================================
@@ -345,9 +1642,9 @@ class RaftServer : public TxLogServer {
         *reply_term = currentTerm ;
       }
 #ifdef RAFT_LEADER_ELECTION_DEBUG
-      siteid_t prev_vote_for = vote_for_;
+      siteid_t prev_vote_for = vote_core_.vote_for();
       Log_info("[RAFT_VOTE] server {} (loc {}) vote={} candidate={} can_term={} cur_term={} prev_vote_for={} is_leader={} lst_idx={} lst_term={}",
-               site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, is_leader_, lst_log_idx, lst_log_term);
+               site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, vote_core_.is_leader(), lst_log_idx, lst_log_term);
 #endif
 
       if( can_term > currentTerm)
@@ -358,22 +1655,22 @@ class RaftServer : public TxLogServer {
           currentTerm = can_term ;
           // @unsafe
           {
-            vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+            vote_core_.set_vote_for(INVALID_SITEID);  // Reset vote when advancing to new term
           }
 
           // SPECULATIVE: Still persist term change synchronously for correctness
           // (term changes must be durable before we can proceed)
-          PersistState(currentTerm, vote_for_, "doVote: observed higher term");
+          PersistState(currentTerm, vote_core_.vote_for(), "doVote: observed higher term");
           LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
       }
 
       if(vote)
       {
           setIsLeader(false) ;
-          vote_for_ = can_id ;
+          vote_core_.set_vote_for(can_id );
 
 #ifdef RAFT_LEADER_ELECTION_DEBUG
-          Log_info("[RAFT_VOTE] server {} recorded vote_for={} at term={}", site_id_, vote_for_, currentTerm);
+          Log_info("[RAFT_VOTE] server {} recorded vote_for={} at term={}", site_id_, vote_core_.vote_for(), currentTerm);
 #endif
           // Reset timeout
           resetTimer("granted vote");
@@ -397,14 +1694,14 @@ class RaftServer : public TxLogServer {
               async_threads_.erase(
                 std::remove_if(async_threads_.begin(), async_threads_.end(),
                   [](auto& entry) {
-                    if (entry.second->get()) {
+                  if (entry.second->load(rusty::sync::atomic::Ordering::Acquire)) {
                       if (entry.first.joinable()) entry.first.join();
                       return true;
                     }
                     return false;
                   }),
                 async_threads_.end());
-              auto done = rusty::Arc<AtomicFlag>::make(false);
+              auto done = rusty::Arc<rusty::sync::atomic::AtomicBool>::make(false);
               async_threads_.emplace_back(
                 std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy, done]() {
                   // Persist the vote durably
@@ -415,7 +1712,7 @@ class RaftServer : public TxLogServer {
                   if (c != nullptr) {
                       c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
                   }
-                  done->set(true);
+                  done->store(true, rusty::sync::atomic::Ordering::Release);
               }), done);
             }
 
@@ -432,12 +1729,16 @@ class RaftServer : public TxLogServer {
       n_vote_++ ;
   }
 
-  // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
+  // @unsafe - shared_ptr/callback operations and apply-state mutation remain
+  // in the hand-written implementation.
   void applyLogs();
 
-  // Dedicated apply fiber and background apply thread.
+  // Dedicated apply fiber and background apply thread. These capture `this`
+  // and are hard-deferred concurrency boundaries for the RustyCpp migration.
   void StartApplyFiber();
 
+  // @unsafe - background apply thread and queue are manually coordinated.
+  // Destructor joins apply_thread_ before member teardown.
   std::thread apply_thread_;
   std::atomic<bool> apply_thread_running_{false};
   std::mutex apply_queue_mtx_;
@@ -537,7 +1838,8 @@ class RaftServer : public TxLogServer {
   // @safe - election timeout calculation (external calls wrapped in @unsafe blocks)
   uint64_t GetElectionTimeout();
  public:
-  // @unsafe - Returns raw pointer cast
+  // @unsafe - returns borrowed communicator pointer from TxLogServer base.
+  // The owning RaftFrame/RaftWorker lifetime must outlive this server use.
   RaftCommo* commo() {
     return (RaftCommo*) commo_;
   }
@@ -551,8 +1853,8 @@ class RaftServer : public TxLogServer {
   int n_accept_ = 0;
   int n_commit_ = 0;
 
-  /* NOTE: I think I should move these to the RaftData class */
-  /* TODO: talk to Shuai about it */
+  // Core Raft progress counters. Keep them on RaftServer for now: snapshots,
+  // replication, voting, and membership paths read them directly.
   uint64_t lastLogIndex = 0;
   uint64_t currentTerm = 0;
   uint64_t commitIndex = 0;
@@ -578,14 +1880,14 @@ class RaftServer : public TxLogServer {
     if (!looping_) {
       return false;
     }
-    return is_leader_ ;
+    return vote_core_.is_leader() ;
   }
   
   // @safe - leadership state transition (callbacks and logging wrapped in @unsafe blocks)
   void setIsLeader(bool isLeader);
 
   // @safe - stores callback for later invocation
-  void RegisterLeaderChangeCallback(std::function<void(bool)> cb);
+  void RegisterLeaderChangeCallback(rusty::Function<void(bool)> cb);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   // take janus::Command;
@@ -604,10 +1906,10 @@ class RaftServer : public TxLogServer {
   }
 
   // @safe - returns POD field
-  uint64_t GetHeartbeatInterval() const { return heartbeat_interval_us_; }
+  uint64_t GetHeartbeatInterval() const { return tuning_core_.heartbeat_interval_us(); }
 
   // @safe - sets POD field
-  void SetHeartbeatInterval(uint64_t micros) { heartbeat_interval_us_ = micros; }
+  void SetHeartbeatInterval(uint64_t micros) { tuning_core_.set_heartbeat_interval_us(micros); }
 
   // @unsafe - Implements ReadIndex protocol for linearizable reads.
   // Returns true if this server is confirmed leader and safe to serve reads.
@@ -615,10 +1917,10 @@ class RaftServer : public TxLogServer {
   bool ReadIndex(uint64_t timeout_us = 5000000);
 
   // @safe - returns POD field
-  uint64_t GetLogRetentionWindow() const { return log_retention_window_; }
+  uint64_t GetLogRetentionWindow() const { return tuning_core_.log_retention_window(); }
 
   // @safe - sets POD field (minimum 1 to avoid division by zero)
-  void SetLogRetentionWindow(uint64_t window) { log_retention_window_ = (window > 0) ? window : 1; }
+  void SetLogRetentionWindow(uint64_t window) { tuning_core_.set_log_retention_window(window); }
 
   // @unsafe - external calls plus output pointer writes and shared_ptr ops
   // take janus::Command;
@@ -728,7 +2030,7 @@ class RaftServer : public TxLogServer {
   // @safe - raw pointer parameter is bounded (frame outlives server)
   RaftServer(Frame *frame) ;
   // @unsafe - thread join and timer cleanup require manual resource management
-  ~RaftServer() ;
+  ~RaftServer() noexcept override;
 
   // ============================================================================
   // LOG PERSISTENCE PUBLIC API
@@ -755,7 +2057,7 @@ class RaftServer : public TxLogServer {
 
   /**
    * Recover state from persistent storage.
-   * Restores currentTerm, vote_for_, commitIndex, and log entries.
+   * Restores currentTerm, vote-for state, commitIndex, and log entries.
    * Should be called during initialization if storage is available.
    * @return true if recovery succeeded or storage is not set, false on error
    */
@@ -817,14 +2119,13 @@ class RaftServer : public TxLogServer {
    * @param create_cb Returns serialized state machine snapshot data
    * @param load_cb Loads serialized state machine snapshot data
    */
-  // @unsafe - stores std::function closures
-  void SetStateMachineSnapshotCallbacks(
-      std::function<std::string()> create_cb,
-      std::function<void(const std::string&)> load_cb) {
-    create_sm_snapshot_cb_ = std::move(create_cb);
-    load_sm_snapshot_cb_ = std::move(load_cb);
-  }
-
+    // @safe - stores move-only snapshot callbacks for later invocation
+    void SetStateMachineSnapshotCallbacks(
+        rusty::Function<std::string()> create_cb,
+        rusty::Function<void(const std::string&)> load_cb) {
+      create_sm_snapshot_cb_ = std::move(create_cb);
+      load_sm_snapshot_cb_ = std::move(load_cb);
+    }
   /**
    * Check if a snapshot is available.
    * @return true if a snapshot exists in the snapshot manager
@@ -861,7 +2162,7 @@ class RaftServer : public TxLogServer {
    */
   // @safe - sets POD field
   void SetSnapshotThreshold(uint64_t threshold) {
-    snapshot_threshold_ = threshold;
+    tuning_core_.set_snapshot_threshold(threshold);
   }
 
   /**
@@ -870,7 +2171,7 @@ class RaftServer : public TxLogServer {
    */
   // @safe - reads POD field
   uint64_t GetSnapshotThreshold() const {
-    return snapshot_threshold_;
+    return tuning_core_.snapshot_threshold();
   }
 
   // ============================================================================
@@ -895,7 +2196,7 @@ class RaftServer : public TxLogServer {
    * @param acknowledged - [OUT] true if vote was recorded
    * @param cb - Callback to invoke when handling complete
    */
-  // @unsafe - Modifies durableVoters_ and securedLeader_
+  // @unsafe - Modifies durableVoters_ and secured leader state
   void OnVoteDurable(const ballot_t& term,
                      const siteid_t& voter_id,
                      bool_t* acknowledged);
@@ -931,7 +2232,7 @@ class RaftServer : public TxLogServer {
    * @param acknowledged - [OUT] true if ack was recorded
    * @param cb - Callback to invoke when handling complete
    */
-  // @unsafe - Modifies durableAcks_ and securedLogIndex_
+  // @unsafe - Modifies durableAcks_ and secured log index
   void OnAppendEntriesDurable(const ballot_t& term,
                               const siteid_t& follower_id,
                               const uint64_t& lastLogIndex,
@@ -987,8 +2288,8 @@ class RaftServer : public TxLogServer {
   // ============================================================================
 
   /**
-   * Get the current quorum size based on current_config_.
-   * @return Majority size: current_config_.size() / 2 + 1
+   * Get the current quorum size based on current_config().
+   * @return Majority size: current_config().len() / 2 + 1
    */
   // @safe - Read-only computation on member field
   size_t GetQuorumSize() const;
@@ -999,23 +2300,23 @@ class RaftServer : public TxLogServer {
    */
   // @safe - Read-only accessor
   // @lifetime: (&'a) -> &'a
-  const std::set<siteid_t>& GetCurrentConfig() const;
+  const rusty::BTreeSet<siteid_t>& GetCurrentConfig() const;
 
   /**
    * Check if a server is a learner (being caught up, not yet in quorum).
    */
-  // @unsafe - Read-only lookup on std::set
-  bool IsLearner(siteid_t id) const { return learners_.count(id) > 0; }
+  // @unsafe - Read-only lookup on the Rusty membership set.
+  bool IsLearner(siteid_t id) const { return learners().contains(id); }
 
   /**
    * Get the current set of learners.
    */
   // @unsafe - returns reference to internal state (no @lifetime annotation)
-  const std::set<siteid_t>& GetLearners() const { return learners_; }
+  const rusty::BTreeSet<siteid_t>& GetLearners() const { return learners(); }
 
   /**
-   * Promote a learner to full member in current_config_.
-   * Removes from learners_, inserts into current_config_, clears pending flag.
+   * Promote a learner to full member in current_config().
+   * Removes from learners(), inserts into current_config(), clears pending flag.
    */
   // @unsafe - Modifies config state
   void PromoteLearner(siteid_t id);
@@ -1115,8 +2416,8 @@ class RaftServer : public TxLogServer {
   void SetPreferredLeader(siteid_t site_id) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-    siteid_t old_preferred = preferred_leader_site_id_;
-    preferred_leader_site_id_ = site_id;
+    siteid_t old_preferred = leadership_core_.preferred_leader_site_id();
+    leadership_core_.set_preferred_leader_site_id(site_id);
 
     if (old_preferred != site_id) {
       Log_info("[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}",
@@ -1124,7 +2425,8 @@ class RaftServer : public TxLogServer {
     }
 
     // If I'm a non-preferred leader, start monitoring for transfer opportunity
-    if (!AmIPreferredLeader() && is_leader_ && looping_) {
+    if (server_leadership_monitor_should_start(
+            AmIPreferredLeader(), vote_core_.is_leader(), looping_)) {
       Log_info("[LEADERSHIP-TRANSFER] Site {}: I'm non-preferred leader, starting transfer monitoring",
                site_id_);
       StartLeadershipTransferMonitoring();
@@ -1137,14 +2439,14 @@ class RaftServer : public TxLogServer {
    */
   // @safe
   siteid_t GetPreferredLeader() const {
-    return preferred_leader_site_id_;
+    return leadership_core_.preferred_leader_site_id();
   }
 
   /**
    * Get the last known leader's site_id for client redirection.
    * @return Leader site_id, or INVALID_SITEID if unknown
    */
-  // @safe - read-only access to current_leader_id_ under lock
+  // @safe - read-only access to current leader id under lock
   siteid_t GetLeaderHint() const;
 
   /**
@@ -1169,13 +2471,13 @@ class RaftServer : public TxLogServer {
 
   /**
    * Check if this leader has achieved secured status (durable vote quorum).
-   * When securedLeader_ = true, a quorum has votedFor = me on disk,
+   * When secured, a quorum has votedFor = me on disk,
    * so no other candidate can win election in this term.
    * @return true if leader has durable vote quorum
    */
   // @safe - Read-only accessor
   bool IsSecuredLeader() const {
-    return securedLeader_;
+    return speculative_core_.secured_leader();
   }
 
   /**
@@ -1184,7 +2486,7 @@ class RaftServer : public TxLogServer {
    */
   // @safe - Read-only accessor
   uint64_t GetSpecCommitIndex() const {
-    return specCommitIndex_;
+    return speculative_core_.spec_commit_index();
   }
 
   /**
@@ -1194,7 +2496,7 @@ class RaftServer : public TxLogServer {
    */
   // @safe - Read-only accessor
   uint64_t GetSecuredLogIndex() const {
-    return securedLogIndex_;
+    return speculative_core_.secured_log_index();
   }
 
   /**
@@ -1348,7 +2650,7 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - Modifies pendingCallbacks_
   void RegisterCommitCallback(uint64_t index,
-                              std::function<void(CommitStatus)> callback);
+                            rusty::Function<void(CommitStatus)> callback);
 
   /**
    * Notify all registered callbacks for indices in range (from, to] with status.
@@ -1367,7 +2669,7 @@ class RaftServer : public TxLogServer {
    *
    * Behavior per reason:
    * - UnsecuredFailure: Rollback all entries in (commitIndex, lastLogIndex]
-   * - SecuredFailure: Rollback only unsecured entries in (securedLogIndex_, specCommitIndex_]
+   * - SecuredFailure: Rollback only unsecured entries in (securedLogIndex, specCommitIndex]
    * - HigherTerm: No automatic rollback (entries may still be valid under new leader)
    *
    * Always clears pendingCallbacks_ and resets notification tracking regardless of reason.

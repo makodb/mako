@@ -16,6 +16,10 @@
 import std;
 
 using janus::raft::RaftQuorum;
+using janus::raft::raft_quorum_count_below;
+using janus::raft::raft_quorum_count_reached;
+using janus::raft::raft_quorum_majority_count;
+using janus::raft::raft_quorum_reached;
 using siteid_t_test = uint16_t;
 
 namespace {
@@ -35,6 +39,19 @@ void pump_reactor(const ::rrr::Reactor* reactor, int iterations = 8) {
 // Construction + accessors
 // ---------------------------------------------------------------------------
 
+TEST(RaftQuorumTest, HelperPredicates) {
+  EXPECT_EQ(raft_quorum_majority_count(1), 1u);
+  EXPECT_EQ(raft_quorum_majority_count(2), 2u);
+  EXPECT_EQ(raft_quorum_majority_count(5), 3u);
+  EXPECT_EQ(raft_quorum_majority_count(6), 4u);
+
+  EXPECT_TRUE(raft_quorum_reached(3, 3));
+  EXPECT_TRUE(raft_quorum_count_reached(4, 3));
+  EXPECT_FALSE(raft_quorum_count_reached(2, 3));
+  EXPECT_TRUE(raft_quorum_count_below(2, 3));
+  EXPECT_FALSE(raft_quorum_count_below(3, 3));
+}
+
 TEST(RaftQuorumTest, ConstructionAndAccessors) {
   // Need a reactor on the test thread because RaftQuorum's ctor calls
   // Reactor::create_sp_event<IntEvent>.
@@ -51,7 +68,7 @@ TEST(RaftQuorumTest, EmptyCollectIsEmpty) {
   auto reactor = ::rrr::Reactor::get_reactor();
   RaftQuorum<int> q(3, 2);
   auto drained = q.collect();
-  EXPECT_TRUE(drained.empty());
+  EXPECT_TRUE(drained.is_empty());
   EXPECT_EQ(q.received(), 0);
 }
 
@@ -197,7 +214,7 @@ TEST(RaftQuorumTest, CollectIsOneShot_SecondCallReturnsEmpty) {
   EXPECT_EQ(first.size(), 2u);
 
   auto second = q.collect();  // already drained
-  EXPECT_TRUE(second.empty());
+  EXPECT_TRUE(second.is_empty());
 
   // received() reflects history, not collect state.
   EXPECT_EQ(q.received(), 2);

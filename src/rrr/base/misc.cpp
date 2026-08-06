@@ -19,7 +19,7 @@ import rrr.basetypes;
 
 // @safe - mostly templated helpers (clamp, insert_into_map, erase) +
 // Job/OneTimeJob/FrequentJob value classes. The syscall-touching
-// functions (`rdtsc`, `time_now_str`, `get_ncpu`, 
+// functions (`rdtsc`, `time_now_str`, `get_ncpu`,
 // `getline`, the static `make_int` byte-writer) and
 // `FrequentJob::Ready` (calls rrr::Time::now(false)) carry per-method
 // `// @unsafe` overrides.

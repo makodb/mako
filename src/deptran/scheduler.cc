@@ -668,7 +668,7 @@ void TxLogServer::JetpackRecoveryEntry() {
 
 void TxLogServer::JetpackBeginRecovery() {
   Log_info("[JETPACK-RECOVERY] Step 1: Broadcasting BeginRecovery to partition {}", partition_id_);
-  Log_info("[JETPACK-RECOVERY] BeginRecovery: old_view leader={}, new_view leader={}, oepoch={}", 
+  Log_info("[JETPACK-RECOVERY] BeginRecovery: old_view leader={}, new_view leader={}, oepoch={}",
            old_view_.GetLeader(), new_view_.GetLeader(), oepoch_);
   
   // Wait for majority to receive BeginRecovery
@@ -786,7 +786,7 @@ void TxLogServer::JetpackRecovery() {
 void TxLogServer::JetpackPrepare(int default_sid, int default_set_size) {
   Log_info("[JETPACK-RECOVERY] Step 4: Starting Paxos Prepare phase for consensus");
 #ifdef JETPACK_RECOVERY_DEBUG
-  Log_info("[JETPACK-RECOVERY] Prepare: default_sid={}, default_set_size={}, ballot={}", 
+  Log_info("[JETPACK-RECOVERY] Prepare: default_sid={}, default_set_size={}, ballot={}",
            default_sid, default_set_size, witness_.max_seen_ballot_);
 #endif
   
@@ -814,7 +814,7 @@ void TxLogServer::JetpackPrepare(int default_sid, int default_set_size) {
     }
     if (e->max_seen_ballot_ > witness_.max_seen_ballot_) {
 #ifdef JETPACK_RECOVERY_DEBUG
-      Log_info("[JETPACK-RECOVERY] Updating ballot from {} to {}", 
+      Log_info("[JETPACK-RECOVERY] Updating ballot from {} to {}",
                witness_.max_seen_ballot_, e->max_seen_ballot_);
 #endif
       witness_.max_seen_ballot_ = e->max_seen_ballot_;
@@ -850,7 +850,7 @@ void TxLogServer::JetpackAccept(int propose_sid, int propose_set_size) {
   // Update local max_seen_ballot before accept
   witness_.max_seen_ballot_++;
 #ifdef JETPACK_RECOVERY_DEBUG
-  Log_info("[JETPACK-RECOVERY] Accept: proposing sid={}, set_size={}, ballot={}", 
+  Log_info("[JETPACK-RECOVERY] Accept: proposing sid={}, set_size={}, ballot={}",
            propose_sid, propose_set_size, witness_.max_seen_ballot_);
 #endif
   
@@ -876,7 +876,7 @@ void TxLogServer::JetpackAccept(int propose_sid, int propose_set_size) {
     }
     if (e->max_seen_ballot_ > witness_.max_seen_ballot_) {
 #ifdef JETPACK_RECOVERY_DEBUG
-      Log_info("[JETPACK-RECOVERY] Updating ballot from {} to {}", 
+      Log_info("[JETPACK-RECOVERY] Updating ballot from {} to {}",
                witness_.max_seen_ballot_, e->max_seen_ballot_);
 #endif
       witness_.max_seen_ballot_ = e->max_seen_ballot_;
@@ -884,7 +884,7 @@ void TxLogServer::JetpackAccept(int propose_sid, int propose_set_size) {
     return;
   }
   
-  Log_info("[JETPACK-RECOVERY] Accept SUCCESS: got {}/{} responses, proceeding to commit sid={}, set_size={}", 
+  Log_info("[JETPACK-RECOVERY] Accept SUCCESS: got {}/{} responses, proceeding to commit sid={}, set_size={}",
            e->q().n_voted_yes_.get(), e->q().n_total_, propose_sid, propose_set_size);
   JetpackCommit(propose_sid, propose_set_size);
 }
@@ -912,7 +912,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   rusty::Option<rusty::Arc<IntEvent>> recovery_event = rusty::None;
   if (set_size > 0) {
     recovery_event = rusty::Some(Reactor::create_sp_event<IntEvent>(set_size));
-    // Log_info("[JETPACK-RECOVERY-EVENT] Created recovery event: target={}, initial value={}, event_ptr={}", 
+    // Log_info("[JETPACK-RECOVERY-EVENT] Created recovery event: target={}, initial value={}, event_ptr={}",
     //          recovery_event->target_.get(), recovery_event->value_.get(), recovery_event.get());
   }
   
@@ -1041,13 +1041,13 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, rusty::Opt
       // The communicator's view should already be updated from OnJetpackBeginRecovery
       // Double-check that we have the right view
       auto comm = commo();
-      // Log_info("[JETPACK-RECOVERY] Using communicator {} (loc_id={}) for recovery dispatch", 
+      // Log_info("[JETPACK-RECOVERY] Using communicator {} (loc_id={}) for recovery dispatch",
       //          comm, comm->loc_id_);
       auto current_leader = comm->GetLeaderForPartition(par_id);
-      // Log_info("[JETPACK-RECOVERY] Dispatching to partition {}, current leader is {}", 
+      // Log_info("[JETPACK-RECOVERY] Dispatching to partition {}, current leader is {}",
       //          par_id, current_leader);
       // auto view_snapshot = comm->GetPartitionView(par_id);
-      // Log_info("[JETPACK-RECOVERY] Resubmit dispatch partition {} targeting leader locale {} view={}", 
+      // Log_info("[JETPACK-RECOVERY] Resubmit dispatch partition {} targeting leader locale {} view={}",
       //          par_id, current_leader, view_snapshot.ToString().c_str());
       
       // Create a temporary coordinator for dispatching
@@ -1150,7 +1150,7 @@ void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
     // Update the communicator's view immediately
     if (commo_) {
       auto my_comm = commo();
-      Log_info("[JETPACK-RECOVERY] This TxLogServer {} has communicator {} (loc_id={})", 
+      Log_info("[JETPACK-RECOVERY] This TxLogServer {} has communicator {} (loc_id={})",
                (void*)this, (void*)my_comm, my_comm ? my_comm->loc_id_ : -1);
       if (my_comm) {
         my_comm->UpdatePartitionView(partition_id_, *sp_new_view_data.unwrap());
@@ -1160,7 +1160,7 @@ void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
     // // Also update rep_sched's communicator if different
     // if (rep_sched_ && rep_sched_ != this && rep_sched_->commo_) {
     //   auto rep_comm = rep_sched_->commo();
-    //   Log_info("[JETPACK-RECOVERY] Also updating rep_sched {} communicator {} (loc_id={})", 
+    //   Log_info("[JETPACK-RECOVERY] Also updating rep_sched {} communicator {} (loc_id={})",
     //            rep_sched_, rep_comm, rep_comm ? rep_comm->loc_id_ : -1);
     //   if (rep_comm) {
     //     rep_comm->UpdatePartitionView(partition_id_, sp_new_view_data);
@@ -1174,7 +1174,7 @@ void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
     if (!sp_new_view_data.unwrap()->GetView().leaders_.empty()) {
       int new_leader = sp_new_view_data.unwrap()->GetView().GetLeader();
       bool should_be_leader = (new_leader == site_id_);
-      Log_info("[JETPACK-VIEW-UPDATE] New view leader is {}, this server is {}, should_be_leader={}", 
+      Log_info("[JETPACK-VIEW-UPDATE] New view leader is {}, this server is {}, should_be_leader={}",
                new_leader, site_id_, should_be_leader);
       
       // Demote immediately if the recovery view picked a different leader

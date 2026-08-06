@@ -323,7 +323,7 @@ void server_failover_co(bool random, bool leader, int srv_idx)
 
     for(int i=0;i<svr_workers_g.size();i++)
     {
-      Log_debug("failover at index {}, id {}, loc id {} part id {}", 
+      Log_debug("failover at index {}, id {}, loc id {} part id {}",
         i, svr_workers_g[i].site_info_->id,
         svr_workers_g[i].site_info_->locale_id,  
         svr_workers_g[i].site_info_->partition_id_ );
@@ -338,7 +338,8 @@ void server_failover_co(bool random, bool leader, int srv_idx)
         }
     }    
 #ifdef FAILOVER_DEBUG
-    Log_info("!!!!!!!!!!!!!!!!! failover_server_quit {}", failover_server_quit);
+    Log_info("!!!!!!!!!!!!!!!!! failover_server_quit {}",
+             static_cast<bool>(failover_server_quit));
 #endif
     while(!failover_server_quit)
     {
@@ -647,7 +648,8 @@ int main(int argc, char *argv[]) {
     failover_server_quit = true;
     Log_info("all clients have shut down.");
   }
-  Log_info("Total throughtput is {:.2f}", total_throughput);
+  Log_info("Total throughtput is {:.2f}",
+           static_cast<double>(total_throughput));
 #ifdef DB_CHECKSUM
   sleep(90); // hopefully servers can finish hanging RPCs in 90 seconds.
 #endif
@@ -708,7 +710,7 @@ int main(int argc, char *argv[]) {
   Log_info("All-efficient-attempts           distribution {}", cli2cli[5].distribution().c_str());
   
   Log_info("Mid throughput is {:.2f}", cli2cli[5].count() / (Config::GetConfig()->duration_ / 3.0));
-  Log_info("Fastpath statistics attempted {} successed {} rate(pct) {:.2f} efficient_successed {} efficient_rate(pct) {:.2f}", 
+  Log_info("Fastpath statistics attempted {} successed {} rate(pct) {:.2f} efficient_successed {} efficient_rate(pct) {:.2f}",
     cli2cli[0].count(), cli2cli[1].count(), cli2cli[1].count() * 100.0 / cli2cli[0].count(), cli2cli[2].count(), cli2cli[2].count() * 100.0 / cli2cli[0].count());
   Log_info("Frequency: {}", frequency.top_keys_pcts().c_str());
 

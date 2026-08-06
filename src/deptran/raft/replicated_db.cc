@@ -20,51 +20,89 @@ using namespace janus;
 // identical, and
 // bridge-dispatched `wrap_typed_marshallable` / `marshallable_cast<T>`
 // keep the legacy call sites working unchanged.
-// registration switched to no-arg form — kind
-// auto-derived from `Serializable<T, MakoCommands>` CRTP base.
+// Registration uses the TypeList-derived static kind.
 static int volatile x_replicated_db =
     rrr::SerializableRegistry::reg<ReplicatedDBCommand>(ReplicatedDBCommand::static_kind());
+
+namespace janus {
+
+#if RUSTYCPP_RUST
+pub struct ReplicatedDBFileEntry {
+    name: std::string,
+    contents: std::string,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.1 version=1 rust_sha256=42b62c5a2a282f767c764d1425abc18fbe0678b2643b518e63f1f45c8552278f*/
+struct ReplicatedDBFileEntry;
+
+struct ReplicatedDBFileEntry {
+    std::string name;
+    std::string contents;
+};
+/*RUSTYCPP:GEN-END id=replicated_db.1*/
+
+}  // namespace janus
 
 // ===========================================================================
 // ReplicatedDBCommand factory methods and serialization
 // ===========================================================================
 
-// @unsafe - unique-owner mutation window on a factory-fresh Arc
+ReplicatedDBCommand janus::replicated_db_command_defaults() {
+  ReplicatedDBCommand cmd;
+  cmd.op_ = ReplicatedDBOp::PUT;
+  cmd.key_ = "";
+  cmd.value_ = "";
+  cmd.batch_ops_.clear();
+  return cmd;
+}
+
+ReplicatedDBCommand janus::replicated_db_command_put(const std::string& key,
+                                                     const std::string& value) {
+  ReplicatedDBCommand cmd = replicated_db_command_defaults();
+  cmd.op_ = ReplicatedDBOp::PUT;
+  cmd.key_ = key;
+  cmd.value_ = value;
+  cmd.batch_ops_.clear();
+  return cmd;
+}
+
+ReplicatedDBCommand janus::replicated_db_command_delete(const std::string& key) {
+  ReplicatedDBCommand cmd = replicated_db_command_defaults();
+  cmd.op_ = ReplicatedDBOp::DELETE;
+  cmd.key_ = key;
+  cmd.value_ = "";
+  cmd.batch_ops_.clear();
+  return cmd;
+}
+
+ReplicatedDBCommand janus::replicated_db_command_batch(const std::vector<KVOperation>& ops) {
+  ReplicatedDBCommand cmd = replicated_db_command_defaults();
+  cmd.op_ = ReplicatedDBOp::BATCH;
+  cmd.key_ = "";
+  cmd.value_ = "";
+  cmd.batch_ops_ = ops;
+  return cmd;
+}
+
+// @unsafe - Creates an Arc around the DSL-produced command value.
 rusty::Arc<ReplicatedDBCommand> ReplicatedDBCommand::CreatePut(
     const std::string& key, const std::string& value) {
-  auto cmd = rusty::Arc<ReplicatedDBCommand>::make();
-  {
-    auto& mut_cmd = cmd.get_mut().unwrap();
-    mut_cmd.op_ = ReplicatedDBOp::PUT;
-    mut_cmd.key_ = key;
-    mut_cmd.value_ = value;
-  }
-  return cmd;
+  return rusty::Arc<ReplicatedDBCommand>::new_(
+      replicated_db_command_put(key, value));
 }
 
 // @unsafe - unique-owner mutation window on a factory-fresh Arc
 rusty::Arc<ReplicatedDBCommand> ReplicatedDBCommand::CreateDelete(
     const std::string& key) {
-  auto cmd = rusty::Arc<ReplicatedDBCommand>::make();
-  {
-    auto& mut_cmd = cmd.get_mut().unwrap();
-    mut_cmd.op_ = ReplicatedDBOp::DELETE;
-    mut_cmd.key_ = key;
-    mut_cmd.value_ = "";
-  }
-  return cmd;
+  return rusty::Arc<ReplicatedDBCommand>::new_(
+      replicated_db_command_delete(key));
 }
 
 // @unsafe - unique-owner mutation window on a factory-fresh Arc
 rusty::Arc<ReplicatedDBCommand> ReplicatedDBCommand::CreateBatch(
     const std::vector<KVOperation>& ops) {
-  auto cmd = rusty::Arc<ReplicatedDBCommand>::make();
-  {
-    auto& mut_cmd = cmd.get_mut().unwrap();
-    mut_cmd.op_ = ReplicatedDBOp::BATCH;
-    mut_cmd.batch_ops_ = ops;
-  }
-  return cmd;
+  return rusty::Arc<ReplicatedDBCommand>::new_(
+      replicated_db_command_batch(ops));
 }
 
 // Serializable save/load — moved here from
@@ -75,7 +113,8 @@ void ReplicatedDBCommand::save(BinaryWriteArchive& ar) const {
   rrr::Serialize_::serialize(static_cast<uint8_t>(op_), ar);
   rrr::Serialize_::serialize(key_, ar);
   rrr::Serialize_::serialize(value_, ar);
-  if (op_ == ReplicatedDBOp::BATCH) {
+  if (replicated_db_command_should_encode_batch(
+          op_, static_cast<uint64_t>(batch_ops_.size()))) {
     uint32_t count = static_cast<uint32_t>(batch_ops_.size());
     rrr::Serialize_::serialize(count, ar);
     for (const auto& op : batch_ops_) {
@@ -114,16 +153,16 @@ void ReplicatedDBCommand::load(BinaryReadArchive& ar) {
 // ReplicatedDB implementation
 // ===========================================================================
 
-// @unsafe - Opens RocksDB, stores raw pointers
+// @unsafe - Allocates RocksDB option handles and opens db_path_.
 ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
-    : raft_(raft), db_path_(db_path) {
+    : raft_(raft), db_path_(db_path), state_core_(ReplicatedDBStateCore::new_()) {
   // @unsafe { std::getenv is not borrow-checked }
   const char* comp_env = std::getenv("MAKO_SNAPSHOT_COMPRESSION");
   if (comp_env && std::strcmp(comp_env, "0") == 0) {
-    compression_enabled_ = false;
+    state_core_.set_compression_enabled(false);
   }
 
-  // @unsafe - RocksDB C API calls
+  // @unsafe - Owns these C handles until the destructor.
   options_ = rocksdb_options_create();
   write_options_ = rocksdb_writeoptions_create();
   read_options_ = rocksdb_readoptions_create();
@@ -144,7 +183,8 @@ ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
   // Read options
   rocksdb_readoptions_set_verify_checksums(read_options_, 1);
 
-  // Open the database
+  // Open the database handle. Snapshot loading can later close/reopen only
+  // db_, while keeping the option handles above alive.
   char* err = nullptr;
   db_ = rocksdb_open(options_, db_path_.c_str(), &err);
   if (err != nullptr || db_ == nullptr) {
@@ -167,10 +207,10 @@ ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
   }
 
   Log_info("[ReplicatedDB] Opened database at {}, last_applied_index={}",
-           db_path_.c_str(), last_applied_index_);
+           db_path_.c_str(), state_core_.last_applied_index());
 }
 
-// @unsafe - Closes RocksDB, destroys options
+// @unsafe - Closes db_ if open and destroys constructor-owned option handles.
 ReplicatedDB::~ReplicatedDB() {
   if (db_ != nullptr) {
     rocksdb_close(db_);
@@ -192,7 +232,7 @@ ReplicatedDB::~ReplicatedDB() {
 
 // @unsafe - Submits PUT command through Raft, blocks until committed
 bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
-  if (!db_ || !raft_) return false;
+  if (!replicated_db_can_submit(db_ != nullptr, raft_ != nullptr, true)) return false;
 
   auto cmd = ReplicatedDBCommand::CreatePut(key, value);
 
@@ -203,24 +243,27 @@ bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
     return false;
   }
 
-  // Block until committed using atomic flag
-  // @unsafe - atomic operations and callback registration
-  std::atomic<int> committed{0};  // 0=pending, 1=success, -1=rolled back
+  // Block until committed using a Rusty atomic flag.
+  rusty::sync::atomic::AtomicI32 committed{0};  // 0=pending, 1=success, -1=rolled back
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
-    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+    committed.store(replicated_db_commit_callback_state(
+        status == CommitStatus::ROLLEDBACK),
+        rusty::sync::atomic::Ordering::Release);
   });
 
   // Poll until callback fires
-  while (committed.load() == 0) {
+  while (replicated_db_commit_pending(
+      committed.load(rusty::sync::atomic::Ordering::Acquire))) {
     usleep(100);  // 100us poll interval
   }
 
-  return committed.load() > 0;
+  return replicated_db_commit_succeeded(
+      committed.load(rusty::sync::atomic::Ordering::Acquire));
 }
 
 // @unsafe - Submits DELETE command through Raft, blocks until committed
 bool ReplicatedDB::Delete(const std::string& key) {
-  if (!db_ || !raft_) return false;
+  if (!replicated_db_can_submit(db_ != nullptr, raft_ != nullptr, true)) return false;
 
   auto cmd = ReplicatedDBCommand::CreateDelete(key);
 
@@ -231,23 +274,26 @@ bool ReplicatedDB::Delete(const std::string& key) {
     return false;
   }
 
-  // Block until committed using atomic flag
-  // @unsafe - atomic operations and callback registration
-  std::atomic<int> committed{0};
+  // Block until committed using a Rusty atomic flag.
+  rusty::sync::atomic::AtomicI32 committed{0};
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
-    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+    committed.store(replicated_db_commit_callback_state(
+        status == CommitStatus::ROLLEDBACK),
+        rusty::sync::atomic::Ordering::Release);
   });
 
-  while (committed.load() == 0) {
+  while (replicated_db_commit_pending(
+      committed.load(rusty::sync::atomic::Ordering::Acquire))) {
     usleep(100);
   }
 
-  return committed.load() > 0;
+  return replicated_db_commit_succeeded(
+      committed.load(rusty::sync::atomic::Ordering::Acquire));
 }
 
 // @unsafe - Submits BATCH command through Raft, blocks until committed
 bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
-  if (!db_ || !raft_ || ops.empty()) return false;
+  if (!replicated_db_can_submit(db_ != nullptr, raft_ != nullptr, !ops.empty())) return false;
 
   auto cmd = ReplicatedDBCommand::CreateBatch(ops);
 
@@ -258,23 +304,26 @@ bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
     return false;
   }
 
-  // Block until committed using atomic flag
-  // @unsafe - atomic operations and callback registration
-  std::atomic<int> committed{0};
+  // Block until committed using a Rusty atomic flag.
+  rusty::sync::atomic::AtomicI32 committed{0};
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
-    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+    committed.store(replicated_db_commit_callback_state(
+        status == CommitStatus::ROLLEDBACK),
+        rusty::sync::atomic::Ordering::Release);
   });
 
-  while (committed.load() == 0) {
+  while (replicated_db_commit_pending(
+      committed.load(rusty::sync::atomic::Ordering::Acquire))) {
     usleep(100);
   }
 
-  return committed.load() > 0;
+  return replicated_db_commit_succeeded(
+      committed.load(rusty::sync::atomic::Ordering::Acquire));
 }
 
 // @unsafe - Direct RocksDB read (stale read, no Raft involvement)
 bool ReplicatedDB::Get(const std::string& key, std::string* value) {
-  if (!db_ || !value) return false;
+  if (!replicated_db_can_get(db_ != nullptr, value != nullptr)) return false;
 
   size_t value_len = 0;
   char* err = nullptr;
@@ -287,7 +336,7 @@ bool ReplicatedDB::Get(const std::string& key, std::string* value) {
               key.c_str(), err_str.c_str());
     return false;
   }
-  if (value_ptr == nullptr) {
+  if (!replicated_db_read_found(value_ptr != nullptr)) {
     return false;  // Key not found
   }
 
@@ -298,7 +347,8 @@ bool ReplicatedDB::Get(const std::string& key, std::string* value) {
 
 // @unsafe - Linearizable read via ReadIndex protocol
 bool ReplicatedDB::LinearizableGet(const std::string& key, std::string* value) {
-  if (!raft_ || !raft_->IsLeader()) {
+  if (!replicated_db_can_linearizable_read(raft_ != nullptr,
+                                           raft_ != nullptr && raft_->IsLeader())) {
     Log_warn("[REPLICATED-DB] LinearizableGet: not leader");
     return false;
   }
@@ -315,19 +365,20 @@ bool ReplicatedDB::LinearizableGet(const std::string& key, std::string* value) {
 
 // @unsafe - Applies committed Raft entries to local RocksDB
 void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
-  if (!db_ || !cmd.has_value()) return;
+  if (!db_ || !replicated_db_has_command_payload(cmd.has_value())) return;
 
   uint64_t index = static_cast<uint64_t>(slot);
 
   // Idempotency: skip already-applied entries
-  if (index <= last_applied_index_) {
+  if (replicated_db_should_skip_applied(index, state_core_.last_applied_index())) {
     return;
   }
 
   // Only process ReplicatedDBCommand entries
-  if (cmd.kind_ != ReplicatedDBCommand::static_kind()) {
+  if (!replicated_db_command_kind_matches(cmd.kind_,
+                                          ReplicatedDBCommand::static_kind())) {
     // Not our command type; still advance the index to avoid re-processing
-    last_applied_index_ = index;
+    state_core_.set_last_applied_index(index);
     PersistLastAppliedIndex();
     return;
   }
@@ -335,43 +386,56 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
   const auto db_cmd = marshallable_cast<ReplicatedDBCommand>(cmd);
   if (db_cmd.is_none()) {
     Log_error("[ReplicatedDB] Failed to cast payload to ReplicatedDBCommand at index {}", index);
-    last_applied_index_ = index;
+    state_core_.set_last_applied_index(index);
     PersistLastAppliedIndex();
     return;
   }
 
-  // Apply the operation
-  switch (db_cmd.unwrap()->op_) {
-    case ReplicatedDBOp::PUT:
-      ApplyPut(db_cmd.unwrap()->key_, db_cmd.unwrap()->value_);
-      break;
-    case ReplicatedDBOp::DELETE:
-      ApplyDelete(db_cmd.unwrap()->key_);
-      break;
-    case ReplicatedDBOp::BATCH:
-      for (const auto& op : db_cmd.unwrap()->batch_ops_) {
-        switch (op.op) {
-          case ReplicatedDBOp::PUT:
-            ApplyPut(op.key, op.value);
-            break;
-          case ReplicatedDBOp::DELETE:
-            ApplyDelete(op.key);
-            break;
-          default:
-            Log_error("[ReplicatedDB] Unknown batch sub-operation {}", static_cast<int>(op.op));
-            break;
-        }
+  ApplyCommand(*db_cmd.unwrap(), index);
+
+  // Update and persist last applied index
+  state_core_.set_last_applied_index(index);
+  PersistLastAppliedIndex();
+}
+
+// @unsafe - dispatches DSL-classified commands into RocksDB apply helpers.
+void ReplicatedDB::ApplyCommand(const ReplicatedDBCommand& db_cmd, uint64_t index) {
+  switch (replicated_db_command_apply_action(db_cmd.op_)) {
+    case ReplicatedDBApplyAction::PUT:
+      ApplyPut(db_cmd.key_, db_cmd.value_);
+      return;
+    case ReplicatedDBApplyAction::DELETE:
+      ApplyDelete(db_cmd.key_);
+      return;
+    case ReplicatedDBApplyAction::BATCH:
+      for (const auto& op : db_cmd.batch_ops_) {
+        ApplyBatchOperation(op);
       }
-      break;
-    default:
-      Log_error("[ReplicatedDB] Unknown operation {} at index {}",
-                static_cast<int>(db_cmd.unwrap()->op_), index);
+      return;
+    case ReplicatedDBApplyAction::UNKNOWN:
       break;
   }
 
-  // Update and persist last applied index
-  last_applied_index_ = index;
-  PersistLastAppliedIndex();
+  Log_error("[ReplicatedDB] Unknown operation {} at index {}",
+            static_cast<int>(db_cmd.op_), index);
+}
+
+// @unsafe - dispatches one DSL-classified batch operation to RocksDB.
+void ReplicatedDB::ApplyBatchOperation(const KVOperation& op) {
+  switch (replicated_db_command_apply_action(op.op)) {
+    case ReplicatedDBApplyAction::PUT:
+      ApplyPut(op.key, op.value);
+      return;
+    case ReplicatedDBApplyAction::DELETE:
+      ApplyDelete(op.key);
+      return;
+    case ReplicatedDBApplyAction::BATCH:
+    case ReplicatedDBApplyAction::UNKNOWN:
+      break;
+  }
+
+  Log_error("[ReplicatedDB] Unknown batch sub-operation {}",
+            static_cast<int>(op.op));
 }
 
 // @unsafe - RocksDB C API
@@ -401,7 +465,7 @@ void ReplicatedDB::ApplyDelete(const std::string& key) {
 
 // @unsafe - RocksDB C API
 void ReplicatedDB::PersistLastAppliedIndex() {
-  std::string idx_str = std::to_string(last_applied_index_);
+  std::string idx_str = std::to_string(state_core_.last_applied_index());
   char* err = nullptr;
   rocksdb_put(db_, write_options_,
               META_LAST_APPLIED, strlen(META_LAST_APPLIED),
@@ -424,21 +488,21 @@ void ReplicatedDB::LoadLastAppliedIndex() {
     return;
   }
   if (value_ptr == nullptr) {
-    last_applied_index_ = 0;
+    state_core_.set_last_applied_index(0);
     return;
   }
 
   std::string value(value_ptr, value_len);
   rocksdb_free(value_ptr);
   try {
-    last_applied_index_ = std::stoull(value);
+    state_core_.set_last_applied_index(std::stoull(value));
   } catch (...) {
     Log_error("[ReplicatedDB] Failed to parse last_applied_index from '{}'", value.c_str());
-    last_applied_index_ = 0;
+    state_core_.set_last_applied_index(0);
   }
 }
 
-// @unsafe - RocksDB C API
+// @unsafe - RocksDB C API; frees error strings returned by RocksDB.
 std::string ReplicatedDB::take_rocksdb_error(char** errptr) {
   if (errptr == nullptr || *errptr == nullptr) {
     return "";
@@ -453,7 +517,8 @@ std::string ReplicatedDB::take_rocksdb_error(char** errptr) {
 // CloseDB / OpenDB helpers (for snapshot loading)
 // ===========================================================================
 
-// @unsafe - Closes RocksDB, nulls db_ pointer (keeps options alive)
+// @unsafe - Closes db_ and nulls the handle. Option handles stay alive so
+// OpenDB can reuse the existing RocksDB configuration after snapshot loading.
 void ReplicatedDB::CloseDB() {
   if (db_ != nullptr) {
     rocksdb_close(db_);
@@ -461,7 +526,7 @@ void ReplicatedDB::CloseDB() {
   }
 }
 
-// @unsafe - Opens RocksDB at db_path_ using existing options
+// @unsafe - Opens db_path_ using the constructor-owned option handles.
 bool ReplicatedDB::OpenDB() {
   if (db_ != nullptr) {
     Log_warn("[ReplicatedDB] OpenDB called but db_ is already open");
@@ -507,9 +572,9 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
     return "";
   }
 
-  std::string cp_dir = db_path_ + "_ckpt_" + std::to_string(last_applied_index_);
+  std::string cp_dir = db_path_ + "_ckpt_" + std::to_string(state_core_.last_applied_index());
 
-  // @unsafe { filesystem operations }
+  // @unsafe { RocksDB checkpoint handle and filesystem operations }
   rocksdb_checkpoint_create(cp, cp_dir.c_str(), 0, &err);
   rocksdb_checkpoint_object_destroy(cp);
 
@@ -600,7 +665,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
   std::string result;
   size_t raw_size = blob.size();
 
-  if (compression_enabled_) {
+  if (state_core_.compression_enabled()) {
     int max_dst = LZ4_compressBound(static_cast<int>(blob.size()));
     std::string compressed(max_dst, '\0');
     int compressed_size = LZ4_compress(
@@ -648,7 +713,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
 
   // 0. Check compression header and decompress if needed
   // @unsafe { LZ4 C API, memcpy }
-  if (data.size() < 1) {
+  if (!replicated_db_snapshot_has_header(data.size())) {
     Log_error("[ReplicatedDB] LoadStateMachineSnapshot: data too small for header");
     return;
   }
@@ -656,9 +721,9 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   uint8_t compression = static_cast<uint8_t>(data[0]);
   std::string blob;
 
-  if (compression == SNAPSHOT_LZ4) {
+  if (replicated_db_snapshot_is_lz4(compression, SNAPSHOT_LZ4)) {
     // LZ4 compressed: header(1) + orig_size(4) + compressed_data
-    if (data.size() < 1 + sizeof(uint32_t)) {
+    if (!replicated_db_snapshot_has_bytes(1, sizeof(uint32_t), data.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated LZ4 header");
       return;
     }
@@ -676,7 +741,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     }
     Log_info("[ReplicatedDB] Snapshot decompressed: {} -> {} bytes",
              data.size(), orig_size);
-  } else if (compression == SNAPSHOT_UNCOMPRESSED) {
+  } else if (replicated_db_snapshot_is_uncompressed(compression, SNAPSHOT_UNCOMPRESSED)) {
     // Uncompressed: header(1) + raw blob
     blob = data.substr(1);
   } else {
@@ -687,7 +752,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
 
   // 1. Parse the blob header
   size_t offset = 0;
-  if (blob.size() < sizeof(uint32_t)) {
+  if (!replicated_db_snapshot_has_bytes(offset, sizeof(uint32_t), blob.size())) {
     Log_error("[ReplicatedDB] LoadStateMachineSnapshot: blob too small for header");
     return;
   }
@@ -696,15 +761,11 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   offset += sizeof(num_files);
 
   // Parse all file entries before modifying anything
-  struct FileEntry {
-    std::string name;
-    std::string contents;
-  };
-  std::vector<FileEntry> files;
+  std::vector<ReplicatedDBFileEntry> files;
   files.reserve(num_files);
 
   for (uint32_t i = 0; i < num_files; i++) {
-    if (offset + sizeof(uint32_t) > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(offset, sizeof(uint32_t), blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} name_len", i);
       return;
     }
@@ -712,14 +773,14 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     std::memcpy(&name_len, blob.data() + offset, sizeof(name_len));
     offset += sizeof(name_len);
 
-    if (offset + name_len > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(offset, name_len, blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} name", i);
       return;
     }
     std::string name(blob.data() + offset, name_len);
     offset += name_len;
 
-    if (offset + sizeof(uint64_t) > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(offset, sizeof(uint64_t), blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} size", i);
       return;
     }
@@ -727,7 +788,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     std::memcpy(&file_size, blob.data() + offset, sizeof(file_size));
     offset += sizeof(file_size);
 
-    if (offset + file_size > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(offset, file_size, blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} data", i);
       return;
     }
@@ -743,6 +804,8 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   // 3. Delete the old database directory
   // @unsafe { RocksDB C API - destroy_db removes all DB files }
   {
+    // Temporary options handle used only for destroy_db; keep this separate
+    // from options_, which remains owned by this ReplicatedDB for reopen.
     rocksdb_options_t* destroy_opts = rocksdb_options_create();
     char* err = nullptr;
     rocksdb_destroy_db(destroy_opts, db_path_.c_str(), &err);
@@ -779,5 +842,5 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   LoadLastAppliedIndex();
 
   Log_info("[ReplicatedDB] Loaded snapshot: {} files, last_applied_index={}",
-           num_files, last_applied_index_);
+           num_files, state_core_.last_applied_index());
 }

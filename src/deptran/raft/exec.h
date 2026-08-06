@@ -10,10 +10,10 @@ class RaftExecutor: public Executor {
  public:
   using Executor::Executor;
 
-  /**
-   * return max_ballot
-   */
-  // @unsafe - calls Log_warn (non-borrow-checked I/O)
+  // Legacy Executor compatibility hooks. Raft does not use the classic
+  // prepare/decide executor protocol; RaftServer::Start/commit processing is
+  // the active path. Keep these symbols for callers that construct an
+  // Executor through the legacy Frame factory.
   ballot_t Prepare(const ballot_t ballot);
 
   // removed dead `Accept` and
@@ -21,7 +21,6 @@ class RaftExecutor: public Executor {
   // didn't override anything in the `Executor` base, and had no
   // callers anywhere in the tree.
 
-  // @unsafe - calls Log_warn (non-borrow-checked I/O)
   ballot_t Decide(ballot_t ballot, CmdData& cmd);
 };
 

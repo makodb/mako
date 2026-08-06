@@ -41,154 +41,271 @@ namespace raft {
 // ---------------------------------------------------------------------------
 // RequestVote
 // ---------------------------------------------------------------------------
+#if RUSTYCPP_RUST
+pub struct VoteReq {
+    last_log_idx: u64,
+    last_log_term: i64,
+    candidate_site_id: u16,
+    current_term: i64,
+}
+
+pub struct VoteReply {
+    max_ballot: i64,
+    vote_granted: bool,
+}
+
+pub struct VoteDurableReq {
+    term: i64,
+    voter_id: u16,
+}
+
+pub struct VoteDurableReply {
+    acknowledged: bool,
+}
+
+pub struct AppendEntriesDurableReq {
+    term: i64,
+    follower_id: u16,
+    last_log_index: u64,
+}
+
+pub struct AppendEntriesDurableReply {
+    acknowledged: bool,
+}
+
+pub struct AppendEntriesReply {
+    follower_append_ok: u64,
+    follower_current_term: u64,
+    follower_last_log_index: u64,
+    follower_ack_type: u64,
+}
+
+pub struct AppendEntriesReq {
+    slot: u64,
+    ballot: i64,
+    leader_current_term: u64,
+    leader_site_id: u16,
+    leader_prev_log_index: u64,
+    leader_prev_log_term: u64,
+    leader_commit_index: u64,
+    cmd: janus::Command,
+    leader_next_log_term: u64,
+}
+
+pub struct EmptyAppendEntriesReq {
+    slot: u64,
+    ballot: i64,
+    leader_current_term: u64,
+    leader_site_id: u16,
+    leader_prev_log_index: u64,
+    leader_prev_log_term: u64,
+    leader_commit_index: u64,
+    trigger_election_now: bool,
+}
+
+pub struct EmptyAppendEntriesReply {
+    follower_append_ok: u64,
+    follower_current_term: u64,
+    follower_last_log_index: u64,
+    follower_ack_type: u64,
+}
+
+pub struct TimeoutNowReq {
+    leader_term: u64,
+    leader_site_id: u16,
+}
+
+pub struct TimeoutNowReply {
+    follower_term: u64,
+    success: bool,
+}
+
+pub struct NotifyRestartReq {
+    restarted_site_id: u16,
+}
+
+pub struct NotifyRestartReply {
+    acknowledged: bool,
+}
+
+pub struct InstallSnapshotReply {
+    term_out: u64,
+}
+
+pub struct InstallSnapshotReq {
+    term: u64,
+    leader_id: u64,
+    last_included_index: u64,
+    last_included_term: u64,
+    data: std::string,
+}
+
+pub struct AddServerReq {
+    term: u64,
+    new_server_id: u64,
+    new_server_addr: std::string,
+}
+
+pub struct AddServerReply {
+    success: bool,
+    error_msg: std::string,
+    leader_hint: u64,
+}
+
+pub struct RemoveServerReq {
+    term: u64,
+    server_id: u64,
+}
+
+pub struct RemoveServerReply {
+    success: bool,
+    error_msg: std::string,
+    leader_hint: u64,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=8b00ade947420650878b60556ca2e93af9dbf9089ea64668e9f31e57cba289f1*/
+struct VoteReq;
+struct VoteReply;
+struct VoteDurableReq;
+struct VoteDurableReply;
+struct AppendEntriesDurableReq;
+struct AppendEntriesDurableReply;
+struct AppendEntriesReply;
+struct AppendEntriesReq;
+struct EmptyAppendEntriesReq;
+struct EmptyAppendEntriesReply;
+struct TimeoutNowReq;
+struct TimeoutNowReply;
+struct NotifyRestartReq;
+struct NotifyRestartReply;
+struct InstallSnapshotReply;
+struct InstallSnapshotReq;
+struct AddServerReq;
+struct AddServerReply;
+struct RemoveServerReq;
+struct RemoveServerReply;
+
 struct VoteReq {
-  uint64_t last_log_idx{0};
-  ballot_t last_log_term{0};
-  siteid_t candidate_site_id{0};
-  ballot_t current_term{0};
+    uint64_t last_log_idx;
+    int64_t last_log_term;
+    uint16_t candidate_site_id;
+    int64_t current_term;
 };
 
 struct VoteReply {
-  ballot_t max_ballot{0};
-  bool     vote_granted{false};
+    int64_t max_ballot;
+    bool vote_granted;
 };
 
-// ---------------------------------------------------------------------------
-// VoteDurable — sent by a voter once its vote has been persisted.
-// ---------------------------------------------------------------------------
 struct VoteDurableReq {
-  ballot_t term{0};
-  siteid_t voter_id{0};
+    int64_t term;
+    uint16_t voter_id;
 };
 
 struct VoteDurableReply {
-  bool acknowledged{false};
+    bool acknowledged;
 };
 
-// ---------------------------------------------------------------------------
-// AppendEntries (with command payload)
-// ---------------------------------------------------------------------------
-struct AppendEntriesReq {
-  uint64_t       slot{0};
-  ballot_t       ballot{0};
-  uint64_t       leader_current_term{0};
-  siteid_t       leader_site_id{0};
-  uint64_t       leader_prev_log_index{0};
-  uint64_t       leader_prev_log_term{0};
-  uint64_t       leader_commit_index{0};
-  // 2 step 5 (2026-05-05): `cmd` migrated from `MarshallDeputy`
-  // to `janus::Command` (= `SerializableEnvelope<MakoCommands>`)
-  // alongside the Marshallable/MarshallDeputy retirement.  Wire format
-  // is identical (`[v32 kind][payload]` for both, post-L9 alignment).
-  ::janus::Command cmd{};
-  uint64_t       leader_next_log_term{0};
-};
-
-struct AppendEntriesReply {
-  uint64_t follower_append_ok{0};
-  uint64_t follower_current_term{0};
-  uint64_t follower_last_log_index{0};
-  uint64_t follower_ack_type{0};
-};
-
-// ---------------------------------------------------------------------------
-// EmptyAppendEntries (heartbeat / election trigger)
-// ---------------------------------------------------------------------------
-struct EmptyAppendEntriesReq {
-  uint64_t slot{0};
-  ballot_t ballot{0};
-  uint64_t leader_current_term{0};
-  siteid_t leader_site_id{0};
-  uint64_t leader_prev_log_index{0};
-  uint64_t leader_prev_log_term{0};
-  uint64_t leader_commit_index{0};
-  bool     trigger_election_now{false};
-};
-
-struct EmptyAppendEntriesReply {
-  uint64_t follower_append_ok{0};
-  uint64_t follower_current_term{0};
-  uint64_t follower_last_log_index{0};
-  uint64_t follower_ack_type{0};
-};
-
-// ---------------------------------------------------------------------------
-// AppendEntriesDurable — follower acks that its log has been fsync'd.
-// ---------------------------------------------------------------------------
 struct AppendEntriesDurableReq {
-  ballot_t term{0};
-  siteid_t follower_id{0};
-  uint64_t last_log_index{0};
+    int64_t term;
+    uint16_t follower_id;
+    uint64_t last_log_index;
 };
 
 struct AppendEntriesDurableReply {
-  bool acknowledged{false};
+    bool acknowledged;
 };
 
-// ---------------------------------------------------------------------------
-// TimeoutNow — leader asks a follower to immediately start election
-// ---------------------------------------------------------------------------
+struct AppendEntriesReply {
+    uint64_t follower_append_ok;
+    uint64_t follower_current_term;
+    uint64_t follower_last_log_index;
+    uint64_t follower_ack_type;
+};
+
+struct AppendEntriesReq {
+    uint64_t slot;
+    int64_t ballot;
+    uint64_t leader_current_term;
+    uint16_t leader_site_id;
+    uint64_t leader_prev_log_index;
+    uint64_t leader_prev_log_term;
+    uint64_t leader_commit_index;
+    janus::Command cmd;
+    uint64_t leader_next_log_term;
+};
+
+struct EmptyAppendEntriesReq {
+    uint64_t slot;
+    int64_t ballot;
+    uint64_t leader_current_term;
+    uint16_t leader_site_id;
+    uint64_t leader_prev_log_index;
+    uint64_t leader_prev_log_term;
+    uint64_t leader_commit_index;
+    bool trigger_election_now;
+};
+
+struct EmptyAppendEntriesReply {
+    uint64_t follower_append_ok;
+    uint64_t follower_current_term;
+    uint64_t follower_last_log_index;
+    uint64_t follower_ack_type;
+};
+
 struct TimeoutNowReq {
-  uint64_t leader_term{0};
-  siteid_t leader_site_id{0};
+    uint64_t leader_term;
+    uint16_t leader_site_id;
 };
 
 struct TimeoutNowReply {
-  uint64_t follower_term{0};
-  bool     success{false};
+    uint64_t follower_term;
+    bool success;
 };
 
-// ---------------------------------------------------------------------------
-// NotifyRestart — after crash recovery, tell peers to reconnect.
-// ---------------------------------------------------------------------------
 struct NotifyRestartReq {
-  siteid_t restarted_site_id{0};
+    uint16_t restarted_site_id;
 };
 
 struct NotifyRestartReply {
-  bool acknowledged{false};
-};
-
-// ---------------------------------------------------------------------------
-// InstallSnapshot
-// ---------------------------------------------------------------------------
-struct InstallSnapshotReq {
-  uint64_t    term{0};
-  uint64_t    leader_id{0};
-  uint64_t    last_included_index{0};
-  uint64_t    last_included_term{0};
-  std::string data;  // raw snapshot bytes; LZ4-compressed in RocksDB impl
+    bool acknowledged;
 };
 
 struct InstallSnapshotReply {
-  uint64_t term_out{0};
+    uint64_t term_out;
 };
 
-// ---------------------------------------------------------------------------
-// AddServer / RemoveServer (membership change)
-// ---------------------------------------------------------------------------
+struct InstallSnapshotReq {
+    uint64_t term;
+    uint64_t leader_id;
+    uint64_t last_included_index;
+    uint64_t last_included_term;
+    std::string data;
+};
+
 struct AddServerReq {
-  uint64_t    term{0};
-  uint64_t    new_server_id{0};
-  std::string new_server_addr;
+    uint64_t term;
+    uint64_t new_server_id;
+    std::string new_server_addr;
 };
 
 struct AddServerReply {
-  bool        success{false};
-  std::string error_msg;
-  uint64_t    leader_hint{0};
+    bool success;
+    std::string error_msg;
+    uint64_t leader_hint;
 };
 
 struct RemoveServerReq {
-  uint64_t term{0};
-  uint64_t server_id{0};
+    uint64_t term;
+    uint64_t server_id;
 };
 
 struct RemoveServerReply {
-  bool        success{false};
-  std::string error_msg;
-  uint64_t    leader_hint{0};
+    bool success;
+    std::string error_msg;
+    uint64_t leader_hint;
 };
+/*RUSTYCPP:GEN-END id=messages.1*/
 
 }  // namespace raft
 }  // namespace janus

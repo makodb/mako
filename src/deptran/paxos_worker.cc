@@ -109,7 +109,7 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
 	      Log_info("Recieved a zero length log");
       }
       //Log_info("Paxos commit a log, par_id:{}, len: {}, epoch:{}, slot_id:{}",site_info_->partition_id_, len, cur_epoch, slot_id);
-      //Log_info("in Next, partition_id: {}, id: {}, proc_name: {}, role: {}, slot: {}", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
+      //Log_info("in Next, partition_id: {}, id: {}, proc_name: {}, role: {}, slot: {}", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);
       if (len > 0) {
          const char *log = sp_log_entry.unwrap()->log_entry.c_str() ;
          
@@ -121,10 +121,10 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
                                                     un_replay_logs_);
          status = encoded_value % 10;  // Extract status from last digit
          uint32_t timestamp = encoded_value / 10;  // Extract timestamp
-         //Log_info("XXXXX: partition_id: {}, id: {}, proc_name: {}, role: {}", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role);                                 
+         //Log_info("XXXXX: partition_id: {}, id: {}, proc_name: {}, role: {}", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role);
          //Log_info("received a message: {}, status: {}, timestamp: {}", sp_log_entry->length, status, timestamp);
          // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
-         //Log_info("par_id: {}, append a log into un_replay_logs, size: {}, status: {}, first[0]: {}, received: {}", 
+         //Log_info("par_id: {}, append a log into un_replay_logs, size: {}, status: {}, first[0]: {}, received: {}",
          //         site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry->length);
          if (status == janus::PaxosStatus::STATUS_SAFETY_FAIL) {
              char *dest = (char *)malloc(len) ;

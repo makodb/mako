@@ -151,7 +151,6 @@ class BenchmarkProxy(object):
             return __result__[1][0]
         elif len(__result__[1]) > 1:
             return __result__[1]
-
     def sync_fast_dot_prod(__self__, p1, p2):
         __result__ = __self__.__clnt__.sync_call(BenchmarkService.FAST_DOT_PROD, [p1, p2], BenchmarkService.__input_type_info__['fast_dot_prod'], BenchmarkService.__output_type_info__['fast_dot_prod'])
         if __result__[0] != 0:
@@ -250,4 +249,3 @@ class BenchmarkProxy(object):
             return __result__[1][0]
         elif len(__result__[1]) > 1:
             return __result__[1]
-

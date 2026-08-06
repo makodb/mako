@@ -7,8 +7,21 @@ cmake_minimum_required(VERSION 3.30)
 # also turns later transitive `#include`s from rusty-cpp/yaml-cpp/etc.
 # into no-ops via the header guard. The UUID gates CMake's
 # experimental `import std;` materialization and must be set BEFORE
-# `project()`.
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+# `project()`. This opt-in UUID deliberately changes between CMake releases.
+# Keep the supported values here rather than silently configuring a tree that
+# cannot materialize the C++ standard-library module target.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.3")
+    # CMake 4.3.x
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "3.31" AND
+       CMAKE_VERSION VERSION_LESS "3.32")
+    # CMake 3.31.x
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
+else()
+    message(FATAL_ERROR
+        "Unsupported CMake ${CMAKE_VERSION} for C++ `import std;`. "
+        "Use CMake 3.31.x or 4.3.x (see apt_packages.sh).")
+endif()
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -2529,7 +2542,6 @@ if(BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
     target_compile_options(test_rpc_log_storage PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_log_storage
-        txlog_core
         ${RPC_TEST_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}

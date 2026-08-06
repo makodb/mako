@@ -227,25 +227,16 @@ class RaftServer : public TxLogServer {
 };
 ```
 
-#### 3. Raft Stub Implementation: `src/deptran/raft_main_helper.cc`
+#### 3. Historical Raft helper sketch
 
-**Current Status:** All functions are `[RAFT_STUB]` - not implemented!
+This section is a historical design sketch from the early migration, not a
+current implementation status report. `raft_main_helper.cc` now has working
+setup, callback registration, submission, epoch, and shutdown paths. Remaining
+helper gaps are tracked in `main-helper-impl.md`.
 
-```cpp
-void register_for_follower_par_id_return(...) {
-  std::cerr << "[RAFT_STUB] register_for_follower_par_id_return() not yet implemented.\n";
-}
-
-void register_for_leader_par_id_return(...) {
-  std::cerr << "[RAFT_STUB] register_for_leader_par_id_return() not yet implemented.\n";
-}
-
-void add_log_to_nc(...) {
-  std::cerr << "[RAFT_STUB] add_log_to_nc() not yet implemented.\n";
-}
-```
-
-**This is what we need to implement!**
+The initial design used placeholder callbacks for these APIs. They are now
+implemented by the worker callback-registration and submission paths described
+in `main-helper-impl.md`.
 
 ---
 
@@ -494,7 +485,7 @@ void RaftWorker::Submit(const char* log, int len, uint32_t par_id) {
 
   // Create Marshallable command from log
   auto cmd = std::make_shared<TpcCommitCommand>();
-  // TODO: Deserialize log into cmd
+  // Historical sketch: current submission uses the implemented helper path.
 
   int index, term;
   raft_sched_->Start(cmd, &index, &term);
@@ -510,7 +501,8 @@ void RaftWorker::register_apply_callback_par_id_return(
   // Register with RaftServer's app_next_
   raft_sched_->app_next_ = [this, cb](int slot, shared_ptr<Marshallable> cmd) -> int {
     // Serialize cmd to char* log
-    // TODO: Implement serialization
+    // Historical sketch: current callback serialization uses the implemented
+    // Raft worker path.
     const char* log = nullptr;
     int len = 0;
     int par_id = this->site_info_->partition_id_;
@@ -765,7 +757,7 @@ int shutdown_paxos() {
   }
 
   // Wait for cleanup
-  // TODO: Join threads, cleanup resources
+  // Current shutdown performs ordered worker/thread cleanup here.
 
   raft_workers_g.clear();
   return 0;

@@ -1,6 +1,4 @@
 #pragma once
-
-#include <memory>
 #include <deptran/communicator.h>
 #include "../frame.h"
 #include "../constants.h"
@@ -10,20 +8,27 @@
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
+#include <rusty/mutex.hpp>
 
 namespace janus {
 
-// @unsafe - inherits from non-@interface Frame (individual methods are @safe)
+// @unsafe - owns the Raft protocol singletons behind raw-pointer factory APIs
+// inherited from Frame. Callers receive borrowed raw pointers from
+// CreateScheduler()/CreateCommo(); RaftFrame keeps ownership in Rusty boxes.
 class RaftFrame : public Frame {
  private:
   // Safe shared mutable counter using Arc<Cell<T>> pattern
   rusty::Arc<rusty::Cell<slotid_t>> slot_hint_ = rusty::Arc<rusty::Cell<slotid_t>>::make(1);
 #ifdef RAFT_TEST_CORO
-  static std::mutex raft_test_mutex_;
+  // @unsafe - test-only global coordination state; keep hand-written while the
+  // lab coroutine harness exists.
+  static rusty::Mutex raft_test_mutex_;
   // raft_test_fiber_ demoted to a file-scope static in frame.cc because
   // rusty::Rc is now module-only (no header). All references live in
   // frame.cc; nothing outside this TU consumes the field.
   static uint16_t n_replicas_;
+  // @unsafe - borrowed frame registry for RAFT_TEST_CORO; entries are not owned
+  // by this map.
   static map<siteid_t, RaftFrame*> frames_;
   static bool all_sites_created_s;
   static bool tests_done_;
@@ -35,9 +40,14 @@ class RaftFrame : public Frame {
  public:
   RaftFrame(int mode);
   ~RaftFrame();  // Destructor to clean up owned resources
-  std::unique_ptr<RaftCommo> commo_;  // @unsafe - unique_ptr kept for test file compatibility
-  /* TODO: have another class for common data */
-  std::unique_ptr<RaftServer> svr_;  // @unsafe - unique_ptr kept for test file compatibility
+  // @unsafe - owning communicator handle. Exposed as a raw borrowed
+  // Communicator* by CreateCommo() for legacy scheduler/coordinator APIs.
+  rusty::Option<rusty::Box<RaftCommo>> commo_{rusty::None};
+  // RaftFrame currently owns both RaftCommo and RaftServer so coordinators can
+  // borrow the same common Raft state through legacy Frame factory APIs.
+  // @unsafe - owning scheduler/server handle. Exposed as a raw borrowed
+  // TxLogServer* by CreateScheduler(); callers must not delete it.
+  rusty::Option<rusty::Box<RaftServer>> svr_{rusty::None};
   Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) override;
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,

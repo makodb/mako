@@ -219,7 +219,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
   // auto endt2 = std::chrono::high_resolution_clock::now();
   sp_quorum->wait();
   // auto endt3 = std::chrono::high_resolution_clock::now();
-  // Log_info("Wan_wait: {}, {}", 
+  // Log_info("Wan_wait: {}, {}",
   //         std::chrono::duration_cast<std::chrono::milliseconds>(endt2 - strt).count(),
   //         std::chrono::duration_cast<std::chrono::milliseconds>(endt3 - endt2).count());
 

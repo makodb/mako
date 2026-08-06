@@ -6,6 +6,13 @@
 #include "messages.hpp"
 #include <map>
 #include <mutex>
+#include <rusty/function.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/cell.hpp>
+#include <rusty/mutex.hpp>
+#include <rusty/slice.hpp>
+
+import rusty;
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -33,18 +40,85 @@ class TxData;
  * - DOWN: Peer responded with "I'm down" (svr_ == nullptr), no retry needed
  * - PENDING: Should send/retry NotifyRestart (not yet acknowledged or timed out)
  */
-enum class NotifyRestartStatus {
-  ACKNOWLEDGED,  // Peer reconnected to us
-  DOWN,          // Peer told us it's down (no retry needed, will reconnect when it restarts)
-  PENDING        // Need to send/retry NotifyRestart
-};
+#if RUSTYCPP_RUST
+pub enum NotifyRestartStatus {
+    ACKNOWLEDGED,
+    DOWN,
+    PENDING,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.1 version=1 rust_sha256=49a2d41c8e5a2dbf51a9143474e2bcdffb9a9adaba6a56dbbebec0d97ba501c5*/
+enum class NotifyRestartStatus;
+inline constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED();
+inline constexpr NotifyRestartStatus NotifyRestartStatus_DOWN();
+inline constexpr NotifyRestartStatus NotifyRestartStatus_PENDING();
 
-// @unsafe - inherits from non-@interface base QuorumEvent
+enum class NotifyRestartStatus {
+    ACKNOWLEDGED,
+    DOWN,
+    PENDING
+};
+inline constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED() { return NotifyRestartStatus::ACKNOWLEDGED; }
+inline constexpr NotifyRestartStatus NotifyRestartStatus_DOWN() { return NotifyRestartStatus::DOWN; }
+inline constexpr NotifyRestartStatus NotifyRestartStatus_PENDING() { return NotifyRestartStatus::PENDING; }
+/*RUSTYCPP:GEN-END id=commo.1*/
+
+#if RUSTYCPP_RUST
+pub fn commo_notify_restart_is_pending(status: NotifyRestartStatus) -> bool {
+    status == NotifyRestartStatus::PENDING
+}
+
+pub fn commo_notify_restart_is_acknowledged(status: NotifyRestartStatus) -> bool {
+    status == NotifyRestartStatus::ACKNOWLEDGED
+}
+
+pub fn commo_notify_restart_is_down(status: NotifyRestartStatus) -> bool {
+    status == NotifyRestartStatus::DOWN
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.notify_restart_helpers version=1 rust_sha256=4982eba0239b313218739f794edbf2bf5eb185851fb1bbca410230298075554c*/
+inline bool commo_notify_restart_is_pending(NotifyRestartStatus status) {
+    return status == NotifyRestartStatus::PENDING;
+}
+
+inline bool commo_notify_restart_is_acknowledged(NotifyRestartStatus status) {
+    return status == NotifyRestartStatus::ACKNOWLEDGED;
+}
+
+inline bool commo_notify_restart_is_down(NotifyRestartStatus status) {
+    return status == NotifyRestartStatus::DOWN;
+}
+/*RUSTYCPP:GEN-END id=commo.notify_restart_helpers*/
+
+#if RUSTYCPP_RUST
+pub fn commo_quorum_should_record_vote(vote_yes: bool, voter_id: u16) -> bool {
+    vote_yes && voter_id != 0
+}
+
+pub fn commo_quorum_should_advance_term(term: u64, highest_term: u64) -> bool {
+    term > highest_term
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.quorum_decisions version=1 rust_sha256=19672f928ad7ccafc3eff033ad9b0e0f264846beeda995bb311705d367052a3c*/
+inline bool commo_quorum_should_record_vote(bool vote_yes, uint16_t voter_id);
+inline bool commo_quorum_should_advance_term(uint64_t term, uint64_t highest_term);
+
+inline bool commo_quorum_should_record_vote(bool vote_yes, uint16_t voter_id) {
+    return rusty::detail::deref_if_pointer_like(vote_yes) && (rusty::detail::deref_if_pointer_like(voter_id) != static_cast<uint16_t>(0));
+}
+
+inline bool commo_quorum_should_advance_term(uint64_t term, uint64_t highest_term) {
+    return rusty::detail::deref_if_pointer_like(term) > rusty::detail::deref_if_pointer_like(highest_term);
+}
+/*RUSTYCPP:GEN-END id=commo.quorum_decisions*/
+
+// @unsafe - owns the flattened QuorumEvent through the upstream composition
+// wrapper and tracks voters in a Rusty mutex.
 class RaftVoteQuorumEvent: public QuorumEventWrapper {
  private:
   // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
-  std::set<siteid_t> spec_voters_;
-  std::mutex voters_mtx_;
+  rusty::Mutex<rusty::BTreeSet<siteid_t>> spec_voters_{
+      rusty::BTreeSet<siteid_t>::new_()};
 
  public:
   using QuorumEventWrapper::QuorumEventWrapper;
@@ -59,13 +133,13 @@ class RaftVoteQuorumEvent: public QuorumEventWrapper {
       // @unsafe
       { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
       // Track the voter for speculative voting
-      if (voter_id != 0) {
-        std::lock_guard<std::mutex> lock(voters_mtx_);
-        spec_voters_.insert(voter_id);
+      if (commo_quorum_should_record_vote(y, voter_id)) {
+        auto voters = spec_voters_.lock().unwrap();
+        voters->insert(voter_id);
       }
     } else {
       vote_no();
-      if(term > q().highest_term_.get())
+      if (commo_quorum_should_advance_term(term, q().highest_term_.get()))
       {
         q().highest_term_.set(term);
       }
@@ -84,22 +158,231 @@ class RaftVoteQuorumEvent: public QuorumEventWrapper {
 
   // @unsafe - Get the set of sites that voted yes (memory votes)
   std::set<siteid_t> GetSpecVoters() {
-    std::lock_guard<std::mutex> lock(voters_mtx_);
-    return spec_voters_;
+    auto voters = spec_voters_.lock().unwrap();
+    std::set<siteid_t> result;
+    auto iter = voters->iter();
+    for (auto voter = iter.next(); voter.is_some(); voter = iter.next()) {
+      result.insert(voter.unwrap());
+    }
+    return result;
   }
 };
 
-// @unsafe - contains std::recursive_mutex (non-borrow-checked type)
-class SendAppendEntriesResults {
- public:
-  std::recursive_mutex mtx;
-  bool done = false;
-  uint64_t ok = 0;
-  uint64_t followerTerm = 0;
-  uint64_t followerLastLogIndex = 0;
-  uint64_t followerAckType = 0;  // 0=Memory, 1=Durable
-  bool empty = true;
+struct SendAppendEntriesResults;
+
+inline SendAppendEntriesResults send_append_entries_results_defaults();
+
+#if RUSTYCPP_RUST
+pub struct SendAppendEntriesResults {
+    done: bool,
+    ok: u64,
+    followerTerm: u64,
+    followerLastLogIndex: u64,
+    followerAckType: u64,
+    empty: bool,
+}
+
+impl SendAppendEntriesResults {
+    fn defaults() -> SendAppendEntriesResults {
+        send_append_entries_results_defaults()
+    }
+
+    // @safe
+    fn apply_reply(&mut self,
+                   ok: u64,
+                   follower_term: u64,
+                   follower_last_log_index: u64,
+                   follower_ack_type: u64,
+                   has_cmd: bool) {
+        self.ok = ok;
+        self.followerTerm = follower_term;
+        self.followerLastLogIndex = follower_last_log_index;
+        self.followerAckType = follower_ack_type;
+        self.empty = !has_cmd;
+        self.done = !(ok == 0 && follower_term == 0 && follower_last_log_index == 0);
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.send_append_entries_results version=1 rust_sha256=6b6bca23f8357319e59dea5bf378dd812d77f4c980f9be24836198af6290a9af*/
+struct SendAppendEntriesResults;
+
+struct SendAppendEntriesResults {
+    bool done;
+    uint64_t ok;
+    uint64_t followerTerm;
+    uint64_t followerLastLogIndex;
+    uint64_t followerAckType;
+    bool empty;
+
+    static SendAppendEntriesResults defaults();
+    void apply_reply(uint64_t ok, uint64_t follower_term, uint64_t follower_last_log_index, uint64_t follower_ack_type, bool has_cmd);
 };
+
+
+inline SendAppendEntriesResults SendAppendEntriesResults::defaults() {
+    return send_append_entries_results_defaults();
+}
+
+inline void SendAppendEntriesResults::apply_reply(uint64_t ok, uint64_t follower_term, uint64_t follower_last_log_index, uint64_t follower_ack_type, bool has_cmd) {
+    this->ok = std::move(ok);
+    this->followerTerm = std::move(follower_term);
+    this->followerLastLogIndex = std::move(follower_last_log_index);
+    this->followerAckType = std::move(follower_ack_type);
+    this->empty = !has_cmd;
+    this->done = !(((rusty::detail::deref_if_pointer_like(ok) == static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(follower_term) == static_cast<uint64_t>(0))) && (rusty::detail::deref_if_pointer_like(follower_last_log_index) == static_cast<uint64_t>(0)));
+}
+/*RUSTYCPP:GEN-END id=commo.send_append_entries_results*/
+
+inline SendAppendEntriesResults send_append_entries_results_defaults() {
+  SendAppendEntriesResults results{};
+  results.done = false;
+  results.ok = 0;
+  results.followerTerm = 0;
+  results.followerLastLogIndex = 0;
+  results.followerAckType = 0;
+  results.empty = true;
+  return results;
+}
+
+// @safe - value-only interpretation of an AppendEntries callback result. The
+// async callback lifetime, shared result object, and RPC fanout stay in
+// RaftCommo; these helpers only classify already-copied scalar reply fields.
+#if RUSTYCPP_RUST
+pub fn commo_append_entries_empty_from_cmd(has_cmd: bool) -> bool {
+    !has_cmd
+}
+
+pub fn commo_append_entries_reply_lost(ok: u64,
+                                       term: u64,
+                                       last_log_index: u64) -> bool {
+    ok == 0 && term == 0 && last_log_index == 0
+}
+
+pub fn commo_append_entries_done_from_reply(ok: u64,
+                                            term: u64,
+                                            last_log_index: u64) -> bool {
+    !commo_append_entries_reply_lost(ok, term, last_log_index)
+}
+
+pub fn commo_proxy_is_target(proxy_site: u16, target_site: u16) -> bool {
+    proxy_site == target_site
+}
+
+pub fn commo_proxy_is_self(proxy_site: u16, self_site: u16) -> bool {
+    proxy_site == self_site
+}
+
+pub fn commo_future_failed(error_code: i32) -> bool {
+    error_code != 0
+}
+
+pub fn commo_future_result_ok(is_ok: bool) -> bool {
+    is_ok
+}
+
+pub fn commo_should_send_empty_append_entries(has_cmd: bool) -> bool {
+    !has_cmd
+}
+
+pub fn commo_callback_is_set(has_callback: bool) -> bool {
+    has_callback
+}
+
+pub fn commo_should_track_notify_restart_peer(peer_site: u16,
+                                               self_site: u16) -> bool {
+    peer_site != self_site
+}
+
+pub fn commo_retry_has_pending_sites(pending_site_count: u64) -> bool {
+    pending_site_count > 0
+}
+
+pub fn commo_make_append_entries_reply(
+    ok: u64,
+    term: u64,
+    last_log_index: u64,
+    ack_type: u64
+) -> raft::AppendEntriesReply {
+    raft::AppendEntriesReply {
+        follower_append_ok: ok,
+        follower_current_term: term,
+        follower_last_log_index: last_log_index,
+        follower_ack_type: ack_type,
+    }
+}
+
+pub fn commo_make_vote_reply(term: i64, vote_granted: bool) -> raft::VoteReply {
+    raft::VoteReply {
+        max_ballot: term,
+        vote_granted,
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_result_helpers version=1 rust_sha256=edfb3f3c405c14062356f5ed026c8596b2c2e57b148e4730c1493eb8a47241ff*/
+inline bool commo_append_entries_empty_from_cmd(bool has_cmd);
+inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index);
+inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index);
+inline bool commo_proxy_is_target(uint16_t proxy_site, uint16_t target_site);
+inline bool commo_proxy_is_self(uint16_t proxy_site, uint16_t self_site);
+inline bool commo_future_failed(int32_t error_code);
+inline bool commo_future_result_ok(bool is_ok);
+inline bool commo_should_send_empty_append_entries(bool has_cmd);
+inline bool commo_callback_is_set(bool has_callback);
+inline bool commo_should_track_notify_restart_peer(uint16_t peer_site, uint16_t self_site);
+inline bool commo_retry_has_pending_sites(uint64_t pending_site_count);
+
+inline bool commo_append_entries_empty_from_cmd(bool has_cmd) {
+    return !has_cmd;
+}
+
+inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return ok == 0 && term == 0 && last_log_index == 0;
+}
+
+inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return !commo_append_entries_reply_lost(ok, term, last_log_index);
+}
+
+inline bool commo_proxy_is_target(uint16_t proxy_site, uint16_t target_site) {
+    return rusty::detail::deref_if_pointer_like(proxy_site) == rusty::detail::deref_if_pointer_like(target_site);
+}
+
+inline bool commo_proxy_is_self(uint16_t proxy_site, uint16_t self_site) {
+    return rusty::detail::deref_if_pointer_like(proxy_site) == rusty::detail::deref_if_pointer_like(self_site);
+}
+
+inline bool commo_future_failed(int32_t error_code) {
+    return rusty::detail::deref_if_pointer_like(error_code) != static_cast<int32_t>(0);
+}
+
+inline bool commo_future_result_ok(bool is_ok) {
+    return std::move(is_ok);
+}
+
+inline bool commo_should_send_empty_append_entries(bool has_cmd) {
+    return !has_cmd;
+}
+
+inline bool commo_callback_is_set(bool has_callback) {
+    return std::move(has_callback);
+}
+
+inline bool commo_should_track_notify_restart_peer(uint16_t peer_site, uint16_t self_site) {
+    return rusty::detail::deref_if_pointer_like(peer_site) != rusty::detail::deref_if_pointer_like(self_site);
+}
+
+inline bool commo_retry_has_pending_sites(uint64_t pending_site_count) {
+    return rusty::detail::deref_if_pointer_like(pending_site_count) > 0;
+}
+
+inline raft::AppendEntriesReply commo_make_append_entries_reply(uint64_t ok, uint64_t term, uint64_t last_log_index, uint64_t ack_type) {
+    return raft::AppendEntriesReply{.follower_append_ok = std::move(ok), .follower_current_term = std::move(term), .follower_last_log_index = std::move(last_log_index), .follower_ack_type = std::move(ack_type)};
+}
+
+inline raft::VoteReply commo_make_vote_reply(int64_t term, bool vote_granted) {
+    return raft::VoteReply{.max_ballot = std::move(term), .vote_granted = std::move(vote_granted)};
+}
+/*RUSTYCPP:GEN-END id=commo.append_entries_result_helpers*/
 
 /**
  * AckType - Speculative Replication acknowledgment type
@@ -107,37 +390,257 @@ class SendAppendEntriesResults {
  * Memory: Entry appended to in-memory log (immediate response)
  * Durable: Entry persisted to disk (sent via AppendEntriesDurable RPC)
  */
+#if RUSTYCPP_RUST
+#[repr(u64)]
+pub enum AckType {
+    Memory = 0,
+    Durable = 1,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.ack_type version=1 rust_sha256=caffdb0a63dea9cf984c3f302fc0dab2480826a989ae350fd27b63222f73e2d5*/
+enum class AckType : uint64_t;
+inline constexpr AckType AckType_Memory();
+inline constexpr AckType AckType_Durable();
+
 enum class AckType : uint64_t {
-  Memory = 0,
-  Durable = 1
+    Memory = 0,
+    Durable = 1
 };
+inline constexpr AckType AckType_Memory() { return AckType::Memory; }
+inline constexpr AckType AckType_Durable() { return AckType::Durable; }
+/*RUSTYCPP:GEN-END id=commo.ack_type*/
 
-// Response data for async AppendEntries RPC
+// @safe - wire-format predicates for the scalar ack_type field. The durable
+// ack callback path and server-side quorum bookkeeping remain hand-C++.
+#if RUSTYCPP_RUST
+pub fn commo_ack_type_is_memory(ack_type: u64) -> bool {
+    ack_type == AckType::Memory as u64
+}
+
+pub fn commo_ack_type_is_durable(ack_type: u64) -> bool {
+    ack_type == AckType::Durable as u64
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.ack_type_helpers version=1 rust_sha256=7ee87e627fd2c0d1ba0229b3295f4b88bc77aeb18aa6195d41e0457405ac3318*/
+inline bool commo_ack_type_is_memory(uint64_t ack_type);
+inline bool commo_ack_type_is_durable(uint64_t ack_type);
+
+inline bool commo_ack_type_is_memory(uint64_t ack_type) {
+    return ack_type == static_cast<uint64_t>(AckType::Memory);
+}
+
+inline bool commo_ack_type_is_durable(uint64_t ack_type) {
+    return ack_type == static_cast<uint64_t>(AckType::Durable);
+}
+/*RUSTYCPP:GEN-END id=commo.ack_type_helpers*/
+
+// Response data for async AppendEntries RPC.
 // Uses shared_ptr semantics to ensure memory validity when callback fires.
-// `event` is a nullable Arc handle: the struct is default-constructed (event =
-// None) then the event is assigned via create_sp_event before the RPC is sent.
+struct AppendEntriesResponse;
+
+inline AppendEntriesResponse append_entries_response_defaults();
+
+#if RUSTYCPP_RUST
+pub struct AppendEntriesResponse {
+    event: shared_ptr<IntEvent>,
+    status: u64,
+    term: u64,
+    last_log_index: u64,
+    ack_type: u64,
+}
+
+impl AppendEntriesResponse {
+    fn defaults() -> AppendEntriesResponse {
+        append_entries_response_defaults()
+    }
+
+    // @safe
+    fn apply_reply(&mut self,
+                   status: u64,
+                   term: u64,
+                   last_log_index: u64,
+                   ack_type: u64) {
+        self.status = status;
+        self.term = term;
+        self.last_log_index = last_log_index;
+        self.ack_type = ack_type;
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_response version=1 rust_sha256=de4dfbb8b0268305ca318f5ee94e0258ae18dd8d10205519612e4bf430010684*/
+struct AppendEntriesResponse;
+
 struct AppendEntriesResponse {
-  rusty::Option<rusty::Arc<IntEvent>> event{rusty::None};
-  uint64_t status = 0;
-  uint64_t term = 0;
-  uint64_t last_log_index = 0;
-  uint64_t ack_type = 0;  // 0=Memory, 1=Durable (see AckType enum)
+    shared_ptr<IntEvent> event;
+    uint64_t status;
+    uint64_t term;
+    uint64_t last_log_index;
+    uint64_t ack_type;
+
+    static AppendEntriesResponse defaults();
+    void apply_reply(uint64_t status, uint64_t term, uint64_t last_log_index, uint64_t ack_type);
 };
 
 
-// @unsafe - inherits from non-@interface base Communicator
+inline AppendEntriesResponse AppendEntriesResponse::defaults() {
+    return append_entries_response_defaults();
+}
+
+inline void AppendEntriesResponse::apply_reply(uint64_t status, uint64_t term, uint64_t last_log_index, uint64_t ack_type) {
+    this->status = std::move(status);
+    this->term = std::move(term);
+    this->last_log_index = std::move(last_log_index);
+    this->ack_type = std::move(ack_type);
+}
+/*RUSTYCPP:GEN-END id=commo.append_entries_response*/
+
+inline AppendEntriesResponse append_entries_response_defaults() {
+  AppendEntriesResponse response{};
+  response.event = shared_ptr<IntEvent>();
+  response.status = 0;
+  response.term = 0;
+  response.last_log_index = 0;
+  response.ack_type = 0;
+  return response;
+}
+
+#if RUSTYCPP_RUST
+pub struct RaftCommoIdentityCore {
+    self_site_id_: rusty::Cell<u16>,
+    self_par_id_: rusty::Cell<u32>,
+}
+
+impl RaftCommoIdentityCore {
+    // @safe
+    fn new() -> RaftCommoIdentityCore {
+        RaftCommoIdentityCore {
+            self_site_id_: rusty::Cell::<u16>::new_(0),
+            self_par_id_: rusty::Cell::<u32>::new_(0),
+        }
+    }
+
+    // @safe
+    fn self_site_id(&self) -> u16 {
+        self.self_site_id_.get()
+    }
+
+    // @safe
+    fn set_self_site_id(&mut self, site_id: u16) {
+        self.self_site_id_.set(site_id)
+    }
+
+    // @safe
+    fn self_par_id(&self) -> u32 {
+        self.self_par_id_.get()
+    }
+
+    // @safe
+    fn set_self_par_id(&mut self, par_id: u32) {
+        self.self_par_id_.set(par_id)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.8 version=1 rust_sha256=8b7375062b8cf17ee81f08967a98b1f1be586e82507bf8d9747b3f72340d3de3*/
+struct RaftCommoIdentityCore;
+
+struct RaftCommoIdentityCore {
+    rusty::Cell<uint16_t> self_site_id_;
+    rusty::Cell<uint32_t> self_par_id_;
+
+    static RaftCommoIdentityCore new_();
+    uint16_t self_site_id() const;
+    void set_self_site_id(uint16_t site_id);
+    uint32_t self_par_id() const;
+    void set_self_par_id(uint32_t par_id);
+};
+
+
+inline RaftCommoIdentityCore RaftCommoIdentityCore::new_() {
+    return RaftCommoIdentityCore{.self_site_id_ = rusty::Cell<uint16_t>::new_(static_cast<uint16_t>(0)), .self_par_id_ = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0))};
+}
+
+inline uint16_t RaftCommoIdentityCore::self_site_id() const {
+    return this->self_site_id_.get();
+}
+
+inline void RaftCommoIdentityCore::set_self_site_id(uint16_t site_id) {
+    this->self_site_id_.set(std::move(site_id));
+}
+
+inline uint32_t RaftCommoIdentityCore::self_par_id() const {
+    return this->self_par_id_.get();
+}
+
+inline void RaftCommoIdentityCore::set_self_par_id(uint32_t par_id) {
+    this->self_par_id_.set(std::move(par_id));
+}
+/*RUSTYCPP:GEN-END id=commo.8*/
+
+#if RUSTYCPP_RUST
+pub struct RaftCommoNotifyRestartCore {
+    statuses_: std::map<u16, NotifyRestartStatus>,
+}
+
+impl RaftCommoNotifyRestartCore {
+    // @safe
+    fn new() -> RaftCommoNotifyRestartCore {
+        RaftCommoNotifyRestartCore {
+            statuses_: std::map::<u16, NotifyRestartStatus>{},
+        }
+    }
+
+    // @safe
+    fn statuses(&self) -> &std::map<u16, NotifyRestartStatus> {
+        &self.statuses_
+    }
+
+    // @safe
+    fn statuses_mut(&mut self) -> &mut std::map<u16, NotifyRestartStatus> {
+        &mut self.statuses_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.9 version=1 rust_sha256=63f3c3a530ffcc06deee6311e6cfd4b6d360ee0e60bf31915a7436b619d7a326*/
+struct RaftCommoNotifyRestartCore;
+
+struct RaftCommoNotifyRestartCore {
+    std::map<uint16_t, NotifyRestartStatus> statuses_;
+
+    static RaftCommoNotifyRestartCore new_();
+    const std::map<uint16_t, NotifyRestartStatus>& statuses() const;
+    std::map<uint16_t, NotifyRestartStatus>& statuses_mut();
+};
+
+
+inline RaftCommoNotifyRestartCore RaftCommoNotifyRestartCore::new_() {
+    return RaftCommoNotifyRestartCore{.statuses_ = std::map<uint16_t, NotifyRestartStatus>{}};
+}
+
+inline const std::map<uint16_t, NotifyRestartStatus>& RaftCommoNotifyRestartCore::statuses() const {
+    return this->statuses_;
+}
+
+inline std::map<uint16_t, NotifyRestartStatus>& RaftCommoNotifyRestartCore::statuses_mut() {
+    return this->statuses_;
+}
+/*RUSTYCPP:GEN-END id=commo.9*/
+
+
+// @unsafe - legacy RPC communicator. It owns no peer proxies directly; proxy
+// tables live in Communicator and are downcast at RPC boundaries.
 class RaftCommo : public Communicator {
 
 friend class RaftProxy;
  private:
-  // NotifyRestart status tracking for each peer
-  std::map<siteid_t, NotifyRestartStatus> notify_restart_status_;
-  std::mutex notify_restart_mtx_;
-  siteid_t self_site_id_ = 0;  // Our own site ID (set when SendNotifyRestart is called)
-  parid_t self_par_id_ = 0;    // Our partition ID
+  // NotifyRestart status tracking for each peer.  The map remains a C++ map
+  // until its iterator-heavy retry paths are migrated as one unit, but its
+  // synchronization is now Rusty-owned and every access takes a scoped guard.
+  rusty::Mutex<RaftCommoNotifyRestartCore> notify_restart_core_;
+  RaftCommoIdentityCore identity_core_;
 
  public:
 #ifdef RAFT_TEST_CORO
+  // @unsafe - test-only RPC accounting shared with RaftTestConfig.
   std::recursive_mutex rpc_mtx_ = {};
   uint64_t rpc_count_ = 0;
 #endif
@@ -203,12 +706,14 @@ friend class RaftProxy;
    * @param callback - Called when RPC completes (success/failure)
    */
 
-  // @unsafe - C-style cast, std::function
+  // @unsafe - legacy RPC boundary: implementation uses raw RaftProxy casts and
+  // async FutureAttr callbacks. Public completion handler has been migrated to
+  // rusty::Function, but the implementation still bridges into legacy RPC code.
   void SendTimeoutNow(siteid_t site_id,
-                      parid_t par_id,
-                      uint64_t leader_term,
-                      siteid_t leader_site_id,
-                      std::function<void(bool success, uint64_t follower_term)> callback);
+                    parid_t par_id,
+                    uint64_t leader_term,
+                    siteid_t leader_site_id,
+                    rusty::Function<void(bool, uint64_t)> callback);
 
   /**
    * SendVoteDurable - Send VoteDurable RPC to candidate after vote is persisted
@@ -268,6 +773,8 @@ friend class RaftProxy;
    * Peers in DOWN state are skipped (they will reconnect when they restart).
    * Peers in ACKNOWLEDGED state are skipped (already done).
    */
+  // @unsafe - retries legacy async RPCs; restart-status access is guarded by
+  // rusty::Mutex.
   void RetryPendingNotifyRestart();
 
   /**
@@ -283,6 +790,7 @@ friend class RaftProxy;
    *
    * @return true if any peer is still in PENDING state
    */
+  // @safe - reads restart status through a scoped Rusty mutex guard.
   bool HasPendingNotifyRestart();
 
   /**
@@ -300,7 +808,8 @@ friend class RaftProxy;
    * @param data - Serialized snapshot data
    * @param callback - Called when RPC completes with follower's term
    */
-  // @unsafe - C-style cast, std::function
+  // @unsafe - legacy RPC boundary: single-target snapshot RPC uses raw RaftProxy
+  // casts and async FutureAttr callback. Completion callback uses rusty::Function.
   void SendInstallSnapshot(siteid_t site_id,
                            parid_t par_id,
                            uint64_t term,
@@ -308,7 +817,7 @@ friend class RaftProxy;
                            uint64_t last_included_index,
                            uint64_t last_included_term,
                            const std::string& data,
-                           std::function<void(uint64_t follower_term)> callback);
+                           rusty::Function<void(uint64_t)> callback);
 
   // ==========================================================================
   // callback-shaped variants of the quorum RPCs.
@@ -321,12 +830,9 @@ friend class RaftProxy;
   // variants are merely a different projection of the reply.
   // ==========================================================================
 
-  // @unsafe - C-style cast, std::function
-  // Called once per reply (for the single target site). `on_reply` fires
-  // with the site_id that replied; on error, it does not fire at all, so
-  // callers should treat absence of reply as a timeout.
-  // take janus::Command (was shared_ptr<Marshallable>);
-  // shared_ptr<Marshallable> callers auto-convert via implicit Command ctor.
+  // @unsafe - legacy RPC boundary: single-target AppendEntries callback API.
+  // on_reply fires once for the target site if a reply arrives; on transport
+  // error, it does not fire, so callers should treat absence as timeout.
   void SendAppendEntriesCb(
       siteid_t site_id,
       parid_t par_id,
@@ -341,18 +847,18 @@ friend class RaftProxy;
       const janus::Command& cmd,
       uint64_t cmdLogTerm,
       bool trigger_election_now,
-      std::function<void(siteid_t, raft::AppendEntriesReply)> on_reply);
+      rusty::Function<void(siteid_t, raft::AppendEntriesReply)> on_reply);
 
-  // @unsafe - C-style cast, std::function
-  // Broadcasts to every peer in the partition except self. `on_reply`
-  // fires once per replying peer with that peer's site_id.
+  // @unsafe - legacy RPC fanout boundary: broadcasts to every peer except self.
+  // on_reply is shared across multiple async replies using the implementation's
+  // shared_ptr bridge because rusty::Function is move-only.
   void BroadcastVoteCb(
       parid_t par_id,
       slotid_t lst_log_idx,
       ballot_t lst_log_term,
       siteid_t self_id,
       ballot_t cur_term,
-      std::function<void(siteid_t, raft::VoteReply)> on_reply);
+      rusty::Function<void(siteid_t, raft::VoteReply)> on_reply);
 };
 
 } // namespace janus

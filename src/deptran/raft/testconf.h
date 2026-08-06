@@ -3,6 +3,7 @@
 #include "frame.h"
 #include "coordinator.h"
 #include <map>
+#include <rusty/function.hpp>
 
 namespace janus {
 
@@ -33,27 +34,23 @@ extern int _test_id_g;
 #define Failed(msg, ...) Print("TEST %d Failed: " msg, _test_id_g, ##__VA_ARGS__)
 #define Passed() Print("TEST %d Passed", _test_id_g)
 
-class CommitIndex {
- private:
-  uint64_t val_;
- public:
-  CommitIndex(uint64_t val) : val_(val) {}
-  uint64_t getval(void) { return val_; }
-  void setval(uint64_t val) { val_ = val; }
-};
-
 class RaftTestConfig {
 
  private:
+  // @unsafe - test harness registry of live RaftFrame objects. The initial
+  // entries are copied from the caller's frame map; Kill() deletes and erases
+  // an entry, Restart() allocates and reinserts a replacement.
   static std::map<siteid_t, RaftFrame*> replicas;
-  // take janus::Command (matching the
-  // RegLearnerAction signature change in deptran/scheduler.h).
+  // @unsafe - compatibility learner-action storage. RegLearnerAction still
+  // accepts std::function, so these callbacks stay std::function for now.
+  // Restart() re-registers a fresh callback on the recreated RaftServer.
   static std::map<siteid_t, std::function<int(int, janus::Command)>> commit_callbacks;
   static std::map<siteid_t, std::vector<int>> committed_cmds;
   static std::map<siteid_t, uint64_t> rpc_count_last;
 
   // disconnected_[svr] true if svr is disconnected by Disconnect()/Reconnect()
   std::map<siteid_t, bool> disconnected_;
+  // @unsafe - test-only network control thread synchronization.
   // guards disconnected_ between Disconnect()/Reconnect() and netctlLoop
   std::mutex disconnect_mtx_;
 
@@ -70,6 +67,9 @@ class RaftTestConfig {
   // Helper function to get next server ID in sequence
   siteid_t getNextServerId(siteid_t current_server_id, int offset = 1) const;
 
+  // @unsafe - copies borrowed/live frame pointers into the static test registry.
+  // The registry becomes responsible for Kill()/Restart() replacement during
+  // the test config lifetime.
   RaftTestConfig(std::map<siteid_t, RaftFrame*>& replicas);
 
   // sets up learner action functions for the servers
@@ -167,10 +167,11 @@ class RaftTestConfig {
   // Starts a command with a callback for commit status notification
   // Returns same values as Start()
   bool StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
-                         std::function<void(CommitStatus)> callback);
+                         rusty::Function<void(CommitStatus)> callback);
 
  private:
   // vars & subroutine for unreliable network setting
+  // @unsafe - test-only thread/condvar state; keep hand-written.
   std::thread th_;
   std::mutex cv_m_; // guards cv_, unreliable_, finished_
   std::condition_variable cv_;
@@ -179,6 +180,7 @@ class RaftTestConfig {
   void netctlLoop(void);
 
   // internal disconnect/reconnect/slow functions
+  // @unsafe - recursive mutex protects test network mutation.
   std::recursive_mutex connection_m_;
   bool isDisconnected(siteid_t svr);
   void disconnect(siteid_t svr, bool ignore = false);

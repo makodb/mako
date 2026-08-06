@@ -6,7 +6,7 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 284  
+**Decl count (top-level class/struct/enum/union):** 284
 **Span across all decls (LOC):** 3957
 
 ## Buckets

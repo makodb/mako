@@ -106,7 +106,7 @@ class FpgaRaftServer : public TxLogServer {
                             rusty::Function<void()> cb) {
       *vote_granted = vote ;
       *reply_term = currentTerm ;
-      Log_debug("loc {} vote decision {}, for can_id {} canterm {} curterm {} isleader {} lst_log_idx {} lst_log_term {}", 
+      Log_debug("loc {} vote decision {}, for can_id {} canterm {} curterm {} isleader {} lst_log_idx {} lst_log_term {}",
             loc_id_, vote, can_id, can_term, currentTerm, is_leader_, lst_log_idx, lst_log_term );
                     
       if( can_term > currentTerm)

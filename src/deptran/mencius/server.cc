@@ -185,7 +185,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
 
 void MenciusServer::Setup() {
   SimpleRWCommand::SetZeroTime();
-  Log_info("Setup this={}, this->loc_id_={}, this->commo_=={}", 
+  Log_info("Setup this={}, this->loc_id_={}, this->commo_=={}",
         (void*)this, this->loc_id_, (void*)this->commo_);
 }
 

@@ -56,7 +56,7 @@ TEST(lambda, no_copy) {
     }
     uint64_t t1 = rrr::Time::now(true);
 
-    Log_info("ret: {}, time interval: {:f}", ret, 
+    Log_info("ret: {}, time interval: {:f}", ret,
 	     CALL_TIMES / ((double)(t1 - t0) / 1000 / 1000));
 
 }

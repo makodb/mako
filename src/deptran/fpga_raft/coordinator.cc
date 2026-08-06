@@ -191,7 +191,7 @@ void CoordinatorFpgaRaft::LeaderLearn() {
     uint64_t prevCommitIndex = this->sch_->commitIndex;
     verify(minIndex >= prevCommitIndex);
     this->sch_->commitIndex = std::max(this->sch_->commitIndex, minIndex);
-    Log_debug("fpga-raft commit for partition: {}, slot {}, commit {} minIndex {} in loc:{}", 
+    Log_debug("fpga-raft commit for partition: {}, slot {}, commit {} minIndex {} in loc:{}",
       (int) par_id_, (int) slot_id_, sch_->commitIndex, minIndex, loc_id_);
 
     /* if (prevCommitIndex < this->sch_->commitIndex) { */

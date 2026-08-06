@@ -258,16 +258,17 @@ rm -rf /tmp/test_raft_persistence_*
 rm -rf /tmp/raft_*
 ```
 
-## Integration with RaftServer (TODO)
+## Integration with RaftServer
 
-The persistence layer is complete but not yet integrated. To integrate:
+The standalone `RaftPersistence` test helper is not the production integration
+boundary. `RaftServer` uses its `LogStorage` and snapshot-manager interfaces
+for log/state recovery and persistence, while term/vote and commit ordering are
+maintained by the server orchestration paths. Do not add a second persistence
+owner without first reconciling those interfaces.
 
-1. Add `std::unique_ptr<RaftPersistence> persistence_;` to `RaftServer` (server.h)
-2. Initialize in RaftServer constructor and load state
-3. Add persistence calls to:
-   - `RequestVote()` - when term or votedFor changes
-   - `OnAppendEntries()` - when receiving new log entries
-   - `Start()` - when adding new client commands
+Remaining work is coverage-oriented: add tests that exercise crash/restart
+recovery through the production `RaftServer` and `LogStorage` stack, including
+term/vote restoration, committed-log replay, and snapshot boundary cases.
 
 
 

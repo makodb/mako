@@ -55,7 +55,7 @@ protected:
     }
 
     LogEntry make_entry(slotid_t slot, ballot_t term, bool committed = false) {
-        LogEntry entry(slot, term);
+        LogEntry entry = LogEntry::with_slot_term(slot, term);
         entry.committed = committed;
         return entry;
     }
@@ -308,7 +308,7 @@ TEST_F(RocksDBLogStorageTest, PersistenceAcrossReopen) {
 }
 
 TEST_F(RocksDBLogStorageTest, PersistenceWithFullLogEntry) {
-    LogEntry entry(100, 5);
+    LogEntry entry = LogEntry::with_slot_term(100, 5);
     entry.max_ballot_seen = 10;
     entry.max_ballot_accepted = 8;
     entry.committed = true;

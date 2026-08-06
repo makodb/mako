@@ -25,6 +25,8 @@
  *
  * Rusty-safety:
  *  - Polymorphism via virtual dispatch with a virtual destructor.
+ *  - TransportBase is a DSL-owned trait, but concrete transports are still
+ *    bridges around their RPC/channel runtimes.
  *  - std::shared_ptr appears only at the rrr-module boundary
  *    (MarshallDeputy carries std::shared_ptr<Marshallable>). Every
  *    such boundary is annotated `@unsafe`.
@@ -58,28 +60,64 @@ struct InstallSnapshotReply;
 // TransportBase / TransportProxy
 // ---------------------------------------------------------------------------
 
+#if RUSTYCPP_RUST
+pub trait TransportBase {
+    // @unsafe - May block on RPC/channel reply path.
+    fn send_append_entries(&mut self, dst: u16, req: AppendEntriesReq)
+        -> AppendEntriesReply;
+    // @unsafe - May block on RPC/channel reply path.
+    fn send_empty_append_entries(&mut self, dst: u16, req: EmptyAppendEntriesReq)
+        -> EmptyAppendEntriesReply;
+    // @unsafe - May block on RPC/channel reply path.
+    fn send_vote(&mut self, dst: u16, req: VoteReq) -> VoteReply;
+    // @unsafe - May block on RPC/channel reply path.
+    fn send_timeout_now(&mut self, dst: u16, req: TimeoutNowReq) -> TimeoutNowReply;
+    // @unsafe - May block on RPC/channel reply path.
+    fn send_install_snapshot(&mut self, dst: u16, req: InstallSnapshotReq)
+        -> InstallSnapshotReply;
+
+    // @unsafe - Fire-and-forget RPC/channel send.
+    fn send_vote_durable(&mut self, candidate: u16, req: VoteDurableReq);
+    // @unsafe - Fire-and-forget RPC/channel send.
+    fn send_append_entries_durable(&mut self, leader: u16,
+                                   req: AppendEntriesDurableReq);
+    // @unsafe - Fire-and-forget RPC/channel send.
+    fn send_notify_restart(&mut self, self_site: u16, par: u32);
+
+    // @safe
+    fn self_site_id(&self) -> u16;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=transport.1 version=1 rust_sha256=f5f3b10fc05ead3090b5aff9a03ca2791fd3660942e55501e1da88162220fd15*/
+namespace {
 class TransportBase {
- public:
-  virtual ~TransportBase() = default;
-
-  // Reply-expecting RPCs: return reply by value. Caller blocks on a
-  // fiber-yielding primitive inside the adapter.
-  virtual AppendEntriesReply       send_append_entries(siteid_t /*dst*/, AppendEntriesReq) = 0;
-  virtual EmptyAppendEntriesReply  send_empty_append_entries(siteid_t /*dst*/, EmptyAppendEntriesReq) = 0;
-  virtual VoteReply                send_vote(siteid_t /*dst*/, VoteReq) = 0;
-  virtual TimeoutNowReply          send_timeout_now(siteid_t /*dst*/, TimeoutNowReq) = 0;
-  virtual InstallSnapshotReply     send_install_snapshot(siteid_t /*dst*/, InstallSnapshotReq) = 0;
-
-  // Durable-ack and restart notifications are fire-and-forget by design.
-  virtual void                     send_vote_durable(siteid_t /*candidate*/, VoteDurableReq) = 0;
-  virtual void                     send_append_entries_durable(siteid_t /*leader*/, AppendEntriesDurableReq) = 0;
-  virtual void                     send_notify_restart(siteid_t /*self*/, parid_t) = 0;
-
-  // Identity — useful for adapters that need to know their own site
-  // for logging / loopback suppression.
-  virtual siteid_t                 self_site_id() const = 0;
+public:
+    virtual ~TransportBase() noexcept(false) {}
+    virtual AppendEntriesReply send_append_entries(uint16_t dst, AppendEntriesReq req) = 0;
+    virtual EmptyAppendEntriesReply send_empty_append_entries(uint16_t dst, EmptyAppendEntriesReq req) = 0;
+    virtual VoteReply send_vote(uint16_t dst, VoteReq req) = 0;
+    virtual TimeoutNowReply send_timeout_now(uint16_t dst, TimeoutNowReq req) = 0;
+    virtual InstallSnapshotReply send_install_snapshot(uint16_t dst, InstallSnapshotReq req) = 0;
+    virtual void send_vote_durable(uint16_t candidate, VoteDurableReq req) = 0;
+    virtual void send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req) = 0;
+    virtual void send_notify_restart(uint16_t self_site, uint32_t par) = 0;
+    virtual uint16_t self_site_id() const = 0;
+    TransportBase(const TransportBase&) = delete;
+    TransportBase& operator=(const TransportBase&) = delete;
+    TransportBase(TransportBase&&) = delete;
+    TransportBase& operator=(TransportBase&&) = delete;
+protected:
+    TransportBase() = default;
 };
+}
 
+template <class U> class TransportBaseAdapter;
+template <class U> class TransportBaseAdapterRef;
+template <class U> class TransportBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=transport.1*/
+
+// @safe - owning transport handle. The pointed-to implementation may still
+// contain unsafe RPC/channel boundaries.
 using TransportProxy = rusty::Box<TransportBase>;
 
 }  // namespace raft

@@ -28,7 +28,6 @@
 #include <cstdint>
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
@@ -38,8 +37,75 @@
 
 #include "../constants.h"  // siteid_t
 
+import rusty;
+
 namespace janus {
 namespace raft {
+
+// @safe - pure threshold predicate. The atomic increment, reply storage, and
+// rrr::IntEvent wakeup stay in RaftQuorum::on_reply(); this helper only names
+// the scalar decision that a quorum has enough replies.
+#if RUSTYCPP_RUST
+pub fn raft_quorum_reached(received: i32, needed: i32) -> bool {
+    received >= needed
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_quorum_reached version=1 rust_sha256=4ff716e366ead197cfd9ce2e06b793adbdf3f2b584d698677a0c0fc5ecc895cd*/
+inline bool raft_quorum_reached(int32_t received, int32_t needed);
+
+inline bool raft_quorum_reached(int32_t received, int32_t needed) {
+    return received >= needed;
+}
+/*RUSTYCPP:GEN-END id=raft_quorum_reached*/
+
+// @safe - pure quorum arithmetic over copied counts. Server membership,
+// ack/vote sets, and leader state stay in RaftServer; these helpers only
+// centralize majority and count-threshold decisions.
+#if RUSTYCPP_RUST
+pub fn raft_quorum_majority_count(total: usize) -> usize {
+    (total / 2) + 1
+}
+
+pub fn raft_quorum_count_reached(count: usize, quorum: usize) -> bool {
+    count >= quorum
+}
+
+pub fn raft_quorum_count_below(count: usize, quorum: usize) -> bool {
+    count < quorum
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_quorum_count_helpers version=1 rust_sha256=105d43fa5ff3bdbbcdf702c82053586a047fd87033fe67606c1f2a1642b626ef*/
+inline size_t raft_quorum_majority_count(size_t total);
+inline bool raft_quorum_count_reached(size_t count, size_t quorum);
+inline bool raft_quorum_count_below(size_t count, size_t quorum);
+
+inline size_t raft_quorum_majority_count(size_t total) {
+    return (total / 2) + 1;
+}
+
+inline bool raft_quorum_count_reached(size_t count, size_t quorum) {
+    return count >= quorum;
+}
+
+inline bool raft_quorum_count_below(size_t count, size_t quorum) {
+    return count < quorum;
+}
+/*RUSTYCPP:GEN-END id=raft_quorum_count_helpers*/
+
+// @unsafe - Preserve the std::shared_ptr<IntEvent> boundary used by
+// RaftQuorum::on_reply while retaining the upstream reactor's Arc ownership.
+// The custom deleter owns the Arc and therefore never deletes event_ptr
+// directly.
+inline std::shared_ptr<::rrr::IntEvent> raft_quorum_share_ready_event(
+    rusty::Arc<::rrr::IntEvent> event) {
+  ::rrr::IntEvent* event_ptr = event.as_ptr();
+  return std::shared_ptr<::rrr::IntEvent>(
+      event_ptr,
+      [event = std::move(event)](::rrr::IntEvent*) mutable {
+        // Dropping the captured Arc releases this ownership share.
+        (void)event;
+      });
+}
 
 template <typename Reply>
 class RaftQuorum {
@@ -50,10 +116,9 @@ class RaftQuorum {
   RaftQuorum(int n_total, int n_needed)
       : n_total_(n_total),
         n_needed_(n_needed),
-        // rrr::Reactor::create_sp_event returns rusty::Arc; the reactor
-        // owns the event via its all_events_ list.
-        ready_(::rrr::Reactor::create_sp_event<::rrr::IntEvent>(n_needed)),
-        replies_(std::vector<std::pair<siteid_t, Reply>>{}) {}
+        ready_(raft_quorum_share_ready_event(
+            ::rrr::Reactor::create_sp_event<::rrr::IntEvent>(n_needed))),
+        replies_(rusty::Vec<std::pair<siteid_t, Reply>>::new_()) {}
 
   // Non-copyable, non-movable: holds an event registered with the reactor.
   RaftQuorum(const RaftQuorum&) = delete;
@@ -65,13 +130,12 @@ class RaftQuorum {
   void on_reply(siteid_t from, Reply reply) {
     {
       auto guard = replies_.lock().unwrap();
-      // @unsafe { std::vector::emplace_back is not borrow-checked }
-      guard->emplace_back(from, std::move(reply));
+      guard->push({from, std::move(reply)});
     }
     int n = n_received_.fetch_add(
                 1, ::rusty::sync::atomic::Ordering::AcqRel) +
             1;
-    if (n >= n_needed_) {
+    if (raft_quorum_reached(n, n_needed_)) {
       // @unsafe { rrr::IntEvent::set bumps value_ and triggers Event::test;
       //           multiple sets past the threshold are idempotent because
       //           is_ready() / status_ stays terminal once fired. }
@@ -90,12 +154,11 @@ class RaftQuorum {
   }
 
   // @safe - drain the accumulated (siteid, reply) pairs.
-  std::vector<std::pair<siteid_t, Reply>> collect() {
+  rusty::Vec<std::pair<siteid_t, Reply>> collect() {
     auto guard = replies_.lock().unwrap();
-    std::vector<std::pair<siteid_t, Reply>> out;
-    // @unsafe { std::vector::swap is not borrow-checked }
-    out.swap(*guard);
-    return out;
+    auto replies = std::move(*guard);
+    *guard = rusty::Vec<std::pair<siteid_t, Reply>>::new_();
+    return replies;
   }
 
   // @safe - non-blocking diagnostic count.
@@ -112,9 +175,9 @@ class RaftQuorum {
   const int n_total_;
   const int n_needed_;
   // See class-level @unsafe note about std::shared_ptr.
-  rusty::Arc<::rrr::IntEvent> ready_;
+  std::shared_ptr<::rrr::IntEvent> ready_;
   rusty::sync::atomic::AtomicI32 n_received_{0};
-  mutable rusty::Mutex<std::vector<std::pair<siteid_t, Reply>>> replies_;
+  mutable rusty::Mutex<rusty::Vec<std::pair<siteid_t, Reply>>> replies_;
 };
 
 }  // namespace raft

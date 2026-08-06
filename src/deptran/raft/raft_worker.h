@@ -1,6 +1,8 @@
 #pragma once
 
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/option.hpp>
 #include "../__dep__.h"
 #include "../coordinator.h"
 #include "../benchmark_control_rpc.h"
@@ -14,6 +16,8 @@
 #include <deque>
 #include <map>
 #include <thread>
+#include <rusty/cell.hpp>
+#include <rusty/function.hpp>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -38,30 +42,152 @@
 
 namespace janus {
 
-// Runtime replication switching - always declare raft functions
-extern std::function<void(int)> leader_callback_;
-// @unsafe - uses raw global std::function, unbounded callback invocation
+// Runtime replication switching - always declare raft functions.
+// The public helper API still receives std::function for Paxos/Raft dispatch
+// compatibility, then stores the Raft-side callback in move-only rusty::Function.
+extern rusty::Function<void(int)> leader_callback_;
+
+// @unsafe - invokes raw global compatibility callback with unbounded user code
 void raft_handle_leader_change(uint32_t partition_id, bool is_leader);
-// @unsafe - uses raw global std::function, unbounded callback invocation
+
+// @unsafe - invokes raw global compatibility callback with unbounded user code
 void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader);
 
 // Watermark callback type used for per-partition leader/follower routing
-using watermark_callback_t = std::function<int(const char*&, int, int, int,
-    std::queue<std::tuple<int, int, int, int, const char*>>&)>;
+using watermark_callback_t = rusty::Function<int(
+    const char*&,
+    int,
+    int,
+    int,
+    std::queue<std::tuple<int, int, int, int, const char*>>&
+)>;
 
-// @unsafe - class contains raw pointers and manual memory management
+#if RUSTYCPP_RUST
+pub struct RaftWorkerPendingLog {
+    payload: std::string,
+    par_id: u32,
+    epoch: i32,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.1 version=1 rust_sha256=65e141028f6b3b50c3192df3f89c4d1f76f402edb9557dc2637960b275d68065*/
+struct RaftWorkerPendingLog;
+
+struct RaftWorkerPendingLog {
+    std::string payload;
+    uint32_t par_id;
+    int32_t epoch;
+};
+/*RUSTYCPP:GEN-END id=raft_worker.1*/
+
+#if RUSTYCPP_RUST
+pub struct RaftWorkerStateCore {
+    batch_limit_: rusty::Cell<i32>,
+    cur_epoch_: rusty::Cell<i32>,
+    is_leader_: rusty::Cell<i32>,
+}
+
+impl RaftWorkerStateCore {
+    // @safe
+    fn new() -> RaftWorkerStateCore {
+        RaftWorkerStateCore {
+            batch_limit_: rusty::Cell::<i32>::new_(1),
+            cur_epoch_: rusty::Cell::<i32>::new_(0),
+            is_leader_: rusty::Cell::<i32>::new_(0),
+        }
+    }
+
+    // @safe
+    fn batch_limit(&self) -> i32 {
+        self.batch_limit_.get()
+    }
+
+    // @safe
+    fn set_batch_limit(&mut self, value: i32) {
+        self.batch_limit_.set(value)
+    }
+
+    // @safe
+    fn cur_epoch(&self) -> i32 {
+        self.cur_epoch_.get()
+    }
+
+    // @safe
+    fn set_cur_epoch(&mut self, value: i32) {
+        self.cur_epoch_.set(value)
+    }
+
+    // @safe
+    fn is_leader(&self) -> i32 {
+        self.is_leader_.get()
+    }
+
+    // @safe
+    fn set_is_leader(&mut self, value: i32) {
+        self.is_leader_.set(value)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.2 version=1 rust_sha256=10d28575bfcecf9dbd4d4e122ea8064d344250f6ba6da438658a73cabcf509be*/
+struct RaftWorkerStateCore;
+
+struct RaftWorkerStateCore {
+    rusty::Cell<int32_t> batch_limit_;
+    rusty::Cell<int32_t> cur_epoch_;
+    rusty::Cell<int32_t> is_leader_;
+
+    static RaftWorkerStateCore new_();
+    int32_t batch_limit() const;
+    void set_batch_limit(int32_t value);
+    int32_t cur_epoch() const;
+    void set_cur_epoch(int32_t value);
+    int32_t is_leader() const;
+    void set_is_leader(int32_t value);
+};
+
+
+inline RaftWorkerStateCore RaftWorkerStateCore::new_() {
+    return RaftWorkerStateCore{.batch_limit_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(1)), .cur_epoch_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), .is_leader_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(0))};
+}
+
+inline int32_t RaftWorkerStateCore::batch_limit() const {
+    return this->batch_limit_.get();
+}
+
+inline void RaftWorkerStateCore::set_batch_limit(int32_t value) {
+    this->batch_limit_.set(std::move(value));
+}
+
+inline int32_t RaftWorkerStateCore::cur_epoch() const {
+    return this->cur_epoch_.get();
+}
+
+inline void RaftWorkerStateCore::set_cur_epoch(int32_t value) {
+    this->cur_epoch_.set(std::move(value));
+}
+
+inline int32_t RaftWorkerStateCore::is_leader() const {
+    return this->is_leader_.get();
+}
+
+inline void RaftWorkerStateCore::set_is_leader(int32_t value) {
+    this->is_leader_.set(std::move(value));
+}
+/*RUSTYCPP:GEN-END id=raft_worker.2*/
+
+// @unsafe - Part 1 migration boundary. This worker still owns thread
+// coordination state and raw protocol/RPC handles; keep the ownership map below
+// accurate before converting any field to Box/Arc/Option or moving to DSL.
 class RaftWorker {
 private:
-  // Callbacks for log application
-  std::function<void(const char*, int)> callback_ = nullptr;
-  std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
+  // TODO(RustyCpp): legacy simple callbacks are currently only stored,
+  // not invoked by Next(). Keep until deletion/compat cleanup.
+  rusty::Function<void(const char*, int)> callback_;
+  rusty::Function<void(const char*&, int, int)> callback_par_id_;
 
   // RAFT CHANGE: Store separate callbacks for leader and follower roles
   // The Next() method will choose which to call based on current leadership
-  std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char*>>&)>
-    leader_callback_par_id_return_ = nullptr;
-  std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char*>>&)>
-    follower_callback_par_id_return_ = nullptr;
+  watermark_callback_t leader_callback_par_id_return_;
+  watermark_callback_t follower_callback_par_id_return_;
 
   // SINGLE-RAFT: Per-partition callback maps for routing apply callbacks
   // When a single RaftWorker handles all partitions, Next() extracts par_id
@@ -70,27 +196,27 @@ private:
   std::map<uint32_t, watermark_callback_t> follower_callbacks_by_partition_;
   std::map<uint32_t, std::queue<std::tuple<int, int, int, int, const char*>>> un_replay_logs_by_partition_;
 
+  // Thread coordination is hard-deferred for RustyCpp migration. These fields
+  // synchronize SubmitLoop/StopSubmitThread and must stay hand-written until a
+  // later pass audits the full threading protocol.
   std::mutex finish_mutex_{};
   std::condition_variable finish_cond_{};
   std::mutex condition_mutex_;
-  struct PendingLog {
-    std::string payload;
-    uint32_t par_id;
-  };
-  std::deque<PendingLog> submit_queue_;
+  std::deque<RaftWorkerPendingLog> submit_queue_;
   std::mutex submit_mutex_;
   std::condition_variable submit_cv_;
-  std::atomic<bool> submit_thread_stop_{false};
+  rusty::sync::atomic::AtomicBool submit_thread_stop_{false};
   bool submit_thread_started_{false};
   std::thread submit_thread_;
-  int batch_limit_ = 1;
+  RaftWorkerStateCore state_core_;
 
 public:
   // Statistics
-  std::atomic<int> n_current{0};   // Current in-flight requests
-  std::atomic<int> n_submit{0};    // Total submitted
-  std::atomic<int> n_tot{0};       // Total processed
-  // removed `std::atomic<int> submit_num{0};`
+  // Cross-thread counters retain atomic semantics through Rusty atomics.
+  rusty::sync::atomic::AtomicI32 n_current{0};  // Current in-flight requests
+  rusty::sync::atomic::AtomicI32 n_submit{0};   // Total submitted
+  rusty::sync::atomic::AtomicI32 n_tot{0};      // Total processed
+  // removed old submit counter
   // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
   // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
   // drivers in `paxos_main_helper.cc`.  `tot_num` is left in place
@@ -98,31 +224,44 @@ public:
   int tot_num = 0;
 
   // Configuration
+  // @unsafe - borrowed Config::SiteInfo. Launch code assigns this from Config
+  // before SetupBase(); RaftWorker must not delete it.
   Config::SiteInfo* site_info_ = nullptr;
   // When true, this worker accepts and serves all partitions.
   bool handles_all_partitions_ = false;
 
   // Raft protocol components
+  // @unsafe - borrowed frame returned by Frame::GetFrame(); the frame registry
+  // owns it, not RaftWorker.
   Frame* rep_frame_ = nullptr;
-  TxLogServer* rep_sched_ = nullptr;      // Points to RaftServer
+  // @unsafe - borrowed pointer to the RaftFrame-owned RaftServer. RaftWorker
+  // must not delete it.
+  TxLogServer* rep_sched_ = nullptr;
+  // @unsafe - borrowed communicator returned by RaftFrame::CreateCommo();
+  // RaftFrame keeps ownership in its commo_ member.
   Communicator* rep_commo_ = nullptr;
 
   // RPC infrastructure
+  // @safe - shared PollThread handle; Arc/Option manages this lifetime.
   rusty::Option<rusty::Arc<PollThread>> svr_poll_thread_worker_;
-  // Services are now owned by rpc_server_ via reg_service()
-  rrr::Server* rpc_server_ = nullptr;
+  // @unsafe - owned RPC server. Allocated in SetupService(), cleared in ShutDown();
+  // services are transferred to the server via reg_service().
+  rusty::Option<rusty::Box<rrr::Server>> rpc_server_{rusty::None};
 
   // Heartbeat/control RPC
+  // @safe - shared heartbeat PollThread/status handles.
   rusty::Option<rusty::Arc<PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
-  rrr::Server* hb_rpc_server_ = nullptr;
+  // @unsafe - owned heartbeat/control server. Allocated in SetupHeartbeat(),
+  // cleared in ShutDown().
+  rusty::Option<rusty::Box<rrr::Server>> hb_rpc_server_{rusty::None};
 
   // Queue for unreplayed logs (follower only)
   std::queue<std::tuple<int, int, int, int, const char*>> un_replay_logs_;
 
-  // Leadership state
-  int cur_epoch = 0;
-  int is_leader = 0;
+  // Leadership routing scalars live in state_core_; callback ownership and
+  // synchronization stay in C++.
+  // @unsafe - recursive mutex protects leadership state across callbacks.
   std::recursive_mutex election_state_lock;
 
   // Constants
@@ -145,7 +284,7 @@ public:
   void SetupHeartbeat();
 
   // Shutdown
-  // @unsafe - uses delete on raw pointers (manual memory management)
+  // @unsafe - shuts down RPC servers and borrowed protocol pointers
   void ShutDown();
   // @safe - bounded pointer dereferences
   void WaitForShutdown();
@@ -157,6 +296,10 @@ public:
   void EnqueueLog(const char* log, int len, uint32_t par_id, int batch_size);
   // @safe
   bool HasSubmitThread() const { return submit_thread_started_; }
+  // @safe
+  int CurrentEpoch() const { return state_core_.cur_epoch(); }
+  // @safe
+  void SetCurrentEpoch(int epoch) { state_core_.set_cur_epoch(epoch); }
 
   // Leadership & Partition queries
   // @unsafe - uses raw pointers, dynamic_cast
@@ -176,21 +319,15 @@ public:
 
   // Callback registration (Mako watermark integration)
   // @safe - stores callback for later invocation
-  void register_apply_callback(std::function<void(const char*, int)> cb);
+  void register_apply_callback(rusty::Function<void(const char*, int)> cb);
   // @safe - stores callback for later invocation
-  void register_apply_callback_par_id(std::function<void(const char*&, int, int)> cb);
+  void register_apply_callback_par_id(rusty::Function<void(const char*&, int, int)> cb);
 
   // RAFT CHANGE: Separate registration for leader and follower callbacks
   // @safe - stores callback for later invocation
-  void register_leader_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
-  );
+  void register_leader_callback_par_id_return(watermark_callback_t cb);
   // @safe - stores callback for later invocation
-  void register_follower_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
-  );
+  void register_follower_callback_par_id_return(watermark_callback_t cb);
 
   // SINGLE-RAFT: Per-partition callback registration
   // Used when a single RaftWorker handles all partitions
@@ -201,10 +338,7 @@ public:
 
   // Legacy method for compatibility (deprecated - use leader/follower specific methods)
   // @safe - delegates to register_follower_callback_par_id_return
-  void register_apply_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
-  );
+  void register_apply_callback_par_id_return(watermark_callback_t cb);
 
   // Application callback (called from RaftServer::applyLogs)
   // @unsafe - uses shared_ptr, dynamic_pointer_cast, raw pointers, malloc/memcpy

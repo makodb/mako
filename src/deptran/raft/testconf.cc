@@ -16,11 +16,45 @@ import std;
 
 namespace janus {
 
+#if RUSTYCPP_RUST
+pub fn raft_test_index_is_valid(index: i32, size: i32) -> bool {
+    index >= 0 && index < size
+}
+
+pub fn raft_test_wrapped_index(index: i32, offset: i32, size: i32) -> i32 {
+    let mut result = (index + offset) % size;
+    if result < 0 {
+        result += size
+    }
+    result
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=testconf.scalar_helpers version=1 rust_sha256=2bdd7a65c126a986e40748135a5fcd38a94ffbfb652955ed053e6b504016d4e0*/
+bool raft_test_index_is_valid(int32_t index, int32_t size);
+int32_t raft_test_wrapped_index(int32_t index, int32_t offset, int32_t size);
+
+bool raft_test_index_is_valid(int32_t index, int32_t size) {
+    return (rusty::detail::deref_if_pointer_like(index) >= 0) && (rusty::detail::deref_if_pointer_like(index) < rusty::detail::deref_if_pointer_like(size));
+}
+
+int32_t raft_test_wrapped_index(int32_t index, int32_t offset, int32_t size) {
+    auto result = ((rusty::detail::deref_if_pointer_like(index) + rusty::detail::deref_if_pointer_like(offset))) % rusty::detail::deref_if_pointer_like(size);
+    if (rusty::detail::deref_if_pointer_like(result) < 0) {
+        rusty::detail::deref_if_pointer_like(result) += size;
+    }
+    return std::move(result);
+}
+/*RUSTYCPP:GEN-END id=testconf.scalar_helpers*/
+
 #ifdef RAFT_TEST_CORO
 
 int _test_id_g = 0;
 
+// @unsafe - static test harness registry of live frames. Kill() deletes and
+// erases entries; Restart() allocates and reinserts replacements.
 std::map<siteid_t, RaftFrame*> RaftTestConfig::replicas;
+
+// @unsafe - std::function compatibility boundary for RaftServer::RegLearnerAction.
 std::map<siteid_t, std::function<int(int, janus::Command)>>
     RaftTestConfig::commit_callbacks;
 std::map<siteid_t, std::vector<int>> RaftTestConfig::committed_cmds;
@@ -45,6 +79,8 @@ void RaftTestConfig::SetLearnerAction(void) {
     auto svr = pair.first;
     auto frame = pair.second;
     // rep_frame_ is already set in constructor, no need to set it here
+    // Store the callback so Restart() can re-register equivalent learner
+    // behavior on the newly allocated RaftServer.
     RaftTestConfig::commit_callbacks[svr] =
         [svr](int slot, janus::Command md) -> int {
           verify(md.kind_ == TpcCommitCommand::static_kind());
@@ -191,7 +227,7 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
 }
 
 bool RaftTestConfig::StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
-                                       std::function<void(CommitStatus)> callback) {
+                                       rusty::Function<void(CommitStatus)> callback) {
   // First, call Start to submit the command
   bool result = Start(svr, cmd, index, term);
   if (!result) {
@@ -579,8 +615,8 @@ void RaftTestConfig::Kill(siteid_t svr) {
   // Mark as disconnected
   disconnected_[svr] = true;
 
-  // Clear atomic pointer in RaftServiceImpl BEFORE deleting frame
-  // This ensures in-flight RPCs get nullptr and return failure gracefully
+  // Publish nullptr before deleting the frame-owned RaftServer so existing RPC
+  // services stop forwarding to an about-to-be-destroyed server.
   RaftServiceImpl::UpdateServer(svr, nullptr);
 
   // Disconnect to save RPC proxies before deletion
@@ -594,10 +630,12 @@ void RaftTestConfig::Kill(siteid_t svr) {
   // We must wait longer than this to ensure stale coroutines exit before we delete
   usleep(450000); // 450ms > max election timer sleep (400ms)
 
-  // Delete the frame (this will cascade delete svr_ and commo_)
+  // RaftFrame owns svr_ and commo_; deleting it tears down the server and
+  // communicator for this test replica.
   delete frame;
 
-  // Remove from replicas map
+  // Remove the killed frame from the live registry. Restart() will allocate
+  // and insert a replacement frame.
   replicas.erase(it);
 
   // Clear committed commands for this server
@@ -640,25 +678,29 @@ void RaftTestConfig::Restart(siteid_t svr) {
     return;
   }
 
-  // Create new RaftFrame
+  // Allocate a replacement frame owned by the test registry after insertion.
   RaftFrame* frame = new RaftFrame(MODE_RAFT);
   frame->site_info_ = site_info;
 
-  // Create new RaftServer (persistence will be loaded when EnsureSetup is called)
+  // RaftFrame owns the recreated RaftServer; external users receive borrowed
+  // raw pointers via .get(). Persistence is loaded below before publication.
   frame->svr_ = std::make_unique<RaftServer>(frame);
   frame->svr_->site_id_ = svr;
   frame->svr_->partition_id_ = site_info->partition_id_;
   frame->svr_->loc_id_ = site_info->locale_id;
   frame->svr_->rep_frame_ = frame;
 
-  // Fix 2: Get the ORIGINAL poll thread from RaftServiceImpl (survives Kill)
+  // Reuse the RPC service poll thread kept by RaftServiceImpl across Kill().
   // This ensures inbound RPCs (via RPC server) and outbound RPCs (via Commo)
-  // use the SAME poll thread, eliminating race conditions on RaftServer state
+  // use the same poll thread, eliminating race conditions on RaftServer state.
   auto poll_thread = RaftServiceImpl::GetPollThread(svr);
   if (poll_thread.is_some()) {
+    // RaftFrame owns the recreated communicator.
     frame->commo_ = std::make_unique<RaftCommo>(std::move(poll_thread));
   } else {
     Log_warn("[RAFT-RESTART] site {}: poll thread not found, creating new one", svr);
+    // RaftFrame owns the recreated communicator even when a poll thread must
+    // be created lazily by RaftCommo.
     frame->commo_ = std::make_unique<RaftCommo>(rusty::None);
   }
   frame->commo_->loc_id_ = site_info->locale_id;
@@ -683,7 +725,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
              svr, frame->svr_->async_persistence_ ? "async" : "sync");
 
     // Create RecoveryConfig
-    raft::RecoveryConfig config;
+    raft::RecoveryConfig config = raft::RecoveryConfig::defaults();
     std::string base_path = "/tmp";
     config.storage_path = base_path + "/raft_" + std::to_string(svr) +
                          "_partition_" + std::to_string(site_info->partition_id_);
@@ -705,7 +747,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
       if (result.success) {
         Log_info("[RAFT-TEST-RESTART] Loaded: term={} vote={} lastLogIndex={} (mode={})",
-                 frame->svr_->currentTerm, frame->svr_->vote_for_,
+                 frame->svr_->currentTerm, frame->svr_->vote_core_.vote_for(),
                  frame->svr_->lastLogIndex, static_cast<int>(result.mode));
       } else {
         Log_error("[RAFT-TEST-RESTART] Recovery failed: {}", result.error_message.c_str());
@@ -714,7 +756,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
   }
 
   // Record startup timestamp for grace period logic (same as Setup())
-  frame->svr_->startup_timestamp_ = Time::now(false);
+  frame->svr_->leadership_core_.set_startup_timestamp(Time::now(false));
 
   // CRITICAL: Mark Setup() as already done to prevent EnsureSetup() from calling it again
   // This prevents double-initialization of persistence which would reset the loaded state
@@ -749,7 +791,8 @@ void RaftTestConfig::Restart(siteid_t svr) {
   }
 #endif
 
-  // Re-register learner action BEFORE adding to replicas map
+  // Register learner callback before publishing the frame so the restarted
+  // server observes commits the same way as the original.
   commit_callbacks[svr] =
       [svr](int slot, janus::Command md) -> int {
         verify(md.kind_ == TpcCommitCommand::static_kind());
@@ -762,11 +805,10 @@ void RaftTestConfig::Restart(siteid_t svr) {
       };
   frame->svr_->RegLearnerAction(commit_callbacks[svr]);
 
-  // Update atomic pointer in RaftServiceImpl to point to the new server
-  // This allows the existing RPC service to forward requests to the new server
+  // Rebind the existing RPC service to the newly frame-owned server.
   RaftServiceImpl::UpdateServer(svr, frame->svr_.get());
 
-  // Add back to replicas map - EnsureSetup() will be called lazily on first RPC to start coroutines
+  // Publish the restarted frame into the live registry.
   replicas[svr] = frame;
 
   // Mark as connected in test config (don't call Reconnect, proxies will be restored on demand)
@@ -804,7 +846,7 @@ siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
 
 siteid_t RaftTestConfig::getServerIdByIndex(int index) const {
   // Get server ID by its position in the replicas map (0-4)
-  if (index < 0 || index >= NSERVERS) {
+  if (!raft_test_index_is_valid(index, NSERVERS)) {
     // Index out of range, return -1
     return -1;
   }
@@ -838,10 +880,7 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
   }
   
   // Calculate new index with wrapping
-  int new_index = (current_index + offset) % NSERVERS;
-  if (new_index < 0) {
-    new_index += NSERVERS;
-  }
+  int new_index = raft_test_wrapped_index(current_index, offset, NSERVERS);
   
   siteid_t result = getServerIdByIndex(new_index);
   if (result == -1) {

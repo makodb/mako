@@ -11,7 +11,6 @@
 
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/raft/memory_log_storage.hpp"
-#include "deptran/classic/tpc_command.h"  // TpcEmptyCommand for nested-command tests
 #include "../rrr.hpp"
 
 import std;
@@ -19,6 +18,20 @@ import rusty;
 
 using namespace rrr;
 using namespace janus::raft;
+
+// This test only needs one concrete member of the closed MakoCommands set to
+// exercise LogEntry's command-carrying wire shape. Defining its empty payload
+// locally keeps the lightweight unit test independent of txlog_core, which
+// otherwise pulls RocksDB and its compression-library dependency graph into
+// the process merely for janus::TpcEmptyCommand.
+namespace janus {
+class TpcEmptyCommand
+    : public rrr::Serializable<TpcEmptyCommand, MakoCommands> {
+ public:
+  void save(BinaryWriteArchive&) const {}
+  void load(BinaryReadArchive&) {}
+};
+}  // namespace janus
 
 // ============================================================================
 // LogEntry Tests
@@ -31,7 +44,7 @@ protected:
 };
 
 TEST_F(LogEntryTest, DefaultConstruction) {
-    LogEntry entry;
+    LogEntry entry = LogEntry::defaults();
     EXPECT_EQ(entry.slot_id, 0u);
     EXPECT_EQ(entry.term, 0u);
     EXPECT_EQ(entry.max_ballot_seen, 0u);
@@ -42,7 +55,7 @@ TEST_F(LogEntryTest, DefaultConstruction) {
 }
 
 TEST_F(LogEntryTest, ConstructionWithSlotAndTerm) {
-    LogEntry entry(42, 5);
+    LogEntry entry = LogEntry::with_slot_term(42, 5);
     EXPECT_EQ(entry.slot_id, 42u);
     EXPECT_EQ(entry.term, 5u);
     EXPECT_FALSE(entry.command.has_value());
@@ -50,13 +63,10 @@ TEST_F(LogEntryTest, ConstructionWithSlotAndTerm) {
 }
 
 TEST_F(LogEntryTest, FullConstruction) {
-    // 2 step 2.5: use TpcEmptyCommand (a real Serializable in
-    // MakoCommands) as the carried payload instead of a Marshallable
-    // test fixture; the test exercises LogEntry's command-carrying
-    // shape, the choice of T doesn't matter beyond "is a valid
-    // Command payload".
+    // The test-local MakoCommands member exercises LogEntry's command-carrying
+    // shape without linking the production transaction command library.
     auto cmd = rusty::Arc<janus::TpcEmptyCommand>::make();
-    LogEntry entry(10, 3, cmd, true);
+    LogEntry entry = LogEntry::with_command(10, 3, cmd, true);
 
     EXPECT_EQ(entry.slot_id, 10u);
     EXPECT_EQ(entry.term, 3u);
@@ -65,9 +75,9 @@ TEST_F(LogEntryTest, FullConstruction) {
 }
 
 TEST_F(LogEntryTest, Comparison) {
-    LogEntry e1(1, 5);
-    LogEntry e2(2, 5);
-    LogEntry e3(1, 5);
+    LogEntry e1 = LogEntry::with_slot_term(1, 5);
+    LogEntry e2 = LogEntry::with_slot_term(2, 5);
+    LogEntry e3 = LogEntry::with_slot_term(1, 5);
 
     EXPECT_TRUE(e1 < e2);
     EXPECT_FALSE(e2 < e1);
@@ -75,7 +85,7 @@ TEST_F(LogEntryTest, Comparison) {
 }
 
 TEST_F(LogEntryTest, SerializationWithoutCommand) {
-    LogEntry original(42, 7);
+    LogEntry original = LogEntry::with_slot_term(42, 7);
     original.max_ballot_seen = 10;
     original.max_ballot_accepted = 8;
     original.committed = true;
@@ -92,7 +102,7 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
         original.save(writer);
     }
 
-    LogEntry restored;
+    LogEntry restored = LogEntry::defaults();
     {
         rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
         rrr::BinaryReadArchive reader(make_source_proxy(&src));
@@ -110,7 +120,7 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
 
 TEST_F(LogEntryTest, SerializationWithCommand) {
     auto cmd = rusty::Arc<janus::TpcEmptyCommand>::make();
-    LogEntry original(100, 20, cmd, true);
+    LogEntry original = LogEntry::with_command(100, 20, cmd, true);
 
     // see SerializationWithoutCommand for
     // the to_marshal → save migration rationale.
@@ -126,7 +136,7 @@ TEST_F(LogEntryTest, SerializationWithCommand) {
     // Note: Full deserialization of custom commands requires MarshallDeputy registration
     // which is done at application startup. Here we just verify serialization works.
     // The basic fields can still be deserialized:
-    LogEntry partial;
+    LogEntry partial = LogEntry::defaults();
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
     rrr::BinaryReadArchive rar(make_source_proxy(&src));
     rrr::Deserialize_::deserialize(partial.slot_id, rar);
@@ -148,7 +158,7 @@ protected:
     void TearDown() override {}
 
     LogEntry make_entry(slotid_t slot, ballot_t term, bool committed = false) {
-        LogEntry entry(slot, term);
+        LogEntry entry = LogEntry::with_slot_term(slot, term);
         entry.committed = committed;
         return entry;
     }
