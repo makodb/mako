@@ -3141,14 +3141,6 @@ rusty::Arc<WaitAll> create_sp_waitall_from(const rusty::Vec<rusty::Arc<EventPoll
 }
 /*RUSTYCPP:GEN-END id=reactor.26*/
 
-// Generic creation entry — the named event types all have per-type DSL
-// factories now (create_sp_int_event & co); this template remains for
-// BoxEvent<T> (via create_sp_box_event below) and QuorumEvent
-// subclasses, constructing directly and sharing the DSL registration.
-template <typename Ev, typename... Args>
-inline rusty::Arc<Ev> reactor_create_sp_event(Args&&... args) {  // @unsafe
-  return reactor_setup_sp_event<Ev>(rusty::Arc<Ev>::make(std::forward<Args>(args)...));
-}
 
 // BoxEvent<T> creation (the old dispatcher's is_box_event branch, now an
 // honest 1-line generic -- BoxEvent's aggregate seeding lives in

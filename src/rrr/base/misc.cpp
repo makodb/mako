@@ -19,19 +19,13 @@ export module rrr.misc;
 import std;
 import rrr.basetypes;
 
-// @safe - mostly templated helpers (clamp, insert_into_map, erase) +
+// @safe - mostly templated helpers (clamp, insert_into_map) +
 // Job/OneTimeJob/FrequentJob value classes. The syscall-touching
-// functions (`rdtsc`, `get_ncpu`, `getline`) and `FrequentJob::Ready`
+// functions (`get_ncpu`, `time_now_str`) and `FrequentJob::Ready`
 // (calls rrr::Time::now(false)) carry per-method `// @unsafe`
 // overrides.
 export namespace rrr {
 
-// The cycle-counter read lives in srpc_timing.c now (plain C, Goal-0 C
-// demotion — inline asm will never be Rust DSL).
-extern "C" uint64_t srpc_rdtsc_raw(void);
-inline uint64_t rdtsc() {
-  return srpc_rdtsc_raw();
-}
 
 // Authored as inline Rust DSL — multi-parameter fn templates lower
 // directly (§7.9); the generated template is byte-equivalent to the
@@ -66,8 +60,6 @@ T clamp(const T& v, const T1& lower, const T2& upper) {
 
 int get_ncpu();
 
-// NOTE: \n is stripped from input
-std::string getline(FILE *fp, char delim = '\n');
 
 // `insert_into_map` -- 20 call sites across src/memdb. Authored as
 // inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
@@ -96,15 +88,6 @@ inline void insert_into_map(Map &map, const K &key, const V &value) {
   map.insert(typename Map::value_type(key, value));
 }
 
-template <class Container>
-typename std::reverse_iterator<typename Container::iterator>
-erase(Container &l,
-      typename std::reverse_iterator<typename Container::iterator> &rit) {
-  typename Container::iterator it = rit.base();
-  it--;
-  it = l.erase(it);
-  return std::reverse_iterator<typename Container::iterator>(it);
-}
 
 // `Job` — abstract base trait for unit-of-work scheduling. Concrete
 // impls (OneTimeJob, FrequentJob, Alarm) inherit from the emitted
@@ -315,19 +298,5 @@ int32_t get_ncpu() {
 }
 /*RUSTYCPP:GEN-END id=misc.get_ncpu*/
 
-
-// @unsafe - getdelim allocates the `char* buf` via malloc, hand-managed
-// by `free(buf)` at the end. Raw `char*` plumbing throughout.
-std::string getline(FILE* fp, char delim) {
-    char* buf = nullptr;
-    size_t n = 0;
-    ssize_t n_read = ::getdelim(&buf, &n, delim, fp);
-    if (n_read > 0 && buf[n_read - 1] == delim) {
-        n_read--;
-    }
-    std::string line(buf, n_read);
-    free(buf);
-    return line;
-}
 
 } // namespace rrr

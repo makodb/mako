@@ -367,18 +367,6 @@ void deserialize(AnyMessage& am, BinaryReadArchive& ar) {
 }
 /*RUSTYCPP:GEN-END id=any_message.serde*/
 
-// Operators have no DSL spelling; these stay hand-written forwarders.
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
-                                      const AnyMessage& am) {
-  serialize(am, ar);
-  return ar;
-}
-
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
-                                     AnyMessage& am) {
-  deserialize(am, ar);
-  return ar;
-}
 
 
 }  // export namespace rrr

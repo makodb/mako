@@ -4246,17 +4246,6 @@ inline void deserialize(T& v, BinaryReadArchive& ar) {
 // the operators are now one-line forwarders). Forward declarations first
 // so nested containers resolve regardless of definition order; element
 // calls are unqualified and fall back to the generic catch-all.
-namespace Deserialize_ {
-// (pair + container fwd-decls deleted — the trait GEN above declares
-// every overload before any use, and its definitions are non-inline.)
-
-// (pair + container deserialize definitions moved into the
-// Deserialize trait block above — impl-for-container lowering lands
-// directly in this namespace; the forward declarations above remain
-// for nested-container resolution.)
-
-
-}  // namespace Deserialize_
 
 
 // ---- Linear containers. -----------------------------------------------

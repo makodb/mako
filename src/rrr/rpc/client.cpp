@@ -1068,7 +1068,6 @@ template<typename F>
 FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id, const RequestOptions& options, const FutureAttr& attr, F write_fn);
 template<typename F>
 rusty::Result<rusty::Unit, i32> clientconn_request_async(const ClientConnection& conn, i32 rpc_id, F write_fn, AsyncReplyCallback on_reply);
-bool operator==(const rusty::Arc<ClientConnection>& lhs, const rusty::Arc<ClientConnection>& rhs);
 
 // @safe - Client-side socket handler exposed to poll loop via Pollable
 // proxy facade.  Methods that genuinely cross socket I/O, Marshal byte
@@ -2573,18 +2572,6 @@ bool ClientConnection::is_closed() const {
 
 }  // export namespace rrr
 
-// std::hash specialization (must be in namespace std, attached to global module)
-// from former client.hpp:1965-1974
-// @safe - Hash specialization for rusty::Arc<ClientConnection>
-namespace std {
-template<>
-struct hash<rusty::Arc<rrr::ClientConnection>> {
-    // @safe - Simple pointer hash
-    size_t operator()(const rusty::Arc<rrr::ClientConnection>& arc) const {
-        return hash<const rrr::ClientConnection*>()(arc.get());
-    }
-};
-}
 
 // ===========================================================================
 // Block 3: Client facade + bulk-reconnect (from former client.hpp:1976-end)
@@ -2612,17 +2599,6 @@ using OnErrorCallbackFn               = rusty::Function<void(RpcError,
                                                              const std::string&) const>;
 using OnReconnectedCallbackFn         = rusty::Function<void(bool) const>;
 
-// @unsafe - reinterpret_cast<const char*> on the addr param. Lives
-// outside the DSL block so the inline-Rust grammar doesn't have to
-// reason about `std::ffi::c_char` (which triggers a transpiler-side
-// `proc_macro_runtime` import explosion). Used by the DSL `connect()`
-// body to bridge `*const i8` (Rust DSL) to `const char*` (legacy
-// ClientConnection signature).
-// @unsafe - reinterpret_cast between raw pointer types; not expressible
-// in the DSL.
-inline const char* client_dsl_addr_to_cstr(const int8_t* addr) {
-    return reinterpret_cast<const char*>(addr);
-}
 
 // `Client` — user-facing RPC client facade. Authored as inline Rust
 // DSL: the `#if RUSTYCPP_RUST` block below is the source of truth; the
@@ -3880,10 +3856,6 @@ namespace rrr {
 // Phase 5 flip: free fns for trivial methods whose bodies aren't cleanly
 // DSL-inline. The all-public DSL struct needs no friend declarations.
 // ============================================================================
-// @safe - Container support for Arc<ClientConnection> (was an inline friend).
-bool operator==(const rusty::Arc<ClientConnection>& lhs, const rusty::Arc<ClientConnection>& rhs) {
-  return lhs.get() == rhs.get();
-}
 
 // @safe - ctor helper: RequestQueue has a config-taking ctor, not a new_().
 inline RequestQueue make_pending_queue(const RequestQueueConfig& c) {

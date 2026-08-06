@@ -436,9 +436,6 @@ FiberChannel::~FiberChannel() noexcept(false) {
 // in the export namespace above.
 namespace rrr {
 
-// Forward decl for the signal path (Arc clone + IntEvent::set
-// arrow-deref; called from the DSL on_inbound_* methods).
-void fiberchannel_signal_pending_recv(FiberChannel& self);
 
 // @unsafe - `ch_->set_on_*` driven through the proxy deref + rusty::Function
 // ctor chain on three captured `[self_ptr]` lambdas. `self_ptr == &self` is

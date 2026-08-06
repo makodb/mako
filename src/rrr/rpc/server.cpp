@@ -795,11 +795,6 @@ int32_t ServerConnection::run_async(rusty::Function<void()> f) const {
 export namespace rrr {
 
 // @safe - RAII wrapper for deferred RPC replies with move semantics
-// Aliases for the two callback types so the DSL field declarations
-// stay terse (the DSL parser doesn't grok complex template signature
-// parameters inside trait-object types).
-using DeferredReplyArchiveCb = rusty::Function<void(BinaryWriteArchive&)>;
-using DeferredReplyCleanupCb = rusty::Function<void()>;
 
 // Forward declarations so the DSL-emitted `DeferredReply::reply()` /
 // `reply_error()` method bodies (which sit inside the GEN block
@@ -1050,15 +1045,6 @@ struct ShutdownState {
 };
 /*RUSTYCPP:GEN-END id=server.shutdown_state*/
 
-// @unsafe - reinterpret_cast<const char*> on the addr param. Lives
-// outside the DSL block so the inline-Rust grammar doesn't have to
-// reason about `std::ffi::c_char` (which triggers a transpiler-side
-// `proc_macro_runtime` import explosion). Used by the DSL `start()`
-// body to bridge `*const i8` (Rust DSL) to `const char*` (legacy
-// Log_error / strlen signatures).
-inline const char* server_dsl_addr_to_cstr(const int8_t* addr) {
-    return reinterpret_cast<const char*>(addr);
-}
 
 // @unsafe - strlen over the reinterpret_cast'ed addr. Returns an owned
 // std::string for the DSL `start()` body (`*const i8` has no `char*`

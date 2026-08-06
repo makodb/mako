@@ -55,8 +55,6 @@ using rusty::sync::atomic::Ordering;
 using rusty::sync::atomic::AtomicI64;
 /*RUSTYCPP:GEN-END id=basetypes.7*/
 
-struct SparseInt;
-
 
 // `SparseInt` — the wire varint format's pointer-free queries, as DSL
 // statics (the v32/v64 DSL blocks above call SparseInt::val_size).
@@ -855,16 +853,3 @@ double Timer::elapsed() const {
 
 } // export namespace rrr
 
-// @safe - impl block: buf_size/val_size are pure switch math; the
-// dump/load_* methods do `reinterpret_cast<char*>` + raw `char*`
-// byte slicing so they carry per-method `// @unsafe`; Timer::* and
-// Rand::* hit `gettimeofday` / `pthread_self` and carry per-method
-// `// @unsafe`.
-namespace rrr {
-
-
-
-
-
-
-} // namespace rrr
