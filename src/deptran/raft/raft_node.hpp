@@ -27,10 +27,10 @@
  */
 
 #include <cstdint>
-#include <utility>
 #include <vector>
 
 #include <rusty/box.hpp>
+#include <rusty/move.hpp>
 
 #include "channel_transport.hpp"
 #include "dispatcher.hpp"
@@ -201,28 +201,28 @@ class DummyDispatcher : public DispatcherBase {
       : core_(DummyDispatcherCore::new_(self)) {}
 
   VoteReply handle_vote(VoteReq req) override {
-    return core_.handle_vote(std::move(req));
+    return core_.handle_vote(rusty::move(req));
   }
   VoteDurableReply handle_vote_durable(VoteDurableReq req) override {
-    return core_.handle_vote_durable(std::move(req));
+    return core_.handle_vote_durable(rusty::move(req));
   }
   AppendEntriesReply handle_append_entries(AppendEntriesReq req) override {
-    return core_.handle_append_entries(std::move(req));
+    return core_.handle_append_entries(rusty::move(req));
   }
   EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq req) override {
-    return core_.handle_empty_append_entries(std::move(req));
+    return core_.handle_empty_append_entries(rusty::move(req));
   }
   AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq req) override {
-    return core_.handle_append_entries_durable(std::move(req));
+    return core_.handle_append_entries_durable(rusty::move(req));
   }
   TimeoutNowReply handle_timeout_now(TimeoutNowReq req) override {
-    return core_.handle_timeout_now(std::move(req));
+    return core_.handle_timeout_now(rusty::move(req));
   }
   NotifyRestartReply handle_notify_restart(NotifyRestartReq req) override {
-    return core_.handle_notify_restart(std::move(req));
+    return core_.handle_notify_restart(rusty::move(req));
   }
   InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq req) override {
-    return core_.handle_install_snapshot(std::move(req));
+    return core_.handle_install_snapshot(rusty::move(req));
   }
 
   siteid_t self_site_id() const { return core_.self_site_id(); }
@@ -352,7 +352,7 @@ class RaftNode {
            LogStorage* log_storage,
            SnapshotManager* snap_manager)
       : state_core_(RaftNodeStateCore::new_(id)),
-        transport_(std::move(transport)),
+        transport_(rusty::move(transport)),
         log_storage_(log_storage),
         snap_manager_(snap_manager),
         dispatcher_(rusty::make_box<DummyDispatcher>(id)) {}

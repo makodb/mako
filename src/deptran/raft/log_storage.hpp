@@ -17,12 +17,12 @@
 
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include <rusty/option.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/move.hpp>
 
 #include "../constants.h"
 #include "rrr/rrr.hpp"
@@ -155,7 +155,7 @@ inline LogEntry log_entry_with_command(slotid_t slot,
                                        Command cmd,
                                        bool commit) {
     LogEntry entry = LogEntry::with_slot_term(slot, term);
-    entry.command = std::move(cmd);
+    entry.command = rusty::move(cmd);
     entry.committed = commit;
     return entry;
 }

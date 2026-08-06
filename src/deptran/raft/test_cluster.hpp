@@ -17,11 +17,11 @@
 #include <atomic>
 #include <cstdint>
 #include <thread>
-#include <utility>
 #include <vector>
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
+#include <rusty/move.hpp>
 
 #include "channel_transport.hpp"
 #include "memory_log_storage.hpp"
@@ -76,7 +76,7 @@ class TestCluster {
   // messages across the boundary. Sites outside both groups remain
   // fully connected (via current switchboard semantics).
   void partition(std::vector<siteid_t> a, std::vector<siteid_t> b) {
-    sw_.partition({std::move(a), std::move(b)});
+    sw_.partition({rusty::move(a), rusty::move(b)});
   }
 
   // @safe - clear all fault injections.
@@ -143,13 +143,13 @@ class TestCluster {
 
       TransportProxy tr = make_channel_transport(&sw_, id, /*par=*/0);
       rusty::Box<RaftNode> node(new RaftNode(
-          id, std::move(tr), logs_.back().get(), snaps_.back().get()));
+          id, rusty::move(tr), logs_.back().get(), snaps_.back().get()));
 
       rusty::Box<ChannelNodeWorker> worker(new ChannelNodeWorker(
-          std::move(receivers[i]), node->take_dispatcher()));
+          rusty::move(receivers[i]), node->take_dispatcher()));
 
-      nodes_.push_back(std::move(node));
-      workers_.push_back(std::move(worker));
+      nodes_.push_back(rusty::move(node));
+      workers_.push_back(rusty::move(worker));
     }
 
     // Spawn one background drainer per node.

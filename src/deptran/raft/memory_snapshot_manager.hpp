@@ -23,9 +23,9 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <utility>
 #include <vector>
 
+#include <rusty/move.hpp>
 #include <rusty/rusty.hpp>
 
 // `rusty::Vec` is exported by RustyCpp's named umbrella module.  The
@@ -129,7 +129,7 @@ inline bool memory_snapshot_writer_finalize_cpp(rusty::Vec<uint8_t>* buffer,
                                                 ballot_t last_term,
                                                 bool* finalized) {
   std::lock_guard<std::mutex> lk(*mtx);
-  *dest_payload = std::move(*buffer);
+  *dest_payload = rusty::move(*buffer);
   *dest_meta = memory_snapshot_metadata(last_index, last_term,
                                         dest_payload->size());
   *has_snapshot = true;
@@ -433,7 +433,7 @@ class MemorySnapshotReader : public SnapshotReader {
  public:
   // @safe
   MemorySnapshotReader(rusty::Vec<uint8_t> payload, SnapshotMetadata meta)
-      : core_(MemorySnapshotReaderCore::new_(std::move(payload), std::move(meta))) {}
+      : core_(MemorySnapshotReaderCore::new_(rusty::move(payload), rusty::move(meta))) {}
 
   // @unsafe - SnapshotReader's virtual interface exposes caller-owned bytes.
   bool Read(char* buffer, size_t buffer_size, size_t* bytes_read) override {
