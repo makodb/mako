@@ -495,10 +495,49 @@ hoist the split to item level.
 
 | recover batch 1 — preprocessor class + any_message/envelope kernels + dead Fiber shims | 57 | (rec 1) | the whole `#ifdef` class was stale |
 | recover batch 2 — `spawn_stackless_task_impl`, `pollthread_create`, `fiber_task_t` bodies, `reactor_make_arc` | 81 | (rec 2) | zero kernels left in spawn_stackless; ASan-clean |
+| recover batch 3 — `server_parse_port` (try/catch DELETED via strtoll), `server_invoke_shutdown_hook_safely` (catch_unwind), `buffer_source_read`->DSL `read_bytes` method, the Archive dispatch/serialize shims, `anymessage_unpack`, the thread-id bit-casts, and 5 pollworker helpers | 70 | (rec 3) | 18 of 21 drafted edits applied; the 3 `base/debugging.cpp` edits DROPPED BY POLICY (see below) |
 
-Running total: **~1,636 lines** of hand-written C++ removed from `src/rrr`
+Running total: **~1,706 lines** of hand-written C++ removed from `src/rrr`
 since the inventory was taken (batch 1: 397, batch 2: ~102, batch 3: 143,
 batch 4: 102, batch 5A: 157, batch 5B: 130, batch 5C: 114).
+
+### Adjudicated: `verify()` stays hand C++ — `if` + `panic!` is not a translation
+
+Asked directly whether the DSL spelling `if !ok { panic!(...) }` could
+replace `verify()`. Probed it; the answer is no, for a reason that is
+worth writing down because the spelling looks so close.
+
+`panic!` lowers to `rusty::panic::do_panic(std::format(...))`, and
+`do_panic` is compile-time switched: with `RUSTY_PANIC_ABORT` it is
+`fputs` + `std::abort()`, and WITHOUT it — which is this build, the macro
+appears nowhere in the tree — it is `throw std::runtime_error`. So the
+DSL spelling turns an abort into a **catchable throw**. rrr has live
+`catch(...)` / `catch_unwind` sites (batch 3 just added one in
+`server_invoke_shutdown_hook_safely`), so a failed `verify` would unwind
+into a swallow instead of dumping core. That is the worst available
+outcome for an assertion whose entire contract is "crucial for both debug
+and release binary".
+
+Flipping `RUSTY_PANIC_ABORT` on to recover abort semantics is not a
+Goal-0 refactor: it is a project-wide switch that also converts every
+`Option::unwrap`, `Result::unwrap` and bounds check from throw to abort,
+and it would break the `catch_unwind` code we rely on.
+
+Two further blockers survive even if the strategy question is settled:
+the `std::source_location` **default argument** (the DSL has none, so all
+~1,936 call sites would have to pass file/line explicitly), and the loss
+of `print_stack_trace` at the failure point.
+
+Related, and a **correction to batch 3's own stated reason** for dropping
+the three `base/debugging.cpp` edits: the objection given was that a DSL
+tail would allocate (`std::format`) before printing, where `fprintf` does
+not. That is only half true. The line *after* the fprintf is
+`print_stack_trace`, and on Linux that already mallocs — `backtrace_symbols`
+allocates, and the renderer builds a `rusty::Vec<std::string>`. The crash
+path is therefore already allocating. What the current order genuinely
+buys is that the `file:line` header reaches stderr *before* the first
+malloc, so a corrupt heap still yields the location. That is a real but
+narrow property, and it is the only thing the drop is defending.
 
 ## Idioms learned while landing these
 

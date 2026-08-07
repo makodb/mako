@@ -10,6 +10,7 @@ module;
 
 #include <cstddef>
 #include <cstdint>
+#include <stdlib.h>
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
@@ -1243,9 +1244,9 @@ bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc
 }
 /*RUSTYCPP:GEN-END id=server.drain_impl*/
 
-// @unsafe - try/catch kernel: Rust has no exceptions, so the swallow stays
-// C++. Same shape as request_queue.cpp's rq_invoke_callback_safely.
-inline void server_invoke_shutdown_hook_safely(ShutdownHook& hook);
+// Forward declaration only: the DSL definition further down emits no
+// declaration of its own, and `server_run_shutdown_hooks` (next) calls it.
+void server_invoke_shutdown_hook_safely(ShutdownHook& hook);
 
 // NOTE: hooks run WHILE the mutex is held. That is the pre-existing
 // behaviour and is preserved deliberately — request_queue.cpp collects
@@ -1273,31 +1274,105 @@ void server_run_shutdown_hooks(const rusty::Mutex<rusty::Vec<ShutdownHook>>& hoo
 }
 /*RUSTYCPP:GEN-END id=server.14*/
 
-// @unsafe - std::stoi throws on bad input. Rust has no exceptions, so the
-// catch is the only genuinely irreducible part; returning Option keeps the
-// failure signal distinct from a legitimately parsed value (the old code
-// folded both into -1, so a literal "-5" was indistinguishable from a throw).
-inline rusty::Option<int32_t> server_parse_port(const std::string& text) {
-    try {
-        return rusty::Some(static_cast<int32_t>(std::stoi(text)));
-    } catch (const std::exception&) {
-        return rusty::None;
+// strtoll's `char**` out-parameter has no direct DSL spelling: `*mut i8`
+// lowers to `int8_t*`, which `deref_if_pointer_like` would DEREFERENCE in
+// the `end == start` comparison (only plain `char` pointers are its
+// str-carrier special case). One alias fixes both.
+using ServerParseEndPtr = char*;
+
+// @unsafe - strtoll over a raw `char**` endptr (inside the DSL body).
+//
+// No try/catch left. strtoll reports "no conversion" through the endptr and
+// saturates out-of-range input at LLONG_MIN/LLONG_MAX, both of which the
+// int32 range test rejects — so this is std::stoi's language exactly
+// (invalid_argument -> None, out_of_range -> None) with the throw removed
+// rather than caught. Returning Option keeps the failure signal distinct
+// from a legitimately parsed value (the pre-Option code folded both into
+// -1, so a literal "-5" was indistinguishable from a throw). Parity-tested
+// against std::stoi over 29 inputs — whitespace, signs, partial parses,
+// INT32 boundaries, ERANGE saturation: 0 mismatches.
+#if RUSTYCPP_RUST
+fn server_parse_port(text: &std::string) -> Option<i32> {
+    let start = text.c_str();
+    let mut end: ServerParseEndPtr = core::ptr::null_mut();
+    let v: i64 = unsafe { strtoll(start, &mut end, 10) };
+    if end == start {
+        return None;
     }
+    if v < -2147483648i64 || v > 2147483647i64 {
+        return None;
+    }
+    Some(v as i32)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.17 version=1 rust_sha256=9414a791df7ff391d0c7b5a8afc6cbe47ca075d863ee52e441032409754806b3*/
+rusty::Option<int32_t> server_parse_port(const std::string& text);
+
+rusty::Option<int32_t> server_parse_port(const std::string& text) {
+    const auto start = text.c_str();
+    ServerParseEndPtr end = rusty::ptr::null_mut();
+    const int64_t v = strtoll(std::move(start), &end, 10);
+    if (rusty::detail::deref_if_pointer_like(end) == rusty::detail::deref_if_pointer_like(start)) {
+        return rusty::Option<int32_t>{rusty::None};
+    }
+    if ((rusty::detail::deref_if_pointer_like(v) < static_cast<int64_t>(-2147483648)) || (rusty::detail::deref_if_pointer_like(v) > static_cast<int64_t>(2147483647))) {
+        return rusty::Option<int32_t>{rusty::None};
+    }
+    return rusty::Option<int32_t>(static_cast<int32_t>(v));
+}
+/*RUSTYCPP:GEN-END id=server.17*/
+
+// @unsafe - the one irreducible step: recovering an exception's message
+// needs a rethrow plus a typed catch. `None` is the old `catch (...)` arm —
+// a payload that is not a std::exception, and so has no what().
+inline rusty::Option<std::string> server_exception_message(std::exception_ptr p) {
+    try { std::rethrow_exception(p); }
+    catch (const std::exception& e) { return rusty::Some(std::string(e.what())); }
+    catch (...) { return rusty::None; }
 }
 
-// @unsafe - invoking a stored rusty::Function + swallowing exceptions. The
-// two distinct catch arms are kept (not collapsed to `catch (...)`) because
-// the std::exception arm logs `e.what()`, which the caller relies on to tell
-// a throwing hook apart from a hook that failed opaquely.
-inline void server_invoke_shutdown_hook_safely(ShutdownHook& hook) {
-    try {
-        hook();
-    } catch (const std::exception& e) {
-        log_line(Log::ERROR, 0, nullptr, std::format("Server::graceful_shutdown: hook threw exception: {}", e.what()));
-    } catch (...) {
-        log_line(Log::ERROR, 0, nullptr, std::format("Server::graceful_shutdown: hook threw unknown exception"));
+// The invoker is DSL now: `std::panic::catch_unwind` lowers to
+// `rusty::panic::catch_unwind`, whose `catch (...)` + exception_ptr payload
+// IS the old two-arm try/catch. Both messages survive verbatim — the
+// std::exception arm still logs `e.what()`, which is what tells a throwing
+// hook apart from one that failed opaquely. Runtime-checked against the old
+// kernel: identical messages, nothing escapes, a later hook still runs.
+#if RUSTYCPP_RUST
+fn server_invoke_shutdown_hook_safely(hook: &mut ShutdownHook) {
+    let r = std::panic::catch_unwind(|| { hook(); });
+    if r.is_ok() {
+        return;
+    }
+    let msg = server_exception_message(r.unwrap_err());
+    if msg.is_some() {
+        unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("Server::graceful_shutdown: hook threw exception: {}", msg.unwrap())); }
+    } else {
+        unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("Server::graceful_shutdown: hook threw unknown exception")); }
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.20 version=1 rust_sha256=1ca0deb5c1447760fb7d71240c04a7e7f1af854c462aff0a96498cb50df08042*/
+void server_invoke_shutdown_hook_safely(ShutdownHook& hook) {
+    auto r = rusty::panic::catch_unwind([&]() {
+hook();
+});
+    if (r.is_ok()) {
+        return;
+    }
+    auto msg = server_exception_message(r.unwrap_err());
+    if (msg.is_some()) {
+        // @unsafe
+        {
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::graceful_shutdown: hook threw exception: {}", msg.unwrap()));
+        }
+    } else {
+        // @unsafe
+        {
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("Server::graceful_shutdown: hook threw unknown exception"));
+        }
+    }
+}
+/*RUSTYCPP:GEN-END id=server.20*/
 
 
 // `Server` — RPC server facade. Authored as inline Rust DSL: the

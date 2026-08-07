@@ -3426,17 +3426,31 @@ bool pollworker_is_on_poll_thread() {
 // incompatible-type ctor, which panics at RUNTIME rather than failing to
 // compile ("invalid Option conversion with value" out of
 // pollthread_create, taking every TcpFactoryTest down in SetUp).
-// Moved ABOVE its first use: the DSL shutdown() below calls it, and an
-// `inline` definition emits no external symbol, so a forward declaration
-// links only if the definition is non-inline. Relocating is simpler than
-// changing its linkage.
-// @unsafe - C++ template metaprogramming: `decltype(std::declval<...>())`
-// to name the native id type, plus std::bit_cast. Neither is DSL-
-// expressible.
-inline rusty::thread::ThreadId u64_to_thread_id(std::uint64_t bits) noexcept {
-    using NativeId = decltype(std::declval<rusty::thread::ThreadId>().as_native());
-    return rusty::thread::ThreadId{std::bit_cast<NativeId>(bits)};
+// Moved ABOVE its first use: the DSL shutdown() below calls it. The old
+// "an `inline` definition emits no external symbol, so a forward
+// declaration links only if the definition is non-inline" caveat went
+// away with the hand-written body — the GEN definition is non-inline.
+// @safe - `platform::threading::thread_id` is `std::thread::id` (default
+// backend) or `pthread_t` (POSIX backend); both are 8-byte and trivially
+// copyable on every platform we support. The old "C++ template
+// metaprogramming, not DSL-expressible" verdict was stale twice over: a
+// foreign type PATH lowers inside a turbofish (so the
+// `decltype(std::declval<...>())` dance is unnecessary), and
+// `std::bit_cast` itself enforces equal size plus trivial copyability.
+#if RUSTYCPP_RUST
+fn u64_to_thread_id(bits: u64) -> rusty::thread::ThreadId {
+    let native = std::bit_cast::<rusty::platform::threading::thread_id>(bits);
+    rusty::thread::ThreadId(native)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.62 version=1 rust_sha256=4f5b9dcf581a693756510a542a29adfcfc326a869fd3ba068a785a70705ce431*/
+rusty::thread::ThreadId u64_to_thread_id(uint64_t bits);
+
+rusty::thread::ThreadId u64_to_thread_id(uint64_t bits) {
+    auto native = std::bit_cast<rusty::platform::threading::thread_id>(std::move(bits));
+    return rusty::thread::ThreadId(std::move(native));
+}
+/*RUSTYCPP:GEN-END id=reactor.62*/
 
 using PollJoinSlot =
     rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<rusty::Unit>>>;
@@ -4808,11 +4822,24 @@ int32_t shared_int_event_set(SharedIntEvent& sie, int32_t v) {
 /*RUSTYCPP:GEN-END id=reactor.28*/
 
 // @unsafe - Arc handle-method raw extraction for the retain identity
-// compare below (`.get()` on the handle would be misrouted to the
-// pointee by the DSL autoderef — same reason as sconn_proxy_ptr).
-inline const IntEvent* int_event_raw_ptr(const rusty::Arc<IntEvent>& ev) {
-    return ev.get();
+// compare below (`.get()` on the handle is misrouted to the pointee by
+// the DSL autoderef — same reason as sconn_proxy_ptr). `&raw const *ev`
+// reaches the same address without naming `get()`: it lowers to
+// `&deref_if_pointer_like(ev)`. The only difference from `.get()` is the
+// debug-build assert Arc::operator* carries for a null handle, and every
+// Arc reaching here is a live element of `SharedIntEvent::events_`.
+#if RUSTYCPP_RUST
+fn int_event_raw_ptr(ev: &rusty::Arc<IntEvent>) -> *const IntEvent {
+    let p: *const IntEvent = &raw const *ev;
+    p
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.63 version=1 rust_sha256=f31e9221e5401669b8df00dff69caa47af913b99b4cd9a78f9a3b01f56824269*/
+const IntEvent* int_event_raw_ptr(const rusty::Arc<IntEvent>& ev) {
+    const IntEvent* p = &rusty::detail::deref_if_pointer_like(ev);
+    return p;
+}
+/*RUSTYCPP:GEN-END id=reactor.63*/
 
 // Threshold wait: register a fresh IntEvent, park with a timeout, then
 // drop it from the waiter list by pointer identity (the Arc keeps the
@@ -6110,16 +6137,35 @@ void pollworker_do_add_job(PollThreadWorker& self, rusty::Arc<Job> job);
 void pollworker_do_remove_job(PollThreadWorker& self, rusty::Arc<Job> job);
 
 // (ctor folded into an aggregate factory; no eventfd needed — the
-// channel is polled with try_recv() after each epoll_wait.)
-static PollThreadWorker pollworker_make(PollCmdReceiver receiver) {
-  return PollThreadWorker{std::move(receiver), Epoll(),        FdPollableMap(),
-                          FdModeMap(),         FdSet(),        JobSet(),
-                          false};
+// channel is polled with try_recv() after each epoll_wait.) The old
+// "its Epoll()/map defaults are alias ctors with no DSL spelling"
+// verdict was stale: a DSL struct literal over a DSL AGGREGATE lowers to
+// designated init and every foreign alias-ctor call passes through
+// verbatim. It stays its OWN fn on purpose — folding the literal into
+// pollworker_create's body makes each field value pick up that fn's
+// class RETURN type as a bogus qualifier
+// (`rusty::Rc<rusty::RefCell<PollThreadWorker>>::Epoll()`), i.e. the
+// class-return mis-qualification defect surfacing in a new place.
+#if RUSTYCPP_RUST
+fn pollworker_make(receiver: PollCmdReceiver) -> PollThreadWorker {
+    PollThreadWorker {
+        receiver_: receiver,
+        poll_: Epoll(),
+        fd_to_pollable_: FdPollableMap(),
+        mode_: FdModeMap(),
+        pending_remove_: FdSet(),
+        jobs_: JobSet(),
+        stop_: false,
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.79 version=1 rust_sha256=168b69f83b5c7193c0bc61fa5b67d89144bf1970259c8e429adf0839cd817899*/
+PollThreadWorker pollworker_make(PollCmdReceiver receiver) {
+    return PollThreadWorker{.receiver_ = std::move(receiver), .poll_ = Epoll(), .fd_to_pollable_ = FdPollableMap(), .mode_ = FdModeMap(), .pending_remove_ = FdSet(), .jobs_ = JobSet(), .stop_ = false};
+}
+/*RUSTYCPP:GEN-END id=reactor.79*/
 
-// Create the worker (the 7-field aggregate stays in the tiny
-// pollworker_make kernel — its Epoll()/map defaults are alias ctors
-// with no DSL spelling) and wrap it in the shared RefCell.
+// Create the worker and wrap it in the shared RefCell.
 #if RUSTYCPP_RUST
 fn pollworker_create(receiver: PollCmdReceiver) -> rusty::Rc<rusty::RefCell<PollThreadWorker>> {
     let mut worker = pollworker_make(receiver);
@@ -6694,8 +6740,25 @@ void pollworker_process_pending_removals(PollThreadWorker& w) {
 }
 /*RUSTYCPP:GEN-END id=reactor.pollworker_cmds*/
 
-// @unsafe - Box-trait arrow dispatch (the 1-line kernels the DSL calls).
-int pollable_proxy_fd(const PollableProxy& p) { return p->fd(); }
+// @safe - Box-trait arrow dispatch; no longer a kernel. What actually
+// blocked it: the `PollableProxy` ALIAS hides the Box from the emitter,
+// so a `&PollableProxy` param plus `(*p).fd()` lowers to a DOT call on
+// the handle (`((p)).fd()`) — a hard compile error, not a silent wrong
+// answer. Re-binding to a Box-TYPED local restores the arrow (playbook
+// §7.13), the same idiom pollworker_close_proxy_of already uses, and the
+// emitted signature stays `const PollableProxy&` for the forward decl.
+#if RUSTYCPP_RUST
+fn pollable_proxy_fd(p: &PollableProxy) -> i32 {
+    let b: &Box<PollableBase> = p;
+    b.fd()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.85 version=1 rust_sha256=900cf3ef12554c9b7217df6b67c04fb2d26c0cf29f46c269a3ae150b10add898*/
+int32_t pollable_proxy_fd(const PollableProxy& p) {
+    const rusty::Box<PollableBase>& b = p;
+    return b->fd();
+}
+/*RUSTYCPP:GEN-END id=reactor.85*/
 // Drains the pending-remove set into an indexable Vec for the DSL
 // sweep. HashSet::drain() empties the set as it yields — the same
 // idiom the client's pending-future map uses — replacing the old
@@ -6723,7 +6786,20 @@ rusty::Vec<int32_t> pollworker_take_removals(PollThreadWorker& w) {
     return std::move(v);
 }
 /*RUSTYCPP:GEN-END id=reactor.31*/
-int pollable_proxy_mode(const PollableProxy& p) { return p->poll_mode(); }
+// @safe - Box-trait arrow dispatch; same alias-hides-the-Box rebinding
+// as pollable_proxy_fd above.
+#if RUSTYCPP_RUST
+fn pollable_proxy_mode(p: &PollableProxy) -> i32 {
+    let b: &Box<PollableBase> = p;
+    b.poll_mode()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.88 version=1 rust_sha256=fc42e79c03df77cf4e7c432964fc3522d7ab055080627dda6a699a8817ae5684*/
+int32_t pollable_proxy_mode(const PollableProxy& p) {
+    const rusty::Box<PollableBase>& b = p;
+    return b->poll_mode();
+}
+/*RUSTYCPP:GEN-END id=reactor.88*/
 // The map hands back Option<Box&>; the named-Box binding makes close()
 // lower to `->` (playbook §7.13).
 #if RUSTYCPP_RUST
@@ -6749,31 +6825,47 @@ void pollworker_close_proxy_of(PollThreadWorker& w, int32_t fd) {
 /*RUSTYCPP:GEN-END id=reactor.32*/
 
 // @safe - Update poll mode directly (bypasses channel); only safe on
-// the poll thread. Kernel by verdict: takes the abstract Pollable by
-// reference (dyn-trait ref params have no verified DSL spelling) for
-// one line of logic.
-void pollworker_update_mode(PollThreadWorker& self, Pollable& poll, int new_mode) {
-  { pollworker_do_update_mode(self, poll.fd(), new_mode); }
+// the poll thread. The "dyn-trait ref params have no verified DSL
+// spelling" verdict was stale: `&mut Pollable` lowers to a plain
+// `Pollable&`, which the PollThreadWorker::update_mode DSL method above
+// had already been proving from the CALLING side all along.
+#if RUSTYCPP_RUST
+fn pollworker_update_mode(w: &mut PollThreadWorker, poll: &mut Pollable, new_mode: i32) {
+    pollworker_do_update_mode(w, poll.fd(), new_mode);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.89 version=1 rust_sha256=c2a4fe7a33358755dff5caae27b16d5e50ca7fcc5532b445b5b33b5e6dbfaba5*/
+void pollworker_update_mode(PollThreadWorker& w, Pollable& poll, int32_t new_mode) {
+    pollworker_do_update_mode(w, poll.fd(), std::move(new_mode));
+}
+/*RUSTYCPP:GEN-END id=reactor.89*/
 
 // =============================================================================
 // PollThread Implementation
 // =============================================================================
 
 
-// @safe - ThreadId<->u64 bit_cast helpers. `platform::threading::thread_id`
+// @safe - ThreadId->u64 bit_cast helper. `platform::threading::thread_id`
 // is `std::thread::id` (default backend) or `pthread_t` (POSIX backend).
-// Both are 8-byte trivially copyable on the platforms we support; the
-// static_assert below makes the bit_cast safe.
+// The two hand-written static_asserts are gone because `std::bit_cast`
+// already enforces exactly them (equal size + trivially copyable) as
+// hard constraints — the DSL body loses no compile-time checking, and
+// `decltype(tid.as_native())` was only ever there to name the type for
+// them. Stays in the anonymous namespace: the GEN lands inside it, and
+// the sole caller (pollthread_create's spawn closure) is below.
 namespace {
-inline std::uint64_t thread_id_to_u64(rusty::thread::ThreadId tid) noexcept {
-    using NativeId = decltype(tid.as_native());
-    static_assert(sizeof(NativeId) == sizeof(std::uint64_t),
-                  "platform thread_id must be 8 bytes for bit_cast to u64");
-    static_assert(std::is_trivially_copyable_v<NativeId>,
-                  "platform thread_id must be trivially copyable");
-    return std::bit_cast<std::uint64_t>(tid.as_native());
+#if RUSTYCPP_RUST
+fn thread_id_to_u64(tid: rusty::thread::ThreadId) -> u64 {
+    std::bit_cast::<u64>(tid.as_native())
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.90 version=1 rust_sha256=e1a6aa470859ad3ba5ab7dc5bd44f4ccf933eac03a8531a720a027e0fe72b5f3*/
+uint64_t thread_id_to_u64(rusty::thread::ThreadId tid);
+
+uint64_t thread_id_to_u64(rusty::thread::ThreadId tid) {
+    return std::bit_cast<uint64_t>(tid.as_native());
+}
+/*RUSTYCPP:GEN-END id=reactor.90*/
 
 } // namespace
 
@@ -7089,15 +7181,37 @@ rusty::Arc<QuorumEvent> create_sp_quorum_event(int32_t n_total, int32_t quorum) 
 // carry that shape for the DSL finalize body.
 using QuorumDanglingVec = rusty::Vec<std::pair<uint16_t, rrr::i64> >;
 
-// @unsafe - copy-out of the xids_ map into the pair Vec (std::pair has
-// no DSL spelling; borrow_mut because the map port's iteration wants a
-// non-const map — read-only copy, no aliasing). Runs BEFORE the wait,
-// per comment A in the DSL body below.
-QuorumDanglingVec quorum_collect_dangling(const QuorumEvent* qe) {
-    QuorumDanglingVec v;
-    for (auto it : *qe->xids_.borrow_mut()) v.push(it);
-    return v;
+// @unsafe - copy-out of the xids_ map into the pair Vec. The stated
+// cause ("std::pair has no DSL spelling") never bound here: the alias
+// carries the pair shape and the loop only forwards whatever the map
+// yields, so `rusty::iter` + `for_in` reach it without the body naming a
+// pair at all — the same shape pollworker_take_removals uses over the
+// HashSet. The tuple-to-pair conversion at `push` is the C++23 pair-like
+// constructor, i.e. exactly what the hand-written `v.push(it)` relied on
+// (verified standalone). Binding the RefMut to a named `guard` also
+// makes the borrow outlive the loop explicitly instead of leaning on
+// range-for temporary lifetime extension. Read-only copy, no aliasing;
+// runs BEFORE the wait, per comment A in the DSL body below.
+#if RUSTYCPP_RUST
+fn quorum_collect_dangling(qe: *const QuorumEvent) -> QuorumDanglingVec {
+    let mut v: QuorumDanglingVec = QuorumDanglingVec::new();
+    let guard = (*qe).xids_.borrow_mut();
+    for it in (*guard).iter() {
+        v.push(it);
+    }
+    v
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.96 version=1 rust_sha256=56a64b9c54ab59ec90b01f0c70794616c7599275085d4d40dbeccc19b22747d1*/
+QuorumDanglingVec quorum_collect_dangling(const QuorumEvent* qe) {
+    QuorumDanglingVec v = QuorumDanglingVec::new_();
+    auto&& guard = (*qe).xids_.borrow_mut();
+    for (auto&& it : rusty::for_in(rusty::iter((rusty::detail::deref_if_pointer_like(guard))))) {
+        v.push(std::move(it));
+    }
+    return std::move(v);
+}
+/*RUSTYCPP:GEN-END id=reactor.96*/
 
 // Spawns a background fiber that parks on the finalize event; faithful
 // port of the former QuorumEvent::finalize. The closure captures a raw

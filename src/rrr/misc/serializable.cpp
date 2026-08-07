@@ -238,14 +238,16 @@ public:
 // the source of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 //
-// `read(void*, size_t)` lives OUTSIDE the DSL block as a free function
-// `buffer_source_read` — the body's `void*` parameter and `memcpy`
-// aren't expressible in inline-Rust today. The existing 2-arg
-// paren-init form `BufferSource src(data, len)` keeps working via
-// C++20 aggregate paren-init; callers can also use the DSL `fn new`
-// factory directly (`BufferSource::new_(data, len)`).
+// `read(void*, size_t)` used to live OUTSIDE the DSL block as the free
+// function `buffer_source_read`; that note ("the body's `void*` parameter
+// and `memcpy` aren't expressible in inline-Rust") was stale. The trait
+// already hands `read_bytes` a typed `*mut u8`, so there is no `void*`,
+// and `core::ptr::copy_nonoverlapping` lowers to
+// `rusty::ptr::copy_nonoverlapping` -- a real memcpy, no perf loss.
+// The existing 2-arg paren-init form `BufferSource src(data, len)` keeps
+// working via C++20 aggregate paren-init; callers can also use the DSL
+// `fn new` factory directly (`BufferSource::new_(data, len)`).
 struct BufferSource;
-inline size_t buffer_source_read(BufferSource& self, void* p, size_t n);
 #if RUSTYCPP_RUST
 struct BufferSource {
     data_: *const u8,
@@ -269,11 +271,22 @@ impl BufferSource {
 
 impl SourceBase for BufferSource {
     fn read_bytes(&mut self, p: *mut u8, n: usize) -> usize {
-        buffer_source_read(self, p, n)
+        let avail: usize = self.len_ - self.pos_;
+        let mut take: usize = n;
+        if avail < take {
+            take = avail;
+        }
+        if take > 0usize {
+            unsafe {
+                core::ptr::copy_nonoverlapping(self.data_.add(self.pos_), p, take);
+            }
+            self.pos_ = self.pos_ + take;
+        }
+        take
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_source version=1 rust_sha256=8f444f57cba3be172b7b75830a7f3568b8a1158b3f63353db1fb2bf3b141cd79*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_source version=1 rust_sha256=6817e70aab631e2484d9b974101a347f9c17c72f34dc9e32ef18dee773b0a339*/
 struct BufferSource;
 
 struct BufferSource {
@@ -306,7 +319,19 @@ bool BufferSource::eof() const {
 }
 
 size_t BufferSource::read_bytes(uint8_t* p, size_t n) {
-    return buffer_source_read((*this), p, std::move(n));
+    size_t avail = rusty::detail::deref_if_pointer_like(this->len_) - rusty::detail::deref_if_pointer_like(this->pos_);
+    size_t take = n;
+    if (rusty::detail::deref_if_pointer_like(avail) < rusty::detail::deref_if_pointer_like(take)) {
+        take = std::move(avail);
+    }
+    if (rusty::detail::deref_if_pointer_like(take) > static_cast<size_t>(0)) {
+        // @unsafe
+        {
+            rusty::ptr::copy_nonoverlapping(rusty::ptr::add(this->data_, this->pos_), p, std::move(take));
+        }
+        this->pos_ = rusty::detail::deref_if_pointer_like(this->pos_) + rusty::detail::deref_if_pointer_like(take);
+    }
+    return std::move(take);
 }
 
 template <>
@@ -341,16 +366,7 @@ public:
 };
 /*RUSTYCPP:GEN-END id=serializable.buffer_source*/
 
-// @unsafe - raw pointer read; memcpy from data_ + pos_.
-inline size_t buffer_source_read(BufferSource& self, void* p, size_t n) {
-    size_t avail = self.len_ - self.pos_;
-    size_t take  = (n < avail) ? n : avail;
-    if (take > 0) {
-        std::memcpy(p, self.data_ + self.pos_, take);
-        self.pos_ += take;
-    }
-    return take;
-}
+// (The former `buffer_source_read` kernel is now the DSL `read_bytes` above.)
 
 // Adapter wrappers for the SinkBase / SourceBase virtual bases.
 //
@@ -1695,15 +1711,40 @@ namespace Serialize_ {
 // "deleted function" diagnostic naming the type.
 namespace adl_detail_ {
 void serialize() = delete;  // lookup poison: stops ascent past this scope
-template<typename T>
-inline void dispatch_serialize(const T& v, BinaryWriteArchive& ar) {
-  serialize(v, ar);  // ADL-only by construction
+// The two generic templates around the decoy are DSL now; the deleted
+// decoy above is the ONLY irreducible line. The guarantee is UNCHANGED,
+// probe-verified in both directions (scratchpad/recover3/probe_adl.cpp,
+// probe_adl_neg.cpp, probe_adl_order.cpp): the emitted dispatcher's call
+// stays UNQUALIFIED, so it can only resolve through ADL, the catch-all
+// cannot self-select, and a type with neither a specific overload above
+// nor an ADL serialize() still fails with a hard "deleted function"
+// diagnostic naming the type -- byte-identical to what the hand-written
+// form emitted. The GEN drops `inline`, which is redundant on a function
+// template; this file already ships non-inline DSL-generated definitions
+// in this very namespace (the string/string_view leaves above).
+#if RUSTYCPP_RUST
+fn dispatch_serialize<T>(v: &T, ar: &mut BinaryWriteArchive) {
+    serialize(v, ar);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.adl_ser_dispatch version=1 rust_sha256=38c0ddc40c850c769b7a2728ffe56ac6d2d96b3191cdf3c501196c27e9fe5c11*/
+template<typename T>
+void dispatch_serialize(const T& v, BinaryWriteArchive& ar) {
+    serialize(v, ar);
+}
+/*RUSTYCPP:GEN-END id=serializable.adl_ser_dispatch*/
 }  // namespace adl_detail_
-template<typename T>
-inline void serialize(const T& v, BinaryWriteArchive& ar) {
-  adl_detail_::dispatch_serialize(v, ar);
+#if RUSTYCPP_RUST
+fn serialize<T>(v: &T, ar: &mut BinaryWriteArchive) {
+    adl_detail_::dispatch_serialize(v, ar);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.adl_ser version=1 rust_sha256=2c782e0b72a43d20b47c9df017419cea19c8506444278ca490bc1cdcd56bca2b*/
+template<typename T>
+void serialize(const T& v, BinaryWriteArchive& ar) {
+    adl_detail_::dispatch_serialize(v, ar);
+}
+/*RUSTYCPP:GEN-END id=serializable.adl_ser*/
 }  // namespace Serialize_
 
 // ---- Variable-length integer encoding (SparseInt). --------------------
@@ -4282,16 +4323,41 @@ namespace Deserialize_ {
 // Phase 8 endgame: ADL dispatch via poisoned decoy (see the serialize
 // catch-all for the full rationale).
 namespace adl_detail_ {
-void deserialize() = delete;
-template<typename T>
-inline void dispatch_deserialize(T& v, BinaryReadArchive& ar) {
-  deserialize(v, ar);  // ADL-only by construction
+void deserialize() = delete;  // lookup poison: stops ascent past this scope
+// The two generic templates around the decoy are DSL now; the deleted
+// decoy above is the ONLY irreducible line. The guarantee is UNCHANGED,
+// probe-verified in both directions (scratchpad/recover3/probe_adl.cpp,
+// probe_adl_neg.cpp, probe_adl_order.cpp): the emitted dispatcher's call
+// stays UNQUALIFIED, so it can only resolve through ADL, the catch-all
+// cannot self-select, and a type with neither a specific overload nor an
+// ADL deserialize() still fails with a hard "deleted function"
+// diagnostic naming the type -- byte-identical to what the hand-written
+// form emitted. The GEN drops `inline`, which is redundant on a function
+// template (and the Deserialize_ forward-declaration wall above already
+// declares this catch-all inline, so its linkage is unchanged).
+#if RUSTYCPP_RUST
+fn dispatch_deserialize<T>(v: &mut T, ar: &mut BinaryReadArchive) {
+    deserialize(v, ar);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.adl_deser_dispatch version=1 rust_sha256=6f05cd04c398dfd75470edb49ad10dedc6c6975c5273a025df0e62ee6b40a1cb*/
+template<typename T>
+void dispatch_deserialize(T& v, BinaryReadArchive& ar) {
+    deserialize(v, ar);
+}
+/*RUSTYCPP:GEN-END id=serializable.adl_deser_dispatch*/
 }  // namespace adl_detail_
-template<typename T>
-inline void deserialize(T& v, BinaryReadArchive& ar) {
-  adl_detail_::dispatch_deserialize(v, ar);
+#if RUSTYCPP_RUST
+fn deserialize<T>(v: &mut T, ar: &mut BinaryReadArchive) {
+    adl_detail_::dispatch_deserialize(v, ar);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.adl_deser version=1 rust_sha256=49f52b1c8ebde469ce577e1d97b3064ac6b64789022aa79ef7133b1707d82737*/
+template<typename T>
+void deserialize(T& v, BinaryReadArchive& ar) {
+    adl_detail_::dispatch_deserialize(v, ar);
+}
+/*RUSTYCPP:GEN-END id=serializable.adl_deser*/
 }  // namespace Deserialize_
 
 // ---- Variable-length integer encoding (SparseInt). --------------------

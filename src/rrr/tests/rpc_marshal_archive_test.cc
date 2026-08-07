@@ -265,14 +265,14 @@ TEST(BufferSourceSemantics, EofReturnsZero) {
   BufferSource source(bytes, sizeof(bytes));
 
   uint8_t got[2];
-  EXPECT_EQ(buffer_source_read(source, got, 2), 2u);
+  EXPECT_EQ(source.read_bytes(got, 2), 2u);
   EXPECT_EQ(source.remaining(), 1u);
   EXPECT_FALSE(source.eof());
 
-  EXPECT_EQ(buffer_source_read(source, got, 2), 1u);  // partial read of last byte
+  EXPECT_EQ(source.read_bytes(got, 2), 1u);  // partial read of last byte
   EXPECT_TRUE(source.eof());
 
-  EXPECT_EQ(buffer_source_read(source, got, 2), 0u);  // no bytes left
+  EXPECT_EQ(source.read_bytes(got, 2), 0u);  // no bytes left
 }
 
 TEST(BufferSinkSemantics, AccumulatesBytes) {

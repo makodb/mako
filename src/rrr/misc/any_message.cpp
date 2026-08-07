@@ -311,18 +311,63 @@ bool anymessage_is_a(const AnyMessage& self_) {
 }
 /*RUSTYCPP:GEN-END id=any_message.2*/
 
-// @unsafe - dynamic_cast through the held base pointer.
+// @unsafe - THE kernel for unpack: the RTTI downcast to the holder for T
+// (nullptr on miss). `dynamic_cast` over a template parameter is the one
+// step with no Rust spelling; this is the same 3-line shape
+// serializable_envelope.cpp already ships as `envelope_holder_of<T>`.
+// Everything around it -- the is_a guard, the empty-payload guard, the
+// null test and the Arc clone -- is DSL below.
 template <typename T>
-inline rusty::Option<rusty::Arc<T>> anymessage_unpack(const AnyMessage& self) {
-  using Out = rusty::Option<rusty::Arc<T>>;
-  if (!anymessage_is_a<T>(self)) return Out(rusty::None);
-  if (self.payload_.is_none()) return Out(rusty::None);
-  if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(
-          self.payload_.unwrap().get())) {
-    return Out(h->ptr.clone());
-  }
-  return Out(rusty::None);
+inline const details::SerializableSharedPtrHolder<T>* anymessage_holder_of(
+    const SerializableBase* base) {
+  return dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(base);
 }
+
+// Recover the typed payload. Returns None if T is not the carried type,
+// if T was never registered, or if the message carries no payload.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The forward declaration at the top
+// of this file stays load-bearing -- the GEN emits only the definition,
+// while `AnyMessage::unpack<T>`'s GEN (above) names `anymessage_unpack<T>`
+// with explicit template arguments and needs the name visible there.
+//
+// INVARIANT: `payload_` is always holder-shaped -- every construction path
+// and every any_message_registry factory wraps the payload in a
+// SerializableSharedPtrHolder<T>, so one downcast suffices with no
+// direct-SerializableBase fallback.
+#if RUSTYCPP_RUST
+fn anymessage_unpack<T>(self_: &AnyMessage) -> rusty::Option<rusty::Arc<T>> {
+    if !anymessage_is_a::<T>(self_) {
+        return None;
+    }
+    if self_.payload_.is_none() {
+        return None;
+    }
+    let h = anymessage_holder_of::<T>(self_.payload_.as_ref().unwrap().get());
+    if h.is_null() {
+        return None;
+    }
+    Some(unsafe { (*h).ptr.clone() })
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=any_message.unpack version=1 rust_sha256=59a99d659dea7935b9fddca09e32f19686902d2e1f70f30a95155068423e5c68*/
+template<typename T>
+rusty::Option<rusty::Arc<T>> anymessage_unpack(const AnyMessage& self_) {
+    if (rusty::detail::rust_not(anymessage_is_a<T>(self_))) {
+        return rusty::Option<rusty::Arc<T>>{rusty::None};
+    }
+    if (self_.payload_.is_none()) {
+        return rusty::Option<rusty::Arc<T>>{rusty::None};
+    }
+    const auto h = anymessage_holder_of<T>(self_.payload_.as_ref().unwrap().get());
+    if ((h == nullptr)) {
+        return rusty::Option<rusty::Arc<T>>{rusty::None};
+    }
+    return rusty::Option<rusty::Arc<T>>(rusty::clone((rusty::detail::deref_if_pointer_like(h)).ptr));
+}
+/*RUSTYCPP:GEN-END id=any_message.unpack*/
 
 // @unsafe - aggregate-constructs the AnyMessage (returned by value;
 // callers store it directly in rcc_rpc.h fields).
