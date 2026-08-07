@@ -252,15 +252,40 @@ void log_sink_write(const std::string& line) {
 // std::string construction -- a C++ type, so it cannot cross -- stays.
 extern "C" const char* srpc_path_basename(const char* path);
 
+// The DSL has no spelling for a plain `char`, so the C kernel's
+// pointer type gets a one-line alias: `fpath as *const c_char` then
+// lowers to exactly the reinterpret_cast the hand-written body used,
+// and `base.is_null()` lowers to `base == nullptr` (probe-verified —
+// `std::ptr::null()` and a bare `nullptr` both mis-lower).
+using c_char = char;
+
 // @unsafe - reinterpret_cast off the int8_t* wire type, then a
 // converting std::string ctor over the C-returned interior pointer.
-std::string log_basename(const int8_t* fpath) {
-    const char* base = srpc_path_basename(reinterpret_cast<const char*>(fpath));
-    if (base == nullptr) {
-        return std::string("<unknown>");
+#if RUSTYCPP_RUST
+fn log_basename(fpath: *const i8) -> std::string {
+    unsafe {
+        let base = srpc_path_basename(fpath as *const c_char);
+        if base.is_null() {
+            return std::string("<unknown>");
+        }
+        std::string(base)
     }
-    return std::string(base);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=logging.6 version=1 rust_sha256=ec53a680553c6977c7187716439d0f1e85c77040d56b555fb025a3b4e3cb9452*/
+std::string log_basename(const int8_t* fpath);
+
+std::string log_basename(const int8_t* fpath) {
+    // @unsafe
+    {
+        const auto base = srpc_path_basename(reinterpret_cast<const c_char*>(fpath));
+        if ((base == nullptr)) {
+            return std::string("<unknown>");
+        }
+        return std::string(std::move(base));
+    }
+}
+/*RUSTYCPP:GEN-END id=logging.6*/
 
 // The timestamp formatter (time/localtime_r/gettimeofday + raw digit
 // writing) lives in srpc_timing.c (plain C, Goal-0 C demotion). This
@@ -274,9 +299,10 @@ extern "C" void srpc_time_now_str(char* now);
 // fills 24 bytes (23 chars + its own NUL at [23]) directly into the
 // result's storage, and the trailing NUL is then trimmed. Byte-identical
 // to the former `char now_str[24]` + `std::string(now_str)` bridge
-// (runtime-verified). No `using c_char = char;` scaffolding is needed:
-// `std::string::data()` is already `char*`, so the DSL never has to
-// name a plain `char`. The `unsafe {}` block carries the @unsafe on the
+// (runtime-verified). Unlike log_basename above, this one needs no
+// `c_char` alias: `std::string::data()` is already `char*`, so the DSL
+// never has to name a plain `char`. The `unsafe {}` block carries the
+// @unsafe on the
 // C call.
 #if RUSTYCPP_RUST
 fn log_time_now() -> std::string {

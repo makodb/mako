@@ -4542,36 +4542,59 @@ rusty::Result<rusty::Unit, int32_t> clientconn_request_async(const ClientConnect
 }
 /*RUSTYCPP:GEN-END id=client.24*/
 
-// Two @unsafe kernels for the DSL below. Neither is about the retry
-// logic — one bridges a hand-written C++ constructor and the other
-// builds a std::span over a borrowed reply buffer. (A third,
+// The two former @unsafe kernels for the DSL below are now DSL
+// themselves; both stated causes expired. (A third,
 // classify_request_failure, used to sit here purely to host an
 // `#if EWOULDBLOCK != EAGAIN`; it is now DSL, inside the block below.)
-
-// @unsafe - BinaryWriteArchive is a hand-written type with a real C++
-// constructor; the DSL's `T::new(...)` spelling looks for a static
-// `new_` factory, so construction goes through this one-liner.
-inline BinaryWriteArchive make_write_archive(BufferSink* sink) {
-  return BinaryWriteArchive(make_sink_proxy(sink));
+#if RUSTYCPP_RUST
+// @safe - BinaryWriteArchive stopped being "a hand-written type with a
+// real C++ constructor" when serializable.cpp made it a single-field DSL
+// aggregate, so a struct literal builds it — the same literal the three
+// other archive sites in this file already spell inline. The parameter
+// stays `*mut BufferSink` (not `&mut`) so the emitted signature keeps a
+// POINTER, which is what the caller's `&mut args_sink` lowers to.
+fn make_write_archive(sink: *mut BufferSink) -> BinaryWriteArchive {
+    BinaryWriteArchive { sink_: make_sink_proxy(sink) }
 }
 
-// @unsafe - two simultaneous RefCell borrows plus a std::span built from
-// `body.data() + src.pos()`; pointer arithmetic and span have no DSL
-// form. Copies the attempt's unread reply region into the coordinator
-// future's buffer. Takes REFERENCES, not pointers: `&local` lowers to a
-// pointer for ordinary locals but collapses to the handle itself for a
-// pointer-like local such as Arc.
-inline void request_copy_reply(const rusty::Arc<Future>& final_fu,
-                               const rusty::Arc<Future>& attempt_fu) {
-  auto attempt_reply = attempt_fu->reply_.borrow_mut();
-  size_t reply_size = attempt_reply->src.remaining();
-  if (reply_size > 0) {
-    reply_buffer_fill(
-        *final_fu->reply_.borrow_mut(),
-        std::span<const std::uint8_t>(
-            attempt_reply->body.data() + attempt_reply->src.pos(), reply_size));
-  }
+// @unsafe - copies the attempt's unread reply region into the coordinator
+// future's buffer. Two simultaneous RefCell borrows (two DISTINCT
+// Futures, so no re-entrant borrow) plus a raw sub-slice of the borrowed
+// body — spelled exactly as clientconn_decode_response_and_notify below
+// already spells the same fill: `ptr::add` + `core::slice::from_raw_parts`
+// inside `unsafe`, which is what retired the "span has no DSL form"
+// excuse. Takes REFERENCES, not pointers: `&Arc<Future>` lowers to
+// `const rusty::Arc<Future>&`, and the caller's `&attempt_fu` collapses to
+// the handle itself.
+fn request_copy_reply(final_fu: &Arc<Future>, attempt_fu: &Arc<Future>) {
+    let mut attempt_reply = (*attempt_fu).reply_.borrow_mut();
+    let reply_size: usize = (*attempt_reply).src.remaining();
+    if reply_size > 0usize {
+        let base: *const u8 = (*attempt_reply).body.data();
+        let start: usize = (*attempt_reply).src.pos();
+        let mut final_reply = (*final_fu).reply_.borrow_mut();
+        reply_buffer_fill(&mut *final_reply, unsafe {
+            core::slice::from_raw_parts(base.add(start), reply_size)
+        });
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.36 version=1 rust_sha256=2ccf4a743ef549a76c2a2464e1b00791f975be29ca5da2dc298ee97f9565d97a*/
+BinaryWriteArchive make_write_archive(BufferSink* sink) {
+    return BinaryWriteArchive{.sink_ = make_sink_proxy(sink)};
+}
+
+void request_copy_reply(const rusty::Arc<Future>& final_fu, const rusty::Arc<Future>& attempt_fu) {
+    auto&& attempt_reply = (rusty::detail::deref_if_pointer_like(attempt_fu)).reply_.borrow_mut();
+    const size_t reply_size = (rusty::detail::deref_if_pointer_like(attempt_reply)).src.remaining();
+    if (rusty::detail::deref_if_pointer_like(reply_size) > static_cast<size_t>(0)) {
+        const uint8_t* base = (rusty::detail::deref_if_pointer_like(attempt_reply)).body.data();
+        const size_t start = (rusty::detail::deref_if_pointer_like(attempt_reply)).src.pos();
+        auto&& final_reply = (rusty::detail::deref_if_pointer_like(final_fu)).reply_.borrow_mut();
+        reply_buffer_fill(rusty::detail::deref_if_pointer_like(final_reply), rusty::from_raw_parts(rusty::ptr::add(base, std::move(start)), std::move(reply_size)));
+    }
+}
+/*RUSTYCPP:GEN-END id=client.36*/
 
 // Same as request_via_channel, plus serialize-once for safe retry replay
 // and an async retry/backoff spawn. Extracted from the inline
@@ -5133,14 +5156,33 @@ int32_t clientconn_connect_via_factory(const ClientConnection& conn, const int8_
 // callbacks fire on. Submits a `OneTimeJob` whose `Work()` runs
 // `run_recv_loop()` from a fiber that the poll thread's
 // `trigger_job` spawns on its own reactor.
-// @unsafe - cross-file #[cpp_ctor] construction: FiberChannel's `fn
-// new` emits a real C++ constructor in fiber_channel.cpp, which THIS
-// file's DSL cannot name (the factory spelling new_ does not exist for
-// cpp_ctor types) — so the boxed construction stays a 3-line kernel.
-inline rusty::Box<FiberChannel> clientconn_make_fiber_channel(
-    ChannelConnectionProxy ch) {
-  return rusty::make_box<FiberChannel>(std::move(ch));
+// @unsafe - heap-constructs the FiberChannel wrapper around the moved
+// proxy. The old note here ("cross-file #[cpp_ctor] construction ...
+// so the boxed construction stays a 3-line kernel") is STALE: the DSL
+// never needed to NAME FiberChannel's cpp_ctor factory -- `make_box`
+// forwards straight to the real C++ constructor, and
+// `rusty::make_box::<T>(x)` lowers verbatim to
+// `rusty::make_box<T>(std::move(x))`.
+//
+// `Box::<T>::new(T::new(x))` is NOT the spelling to use here: it lowers
+// to `rusty::Box<T>::new_(FiberChannel::new_(...))`, and `new_` does
+// not exist for a #[cpp_ctor] type.
+//
+// The former `inline` is dropped: this fn sits in `rrr.client`'s
+// non-exported impl namespace (module linkage, single module unit) with
+// exactly one caller (clientconn_bind_channel_via_poll_thread, below),
+// so no other TU could ever define it and the vague-linkage specifier
+// bought nothing.
+#if RUSTYCPP_RUST
+fn clientconn_make_fiber_channel(ch: ChannelConnectionProxy) -> rusty::Box<FiberChannel> {
+    rusty::make_box::<FiberChannel>(ch)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.37 version=1 rust_sha256=00b46e808a7daf8c16201eb8c013e160e8db131469cdf47337d19e2ad802caa2*/
+rusty::Box<FiberChannel> clientconn_make_fiber_channel(ChannelConnectionProxy ch) {
+    return rusty::make_box<FiberChannel>(std::move(ch));
+}
+/*RUSTYCPP:GEN-END id=client.37*/
 
 // The recv-job body, as a free fn so the OneTimeJob closure stays the
 // single-call shape (see the inference-bug note at the closure site).

@@ -1523,11 +1523,13 @@ using TcpOutBuf = std::vector<std::uint8_t>;
 ChannelError tcpconn_drain_outbound_locked(const TcpConnection& conn, TcpOutBuf& buf);
 // Stack scratch for the recv drain. The struct itself is DSL — a
 // fixed-size field lowers to `std::array<uint8_t, kRecvScratchBytes>`
-// — but the thread_local slot below stays a kernel: a DSL
-// `#[thread_local] static` emits a plain `extern RecvScratch SCRATCH;`
-// ahead of the `inline thread_local` definition, which every compiler
-// rejects ("thread-local declaration follows non-thread-local
-// declaration" — the thread-local-static-fwd-decl blocker).
+// — and so is the per-thread slot: `tcpconn_scratch()` below is a DSL
+// fn whose body holds a `#[thread_local] static mut`, which the
+// transpiler emits in place as a function-local `static thread_local`.
+// (A NAMESPACE-scope `#[thread_local] static` instead emits an
+// `extern thread_local` decl plus an `inline thread_local` definition
+// — legal, but a vague-linkage TLS object where a function-local slot
+// is strictly tighter.)
 #if RUSTYCPP_RUST
 struct RecvScratch {
     arr: [u8; kRecvScratchBytes],
@@ -1918,11 +1920,33 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
 
 // @unsafe - per-poll-thread recv scratch (single-threaded per
 // connection by the poll contract; thread_local keeps 64 KiB off the
-// hot stack and out of the DSL's grammar).
+// hot stack). Now DSL: the "function-local static" blocker has
+// expired -- a fn-body `#[thread_local] static mut` lowers to a real
+// `static thread_local RecvScratch s = ...;` emitted in place (the
+// namespace-scope fwd-decl blocker does not apply to a function-local
+// static).
+//
+// LOAD-BEARING INITIALIZER: `RecvScratch { }` lowers to the aggregate
+// `RecvScratch{}` -- a constant expression, so the slot stays
+// constant-initialized in .tbss exactly like the former
+// `static thread_local RecvScratch s;`: same storage duration, same
+// zeroed bytes, no TLS guard variable, no dynamic init on this hot
+// path. Do NOT respell it as `[0u8; kRecvScratchBytes]`: that lowers
+// to `rusty::array_repeat(...)`, which heap-builds a 64 KiB
+// std::vector and would make the slot dynamically initialized (guard
+// check on every call).
+#if RUSTYCPP_RUST
+fn tcpconn_scratch() -> *mut RecvScratch {
+    #[thread_local] static mut s: RecvScratch = RecvScratch { };
+    &raw mut s
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.21 version=1 rust_sha256=eeac42d21df466e903cbde18da1c17796040db71682ffa038a182d34056416c0*/
 RecvScratch* tcpconn_scratch() {
-    static thread_local RecvScratch s;
+    static thread_local RecvScratch s = RecvScratch{};
     return &s;
 }
+/*RUSTYCPP:GEN-END id=tcp_channel.21*/
 
 // @unsafe - recv(2) into the scratch, plus the RefCell arrows into the
 // frame reader. All DSL: the scratch pointer stays a `*mut RecvScratch`

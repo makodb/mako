@@ -5024,32 +5024,108 @@ void shared_int_event_wait(SharedIntEvent& sie, EventTestFn f) {
 // --- from fiber_impl.cc --------------------------------------------------
 
 
-// @unsafe micro-kernels for the fiber DSL bodies below (guard surgery
-// the DSL cannot spell: rusty::Function operator bool / operator() /
-// reset-to-empty, the Box<fiber_task_t> unwrap-invoke, the make_box
-// Some-wrap, the const_cast self handle, and the fiber_yield_t
-// re-reference). Pointer params because a DSL `&fb.field` argument
-// lowers to a pointer.
-static bool fiber_fn_present(const rusty::RefCell<FiberFn>* f) {
-  return static_cast<bool>(*f->borrow());
-}
-static void fiber_fn_invoke(const rusty::RefCell<FiberFn>* f) {
-  (*f->borrow_mut())();  // borrow_mut: operator() is non-const
-}
-static void fiber_fn_clear(const rusty::RefCell<FiberFn>* f) {
-  *f->borrow_mut() = {};
-}
-static void fiber_install_task(
-    const rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>>* t,
-    FiberTaskFn task) {
-  *t->borrow_mut() = rusty::Some(rusty::make_box<fiber_task_t>(std::move(task)));
-}
-static void fiber_task_invoke(
-    const rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>>* t) {
-  (*(*t->borrow_mut()).as_mut().unwrap())();
-}
+// @unsafe { const_cast<Fiber*> } The one fiber micro-kernel that stays
+// hand-written C++: the DSL `as *mut T` cast lowers to
+// `static_cast<T*>(ptr_or_addr(f))`, which is ill-formed when it would
+// cast away constness ("static_cast from 'const rrr::Fiber *' to
+// 'Fiber *' ... is not allowed"), and the DSL has no const_cast spelling.
 static Fiber* fiber_self_mut(const Fiber& f) { return const_cast<Fiber*>(&f); }
-static void fiber_yield_invoke_ptr(fiber_yield_t* y) { fiber_yield_invoke(*y); }
+
+// @unsafe { each body dereferences a raw pointer the caller owns }
+// The rest of the guard surgery is DSL now. Raw-pointer params because a
+// DSL `&fb.field` argument lowers to a pointer at the call site, so the
+// call sites in fiber_run_wrapper / fiber_run / fiber_do_* are unchanged.
+#if RUSTYCPP_RUST
+fn fiber_fn_present(f: *const rusty::RefCell<FiberFn>) -> bool {
+    let g = (*f).borrow();
+    !(*g).is_empty()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.65 version=1 rust_sha256=c0efda8bea4b18acb6ef2f3deaee3794042665a2bcc0fa4aee078426c9afa88e*/
+bool fiber_fn_present(const rusty::RefCell<FiberFn>* f) {
+    const auto g = ((*f)).borrow();
+    return rusty::detail::rust_not(rusty::is_empty(((*g))));
+}
+/*RUSTYCPP:GEN-END id=reactor.65*/
+
+#if RUSTYCPP_RUST
+fn fiber_fn_invoke(f: *const rusty::RefCell<FiberFn>) {
+    // borrow_mut: rusty::Function::operator() is non-const.
+    let mut g = (*f).borrow_mut();
+    (*g)();
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.66 version=1 rust_sha256=ff1a5dbdd95a3e94dd059a5cfdcc97eb15652bc3928f501e7e82b8d005402230*/
+void fiber_fn_invoke(const rusty::RefCell<FiberFn>* f) {
+    auto g = ((*f)).borrow_mut();
+    (*g)();
+}
+/*RUSTYCPP:GEN-END id=reactor.66*/
+
+#if RUSTYCPP_RUST
+fn fiber_fn_clear(f: *const rusty::RefCell<FiberFn>) {
+    let mut g = (*f).borrow_mut();
+    let mut empty: FiberFn = Default::default();
+    *g = empty;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.67 version=1 rust_sha256=e4e297199652b3cd0968ce2eb3e1d2bb6426be03117bb5302e36615a86179c87*/
+void fiber_fn_clear(const rusty::RefCell<FiberFn>* f) {
+    auto g = ((*f)).borrow_mut();
+    FiberFn empty = rusty::default_like<FiberFn>();
+    *g = std::move(empty);
+}
+/*RUSTYCPP:GEN-END id=reactor.67*/
+
+#if RUSTYCPP_RUST
+fn fiber_install_task(t: *const rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>>,
+                      task: FiberTaskFn) {
+    // fiber_task_t's ctor RUNS the body up to its first yield, so the box
+    // must be built BEFORE the borrow is taken (C++17 sequences the RHS of
+    // `*t->borrow_mut() = ...` before the LHS; binding the guard first
+    // would newly hold a borrow across fiber execution).
+    let mut boxed = rusty::Some(rusty::make_box::<fiber_task_t>(task));
+    let mut g = (*t).borrow_mut();
+    *g = boxed;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.68 version=1 rust_sha256=b82e41644f3b754691aad6f542675950097eb921d586b196e1fcdfa10cd30fbe*/
+void fiber_install_task(const rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>>* t, FiberTaskFn task) {
+    auto boxed = rusty::Some(rusty::make_box<fiber_task_t>(std::move(task)));
+    auto g = ((*t)).borrow_mut();
+    *g = std::move(boxed);
+}
+/*RUSTYCPP:GEN-END id=reactor.68*/
+
+#if RUSTYCPP_RUST
+fn fiber_task_invoke(t: *const rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>>) {
+    let mut g = (*t).borrow_mut();
+    let bx: &mut rusty::Box<fiber_task_t> = (*g).as_mut().unwrap();
+    (*bx)();
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.69 version=1 rust_sha256=4318c29076a0199bf53b61afdcffc7fe1c79c95fb1fab3d2d459726ad2ab4b11*/
+void fiber_task_invoke(const rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>>* t);
+
+void fiber_task_invoke(const rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>>* t) {
+    auto g = ((*t)).borrow_mut();
+    rusty::Box<fiber_task_t>& bx = ((*g)).as_mut().unwrap();
+    (rusty::detail::deref_if_pointer_like(bx))();
+}
+/*RUSTYCPP:GEN-END id=reactor.69*/
+
+#if RUSTYCPP_RUST
+fn fiber_yield_invoke_ptr(y: *mut fiber_yield_t) {
+    fiber_yield_invoke(*y);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.70 version=1 rust_sha256=322012d3d1ecaddd184094e9b1aacc4ed9e1cca9a866d40048a13ad72b7253d0*/
+void fiber_yield_invoke_ptr(fiber_yield_t* y);
+
+void fiber_yield_invoke_ptr(fiber_yield_t* y) {
+    fiber_yield_invoke(*y);
+}
+/*RUSTYCPP:GEN-END id=reactor.70*/
 
 // Reactor-touching helpers as DSL free fns (Reactor is complete here;
 // fresh get_reactor() per call also dodges the Rc-in-loop last-use-move
@@ -6250,24 +6326,38 @@ rusty::Rc<rusty::RefCell<PollThreadWorker>> pollworker_create(PollCmdReceiver re
 }
 /*RUSTYCPP:GEN-END id=reactor.37*/
 
-// @unsafe { PAIR-YIELDING MAP ITERATION — the one wall left in poll_loop.
+// Key-set snapshot for poll_loop's three map sweeps, as DSL. The stated
+// blocker has expired: the old hand-written loop existed only because
 // `for (auto [fd, poll] : self.fd_to_pollable_)` destructures the
-// `std::tuple<const K&, V&>` hashbrown's stl_iter_t yields, and the DSL
-// has no spelling for that binding (same wall as quorum_collect_dangling).
-// Copying just the KEY SET out is enough: with an indexable `Vec<i32>` in
-// hand, all three of poll_loop's map sweeps become plain DSL loops that
-// re-`get()` the proxy per fd, so every virtual dispatch and every policy
-// decision stays in the DSL body. Same shape as pollworker_take_removals.
-// Cost is one Vec<int> plus one hash lookup per registered fd per poll
-// iteration, against an epoll_wait syscall and the same N virtual calls
-// the two hand-written sweeps already made. }
-rusty::Vec<int> pollworker_snapshot_fds(PollThreadWorker& self) {
-  rusty::Vec<int> fds;
-  for (auto [fd, poll] : self.fd_to_pollable_) {
-    fds.push(fd);
-  }
-  return fds;
+// `std::tuple<const K&, V&>` that hashbrown's stl_iter_t yields and the
+// DSL has no spelling for that binding -- but the map port also exposes
+// `keys()`, whose Item is a plain `const K&`, so the pair never appears.
+// With an indexable `Vec<i32>` in hand, all three of poll_loop's sweeps
+// stay plain DSL loops that re-`get()` the proxy per fd (that re-lookup
+// is what makes each sweep robust against an entry a previous sweep
+// already erased). Cost is unchanged: one Vec<int> plus one hash lookup
+// per registered fd per poll iteration, against an epoll_wait syscall
+// and the same N virtual calls. Same shape as pollworker_take_removals.
+#if RUSTYCPP_RUST
+fn pollworker_snapshot_fds(w: &mut PollThreadWorker) -> Vec<i32> {
+    let mut fds: Vec<i32> = Vec::new();
+    let mut ks = w.fd_to_pollable_.keys();
+    for fd in ks {
+        fds.push(*fd);
+    }
+    fds
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.91 version=1 rust_sha256=0a69a6fb999ae3089f649fbd15391df35ad4acd55e796982601e4b1e994f5e9c*/
+rusty::Vec<int32_t> pollworker_snapshot_fds(PollThreadWorker& w) {
+    rusty::Vec<int32_t> fds = rusty::Vec<int32_t>::new_();
+    auto ks = w.fd_to_pollable_.keys();
+    for (auto&& fd : rusty::for_in(ks)) {
+        fds.push(std::move(rusty::detail::deref_if_pointer_like(fd)));
+    }
+    return std::move(fds);
+}
+/*RUSTYCPP:GEN-END id=reactor.91*/
 
 // The poll thread's main loop as inline Rust DSL. The structure is
 // unchanged from the hand-written original: epoll_wait -> channel

@@ -246,26 +246,50 @@ int randgen_nu_constant = 0;
 extern "C" int srpc_rand_raw(void);
 extern "C" void srpc_rand_destroy(void);
 
+// The last three shims are DSL too: two `unsafe {}` calls into the
+// srpc_rand.c kernels and one accessor over the impl-namespace nu_rand
+// constant. `i32` lowers to `int32_t`, which is the same type as the
+// `int` in the export-namespace declarations above (same redeclaration
+// pattern the sibling logging.cpp already uses for its kernels).
+#if RUSTYCPP_RUST
 // @unsafe - thin shim over the C kernel.
-int randgen_rand_raw() {
-    return srpc_rand_raw();
+fn randgen_rand_raw() -> i32 {
+    unsafe { return srpc_rand_raw(); }
 }
-
-// @safe - RAND_MAX as a double for the DSL's scale math (the macro has
-// no DSL spelling).
 
 // @safe - accessor over the impl-namespace nu_rand constant.
-int randgen_nu_constant_now() {
-    return randgen_nu_constant;
+fn randgen_nu_constant_now() -> i32 {
+    randgen_nu_constant
 }
-
-// @unsafe - std::string surgery (substr/prepend) for int2str_n's
-// fixed-width formatting; kept as a kernel for the substr call.
 
 // @unsafe - thin shim over the C kernel (pthread teardown lives there).
-void randgen_destroy() {
-    srpc_rand_destroy();
+fn randgen_destroy() {
+    unsafe { srpc_rand_destroy(); }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=rand.4 version=1 rust_sha256=c7ab926c4aeff1c9c31719eadadae48c5b53c91e8544c8f6bd7e3a4cc6a758b4*/
+int32_t randgen_rand_raw();
+int32_t randgen_nu_constant_now();
+void randgen_destroy();
+
+int32_t randgen_rand_raw() {
+    // @unsafe
+    {
+        return srpc_rand_raw();
+    }
+}
+
+int32_t randgen_nu_constant_now() {
+    return std::move(randgen_nu_constant);
+}
+
+void randgen_destroy() {
+    // @unsafe
+    {
+        srpc_rand_destroy();
+    }
+}
+/*RUSTYCPP:GEN-END id=rand.4*/
 
 
 }

@@ -380,11 +380,21 @@ struct SerializableEnvelope {
 // Migration compat: `marshallable_cast<T>` overload for envelopes.
 // Returns Option<Arc<T>> — None on empty envelope / type mismatch.
 // (unpack_shared is const now; the old const_cast overload collapsed.)
-template<typename T, typename TypeList>
-inline rusty::Option<rusty::Arc<T>> marshallable_cast(
-    const SerializableEnvelope<TypeList>& env) {
-  return env.template unpack_shared<T>();
+// @unsafe - authored as inline Rust DSL; the body is a pure delegation
+// to the dynamic_cast-backed `unpack_shared`. T is declared FIRST so the
+// call sites keep spelling `marshallable_cast<T>(env)` with TypeList
+// deduced from the argument.
+#if RUSTYCPP_RUST
+fn marshallable_cast<T, TypeList>(env: &SerializableEnvelope<TypeList>) -> rusty::Option<rusty::Arc<T>> {
+    env.unpack_shared::<T>()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.3 version=1 rust_sha256=3d1b6f75a3a014413617da69d485569cbbaa6909085948a11a4e9826ee664729*/
+template<typename T, typename TypeList>
+rusty::Option<rusty::Arc<T>> marshallable_cast(const SerializableEnvelope<TypeList>& env) {
+    return env.template unpack_shared<T>();
+}
+/*RUSTYCPP:GEN-END id=serializable_envelope.3*/
 
 template<typename T, typename TypeList>
 inline rusty::Option<rusty::Arc<T>> marshallable_cast(
@@ -393,26 +403,32 @@ inline rusty::Option<rusty::Arc<T>> marshallable_cast(
   return env->template unpack_shared<T>();
 }
 
-// Free archive operators — let SerializableEnvelope ride directly in
-// rpcgen-emitted RPC struct fields the same way any other Serializable
-// type does.
-// Phase 8 batch 4: serde free functions own the envelope wire format; the
-// operators below are forwarders kept until the operator layer is deleted.
-// @unsafe - forwards to `env.save(ar)` which drives a Marshal
-// operator<< chain.
-template<typename TypeList>
-inline void serialize(const SerializableEnvelope<TypeList>& env,
-                      BinaryWriteArchive& ar) {
-  env.save(ar);
+// Free archive serde entry points — let SerializableEnvelope ride
+// directly in rpcgen-emitted RPC struct fields the same way any other
+// Serializable type does.
+// Phase 8 batch 4: serde free functions own the envelope wire format.
+// @unsafe - forwards to `env.save(ar)` / `env.load(ar)`, which drive
+// the Marshal operator chains.
+#if RUSTYCPP_RUST
+fn serialize<TypeList>(env: &SerializableEnvelope<TypeList>, ar: &mut BinaryWriteArchive) {
+    env.save(ar);
 }
 
-// @unsafe - forwards to `env.load(ar)` which drives a Marshal
-// operator>> chain.
-template<typename TypeList>
-inline void deserialize(SerializableEnvelope<TypeList>& env,
-                        BinaryReadArchive& ar) {
-  env.load(ar);
+fn deserialize<TypeList>(env: &mut SerializableEnvelope<TypeList>, ar: &mut BinaryReadArchive) {
+    env.load(ar);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.4 version=1 rust_sha256=adac1c607824f4725229a1a6f3cd6a4b8da7870b71e9f169e3d2f0590bc05f46*/
+template<typename TypeList>
+void serialize(const SerializableEnvelope<TypeList>& env, BinaryWriteArchive& ar) {
+    env.save(ar);
+}
+
+template<typename TypeList>
+void deserialize(SerializableEnvelope<TypeList>& env, BinaryReadArchive& ar) {
+    env.load(ar);
+}
+/*RUSTYCPP:GEN-END id=serializable_envelope.4*/
 
 // Marshal-deprecation slice C: the legacy `Marshal&` envelope operators
 // are deleted — the archive save/load path above is the only surface.
