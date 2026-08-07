@@ -738,9 +738,21 @@ Closed at `665bc43c`. Six recovery batches plus the verify/panic change:
 
 **Campaign total: ~1,824 lines** of hand-written C++ removed from `src/rrr`.
 
-Where `src/rrr` stands now (non-test): **795 lines of logic**, 1,053 of module
+Where `src/rrr` stands now (non-test): **328 lines of logic**, ~1,493 of module
 scaffolding (`module;` / includes / `import` / namespace braces / fwd-decl
-walls), 5,108 of comment, and 407 lines of tolerated plain C.
+walls), and ~390 lines of tolerated plain C.
+
+> **Correction.** An earlier revision of this ledger said 795 logic lines. That
+> was wrong — the counting script had two bugs pointing in OPPOSITE directions,
+> which made the total not merely imprecise but unfalsifiable:
+> (i) the in-GEN flag latched on any line *containing* the literal
+> `RUSTYCPP:GEN-BEGIN`, and `epoll_wrapper.cc:187` is a COMMENT containing it,
+> hiding ~130 lines including a whole hand-written kqueue template; and
+> (ii) the scaffolding/declaration regexes were line-anchored, so every
+> prototype wrapped across two lines leaked its first line in as "logic".
+> `logic_census3.py` fixes both (real GEN delimiters only; declarations joined
+> before classification). The corrected figure was **377** at the point the
+> audit ran, and is **328** after the post-audit batch below.
 
 ### What the re-audit proved
 

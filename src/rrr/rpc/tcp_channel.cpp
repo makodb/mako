@@ -64,6 +64,7 @@ import rrr.threading;
 // TcpConnection, its two adapters, TcpFactory, and the adapter set.
 /*RUSTYCPP:GEN-DISPATCH-BEGIN*/
 namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(accept)
 RUSTY_METHOD_DISPATCH(append)
 RUSTY_METHOD_DISPATCH(consume_frame)
 RUSTY_METHOD_DISPATCH(reset)
@@ -2563,57 +2564,118 @@ void accept_set_nosigpipe(int32_t fd) {
 #endif  // !(defined(__APPLE__))
 /*RUSTYCPP:GEN-END id=tcp_channel.33*/
 
-// @unsafe - accept(2) via rusty::net + the full accepted-socket wrap.
-int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out) {
-    auto listener_guard = self.listener_.borrow();
-    auto accept_result = (*listener_guard).accept();
-    if (accept_result.is_err()) {
-        auto err = accept_result.unwrap_err();
-        auto kind = err.kind();
-        // Retriable / "no work" — the DSL loop breaks without spinning.
-        if (kind == rusty::io::Error::Kind::WouldBlock ||
-            kind == rusty::io::Error::Kind::Interrupted ||
-            kind == rusty::io::Error::Kind::ConnectionAborted) {
+// @unsafe - 1-line const_cast kernel: Arc<T>::get() yields `const T*` but
+// TcpConnection::set_poll_thread takes `&mut self`. Same idiom as the
+// mut_conn/mut_listener kernels elsewhere in this file. Deliberately NOT
+// Arc::get_mut(): that is conditional on uniqueness and would panic if the
+// handle were ever shared, whereas the original const_cast is unconditional.
+inline TcpConnection& tcpconn_mut(const rusty::Arc<TcpConnection>& c) {
+    return const_cast<TcpConnection&>(*c.get());
+}
+
+// @unsafe - 1-line kernel: add_proxy is a method on the POINTEE, and the
+// DSL cannot spell `->` on an Arc. `(*pt).add_proxy(..)` collapses back to
+// `pt.add_proxy(..)` (Arc is pointer-like, so the deref is folded away),
+// which does NOT compile: "no member named 'add_proxy' in rusty::Arc".
+// Compile-checked, not assumed.
+inline void pollthread_add_proxy(const rusty::Arc<PollThread>& pt, PollableProxy p) {
+    pt->add_proxy(std::move(p));
+}
+
+// The accept ladder, in DSL. Returns 1 accepted (out.proxy filled), 0
+// retriable/no-work, 2 nonblock-config failure (out.ch filled), -1 hard
+// error (out.ch + out.msg filled).
+//
+// Three route notes, each of which costs a build cycle to rediscover:
+//  - the out-param stays `*mut AcceptStep`. An `&mut AcceptStep` changes
+//    the emitted signature and breaks the cross-block caller above, which
+//    passes `&mut step` from a different GEN block.
+//  - the accept result is destructured with a tuple binding, NOT
+//    `.first`/`.second`.
+//  - the parameter cannot be named `self` (it is a free fn, and `self`
+//    lowers to `(*this)`).
+#if RUSTYCPP_RUST
+fn tcplistener_accept_step(lst: &TcpListener, out: *mut AcceptStep) -> i32 {
+    let listener_guard = lst.listener_.borrow();
+    let accept_result = listener_guard.accept();
+    if accept_result.is_err() {
+        let err = accept_result.unwrap_err();
+        let kind = err.kind();
+        // Retriable / "no work" -- the DSL loop breaks without spinning.
+        if kind == rusty::io::Error::Kind::WouldBlock
+            || kind == rusty::io::Error::Kind::Interrupted
+            || kind == rusty::io::Error::Kind::ConnectionAborted {
             return 0;
         }
-        out->ch = io_kind_to_channel_error(kind);
-        out->msg = err.to_string();
+        (*out).ch = io_kind_to_channel_error(kind);
+        (*out).msg = err.what();
         return -1;
     }
 
-    auto accepted = accept_result.unwrap();
-    rusty::net::TcpStream stream = std::move(accepted.first);
-    rusty::net::SocketAddrV4 peer_addr = accepted.second;
+    let (stream, peer_addr) = accept_result.unwrap();
 
     // No-op except on macOS; see the #[cfg] pair above.
     accept_set_nosigpipe(stream.as_owned_fd().as_raw_fd());
 
-    auto nonblock_result = stream.set_nonblocking(true);
-    if (nonblock_result.is_err()) {
-        out->ch = io_kind_to_channel_error(nonblock_result.unwrap_err().kind());
+    let nonblock_result = stream.set_nonblocking(true);
+    if nonblock_result.is_err() {
+        (*out).ch = io_kind_to_channel_error(nonblock_result.unwrap_err().kind());
         // stream drops here, closing the accepted fd.
         return 2;
     }
 
-    std::string peer_addr_str = rusty::net::socket_addr_v4_to_string(peer_addr);
+    let peer_addr_str = rusty::net::socket_addr_v4_to_string(peer_addr);
 
-    // Hand the accepted fd to TcpConnection (Phase D will pass the
-    // TcpStream directly).
-    int conn_fd = stream.into_owned_fd().into_raw_fd();
-    auto conn = rusty::Arc<TcpConnection>::make(conn_fd, std::move(peer_addr_str));
+    // Hand the accepted fd to TcpConnection.
+    let conn_fd = stream.into_owned_fd().into_raw_fd();
+    let conn = rusty::Arc::<TcpConnection>::make(conn_fd, peer_addr_str);
 
-    if (self.poll_thread_.is_some()) {
-        {
-            auto& mut_conn = const_cast<TcpConnection&>(*conn.get());
-            mut_conn.set_poll_thread(self.poll_thread_.as_ref().unwrap().clone());
-        }
-        self.poll_thread_.as_ref().unwrap()->add_proxy(
-            make_tcp_connection_pollable_proxy(conn.clone()));
+    if lst.poll_thread_.is_some() {
+        // `pt` is an Arc<PollThread>; add_proxy is a method on the POINTEE,
+        // so it needs an explicit deref -- a bare `pt.add_proxy(..)` emits a
+        // dot and does not compile (the hand-written original used `->`).
+        let pt = lst.poll_thread_.as_ref().unwrap();
+        tcpconn_mut(&conn).set_poll_thread(pt.clone());
+        pollthread_add_proxy(pt, make_tcp_connection_pollable_proxy(conn.clone()));
     }
 
-    out->proxy = rusty::Some(make_tcp_connection_channel_proxy(std::move(conn)));
-    return 1;
+    (*out).proxy = rusty::Some(make_tcp_connection_channel_proxy(conn));
+    1
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_scratch.34 version=1 rust_sha256=e11ffc67f40429211791a564eca57e5f759aa6e54663bee72d027fd23c27dc28*/
+int32_t tcplistener_accept_step(const TcpListener& lst, AcceptStep* out) {
+    auto&& listener_guard = rusty::borrow(lst.listener_);
+    auto accept_result = rusty::deref_call(listener_guard, rusty::detail::__mdisp_accept{});
+    if (accept_result.is_err()) {
+        const auto err = accept_result.unwrap_err();
+        const auto kind = err.kind();
+        if (((rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(rusty::io::Error::Kind::WouldBlock)) || (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(rusty::io::Error::Kind::Interrupted))) || (rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(rusty::io::Error::Kind::ConnectionAborted))) {
+            return static_cast<int32_t>(0);
+        }
+        (*out).ch = io_kind_to_channel_error(std::move(kind));
+        (*out).msg = err.what();
+        return -1;
+    }
+    auto [stream, peer_addr] = rusty::detail::deref_if_pointer_like(accept_result.unwrap());
+    accept_set_nosigpipe(stream.as_owned_fd().as_raw_fd());
+    auto nonblock_result = stream.set_nonblocking(true);
+    if (nonblock_result.is_err()) {
+        (*out).ch = io_kind_to_channel_error(nonblock_result.unwrap_err().kind());
+        return static_cast<int32_t>(2);
+    }
+    auto peer_addr_str = rusty::net::socket_addr_v4_to_string(std::move(peer_addr));
+    auto conn_fd = stream.into_owned_fd().into_raw_fd();
+    const auto conn = rusty::Arc<TcpConnection>::make(std::move(conn_fd), std::move(peer_addr_str));
+    if (lst.poll_thread_.is_some()) {
+        auto& pt = lst.poll_thread_.as_ref().unwrap();
+        tcpconn_mut(conn).set_poll_thread(rusty::clone(pt));
+        pollthread_add_proxy(pt, make_tcp_connection_pollable_proxy(rusty::clone(conn)));
+    }
+    (*out).proxy = rusty::Some(make_tcp_connection_channel_proxy(std::move(conn)));
+    return static_cast<int32_t>(1);
+}
+/*RUSTYCPP:GEN-END id=tcp_scratch.34*/
 
 // @unsafe - drives the on_error callback then closes the listener.
 // @unsafe - fires on_error callback + drives tcplistener_close (::shutdown).
