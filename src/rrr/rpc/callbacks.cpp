@@ -19,11 +19,9 @@ import rrr.threading;
 // DSL; the transpiler regenerates the matching
 // `/*RUSTYCPP:GEN-BEGIN ... END*/` block below.
 //
-// One thing stays outside the DSL:
-//   * The `invoke_callback_safely<...>` free template helper. The DSL
-//     doesn't support C++ parameter packs or `try { } catch (…) { }`
-//     blocks; the invoke_on_* methods just delegate to this helper for
-//     the per-callback try/catch swallow.
+// Nothing here is hand-written C++ any more: the per-callback exception
+// swallow (`invoke_callback_safely`) is three arity-specific DSL fns over
+// `std::panic::catch_unwind`, one per callback alias.
 export namespace rrr {
 
 // Authored as inline Rust DSL. `dyn Fn` is callable through `&self`, so it
@@ -42,18 +40,67 @@ using ErrorCallback = rusty::Arc<rusty::Function<void(RpcError, const std::strin
 using ReconnectCallback = rusty::Arc<rusty::Function<void(bool) const>>;
 /*RUSTYCPP:GEN-END id=callbacks.2*/
 
-// @safe - try/catch protects the dispatcher from a user callback that
-// throws. The catch swallows everything per the original behaviour.
-// Outside the DSL because the DSL has no `try/catch` and no parameter
-// packs.
-template<typename Callback, typename... Args>
-inline void invoke_callback_safely(const Callback& cb, Args&&... args) {
-    // @unsafe { user-supplied callback bodies aren't borrow-checked }
-    try {
-        (*cb)(std::forward<Args>(args)...);
-    } catch (...) {
+// @safe - the per-callback exception swallow, now DSL.
+// `std::panic::catch_unwind` lowers to `rusty::panic::catch_unwind`, whose
+// internal `catch (...)` IS the old `try { } catch (...) { }`: the Result is
+// dropped, so a throwing — or panicking — user callback is swallowed exactly
+// as before (a rusty panic is `throw std::runtime_error`, which the old
+// `catch (...)` swallowed too). No log arm on purpose: adding one would
+// change observable behaviour. Same recipe as server.cpp's
+// `server_invoke_shutdown_hook_safely`, minus its logging/rethrow kernel.
+//
+// The template + parameter pack are gone because every call site is one of
+// exactly three arities (5 sites: 3x arity-0, 1x arity-2, 1x arity-1), one
+// per callback alias. Rust has no overloading, so the three fns live in
+// SEPARATE `#if RUSTYCPP_RUST` blocks; the emitted C++ overloads fine and
+// the arities are disjoint, so no ambiguity is possible.
+#if RUSTYCPP_RUST
+fn invoke_callback_safely(cb: &ConnectionCallback) {
+    unsafe { std::panic::catch_unwind(|| { (*cb)(); }); }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=callbacks.3 version=1 rust_sha256=c8723db94d76137a21c57d2d5a1ef09d65a5d246c9ebdc8ee61e71c992dcb253*/
+void invoke_callback_safely(const ConnectionCallback& cb) {
+    // @unsafe
+    {
+        rusty::panic::catch_unwind([&]() {
+(rusty::detail::deref_if_pointer_like(cb))();
+});
     }
 }
+/*RUSTYCPP:GEN-END id=callbacks.3*/
+
+#if RUSTYCPP_RUST
+fn invoke_callback_safely(cb: &ErrorCallback, error: RpcError, message: &std::string) {
+    unsafe { std::panic::catch_unwind(|| { (*cb)(error, message); }); }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=callbacks.4 version=1 rust_sha256=b526360c1468c90fd6512cceb4b2bad90396f2d12ffd1041b59aac2b280dab3b*/
+void invoke_callback_safely(const ErrorCallback& cb, RpcError error, const std::string& message) {
+    // @unsafe
+    {
+        rusty::panic::catch_unwind([&]() {
+(rusty::detail::deref_if_pointer_like(cb))(std::move(error), message);
+});
+    }
+}
+/*RUSTYCPP:GEN-END id=callbacks.4*/
+
+#if RUSTYCPP_RUST
+fn invoke_callback_safely(cb: &ReconnectCallback, success: bool) {
+    unsafe { std::panic::catch_unwind(|| { (*cb)(success); }); }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=callbacks.5 version=1 rust_sha256=d000708bb2bce5998cdd061d5cfbea8e2e90ba2e3bd1cbcef22a8e6a01ace29a*/
+void invoke_callback_safely(const ReconnectCallback& cb, bool success) {
+    // @unsafe
+    {
+        rusty::panic::catch_unwind([&]() {
+(rusty::detail::deref_if_pointer_like(cb))(std::move(success));
+});
+    }
+}
+/*RUSTYCPP:GEN-END id=callbacks.5*/
 
 #if RUSTYCPP_RUST
 struct ConnectionCallbacks {

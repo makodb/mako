@@ -511,7 +511,7 @@ using FutureResult = rusty::Result<rusty::Arc<Future>, i32>;
 // (so the 92+ existing `fuattr.callback = lambda;` callsites compile
 // unchanged) while letting FutureAttr propagate through generated
 // rcc_rpc.h proxy stubs cheaply.
-using FutureCallback = detail::CallbackWrapper<void(rusty::Arc<Future>) const>;
+using FutureCallback = detail::CallbackWrapper<rusty::Function<void(rusty::Arc<Future>) const>>;
 
 // @safe - Simple attribute struct for Future callbacks.
 //

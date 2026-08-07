@@ -360,7 +360,7 @@ hoist the split to item level.
 |---|---|---:|---|---|
 | [x] | STALE | 42 | `src/rrr/reactor/reactor.cpp:5940 — reactor_spawn_stackless_task_impl (` | Recommended: DELETE lines 2052 and 5940-5981 (zero callers). If kept, the exact DSL is /home/shuai/tmp/claude-3000/-home-users-shuai-mako/3fb8630e-47ec-4ca7-9840-13a2baa3269b/scratchpad/kern |  **← LANDED (recover batch 2)**
 | [x] | STALE | 42 | `src/rrr/reactor/reactor.cpp:5940 reactor_spawn_stackless_task_impl` | using TaskVoid = rusty::Task<void>;  // 1 line of scaffolding, then: fn reactor_spawn_stackless_task_impl(self_: &Reactor, task: TaskVoid) {     struct EarlyWakeState { reactor: *const React |  **← LANDED (recover batch 2)**
-| [ ] | STALE | 40 | `docs/srpc-rust-port.md:1763 + :386 — the CLASS-LEVEL claim itself ("`#` | #[cfg(target_os = "macos")] fn f() {…}   /   #[cfg(not(target_os = "macos"))] fn f() {…}   (two same-named free fns; each lowers inside its own #if/#endif) |
+| [x] | STALE | 40 | `docs/srpc-rust-port.md:1763 + :386 — the CLASS-LEVEL claim itself ("`#` | #[cfg(target_os = "macos")] fn f() {…}   /   #[cfg(not(target_os = "macos"))] fn f() {…}   (two same-named free fns; each lowers inside its own #if/#endif) |  **← LANDED batch 5 (capped at 18 lines, not 40)**
 | [~] | STALE | 30 | `src/rrr/misc/serializable.cpp:1725 Serialize_ <-> WireSerialize_ looku` | Move the container/pair impls out of `pub trait WireSerialize` and into the EXISTING `serializable.serialize_trait` DSL block (or rename the trait to `Serialize`), i.e.:   impl<T> Serialize  |  **← SKIPPED with cause: the audit's VERDICT (recoverable) is right but its RECIPE is wrong, and the prior KEEP's MECHANISM (overload-set residency for nested-container resolution) is right while its CONCLUSION was wrong. Recoverable, but not as one ~56-line edit — needs its own build-verified slice.**
 | [x] | STALE | 28 | `src/rrr/reactor/reactor.cpp:6690 — pollthread_create (tracker row cite` | /home/shuai/tmp/claude-3000/-home-users-shuai-mako/3fb8630e-47ec-4ca7-9840-13a2baa3269b/scratchpad/kernelaudit/probe_pollthread_create3.cpp — key lines:   let (sender, receiver) = rusty::syn |  **← LANDED (recover batch 2)**
 | [~] | STALE | 26 | `src/rrr/misc/serializable.cpp:1768 Serialize_ container forwarders, pa` | Same as the part-1 row: author the container impls as `impl<T> Serialize for <Container>` inside the trait block whose name is `Serialize`, and delete all seven (in fact all twelve) `Seriali |  **← SKIPPED with cause: the audit's VERDICT (recoverable) is right but its RECIPE is wrong, and the prior KEEP's MECHANISM (overload-set residency for nested-container resolution) is right while its CONCLUSION was wrong. Recoverable, but not as one ~56-line edit — needs its own build-verified slice.**
@@ -371,15 +371,15 @@ hoist the split to item level.
 | [x] | STALE | 9 | `src/rrr/misc/serializable.cpp:345 — buffer_source_read (doc row: "void` | fn read_bytes(&mut self, p: *mut u8, n: usize) -> usize {     let avail: usize = self.len_ - self.pos_;     let mut take: usize = n;     if avail < take { take = avail; }     if take > 0usiz |  **← LANDED batch 3**
 | [x] | STALE | 9 | `src/rrr/misc/serializable.cpp:345 buffer_source_read` | impl SourceBase for BufferSource {     fn read_bytes(&mut self, p: *mut u8, n: usize) -> usize {         let avail: usize = self.len_ - self.pos_;         let mut take: usize = n;         if |  **← LANDED batch 3**
 | [x] | STALE | 7 | `src/rrr/rpc/server.cpp:1280 — server_parse_port (doc row: "try/catch a` | fn server_parse_port(text: &std::string) -> Option<i32> {     let r = std::panic::catch_unwind(\|\| -> i32 { std::stoi(text) });     if r.is_ok() { return Some(r.unwrap()); }     None } |  **← LANDED batch 3**
-| [ ] | STALE | 7 | `src/rrr/rpc/callbacks.cpp:50 `template<typename Callback, typename... ` | fn invoke_callback_safely(cb: &rusty::Function<dyn Fn()>) { let _r = std::panic::catch_unwind(\|\| { cb(); }); } fn invoke_callback_safely(cb: &rusty::Function<dyn Fn(bool)>, success: bool)  |
+| [x] | STALE | 7 | `src/rrr/rpc/callbacks.cpp:50 `template<typename Callback, typename... ` | fn invoke_callback_safely(cb: &rusty::Function<dyn Fn()>) { let _r = std::panic::catch_unwind(\|\| { cb(); }); } fn invoke_callback_safely(cb: &rusty::Function<dyn Fn(bool)>, success: bool)  |  **← LANDED batch 5**
 | [x] | STALE | 6 | `src/rrr/base/debugging.cpp:59-64 — the verify() FAILURE TAIL (fprintf ` | fn verify_fail(file: &std::string, line: u32) { let msg: std::string = format!("  *** verify failed at {}, line {}\n", file, line); verify_fail_write(msg); print_stack_trace_stderr(); rusty: |  **← LANDED verify->panic (101af242)**
 | [x] | STALE | 6 | `src/rrr/reactor/reactor.cpp:6675 thread_id_to_u64 (anon namespace)` | namespace { #if RUSTYCPP_RUST const _: () = assert!(core::mem::size_of::<rusty::platform::threading::thread_id>() == core::mem::size_of::<u64>(),     "platform thread_id must be 8 bytes for  |  **← LANDED batch 3**
 | [x] | STALE | 6 | `src/rrr/reactor/reactor.cpp:6675 — thread_id_to_u64 (tracker row cites` | fn thread_id_to_u64(tid: rusty::thread::ThreadId) -> u64 {     std::bit_cast::<u64>(tid.as_native()) } |  **← LANDED batch 3**
-| [ ] | STALE | 5 | `src/rrr/base/basetypes.cpp:703 `time_now_us` (COLLATERAL, same constru` | #[cfg(target_os = "macos")] fn time_now_us(accurate: bool) -> u64 {…}  +  #[cfg(not(target_os = "macos"))] fn time_now_us(accurate: bool) -> u64 {…} |
+| [x] | STALE | 5 | `src/rrr/base/basetypes.cpp:703 `time_now_us` (COLLATERAL, same constru` | #[cfg(target_os = "macos")] fn time_now_us(accurate: bool) -> u64 {…}  +  #[cfg(not(target_os = "macos"))] fn time_now_us(accurate: bool) -> u64 {…} |  **← LANDED batch 5**
 | [x] | STALE | 5 | `src/rrr/rpc/client.cpp:3525 static_assert(std::is_trivially_copyable<P` | #if RUSTYCPP_RUST const _: () = assert!(std::is_trivially_copyable::<PoolConfig>::value,     "ClientPool::pool_config() returns std::move(*guard); a non-trivially-copyable PoolConfig would b |  **← LANDED batch 4**
 | [x] | STALE | 5 | `src/rrr/base/logging.cpp:214 — log_stm_s + log_sink_write (doc row: "i` | fn log_sink_write(line: &std::string) {     let mut out = std::io::stdout();     out.write(line.as_bytes());     out.write(b"\n");     out.flush(); } |  **← LANDED batch 4**
 | [x] | STALE | 5 | `src/rrr/misc/serializable.cpp:4511 `template<class T, class... Args> m` | fn make_serializable_proxy<T>() -> SerializableProxy { let sp = rusty::Arc::<T>::make(); rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp) } fn make_serializable_proxy<T, A>(a: |  **← LANDED batch 4**
-| [ ] | STALE | 5 | `src/rrr/rpc/channel.cpp:131-134 and :192 — OnFrameCallback / OnClosedC` | type OnFrameCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(&ChannelFrame)>>; type OnClosedCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(ChannelError)>>; type OnErrorCa |
+| [x] | STALE | 5 | `src/rrr/rpc/channel.cpp:131-134 and :192 — OnFrameCallback / OnClosedC` | type OnFrameCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(&ChannelFrame)>>; type OnClosedCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(ChannelError)>>; type OnErrorCa |  **← LANDED batch 5**
 | [ ] | STALE | 5 | `src/rrr/reactor/reactor.cpp:3298 rusty::is_send / is_sync explicit spe` | // pollable_proxy.cpp:  pub trait PollableBase: Send + Sync { ... } // job trait:           pub trait Job: Send + Sync { ... } // reactor.cpp PollCommand: pub enum PollCommand {     AddPolla |
 | [x] | STALE | 5 | `src/rrr/base/logging.cpp:244 log_time_now` | using c_char = char;   // 1 line of scaffolding #if RUSTYCPP_RUST fn log_time_now() -> std::string {     let mut buf: [c_char; 24] = [0 as c_char; 24];     srpc_time_now_str(buf.as_mut_ptr() |  **← LANDED batch 4**
 | [x] | STALE | 4 | `src/rrr/reactor/reactor.cpp:3443 u64_to_thread_id` | #if RUSTYCPP_RUST fn u64_to_thread_id(bits: u64) -> rusty::thread::ThreadId {     rusty::thread::ThreadId(rusty::mem::transmute::<u64, rusty::platform::threading::thread_id>(bits)) } #endif |  **← LANDED batch 3**
@@ -497,7 +497,7 @@ hoist the split to item level.
 | recover batch 2 — `spawn_stackless_task_impl`, `pollthread_create`, `fiber_task_t` bodies, `reactor_make_arc` | 81 | (rec 2) | zero kernels left in spawn_stackless; ASan-clean |
 | recover batch 3 — `server_parse_port` (try/catch DELETED via strtoll), `server_invoke_shutdown_hook_safely` (catch_unwind), `buffer_source_read`->DSL `read_bytes` method, the Archive dispatch/serialize shims, `anymessage_unpack`, the thread-id bit-casts, and 5 pollworker helpers | 70 | (rec 3) | 18 of 21 drafted edits applied; the 3 `base/debugging.cpp` edits DROPPED BY POLICY (see below) |
 
-Running total: **~1,753 lines** of hand-written C++ removed from `src/rrr`
+Running total: **~1,777 lines** of hand-written C++ removed from `src/rrr`
 since the inventory was taken (batch 1: 397, batch 2: ~102, batch 3: 143,
 batch 4: 102, batch 5A: 157, batch 5B: 130, batch 5C: 114).
 
@@ -539,6 +539,53 @@ byte-for-byte before applying (`rusty::as_ptr`/`as_mut_ptr` fall through to
 `.data()`; `VarintBuf{}` value-init already zeroed; the one micro-diff is
 `b.arr[0]` -> `b.at(0)`, bounds-checked on a literal 0 over 9 elements).
 test_marshal is 23/23.
+
+### Batch 5: THREE transpiler traps found — record these before writing any `#[cfg]`
+
+The `#[cfg(target_os = ...)]` class row said STALE; it is, but only at ONE
+level, and the failure modes below are silent. All three are probe-verified.
+
+1. **Item-level `#[cfg(target_os)]` on a free fn WORKS.** Two same-named fns
+   with `#[cfg(target_os = "macos")]` / `#[cfg(not(...))]` lower to
+   `#if defined(__APPLE__)` / `#if !(defined(__APPLE__))` around the
+   definitions (prototype emitted twice, unguarded — a legal redeclaration).
+   Generic fns included. `accept_set_nosigpipe` already shipped this shape.
+2. **`#[cfg]` on a `struct` or an `impl` is SILENTLY DROPPED** — emitted
+   unguarded, no diagnostic. This is why `debugging.cpp`'s macOS shim keeps
+   its hand-written `#ifdef`: the `#else` arm's `BtCapture` struct+impl would
+   need cfgs the transpiler would discard.
+3. **STATEMENT-level `#[cfg]` SILENTLY MISCOMPILES.** The two arms become
+   `y` and `y_shadow1`, and the reference resolves to the second — so the
+   NON-macOS value wins on every platform, with no error. Never split at
+   statement level. `tests/rpc_state_integration_test.cc:42` (`kFdDir`) is
+   exactly this shape and MUST NOT be converted.
+
+Also corrected: the class row's "~40 lines" was overstated. Real yield is 18
+— the rest of the `__APPLE__` sites are plain-C kernel files, assembly, a GMF
+`#include`, or a `USE_KQUEUE` guard (an arbitrary macro, which has no cfg
+spelling at all).
+
+**`is_send` / `is_sync` — SKIPPED, and this one would have been a silent
+correctness bug.** `unsafe impl Send for X {}` parses fine and emits
+NOTHING — no marker, no diagnostic. Converting would have flipped
+`is_send<rrr::PollCommand>` from true to FALSE. The two escape routes are
+also dead: use-site `dyn T + Send + Sync` rewrites the field type to a
+synthesized `PollableBaseAndSendAndSync` class, and trait-declaration
+supertraits work but cannot reach `reactor.cpp` because regen is per-file
+and the traits live in `pollable_proxy.cpp`. `PollThread` has a second
+independent floor (`Sender<T>` and the `PollJoinSlot` alias are
+non-derivable field types).
+
+**`CallbackWrapper` re-parameterization.** The 4 callback aliases only
+convert if `detail::CallbackWrapper` is parameterised by the CALLABLE TYPE
+(`CallbackWrapper<F> { Arc<F> inner }`) rather than the bare signature: the
+abominable C++ function type `void(Args) const` has no Rust spelling, and
+`CallbackWrapper<dyn Fn(..)>` would silently lower to
+`CallbackWrapper<std::function<..>>` — a different type that still compiles.
+The substitution is exact (`Sig` occurred only inside `rusty::Function<Sig>`)
+and all 5 instantiation sites repo-wide were updated. Verified by diffing the
+REGENERATED aliases against the originals: type-identical, only parameter
+names dropped.
 
 ### RESOLVED: `verify()` now panics — the abort semantics were dropped on purpose
 

@@ -15,20 +15,20 @@ export namespace rrr {
 // @safe - see file header.
 namespace detail {
 
-template<typename Sig>
+template<typename F>
 struct CallbackWrapper {
-    rusty::Arc<rusty::Function<Sig>> inner;
+    rusty::Arc<F> inner;
 
     CallbackWrapper()
-        : inner(rusty::Arc<rusty::Function<Sig>>::make()) {}
+        : inner(rusty::Arc<F>::make()) {}
 
     template<typename Callable,
              typename = std::enable_if_t<
                  !std::is_same_v<std::decay_t<Callable>, CallbackWrapper> &&
-                 std::is_constructible_v<rusty::Function<Sig>, Callable&&>
+                 std::is_constructible_v<F, Callable&&>
              >>
     CallbackWrapper(Callable&& c)
-        : inner(rusty::Arc<rusty::Function<Sig>>::make(std::forward<Callable>(c))) {}
+        : inner(rusty::Arc<F>::make(std::forward<Callable>(c))) {}
 
     CallbackWrapper(const CallbackWrapper&) = default;
     CallbackWrapper(CallbackWrapper&&) noexcept = default;

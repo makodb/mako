@@ -128,10 +128,23 @@ struct ChannelFrame {
 };
 /*RUSTYCPP:GEN-END id=channel.1*/
 
-using OnFrameCallback  = detail::CallbackWrapper<void(const ChannelFrame&) const>;
-using OnClosedCallback = detail::CallbackWrapper<void(ChannelError reason) const>;
-using OnErrorCallback  = detail::CallbackWrapper<void(ChannelError err,
-                                                       std::string_view message) const>;
+// The three connection-tier callback typedefs, as DSL. This works only
+// because `detail::CallbackWrapper` is parameterised by the CALLABLE
+// TYPE (`CallbackWrapper<F> { Arc<F> inner }`) and not by the bare
+// signature: the abominable C++ function type `void(Args) const` has no
+// Rust spelling, and `CallbackWrapper<dyn Fn(..)>` would silently lower
+// to `CallbackWrapper<std::function<..>>` -- a DIFFERENT type that
+// still compiles.
+#if RUSTYCPP_RUST
+type OnFrameCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(&ChannelFrame)>>;
+type OnClosedCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(ChannelError)>>;
+type OnErrorCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(ChannelError, std::string_view)>>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.7 version=1 rust_sha256=6cde2d42cdf6bd309b3af7cb7268e8d596251a4f1a4acf6a16f5322de48679b6*/
+using OnFrameCallback = detail::CallbackWrapper<rusty::Function<void(const ChannelFrame&) const>>;
+using OnClosedCallback = detail::CallbackWrapper<rusty::Function<void(ChannelError) const>>;
+using OnErrorCallback = detail::CallbackWrapper<rusty::Function<void(ChannelError, std::string_view) const>>;
+/*RUSTYCPP:GEN-END id=channel.7*/
 
 // `ChannelConnectionBase` — abstract transport-connection interface
 // (TcpConnection, inmemory connection, ...). Authored as inline Rust
@@ -189,7 +202,14 @@ type ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;
 using ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;
 /*RUSTYCPP:GEN-END id=channel.5*/
 
-using OnAcceptCallback = detail::CallbackWrapper<void(ChannelConnectionProxy) const>;
+// The listener-tier accept callback. Separate DSL block because it
+// names `ChannelConnectionProxy`, defined by the block above.
+#if RUSTYCPP_RUST
+type OnAcceptCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(ChannelConnectionProxy)>>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.8 version=1 rust_sha256=98f513e70f84c495a775867f440935f1f15008e6b444ed714375bd60dd9d1079*/
+using OnAcceptCallback = detail::CallbackWrapper<rusty::Function<void(ChannelConnectionProxy) const>>;
+/*RUSTYCPP:GEN-END id=channel.8*/
 
 // `ChannelListenerBase` — abstract accept-loop interface (TcpListener,
 // inmemory listener, ...). Tier-1.4 trait migration.

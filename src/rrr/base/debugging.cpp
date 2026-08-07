@@ -135,10 +135,29 @@ namespace rrr {
 // pure libc over a caller-owned FILE*, with no C++ type in sight.
 extern "C" void srpc_print_stack_trace(FILE* fp);
 
+// Authored as inline Rust DSL, nested INSIDE the `#ifdef __APPLE__`
+// branch -- the preprocessor line stays hand-written scaffolding. It
+// CANNOT become an item-level `#[cfg]` pair the way `time_now_us` in
+// basetypes.cpp did: the `#else` branch's `BtCapture` struct and its
+// `impl` would then need cfgs of their own, and the transpiler
+// SILENTLY DROPS a `#[cfg]` on a struct or an impl.
+//
+// MACOS-ONLY: never compiled on Linux CI, so the Linux build cannot
+// regress here -- but for the same reason CI cannot validate it.
+#if RUSTYCPP_RUST
 // @unsafe - thin shim over the C kernel.
-void print_stack_trace(FILE* fp) {
-    srpc_print_stack_trace(fp);
+fn print_stack_trace(fp: *mut FILE) {
+    unsafe { srpc_print_stack_trace(fp); }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=debugging.7 version=1 rust_sha256=9db407fcb6cd524ce39ba36fbb08be6297ebc19086c75c67e37e0db02c029ce0*/
+void print_stack_trace(FILE* fp) {
+    // @unsafe
+    {
+        srpc_print_stack_trace(fp);
+    }
+}
+/*RUSTYCPP:GEN-END id=debugging.7*/
 
 #else // no __APPLE__
 
