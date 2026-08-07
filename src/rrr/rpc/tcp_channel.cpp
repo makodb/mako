@@ -2509,6 +2509,60 @@ bool tcplistener_is_bound(const TcpListener& lst) {
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.22*/
 
+// The macOS-only SO_NOSIGPIPE step, hoisted OUT of the accept kernel
+// into an ITEM-LEVEL `#[cfg]` pair. Statement-level `#[cfg]` is
+// silently dropped by the transpiler, so a platform split must be two
+// same-named free fns; each lowers inside its own
+// `#if defined(__APPLE__)` / `#if !(defined(__APPLE__))` guard, which
+// is why the call site below is unconditional.
+//
+// NOT deleted as dead: srpc_connect.c:41-47 does the same setsockopt
+// for the CONNECT path, but that is a different fd — dropping this
+// would silently change macOS behaviour for accepted sockets.
+//
+// GOTCHA (probe-verified): `&yes` written directly as a call argument
+// is SILENTLY DROPPED (the emitted call passes the int by value); the
+// optval pointer must go through an explicit `&raw const` binding.
+#if RUSTYCPP_RUST
+// @unsafe { setsockopt(2) on the freshly accepted fd }
+#[cfg(target_os = "macos")]
+fn accept_set_nosigpipe(fd: i32) {
+    // Prevent SIGPIPE termination on write() to closed sockets (Linux
+    // uses MSG_NOSIGNAL on send(); macOS lacks that flag).
+    let yes: i32 = 1;
+    let yes_p: *const i32 = &raw const yes;
+    let len: u32 = core::mem::size_of::<i32>() as u32;
+    unsafe { setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, yes_p, len) };
+}
+
+// @safe - no-op on every other platform: Linux passes MSG_NOSIGNAL to
+// send() instead, so there is nothing to set on the accepted fd.
+#[cfg(not(target_os = "macos"))]
+fn accept_set_nosigpipe(fd: i32) {
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.33 version=1 rust_sha256=00ce223e83732a2766ad0644c75a10148542f8951660f48c00b36301765bb349*/
+void accept_set_nosigpipe(int32_t fd);
+void accept_set_nosigpipe(int32_t fd);
+
+#if defined(__APPLE__)
+void accept_set_nosigpipe(int32_t fd) {
+    const int32_t yes = static_cast<int32_t>(1);
+    const int32_t* yes_p = &yes;
+    const uint32_t len = static_cast<uint32_t>(rusty::mem::size_of<int32_t>());
+    // @unsafe
+    {
+        setsockopt(std::move(fd), SOL_SOCKET, SO_NOSIGPIPE, yes_p, std::move(len));
+    }
+}
+#endif  // defined(__APPLE__)
+
+#if !(defined(__APPLE__))
+void accept_set_nosigpipe(int32_t fd) {
+}
+#endif  // !(defined(__APPLE__))
+/*RUSTYCPP:GEN-END id=tcp_channel.33*/
+
 // @unsafe - accept(2) via rusty::net + the full accepted-socket wrap.
 int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out) {
     auto listener_guard = self.listener_.borrow();
@@ -2531,15 +2585,8 @@ int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out) {
     rusty::net::TcpStream stream = std::move(accepted.first);
     rusty::net::SocketAddrV4 peer_addr = accepted.second;
 
-#ifdef __APPLE__
-    // Prevent SIGPIPE termination on write() to closed sockets (Linux
-    // uses MSG_NOSIGNAL on send(); macOS lacks that flag).
-    {
-        const int yes = 1;
-        (void)::setsockopt(stream.as_owned_fd().as_raw_fd(),
-                           SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
-    }
-#endif
+    // No-op except on macOS; see the #[cfg] pair above.
+    accept_set_nosigpipe(stream.as_owned_fd().as_raw_fd());
 
     auto nonblock_result = stream.set_nonblocking(true);
     if (nonblock_result.is_err()) {

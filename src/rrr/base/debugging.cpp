@@ -30,15 +30,42 @@ export namespace rrr {
 // erpc's `third-party/erpc/src/common.h` defines `likely(x)` /
 // `unlikely(x)` as preprocessor macros. Wrap in `#ifndef` so we
 // don't fight the macros when the erpc header has already won.
+// The four `#ifndef`/`#endif` guard lines stay hand-written on purpose:
+// they ask whether another header defined a C MACRO of that name, which
+// Rust `#[cfg]` cannot ask. The transpiler is textual, so the DSL block
+// nests inside them correctly (probe-verified). Two spellings are lost
+// with no DSL equivalent — `[[nodiscard]]` and `noexcept` — and the
+// emitted definition is not `inline`; it is module-attached, so clang
+// can still inline it from the BMI.
 #ifndef likely
-[[nodiscard]] inline bool likely(bool value) noexcept {
-    return __builtin_expect(value, true);
+// @safe - `__builtin_expect` branch hint; pure, no side effects.
+#if RUSTYCPP_RUST
+fn likely(value: bool) -> bool {
+    __builtin_expect(value, true)
 }
 #endif
-#ifndef unlikely
-[[nodiscard]] inline bool unlikely(bool value) noexcept {
-    return __builtin_expect(value, false);
+/*RUSTYCPP:GEN-BEGIN id=debugging.3 version=1 rust_sha256=0c594084e9a2931a3f5f09e95d19761108ae65d096ff4a64e48e3567ee86b6d9*/
+bool likely(bool value);
+
+bool likely(bool value) {
+    return __builtin_expect(std::move(value), true);
 }
+/*RUSTYCPP:GEN-END id=debugging.3*/
+#endif
+#ifndef unlikely
+// @safe - `__builtin_expect` branch hint; pure, no side effects.
+#if RUSTYCPP_RUST
+fn unlikely(value: bool) -> bool {
+    __builtin_expect(value, false)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=debugging.5 version=1 rust_sha256=a86166bcb89b6c9894edf3c479103648a3d5c88cfe9e20129c9d9fa71119417b*/
+bool unlikely(bool value);
+
+bool unlikely(bool value) {
+    return __builtin_expect(std::move(value), false);
+}
+/*RUSTYCPP:GEN-END id=debugging.5*/
 #endif
 
 void print_stack_trace(FILE* fp = stderr) __attribute__((noinline));

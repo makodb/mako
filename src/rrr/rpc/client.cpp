@@ -4536,31 +4536,16 @@ rusty::Result<rusty::Unit, int32_t> clientconn_request_async(const ClientConnect
 /*RUSTYCPP:GEN-END id=client.24*/
 
 // Two @unsafe kernels for the DSL below. Neither is about the retry
-// logic — one hosts a PREPROCESSOR conditional (no DSL spelling) and
-// the other builds a std::span over a borrowed reply buffer.
+// logic — one bridges a hand-written C++ constructor and the other
+// builds a std::span over a borrowed reply buffer. (A third,
+// classify_request_failure, used to sit here purely to host an
+// `#if EWOULDBLOCK != EAGAIN`; it is now DSL, inside the block below.)
 
 // @unsafe - BinaryWriteArchive is a hand-written type with a real C++
 // constructor; the DSL's `T::new(...)` spelling looks for a static
 // `new_` factory, so construction goes through this one-liner.
 inline BinaryWriteArchive make_write_archive(BufferSink* sink) {
   return BinaryWriteArchive(make_sink_proxy(sink));
-}
-
-// @unsafe - `#if EWOULDBLOCK != EAGAIN` cannot appear in a DSL body.
-// Captures nothing; pure classification of an errno.
-inline TimeoutType classify_request_failure(int err) {
-  if (err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET ||
-      err == ECONNABORTED || err == EHOSTUNREACH || err == ENETUNREACH) {
-    return TimeoutType::CONNECT_TIMEOUT;
-  }
-  if (err == ETIMEDOUT || err == EAGAIN
-#if EWOULDBLOCK != EAGAIN
-      || err == EWOULDBLOCK
-#endif
-  ) {
-    return TimeoutType::REQUEST_TIMEOUT;
-  }
-  return TimeoutType::NONE;
 }
 
 // @unsafe - two simultaneous RefCell borrows plus a std::span built from
@@ -4592,13 +4577,33 @@ inline void request_copy_reply(const rusty::Arc<Future>& final_fu,
 // finish_terminal/set_terminal_timeout need to mutate `retry_count`
 // across the retry loop), the replay payload stays a Vec<u8> so the
 // reinterpret_cast string build disappears, and the preprocessor
-// conditional lives in the classify_request_failure kernel above.
+// conditional is gone entirely — classify_request_failure is now DSL
+// in this same block (see the note on its body below).
 //
 // Idiom note: a callable argument must be passed through a NAMED
 // `&mut` binding (`let ar_ref: &mut BinaryWriteArchive = &mut ar;`) —
 // spelling `write_fn(&mut ar)` lowers to a POINTER argument, which will
 // not bind to the `BinaryWriteArchive&` the callables take.
 #if RUSTYCPP_RUST
+// Pure classification of an errno; captures nothing. The original
+// `#if EWOULDBLOCK != EAGAIN` guard existed only to avoid a duplicate
+// switch case label; in an if-else `|| err == EWOULDBLOCK` is a
+// harmless redundancy on Linux (EAGAIN == EWOULDBLOCK) and keeps the
+// intent without a preprocessor conditional — exactly the reshape
+// already shipped in clientconn_map_system_error above. It lives in
+// THIS block rather than one of its own so the call below stays a
+// same-block call.
+fn classify_request_failure(err: i32) -> TimeoutType {
+    if err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET
+        || err == ECONNABORTED || err == EHOSTUNREACH || err == ENETUNREACH {
+        return TimeoutType::CONNECT_TIMEOUT;
+    }
+    if err == ETIMEDOUT || err == EAGAIN || err == EWOULDBLOCK {
+        return TimeoutType::REQUEST_TIMEOUT;
+    }
+    TimeoutType::NONE
+}
+
 fn clientconn_request_with_options<F>(self_: &ClientConnection, rpc_id: i32,
                                       options: &RequestOptions,
                                       attr: &FutureAttr, write_fn: F) -> FutureResult {
@@ -4743,7 +4748,17 @@ fn clientconn_request_with_options<F>(self_: &ClientConnection, rpc_id: i32,
     FutureResult::Ok(final_fu)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.33 version=1 rust_sha256=17a5cefdf1ff88050af680503977cda43cb6698e3c2309c4a87cc5bcf870ca76*/
+/*RUSTYCPP:GEN-BEGIN id=client.33 version=1 rust_sha256=bfd38431bb3150ebf50d4ace2cf62e6bb1bfde910f40ad4d7855ba7eea697495*/
+TimeoutType classify_request_failure(int32_t err) {
+    if ((((((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENOTCONN)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNREFUSED))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNRESET))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNABORTED))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EHOSTUNREACH))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENETUNREACH))) {
+        return rusty::clone(TimeoutType::CONNECT_TIMEOUT);
+    }
+    if (((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ETIMEDOUT)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EAGAIN))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EWOULDBLOCK))) {
+        return rusty::clone(TimeoutType::REQUEST_TIMEOUT);
+    }
+    return rusty::clone(rusty::clone(TimeoutType::NONE));
+}
+
 template<typename F>
 FutureResult clientconn_request_with_options(const ClientConnection& self_, int32_t rpc_id, const RequestOptions& options, const FutureAttr& attr, F write_fn) {
     BufferSink args_sink = rusty::default_like<BufferSink>();
@@ -4806,7 +4821,7 @@ if (rusty::detail::rust_not(rusty::is_empty(args_bytes))) {
     const FutureAttr empty_attr = rusty::default_like<FutureAttr>();
     auto attempt_result = ((rusty::detail::deref_if_pointer_like(conn))).request(std::move(rpc_id), std::move(empty_attr), std::move(replay));
     if (attempt_result.is_err()) {
-        const int32_t err = attempt_result.unwrap_err();
+        int32_t err = attempt_result.unwrap_err();
         finish_terminal(std::move(err), classify_request_failure(std::move(err)));
         return;
     }

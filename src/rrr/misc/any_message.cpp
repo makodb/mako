@@ -246,31 +246,70 @@ void clear_for_testing();
 // same shape `SerializableEnvelope` uses, so unpack semantics match.
 //
 // Returns 0 — suitable for `static int _reg = reg_any_message_as<T>("...");`.
+
+// @unsafe - THE kernel for this family: RTTI over a TEMPLATE PARAMETER.
+// `typeid(T)` is the one step with no Rust spelling; the factory closure,
+// the registry calls and the name compare are all DSL below and share
+// this single line. (The old "typeid / std::type_index is not
+// DSL-expressible, so the whole function must be C++" note was too broad:
+// only the typeid is.)
 template <typename T>
-// @unsafe - builds a factory LAMBDA and uses typeid / std::type_index
-// (RTTI). Neither is DSL-expressible.
-inline int reg_any_message_as(std::string name) {
-  auto factory = []() -> SerializableProxy {
-    auto sp = rusty::Arc<T>::make();
-    return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
-        std::move(sp));
-  };
-  return any_message_registry::register_type(std::move(name),
-                                           std::type_index(typeid(T)),
-                                           std::move(factory));
+inline std::type_index anymessage_type_index_of() {
+  return std::type_index(typeid(T));
 }
 
 // ---- Inlines that rely on the registry ------------------------------
-
-// @unsafe - dereferences raw `const std::string*` returned by
-// any_message_registry::name_for_type.
-template <typename T>
-inline bool anymessage_is_a(const AnyMessage& self) {
-  const std::string name = any_message_registry::name_for_type_owned(
-      std::type_index(typeid(T)));
-  if (name.empty()) return false;
-  return self.type_name_ == name;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Behavioral diffs from the hand-written C++ these replace:
+//   * `reg_any_message_as` returns `int32_t` rather than `int` (the same
+//     type on every supported target; every call site discards it).
+//   * its factory lambda gains a `[&]` capture-default it never uses —
+//     the closure captures nothing, exactly as the `[]` form did.
+#if RUSTYCPP_RUST
+fn reg_any_message_as<T>(name: std::string) -> i32 {
+    any_message_registry::register_type(
+        name,
+        anymessage_type_index_of::<T>(),
+        || -> SerializableProxy {
+            let sp = rusty::Arc::<T>::make();
+            rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp)
+        })
 }
+
+fn anymessage_is_a<T>(self_: &AnyMessage) -> bool {
+    let name: std::string =
+        any_message_registry::name_for_type_owned(anymessage_type_index_of::<T>());
+    if name.is_empty() {
+        return false;
+    }
+    self_.type_name_ == name
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=any_message.2 version=1 rust_sha256=b80403e3b74373cc319c52dced7e5dd7b4ffd358bba09ff479663ec24dd849ad*/
+template<typename T>
+int32_t reg_any_message_as(std::string name);
+
+template<typename T>
+int32_t reg_any_message_as(std::string name) {
+    return any_message_registry::register_type(std::move(name), anymessage_type_index_of<T>(), [&]() -> SerializableProxy {
+auto sp = rusty::Arc<T>::make();
+return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(sp));
+});
+}
+
+template<typename T>
+bool anymessage_is_a(const AnyMessage& self_) {
+    const std::string name = any_message_registry::name_for_type_owned(anymessage_type_index_of<T>());
+    if (rusty::is_empty(name)) {
+        return false;
+    }
+    return rusty::detail::deref_if_pointer_like(self_.type_name_) == rusty::detail::deref_if_pointer_like(name);
+}
+/*RUSTYCPP:GEN-END id=any_message.2*/
 
 // @unsafe - dynamic_cast through the held base pointer.
 template <typename T>
@@ -317,17 +356,31 @@ AnyMessage anymessage_pack_as(std::string name, rusty::Arc<T> val) {
 }
 /*RUSTYCPP:GEN-END id=any_message.pack_as*/
 
-// @unsafe - dereferences raw `const std::string*` from name_for_type
-// and forwards to the @unsafe anymessage_pack_as.
-template <typename T>
-inline AnyMessage anymessage_pack(rusty::Arc<T> val) {
-  const std::string name = any_message_registry::name_for_type_owned(
-      std::type_index(typeid(T)));
-  verify(!name.empty() &&
-         "AnyMessage::pack<T>: T not registered. "
-         "Call reg_any_message_as<T>(\"name\") at static init.");
-  return anymessage_pack_as<T>(name, std::move(val));
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The only C++ left is the shared
+// `anymessage_type_index_of<T>()` RTTI kernel above.
+//
+// The verify() loses its trailing `&& "AnyMessage::pack<T>: T not
+// registered. Call reg_any_message_as<T>('name') at static init."` string
+// literal — rrr's verify() reports file + line only and never printed it,
+// the same trade `AnyMessage::load` above already made.
+#if RUSTYCPP_RUST
+fn anymessage_pack<T>(val: rusty::Arc<T>) -> AnyMessage {
+    let name: std::string =
+        any_message_registry::name_for_type_owned(anymessage_type_index_of::<T>());
+    verify(!name.is_empty());
+    anymessage_pack_as::<T>(name, val)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=any_message.4 version=1 rust_sha256=119ef1ee5210854734cdf6e82a7dc71f7602d2352c36fba857dcb6f680224a9f*/
+template<typename T>
+AnyMessage anymessage_pack(rusty::Arc<T> val) {
+    const std::string name = any_message_registry::name_for_type_owned(anymessage_type_index_of<T>());
+    verify(rusty::detail::rust_not(rusty::is_empty(name)));
+    return anymessage_pack_as<T>(std::move(name), std::move(val));
+}
+/*RUSTYCPP:GEN-END id=any_message.4*/
 
 // ---- Free archive serde fns + operator forwarders --------------------
 

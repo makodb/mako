@@ -1900,12 +1900,12 @@ class Fiber {
   explicit Fiber(rusty::Function<void()> func);
   ~Fiber();
 
-  void run_wrapper(fiber_yield_t& yield);
+
   void run() const;
   void yield_() const;
   void continue_() const;
   bool finished() const;
-  void do_finalize();
+
 
   // Comparison operator for the ordered Rc<Fiber> set
   friend bool operator<(const rusty::Rc<Fiber>& lhs, const rusty::Rc<Fiber>& rhs) {
@@ -5141,12 +5141,12 @@ void fiber_do_finalize(const Fiber& fb) {
 
 // @safe - 1-line member delegations into the DSL free fns above (the
 // current_fiber/sleep pattern).
-void Fiber::run_wrapper(fiber_yield_t& yield) { fiber_run_wrapper(*this, &yield); }
+
 void Fiber::run() const { fiber_run(*this); }
 void Fiber::yield_() const { fiber_do_yield(*this); }
 void Fiber::continue_() const { fiber_do_continue(*this); }
 bool Fiber::finished() const { return fiber_is_finished(*this); }
-void Fiber::do_finalize() { fiber_do_finalize(*this); }
+
 
 
 // --- from reactor.cc -----------------------------------------------------

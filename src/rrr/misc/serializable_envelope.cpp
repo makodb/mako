@@ -38,13 +38,37 @@ export namespace rrr {
 // DSL `&mut` PARAMETER passes through as a C++ reference (the archives),
 // while `&mut local` lowers to a pointer (the proxy).
 
-// @unsafe - C++ TMP; `TypeList::template contains<T>()` has no Rust analogue.
+// @unsafe - THE kernel: the C++ dependent-name `template` disambiguator.
+// `TypeList::contains::<T>()` IS spellable in the DSL and DOES lower to a
+// static_assert; the one thing the emitter cannot add is the `template`
+// keyword C++ requires before a dependent member template. One
+// non-dependent line buys it back, and the assertion itself moves to DSL.
 template<typename TypeList, typename T>
-constexpr void envelope_assert_in_type_list() {
-  static_assert(TypeList::template contains<T>(),
-                "SerializableEnvelope: T is not in TypeList. "
-                "Add T to the TypeList declaration.");
+inline constexpr bool type_list_contains() {
+  return TypeList::template contains<T>();
 }
+
+// @safe - Authored as inline Rust DSL; the `#if RUSTYCPP_RUST` block is the
+// source of truth and the transpiler regenerates the GEN block below it.
+// A fn-body `const _: () = assert!(cond, "prose")` lowers to a real in-body
+// `static_assert`, so this stays a COMPILE-TIME check with its prose intact.
+// Diff from the hand-written C++: the fn is no longer `constexpr` — every
+// call site is a statement, never a constant evaluation.
+#if RUSTYCPP_RUST
+fn envelope_assert_in_type_list<TypeList, T>() {
+    const _: () = assert!(type_list_contains::<TypeList, T>(),
+        "SerializableEnvelope: T is not in TypeList. Add T to the TypeList declaration.");
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.2 version=1 rust_sha256=dea492a53b809d1a5c01a4aad52896e67e7761db04d490987852d572f3a3eae3*/
+template<typename TypeList, typename T>
+void envelope_assert_in_type_list();
+
+template<typename TypeList, typename T>
+void envelope_assert_in_type_list() {
+    static_assert(type_list_contains<TypeList, T>(), "assert ! (type_list_contains ::< TypeList , T > () , \"SerializableEnvelope: T is not in TypeList. Add T to the TypeList declaration.\")");
+}
+/*RUSTYCPP:GEN-END id=serializable_envelope.2*/
 
 // @unsafe - RTTI downcast to the holder for T (nullptr on miss).
 template<typename T>

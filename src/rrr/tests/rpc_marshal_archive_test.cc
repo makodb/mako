@@ -553,21 +553,33 @@ struct ScopedPipe {
   }
 };
 
+// Temp directory for test scratch: honour TMPDIR, fall back to /tmp.
+// Hardcoding /tmp made these tests fail with ENOSPC whenever the host's
+// /tmp tmpfs filled up -- and the failure mode was a bare SIGABRT from
+// the write path, which reads exactly like a real regression.
+inline std::string test_tmp_dir() {
+  const char* env = ::getenv("TMPDIR");
+  return (env != nullptr && env[0] != '\0') ? std::string(env) : std::string("/tmp");
+}
+
 // RAII wrapper around a temp file. Lives only inside the test.
 struct ScopedTempFile {
-  char path[64] = "/tmp/mako_archive_test_XXXXXX";
+  std::vector<char> path;
   int fd = -1;
   ScopedTempFile() {
-    fd = ::mkstemp(path);
-    EXPECT_GE(fd, 0);
+    const std::string tmpl = test_tmp_dir() + "/mako_archive_test_XXXXXX";
+    path.assign(tmpl.begin(), tmpl.end());
+    path.push_back('\0');
+    fd = ::mkstemp(path.data());
+    EXPECT_GE(fd, 0) << "mkstemp failed under " << test_tmp_dir();
   }
   ~ScopedTempFile() {
     if (fd >= 0) ::close(fd);
-    ::unlink(path);
+    ::unlink(path.data());
   }
   // Reopen by path read-only, returning a fresh fd. Caller closes it.
   int reopen_ro() const {
-    int rfd = ::open(path, O_RDONLY);
+    int rfd = ::open(path.data(), O_RDONLY);
     EXPECT_GE(rfd, 0);
     return rfd;
   }
