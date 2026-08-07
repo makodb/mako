@@ -7,10 +7,6 @@
 #include <time.h>
 #include <sys/time.h>
 
-#if defined(__APPLE__)
-#include <mach/mach_time.h>
-#endif
-
 /* The base/misc.cpp variant: same x86 read, aarch64 counter via mrs,
  * and a plain 0 fallback (its callers only mix the value into stats
  * seeds — behavior preserved exactly from the C++ original). */
@@ -29,9 +25,7 @@ uint64_t srpc_rdtsc_raw(void) {
 }
 
 uint64_t srpc_rdtsc(void) {
-#if defined(__APPLE__)
-    return (uint64_t)mach_absolute_time();
-#elif defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__)
     unsigned int lo, hi;
     __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
     return ((uint64_t)hi << 32) | lo;

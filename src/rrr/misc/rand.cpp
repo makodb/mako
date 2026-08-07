@@ -3,9 +3,6 @@ module;
 #include <rusty/rusty.hpp>
 #include <pthread.h>
 #include <time.h>
-#if defined(__APPLE__)
-#include <mach/mach_time.h>
-#endif
 
 export module rrr.rand;
 

@@ -37,15 +37,6 @@ int32_t srpc_tcp_connect_socket(uint32_t addr_be, uint16_t port_be,
         return -1;
     }
 
-#ifdef __APPLE__
-    /* Prevent SIGPIPE termination on write() to closed sockets.
-     * Linux uses MSG_NOSIGNAL on send(); macOS lacks that flag. */
-    {
-        const int yes = 1;
-        (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
-    }
-#endif
-
     /* Non-blocking BEFORE the connect so the timeout can be applied via
      * select(2) if the kernel doesn't fail-fast. */
     {

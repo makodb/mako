@@ -49,28 +49,6 @@ void srpc_backtrace_free(char** syms) {
     free(syms);
 }
 
-#ifdef __APPLE__
-/* The macOS stack-trace printer: pure libc over a caller-owned FILE*.
- * (The Linux path renders through the DSL instead — see the note above.)
- * Not compiled on Linux, exactly as the C++ original was not. */
-void srpc_print_stack_trace(FILE* fp) {
-    char** syms;
-    int frames = srpc_backtrace_capture(&syms);
-    int i;
-
-    if (frames < 0) {
-        fprintf(fp, "  *** failed to obtain stack trace!\n");
-        return;
-    }
-    fprintf(fp, "  *** begin stack trace ***\n");
-    for (i = 0; i < frames - 1; i++) {
-        /* In-process symbols only; no external binaries are executed. */
-        fprintf(fp, "%s\n", syms[i]);
-    }
-    fprintf(fp, "  ***  end stack trace  ***\n");
-    srpc_backtrace_free(syms);
-}
-#endif
 
 /* Return the filename portion of a path (the span after the last '/'),
  * or the whole string when there is no separator. Returns a pointer

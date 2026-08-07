@@ -15,8 +15,8 @@ import rusty;
 
 // @safe - debugging primitives. `verify()` is a pure precondition
 // check; `likely`/`unlikely` are `__builtin_expect` wrappers. The
-// `print_stack_trace` impls (both __APPLE__ and Linux branches) use
-// backtrace/backtrace_symbols raw char arrays and carry per-method
+// `print_stack_trace` impl uses backtrace/backtrace_symbols raw char
+// arrays and carries per-method
 // `// @unsafe` below. Symbol resolution is IN-PROCESS only (no
 // external binaries are executed).
 export namespace rrr {
@@ -129,37 +129,6 @@ inline void verify(const Expr& expr,
 // helper `read_line_from_pipe` is also `// @unsafe`.
 namespace rrr {
 
-#ifdef __APPLE__
-
-// The macOS stack-trace printer moved to srpc_base.c (plain C): it is
-// pure libc over a caller-owned FILE*, with no C++ type in sight.
-extern "C" void srpc_print_stack_trace(FILE* fp);
-
-// Authored as inline Rust DSL, nested INSIDE the `#ifdef __APPLE__`
-// branch -- the preprocessor line stays hand-written scaffolding. It
-// CANNOT become an item-level `#[cfg]` pair the way `time_now_us` in
-// basetypes.cpp did: the `#else` branch's `BtCapture` struct and its
-// `impl` would then need cfgs of their own, and the transpiler
-// SILENTLY DROPS a `#[cfg]` on a struct or an impl.
-//
-// MACOS-ONLY: never compiled on Linux CI, so the Linux build cannot
-// regress here -- but for the same reason CI cannot validate it.
-#if RUSTYCPP_RUST
-// @unsafe - thin shim over the C kernel.
-fn print_stack_trace(fp: *mut FILE) {
-    unsafe { srpc_print_stack_trace(fp); }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=debugging.7 version=1 rust_sha256=9db407fcb6cd524ce39ba36fbb08be6297ebc19086c75c67e37e0db02c029ce0*/
-void print_stack_trace(FILE* fp) {
-    // @unsafe
-    {
-        srpc_print_stack_trace(fp);
-    }
-}
-/*RUSTYCPP:GEN-END id=debugging.7*/
-
-#else // no __APPLE__
 
 // Reshaped for the DSL (H-category shrink) and — per the no-external-
 // binaries rule — resolved entirely IN-PROCESS: symbols come from
@@ -333,6 +302,5 @@ void print_stack_trace(FILE* fp) {
 }
 /*RUSTYCPP:GEN-END id=debugging.4*/
 
-#endif // ifdef __APPLE__
 
 } // namespace rrr

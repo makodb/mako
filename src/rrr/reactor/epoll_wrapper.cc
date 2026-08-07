@@ -13,15 +13,7 @@ module;
 #include <unistd.h>
 #include <strings.h>
 
-#ifdef __APPLE__
-#define USE_KQUEUE
-#endif
-
-#ifdef USE_KQUEUE
-#include <sys/event.h>
-#else
 #include <sys/epoll.h>
-#endif
 
 export module rrr.epoll_wrapper;
 
@@ -29,13 +21,13 @@ import std;
 import rusty;
 import rrr.debugging;
 
-// @safe - kqueue/epoll wrapper. The Pollable virtual interface has no
+// @safe - epoll wrapper. The Pollable virtual interface has no
 // bodies, PollMode/PollReady are constexpr int sets, and Epoll owns the
-// kqueue/epoll poll fd. Epoll is authored as an inline-rust DSL struct
+// epoll poll fd. Epoll is authored as an inline-rust DSL struct
 // (impl Drop closes the fd; a `rusty::Cell<bool>` field makes it
-// move-only so the fd is never double-closed). Every kqueue/epoll
+// move-only so the fd is never double-closed). Every epoll
 // syscall body lives in the per-platform module implementation unit
-// (epoll_platform_linux.cc, all-DSL / epoll_platform_kqueue.cc, C++),
+// (epoll_platform_linux.cc, all-DSL).
 // selected by CMake — Rust std's sys-module pattern. Only the Wait<F>
 // template below keeps an in-interface #ifdef (templates cannot move
 // to an implementation unit). The close is the OwnedFd RAII drop.
@@ -78,7 +70,7 @@ constexpr int32_t ERROR = static_cast<int32_t>(4);
 /*RUSTYCPP:GEN-END id=epoll_wrapper.3*/
 }
 
-// `Pollable` — abstract base for things that the epoll/kqueue wrapper
+// `Pollable` — abstract base for things that the epoll wrapper
 // polls (concrete subclasses live in tests; production code uses the
 // higher-level `PollableBase` trait). Authored as inline Rust DSL: the
 // `#if RUSTYCPP_RUST` block below is the source of truth; the
@@ -153,7 +145,7 @@ inline rusty::sync::atomic::AtomicI32 epoll_remove_count = rusty::sync::atomic::
 
 // Platform syscall bodies live in the per-platform module
 // implementation units (epoll_platform_linux.cc — DSL — or
-// epoll_platform_kqueue.cc), selected by CMake. This is Rust std's
+// epoll_platform_linux.cc), selected by CMake. This is Rust std's
 // sys-module pattern: no preprocessor split in the shared interface.
 int32_t epoll_open();
 int epoll_add_impl(int32_t poll_fd, int fd, int poll_mode);
@@ -182,14 +174,13 @@ void epoll_bump_remove_count() {
 
 
 
-// `Epoll` — owns the kqueue/epoll poll fd. Authored as inline-rust DSL: the
+// `Epoll` — owns the epoll poll fd. Authored as inline-rust DSL: the
 // `#if RUSTYCPP_RUST` block is the source of truth; the transpiler regenerates
 // the `RUSTYCPP:GEN-BEGIN ... END` C++ below it. The poll fd is a
 // std-faithful rusty::os::fd::OwnedFd — RAII close on drop, move-only —
 // which subsumes the former impl Drop and Cell<bool> copy marker. The
-// methods delegate to the `@unsafe` syscall free functions above (their
-// `#ifdef USE_KQUEUE` bodies aren't DSL-expressible). `Wait<F>` regenerates as
-// a real C++ template member. (Dropped vs the old class: the unused
+// methods delegate to the `@unsafe` syscall free functions above.
+// `Wait<F>` regenerates as a real C++ template member. (Dropped vs the old class: the unused
 // `volatile bool* pause/stop` back-pointers, the six dead stat counters, and
 // the never-called nullary `Wait()` overload.)
 
@@ -209,40 +200,6 @@ void epoll_bump_remove_count() {
 // single hot call site (reactor.cpp's poll loop) still inlines the
 // handler.
 //
-// The kqueue branch stays hand-written C++ because it cannot be compiled,
-// let alone tested, on this platform — the same rule
-// epoll_platform_kqueue.cc is held to. Convert it alongside a macOS build.
-#ifdef USE_KQUEUE
-// @unsafe - kevent blocking syscall + raw `evlist[max_nev]` stack buffer +
-// dispatch into the caller-supplied handler. APPLE-ONLY: not compiled or
-// verified on Linux CI.
-template<typename ReadyHandler>
-inline void epoll_wait_impl(int32_t poll_fd, ReadyHandler on_ready) {
-    const int max_nev = 100;
-    struct kevent evlist[max_nev];
-    struct timespec timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_nsec = 1 * 1000 * 1000;
-
-    int nev = kevent(poll_fd, nullptr, 0, evlist, max_nev, &timeout);
-
-    for (int i = 0; i < nev; i++) {
-      int ready_events = 0;
-      if (evlist[i].filter == EVFILT_READ) {
-        ready_events |= PollReady::READABLE;
-      }
-      if (evlist[i].filter == EVFILT_WRITE) {
-        ready_events |= PollReady::WRITABLE;
-      }
-      if (evlist[i].flags & EV_EOF) {
-        ready_events |= PollReady::ERROR;
-      }
-      if (ready_events != 0) {
-        on_ready(static_cast<int>(evlist[i].ident), ready_events);
-      }
-    }
-}
-#else
 // @unsafe - epoll_wait blocking syscall, called route-2 (`unsafe { .. }`)
 // from the DSL body below.
 //
@@ -318,7 +275,6 @@ void epoll_wait_impl(int32_t poll_fd, F on_ready) {
     }
 }
 /*RUSTYCPP:GEN-END id=epoll_wrapper.2*/
-#endif
 
 //
 // @safe - see comment above.

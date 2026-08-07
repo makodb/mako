@@ -1,6 +1,6 @@
 // rrr.epoll_wrapper — Linux implementation unit (Rust std's sys-module
-// pattern: CMake selects this file on non-Apple platforms; the kqueue
-// twin lives in epoll_platform_kqueue.cc). No preprocessor splits —
+// pattern). This is now the ONLY implementation unit: the kqueue twin
+// and every other macOS branch were removed. No preprocessor splits —
 // every body here is inline-Rust DSL over route-2 unsafe{} libc calls,
 // plus the zeroed-event factory kernel.
 module;
@@ -133,7 +133,7 @@ int32_t epoll_remove_impl(int32_t poll_fd, int32_t fd) {
 // ENOENT/EBADF tolerance (racing close/remove) — as DSL over the zeroed
 // factory. `old_mode` is unused on Linux (EPOLL_CTL_MOD replaces the
 // whole interest set) but stays in the signature: the shared interface
-// declares it because the kqueue twin really needs it. Carrying it here
+// declared it for the since-removed kqueue twin. Carrying it here
 // is what deleted the hand-written C++ wrapper that used to drop it (a
 // named-but-unused C++ parameter does not warn, verified under -Wall).
 #if RUSTYCPP_RUST

@@ -695,15 +695,13 @@ void abort_if_false(bool cond) {
 }
 /*RUSTYCPP:GEN-END id=basetypes.6*/
 
-// @safe - platform-split wall-clock helper. The `#ifdef __APPLE__`
-// kernel is gone: item-level `#[cfg(target_os = "macos")]` /
-// `#[cfg(not(target_os = "macos"))]` on two same-named free fns lowers
-// to a `#if defined(__APPLE__)` / `#if !(defined(__APPLE__))` pair
-// around the DEFINITIONS (the prototype is emitted unguarded, twice --
-// legal, a redeclaration). Same shape as `accept_set_nosigpipe` in
-// tcp_channel.cpp.
+// @safe - wall-clock helper. Was a `#ifdef __APPLE__` split, then an
+// item-level `#[cfg(target_os)]` pair; now a single body, because macOS
+// support was removed from src/rrr entirely.
 //
-// TRAP, probe-verified: this works at ITEM level only. A `#[cfg]` on a
+// The cfg TRAP below is kept on record even though this site no longer
+// uses one -- it is the reason a platform split must never be written at
+// statement level. A `#[cfg]` on a
 // struct or an impl is SILENTLY DROPPED (emitted unguarded, no
 // diagnostic), and STATEMENT-level `#[cfg]` silently MISCOMPILES --
 // the two arms become `y` and `y_shadow1`, and the non-macOS value
@@ -711,15 +709,6 @@ void abort_if_false(bool cond) {
 #if RUSTYCPP_RUST
 // @safe - macOS has no CLOCK_REALTIME_COARSE, so both accuracies
 // collapse onto the plain realtime clock.
-#[cfg(target_os = "macos")]
-fn time_now_us(accurate: bool) -> u64 {
-    let _ = accurate;
-    rusty::sys::time::clock_realtime_us()
-}
-
-// @safe - elsewhere: monotonic when the caller asks for accuracy, the
-// coarse (vDSO-cached) realtime clock otherwise.
-#[cfg(not(target_os = "macos"))]
 fn time_now_us(accurate: bool) -> u64 {
     if accurate {
         rusty::sys::time::clock_monotonic_us()
@@ -728,18 +717,9 @@ fn time_now_us(accurate: bool) -> u64 {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=basetypes.8 version=1 rust_sha256=08c6c55aca47bdb19b2dad22274a8a94aedb55ce141b0ce1f4096c390310448d*/
-uint64_t time_now_us(bool accurate);
+/*RUSTYCPP:GEN-BEGIN id=basetypes.8 version=1 rust_sha256=8d322394bc3aa57ced11457689e0f963dbdda739a8bdfc65800678099c593741*/
 uint64_t time_now_us(bool accurate);
 
-#if defined(__APPLE__)
-uint64_t time_now_us(bool accurate) {
-    static_cast<void>(std::move(accurate));
-    return rusty::sys::time::clock_realtime_us();
-}
-#endif  // defined(__APPLE__)
-
-#if !(defined(__APPLE__))
 uint64_t time_now_us(bool accurate) {
     if (accurate) {
         return rusty::sys::time::clock_monotonic_us();
@@ -747,7 +727,6 @@ uint64_t time_now_us(bool accurate) {
         return rusty::sys::time::clock_realtime_coarse_us();
     }
 }
-#endif  // !(defined(__APPLE__))
 /*RUSTYCPP:GEN-END id=basetypes.8*/
 
 // `Time` — wall-clock + sleep facade. The historical class was static-
