@@ -351,6 +351,57 @@ std::string cpuinfo_nth_field(const std::string& line, int32_t n) {
 }
 /*RUSTYCPP:GEN-END id=cpuinfo.string_helpers*/
 
+
+// @safe - path builders for the DSL (operator+ on std::string has no
+// DSL spelling).
+#if RUSTYCPP_RUST
+fn cpuinfo_net_path(pid: &std::string) -> std::string {
+    format!("/proc/{}/net/dev", pid)
+}
+
+fn cpuinfo_stat_path(pid: &std::string) -> std::string {
+    format!("/proc/{}/stat", pid)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.4 version=1 rust_sha256=0b0774e1025b07413622a49e53c531d09ae930d5968971fa821ff0b6fcd70347*/
+std::string cpuinfo_net_path(const std::string& pid);
+std::string cpuinfo_stat_path(const std::string& pid);
+
+std::string cpuinfo_net_path(const std::string& pid) {
+    return std::format("/proc/{}/net/dev" , pid);
+}
+
+std::string cpuinfo_stat_path(const std::string& pid) {
+    return std::format("/proc/{}/stat" , pid);
+}
+/*RUSTYCPP:GEN-END id=cpuinfo.4*/
+
+} // export namespace rrr
+
+// @safe - impl namespace: the cpuinfo_* sampling kernels. Each carries
+// per-fn `// @unsafe` for syscalls (via the @safe rusty::sys::process
+// helpers) and the tiny bridge/parse kernels (Result bridge, strtoul +
+// operator>> chains). SP-5 (Cursor) remains the eventual refactor
+// target for the two parsers.
+namespace rrr {
+
+// Forward declaration: the DSL factory below calls this kernel, whose
+// definition sits further down with the other syscall kernels.
+CPUInfo cpuinfo_blank();
+
+// RELOCATED from the export namespace (Goal 0). The two /proc parsers are
+// DEFINED here in the impl namespace; their DECLARATIONS stay exported
+// above (cpuinfo.cpp:51-54), so exported callers still resolve and the
+// entity keeps its exported linkage -- the same implicitly-exported
+// redeclaration pattern logging.cpp uses for log_basename.
+//
+// The move is what lets `cpuinfo_new` join this DSL block: it calls
+// `cpuinfo_get_network(&mut info, ..)`, and a CROSS-block `&mut` argument
+// lowers to `&info` (a hard error), so the caller has to share the block.
+// Merging into the block while it sat in the export namespace would have
+// dragged cpuinfo_new into the module interface; relocating first keeps
+// the interface exactly as it was.
+
 // tx/rx sampling from /proc/<pid>/net/dev (4th line; strtok-era field
 // numbering: field 1 and field 9 after the interface token).
 #if RUSTYCPP_RUST
@@ -422,8 +473,68 @@ fn cpuinfo_get_memory(info: &mut CPUInfo, pid: &std::string,
     result.push(mem_total);
     info.last_mem = mem_total;
 }
+
+// The CPUInfo factory, in the SAME block as the two parsers it calls --
+// a CROSS-block `&mut info` argument lowers to `&info`, which is a hard
+// error, so the caller has to share the block. (That constraint is why
+// the block was relocated out of the export namespace first: merging
+// while it sat there would have dragged this factory into the module
+// interface.)
+//
+// The platform split is item-level `#[cfg]` on two same-named fns, which
+// emits real `#if defined(__linux__)` guards. It is NOT statement-level
+// #[cfg] -- that spelling silently miscompiles, picking one arm on every
+// platform.
+#[cfg(target_os = "linux")]
+fn cpuinfo_new() -> CPUInfo {
+    let mut info = cpuinfo_blank();
+    let mut result = Vec::<f64>::new();
+
+    let mem_info = rusty::sys::process::sysinfo();
+    // `total_ram_bytes` is already scaled by mem_unit.
+    info.total_mem = (mem_info.total_ram_bytes / 1024) as i64;
+    log_line(Log::DEBUG, 0i32, core::ptr::null(),
+             std::format("total amount of ram is: {}", info.total_mem));
+
+    info.page_size = rusty::sys::process::sysconf(_SC_PAGE_SIZE) / 1024;
+
+    let ticks = rusty::sys::process::process_times();
+    // `idx` is bound to a local ON PURPOSE. Spelling the subscript as
+    // `info.last_ticks_[info.index]` makes the transpiler emit a
+    // field-access lambda for BOTH operands, producing `...)[[&](auto&&...`
+    // -- two consecutive `[`, which C++ parses as an attribute:
+    // "C++11 only allows consecutive left square brackets when
+    // introducing an attribute". A plain local for the index avoids it.
+    let idx = info.index;
+    info.last_ticks_[idx]        = ticks.wall_ticks as clock_t;
+    info.last_kernel_ticks_[idx] = ticks.system_ticks as clock_t;
+    info.last_user_ticks_[idx]   = ticks.user_ticks as clock_t;
+
+    info.pid_ = rusty::sys::process::getpid();
+    let pid_str = std::to_string(info.pid_);
+    let t0 = info.last_ticks_[idx] as i64;
+    cpuinfo_get_network(&mut info, &pid_str, &raw mut result, t0);
+    cpuinfo_get_memory(&mut info, &pid_str, &raw mut result, t0);
+
+    info.index += 1;
+    info
+}
+
+#[cfg(not(target_os = "linux"))]
+fn cpuinfo_new() -> CPUInfo {
+    let mut info = cpuinfo_blank();
+    info.last_cpu = 0.0;
+    info.last_txed = 0.0;
+    info.last_rxed = 0.0;
+    info.last_mem = 0.0;
+    info.total_mem = 0;
+    info.page_size = 0;
+    info.index = 0;
+    info.pid_ = rusty::sys::process::getpid();
+    info
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cpuinfo.parsers version=1 rust_sha256=10ebbc8a2627a442b7e2b8b3ae9428b79aff988b50b2fc6c5932b1198a3c8cf4*/
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.parsers version=1 rust_sha256=c2a6004cce9f84bd59104fc41d95e3d62a69c359410c7712abdc9581b410344a*/
 void cpuinfo_get_network(CPUInfo& info, const std::string& pid, rusty::Vec<double>* result, int64_t ticks) {
     CPUInfo* info_shadow1 = &info;
     const auto content = cpuinfo_read_proc(cpuinfo_net_path(pid));
@@ -482,40 +593,45 @@ void cpuinfo_get_memory(CPUInfo& info, const std::string& pid, rusty::Vec<double
     result->push(std::move(mem_total));
     (*info_shadow1).last_mem = std::move(mem_total);
 }
+
+#if defined(__linux__)
+CPUInfo cpuinfo_new() {
+    auto info = cpuinfo_blank();
+    auto result = rusty::Vec<double>::new_();
+    const auto mem_info = rusty::sys::process::sysinfo();
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.total_mem); }) { return (__r.total_mem); } else if constexpr (requires { (__r.total_mem_field); }) { return (__r.total_mem_field); } else if constexpr (requires { ((*__r).total_mem); }) { return ((*__r).total_mem); } else { return ((*__r).total_mem_field); } }(info) = static_cast<int64_t>((rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.total_ram_bytes); }) { return (__r.total_ram_bytes); } else if constexpr (requires { (__r.total_ram_bytes_field); }) { return (__r.total_ram_bytes_field); } else if constexpr (requires { ((*__r).total_ram_bytes); }) { return ((*__r).total_ram_bytes); } else { return ((*__r).total_ram_bytes_field); } }(mem_info)) / 1024));
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("total amount of ram is: {}", std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.total_mem); }) { return (__r.total_mem); } else if constexpr (requires { (__r.total_mem_field); }) { return (__r.total_mem_field); } else if constexpr (requires { ((*__r).total_mem); }) { return ((*__r).total_mem); } else { return ((*__r).total_mem_field); } }(info))));
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.page_size); }) { return (__r.page_size); } else if constexpr (requires { (__r.page_size_field); }) { return (__r.page_size_field); } else if constexpr (requires { ((*__r).page_size); }) { return ((*__r).page_size); } else { return ((*__r).page_size_field); } }(info) = rusty::sys::process::sysconf(_SC_PAGE_SIZE) / 1024;
+    const auto ticks = rusty::sys::process::process_times();
+    const auto idx = std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.index); }) { return (__r.index); } else if constexpr (requires { (__r.index_field); }) { return (__r.index_field); } else if constexpr (requires { ((*__r).index); }) { return ((*__r).index); } else { return ((*__r).index_field); } }(info));
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_ticks_); }) { return (__r.last_ticks_); } else if constexpr (requires { (__r.last_ticks__field); }) { return (__r.last_ticks__field); } else if constexpr (requires { ((*__r).last_ticks_); }) { return ((*__r).last_ticks_); } else { return ((*__r).last_ticks__field); } }(info)[idx] = static_cast<clock_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.wall_ticks); }) { return (__r.wall_ticks); } else if constexpr (requires { (__r.wall_ticks_field); }) { return (__r.wall_ticks_field); } else if constexpr (requires { ((*__r).wall_ticks); }) { return ((*__r).wall_ticks); } else { return ((*__r).wall_ticks_field); } }(ticks));
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_kernel_ticks_); }) { return (__r.last_kernel_ticks_); } else if constexpr (requires { (__r.last_kernel_ticks__field); }) { return (__r.last_kernel_ticks__field); } else if constexpr (requires { ((*__r).last_kernel_ticks_); }) { return ((*__r).last_kernel_ticks_); } else { return ((*__r).last_kernel_ticks__field); } }(info)[idx] = static_cast<clock_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.system_ticks); }) { return (__r.system_ticks); } else if constexpr (requires { (__r.system_ticks_field); }) { return (__r.system_ticks_field); } else if constexpr (requires { ((*__r).system_ticks); }) { return ((*__r).system_ticks); } else { return ((*__r).system_ticks_field); } }(ticks));
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_user_ticks_); }) { return (__r.last_user_ticks_); } else if constexpr (requires { (__r.last_user_ticks__field); }) { return (__r.last_user_ticks__field); } else if constexpr (requires { ((*__r).last_user_ticks_); }) { return ((*__r).last_user_ticks_); } else { return ((*__r).last_user_ticks__field); } }(info)[idx] = static_cast<clock_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.user_ticks); }) { return (__r.user_ticks); } else if constexpr (requires { (__r.user_ticks_field); }) { return (__r.user_ticks_field); } else if constexpr (requires { ((*__r).user_ticks); }) { return ((*__r).user_ticks); } else { return ((*__r).user_ticks_field); } }(ticks));
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.pid_); }) { return (__r.pid_); } else if constexpr (requires { (__r.pid__field); }) { return (__r.pid__field); } else if constexpr (requires { ((*__r).pid_); }) { return ((*__r).pid_); } else { return ((*__r).pid__field); } }(info) = rusty::sys::process::getpid();
+    const auto pid_str = std::to_string(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.pid_); }) { return (__r.pid_); } else if constexpr (requires { (__r.pid__field); }) { return (__r.pid__field); } else if constexpr (requires { ((*__r).pid_); }) { return ((*__r).pid_); } else { return ((*__r).pid__field); } }(info)));
+    auto t0 = static_cast<int64_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_ticks_); }) { return (__r.last_ticks_); } else if constexpr (requires { (__r.last_ticks__field); }) { return (__r.last_ticks__field); } else if constexpr (requires { ((*__r).last_ticks_); }) { return ((*__r).last_ticks_); } else { return ((*__r).last_ticks__field); } }(info)[idx]);
+    cpuinfo_get_network(rusty::detail::deref_if_pointer_like(info), pid_str, &result, std::move(t0));
+    cpuinfo_get_memory(rusty::detail::deref_if_pointer_like(info), pid_str, &result, std::move(t0));
+    rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.index); }) { return (__r.index); } else if constexpr (requires { (__r.index_field); }) { return (__r.index_field); } else if constexpr (requires { ((*__r).index); }) { return ((*__r).index); } else { return ((*__r).index_field); } }(info)) += 1;
+    return std::move(info);
+}
+#endif  // defined(__linux__)
+
+#if !(defined(__linux__))
+CPUInfo cpuinfo_new() {
+    auto info = cpuinfo_blank();
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_cpu); }) { return (__r.last_cpu); } else if constexpr (requires { (__r.last_cpu_field); }) { return (__r.last_cpu_field); } else if constexpr (requires { ((*__r).last_cpu); }) { return ((*__r).last_cpu); } else { return ((*__r).last_cpu_field); } }(info) = 0.0;
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_txed); }) { return (__r.last_txed); } else if constexpr (requires { (__r.last_txed_field); }) { return (__r.last_txed_field); } else if constexpr (requires { ((*__r).last_txed); }) { return ((*__r).last_txed); } else { return ((*__r).last_txed_field); } }(info) = 0.0;
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_rxed); }) { return (__r.last_rxed); } else if constexpr (requires { (__r.last_rxed_field); }) { return (__r.last_rxed_field); } else if constexpr (requires { ((*__r).last_rxed); }) { return ((*__r).last_rxed); } else { return ((*__r).last_rxed_field); } }(info) = 0.0;
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_mem); }) { return (__r.last_mem); } else if constexpr (requires { (__r.last_mem_field); }) { return (__r.last_mem_field); } else if constexpr (requires { ((*__r).last_mem); }) { return ((*__r).last_mem); } else { return ((*__r).last_mem_field); } }(info) = 0.0;
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.total_mem); }) { return (__r.total_mem); } else if constexpr (requires { (__r.total_mem_field); }) { return (__r.total_mem_field); } else if constexpr (requires { ((*__r).total_mem); }) { return ((*__r).total_mem); } else { return ((*__r).total_mem_field); } }(info) = 0;
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.page_size); }) { return (__r.page_size); } else if constexpr (requires { (__r.page_size_field); }) { return (__r.page_size_field); } else if constexpr (requires { ((*__r).page_size); }) { return ((*__r).page_size); } else { return ((*__r).page_size_field); } }(info) = 0;
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.index); }) { return (__r.index); } else if constexpr (requires { (__r.index_field); }) { return (__r.index_field); } else if constexpr (requires { ((*__r).index); }) { return ((*__r).index); } else { return ((*__r).index_field); } }(info) = 0;
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.pid_); }) { return (__r.pid_); } else if constexpr (requires { (__r.pid__field); }) { return (__r.pid__field); } else if constexpr (requires { ((*__r).pid_); }) { return ((*__r).pid_); } else { return ((*__r).pid__field); } }(info) = rusty::sys::process::getpid();
+    return std::move(info);
+}
+#endif  // !(defined(__linux__))
 /*RUSTYCPP:GEN-END id=cpuinfo.parsers*/
-
-// @safe - path builders for the DSL (operator+ on std::string has no
-// DSL spelling).
-#if RUSTYCPP_RUST
-fn cpuinfo_net_path(pid: &std::string) -> std::string {
-    format!("/proc/{}/net/dev", pid)
-}
-
-fn cpuinfo_stat_path(pid: &std::string) -> std::string {
-    format!("/proc/{}/stat", pid)
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=cpuinfo.4 version=1 rust_sha256=0b0774e1025b07413622a49e53c531d09ae930d5968971fa821ff0b6fcd70347*/
-std::string cpuinfo_net_path(const std::string& pid);
-std::string cpuinfo_stat_path(const std::string& pid);
-
-std::string cpuinfo_net_path(const std::string& pid) {
-    return std::format("/proc/{}/net/dev" , pid);
-}
-
-std::string cpuinfo_stat_path(const std::string& pid) {
-    return std::format("/proc/{}/stat" , pid);
-}
-/*RUSTYCPP:GEN-END id=cpuinfo.4*/
-
-} // export namespace rrr
-
-// @safe - impl namespace: the cpuinfo_* sampling kernels. Each carries
-// per-fn `// @unsafe` for syscalls (via the @safe rusty::sys::process
-// helpers) and the tiny bridge/parse kernels (Result bridge, strtoul +
-// operator>> chains). SP-5 (Cursor) remains the eventual refactor
-// target for the two parsers.
-namespace rrr {
 
 // (anonymous namespace dissolved: the kernels need module linkage so the
 // exported declarations above unify with these definitions)
@@ -552,44 +668,14 @@ unsigned long cpuinfo_parse_ulong(const std::string& tok) {
     return strtoul(tok.c_str(), nullptr, 0);
 }
 
-// @unsafe - sysinfo / sysconf / times / getpid flow through the @safe
-// rusty::sys::process::* helpers; dispatches into the @unsafe parsers.
-// No lock is taken: the instance is local until returned (only the
-// singleton in cpuinfo_cpu_stat constructs one, exactly once).
-CPUInfo cpuinfo_new() {
-    // Designated-init: mtx_ gets its placeholder payload; every other
-    // member is value-initialized ({} per C++20 designated-init rules),
-    // replacing the old in-class `= {}` field initializers.
-    CPUInfo info{.mtx_ = rusty::Mutex<bool>(false)};
-#ifdef __linux__
-    rusty::Vec<double> result;
-
-    const auto mem_info = rusty::sys::process::sysinfo();
-    // `mem_info.total_ram_bytes` is already scaled by mem_unit.
-    info.total_mem = static_cast<long long>(mem_info.total_ram_bytes / 1024);
-    log_line(Log::DEBUG, 0, nullptr, std::format("total amount of ram is: {}", info.total_mem));
-
-    info.page_size = rusty::sys::process::sysconf(_SC_PAGE_SIZE) / 1024;
-
-    const auto ticks = rusty::sys::process::process_times();
-    info.last_ticks_[info.index]        = static_cast<clock_t>(ticks.wall_ticks);
-    info.last_kernel_ticks_[info.index] = static_cast<clock_t>(ticks.system_ticks);
-    info.last_user_ticks_[info.index]   = static_cast<clock_t>(ticks.user_ticks);
-
-    info.pid_ = rusty::sys::process::getpid();
-    cpuinfo_get_network(info, std::to_string(info.pid_), &result, static_cast<int64_t>(info.last_ticks_[info.index]));
-    cpuinfo_get_memory(info, std::to_string(info.pid_), &result, static_cast<int64_t>(info.last_ticks_[info.index]));
-
-    info.index++;
-#else
-    info.last_cpu = info.last_txed = info.last_rxed = info.last_mem = 0.0;
-    info.total_mem = 0;
-    info.page_size = 0;
-    info.index = 0;
-    info.pid_ = rusty::sys::process::getpid();
-#endif
-    return info;
+// @unsafe - the one line of cpuinfo_new that has no DSL spelling: a
+// DESIGNATED initializer. mtx_ takes its placeholder payload and every
+// other member is value-initialized ({} per C++20 designated-init
+// rules). The rest of the factory is DSL in the parsers block above.
+CPUInfo cpuinfo_blank() {
+    return CPUInfo{.mtx_ = rusty::Mutex<bool>(false)};
 }
+
 
 // @unsafe - Log_debug varargs shim for the DSL delta method.
 #if RUSTYCPP_RUST
