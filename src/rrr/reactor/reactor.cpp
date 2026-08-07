@@ -91,6 +91,7 @@ RUSTY_METHOD_DISPATCH(push_back)
 RUSTY_METHOD_DISPATCH(retain)
 RUSTY_METHOD_DISPATCH(set_self)
 RUSTY_METHOD_DISPATCH(size)
+RUSTY_METHOD_DISPATCH(unwrap)
 RUSTY_METHOD_DISPATCH(upgrade)
 } } // namespace rusty::detail (issue #31 deref_call dispatch)
 /*RUSTYCPP:GEN-DISPATCH-END*/
@@ -2872,15 +2873,7 @@ Reactor::~Reactor() noexcept(false) {
 // a DSL struct's GEN cannot mix in hand-written members, so the class's
 // template members become free function templates). ====
 
-// @safe - Arc::make is @safe in the library. Hoisted out of `class Reactor`
-// (was the private member template `make_arc`). Still hand-written: a
-// variadic perfect-forwarding parameter pack has no DSL spelling, so this
-// one stays in the variadic rewrite backlog. Its remaining callers are in
-// reactor_spawn_stackless_task_impl (the Task<void> sibling below).
-template <typename U, typename... Args>
-inline rusty::Arc<U> reactor_make_arc(Args&&... args) {
-  return rusty::Arc<U>::make(std::forward<Args>(args)...);
-}
+
 
 // @safe - Spawn a stackless task with a completion callback when ready.
 // Hoisted out of `class Reactor` (member template; a DSL struct's GEN is
@@ -5936,64 +5929,165 @@ rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self_, FiberFn 
 
 // @unsafe - Uses RefCell interior mutability (rusty-cpp doesn't fully support RefCell semantics)
 
-// @unsafe - Spawn a stackless task and schedule first poll on this reactor.
-void reactor_spawn_stackless_task_impl(const Reactor& self, rusty::Task<void> task) {
-  verify(rusty::thread::current_id() == self.thread_id_.get());
-  constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
-  // @unsafe - mutable atomic fields are storage for cross-thread
-  // wake-state mutations from the early_waker lambda. The struct is
-  // local to this method body and does not inherit Reactor's
-  // class-level @safe in intent — the rusty-cpp mutable-field rule
-  // fires here because libclang qualifies local types under the
-  // enclosing class scope.
-  struct EarlyWakeState {
-    explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
-    const Reactor* reactor;
-    mutable std::atomic<size_t> idx{kUnregisteredSlot};
-    mutable std::atomic<bool> pending_wake{false};
-  };
+// One line of scaffolding for the DSL below: a DSL `rusty::Task<void>`
+// parameter lowers to the bogus `rusty::Task<void_>`, but through a type
+// alias it lowers verbatim. `TaskVoid` IS `rusty::Task<void>`, so the
+// forward declaration near the top of this file still declares this very
+// function.
+using TaskVoid = rusty::Task<void>;
 
-  auto early_wake = reactor_make_arc<EarlyWakeState>(&self);
-
-  rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
-    size_t idx = early_wake->idx.load(std::memory_order_acquire);
-    if (idx == kUnregisteredSlot) {
-      early_wake->pending_wake.store(true, std::memory_order_release);
-      return;
+// @safe - Spawn a stackless task and schedule its first poll on this
+// reactor. The Task<void> sibling of reactor_spawn_stackless_task_with_result
+// (GEN id=reactor.27); apart from the thread-pinning `verify` and the absence
+// of a completion callback it is an exact mirror of it.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block. Three
+// lowering rules shape it, each shared with the with_result sibling:
+//   * the parameter is `self_` — a DSL parameter literally named `self` is
+//     swallowed into a receiver and the body emits `this->`.
+//   * `std::atomic` + `std::memory_order` become
+//     `rusty::sync::atomic::{AtomicUsize,AtomicBool}` + `Ordering::*`
+//     (`exchange` is spelled `swap`). That also DELETES the `mutable` on both
+//     wake-state fields: rusty's atomic load/store/swap are already const, so
+//     they reach through `Arc::operator->`'s `const T*`. The one genuinely
+//     mutable field (the Task) becomes a `RefCell` for the same reason,
+//     borrowed in a scope so no borrow is held across the ready-path store —
+//     matching the original, which held none.
+//   * `early_wake` is `.clone()`d into each closure: a DSL `move ||` closure
+//     MOVES its captures, and this body reads `early_wake` again after
+//     registering the poller.
+// The two fn-body-local structs lower verbatim (hoisted to the top of the
+// emitted body); neither carries generic parameters, which is what keeps the
+// emitted declarations non-template — see the sibling's note.
+#if RUSTYCPP_RUST
+fn reactor_spawn_stackless_task_impl(self_: &Reactor, task: TaskVoid) {
+    // SAFETY: shared state is heap-owned; the reactor outlives the poller.
+    // Both counters are atomic because the waker may fire from another
+    // thread.
+    struct EarlyWakeState {
+        reactor: *const Reactor,
+        idx: rusty::sync::atomic::AtomicUsize,
+        pending_wake: rusty::sync::atomic::AtomicBool
     }
-    early_wake->reactor->enqueue_stackless_task(idx);
-  }};
-  rusty::Context early_ctx{&early_waker};
-  auto early_poll = task.poll(early_ctx);
-  if (early_poll.is_ready()) {
-    return;
-  }
-
-  // @unsafe - mutable Task field is needed because the registered
-  // poller closure must call `task.poll(ctx)` which mutates the Task,
-  // and the closure receives `TaskState` by const Arc.
-  struct TaskState {
-    mutable rusty::Task<void> task;
-    rusty::Arc<EarlyWakeState> early_wake;
-
-    TaskState(rusty::Task<void> t, rusty::Arc<EarlyWakeState> ew)
-        : task(std::move(t)), early_wake(std::move(ew)) {}
-  };
-
-  auto state = reactor_make_arc<TaskState>(std::move(task), std::move(early_wake));
-  auto idx = self.register_stackless_poller([state](rusty::Context& ctx) mutable {
-    auto poll_result = state->task.poll(ctx);
-    if (poll_result.is_ready()) {
-      state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
-      return true;
+    // SAFETY: TaskState is only reached through the Arc captured by the
+    // poller closure, which runs on this reactor's thread.
+    struct TaskState {
+        task: rusty::RefCell<TaskVoid>,
+        early_wake: rusty::Arc<EarlyWakeState>
     }
-    return false;
-  });
-  state->early_wake->idx.store(idx, std::memory_order_release);
-  if (state->early_wake->pending_wake.exchange(false, std::memory_order_acq_rel)) {
-    self.enqueue_stackless_task(idx);
-  }
+
+    verify(rusty::thread::current_id() == self_.thread_id_.get());
+    let kUnregisteredSlot: usize = usize::MAX;
+    let rp: *const Reactor = &raw const self_;
+    let seed = EarlyWakeState {
+        reactor: rp,
+        idx: rusty::sync::atomic::AtomicUsize::new(kUnregisteredSlot),
+        pending_wake: rusty::sync::atomic::AtomicBool::new(false)
+    };
+    let early_wake: rusty::Arc<EarlyWakeState> = rusty::Arc::<EarlyWakeState>::make(seed);
+
+    // Each `move ||` closure gets its own clone; early_wake is read again
+    // after the poller is registered.
+    let ew_waker = early_wake.clone();
+    let mut early_waker = rusty::Waker {
+        wake_fn: move || {
+            let slot = ew_waker.idx.load(rusty::sync::atomic::Ordering::Acquire);
+            if slot == kUnregisteredSlot {
+                ew_waker.pending_wake.store(true, rusty::sync::atomic::Ordering::Release);
+            } else {
+                (*ew_waker.reactor).enqueue_stackless_task(slot);
+            }
+        }
+    };
+    let wp: *mut rusty::Waker = &raw mut early_waker;
+    let mut early_ctx = rusty::Context { waker: wp };
+    // Named binding: a bare `&mut local` argument lowers to a pointer, and a
+    // last-use local argument is std::move()d — neither binds
+    // `Task::poll(rusty::Context&)`. An annotated `&mut` let emits a real
+    // C++ reference.
+    let ectx: &mut rusty::Context = &mut early_ctx;
+    if task.poll(ectx).is_ready() {
+        return;
+    }
+
+    let ew_state = early_wake.clone();
+    let ts = TaskState {
+        task: rusty::RefCell::<TaskVoid>::new(task),
+        early_wake: ew_state
+    };
+    let state: rusty::Arc<TaskState> = rusty::Arc::<TaskState>::make(ts);
+    let idx = self_.register_stackless_poller(move |ctx: &mut rusty::Context| -> bool {
+        // Scoped so the task borrow is released before the ready-path store.
+        let mut ready: bool = false;
+        {
+            let tguard = state.task.borrow_mut();
+            ready = (*tguard).poll(ctx).is_ready();
+        }
+        if !ready {
+            return false;
+        }
+        (*state.early_wake).idx.store(kUnregisteredSlot, rusty::sync::atomic::Ordering::Release);
+        true
+    });
+    early_wake.idx.store(idx, rusty::sync::atomic::Ordering::Release);
+    if early_wake.pending_wake.swap(false, rusty::sync::atomic::Ordering::AcqRel) {
+        self_.enqueue_stackless_task(idx);
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.76 version=1 rust_sha256=39f9e6838fcf5358bb2dbaf051ee8d48f8e5debda9b884277a61116ec3f28741*/
+void reactor_spawn_stackless_task_impl(const Reactor& self_, TaskVoid task) {
+    struct EarlyWakeState {
+        const Reactor* reactor;
+        rusty::sync::atomic::AtomicUsize idx;
+        rusty::sync::atomic::AtomicBool pending_wake;
+    };
+    struct TaskState {
+        rusty::RefCell<TaskVoid> task;
+        rusty::Arc<EarlyWakeState> early_wake;
+    };
+    verify(rusty::thread::current_id() == self_.thread_id_.get());
+    size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
+    const Reactor* rp = &self_;
+    auto seed = EarlyWakeState{.reactor = rp, .idx = rusty::sync::atomic::AtomicUsize::new_(std::move(kUnregisteredSlot)), .pending_wake = rusty::sync::atomic::AtomicBool::new_(false)};
+    const rusty::Arc<EarlyWakeState> early_wake = rusty::Arc<EarlyWakeState>::make(std::move(seed));
+    auto ew_waker = rusty::clone(early_wake);
+    auto early_waker = rusty::Waker{.wake_fn = [=, ew_waker = std::move(ew_waker), kUnregisteredSlot = std::move(kUnregisteredSlot)]() {
+const auto slot = (*ew_waker).idx.load(rusty::sync::atomic::Ordering::Acquire);
+if (rusty::detail::deref_if_pointer_like(slot) == rusty::detail::deref_if_pointer_like(kUnregisteredSlot)) {
+    (*ew_waker).pending_wake.store(true, rusty::sync::atomic::Ordering::Release);
+} else {
+    ((*(*ew_waker).reactor)).enqueue_stackless_task(std::move(slot));
+}
+}};
+    rusty::Waker* wp = &early_waker;
+    auto early_ctx = rusty::Context{.waker = wp};
+    rusty::Context& ectx = early_ctx;
+    if (task.poll(ectx).is_ready()) {
+        return;
+    }
+    auto ew_state = rusty::clone(early_wake);
+    auto ts = TaskState{.task = rusty::RefCell<TaskVoid>::new_(std::move(task)), .early_wake = std::move(ew_state)};
+    rusty::Arc<TaskState> state = rusty::Arc<TaskState>::make(std::move(ts));
+    const auto idx = self_.register_stackless_poller([=, kUnregisteredSlot = std::move(kUnregisteredSlot), state = std::move(state)](rusty::Context& ctx) -> bool {
+bool ready = false;
+{
+    auto tguard = (*state).task.borrow_mut();
+    ready = ((*tguard)).poll(ctx).is_ready();
+}
+if (!ready) {
+    return false;
+}
+(rusty::detail::deref_if_pointer_like((*state).early_wake)).idx.store(std::move(kUnregisteredSlot), rusty::sync::atomic::Ordering::Release);
+return true;
+});
+    (*early_wake).idx.store(std::move(idx), rusty::sync::atomic::Ordering::Release);
+    if ((*early_wake).pending_wake.swap(false, rusty::sync::atomic::Ordering::AcqRel)) {
+        self_.enqueue_stackless_task(std::move(idx));
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.76*/
 
 // =============================================================================
 // PollThreadWorker Implementation
@@ -6683,51 +6777,76 @@ inline std::uint64_t thread_id_to_u64(rusty::thread::ThreadId tid) noexcept {
 
 } // namespace
 
-// @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_bits_`)
-// and passes the raw pointer into a spawned thread closure. The Arc
-// keeps the PollThread (and thus the atomic) alive until the worker
-// thread finishes; rusty-cpp can't express that lifetime relationship.
-rusty::Arc<PollThread> pollthread_create() {
-  // Create MPSC channel
-  auto [sender, receiver] = rusty::sync::mpsc::channel<PollCommand>();
-
-  // Movable-atomics aggregate route (no private ctor / friend Arc):
-  auto arc = rusty::Arc<PollThread>::new_(PollThread{
-      std::move(sender),
-      PollJoinSlot(rusty::None),
-      rusty::sync::atomic::AtomicU64(0),
-      rusty::sync::atomic::AtomicBool(false)});
-
-  // Pointer to atomic thread ID for safe cross-thread access (rusty
-  // Atomic ops are const, so a const* suffices through the Arc).
-  const rusty::sync::atomic::AtomicU64* thread_id_ptr = &arc->poll_thread_id_bits_;
-
-  // Spawn thread - worker owns the receiver
-  auto handle = rusty::thread::spawn(
-    [thread_id_ptr](rusty::sync::mpsc::Receiver<PollCommand> rx) {
-      auto tid = rusty::thread::current_id();
-      thread_id_ptr->store(thread_id_to_u64(tid), rusty::sync::atomic::Ordering::Release);
-      // Create worker wrapped in Rc<RefCell<>>
-      auto worker = PollThreadWorker::create(std::move(rx));
-      // Store raw pointer in TLS for direct access from same thread
-      // The borrow_mut guard keeps RefCell borrowed during poll_loop()
-      // Using raw pointer avoids RefCell re-borrow issues in fibers
-      auto guard = worker->borrow_mut();
-      g_current_poll_worker = &*guard;
-      guard->poll_loop();
-      g_current_poll_worker = nullptr;  // Clear on exit
-    },
-    std::move(receiver)
-  );
-
-  // Store handle
-  {
-    auto guard = arc->join_handle_.lock().unwrap();
-    *guard = rusty::Some(std::move(handle));
-  }
-
-  return arc;
+// The poll-thread factory, authored as inline Rust DSL. Three spellings
+// are load-bearing:
+//   * `rrr::PollThread(...)` is the fieldwise-CTOR call, NOT a
+//     `PollThread { field: v }` struct literal: PollThread has an
+//     `impl Drop`, so its GEN is move-only WITH a fieldwise ctor (not
+//     an aggregate) and a struct literal lowers to an ill-formed
+//     designated-initializer list. The `rrr::` qualification dodges the
+//     class-return-type mis-qualification that would otherwise emit
+//     `rusty::Arc<PollThread>::PollThread(...)`.
+//   * `thread_id_ptr` is bound to a TYPED local: `&raw const` written
+//     directly as a call argument is dropped.
+//   * `worker` / `guard` are TYPED lets, so the emitted accesses are
+//     `worker->borrow_mut()` and `&*guard` (an untyped let emits a dot,
+//     which rusty::Rc does not offer for RefCell::borrow_mut).
+// @unsafe - takes the address of an atomic field and hands the raw
+// pointer to the spawned worker; the Arc keeps the PollThread (and thus
+// the atomic) alive until that thread finishes, and the borrow_mut
+// guard outlives the whole poll_loop() call so the raw TLS
+// `g_current_poll_worker` stays valid. rusty-cpp cannot express either
+// lifetime relationship.
+#if RUSTYCPP_RUST
+fn pollthread_create() -> rusty::Arc<PollThread> {
+    let (sender, receiver) = rusty::sync::mpsc::channel::<PollCommand>();
+    let seed = rrr::PollThread(sender,
+                               PollJoinSlot::new(rusty::None),
+                               rusty::sync::atomic::AtomicU64::new(0u64),
+                               rusty::sync::atomic::AtomicBool::new(false));
+    let arc: rusty::Arc<PollThread> = rusty::Arc::<PollThread>::new_(seed);
+    // rusty atomic ops are const, so a const* suffices through the Arc.
+    let thread_id_ptr: *const rusty::sync::atomic::AtomicU64 = &raw const arc.poll_thread_id_bits_;
+    let handle = rusty::thread::spawn(move |rx: PollCmdReceiver| {
+        let tid = rusty::thread::current_id();
+        (*thread_id_ptr).store(thread_id_to_u64(tid), rusty::sync::atomic::Ordering::Release);
+        // Raw TLS pointer (not a re-borrow) so fibers on this thread can
+        // reach the worker while the borrow_mut guard is held.
+        let worker: rusty::Rc<rusty::RefCell<PollThreadWorker>> = PollThreadWorker::create(rx);
+        let guard: rusty::RefMut<PollThreadWorker> = worker.borrow_mut();
+        g_current_poll_worker = &raw mut *guard;
+        guard.poll_loop();
+        g_current_poll_worker = core::ptr::null_mut();
+    }, receiver);
+    {
+        let mut slot = (*arc).join_handle_.lock().unwrap();
+        *slot = rusty::Some(handle);
+    }
+    arc
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.84 version=1 rust_sha256=7db7fe3a19c05b5910328cc49a04396014e46a528321401fe6a8b712ffc1efdd*/
+rusty::Arc<PollThread> pollthread_create() {
+    auto [sender, receiver] = rusty::detail::deref_if_pointer_like(rusty::sync::mpsc::channel<PollCommand>());
+    auto seed = rrr::PollThread(std::move(sender), PollJoinSlot::new_(rusty::None), rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), rusty::sync::atomic::AtomicBool::new_(false));
+    rusty::Arc<PollThread> arc = rusty::Arc<PollThread>::new_(std::move(seed));
+    const rusty::sync::atomic::AtomicU64* thread_id_ptr = &(*arc).poll_thread_id_bits_;
+    auto handle = rusty::thread::spawn([=, thread_id_ptr = std::move(thread_id_ptr)](PollCmdReceiver rx) {
+const auto tid = rusty::thread::current_id();
+((*thread_id_ptr)).store(thread_id_to_u64(std::move(tid)), rusty::sync::atomic::Ordering::Release);
+const rusty::Rc<rusty::RefCell<PollThreadWorker>> worker = PollThreadWorker::create(std::move(rx));
+const rusty::RefMut<PollThreadWorker> guard = worker->borrow_mut();
+g_current_poll_worker = &*guard;
+guard->poll_loop();
+g_current_poll_worker = rusty::ptr::null_mut();
+}, std::move(receiver));
+    {
+        auto&& slot = rusty::deref_call((rusty::detail::deref_if_pointer_like(arc)).join_handle_.lock(), rusty::detail::__mdisp_unwrap{});
+        rusty::detail::deref_if_pointer_like(slot) = rusty::Some(std::move(handle));
+    }
+    return std::move(arc);
+}
+/*RUSTYCPP:GEN-END id=reactor.84*/
 
 // The PollThread drop body, authored as inline Rust DSL: gettid via a
 // route-2 unsafe{} syscall (SYS_gettid is a macro identifier that
@@ -6796,31 +6915,98 @@ void fiber_yield_invoke(fiber_yield_t& y) {
 
 extern "C" void fiber_task_entry_thunk(void* self);
 
+// The srpc_fiber C-engine boundary, authored as inline Rust DSL. The
+// handles arrive as PARAMETERS (a `*mut srpc_fiber`, and the
+// Function/yield pair), so the deliberately hand-written fiber_task_t
+// shell needs no new `friend` declarations: each member passes its own
+// private member in. Same shape as the Fiber member delegations at
+// :5145 (`void Fiber::run() const { fiber_run(*this); }`). `f as bool`
+// is the DSL spelling of `static_cast<bool>(fn_)` — rusty::Function has
+// an explicit operator bool and no is_valid().
+#if RUSTYCPP_RUST
+fn fiber_engine_start(fib: *mut srpc_fiber, arg: *mut core::ffi::c_void) {
+    unsafe {
+        srpc_fiber_init(fib, kDefaultStackBytes, fiber_task_entry_thunk, arg);
+        // Match Boost.Coroutine2 pull_type behavior: run immediately on
+        // construction.
+        srpc_fiber_resume(fib);
+    }
+}
+
+fn fiber_engine_resume(fib: *mut srpc_fiber) {
+    unsafe { srpc_fiber_resume(fib); }
+}
+
+fn fiber_engine_yield(fib: *mut srpc_fiber) {
+    unsafe { srpc_fiber_yield(fib); }
+}
+
+fn fiber_engine_destroy(fib: *mut srpc_fiber) {
+    unsafe { srpc_fiber_destroy(fib); }
+}
+
+fn fiber_task_body_invoke(f: &mut FiberTaskFn, y: &mut fiber_yield_t) {
+    verify(f as bool);
+    (*f)(y);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.87 version=1 rust_sha256=4d5bb753d7ddba7e1bd038589650d6999c915c8a2184f8f3d3a306340d493b02*/
+void fiber_engine_start(srpc_fiber* fib, rusty::ffi::c_void* arg);
+void fiber_engine_resume(srpc_fiber* fib);
+void fiber_engine_yield(srpc_fiber* fib);
+void fiber_engine_destroy(srpc_fiber* fib);
+
+void fiber_engine_start(srpc_fiber* fib, rusty::ffi::c_void* arg) {
+    // @unsafe
+    {
+        srpc_fiber_init(fib, std::move(kDefaultStackBytes), std::move(fiber_task_entry_thunk), arg);
+        srpc_fiber_resume(fib);
+    }
+}
+
+void fiber_engine_resume(srpc_fiber* fib) {
+    // @unsafe
+    {
+        srpc_fiber_resume(fib);
+    }
+}
+
+void fiber_engine_yield(srpc_fiber* fib) {
+    // @unsafe
+    {
+        srpc_fiber_yield(fib);
+    }
+}
+
+void fiber_engine_destroy(srpc_fiber* fib) {
+    // @unsafe
+    {
+        srpc_fiber_destroy(fib);
+    }
+}
+
+void fiber_task_body_invoke(FiberTaskFn& f, fiber_yield_t& y) {
+    verify(static_cast<bool>(f));
+    (f)(y);
+}
+/*RUSTYCPP:GEN-END id=reactor.87*/
+
+// @unsafe - the mem-init list stays C++ (yield_ needs `*this`); the
+// engine handshake it used to inline is the DSL above. Hands `this` to
+// the C engine as the entry-thunk argument.
 fiber_task_t::fiber_task_t(TaskFn fn)
     : fn_(std::move(fn)),
       yield_(fiber_yield_t::new_(*this)) {
-  // @unsafe - hands `this` to the C engine as the entry-thunk argument.
-  srpc_fiber_init(&fib_, kDefaultStackBytes, &fiber_task_entry_thunk, this);
-  // Match Boost.Coroutine2 pull_type behavior: run immediately on construction.
-  srpc_fiber_resume(&fib_);
+  fiber_engine_start(&fib_, this);
 }
 
-fiber_task_t::~fiber_task_t() {
-  srpc_fiber_destroy(&fib_);
-}
+fiber_task_t::~fiber_task_t() { fiber_engine_destroy(&fib_); }
 
-void fiber_task_t::operator()() {
-  srpc_fiber_resume(&fib_);
-}
+void fiber_task_t::operator()() { fiber_engine_resume(&fib_); }
 
-void fiber_task_t::yield_to_caller() {
-  srpc_fiber_yield(&fib_);
-}
+void fiber_task_t::yield_to_caller() { fiber_engine_yield(&fib_); }
 
-void fiber_task_t::run_body() {
-  verify(static_cast<bool>(fn_));
-  fn_(yield_);
-}
+void fiber_task_t::run_body() { fiber_task_body_invoke(fn_, yield_); }
 
 // @unsafe - the one C->C++ reentry: invoked by the C trampoline on the
 // fiber stack.
