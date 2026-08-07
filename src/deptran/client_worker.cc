@@ -342,7 +342,7 @@ void ClientWorker::Work() {
           auto sp_event = create_sp_never_event();
           wait_recordplace(sp_event, wait_timeout(pow(10, 6)));
         }
-        Fiber::create_run([this, coo](){
+        Fiber::create_run_impl([this, coo](){
           verify(coo->_inuse_);
           auto ev = coo->sp_ev_done_.as_ref().unwrap().clone();
           wait_recordplace(ev, wait());

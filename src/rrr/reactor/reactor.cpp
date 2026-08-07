@@ -1826,95 +1826,197 @@ uint64_t fiber_next_global_id() {
 using FiberFn = rusty::Function<void()>;
 using FiberTaskFn = rusty::Function<void(fiber_yield_t&)>;
 
-// DECLARATION-ONLY SCAFFOLDING: every method body lives in the impl
-// section as an inline-Rust DSL free function (fiber_run_wrapper /
-// fiber_run / fiber_do_yield / fiber_do_continue / fiber_is_finished /
-// fiber_do_finalize) with a 1-line member delegation — the same split
-// current_fiber/sleep already use. The class shell itself stays hand
-// C++ because (a) a GEN struct cannot carry the create_run<Func>
-// template with its default args (Rust has neither overloading nor
-// default args, and ~90 generated rcc_rpc.h call sites spell
-// Fiber::create_run(lambda)), and (b) Fiber and Reactor mutually
-// recurse (Reactor's GEN bodies call Fiber methods; fiber logic reads
-// Reactor fields), which inline-at-block GEN emission cannot order —
-// free fns defined after Reactor break the cycle.
-class Fiber {
- public:
-  /**
-   * Get the currently executing fiber.
-   *
-   * @return Some(fiber) if in fiber context, None otherwise
-   */
-  static rusty::Option<rusty::Rc<Fiber>> current_fiber();
+// Fiber -- converted to inline-Rust DSL (Goal 0). The whole class shell
+// is GEN now: the fields, the `#[cpp_ctor]` member-initializer
+// constructor (so `rusty::Rc<Fiber>::make(func)` keeps working
+// unchanged), the `create_run<Func>` member template, and every method
+// declaration. The method BODIES still live below Reactor as `fiber_*`
+// DSL free fns, because Fiber and Reactor mutually recurse; the GEN
+// methods delegate through the forward declarations directly below --
+// the same cycle-breaking split Reactor's `reactor_*_impl` kernels use.
+//
+// Both historical blockers expired:
+//   - a DSL generic method DOES lower to a real member template, so
+//     `create_run<Func>` survives. Rust has no default arguments, so the
+//     `file`/`line` defaults are gone: the call sites that DID pass
+//     `__FILE__, __LINE__` now call `create_run_impl` directly, which
+//     keeps their provenance exactly. (The tracker's claim that all 89
+//     sites pass exactly one argument was WRONG -- four pass three.)
+//   - `using Status = FiberStatus; using enum FiberStatus;` had no
+//     external consumers -- the only four `Fiber::INIT`-style spellings
+//     in the tree were DSL bodies in this file.
+//
+// One member could not follow: `operator<` over rusty::Rc<Fiber> is a
+// free operator on a FOREIGN type; it is the 3-line kernel below the GEN.
 
-  /**
-   * Create and run a new fiber with the given function.
-   *
-   * @param func The function to execute in the fiber
-   * @param file Source file (for debugging)
-   * @param line Source line (for debugging)
-   * @return Rc<Fiber> handle to the created fiber
-   *
-   * @safe - Wraps callable and delegates to create_run_impl. Memory-safe:
-   *   - rusty::Function safely captures the callable
-   *   - Returns rusty::Rc for safe reference counting
-   *   - Internal fiber state is managed by Reactor
-   */
-  template <typename Func>
-  static rusty::Rc<Fiber> create_run(Func&& func, const char* file = "", int64_t line = 0) {
-    // @unsafe - create_run_impl uses raw pointer operations internally
-    { return create_run_impl(rusty::Function<void()>(std::forward<Func>(func)), file, line); }
-  }
+// The DSL fiber free fns the GEN Fiber methods delegate to; bodies live
+// below Reactor.
+rusty::Option<rusty::Rc<Fiber>> fiber_current_fiber();
+rusty::Rc<Fiber> fiber_create_run_impl(FiberFn func, SrcFileCStr file, int64_t line);
+void fiber_sleep(uint64_t microseconds);
+void fiber_run(const Fiber& fb);
+void fiber_do_yield(const Fiber& fb);
+void fiber_do_continue(const Fiber& fb);
+bool fiber_is_finished(const Fiber& fb);
 
-  /**
-   * Sleep the current fiber for the specified duration.
-   *
-   * @param microseconds Duration to sleep in microseconds
-   */
-  static void sleep(uint64_t microseconds);
+#if RUSTYCPP_RUST
+struct Fiber {
+    dep_id_: u64,
+    need_finalize_: bool,
+    id: rusty::Cell<u64>,
+    status_: rusty::Cell<FiberStatus>,
+    needs_finalize_: rusty::Cell<bool>,
+    func_: rusty::RefCell<FiberFn>,
+    fiber_task_: rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>>,
+    fiber_yield_: rusty::Cell<*mut fiber_yield_t>,
+    // Fiber hands its own `this` to the C stack-switching engine, so a
+    // move would leave the engine pointing at the old address. The old
+    // hand-written class got that guarantee for free: its empty
+    // `~Fiber()` was a user-declared destructor, which SUPPRESSED the
+    // implicit move operations. A DSL struct has no destructor, so the
+    // move ctor would come back -- inert today (nothing holds a Fiber by
+    // value; Rc::make placement-news), but it would silently permit
+    // `Fiber b = std::move(a);` and dangle the engine. `_pin` makes the
+    // transpiler emit DELETED move operations instead, which is the same
+    // guarantee the destructor used to provide, stated on purpose.
+    // Same precedent as Reactor above.
+    _pin: rusty::marker::PhantomPinned,
+}
 
-  uint64_t dep_id_{0};
-  bool need_finalize_{false};
-  // Cell: the id is stamped once on a Fiber reached through a shared
-  // handle, so interior mutability replaces the const_cast that used to
-  // do it.
-  rusty::Cell<uint64_t> id{0};
+impl Fiber {
+    #[cpp_ctor]
+    fn new(func: FiberFn) -> Fiber {
+        Fiber {
+            dep_id_: 0u64,
+            need_finalize_: false,
+            id: rusty::Cell::<u64>::new_(fiber_next_global_id()),
+            status_: rusty::Cell::<FiberStatus>::new_(FiberStatus::INIT),
+            needs_finalize_: rusty::Cell::<bool>::new_(false),
+            func_: rusty::RefCell::<FiberFn>::new_(func),
+            fiber_task_: Default::default(),
+            fiber_yield_: rusty::Cell::<*mut fiber_yield_t>::new_(core::ptr::null_mut()),
+            _pin: rusty::marker::PhantomPinned {},
+        }
+    }
 
-  // Compatibility spellings for the hoisted status enum: `Fiber::Status`
-  // as a type, `Fiber::INIT` etc. as values (C++20 using-enum).
-  using Status = FiberStatus;
-  using enum FiberStatus;
+    fn current_fiber() -> rusty::Option<rusty::Rc<Fiber>> {
+        fiber_current_fiber()
+    }
 
-  // Interior mutability using Cell/RefCell for use with rusty::Rc
-  // Cell<T> for Copy types, RefCell<T> for non-Copy types
-  rusty::Cell<FiberStatus> status_{FiberStatus::INIT};
-  rusty::Cell<bool> needs_finalize_{false};
-  rusty::RefCell<FiberFn> func_{};
+    fn create_run<Func>(func: Func) -> rusty::Rc<Fiber> {
+        Fiber::create_run_impl(func, "", 0i64)
+    }
 
-  // Uses rusty::Box with Option for nullable semantics
-  rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>> fiber_task_{};
-  // Non-owning pointer to the yield handle owned by fiber_task_t.
-  // Cell provides interior mutability for const yield_().
-  rusty::Cell<fiber_yield_t*> fiber_yield_{nullptr};
+    fn create_run_impl(func: FiberFn, file: SrcFileCStr, line: i64) -> rusty::Rc<Fiber> {
+        fiber_create_run_impl(func, file, line)
+    }
 
-  Fiber() = delete;
-  explicit Fiber(rusty::Function<void()> func);
-  ~Fiber();
+    fn sleep(microseconds: u64) {
+        fiber_sleep(microseconds);
+    }
 
+    fn run(&self) {
+        fiber_run(self);
+    }
 
-  void run() const;
-  void yield_() const;
-  void continue_() const;
-  bool finished() const;
+    fn yield_(&self) {
+        fiber_do_yield(self);
+    }
 
+    fn continue_(&self) {
+        fiber_do_continue(self);
+    }
 
-  // Comparison operator for the ordered Rc<Fiber> set
-  friend bool operator<(const rusty::Rc<Fiber>& lhs, const rusty::Rc<Fiber>& rhs) {
-    return lhs.get() < rhs.get();
-  }
+    fn finished(&self) -> bool {
+        fiber_is_finished(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.64 version=1 rust_sha256=56860ce89827ee50b45f160880f8109db49b5142ebd7b17eba35f80594f1e5a5*/
+struct Fiber;
 
-  static rusty::Rc<Fiber> create_run_impl(rusty::Function<void()> func, const char* file, int64_t line);
+struct Fiber {
+    uint64_t dep_id_;
+    bool need_finalize_;
+    rusty::Cell<uint64_t> id;
+    rusty::Cell<FiberStatus> status_;
+    rusty::Cell<bool> needs_finalize_;
+    rusty::RefCell<FiberFn> func_;
+    rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>> fiber_task_;
+    rusty::Cell<fiber_yield_t*> fiber_yield_;
+    rusty::marker::PhantomPinned _pin;
+
+    Fiber(FiberFn func);
+    static rusty::Option<rusty::Rc<Fiber>> current_fiber();
+    template<typename Func>
+    static rusty::Rc<Fiber> create_run(Func func);
+    static rusty::Rc<Fiber> create_run_impl(FiberFn func, SrcFileCStr file, int64_t line);
+    static void sleep(uint64_t microseconds);
+    void run() const;
+    void yield_() const;
+    void continue_() const;
+    bool finished() const;
+    Fiber(Fiber&&) = delete;
+    Fiber& operator=(Fiber&&) = delete;
 };
+
+
+Fiber::Fiber(FiberFn func)
+    : dep_id_(static_cast<uint64_t>(0))
+    , need_finalize_(false)
+    , id(rusty::Cell<uint64_t>::new_(fiber_next_global_id()))
+    , status_(rusty::Cell<FiberStatus>::new_(rusty::clone(rusty::clone(FiberStatus_INIT()))))
+    , needs_finalize_(rusty::Cell<bool>::new_(false))
+    , func_(rusty::RefCell<FiberFn>::new_(std::move(func)))
+    , fiber_task_(rusty::default_like<rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>>>())
+    , fiber_yield_(rusty::Cell<fiber_yield_t*>::new_(rusty::ptr::null_mut()))
+    , _pin(rusty::marker::PhantomPinned{})
+{}
+
+rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
+    return fiber_current_fiber();
+}
+
+template<typename Func>
+rusty::Rc<Fiber> Fiber::create_run(Func func) {
+    return Fiber::create_run_impl(std::move(func), "", static_cast<int64_t>(0));
+}
+
+rusty::Rc<Fiber> Fiber::create_run_impl(FiberFn func, SrcFileCStr file, int64_t line) {
+    return fiber_create_run_impl(std::move(func), std::move(file), std::move(line));
+}
+
+void Fiber::sleep(uint64_t microseconds) {
+    fiber_sleep(std::move(microseconds));
+}
+
+void Fiber::run() const {
+    fiber_run((*this));
+}
+
+void Fiber::yield_() const {
+    fiber_do_yield((*this));
+}
+
+void Fiber::continue_() const {
+    fiber_do_continue((*this));
+}
+
+bool Fiber::finished() const {
+    return fiber_is_finished((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.64*/
+
+// KERNEL that must stay hand-written C++ (3 lines): a free `operator<`
+// over a FOREIGN type (rusty::Rc<Fiber>) has no DSL trait-impl form -- a
+// PartialOrd impl on Fiber would order Fibers, not Rc<Fiber> handles.
+// Hoisted out of the class body (it was an in-class friend); at namespace
+// scope ADL still finds it from `std::less<Rc<Fiber>>` because Fiber's
+// namespace is an associated namespace of the template argument.
+// Required by Reactor's `RefCell<std::set<Rc<Fiber>>> fibers_`.
+inline bool operator<(const rusty::Rc<Fiber>& lhs, const rusty::Rc<Fiber>& rhs) {
+  return lhs.get() < rhs.get();
+}
 
 
 
@@ -2196,7 +2298,7 @@ impl Reactor {
                                     known = (*fibers_guard).contains(fiber);
                                 }
                                 if known {
-                                    verify(fiber.status_.get() == Fiber::PAUSED);
+                                    verify(fiber.status_.get() == FiberStatus::PAUSED);
                                     if (*ev).status() == EventStatus::READY {
                                         (*ev).set_status(EventStatus::DONE);
                                     } else {
@@ -2250,7 +2352,7 @@ impl Reactor {
             verify(!running.finished());
         }
         self.n_active_fibers_.set(self.n_active_fibers_.get() + 1i64);
-        if fiber.status_.get() == Fiber::INIT {
+        if fiber.status_.get() == FiberStatus::INIT {
             fiber.run();
         } else {
             // Don't hold a borrow across continue_(): the fiber may call
@@ -2292,7 +2394,7 @@ impl Reactor {
     fn recycle(&self, fiber: &mut rusty::Rc<Fiber>) {
         // Fixes fibers not being recycled when they don't finish immediately.
         if REUSING_FIBER {
-            fiber.status_.set(Fiber::RECYCLED);
+            fiber.status_.set(FiberStatus::RECYCLED);
             let empty_fn: rusty::Function<dyn FnMut()> = Default::default();
             *fiber.func_.borrow_mut() = empty_fn;
             self.n_idle_fibers_.set(self.n_idle_fibers_.get() + 1i64);
@@ -2454,7 +2556,7 @@ impl Drop for Reactor {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=b5f1f8299db22f7d3c200e65ee52dca37d97262fcdc95f291a6579c80476ea7b*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=3372368d12188ddcf7bd79f42a201fe665094ba6659527f8388420df09b55dbc*/
 struct Reactor;
 
 struct Reactor {
@@ -2624,7 +2726,7 @@ return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(Eve
                                 known = rusty::contains((*fibers_guard), std::move(fiber));
                             }
                             if (known) {
-                                verify([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.status_); }) { return (__r.status_); } else if constexpr (requires { (__r.status__field); }) { return (__r.status__field); } else if constexpr (requires { ((*__r).status_); }) { return ((*__r).status_); } else { return ((*__r).status__field); } }(fiber).get() == rusty::clone(Fiber::PAUSED));
+                                verify([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.status_); }) { return (__r.status_); } else if constexpr (requires { (__r.status__field); }) { return (__r.status__field); } else if constexpr (requires { ((*__r).status_); }) { return ((*__r).status_); } else { return ((*__r).status__field); } }(fiber).get() == rusty::clone(FiberStatus_PAUSED()));
                                 if (((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus_READY())) {
                                     ((rusty::detail::deref_if_pointer_like(ev))).set_status(rusty::clone(rusty::clone(EventStatus_DONE())));
                                 } else {
@@ -2679,7 +2781,7 @@ void Reactor::continue_fiber(const rusty::Rc<Fiber>& fiber) const {
         verify(rusty::detail::rust_not(running->finished()));
     }
     this->n_active_fibers_.set(this->n_active_fibers_.get() + static_cast<int64_t>(1));
-    if ((*fiber).status_.get() == rusty::clone(Fiber::INIT)) {
+    if ((*fiber).status_.get() == rusty::clone(FiberStatus_INIT())) {
         fiber->run();
     } else {
         fiber->continue_();
@@ -2721,7 +2823,7 @@ void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
 
 void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
     if (REUSING_FIBER) {
-        (*fiber).status_.set(rusty::clone(rusty::clone(Fiber::RECYCLED)));
+        (*fiber).status_.set(rusty::clone(rusty::clone(FiberStatus_RECYCLED())));
         rusty::Function<void()> empty_fn = rusty::default_like<rusty::Function<void()>>();
         rusty::detail::deref_if_pointer_like((*fiber).func_.borrow_mut()) = std::move(empty_fn);
         this->n_idle_fibers_.set(this->n_idle_fibers_.get() + static_cast<int64_t>(1));
@@ -4420,12 +4522,12 @@ fn event_wait_impl<W>(ev: &W, timeout: u64) {
         *ev.state_.wp_fiber_.borrow_mut() = ::rusty::port::rc::Rc::<Fiber>::downgrade(fiber.clone());
         ev.status_.set(EventStatus::WAIT);
         let fiber_status = (*fiber).status_.get();
-        verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
+        verify(fiber_status != FiberStatus::FINISHED && fiber_status != FiberStatus::RECYCLED);
         (*fiber).yield_();
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.13 version=1 rust_sha256=ea6cbb771479971d143f60f862b2af9bfa86340585731f4a80a84b1c99c4f87c*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.13 version=1 rust_sha256=a41f3e2ea0cb9654b784b3f6ce13bc3481ccb87368385658fa6476f1388b4b5f*/
 template<typename W>
 void event_wait_impl(const W& ev, uint64_t timeout);
 
@@ -4457,7 +4559,7 @@ void event_wait_impl(const W& ev, uint64_t timeout) {
         rusty::detail::deref_if_pointer_like(ev.state_.wp_fiber_.borrow_mut()) = std::conditional_t<true, ::rusty::port::rc::Rc<Fiber>, W>::downgrade(rusty::clone(fiber));
         ev.status_.set(rusty::clone(rusty::clone(EventStatus_WAIT())));
         const auto fiber_status = (rusty::detail::deref_if_pointer_like(fiber)).status_.get();
-        verify((rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(Fiber::FINISHED)) && (rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(Fiber::RECYCLED)));
+        verify((rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(FiberStatus_FINISHED())) && (rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(FiberStatus_RECYCLED())));
         ((rusty::detail::deref_if_pointer_like(fiber))).yield_();
     }
 }
@@ -4921,20 +5023,6 @@ void shared_int_event_wait(SharedIntEvent& sie, EventTestFn f) {
 
 // --- from fiber_impl.cc --------------------------------------------------
 
-// @safe - Trivial member-initializer ctor; Cells/RefCells construct via
-// class initializers above; func_ takes a moved-in rusty::Function; the
-// id stamp comes from the TLS counter kernel.
-Fiber::Fiber(rusty::Function<void()> func)
-    : status_(FiberStatus::INIT),
-      needs_finalize_(false),
-      func_(std::move(func)),
-      fiber_task_(rusty::None),
-      id(fiber_next_global_id()) {
-}
-
-// @safe - Empty dtor; rusty::Box / rusty::RefCell members release on drop.
-Fiber::~Fiber() {
-}
 
 // @unsafe micro-kernels for the fiber DSL bodies below (guard surgery
 // the DSL cannot spell: rusty::Function operator bool / operator() /
@@ -5159,13 +5247,6 @@ void fiber_do_finalize(const Fiber& fb) {
 }
 /*RUSTYCPP:GEN-END id=reactor.fiber_do_finalize*/
 
-// @safe - 1-line member delegations into the DSL free fns above (the
-// current_fiber/sleep pattern).
-
-void Fiber::run() const { fiber_run(*this); }
-void Fiber::yield_() const { fiber_do_yield(*this); }
-void Fiber::continue_() const { fiber_do_continue(*this); }
-bool Fiber::finished() const { return fiber_is_finished(*this); }
 
 
 
@@ -5559,9 +5640,6 @@ rusty::Option<rusty::Rc<Fiber>> fiber_current_fiber() {
     return rusty::Option<rusty::Rc<Fiber>>(rusty::clone(((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap()));
 }
 /*RUSTYCPP:GEN-END id=reactor.33*/
-rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
-  return fiber_current_fiber();
-}
 
 // @unsafe - Creates and runs a new fiber with rusty::Rc ownership.
 // The static member delegates to a DSL free fn (same split as
@@ -5580,10 +5658,6 @@ rusty::Rc<Fiber> fiber_create_run_impl(FiberFn func, SrcFileCStr file, int64_t l
     return reactor_create_run_fiber_at_impl(rusty::detail::deref_if_pointer_like(reactor_rc), std::move(func), std::move(file), std::move(line));
 }
 /*RUSTYCPP:GEN-END id=reactor.61*/
-rusty::Rc<Fiber>
-Fiber::create_run_impl(rusty::Function<void()> func, const char* file, int64_t line) {
-  return fiber_create_run_impl(std::move(func), file, line);
-}
 
 // The static member delegates to the DSL free fn (§7.59 turbofish
 // factory call with an argument).
@@ -5607,9 +5681,6 @@ void fiber_sleep(uint64_t microseconds) {
     ((rusty::detail::deref_if_pointer_like(x))).wait();
 }
 /*RUSTYCPP:GEN-END id=reactor.34*/
-void Fiber::sleep(uint64_t microseconds) {
-  return fiber_sleep(microseconds);
-}
 
 /**
  * @safe - Returns thread-local reactor instance, creates if needed

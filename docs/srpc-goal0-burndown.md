@@ -380,11 +380,11 @@ hoist the split to item level.
 | [x] | STALE | 5 | `src/rrr/base/logging.cpp:214 — log_stm_s + log_sink_write (doc row: "i` | fn log_sink_write(line: &std::string) {     let mut out = std::io::stdout();     out.write(line.as_bytes());     out.write(b"\n");     out.flush(); } |  **← LANDED batch 4**
 | [x] | STALE | 5 | `src/rrr/misc/serializable.cpp:4511 `template<class T, class... Args> m` | fn make_serializable_proxy<T>() -> SerializableProxy { let sp = rusty::Arc::<T>::make(); rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp) } fn make_serializable_proxy<T, A>(a: |  **← LANDED batch 4**
 | [x] | STALE | 5 | `src/rrr/rpc/channel.cpp:131-134 and :192 — OnFrameCallback / OnClosedC` | type OnFrameCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(&ChannelFrame)>>; type OnClosedCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(ChannelError)>>; type OnErrorCa |  **← LANDED batch 5**
-| [ ] | STALE | 5 | `src/rrr/reactor/reactor.cpp:3298 rusty::is_send / is_sync explicit spe` | // pollable_proxy.cpp:  pub trait PollableBase: Send + Sync { ... } // job trait:           pub trait Job: Send + Sync { ... } // reactor.cpp PollCommand: pub enum PollCommand {     AddPolla |
+| [x] | STALE | 5 | `src/rrr/reactor/reactor.cpp:3298 rusty::is_send / is_sync explicit spe` | // pollable_proxy.cpp:  pub trait PollableBase: Send + Sync { ... } // job trait:           pub trait Job: Send + Sync { ... } // reactor.cpp PollCommand: pub enum PollCommand {     AddPolla |  **← ADJUDICATED REAL (batch 5): `unsafe impl Send` is SILENTLY DROPPED; converting would flip is_send<PollCommand> true->FALSE with a green build. Blocked on transpiler.**
 | [x] | STALE | 5 | `src/rrr/base/logging.cpp:244 log_time_now` | using c_char = char;   // 1 line of scaffolding #if RUSTYCPP_RUST fn log_time_now() -> std::string {     let mut buf: [c_char; 24] = [0 as c_char; 24];     srpc_time_now_str(buf.as_mut_ptr() |  **← LANDED batch 4**
 | [x] | STALE | 4 | `src/rrr/reactor/reactor.cpp:3443 u64_to_thread_id` | #if RUSTYCPP_RUST fn u64_to_thread_id(bits: u64) -> rusty::thread::ThreadId {     rusty::thread::ThreadId(rusty::mem::transmute::<u64, rusty::platform::threading::thread_id>(bits)) } #endif |  **← LANDED batch 3**
-| [ ] | STALE | 4 | `src/rrr/rpc/client.cpp:160 `template<typename... Ts> deserialize_from`` | fn deserialize_from<A>(src: rusty::RefMut<ReplyBuffer>, a: &mut A) { src >> a; } fn deserialize_from<A, B>(src: rusty::RefMut<ReplyBuffer>, a: &mut A, b: &mut B) { src >> a; src >> b; } // . |
-| [ ] | STALE | 4 | `src/rrr/reactor/reactor.cpp:2881 `template <typename U, typename... Ar` | // Delete the helper; spell it at the 2 sites: // reactor.cpp:5956  auto early_wake = rusty::Arc<EarlyWakeState>::make(&self); // reactor.cpp:5983  auto state = rusty::Arc<TaskState>::make(s |
+| [x] | STALE | 4 | `src/rrr/rpc/client.cpp:160 `template<typename... Ts> deserialize_from`` | fn deserialize_from<A>(src: rusty::RefMut<ReplyBuffer>, a: &mut A) { src >> a; } fn deserialize_from<A, B>(src: rusty::RefMut<ReplyBuffer>, a: &mut A, b: &mut B) { src >> a; src >> b; } // . |  **← ADJUDICATED REAL (batch 4): 88 call sites, arities 1..9 — genuinely variadic, syn has no variadic-generic node.**
+| [x] | STALE | 4 | `src/rrr/reactor/reactor.cpp:2881 `template <typename U, typename... Ar` | // Delete the helper; spell it at the 2 sites: // reactor.cpp:5956  auto early_wake = rusty::Arc<EarlyWakeState>::make(&self); // reactor.cpp:5983  auto state = rusty::Arc<TaskState>::make(s |  **← ALREADY LANDED (batch 2): `reactor_make_arc` is gone tree-wide (0 references). Both former call sites are inside GEN blocks and spell `Arc<T>::make(std::move(x))` — the rvalue still moves, no move-to-copy regression. Note the row's '4 call sites' was wrong; there were 2.**
 | [x] | STALE | 4 | `src/rrr/reactor/reactor.cpp:3443 — u64_to_thread_id (tracker row cites` | fn u64_to_thread_id(bits: u64) -> rusty::thread::ThreadId {     rusty::thread::ThreadId { inner_: std::bit_cast::<rusty::thread::NativeThreadId>(bits) } } |  **← LANDED batch 3**
 | [x] | STALE | 4 | `src/rrr/reactor/reactor.cpp:6020 — pollworker_make (tracker row cites ` | fn pollworker_make(receiver: PollCmdReceiver) -> PollThreadWorker {     PollThreadWorker {         receiver_: receiver,         poll_: Epoll(),         fd_to_pollable_: FdPollableMap(),      |  **← LANDED batch 3**
 | [x] | STALE | 4 | `src/rrr/rpc/server.cpp:2369 sconn_proxy_ptr` | fn sconn_proxy_ptr(slot: &rusty::Option<ChannelConnectionProxy>) -> *mut ChannelConnectionBase {     let p: *mut ChannelConnectionBase = slot.as_ref().unwrap().get();     p } // or inline it |  **← LANDED batch 4**
@@ -400,26 +400,26 @@ hoist the split to item level.
 | [x] | STALE | 2 | `src/rrr/reactor/reactor.cpp:6604 pollable_proxy_fd / pollable_proxy_mo` | // inline into the DSL pollworker_do_add_pollable, or as free fns: fn pollable_proxy_fd(p: &PollableProxy) -> i32 { (*p).fd() } fn pollable_proxy_mode(p: &PollableProxy) -> i32 { (*p).poll_m |  **← LANDED batch 3**
 | [x] | STALE | 1 | `src/rrr/reactor/reactor.cpp:4820 int_event_raw_ptr` | fn int_event_raw_ptr(ev: &rusty::Arc<IntEvent>) -> *const IntEvent {     let p: *const IntEvent = &raw const *ev;     p } // or inline at the two use sites in shared_int_event_wait_until_gte |  **← LANDED batch 3**
 | [x] | TRANSPILER-BUG | 15 | `src/rrr/misc/any_message.cpp:268 anymessage_is_a<T> + :323 anymessage_` | Same root cause as reg_any_message_as: the ONLY blocker cited ("built around std::type_index(typeid(T)) — RTTI over a template parameter, which the DSL cannot spell") is the missing `TypeId: |  **← LANDED (recover batch 1)**
-| [ ] | TRANSPILER-BUG | 11 | `src/rrr/reactor/reactor.cpp:3296 (is_send<rrr::PollCommand>) and :3686` | unsafe impl Send for PollThread {} unsafe impl Sync for PollThread {} unsafe impl Send for PollCommand {} (parses today at pin 916b4991; blocked only because the emitter drops it — until fix |
-| [ ] | TRANSPILER-BUG | 10 | `src/rrr/misc/serializable.cpp:4476 DefaultPayloadList + Serializable<D` | Claim: 'CRTP: the base calls PayloadList::template index_of<Derived>() ... That is C++ template metaprogramming with no Rust construct (Rust has no CRTP and no dependent ::template disambigu |
+| [x] | TRANSPILER-BUG | 11 | `src/rrr/reactor/reactor.cpp:3296 (is_send<rrr::PollCommand>) and :3686` | unsafe impl Send for PollThread {} unsafe impl Sync for PollThread {} unsafe impl Send for PollCommand {} (parses today at pin 916b4991; blocked only because the emitter drops it — until fix |  **← ADJUDICATED REAL (batch 5): same dropped-`unsafe impl` defect; PollThread has a second floor (Sender<T> + PollJoinSlot alias are non-derivable field types).**
+| [x] | TRANSPILER-BUG | 10 | `src/rrr/misc/serializable.cpp:4476 DefaultPayloadList + Serializable<D` | Claim: 'CRTP: the base calls PayloadList::template index_of<Derived>() ... That is C++ template metaprogramming with no Rust construct (Rust has no CRTP and no dependent ::template disambigu |  **← DECLINED, NOT BLOCKED (batch 6, 4 independent reasons): the GEN leaks `is_send=true`/`is_sync=true` through the CRTP base into 19 named wire payload types holding Arc/shared_ptr/raw pointers, silently disarming `template<Send T> channel()` — compile-proven false-today/TRUE-after. Same defect class as is_send<PollCommand>, but in the SILENT direction. Also: the GEN drops the `::template` disambiguator and DOES NOT COMPILE, loses the default template arg, drops noexcept on 3 methods, and drops constexpr on index_of.**
 | [x] | TRANSPILER-BUG | 9 | `src/rrr/misc/any_message.cpp:252 reg_any_message_as<T>` | Rust HAS this construct: `std::any::TypeId::of::<T>()`, and the transpiler ALREADY maps the type (src/types.rs:263 `"TypeId" \| "std::any::TypeId" \| "core::any::TypeId" => Some(("std::type_ |  **← LANDED (recover batch 1)**
-| [ ] | TRANSPILER-BUG | 6 | `src/rrr/reactor/reactor.cpp:5145 Fiber instance-method delegation shim` | Claim: 'a DSL impl Fiber requires Fiber to be a DSL struct, and a DSL free fn cannot be emitted as a class member.' probe_fiber_shims.cpp: a DSL `impl Fiber` against a HAND-WRITTEN `class Fi |
-| [ ] | TRANSPILER-BUG | 6 | `src/rrr/reactor/reactor.cpp:5542 Fiber::current_fiber / Fiber::sleep (` | Same root cause as the instance shims: a DSL `impl Fiber` on the hand-written shell takes the orphan-impl fallback path (emit_items.rs:6672-6725) and is stubbed inside `#if 0` rather than em |
+| [x] | TRANSPILER-BUG | 6 | `src/rrr/reactor/reactor.cpp:5145 Fiber instance-method delegation shim` | Claim: 'a DSL impl Fiber requires Fiber to be a DSL struct, and a DSL free fn cannot be emitted as a class member.' probe_fiber_shims.cpp: a DSL `impl Fiber` against a HAND-WRITTEN `class Fi |  **← LANDED batch 6 — the claim that a DSL `impl Fiber` requires Fiber to be a DSL struct was TRUE, and Fiber duly became one, so these fell with it. (Row said 6 shims; only 4 exist.)**
+| [x] | TRANSPILER-BUG | 6 | `src/rrr/reactor/reactor.cpp:5542 Fiber::current_fiber / Fiber::sleep (` | Same root cause as the instance shims: a DSL `impl Fiber` on the hand-written shell takes the orphan-impl fallback path (emit_items.rs:6672-6725) and is stubbed inside `#if 0` rather than em |  **← LANDED batch 6 — same root cause as the instance shims, resolved the same way.**
 | [x] | TRANSPILER-BUG | 5 | `src/rrr/misc/serializable_envelope.cpp:43 envelope_assert_in_type_list` | Adjacent static_assert-on-TMP tripwire, probed for completeness. The assertion itself lowers; the ONLY thing blocking it is a missing C++ dependent-name disambiguator.  PROBE scratchpad/kern |  **← LANDED (recover batch 1)**
-| [ ] | TRANSPILER-BUG | 0 | `src/rrr/base/debugging.cpp:56 `verify<Expr>` — the `#ifdef NDEBUG` hal` | (none today — `#[cfg(debug_assertions)]` emits unguarded and produces `error: redefinition`. After the one-arm fix it would be `#[cfg(debug_assertions)] fn … / #[cfg(not(debug_assertions))]  |
+| [x] | TRANSPILER-BUG | 0 | `src/rrr/base/debugging.cpp:56 `verify<Expr>` — the `#ifdef NDEBUG` hal` | (none today — `#[cfg(debug_assertions)]` emits unguarded and produces `error: redefinition`. After the one-arm fix it would be `#[cfg(debug_assertions)] fn … / #[cfg(not(debug_assertions))]  |  **← RESOLVED (verify->panic, 101af242): the #ifdef NDEBUG split was DELETED outright, so this row no longer exists.**
 | [ ] | TRANSPILER-BUG | 0 | `transpiler/src/codegen/emit_stmt.rs:149 `emit_stmt` — statement-level ` | (workaround, verified: hoist the cfg'd statement into a cfg'd free-fn PAIR and call it unconditionally — see the tcp_channel claim) |
 | [ ] | TRANSPILER-BUG | 0 | `third-party/rusty-cpp/transpiler/src/codegen/mod.rs:45981 (map_operato` | Two distinct emitter defects surfaced while probing this class; the first is a SILENT WRONG-ANSWER hazard that would booby-trap any newtype workaround for the Fiber ordering. (1) PartialOrd  |
-| [ ] | KERNEL-BUT-SMALLER | 27 | `src/rrr/reactor/reactor.cpp:1840 — class Fiber (declaration shell); tr` | Kernel that must stay hand-written C++ (3 lines, moved OUT of the class to namespace rrr scope, next to the other reactor free fns):   bool operator<(const rusty::Rc<Fiber>& lhs, const rusty |
-| [ ] | KERNEL-BUT-SMALLER | 20 | `src/rrr/reactor/reactor.cpp:1677-1710 — class fiber_task_t (declaratio` | The GEN from probe_fiber.cpp generates the ENTIRE shell — fields, a fieldwise ctor, deleted copy ctor/assign, all four method decls, and the destructor decl:      struct fiber_task_t {       |
+| [x] | KERNEL-BUT-SMALLER | 27 | `src/rrr/reactor/reactor.cpp:1840 — class Fiber (declaration shell); tr` | Kernel that must stay hand-written C++ (3 lines, moved OUT of the class to namespace rrr scope, next to the other reactor free fns):   bool operator<(const rusty::Rc<Fiber>& lhs, const rusty |  **← LANDED batch 6 — `class Fiber` IS a DSL struct. Both cited blockers expired: a DSL generic method DOES lower to a real member template (`create_run<Func>`), and `using enum FiberStatus` had zero external consumers. Residual kernel: 3 lines (`operator<` over `Rc<Fiber>` — a free operator on a FOREIGN type).**
+| [x] | KERNEL-BUT-SMALLER | 20 | `src/rrr/reactor/reactor.cpp:1677-1710 — class fiber_task_t (declaratio` | The GEN from probe_fiber.cpp generates the ENTIRE shell — fields, a fieldwise ctor, deleted copy ctor/assign, all four method decls, and the destructor decl:      struct fiber_task_t {       |  **← ADJUDICATED REAL (batch 6): `#[cpp_ctor]` SILENTLY DEGRADES to a `static new_` factory whenever the body is not a pure struct literal, and fiber_task_t's ctor must run `fiber_engine_start(&fib_, this)` IN PLACE on a deliberately non-movable object. The degraded GEN is unusable. Also `void operator()()` and two `friend` declarations have no DSL form.**
 | [x] | KERNEL-BUT-SMALLER | 8 | `src/rrr/misc/any_message.cpp:277 anymessage_unpack<T>` | template <typename T> inline const details::SerializableSharedPtrHolder<T>* anymessage_holder_of(     const SerializableBase* base) {   return dynamic_cast<const details::SerializableSharedP |  **← LANDED batch 3**
-| [ ] | KERNEL-BUT-SMALLER | 8 | `src/rrr/misc/serializable.cpp:1697 Serialize_::adl_detail_ poisoned-de` | namespace Serialize_ { namespace adl_detail_ { void serialize() = delete;   // <- the ONLY irreducible line #if RUSTYCPP_RUST fn dispatch_serialize<T>(v: &T, ar: &mut BinaryWriteArchive) { s |
-| [ ] | KERNEL-BUT-SMALLER | 8 | `src/rrr/misc/serializable.cpp:4285 Deserialize_::adl_detail_ poisoned-` | namespace Deserialize_ { namespace adl_detail_ { void deserialize() = delete;   // <- the ONLY irreducible line #if RUSTYCPP_RUST fn dispatch_deserialize<T>(v: &mut T, ar: &mut BinaryReadArc |
+| [x] | KERNEL-BUT-SMALLER | 8 | `src/rrr/misc/serializable.cpp:1697 Serialize_::adl_detail_ poisoned-de` | namespace Serialize_ { namespace adl_detail_ { void serialize() = delete;   // <- the ONLY irreducible line #if RUSTYCPP_RUST fn dispatch_serialize<T>(v: &T, ar: &mut BinaryWriteArchive) { s |  **← ADJUDICATED REAL (batch 6): row is STALE at 8 lines — both dispatcher templates are ALREADY DSL; only 1 line is a candidate (`void serialize() = delete;`) and `= delete` on a FREE fn has no DSL spelling (emitted only for implicit special members; no delete attribute, no raw-emission hatch).**
+| [x] | KERNEL-BUT-SMALLER | 8 | `src/rrr/misc/serializable.cpp:4285 Deserialize_::adl_detail_ poisoned-` | namespace Deserialize_ { namespace adl_detail_ { void deserialize() = delete;   // <- the ONLY irreducible line #if RUSTYCPP_RUST fn dispatch_deserialize<T>(v: &mut T, ar: &mut BinaryReadArc |  **← ADJUDICATED REAL (batch 6): exact mirror of the Serialize_ twin, and the two must move in lockstep so the read/write bridges never diverge.**
 | [x] | KERNEL-BUT-SMALLER | 6 | `src/rrr/base/debugging.cpp:33-42 `likely` / `unlikely` (cause: "`#ifnd` | #ifndef likely\n#if RUSTYCPP_RUST\nfn likely(value: bool) -> bool { __builtin_expect(value, true) }\n#endif\n<GEN>\n#endif   (and the same for unlikely) |  **← LANDED (recover batch 1)**
 | [x] | KERNEL-BUT-SMALLER | 6 | `src/rrr/base/debugging.cpp:56 `template<typename Expr> verify(const Ex` | // DSL (everything except the default arg): fn verify_at<Expr>(expr: &Expr, loc: &std::source_location) { let ok: bool = expr as bool; if !ok { verify_fail(loc.file_name(), loc.line()); } }  |  **← LANDED verify->panic (101af242)**
-| [ ] | KERNEL-BUT-SMALLER | 5 | `src/rrr/reactor/reactor.cpp:4907 Fiber::Fiber / Fiber::~Fiber` | // delete the empty ~Fiber outright; then, once the orphan-impl qualification is fixed: impl Fiber {     fn new(func: rusty::Function<dyn Fn()>) -> Fiber {         Fiber { status_: rusty::Ce |
-| [ ] | KERNEL-BUT-SMALLER | 4 | `src/rrr/base/callback_wrapper.cpp:19 `template<typename Sig> struct Ca` | Two of the four stated floors are WRONG, one is soft, one is real. (1) "Rust generics cannot name a function type with a trailing const qualifier" — FALSE as stated. `dyn Fn(..)` IS the DSL  |
+| [x] | KERNEL-BUT-SMALLER | 5 | `src/rrr/reactor/reactor.cpp:4907 Fiber::Fiber / Fiber::~Fiber` | // delete the empty ~Fiber outright; then, once the orphan-impl qualification is fixed: impl Fiber {     fn new(func: rusty::Function<dyn Fn()>) -> Fiber {         Fiber { status_: rusty::Ce |  **← LANDED batch 6 — the ctor is now a `#[cpp_ctor]` GEN mem-init ctor (so `Rc<Fiber>::make(func)` is unchanged); `~Fiber` deleted, with `_pin: PhantomPinned` added to PRESERVE the non-movability the destructor was silently providing.**
+| [x] | KERNEL-BUT-SMALLER | 4 | `src/rrr/base/callback_wrapper.cpp:19 `template<typename Sig> struct Ca` | Two of the four stated floors are WRONG, one is soft, one is real. (1) "Rust generics cannot name a function type with a trailing const qualifier" — FALSE as stated. `dyn Fn(..)` IS the DSL  |  **← PARTIALLY RECOVERED (batch 6, 4 lines) + FLOOR CONFIRMED. Of the 4 stated floors: the function-type template param is WRONG (already re-parameterized to <F> in batch 5) and 'no-operator-assign' is WRONG (those 4 `= default`s were merely REDUNDANT — removed, machine-checked identical). `explicit operator bool` is SOFT (a named `is_set()` lowers, at call-site cost). REAL floors: the variadic perfect-forwarding `operator()` (no Fn-impl lowering AND no packs, arities 1 and 2 both live) and the SFINAE converting ctor (~194 implicit-conversion sites). Because a DSL struct's GEN cannot host hand-written members, that one floor pins the WHOLE struct — zero further lines are recoverable.**
 | [x] | KERNEL-BUT-SMALLER | 2 | `src/rrr/reactor/reactor.cpp:3443 u64_to_thread_id` | using NativeId = decltype(std::declval<rusty::thread::ThreadId>().as_native());  // scaffolding alias #if RUSTYCPP_RUST // after adding `static ThreadId from_native(platform::threading::thre |  **← LANDED batch 3**
-| [ ] | KERNEL-BUT-SMALLER | 0 | `src/rrr/misc/serializable_envelope.cpp:51 envelope_holder_of<T>` | This one is ALREADY at its floor and is the in-tree proof that the RTTI-downcast pattern is a 3-line kernel, not a per-callsite wall: three DSL bodies (unpack/:173, unpack_shared/:185, unpac |
+| [x] | KERNEL-BUT-SMALLER | 0 | `src/rrr/misc/serializable_envelope.cpp:51 envelope_holder_of<T>` | This one is ALREADY at its floor and is the in-tree proof that the RTTI-downcast pattern is a 3-line kernel, not a per-callsite wall: three DSL bodies (unpack/:173, unpack_shared/:185, unpac |  **← AT FLOOR (0 lines) — nothing to recover; kept as the in-tree proof of the floor.**
 
 ### The genuine floor — 4 claims, ~173 lines
 
@@ -497,7 +497,11 @@ hoist the split to item level.
 | recover batch 2 — `spawn_stackless_task_impl`, `pollthread_create`, `fiber_task_t` bodies, `reactor_make_arc` | 81 | (rec 2) | zero kernels left in spawn_stackless; ASan-clean |
 | recover batch 3 — `server_parse_port` (try/catch DELETED via strtoll), `server_invoke_shutdown_hook_safely` (catch_unwind), `buffer_source_read`->DSL `read_bytes` method, the Archive dispatch/serialize shims, `anymessage_unpack`, the thread-id bit-casts, and 5 pollworker helpers | 70 | (rec 3) | 18 of 21 drafted edits applied; the 3 `base/debugging.cpp` edits DROPPED BY POLICY (see below) |
 
-Running total: **~1,777 lines** of hand-written C++ removed from `src/rrr`
+| recover batch 4 — `log_sink_write`+`log_time_now`, `sconn_proxy_ptr`+`server_dsl_addr_to_string`+`server_random_u64`, the PoolConfig `static_assert`+`clientconn_fiber_channel_ptr`+`clientconn_addr_to_string`, and `sink_span`+`VarintBuf`+`make_serializable_proxy` | 40 | (rec 4) | `deserialize_from` SKIPPED (genuinely variadic — 88 sites, arities 1..9) |
+| recover batch 5 — `invoke_callback_safely` (3 arity-specific DSL fns over catch_unwind), `time_now_us` (item-level `#[cfg(target_os)]`), the macOS `print_stack_trace` shim, the 4 `CallbackWrapper` callback aliases | 24 | (rec 5) | `is_send`/`is_sync` SKIPPED — transpiler silently drops `unsafe impl Send` |
+| recover batch 6 — the FIBER CLUSTER (`class Fiber` becomes a DSL struct, taking the instance shims, the statics and the ctor/dtor with it) + 4 redundant `CallbackWrapper` special members | 47 | (rec 6) | `fiber_task_t`, both ADL decoys and `Serializable<D,PL>` adjudicated REAL |
+
+Running total: **~1,824 lines** of hand-written C++ removed from `src/rrr`
 since the inventory was taken (batch 1: 397, batch 2: ~102, batch 3: 143,
 batch 4: 102, batch 5A: 157, batch 5B: 130, batch 5C: 114).
 
@@ -586,6 +590,89 @@ The substitution is exact (`Sig` occurred only inside `rusty::Function<Sig>`)
 and all 5 instantiation sites repo-wide were updated. Verified by diffing the
 REGENERATED aliases against the originals: type-identical, only parameter
 names dropped.
+
+### Batch 6 adjudications: two burndown claims were wrong, but the skips stand
+
+A useful case of "the stated reason is false AND the conclusion is right":
+
+- The claim that the `adl_detail_` **namespace** is inexpressible is WRONG —
+  `mod adl_detail_ { .. }` does lower to a nested `namespace`. And
+  `extern "C++" { fn f(); }` does emit a body-less declaration. What has no
+  DSL spelling is **`= delete` on a free function** (grep of
+  `transpiler/src/codegen/`: `= delete` is emitted only for implicit special
+  members; there is no delete attribute and no raw-emission escape hatch).
+  Converting via `extern "C++"` would take 1 hand line to 3 DSL + 4 GEN — the
+  metric goes UP — and would WEAKEN the guard by making the decoy callable,
+  degrading a compile error to an undefined-symbol link error. Net loss; keep.
+- The decoy rows are **stale at 8 lines each**. Both dispatcher templates are
+  already DSL; the residual is 1 candidate line plus namespace scaffolding the
+  DSL must lower into regardless.
+- The in-file comment **misdescribed its own mechanism** and has been
+  corrected: the decoy is never SELECTED (arity 0 vs 2), so the failure is an
+  ordinary "no matching function" error, not a "deleted function" diagnostic.
+  Compile-verified byte-identical to a plain declaration. The `= delete` is
+  still worth keeping because it turns a stray 0-arg call into a compile error
+  instead of a link error.
+
+**`Serializable<Derived, PayloadList>` is DECLINED, not blocked** — and the
+earlier decline now has four reasons instead of one, the first of which would
+ship a silent correctness bug:
+
+1. The GEN unconditionally appends `is_send = true` / `is_sync = true` to the
+   CRTP base (the emitter derives Send/Sync from fields; zero fields = vacuously
+   true), and `rusty/traits.hpp` reads that as an INHERITED member. Compile-proven
+   false-today / TRUE-after for 19 named wire payload types that hold
+   `Arc<Marshallable>` / `shared_ptr` / raw pointers, which silently disarms
+   `template<Send T> channel()`. Same defect class as the `is_send<PollCommand>`
+   row from batch 5 — except that one flipped true->FALSE (loud build break)
+   and this flips false->TRUE (green build, lost refusal).
+2. The GEN drops the dependent-name `::template` disambiguator and therefore
+   DOES NOT COMPILE.
+3. The default template argument is lost (Rust has no default type params).
+4. `noexcept` is dropped from three methods and `constexpr` from `index_of`.
+
+Reason 1 is the one that matters: a conversion whose cost is a silently lost
+compile-time refusal is not a conversion worth making at any line count.
+
+### Batch 6: the Fiber cluster fell, and the destructor was load-bearing
+
+`class Fiber` CAN be a DSL struct, which took four rows at once (the shell,
+the instance-method shims, the statics, and the ctor/dtor). Both cited
+blockers had expired: a DSL generic method DOES lower to a real member
+template, so `create_run<Func>` survives; and `using enum FiberStatus` had
+ZERO external consumers — the only four `Fiber::INIT`-style spellings in the
+tree were DSL bodies in this same file. Residual kernel is 3 lines:
+`operator<` over `rusty::Rc<Fiber>` is a free operator on a FOREIGN type, so
+it hoists to namespace scope (ADL still finds it from `std::less<Rc<Fiber>>`).
+
+**The empty `~Fiber()` was doing invisible work.** It was a user-declared
+destructor, which SUPPRESSES the implicit move operations — so Fiber was
+non-movable by accident of the rule, not by declaration. A DSL struct has no
+destructor, so deleting it brought the move ctor back. Inert today (nothing
+holds a Fiber by value; `Rc::make` placement-news; containers move only the
+handle), but Fiber hands its own `this` to the C stack-switching engine, so a
+move would leave the engine pointing at freed storage — and
+`Fiber b = std::move(a);` would have compiled silently. Fixed with
+`_pin: rusty::marker::PhantomPinned`, which makes the transpiler emit DELETED
+move operations: the same guarantee, now stated on purpose. Reactor two
+hundred lines above already uses this exact idiom for the same reason.
+
+Generalise: **an empty destructor is never just noise.** Before deleting one,
+ask what it suppresses.
+
+The compiler also caught a wrong tracker claim: the row asserted "all 89
+`Fiber::create_run` call sites pass exactly one argument". FALSE — four pass
+`__FILE__, __LINE__`. They now call `create_run_impl` directly, preserving
+provenance exactly.
+
+**`fiber_task_t` HOLDS** — the sibling that did not fall. `#[cpp_ctor]`
+SILENTLY DEGRADES to a `static new_` factory the moment the body is not a
+pure struct literal, and fiber_task_t's ctor must run
+`fiber_engine_start(&fib_, this)` IN PLACE on a deliberately non-movable
+object. The degraded GEN is unusable (`new_(std::move((*this)))` in a static
+context, the engine handed a value instead of an address, `return std::move`
+on deleted move ops). Plus `void operator()()` and two `friend` declarations
+have no DSL form.
 
 ### RESOLVED: `verify()` now panics — the abort semantics were dropped on purpose
 

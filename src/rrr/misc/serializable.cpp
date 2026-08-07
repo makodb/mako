@@ -1721,8 +1721,16 @@ namespace Serialize_ {
 // operator layer. The deleted decoy in adl_detail_ poisons unqualified
 // lookup so the dispatcher can ONLY resolve through ADL (the type's own
 // namespace) — the catch-all cannot self-select, and a type with neither a
-// specific overload above nor an ADL serialize() fails with a hard
-// "deleted function" diagnostic naming the type.
+// specific overload above nor an ADL serialize() fails to compile, with
+// the diagnostic naming the type through two instantiation notes.
+//
+// NB the decoy is never SELECTED (arity 0 vs 2), so the failure is an
+// ordinary "no matching function for call to 'serialize'", NOT a
+// "deleted function" diagnostic — an earlier version of this comment
+// claimed the latter. Compile-verified: `= delete` and a plain
+// declaration give byte-identical diagnostics here. The `= delete` is
+// kept anyway because it also makes a stray 0-arg call a COMPILE error
+// rather than an undefined-symbol link error.
 namespace adl_detail_ {
 void serialize() = delete;  // lookup poison: stops ascent past this scope
 // The two generic templates around the decoy are DSL now; the deleted

@@ -1276,7 +1276,7 @@ impl ClientConnection {
         // The recv-loop fiber must live on the reactor that fires the proxy's
         // on_frame/on_closed callbacks (single-threaded IntEvent signaling);
         // the caller picks the thread (see bind_channel_via_poll_thread).
-        Fiber::create_run(move || {
+        Fiber::create_run_impl(move || {
             let conn_opt = weak_self.upgrade();
             if conn_opt.is_none() {
                 return;
@@ -1696,7 +1696,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=e4c796d4436cc22eb124f8c68fba27b1841d3e4746b5913f064083719866c4cd*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=c15dc700533ee83b4e7c7bbacd74575c4e4132529fb6f997221dd0e47364389f*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1993,7 +1993,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) const {
     }
     this->channel_mode_.set(true);
     WeakClientConnection weak_self = rusty::clone(this->weak_self_);
-    Fiber::create_run([=, weak_self = std::move(weak_self)]() {
+    Fiber::create_run_impl([=, weak_self = std::move(weak_self)]() {
 auto conn_opt = weak_self.upgrade();
 if (conn_opt.is_none()) {
     return;
