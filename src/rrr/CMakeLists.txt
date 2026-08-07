@@ -119,7 +119,6 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_rand.c
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_io.c
         ${CMAKE_CURRENT_SOURCE_DIR}/base/srpc_base.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/srpc_epoll.c
         ${CMAKE_CURRENT_SOURCE_DIR}/reactor/srpc_fiber.c
     )
     # `src/compat` ships shims that fix third-party header gotchas

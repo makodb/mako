@@ -406,26 +406,12 @@ inline void serialize(const SerializableEnvelope<TypeList>& env,
   env.save(ar);
 }
 
-template<typename TypeList>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
-                                      const SerializableEnvelope<TypeList>& env) {
-  serialize(env, ar);
-  return ar;
-}
-
 // @unsafe - forwards to `env.load(ar)` which drives a Marshal
 // operator>> chain.
 template<typename TypeList>
 inline void deserialize(SerializableEnvelope<TypeList>& env,
                         BinaryReadArchive& ar) {
   env.load(ar);
-}
-
-template<typename TypeList>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
-                                     SerializableEnvelope<TypeList>& env) {
-  deserialize(env, ar);
-  return ar;
 }
 
 // Marshal-deprecation slice C: the legacy `Marshal&` envelope operators

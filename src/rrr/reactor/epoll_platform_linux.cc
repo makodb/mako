@@ -18,17 +18,30 @@ import rrr.debugging;
 
 namespace rrr {
 
-// The zeroed-epoll_event factory lives in srpc_epoll.c now (plain C,
-// Goal-0 C demotion): memset-then-fill has no DSL spelling and needs no
-// C++ either, and `struct epoll_event` is a libc POD so returning one by
-// value is ABI-identical across the boundary.
-extern "C" struct epoll_event srpc_epoll_event_zeroed(void);
-
-// @unsafe - thin shim over the C kernel, keeping the name the DSL bodies
-// below already call.
-inline struct epoll_event epoll_event_zeroed() {
-    return srpc_epoll_event_zeroed();
+// @safe - the zeroed-epoll_event factory, in DSL. It used to be a plain-C
+// kernel in srpc_epoll.c on the reasoning that "memset-then-fill has no DSL
+// spelling"; that was true of memset-then-fill, but the factory only needs
+// the ZEROING, and `Default::default()` supplies it. That retired the whole
+// srpc_epoll.c translation unit -- the last C file in reactor/ -- and with
+// it an UNCONDITIONAL macOS build break: CMakeLists added srpc_epoll.c to
+// every platform's source list, and it includes <sys/epoll.h>.
+//
+// Zeroing equivalence was measured, not assumed: `rusty::default_like<
+// epoll_event>()` over poisoned (0xAB) storage leaves 0 non-zero bytes and
+// memcmp's equal to memset(&ev,0,sizeof ev) -- padding included, which
+// matters because the kernel reads the whole union.
+#if RUSTYCPP_RUST
+fn epoll_event_zeroed() -> epoll_event {
+    Default::default()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll_platform_linux.1 version=1 rust_sha256=e64905dc19cf2e4c70b5c2c9c842261ea81bf4a1d83452b4c94e286130ca71bf*/
+epoll_event epoll_event_zeroed();
+
+epoll_event epoll_event_zeroed() {
+    return rusty::default_like<epoll_event>();
+}
+/*RUSTYCPP:GEN-END id=epoll_platform_linux.1*/
 
 // The Linux epoll_ctl(ADD) body — registration flags, EEXIST
 // del-then-re-add retry, and the EBADF teardown-race tolerance — as

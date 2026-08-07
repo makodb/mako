@@ -146,23 +146,6 @@ AddrInfo::~AddrInfo() noexcept(false) {
 }
 /*RUSTYCPP:GEN-END id=utils.addrinfo*/
 
-// @unsafe - `getaddrinfo` libc call returning a raw `struct addrinfo*`,
-// adopted into a move-only AddrInfo. (Was AddrInfo::resolve; lifted to a
-// free function because the getaddrinfo out-parameter is not DSL-able.)
-inline rusty::Result<AddrInfo, int> addrinfo_resolve(
-    const char* host,
-    const char* service,
-    const struct addrinfo* hints
-) {
-    struct addrinfo* result = nullptr;
-    int r = getaddrinfo(host, service, hints, &result);
-    if (r != 0) {
-        return rusty::Err<AddrInfo, int>(r);
-    }
-    return rusty::Ok<AddrInfo, int>(AddrInfo(result));
-}
-
-int set_nonblocking(int fd, bool nonblocking);
 int find_open_port();
 std::string get_host_name();
 
@@ -171,19 +154,6 @@ std::string get_host_name();
 // @safe - impl namespace. All three free functions are pure syscall
 // wrappers and carry per-method `// @unsafe` below.
 namespace rrr {
-
-// @unsafe - fcntl(F_GETFL / F_SETFL) syscall.
-int set_nonblocking(int fd, bool nonblocking) {
-    int ret = fcntl(fd, F_GETFL, 0);
-    if (ret != -1) {
-        if (nonblocking) {
-            ret = fcntl(fd, F_SETFL, ret | O_NONBLOCK);
-        } else {
-            ret = fcntl(fd, F_SETFL, ret & ~O_NONBLOCK);
-        }
-    }
-    return ret;
-}
 
 // The syscall ladder (socket/getaddrinfo/bind/getsockname/close) lives
 // in srpc_net.c now (plain C, Goal-0 C demotion). Contract: port on
