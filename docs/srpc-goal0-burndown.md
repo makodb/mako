@@ -722,6 +722,93 @@ objection was half wrong. `print_stack_trace` already mallocs on Linux
 (`backtrace_symbols`, plus a `rusty::Vec<std::string>` renderer), so the
 path was never allocation-free.
 
+## FINAL LEDGER — the kernel-recovery vein is exhausted (2026-08-07)
+
+Closed at `665bc43c`. Six recovery batches plus the verify/panic change:
+
+| batch | lines | headline |
+|---|---|---|
+| 1 | 57 | the stale `#ifdef` class; any_message/envelope kernels |
+| 2 | 81 | stackless spawn, poll-thread create, fiber_task_t bodies |
+| 3 | 70 | `server_parse_port` try/catch DELETED; catch_unwind recipe established |
+| — | — | `verify()` panics; the `#ifdef NDEBUG` split deleted (authorized) |
+| 4 | 40 | logging/server/client smalls; `sink_span`, `VarintBuf`, proxy factory |
+| 5 | 24 | `invoke_callback_safely`; item-level `#[cfg(target_os)]`; callback aliases |
+| 6 | 47 | the FIBER CLUSTER — `class Fiber` became a DSL struct |
+
+**Campaign total: ~1,824 lines** of hand-written C++ removed from `src/rrr`.
+
+Where `src/rrr` stands now (non-test): **795 lines of logic**, 1,053 of module
+scaffolding (`module;` / includes / `import` / namespace braces / fwd-decl
+walls), 5,108 of comment, and 407 lines of tolerated plain C.
+
+### What the re-audit proved
+
+The inherited "permanent kernels" list was **84% recoverable**. It had been
+compiled by reasoning about the code rather than probing it, and reasoning
+was wrong far more often than not. The rule this campaign confirmed twice
+over: *an impossibility claim with no probe attached is worth nothing,
+including one I wrote myself.*
+
+But the inverse also held — **a stale reason does not make a row recoverable.**
+Both ADL decoy rows had factually wrong justifications (`mod` DOES lower to a
+nested namespace) and were still correctly skipped, because the expressible
+route raised the line count and weakened a load-bearing guard.
+
+### The genuine floor — what is left and why
+
+- **`deserialize_from`** — 88 call sites, arities 1 through 9. `syn` has no
+  variadic-generic node. (Recorded escape: the in-file comment forbidding
+  per-value re-calls is itself stale, so a 28-site rewrite would work. Not
+  taken — cross-module, and a separate decision.)
+- **`fiber_task_t`** — `#[cpp_ctor]` silently degrades to a `static new_`
+  factory unless the body is a pure struct literal; this ctor must run
+  `fiber_engine_start(&fib_, this)` in place on a non-movable object.
+- **Both `adl_detail_` decoys** — `= delete` on a free function has no DSL
+  spelling.
+- **`CallbackWrapper`** — the SFINAE converting ctor (~194 implicit-conversion
+  sites). Because a DSL struct's GEN cannot host hand-written members, that
+  ONE floor pins the entire struct.
+- **`verify`** — the `std::source_location` default argument, at ~1,940 sites.
+- **`is_send`/`is_sync`** and **`Serializable<D,PL>`** — blocked on transpiler
+  defects that would ship SILENT correctness bugs (see below).
+- **`operator<` over `Rc<Fiber>`** — 3 lines; a free operator on a foreign type.
+
+### The four silent-failure modes found (these matter more than the line count)
+
+Each produces a WRONG BINARY rather than a build error:
+
+1. **Statement-level `#[cfg]`** — the arms become `y` and `y_shadow1`, and the
+   NON-macOS value wins on every platform.
+   `tests/rpc_state_integration_test.cc:42` is this shape. Never convert it.
+2. **`#[cfg]` on a struct or impl** — silently dropped, emitted unguarded.
+3. **`unsafe impl Send for X {}`** — parses, emits NOTHING. Would have flipped
+   `is_send<PollCommand>` true->FALSE.
+4. **CRTP Send/Sync leak** — a zero-field DSL base is vacuously Send+Sync and
+   the member is INHERITED, which would flip 19 wire payload types
+   false->TRUE and silently disarm `template<Send T> channel()`.
+
+(3) and (4) are the same defect class in opposite directions; (4) is the
+dangerous one because it builds green.
+
+### Two idioms worth carrying to deptran/mako
+
+- **An empty destructor is never just noise.** `~Fiber()` was suppressing the
+  implicit move operations on a type that hands its `this` to a C engine.
+  Deleting it compiled and tested green while silently permitting
+  `Fiber b = std::move(a);`. `_pin: PhantomPinned` restores the guarantee
+  explicitly. Ask what a destructor suppresses before removing it.
+- **A row's suggested DSL is a hypothesis, not a spec.** The `VarintBuf` row's
+  own proposal would have broken all four call sites; the right move was to
+  delete the struct entirely.
+
+### Remaining work is upstream, not here
+
+The two open rows are transpiler defects (`emit_stmt.rs` statement-level cfg,
+`map_operator_trait` operator lowering) — 0 lines of `src/rrr`. Further
+progress on the 1,053 scaffolding lines needs a whole-file transpiler mode,
+which does not exist yet.
+
 ## Idioms learned while landing these
 
 Add to this list as the campaign continues — each one cost a build cycle
