@@ -49,11 +49,18 @@ import rrr.utils;
 // `shutdown_phase_to_string` free function is `// @safe`. The
 // `make_service_proxy_from_box` / `make_service_proxy_from_typed_box`
 // helpers are pure Box adapters.
+// One-line scaffolding for the inline-Rust DSL: the grammar has no
+// spelling for C's `char` (DSL `char` is Rust's 4-byte scalar and
+// lowers to `char32_t`; `core::ffi::c_char` lowers to an undefined
+// `rusty::ffi::c_char`). Declared outside the export namespace so it
+// stays module-local -- it is only ever named inside generated bodies.
 /*RUSTYCPP:GEN-DISPATCH-BEGIN*/
 namespace rusty { namespace detail {
 RUSTY_METHOD_DISPATCH(unwrap)
 } } // namespace rusty::detail (issue #31 deref_call dispatch)
 /*RUSTYCPP:GEN-DISPATCH-END*/
+
+using c_char = char;
 
 export namespace rrr {
 
@@ -1048,12 +1055,27 @@ struct ShutdownState {
 
 
 // @unsafe - strlen over the reinterpret_cast'ed addr. Returns an owned
-// std::string for the DSL `start()` body (`*const i8` has no `char*`
-// spelling in the DSL, and std::string wants char*).
-inline std::string server_dsl_addr_to_string(const int8_t* addr) {
-    const char* p = reinterpret_cast<const char*>(addr);
+// std::string for the DSL `start()` body (`*const i8` is how the DSL
+// spells the incoming `const char*`, and std::string wants char*).
+//
+// `c_char` is the module-local `using c_char = char` alias declared
+// above `export namespace rrr`: the DSL's own `char` is Rust's 4-byte
+// scalar and lowers to `char32_t`, and `core::ffi::c_char` lowers to a
+// `rusty::ffi::c_char` the rusty headers do not define.
+#if RUSTYCPP_RUST
+fn server_dsl_addr_to_string(addr: *const i8) -> std::string {
+    let p: *const c_char = addr as *const c_char;
+    std::string(p, strlen(p))
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.12 version=1 rust_sha256=0dfe87d649c435d725b844c43f0c996c4c5ab101404c1cc42b833d60aed893b4*/
+std::string server_dsl_addr_to_string(const int8_t* addr);
+
+std::string server_dsl_addr_to_string(const int8_t* addr) {
+    const c_char* p = reinterpret_cast<const c_char*>(addr);
     return std::string(p, strlen(p));
 }
+/*RUSTYCPP:GEN-END id=server.12*/
 
 // Forward declaration of Server to allow helper signatures to refer
 // to it. The DSL emits the full definition below.
@@ -1101,11 +1123,23 @@ rusty::Option<rusty::Arc<PollThread>> server_resolve_poll_thread(rusty::Option<r
 
 // @unsafe - one micro-kernel is left here: constructing a
 // std::random_device and drawing from it. Everything built ON it (the
-// clock read, the mix, the mask, the zero guard) is DSL below.
-inline uint64_t server_random_u64() {
-    std::random_device rd;
-    return static_cast<uint64_t>(rd()) << 32 | static_cast<uint64_t>(rd());
+// mix, the shift) is DSL below. `std::random_device()` lowers to a
+// prvalue initializer, which C++17 guaranteed elision turns back into
+// the plain default-construct the hand-written kernel spelled.
+#if RUSTYCPP_RUST
+fn server_random_u64() -> u64 {
+    let mut rd: std::random_device = std::random_device();
+    ((rd() as u64) << 32) | (rd() as u64)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.15 version=1 rust_sha256=e743d2464b29684bd5574ec278822f321658b1da3c6372809f6c9f767a87a62c*/
+uint64_t server_random_u64();
+
+uint64_t server_random_u64() {
+    std::random_device rd = std::random_device();
+    return ((((static_cast<uint64_t>(rd()))) << 32)) | ((static_cast<uint64_t>(rd())));
+}
+/*RUSTYCPP:GEN-END id=server.15*/
 
 #if RUSTYCPP_RUST
 // @safe - rrr's own clock (Time::now microseconds, scaled to the nano
@@ -2439,12 +2473,23 @@ sconn_dispatch_in_fiber(std::move(ctx2), std::move(svc_index), std::move(rpc_id)
 // @unsafe - Box::get raw extraction for the DSL dispatch body below —
 // the pointer must OUTLIVE the guard (send happens without the lock,
 // per the channel-layer contract that send_frame is internally
-// thread-safe), and Box's own `.get()` is a handle method the DSL's
-// autoderef would misroute to the pointee.
-inline ChannelConnectionBase* sconn_proxy_ptr(
-        const rusty::Option<ChannelConnectionProxy>& slot) {
+// thread-safe).
+//
+// The old note here claimed Box's own `.get()` was "a handle method the
+// DSL's autoderef would misroute to the pointee"; that cause EXPIRED --
+// the pointer-like arrow rewrite only fires for a `let`-annotated
+// `Box<..>` binding, so the chained form lowers verbatim.
+#if RUSTYCPP_RUST
+fn sconn_proxy_ptr(slot: &rusty::Option<ChannelConnectionProxy>)
+        -> *mut ChannelConnectionBase {
+    slot.as_ref().unwrap().get()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.24 version=1 rust_sha256=aeece4bdeb41ec642fcc7957630ca890664baa9caab38afe647f82cd53587962*/
+ChannelConnectionBase* sconn_proxy_ptr(const rusty::Option<ChannelConnectionProxy>& slot) {
     return slot.as_ref().unwrap().get();
 }
+/*RUSTYCPP:GEN-END id=server.24*/
 
 // Dispatch a reply-frame body through the bound proxy. Locks the
 // rusty::Mutex briefly to extract the proxy pointer, then drops the

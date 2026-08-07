@@ -133,9 +133,10 @@ std::string log_basename(const int8_t* fpath);
 // @unsafe - wraps the char-buffer srpc_time_now_str C kernel.
 std::string log_time_now();
 
-// @unsafe - std::ostream operator<< sink write. Was the class-static
-// `Log::sink_write`; a DSL struct cannot carry a hand-written static
-// member, so the ostream sink stayed behind as a free kernel.
+// @safe - DSL below, over a hand-written `&std::cout` pointer the DSL
+// cannot spell. Was the class-static `Log::sink_write`; a DSL struct
+// cannot carry a hand-written static member, so the sink write stayed
+// behind as a free function -- which is now DSL itself.
 void log_sink_write(const std::string& line);
 
 // DSL core: level filter + line decoration + sink routing. Everything
@@ -207,15 +208,43 @@ void log_line(int32_t level, int32_t line, const int8_t* file, const std::string
 // @safe - impl namespace. Kernel definitions carry per-method @unsafe.
 namespace rrr {
 
-// @unsafe - std::ostream operator<< sink write. Both the sink pointer
-// and the write were class statics on `Log` until `Log` became a DSL
-// struct; a DSL struct cannot carry hand-written statics, so they live
-// on here as a module-linkage pointer plus a free kernel.
+// @unsafe - the ostream sink POINTER stays hand-written C++: the DSL
+// has no spelling for `&std::cout`. (Probe-verified: a DSL
+// `static LOG_STM_S: *mut std::ostream = &mut std::cout;` lowers to a
+// lambda that COPIES the stream into a thread_local std::optional --
+// wrong, and not even compilable for a non-copyable ostream.) It was a
+// class static on `Log` until `Log` became a DSL struct.
 std::ostream* log_stm_s = &std::cout;
 
-void log_sink_write(const std::string& line) {
-    (*log_stm_s) << line << std::endl;
+// @safe - the sink WRITE is DSL. `os << line << std::endl` has no Rust
+// spelling (`<<` is Shl, and `std::endl` is a function template that
+// the transpiler's argument unwrapping cannot name), so the same bytes
+// go out through the equivalent member calls: `operator<<(ostream&,
+// const string&)` is a sentry-guarded `write(data(), size())` at the
+// default field width of 0, and `std::endl` is `put('\n')` + `flush()`.
+// Runtime-verified byte-identical on a normal line, an empty line, and
+// a line containing an embedded NUL.
+#if RUSTYCPP_RUST
+fn log_sink_write(line: &std::string) {
+    unsafe {
+        (*log_stm_s).write(line.data(), line.size());
+        (*log_stm_s).write("\n", 1);
+        (*log_stm_s).flush();
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=logging.4 version=1 rust_sha256=705011ada85f36a3369e64792163891a56d707b9d8e47e06959c8d0485c1ed0c*/
+void log_sink_write(const std::string& line);
+
+void log_sink_write(const std::string& line) {
+    // @unsafe
+    {
+        ((rusty::detail::deref_if_pointer_like(log_stm_s))).write(line.data(), line.size());
+        ((rusty::detail::deref_if_pointer_like(log_stm_s))).write("\n", 1);
+        ((rusty::detail::deref_if_pointer_like(log_stm_s))).flush();
+    }
+}
+/*RUSTYCPP:GEN-END id=logging.4*/
 
 // @unsafe - raw pointer scan; returns an owned copy.
 // The strrchr scan lives in srpc_base.c now (plain C, Goal-0 C
@@ -240,12 +269,37 @@ std::string log_basename(const int8_t* fpath) {
 // base/misc.cpp is deleted.
 extern "C" void srpc_time_now_str(char* now);
 
-// @unsafe - raw char-buffer bridge to the C timestamp formatter.
-std::string log_time_now() {
-    constexpr int kTimeNowStrSize = 24;
-    char now_str[kTimeNowStrSize];
-    srpc_time_now_str(now_str);
-    return std::string(now_str);
+// @safe - the 24-byte scratch buffer is a std::string sized in place,
+// so there is no raw char array and no second copy: srpc_time_now_str
+// fills 24 bytes (23 chars + its own NUL at [23]) directly into the
+// result's storage, and the trailing NUL is then trimmed. Byte-identical
+// to the former `char now_str[24]` + `std::string(now_str)` bridge
+// (runtime-verified). No `using c_char = char;` scaffolding is needed:
+// `std::string::data()` is already `char*`, so the DSL never has to
+// name a plain `char`. The `unsafe {}` block carries the @unsafe on the
+// C call.
+#if RUSTYCPP_RUST
+fn log_time_now() -> std::string {
+    let mut now_str = std::string();
+    now_str.resize(24);
+    unsafe { srpc_time_now_str(now_str.data()); }
+    now_str.resize(23);
+    now_str
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=logging.5 version=1 rust_sha256=d55a160b8c25e37bff1840a5efb0e30ac6f0df4f8eaded7e2736e3c7cc4b8353*/
+std::string log_time_now();
+
+std::string log_time_now() {
+    auto now_str = std::string();
+    now_str.resize(24);
+    // @unsafe
+    {
+        srpc_time_now_str(now_str.data());
+    }
+    now_str.resize(23);
+    return std::move(now_str);
+}
+/*RUSTYCPP:GEN-END id=logging.5*/
 
 } // namespace rrr

@@ -3522,11 +3522,18 @@ struct ClientPool;
 // the stored config is left intact. Add a non-trivial member (a
 // std::string, say) and that same line would silently GUT the pool's
 // config on every read. Fail the build instead of shipping that.
-static_assert(std::is_trivially_copyable<PoolConfig>::value,
-              "ClientPool::pool_config() returns std::move(*guard); a "
-              "non-trivially-copyable PoolConfig would be moved OUT of the "
-              "mutex and leave the stored config wrecked. Give pool_config() "
-              "an explicit copy before relaxing this.");
+// Authored as inline Rust DSL: a top-level `const _: () = assert!(cond,
+// "prose")` lowers to a namespace-scope `static_assert` (same idiom as
+// `envelope_assert_in_type_list` in serializable_envelope.cpp). The
+// emitted message is the stringified assertion, so the prose survives
+// nested inside it.
+#if RUSTYCPP_RUST
+const _: () = assert!(std::is_trivially_copyable::<PoolConfig>::value,
+    "ClientPool::pool_config() returns std::move(*guard); a non-trivially-copyable PoolConfig would be moved OUT of the mutex and leave the stored config wrecked. Give pool_config() an explicit copy before relaxing this.");
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.14 version=1 rust_sha256=c46ad82d389216713065061581cc71ba116c0198775d92cb164dbbfecd95953e*/
+static_assert(std::is_trivially_copyable<PoolConfig>::value, "assert ! (std :: is_trivially_copyable ::< PoolConfig >:: value , \"ClientPool::pool_config() returns std::move(*guard); a non-trivially-copyable PoolConfig would be moved OUT of the mutex and leave the stored config wrecked. Give pool_config() an explicit copy before relaxing this.\")");
+/*RUSTYCPP:GEN-END id=client.14*/
 
 // Health check on an EXPLICIT config snapshot. The config is passed in
 // rather than read from `self` because every caller below runs inside the
@@ -4968,11 +4975,27 @@ void clientconn_enqueue_heartbeat_probe(const ClientConnection& conn) {
 // which already transitioned the state to CONNECTING and verified
 // the factory binding.
 // @unsafe - strlen over the reinterpret_cast'ed addr; owned string for
-// the DSL body (`*const i8` has no char* spelling in the DSL).
-inline std::string clientconn_addr_to_string(const int8_t* addr) {
-  const char* p = reinterpret_cast<const char*>(addr);
-  return std::string(p, strlen(p));
+// the DSL body. The old excuse ("`*const i8` has no char* spelling in the
+// DSL") is EXPIRED — `as *const c_char` lowers to the same
+// `reinterpret_cast<const char*>`, and `std::string(p, strlen(p))` is a
+// plain DSL call expression. The one bit of scaffolding is the alias: a
+// DSL `*const char` lowers to `const char32_t*` (Rust's `char` is a
+// 32-bit scalar), so the byte-pointer spelling has to come from C++.
+using c_char = char;
+#if RUSTYCPP_RUST
+fn clientconn_addr_to_string(addr: *const i8) -> std::string {
+    let p: *const c_char = addr as *const c_char;
+    std::string(p, strlen(p))
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.34 version=1 rust_sha256=78aadfdf5cbfe810d389571f608fa97c82e0a98bbb84893b3f115ffbe6785209*/
+std::string clientconn_addr_to_string(const int8_t* addr);
+
+std::string clientconn_addr_to_string(const int8_t* addr) {
+    const c_char* p = reinterpret_cast<const c_char*>(addr);
+    return std::string(p, strlen(p));
+}
+/*RUSTYCPP:GEN-END id=client.34*/
 
 // The factory-driven connect. The factory is used IN PLACE through
 // the Box while the rusty::Mutex guard is held — the proxy is
@@ -5221,10 +5244,19 @@ clientconn_recv_job_entry(std::move(weak_self));
 // pointer must outlive the guard — recv_frame() parks the fiber, and
 // holding the lock across the yield would block dispatch_frame racers;
 // the spawning lambda's Arc<ClientConnection> keeps the Box alive).
-inline FiberChannel* clientconn_fiber_channel_ptr(
-    const rusty::Option<rusty::Box<FiberChannel>>& slot) {
-  return const_cast<FiberChannel*>(slot.as_ref().unwrap().get());
+// The hand-written body's `const_cast` was a NO-OP — `rusty::Box<T>::get()
+// const` (box.hpp:465) already returns a non-const `T*` — so the DSL body
+// is a plain `as_ref().unwrap().get()`.
+#if RUSTYCPP_RUST
+fn clientconn_fiber_channel_ptr(slot: &Option<Box<FiberChannel>>) -> *mut FiberChannel {
+    slot.as_ref().unwrap().get()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.35 version=1 rust_sha256=ce9057c513ff92f0887a5c09e8ab701471c8fd1f96a8a3e52e14ef27a24cbb0e*/
+FiberChannel* clientconn_fiber_channel_ptr(const rusty::Option<rusty::Box<FiberChannel>>& slot) {
+    return slot.as_ref().unwrap().get();
+}
+/*RUSTYCPP:GEN-END id=client.35*/
 
 #if RUSTYCPP_RUST
 fn clientconn_run_recv_loop(conn: &ClientConnection) {

@@ -155,12 +155,6 @@ using SourceProxy = rusty::Box<SourceBase>;
 // need to reset just touch the field directly via `sink.bytes.clear()`
 // (the legacy `clear()` method had zero callers).
 struct BufferSink;
-// Hand-bridge: the SinkBase trait hands write_bytes a raw (ptr, len) pair,
-// and the DSL cannot build a span from one. This is the whole kernel that
-// remains — the copy itself is extend_from_slice below.
-inline std::span<const std::uint8_t> sink_span(const std::uint8_t* p, size_t n) {
-    return std::span<const std::uint8_t>(p, n);
-}
 #if RUSTYCPP_RUST
 struct BufferSink {
     bytes: Vec<u8>,
@@ -173,11 +167,23 @@ impl SinkBase for BufferSink {
         // Appends, so extend_from_slice is exactly the old kernel's work:
         // grow if needed, then copy. The hand-rolled capacity doubling is
         // gone with it — Vec already amortises growth.
-        self.bytes.extend_from_slice(sink_span(p, n));
+        //
+        // The `sink_span` hand-bridge that used to sit above this block —
+        // "the SinkBase trait hands write_bytes a raw (ptr, len) pair, and
+        // the DSL cannot build a span from one" — was STALE.
+        // `core::slice::from_raw_parts` lowers to `rusty::from_raw_parts(p,
+        // n)`, whose body IS `std::span<const uint8_t>(p, n)`: the exact
+        // expression the kernel spelled by hand. The same shape already
+        // ships in GEN blocks inmemory_channel.14 and fiber_channel.3.
+        //
+        // @unsafe - builds a borrowed `&[u8]` over the caller's raw
+        // pointer. Inherent boundary: the SinkBase contract pins those
+        // bytes for the duration of the call.
+        self.bytes.extend_from_slice(unsafe { core::slice::from_raw_parts(p, n) });
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_sink version=1 rust_sha256=6239cfd1292829e54a30a003fc52a2bb8884870dee81f1304cec8a317f814a0f*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_sink version=1 rust_sha256=3660992d9b625de489038e04d8d1276744e20ed726fb0a4d6d3f118510349c61*/
 struct BufferSink;
 
 struct BufferSink {
@@ -194,7 +200,7 @@ void BufferSink::write_bytes(const uint8_t* p, size_t n) {
     if (rusty::detail::deref_if_pointer_like(n) == static_cast<size_t>(0)) {
         return;
     }
-    this->bytes.extend_from_slice(sink_span(p, std::move(n)));
+    this->bytes.extend_from_slice(rusty::from_raw_parts(p, n));
 }
 
 template <>
@@ -732,14 +738,22 @@ void BinaryWriteArchive::write_bytes(const uint8_t* p, size_t n) {
 }
 /*RUSTYCPP:GEN-END id=serializable.write_archive*/
 
-// Varint scratch for the v32/v64 leaf impls: the DSL has no local
-// arrays, so the stack buffer lives in a plain C++ POD whose C-array
-// field decays to uint8_t* at the DSL call sites.
-struct VarintBuf { uint8_t arr[9]; };
-inline VarintBuf varint_buf_new() { return VarintBuf{}; }
-// @unsafe - pointer offset into the scratch (the tail read lands after
-// the already-consumed first byte).
-inline uint8_t* varint_tail(VarintBuf* b) { return b->arr + 1; }
+// The v32/v64 leaf impls' 9-byte varint scratch used to live in a
+// hand-written `struct VarintBuf { uint8_t arr[9]; }` POD, because "the
+// DSL has no local arrays, so the buffer lives in a plain C++ POD whose
+// C-array field decays to uint8_t* at the DSL call sites". That is now
+// STALE: `let mut b: [u8; 9] = [0u8; 9];` lowers to a zero-filled
+// `std::array<uint8_t, 9>`, and `b.as_mut_ptr()` / `b.as_ptr()` lower to
+// `rusty::as_mut_ptr(b)` / `rusty::as_ptr(b)` — the same `uint8_t*` /
+// `const uint8_t*` the C array decayed to. `varint_tail` becomes
+// `unsafe { b.as_mut_ptr().add(1) }` -> `rusty::ptr::add(...)`.
+// VarintBuf, varint_buf_new and varint_tail are all gone; the scratch is
+// a DSL local at each of the four leaf sites below.
+//
+// NB the tracker's own suggested DSL (`pub struct VarintBuf { arr: [u8; 9] }`)
+// is a TRAP and was rejected: as a DSL struct field the array lowers to a
+// `std::array` that does NOT decay, breaking all four `b.arr` call sites
+// while adding nothing. Deleting the struct is strictly better.
 
 // ---- Serde-style Serialize trait (wire migration). --------------------
 // Value-side serialization: each type implements how to write itself into
@@ -754,16 +768,16 @@ pub trait Serialize {
 }
 impl Serialize for v32 {
     fn serialize(&self, ar: &mut BinaryWriteArchive) {
-        let mut b = varint_buf_new();
-        let bsize = SparseInt::dump32(self.get(), b.arr);
-        ar.write_bytes(b.arr, bsize);
+        let mut b: [u8; 9] = [0u8; 9];
+        let bsize = SparseInt::dump32(self.get(), b.as_mut_ptr());
+        ar.write_bytes(b.as_ptr(), bsize);
     }
 }
 impl Serialize for v64 {
     fn serialize(&self, ar: &mut BinaryWriteArchive) {
-        let mut b = varint_buf_new();
-        let bsize = SparseInt::dump64(self.get(), b.arr);
-        ar.write_bytes(b.arr, bsize);
+        let mut b: [u8; 9] = [0u8; 9];
+        let bsize = SparseInt::dump64(self.get(), b.as_mut_ptr());
+        ar.write_bytes(b.as_ptr(), bsize);
     }
 }
 impl Serialize for i32 {
@@ -877,7 +891,7 @@ impl Serialize for std::string {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=b7d7a93866e206d1f251949253daae336e76e48057a86c3d682c663ea09aa480*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=08eaf60b6d21a766d61e6e96d4e01ec1d0b6bdd89fe700d1f3ebb1ebc21cc1aa*/
 class Serialize;
 
 // Extension trait free-function forward declarations
@@ -1009,16 +1023,16 @@ template <class U> class SerializeAdapterRefMut;
 namespace rusty_ext {
     void serialize(const v32& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
-        auto b = varint_buf_new();
-        const auto bsize = SparseInt::dump32(self_.get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
-        ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
+        std::array<uint8_t, 9> b = [](auto _seed) { std::array<uint8_t, 9> _repeat{}; _repeat.fill(static_cast<uint8_t>(_seed)); return _repeat; }(static_cast<uint8_t>(0));
+        const auto bsize = SparseInt::dump32(self_.get(), rusty::as_mut_ptr(b));
+        ar.write_bytes(rusty::as_ptr(b), std::move(bsize));
     }
 
     void serialize(const v64& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
-        auto b = varint_buf_new();
-        const auto bsize = SparseInt::dump64(self_.get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
-        ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
+        std::array<uint8_t, 9> b = [](auto _seed) { std::array<uint8_t, 9> _repeat{}; _repeat.fill(static_cast<uint8_t>(_seed)); return _repeat; }(static_cast<uint8_t>(0));
+        const auto bsize = SparseInt::dump64(self_.get(), rusty::as_mut_ptr(b));
+        ar.write_bytes(rusty::as_ptr(b), std::move(bsize));
     }
 
     void serialize(const int32_t& self_, BinaryWriteArchive& ar) {
@@ -1532,9 +1546,9 @@ public:
 namespace Serialize_ {
     void serialize(const v32& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
-        auto b = varint_buf_new();
-        const auto bsize = SparseInt::dump32(self_.get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
-        ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
+        std::array<uint8_t, 9> b = [](auto _seed) { std::array<uint8_t, 9> _repeat{}; _repeat.fill(static_cast<uint8_t>(_seed)); return _repeat; }(static_cast<uint8_t>(0));
+        const auto bsize = SparseInt::dump32(self_.get(), rusty::as_mut_ptr(b));
+        ar.write_bytes(rusty::as_ptr(b), std::move(bsize));
     }
 
 }
@@ -1542,9 +1556,9 @@ namespace Serialize_ {
 namespace Serialize_ {
     void serialize(const v64& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
-        auto b = varint_buf_new();
-        const auto bsize = SparseInt::dump64(self_.get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
-        ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
+        std::array<uint8_t, 9> b = [](auto _seed) { std::array<uint8_t, 9> _repeat{}; _repeat.fill(static_cast<uint8_t>(_seed)); return _repeat; }(static_cast<uint8_t>(0));
+        const auto bsize = SparseInt::dump64(self_.get(), rusty::as_mut_ptr(b));
+        ar.write_bytes(rusty::as_ptr(b), std::move(bsize));
     }
 
 }
@@ -2673,24 +2687,28 @@ pub trait Deserialize {
 }
 impl Deserialize for v32 {
     fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
-        let mut b = varint_buf_new();
-        verify(ar.read_exact(b.arr, 1));
-        let total = SparseInt::buf_size(b.arr[0]);
+        let mut b: [u8; 9] = [0u8; 9];
+        verify(ar.read_exact(b.as_mut_ptr(), 1));
+        let total = SparseInt::buf_size(b[0]);
         if total > 1 {
-            verify(ar.read_exact(varint_tail(&mut b), total - 1));
+            // @unsafe - the tail read lands after the already-consumed
+            // first byte (the retired `varint_tail` kernel's whole job).
+            verify(ar.read_exact(unsafe { b.as_mut_ptr().add(1) }, total - 1));
         }
-        self.set(SparseInt::load32(b.arr));
+        self.set(SparseInt::load32(b.as_ptr()));
     }
 }
 impl Deserialize for v64 {
     fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
-        let mut b = varint_buf_new();
-        verify(ar.read_exact(b.arr, 1));
-        let total = SparseInt::buf_size(b.arr[0]);
+        let mut b: [u8; 9] = [0u8; 9];
+        verify(ar.read_exact(b.as_mut_ptr(), 1));
+        let total = SparseInt::buf_size(b[0]);
         if total > 1 {
-            verify(ar.read_exact(varint_tail(&mut b), total - 1));
+            // @unsafe - the tail read lands after the already-consumed
+            // first byte (the retired `varint_tail` kernel's whole job).
+            verify(ar.read_exact(unsafe { b.as_mut_ptr().add(1) }, total - 1));
         }
-        self.set(SparseInt::load64(b.arr));
+        self.set(SparseInt::load64(b.as_ptr()));
     }
 }
 impl Deserialize for i32 {
@@ -2989,7 +3007,7 @@ impl<K, V> Deserialize for std::unordered_map<K, V> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=3f6114c1e568643726db9031951ce65e6c45f4047ae5310e8747c0b4b230a453*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=d18c8bd66098a37a626daecdcd431849941815b4c84dfc640d806a65cc847b2e*/
 class Deserialize;
 
 // Extension trait free-function forward declarations
@@ -3233,24 +3251,24 @@ template <class U> class DeserializeAdapterRefMut;
 namespace rusty_ext {
     void deserialize(v32& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
-        auto b = varint_buf_new();
-        verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
-        const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
+        std::array<uint8_t, 9> b = [](auto _seed) { std::array<uint8_t, 9> _repeat{}; _repeat.fill(static_cast<uint8_t>(_seed)); return _repeat; }(static_cast<uint8_t>(0));
+        verify(ar.read_exact(rusty::as_mut_ptr(b), 1));
+        const auto total = SparseInt::buf_size(b.at(static_cast<size_t>(0)));
         if (rusty::detail::deref_if_pointer_like(total) > 1) {
-            verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+            verify(ar.read_exact(rusty::ptr::add(rusty::as_mut_ptr(b), 1), rusty::detail::deref_if_pointer_like(total) - 1));
         }
-        self_.set(SparseInt::load32(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
+        self_.set(SparseInt::load32(rusty::as_ptr(b)));
     }
 
     void deserialize(v64& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
-        auto b = varint_buf_new();
-        verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
-        const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
+        std::array<uint8_t, 9> b = [](auto _seed) { std::array<uint8_t, 9> _repeat{}; _repeat.fill(static_cast<uint8_t>(_seed)); return _repeat; }(static_cast<uint8_t>(0));
+        verify(ar.read_exact(rusty::as_mut_ptr(b), 1));
+        const auto total = SparseInt::buf_size(b.at(static_cast<size_t>(0)));
         if (rusty::detail::deref_if_pointer_like(total) > 1) {
-            verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+            verify(ar.read_exact(rusty::ptr::add(rusty::as_mut_ptr(b), 1), rusty::detail::deref_if_pointer_like(total) - 1));
         }
-        self_.set(SparseInt::load64(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
+        self_.set(SparseInt::load64(rusty::as_ptr(b)));
     }
 
     void deserialize(int32_t& self_, BinaryReadArchive& ar) {
@@ -3930,13 +3948,13 @@ public:
 namespace Deserialize_ {
     void deserialize(v32& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
-        auto b = varint_buf_new();
-        verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
-        const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
+        std::array<uint8_t, 9> b = [](auto _seed) { std::array<uint8_t, 9> _repeat{}; _repeat.fill(static_cast<uint8_t>(_seed)); return _repeat; }(static_cast<uint8_t>(0));
+        verify(ar.read_exact(rusty::as_mut_ptr(b), 1));
+        const auto total = SparseInt::buf_size(b.at(static_cast<size_t>(0)));
         if (rusty::detail::deref_if_pointer_like(total) > 1) {
-            verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+            verify(ar.read_exact(rusty::ptr::add(rusty::as_mut_ptr(b), 1), rusty::detail::deref_if_pointer_like(total) - 1));
         }
-        self_.set(SparseInt::load32(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
+        self_.set(SparseInt::load32(rusty::as_ptr(b)));
     }
 
 }
@@ -3944,13 +3962,13 @@ namespace Deserialize_ {
 namespace Deserialize_ {
     void deserialize(v64& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
-        auto b = varint_buf_new();
-        verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
-        const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
+        std::array<uint8_t, 9> b = [](auto _seed) { std::array<uint8_t, 9> _repeat{}; _repeat.fill(static_cast<uint8_t>(_seed)); return _repeat; }(static_cast<uint8_t>(0));
+        verify(ar.read_exact(rusty::as_mut_ptr(b), 1));
+        const auto total = SparseInt::buf_size(b.at(static_cast<size_t>(0)));
         if (rusty::detail::deref_if_pointer_like(total) > 1) {
-            verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+            verify(ar.read_exact(rusty::ptr::add(rusty::as_mut_ptr(b), 1), rusty::detail::deref_if_pointer_like(total) - 1));
         }
-        self_.set(SparseInt::load64(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
+        self_.set(SparseInt::load64(rusty::as_ptr(b)));
     }
 
 }
@@ -4564,21 +4582,62 @@ struct Serializable {
 // as instantiation-time template errors rather than a separate
 // constraint predicate.
 
-// Construct a SerializableProxy that owns a T constructed from the
-// forwarded arguments (default-constructed if no args). T just needs
-// to satisfy the structural shape:
+// Construct a SerializableProxy that owns a T — default-constructed, or
+// copy-constructed from `value`. T just needs to satisfy the structural
+// shape:
 //   - void save(BinaryWriteArchive&) const
 //   - void load(BinaryReadArchive&)
 //   - int32_t kind() const
-// The factory wraps T in a SerializableSharedPtrHolder<T> so callers
-// can downcast back to T* via
+// The factory wraps T in a SerializableSharedPtrHolder<T> so callers can
+// downcast back to T* via
 //   dynamic_cast<details::SerializableSharedPtrHolder<T>*>(proxy.get())
 // (or via the envelope's unpack<T>() / unpack_shared<T>()).
-template<class T, class... Args>
-inline SerializableProxy make_serializable_proxy(Args&&... args) {
-  auto sp = rusty::Arc<T>::make(std::forward<Args>(args)...);
-  return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(sp));
+//
+// This was one `template<class T, class... Args>` perfect-forwarding
+// factory, and the tracker called parameter-packs a PERMANENT blocker.
+// It is not: no call site passes more than one argument (5 total — 4 in
+// rpc_marshal_archive_test.cc, 1 in TypeList::create_at_impl below), so
+// the pack splits into two arity-disjoint generic fns and every call site
+// keeps its exact current spelling.
+//
+// Rust has no function overloading, so the two live in SEPARATE
+// `#if RUSTYCPP_RUST` blocks — the same trick the make_sink_proxy /
+// make_source_proxy pairs above use. Each emits an ordinary C++ function
+// template; being arity-disjoint they overload unambiguously.
+//
+// The 1-arg form takes `&T` (not `T`) DELIBERATELY: that lowers to
+// `const T&`, so `rusty::Arc<T>::make(value)` copy-constructs exactly as
+// `std::forward<Args>(args)...` did at both existing (lvalue) call sites.
+// An rvalue argument would now copy where the pack would have moved; if
+// such a site ever appears, add a third block taking `value: T` rather
+// than widening these.
+#if RUSTYCPP_RUST
+fn make_serializable_proxy<T>() -> SerializableProxy {
+    let sp: Arc<T> = rusty::Arc::<T>::make();
+    rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.20 version=1 rust_sha256=5301d8f9a9e419e55fcb15505fc25351b0c622caef3498bb957e6c0345184ddc*/
+template<typename T>
+SerializableProxy make_serializable_proxy() {
+    rusty::Arc<T> sp = rusty::Arc<T>::make();
+    return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(sp));
+}
+/*RUSTYCPP:GEN-END id=serializable.20*/
+
+#if RUSTYCPP_RUST
+fn make_serializable_proxy<T>(value: &T) -> SerializableProxy {
+    let sp: Arc<T> = rusty::Arc::<T>::make(value);
+    rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.21 version=1 rust_sha256=0363746061cf3e586373b1aa92d12482fee2deed9773df121c3665713a4c4b63*/
+template<typename T>
+SerializableProxy make_serializable_proxy(const T& value) {
+    rusty::Arc<T> sp = rusty::Arc<T>::make(value);
+    return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(sp));
+}
+/*RUSTYCPP:GEN-END id=serializable.21*/
 
 // Factory registry: maps int32_t kind tags to factories that produce
 // fresh SerializableProxy instances. Authored as inline Rust DSL
