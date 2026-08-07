@@ -501,43 +501,53 @@ Running total: **~1,706 lines** of hand-written C++ removed from `src/rrr`
 since the inventory was taken (batch 1: 397, batch 2: ~102, batch 3: 143,
 batch 4: 102, batch 5A: 157, batch 5B: 130, batch 5C: 114).
 
-### Adjudicated: `verify()` stays hand C++ — `if` + `panic!` is not a translation
+### RESOLVED: `verify()` now panics — the abort semantics were dropped on purpose
 
-Asked directly whether the DSL spelling `if !ok { panic!(...) }` could
-replace `verify()`. Probed it; the answer is no, for a reason that is
-worth writing down because the spelling looks so close.
+An earlier entry here argued `verify()` could not become `if` + `panic!`.
+That analysis was right about the mechanics and wrong about the premise:
+the blocking objection was a *semantic* one (panic throws, verify aborted),
+and the semantic change was subsequently authorized. Recording the
+resolution so the earlier reasoning is not mistaken for a live constraint.
 
-`panic!` lowers to `rusty::panic::do_panic(std::format(...))`, and
-`do_panic` is compile-time switched: with `RUSTY_PANIC_ABORT` it is
-`fputs` + `std::abort()`, and WITHOUT it — which is this build, the macro
-appears nowhere in the tree — it is `throw std::runtime_error`. So the
-DSL spelling turns an abort into a **catchable throw**. rrr has live
-`catch(...)` / `catch_unwind` sites (batch 3 just added one in
-`server_invoke_shutdown_hook_safely`), so a failed `verify` would unwind
-into a swallow instead of dumping core. That is the worst available
-outcome for an assertion whose entire contract is "crucial for both debug
-and release binary".
+What landed:
 
-Flipping `RUSTY_PANIC_ABORT` on to recover abort semantics is not a
-Goal-0 refactor: it is a project-wide switch that also converts every
-`Option::unwrap`, `Result::unwrap` and bounds check from throw to abort,
-and it would break the `catch_unwind` code we rely on.
+  - the `#ifdef NDEBUG` split is **deleted**. It was not merely awkward,
+    it was a live inconsistency: without `-DNDEBUG` (this build — the
+    only `-DNDEBUG` in the tree is PRIVATE to the `rusty` umbrella
+    target) `verify` was plain `assert(ok)`, while release builds took a
+    completely different fprintf + trace + abort path. Debug and release
+    now behave identically.
+  - the failure tail is DSL: `fn verify_failed(file: &str, line: u32)`
+    calls `print_stack_trace(stderr)` and then `panic!`.
+  - `verify` itself stays a hand-written 4-line template shim, and always
+    will. The `std::source_location` default argument is the reason: it
+    captures the CALLER's location at ~1,940 sites, and the DSL has no
+    default-argument spelling, so the parameter cannot move into
+    `verify_failed` and cannot be dropped without editing every site.
+    This is the irreducible core — the NDEBUG split and the varargs
+    fprintf that used to accompany it are both gone.
 
-Two further blockers survive even if the strategy question is settled:
-the `std::source_location` **default argument** (the DSL has none, so all
-~1,936 call sites would have to pass file/line explicitly), and the loss
-of `print_stack_trace` at the failure point.
+Consequences, stated because they are invisible from a call site:
 
-Related, and a **correction to batch 3's own stated reason** for dropping
-the three `base/debugging.cpp` edits: the objection given was that a DSL
-tail would allocate (`std::format`) before printing, where `fprintf` does
-not. That is only half true. The line *after* the fprintf is
-`print_stack_trace`, and on Linux that already mallocs — `backtrace_symbols`
-allocates, and the renderer builds a `rusty::Vec<std::string>`. The crash
-path is therefore already allocating. What the current order genuinely
-buys is that the `file:line` header reaches stderr *before* the first
-malloc, so a corrupt heap still yields the location. That is a real but
-narrow property, and it is the only thing the drop is defending.
+  - `panic!` lowers to `rusty::panic::do_panic`, compile-time switched on
+    `RUSTY_PANIC_ABORT`, which this tree defines nowhere. So a failed
+    `verify` now THROWS and unwinds. rrr has live `catch (...)` sites
+    (rpc/callbacks.cpp, rpc/request_queue.cpp) plus a `catch_unwind` in
+    rpc/server.cpp, any of which can swallow a failed precondition that
+    previously killed the process.
+  - the mitigation is ordering: `print_stack_trace` runs BEFORE the
+    throw, so even a swallowed panic leaves the failure and its frames on
+    stderr. After unwinding those frames are gone for good.
+  - three regression tests in `tests/rpc_frame_codec_test.cc`
+    (`VerifySemantics.*`) pin all of it — passing checks are silent,
+    failing ones throw with the caller's file in the message, and
+    unwinding runs destructors. They are the tripwire if the panic
+    strategy is ever flipped.
+
+Also worth keeping: the earlier "the crash path is allocation-free"
+objection was half wrong. `print_stack_trace` already mallocs on Linux
+(`backtrace_symbols`, plus a `rusty::Vec<std::string>` renderer), so the
+path was never allocation-free.
 
 ## Idioms learned while landing these
 

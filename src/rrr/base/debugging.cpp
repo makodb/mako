@@ -70,28 +70,56 @@ bool unlikely(bool value) {
 
 void print_stack_trace(FILE* fp = stderr) __attribute__((noinline));
 
+// The failure tail of `verify()`, in DSL. Authorized semantic change:
+// this now PANICS rather than aborting. Two consequences worth stating
+// at the definition, because neither is visible from a call site:
+//
+//  - `panic!` lowers to `rusty::panic::do_panic`, which is compile-time
+//    switched. This tree does not define `RUSTY_PANIC_ABORT` anywhere,
+//    so a panic THROWS `std::runtime_error` and unwinds. rrr has live
+//    `catch (...)` sites (rpc/callbacks.cpp, rpc/request_queue.cpp) and
+//    a `catch_unwind` in rpc/server.cpp, any of which can now swallow a
+//    failed precondition that previously killed the process. That is
+//    why the stack trace is emitted HERE, before the throw: even when
+//    the panic is swallowed, the failure still reaches stderr with the
+//    frames intact, which is not recoverable after unwinding.
+//  - the trace precedes the message deliberately (the message is the
+//    last line, nearest the eye, and closest to any `what()` a catcher
+//    later prints).
+#if RUSTYCPP_RUST
+fn verify_failed(file: &str, line: u32) {
+    print_stack_trace(stderr);
+    panic!("verify failed at {}, line {}", file, line);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=debugging.6 version=1 rust_sha256=447806d50d5e9ea998e4fed523c51d16bfd0cec5da4cd46ea0c29dd84934c30b*/
+void verify_failed(std::string_view file, uint32_t line);
+
+void verify_failed(std::string_view file, uint32_t line) {
+    print_stack_trace(std::move(stderr));
+    rusty::panic::do_panic(std::format("verify failed at {}, line {}" , file , line));
+}
+/*RUSTYCPP:GEN-END id=debugging.6*/
+
 /**
  * Use assert() when the test is only intended for debugging.
  * Use verify() when the test is crucial for both debug and release binary.
  */
 template <typename Expr>
-// @safe - pure precondition check; aborts on failure (parity with Rust's
-// `assert!` macro). No memory operations, no caller-visible side effects.
-// @unsafe - PLATFORM/CONFIG #ifdef SPLIT (NDEBUG), a std::source_location
-// DEFAULT ARGUMENT (the DSL has no default args), and varargs fprintf.
-// Any one of those would floor it.
+// @safe - pure precondition check; panics on failure (parity with Rust's
+// `assert!`). No memory operations, no caller-visible side effects.
+// @unsafe - a std::source_location DEFAULT ARGUMENT, which the DSL has
+// no spelling for. That default is the whole point of the shim: it
+// captures the CALLER's location across ~1,940 call sites, so it cannot
+// move into `verify_failed` and cannot be dropped without editing all
+// of them. Everything else that used to floor this function is gone —
+// the NDEBUG #ifdef split and the varargs fprintf both live in the DSL
+// tail above now.
 inline void verify(const Expr& expr,
                    const std::source_location& loc = std::source_location::current()) {
-  const bool ok = static_cast<bool>(expr);
-#ifdef NDEBUG
-  if (__builtin_expect(!ok, false)) {
-    fprintf(stderr, "  *** verify failed at %s, line %u\n", loc.file_name(), loc.line());
-    print_stack_trace(stderr);
-    std::abort();
+  if (unlikely(!static_cast<bool>(expr))) {
+    verify_failed(loc.file_name(), loc.line());
   }
-#else
-  assert(ok);
-#endif
 }
 
 } // export namespace rrr

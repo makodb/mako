@@ -490,5 +490,61 @@ TEST(RpcFrameCodecTest, FrameDecodeStatusStringification) {
               frame_decode_status_to_string(FrameDecodeStatus::Malformed));
 }
 
+
+// ---------------------------------------------------------------------
+// verify() semantics guard.
+//
+// `verify()` was changed from abort-on-failure to panic-on-failure (an
+// authorized semantic change). Because this tree does not define
+// RUSTY_PANIC_ABORT, "panic" means "throw and unwind", and that is a
+// property ~1,940 call sites now depend on. These pin it: a passing
+// check must be silent and free, and a failing one must throw something
+// catchable that names the caller's file and line. Without this, a
+// future flip of the panic strategy would change behaviour everywhere
+// with nothing going red.
+// ---------------------------------------------------------------------
+
+TEST(VerifySemantics, PassingCheckDoesNotThrow) {
+  EXPECT_NO_THROW(verify(true));
+  EXPECT_NO_THROW(verify(1 == 1));
+  // Pointer and integer expressions go through the same static_cast<bool>.
+  int x = 0;
+  EXPECT_NO_THROW(verify(&x));
+  EXPECT_NO_THROW(verify(42));
+}
+
+TEST(VerifySemantics, FailingCheckThrowsAndNamesCallerLocation) {
+  bool threw = false;
+  std::string what;
+  try {
+    verify(false);
+  } catch (const std::exception& e) {
+    threw = true;
+    what = e.what();
+  }
+  ASSERT_TRUE(threw) << "verify(false) must throw now, not abort";
+  // The message must carry the CALLER's location (this file), which is
+  // the whole reason the source_location default argument survives.
+  EXPECT_NE(what.find("verify failed"), std::string::npos) << what;
+  EXPECT_NE(what.find("rpc_frame_codec_test"), std::string::npos)
+      << "message should name the caller's file, got: " << what;
+}
+
+TEST(VerifySemantics, ThrowUnwindsSoDestructorsStillRun) {
+  // The practical consequence of panic=unwind: cleanup runs. If the
+  // strategy is ever switched to abort, this test is the tripwire.
+  struct Flag {
+    bool* p;
+    ~Flag() { *p = true; }
+  };
+  bool destroyed = false;
+  try {
+    Flag f{&destroyed};
+    verify(false);
+  } catch (const std::exception&) {
+  }
+  EXPECT_TRUE(destroyed) << "unwinding must run destructors";
+}
+
 }  // namespace
 }  // namespace rrr
