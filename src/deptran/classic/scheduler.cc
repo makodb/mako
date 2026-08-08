@@ -407,7 +407,7 @@ bool SchedulerClassic::CheckCommitted(const janus::Command& tpc_commit_cmd) {
 int SchedulerClassic::Next(int slot, janus::Command md) {
   if (md.kind_ == TpcPrepareCommand::static_kind()) {
     // TpcPrepareCommand migrated to Serializable.
-    auto* c = md.unpack<TpcPrepareCommand>();
+    auto* c = md.unpack_mut<TpcPrepareCommand>();
     verify(c != nullptr);
     PrepareReplicated(*c);
   } else if (md.kind_ == TpcCommitCommand::static_kind()) {
@@ -421,7 +421,7 @@ int SchedulerClassic::Next(int slot, janus::Command md) {
     // because construction sites use `wrap_serializable_aliased`,
     // which preserves shared_ptr aliasing through the proxy. On the
     // leader, `c` here aliases the sender's instance.
-    auto* c = md.unpack<TpcEmptyCommand>();
+    auto* c = md.unpack_mut<TpcEmptyCommand>();
     verify(c != nullptr);
     c->Done();
   } else if (md.kind_ == TpcBatchCommand::static_kind()) {

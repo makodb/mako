@@ -8,8 +8,7 @@
 
 namespace janus {
 
-// registration switched to no-arg form — kind
-// auto-derived from `Serializable<T, MakoCommands>` CRTP base.
+// Registry key comes from the payload's explicit MakoCommands membership.
 static int volatile x = rrr::SerializableRegistry::reg<SimpleRWCommand>(SimpleRWCommand::static_kind());
 
 SimpleRWCommand::SimpleRWCommand() {

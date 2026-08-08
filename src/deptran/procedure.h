@@ -185,7 +185,9 @@ typedef map<parid_t, vector<shared_ptr<SimpleCommand>>> ReadyPiecesData;
 // The nested SimpleCommand serialization uses the Phase 4d-6
 // archive operators in `command_marshaler.cc`, which mirror the
 // existing Marshal-based ones byte-for-byte.
-class VecPieceData : public rrr::Serializable<VecPieceData, MakoCommands> {
+class VecPieceData
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, VecPieceData>::KIND> {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece_data_{};
@@ -218,8 +220,10 @@ class VecPieceData : public rrr::Serializable<VecPieceData, MakoCommands> {
   }
 };
 
-// TypeList-derived kind.
-class VecRecData : public rrr::Serializable<VecRecData, MakoCommands> {
+// Explicit kind from the `PayloadMember<MakoCommands>` registration.
+class VecRecData
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, VecRecData>::KIND> {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<key_t>> key_data_{};
@@ -246,8 +250,10 @@ class VecRecData : public rrr::Serializable<VecRecData, MakoCommands> {
   }
 };
 
-// TypeList-derived kind.
-class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
+// Explicit kind from the `PayloadMember<MakoCommands>` registration.
+class ViewData
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, ViewData>::KIND> {
  public:
   View view_;
   parid_t partition_id_ = 0; // partition id for which this view applies
@@ -295,7 +301,7 @@ class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
   }
 };
 
-// TypeList-derived kind. Uses Phase 3f-prep
+// Explicit registered kind. Uses Phase 3f-prep
 // nested-MarshallDeputy archive operators for the per-entry command
 // payloads.
 //
@@ -305,8 +311,9 @@ class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
 // also uses Command directly; shared_ptr<Marshallable> callers
 // auto-convert via Command's implicit ctor.  save/load drives
 // Command archive ops directly; wire format unchanged.
-class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
-                                                 MakoCommands> {
+class KeyCmdBatchData
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, KeyCmdBatchData>::KIND> {
  public:
   std::vector<key_t> keys_;
   std::vector<Command> commands_;

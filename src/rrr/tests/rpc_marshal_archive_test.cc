@@ -21,6 +21,7 @@
 
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
+#include <rusty/marker.hpp>
 #include <rusty/option.hpp>
 
 
@@ -1053,17 +1054,18 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
 // removed earlier this session.
 
 // ---------------------------------------------------------------------------
-// TypeList index/contains and SerializableEnvelope fixtures.
+// PayloadMember and SerializableEnvelope fixtures.
 // ---------------------------------------------------------------------------
 
-// Three small Serializable types shared by the compile-time TypeList
-// lookup tests and the runtime-registry envelope tests.
+// Three small Serializable-shaped types shared by the compile-time marker
+// membership tests and the runtime-registry envelope tests.
 // Test types use kind values 60/61/62 — fit in v32 single-byte range
 // (≤63), distinct from `MakoCommands` (1-19) and `ANY_MESSAGE` (24).
 // `SerializableEnvelope::load` uses `SerializableRegistry::create(kind)`,
-// so the test types are registered below. `TypeList::index_of<T>()`
-// remains compile-time (1-indexed positions); the kind value the
-// test types report is independent of TypeList position.
+// so the test types are registered below. Closed-set membership and its
+// wire kind are explicit, compile-time `PayloadMember` properties.
+struct EnvelopeTestSet {};
+
 struct TypeListFactoryAlpha {
   static constexpr int32_t kKind = 60;
   int32_t a{0};
@@ -1088,9 +1090,60 @@ struct TypeListFactoryGamma {
   int32_t kind() const { return kKind; }
 };
 
-using TypeListFactoryList = TypeList<TypeListFactoryAlpha,
-                                     TypeListFactoryBeta,
-                                     TypeListFactoryGamma>;
+}  // namespace
+
+// Marker specializations must live in the primary template's namespace.
+// The fixture types remain TU-local through the surrounding unnamed
+// namespace; reopening it below refers to the same unnamed namespace.
+template <>
+struct PayloadMember<EnvelopeTestSet, TypeListFactoryAlpha> {
+  static constexpr bool value = true;
+  static constexpr int32_t KIND = TypeListFactoryAlpha::kKind;
+};
+
+template <>
+struct PayloadMember<EnvelopeTestSet, TypeListFactoryBeta> {
+  static constexpr bool value = true;
+  static constexpr int32_t KIND = TypeListFactoryBeta::kKind;
+};
+
+template <>
+struct PayloadMember<EnvelopeTestSet, TypeListFactoryGamma> {
+  static constexpr bool value = true;
+  static constexpr int32_t KIND = TypeListFactoryGamma::kKind;
+};
+
+namespace {
+
+struct LegacyEnvelopeLayout {
+  int32_t kind_;
+  rusty::Option<SerializableProxy> inner_;
+};
+
+using EnvelopeLayoutSubject = SerializableEnvelope<EnvelopeTestSet>;
+
+template <typename T>
+concept HasGeneratedDefaultFactory = requires { T::default_(); };
+
+static_assert(std::is_default_constructible_v<EnvelopeLayoutSubject>);
+static_assert(std::is_copy_constructible_v<EnvelopeLayoutSubject>);
+static_assert(std::is_copy_assignable_v<EnvelopeLayoutSubject>);
+static_assert(!std::is_aggregate_v<EnvelopeLayoutSubject>);
+static_assert(!HasGeneratedDefaultFactory<EnvelopeLayoutSubject>);
+static_assert(!std::is_constructible_v<
+              EnvelopeLayoutSubject,
+              int32_t,
+              rusty::Option<SerializableProxy>,
+              std::array<rusty::PhantomData<EnvelopeTestSet>, 0>>);
+static_assert(std::is_standard_layout_v<EnvelopeLayoutSubject>);
+static_assert(sizeof(SerializableEnvelope<EnvelopeTestSet>) ==
+              sizeof(LegacyEnvelopeLayout));
+static_assert(alignof(SerializableEnvelope<EnvelopeTestSet>) ==
+              alignof(LegacyEnvelopeLayout));
+static_assert(offsetof(EnvelopeLayoutSubject, kind_) ==
+              offsetof(LegacyEnvelopeLayout, kind_));
+static_assert(offsetof(EnvelopeLayoutSubject, inner_) ==
+              offsetof(LegacyEnvelopeLayout, inner_));
 
 // Register with SerializableRegistry so SerializableEnvelope::load can
 // find them. (Static-init ordering is fine:
@@ -1105,49 +1158,109 @@ static int _reg_tl_factory_gamma =
     SerializableRegistry::reg<TypeListFactoryGamma>(
         TypeListFactoryGamma::kKind);
 
-TEST(TypeListFactory, IndexOfReturns1IndexedPosition) {
-  EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryAlpha>(), 1);
-  EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryBeta>(), 2);
-  EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryGamma>(), 3);
-  // Type not in list resolves to 0 (UNKNOWN sentinel).
-  EXPECT_EQ(TypeListFactoryList::index_of<int>(), 0);
-}
+template <typename T>
+concept EnvelopeTestPackable = requires(const T& value) {
+  SerializableEnvelope<EnvelopeTestSet>::template pack<T>(value);
+};
 
-TEST(TypeListFactory, ContainsTracksIndexOf) {
-  EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryAlpha>());
-  EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryBeta>());
-  EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryGamma>());
-  EXPECT_FALSE(TypeListFactoryList::contains<int>());
+template <typename T>
+concept EnvelopeTestAliasPackable = requires(rusty::Arc<T> value) {
+  SerializableEnvelope<EnvelopeTestSet>::template pack_aliased<T>(value);
+};
+
+template <typename T>
+concept EnvelopeTestUnpackable =
+    requires(const SerializableEnvelope<EnvelopeTestSet>& env) {
+      env.template unpack<T>();
+    };
+
+template <typename T>
+concept EnvelopeTestSharedUnpackable =
+    requires(const SerializableEnvelope<EnvelopeTestSet>& env) {
+      env.template unpack_shared<T>();
+    };
+
+template <typename T>
+concept EnvelopeTestTypeCheckable =
+    requires(const SerializableEnvelope<EnvelopeTestSet>& env) {
+      env.template is_a<T>();
+    };
+
+template <typename T>
+concept EnvelopeTestMutUnpackable =
+    requires(SerializableEnvelope<EnvelopeTestSet>& env) {
+      env.template unpack_mut<T>();
+    };
+
+template <typename T>
+concept EnvelopeTestMarshallableCastable =
+    requires(const SerializableEnvelope<EnvelopeTestSet>& env) {
+      marshallable_cast<T>(env);
+    };
+
+static_assert(EnvelopeTestPackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestPackable<TypeListFactoryBeta>);
+static_assert(EnvelopeTestPackable<TypeListFactoryGamma>);
+static_assert(EnvelopeTestAliasPackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestUnpackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestSharedUnpackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestTypeCheckable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestMutUnpackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestMarshallableCastable<TypeListFactoryAlpha>);
+static_assert(!EnvelopeTestPackable<int>);
+static_assert(!EnvelopeTestAliasPackable<int>);
+static_assert(!EnvelopeTestUnpackable<int>);
+static_assert(!EnvelopeTestSharedUnpackable<int>);
+static_assert(!EnvelopeTestTypeCheckable<int>);
+static_assert(!EnvelopeTestMutUnpackable<int>);
+static_assert(!EnvelopeTestMarshallableCastable<int>);
+
+TEST(PayloadMemberFactory, ExplicitMembershipAndKinds) {
+  EXPECT_TRUE((PayloadMember<EnvelopeTestSet, TypeListFactoryAlpha>::value));
+  EXPECT_TRUE((PayloadMember<EnvelopeTestSet, TypeListFactoryBeta>::value));
+  EXPECT_TRUE((PayloadMember<EnvelopeTestSet, TypeListFactoryGamma>::value));
+  EXPECT_FALSE((PayloadMember<EnvelopeTestSet, int>::value));
+  EXPECT_EQ((PayloadMember<EnvelopeTestSet, TypeListFactoryAlpha>::KIND), 60);
+  EXPECT_EQ((PayloadMember<EnvelopeTestSet, TypeListFactoryBeta>::KIND), 61);
+  EXPECT_EQ((PayloadMember<EnvelopeTestSet, TypeListFactoryGamma>::KIND), 62);
 }
 
 // ---------------------------------------------------------------------------
-// SerializableEnvelope<TypeList> — closed-set polymorphic carrier.
+// SerializableEnvelope<PayloadSet> — closed-set polymorphic carrier.
 //
 // Replaces MarshallDeputy for closed-set polymorphism. Wire format
 // [v32 kind][payload bytes] — byte-for-byte identical to MarshallDeputy
 // post-L9.
 // ---------------------------------------------------------------------------
 
-using EnvelopeTestList = TypeList<TypeListFactoryAlpha,
-                                  TypeListFactoryBeta,
-                                  TypeListFactoryGamma>;
-
 TEST(SerializableEnvelope, DefaultConstructedIsEmpty) {
-  SerializableEnvelope<EnvelopeTestList> env;
+  SerializableEnvelope<EnvelopeTestSet> env;
   // (the redundant `explicit operator bool` was removed with the DSL
   // conversion — no trait maps to it and it had zero production callers)
   EXPECT_FALSE(env.has_value());
+  EXPECT_EQ(env.kind_, 0);
   EXPECT_EQ(env.kind(), 0);
   // unpack on empty returns nullptr.
   EXPECT_EQ(env.unpack<TypeListFactoryAlpha>(), nullptr);
   EXPECT_FALSE(env.is_a<TypeListFactoryAlpha>());
+
+  // Prove the generated C++ constructor writes the public kind cache rather
+  // than merely observing zeroed stack storage by accident.
+  alignas(EnvelopeLayoutSubject)
+      std::array<std::byte, sizeof(EnvelopeLayoutSubject)> storage;
+  storage.fill(std::byte{0xA5});
+  auto* poisoned = std::construct_at(
+      reinterpret_cast<EnvelopeLayoutSubject*>(storage.data()));
+  EXPECT_EQ(poisoned->kind_, 0);
+  EXPECT_FALSE(poisoned->has_value());
+  std::destroy_at(poisoned);
 }
 
 TEST(SerializableEnvelope, PackValueSemanticHoldsCopy) {
   TypeListFactoryBeta beta;
   beta.b = "value-semantic";
 
-  auto env = SerializableEnvelope<EnvelopeTestList>::pack(beta);
+  auto env = SerializableEnvelope<EnvelopeTestSet>::pack(beta);
   EXPECT_TRUE(env.has_value());
   EXPECT_EQ(env.kind(), TypeListFactoryBeta::kKind);
   EXPECT_TRUE(env.is_a<TypeListFactoryBeta>());
@@ -1167,7 +1280,7 @@ TEST(SerializableEnvelope, PackAliasedSharesPayload) {
   auto sp = rusty::Arc<TypeListFactoryAlpha>::make();
   sp.get_mut().unwrap().a = 7;
 
-  auto env = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
+  auto env = SerializableEnvelope<EnvelopeTestSet>::pack_aliased(sp);
   EXPECT_TRUE(env.has_value());
   EXPECT_EQ(env.kind(), TypeListFactoryAlpha::kKind);
 
@@ -1185,7 +1298,7 @@ TEST(SerializableEnvelope, PackAliasedSharesPayload) {
 }
 
 TEST(SerializableEnvelope, UnpackWrongTypeReturnsNullptr) {
-  auto env = SerializableEnvelope<EnvelopeTestList>::pack(
+  auto env = SerializableEnvelope<EnvelopeTestSet>::pack(
       TypeListFactoryGamma{});
   EXPECT_TRUE(env.is_a<TypeListFactoryGamma>());
   EXPECT_FALSE(env.is_a<TypeListFactoryAlpha>());
@@ -1199,13 +1312,13 @@ TEST(SerializableEnvelope, RoundTripValueSemanticViaArchive) {
   // Encode.
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  auto outgoing = SerializableEnvelope<EnvelopeTestList>::pack(beta);
+  auto outgoing = SerializableEnvelope<EnvelopeTestSet>::pack(beta);
   outgoing.save(writer);
 
   // Decode.
   BufferSource source(sink.bytes.data(), sink.bytes.len());
   BinaryReadArchive reader(make_source_proxy(&source));
-  SerializableEnvelope<EnvelopeTestList> incoming;
+  SerializableEnvelope<EnvelopeTestSet> incoming;
   incoming.load(reader);
 
   EXPECT_TRUE(incoming.has_value());
@@ -1223,13 +1336,13 @@ TEST(SerializableEnvelope, RoundTripAliasedViaArchive) {
   // Encode aliased pack.
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  auto outgoing = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
+  auto outgoing = SerializableEnvelope<EnvelopeTestSet>::pack_aliased(sp);
   outgoing.save(writer);
 
   // Decode.
   BufferSource source(sink.bytes.data(), sink.bytes.len());
   BinaryReadArchive reader(make_source_proxy(&source));
-  SerializableEnvelope<EnvelopeTestList> incoming;
+  SerializableEnvelope<EnvelopeTestSet> incoming;
   incoming.load(reader);
 
   EXPECT_EQ(incoming.kind(), TypeListFactoryGamma::kKind);
@@ -1239,14 +1352,14 @@ TEST(SerializableEnvelope, RoundTripAliasedViaArchive) {
 }
 
 TEST(SerializableEnvelope, WireSizeFor1ByteKind) {
-  // Kind 50 (alpha) fits in 1-byte v32 (≤63); alpha's `a` field is
+  // Kind 60 (alpha) fits in 1-byte v32 (≤63); alpha's `a` field is
   // i32 (4 bytes).  Total wire size: 1 (v32 kind) + 4 (i32 a) = 5 bytes.
   TypeListFactoryAlpha alpha;
   alpha.a = 0;
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  auto env = SerializableEnvelope<EnvelopeTestList>::pack(alpha);
+  auto env = SerializableEnvelope<EnvelopeTestSet>::pack(alpha);
   env.save(writer);
 
   EXPECT_EQ(sink.bytes.len(), 1u + sizeof(int32_t));
@@ -1262,14 +1375,20 @@ TEST(SerializableEnvelope, IsCopyableAndCopiesShareProxy) {
   // Unique-owner mutation window: the Arc is not shared yet.
   auto sp = rusty::Arc<TypeListFactoryAlpha>::make();
   sp.get_mut().unwrap().a = 100;
-  auto env_a = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
+  auto env_a = SerializableEnvelope<EnvelopeTestSet>::pack_aliased(sp);
 
-  // Copy.
+  // The implicit C++ copy remains available.
   auto env_b = env_a;
 
-  // Both should see the same payload.
+  // The explicit Rust Clone surface has the same Arc-sharing semantics and
+  // does not require the payload-set tag to implement Clone.
+  auto env_c = env_a.clone();
+
+  // All three should see the same payload.
   EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>(),
             env_b.unpack<TypeListFactoryAlpha>());
+  EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>(),
+            env_c.unpack<TypeListFactoryAlpha>());
 
   // Mutation through one envelope is visible to the other (because
   // both share the same Arc-backed proxy internally).
@@ -1278,6 +1397,7 @@ TEST(SerializableEnvelope, IsCopyableAndCopiesShareProxy) {
   const_cast<TypeListFactoryAlpha*>(sp.get())->a = 200;
   EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>()->a, 200);
   EXPECT_EQ(env_b.unpack<TypeListFactoryAlpha>()->a, 200);
+  EXPECT_EQ(env_c.unpack<TypeListFactoryAlpha>()->a, 200);
 }
 
 }  // namespace

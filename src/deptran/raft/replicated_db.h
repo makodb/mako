@@ -29,7 +29,7 @@ struct KVOperation {
     std::string value;  // empty for DELETE
 };
 
-// TypeList-derived kind. Wire payload preserved
+// Explicit registered kind. Wire payload preserved
 // byte-for-byte:
 //   uint8_t op | std::string key | std::string value
 //   [if op == BATCH] uint32_t count
@@ -41,8 +41,9 @@ struct KVOperation {
 // thin wrappers that build a BinaryWriteArchive/BinaryReadArchive on
 // top of the archive serde surface via save/load — this
 // keeps the existing test.cc round-trip sites compiling unchanged.
-class ReplicatedDBCommand : public rrr::Serializable<ReplicatedDBCommand,
-                                                     MakoCommands> {
+class ReplicatedDBCommand
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, ReplicatedDBCommand>::KIND> {
 public:
     ReplicatedDBOp op_ = ReplicatedDBOp::PUT;
     std::string key_;

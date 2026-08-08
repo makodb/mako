@@ -3509,10 +3509,8 @@ struct ClientPool;
 // std::string, say) and that same line would silently GUT the pool's
 // config on every read. Fail the build instead of shipping that.
 // Authored as inline Rust DSL: a top-level `const _: () = assert!(cond,
-// "prose")` lowers to a namespace-scope `static_assert` (same idiom as
-// `envelope_assert_in_type_list` in serializable_envelope.cpp). The
-// emitted message is the stringified assertion, so the prose survives
-// nested inside it.
+// "prose")` lowers to a namespace-scope `static_assert`. The emitted
+// message is the stringified assertion, so the prose survives.
 #if RUSTYCPP_RUST
 const _: () = assert!(std::is_trivially_copyable::<PoolConfig>::value,
     "ClientPool::pool_config() returns std::move(*guard); a non-trivially-copyable PoolConfig would be moved OUT of the mutex and leave the stored config wrecked. Give pool_config() an explicit copy before relaxing this.");

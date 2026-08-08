@@ -10,17 +10,18 @@ namespace janus {
 
 
 class TxData;
-// TypeList-derived kind from `MakoCommands` position.
+// Explicit kind from the `PayloadMember<MakoCommands>` registration.
 // Previously held a manual `kMarshallKind = MarshallDeputy::CMD_TPC_PREPARE`
-// constant; the position in `MakoCommands` (see mako_commands.h) now
-// supplies the kind via the `Serializable` CRTP base.
+// constant; the central marker registration (see mako_commands.h) now
+// supplies the kind via the const-generic `Serializable` base.
 //
 // the nested polymorphic
 // command field `cmd_` migrated from `shared_ptr<Marshallable>` to
 // `janus::Command`.  Wire format unchanged; see
 // `docs/dev/l10-unblock-plan.md`.
-class TpcPrepareCommand : public rrr::Serializable<TpcPrepareCommand,
-                                                   MakoCommands> {
+class TpcPrepareCommand
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, TpcPrepareCommand>::KIND> {
  public:
   txnid_t tx_id_ = 0;
   int32_t ret_ = -1;
@@ -30,10 +31,11 @@ class TpcPrepareCommand : public rrr::Serializable<TpcPrepareCommand,
   void load(BinaryReadArchive& ar);
 };
 
-// TypeList-derived kind via `MakoCommands` position.
+// Explicit kind via the `PayloadMember<MakoCommands>` registration.
 // nested `cmd_` migrated to janus::Command.
-class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
-                                                  MakoCommands> {
+class TpcCommitCommand
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, TpcCommitCommand>::KIND> {
  public:
   txnid_t tx_id_ = 0;
   int ret_ = -1;
@@ -46,15 +48,16 @@ class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
   void load(BinaryReadArchive& ar);
 };
 
-// TypeList-derived kind via `MakoCommands` position.
+// Explicit kind via the `PayloadMember<MakoCommands>` registration.
 // Wire payload empty (no fields). The `event` member is local state
 // used for sender↔apply synchronization on the leader; it is NOT
 // serialized. Construction sites that need the leader-local "wrap,
 // replicate, wait" pattern use `wrap_serializable_aliased<T>` to
 // preserve `shared_ptr` aliasing — `serializable_cast<T>` on the apply
 // path returns the SAME instance the sender is waiting on.
-class TpcEmptyCommand : public rrr::Serializable<TpcEmptyCommand,
-                                                 MakoCommands> {
+class TpcEmptyCommand
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, TpcEmptyCommand>::KIND> {
  private:
   rusty::Arc<BoxEvent<bool>> event{create_sp_box_event<bool>()};
 
@@ -70,20 +73,22 @@ class TpcEmptyCommand : public rrr::Serializable<TpcEmptyCommand,
   void Done() const { event->set(1); };
 };
 
-// TypeList-derived kind. Stateless tag command — no
+// Explicit registered kind. Stateless tag command — no
 // fields, save/load are no-ops.
-class TpcNoopCommand : public rrr::Serializable<TpcNoopCommand,
-                                                MakoCommands> {
+class TpcNoopCommand
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, TpcNoopCommand>::KIND> {
  public:
   void save(BinaryWriteArchive&) const {}
   void load(BinaryReadArchive&) {}
 };
 
-// TypeList-derived kind. Holds a vector of
+// Explicit registered kind. Holds a vector of
 // TpcCommitCommand; each element's save/load uses TpcCommitCommand's
 // Serializable interface.
-class TpcBatchCommand : public rrr::Serializable<TpcBatchCommand,
-                                                 MakoCommands> {
+class TpcBatchCommand
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, TpcBatchCommand>::KIND> {
   uint32_t size_ = 0;
 public:
   vector<rusty::Arc<TpcCommitCommand>> cmds_;

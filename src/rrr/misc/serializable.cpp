@@ -4402,23 +4402,49 @@ std::add_pointer_t<std::add_const_t<details::SerializableSharedPtrHolder<T>>> se
 }
 /*RUSTYCPP:GEN-END id=serializable.19*/
 
-// CRTP base providing `kind()` (instance) + `static_kind()` (static)
-// derived from a TypeList position.  Production payload types
-// inherit `rrr::Serializable<MyType, MakoCommands>` to pick up these
-// methods + satisfy the SerializableFacade convention shape.
+// Const-generic base providing `kind()` (instance) + `static_kind()`
+// (static) from an explicit wire discriminant. Production payloads bind
+// KIND through their closed-set PayloadMember registration, e.g.
+// `Serializable<PayloadMember<MakoCommands, MyType>::KIND>`.
 //
-// 2 step 5 (2026-05-05): moved here from marshal_serializable_bridge.hpp
-// when that header retired with the rest of the bridge. Every in-tree
-// payload names its TypeList explicitly; there is no sentinel default.
-template<typename Derived, typename PayloadList>
+// KIND 0 remains the wire-level "unknown / unset" sentinel. The const
+// accessor asserts before returning the discriminant. `cpp_no_auto_traits`
+// is load-bearing: this empty C++ base must not inject inherited Send/Sync
+// markers into payload classes.
+#if RUSTYCPP_RUST
+#[cfg_attr(any(), cpp_no_auto_traits)]
+pub struct Serializable<const KIND: i32> {}
+
+impl<const KIND: i32> Serializable<KIND> {
+    #[cfg_attr(any(), cpp_noexcept)]
+    pub const fn kind(&self) -> i32 {
+        Self::static_kind()
+    }
+
+    #[cfg_attr(any(), cpp_noexcept)]
+    pub const fn static_kind() -> i32 {
+        assert!(KIND != 0i32,
+            "Serializable kind 0 is reserved for unknown / unset");
+        KIND
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.22 version=1 rust_sha256=760f928907e3a9832cddb249b7197eb0cbaaa3fd2403da10ad8768f25880fb29*/
+template<int32_t KIND>
+struct Serializable;
+
+template<int32_t KIND>
 struct Serializable {
-  int32_t kind() const noexcept {
-    return PayloadList::template index_of<Derived>();
-  }
-  static int32_t static_kind() noexcept {
-    return PayloadList::template index_of<Derived>();
-  }
+
+    constexpr int32_t kind() const noexcept(true) {
+        return Serializable<KIND>::static_kind();
+    }
+    static constexpr int32_t static_kind() noexcept(true) {
+        if (!(rusty::detail::deref_if_pointer_like(KIND) != static_cast<int32_t>(0))) { throw std::logic_error("Serializable kind 0 is reserved for unknown / unset"); }
+        return KIND;
+    }
 };
+/*RUSTYCPP:GEN-END id=serializable.22*/
 
 // The structural contract for a Serializable-migrated T is:
 //   - void save(BinaryWriteArchive&) const
@@ -4574,90 +4600,6 @@ void SerializableRegistry::clear_for_testing() {
 }
 /*RUSTYCPP:GEN-END id=serializable.registry*/
 
-
-
-// ---------------------------------------------------------------------------
-// Layer 5: declaration-order kind tags via a central TypeList.
-//
-// Mirrors Rust's `enum Foo { A(...), B(...), ... }` + bincode pattern,
-// where each variant's wire discriminant is derived from declaration
-// order in the enum.  In C++, the "central enum" is a `TypeList<...>`
-// at namespace scope:
-//
-//   namespace janus {
-//   class EmptyGraph;
-//   class RccGraph;
-//   class TpcCommitCommand;
-//   // ...all forward-declared
-//
-//   using AllPayloads = rrr::TypeList<
-//       EmptyGraph,
-//       RccGraph,
-//       TpcCommitCommand,
-//       // ...
-//   >;
-//   }
-//
-// `TypeList<Ts...>::index_of<T>()` returns T's position in the list as
-// a constexpr int32_t.  Each Serializable type's kind is its position.
-//
-// Properties:
-//   * Cross-compiler / cross-machine deterministic — index is purely
-//     a property of declaration order in source.
-//   * Zero collision risk — distinct types get distinct indices.
-//   * Rename-stable — renaming `TpcCommitCommand` doesn't change its
-//     position in the list, so its kind is unchanged.
-//   * Backward-compat by appending — adding a new type at the END of
-//     the list assigns it the next available kind; existing types keep
-//     theirs.  Reordering or removing is a wire-break.
-//
-// This replaces the prior approaches:
-//   * Manual `static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_X`
-//     (per-type constant + central int enum) — the per-type constant
-//     and the central enum collapse into the single TypeList.
-//   * FNV-1a hash of `typeid(T).name()` (the previous POC) — replaced
-//     because hashing is implementation-dependent (mangled name format)
-//     and rename-fragile.
-
-// `TypeList<Ts...>` — variadic compile-time type list with index lookup.
-// Follows the standard `std::tuple`-style variadic pattern but exposes
-// only the operations we need.
-//
-// Indices start at 1 (not 0) — position 0 remains the wire-level
-// "unknown / kind unset" sentinel. So the first element has
-// `index_of<...>() == 1`. Types not in the list resolve to 0, which
-// `contains<T>()` exposes to compile-time envelope membership checks.
-//
-template<typename... Ts>
-struct TypeList {
-  // Returns T's 1-indexed position in `Ts...`, or 0 if T is not in
-  // the list.  Constexpr so `kind()` etc. inline to a literal.
-  template<typename T>
-  static constexpr int32_t index_of() noexcept {
-    return index_of_impl<T, 1, Ts...>();
-  }
-
-  // Returns true iff `T` appears in `Ts...`.
-  template<typename T>
-  static constexpr bool contains() noexcept {
-    return index_of<T>() != 0;
-  }
-
- private:
-  template<typename T, int32_t I>
-  static constexpr int32_t index_of_impl() noexcept {
-    return 0;  // T not in list — surfaces as UNKNOWN sentinel
-  }
-
-  template<typename T, int32_t I, typename Head, typename... Rest>
-  static constexpr int32_t index_of_impl() noexcept {
-    if constexpr (std::is_same_v<T, Head>) {
-      return I;
-    } else {
-      return index_of_impl<T, I + 1, Rest...>();
-    }
-  }
-};
 
 
 }  // export namespace rrr

@@ -9,12 +9,13 @@ namespace janus {
 
 class SimpleCommand;  // forward decl for ctor below; full def in procedure.h
 
-// TypeList-derived kind. Wire payload preserved:
+// Explicit registered kind. Wire payload preserved:
 // int32_t type_ | key_t key_ | int32_t value_ (the cmd_id_,
 // rule_mode_*, is_recovery_command_, zero_time_ fields are local
 // state, never serialized).
-class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
-                                                 MakoCommands> {
+class SimpleRWCommand
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, SimpleRWCommand>::KIND> {
  public:
   int32_t type_;
   key_t key_;
