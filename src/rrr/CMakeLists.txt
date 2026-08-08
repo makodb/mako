@@ -14,11 +14,48 @@ file(GLOB RRR_BENCH_SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/reactor/*.S"
 )
 
-# Files that have been converted to C++23 named-module interface units.
-# Each entry is a regular .cpp/.cc file but contains `export module
-# rrr.<name>;` at the top. The matching .hpp/.h remains as a forward-
-# declaration shim for non-importing consumers; the linker resolves
-# their calls to the module-emitted .o.
+# C++23 named-module interface units. Most entries are legacy .cpp/.cc files;
+# the srpc pilot entries are checked-in .cppm artifacts generated from Rust.
+# Each contains `export module rrr.<name>;`. Matching .hpp/.h files remain as
+# forward-declaration shims for non-importing consumers during the transition.
+set(SRPC_GENERATED_MODULE_DIR
+    ${CMAKE_SOURCE_DIR}/crates/srpc/cpp/generated)
+set(SRPC_CPP_CONSUMER_MANIFEST
+    ${CMAKE_SOURCE_DIR}/crates/srpc/cpp/mako-consumer.toml)
+set(SRPC_CPP_GENERATOR
+    ${CMAKE_SOURCE_DIR}/scripts/generate_srpc_cpp.py)
+
+# Ordinary C++ builds consume checked-in modules and do not need rustc or the
+# transpiler. Fail closed at configure time if their offline ownership/source/
+# integrity stamps drift from the Rust sources or consumer profile.
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+execute_process(
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${SRPC_CPP_GENERATOR}"
+        --check-stamps
+        --manifest "${SRPC_CPP_CONSUMER_MANIFEST}"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    RESULT_VARIABLE SRPC_CPP_STAMP_CHECK_RESULT
+    OUTPUT_VARIABLE SRPC_CPP_STAMP_CHECK_STDOUT
+    ERROR_VARIABLE SRPC_CPP_STAMP_CHECK_STDERR
+)
+if(NOT SRPC_CPP_STAMP_CHECK_RESULT STREQUAL "0")
+    string(STRIP
+        "${SRPC_CPP_STAMP_CHECK_STDOUT}\n${SRPC_CPP_STAMP_CHECK_STDERR}"
+        SRPC_CPP_STAMP_CHECK_DIAGNOSTIC)
+    message(FATAL_ERROR
+        "srpc generated C++ module integrity check failed:\n"
+        "${SRPC_CPP_STAMP_CHECK_DIAGNOSTIC}\n"
+        "Regenerate with scripts/generate_srpc_cpp.py --write")
+endif()
+message(STATUS "Verified srpc generated C++ module integrity stamps")
+
+set(RRR_GENERATED_PILOT_LEGACY_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
+)
 set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/basetypes.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/callback_wrapper.cpp
@@ -31,7 +68,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
+    ${SRPC_GENERATED_MODULE_DIR}/rrr.stat.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
@@ -41,7 +78,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/completion_tracker.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
+    ${SRPC_GENERATED_MODULE_DIR}/rrr.connection_metrics.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
@@ -49,7 +86,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
+    ${SRPC_GENERATED_MODULE_DIR}/rrr.internal_protocol.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp
@@ -59,7 +96,13 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
 )
-list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_MODULE_SRC})
+# Remove the retired legacy pilot paths from the ordinary source glob so each
+# generated named module has exactly one compilation unit. Keeping the paths
+# explicit also makes stale files in a no-delete build mirror harmless.
+list(REMOVE_ITEM RRR_BENCH_SRC
+    ${RRR_MODULE_SRC}
+    ${RRR_GENERATED_PILOT_LEGACY_SRC}
+)
 # Platform implementation units for rrr.epoll_wrapper (Rust std's
 # sys-module pattern): exactly one is compiled, selected below.
 list(REMOVE_ITEM RRR_BENCH_SRC
@@ -105,7 +148,11 @@ if(NOT TARGET rrr)
     add_library(rrr STATIC ${RRR_BENCH_SRC})
     if(RRR_MODULE_SRC)
         target_sources(rrr PUBLIC
-            FILE_SET rrr_modules TYPE CXX_MODULES FILES ${RRR_MODULE_SRC}
+            FILE_SET rrr_modules TYPE CXX_MODULES
+            BASE_DIRS
+                ${CMAKE_CURRENT_SOURCE_DIR}
+                ${SRPC_GENERATED_MODULE_DIR}
+            FILES ${RRR_MODULE_SRC}
         )
     endif()
     # Goal-0 C demotion: syscall ladders that will never be Rust live as
@@ -142,8 +189,9 @@ if(NOT TARGET rrr)
     target_link_libraries(rrr pthread rusty)
     target_sources(rrr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
 
-    # RRR files for borrow checking — every non-test C++ module unit in rrr
-    # except for the two genuine exclusions called out at the bottom.
+    # RRR files for borrow checking — every non-test, hand-maintained C++
+    # module unit in rrr except for the two genuine exclusions called out at
+    # the bottom. Rust-owned generated units are documented inline.
     set(RRR_BORROW_SRC
         # base/
         ${CMAKE_CURRENT_SOURCE_DIR}/base/basetypes.cpp
@@ -158,7 +206,10 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
+        # Generated pilot modules (rrr.stat, rrr.connection_metrics, and
+        # rrr.internal_protocol) are emitted from crates/srpc Rust sources.
+        # rustc owns their source-level safety checks; the checked-in C++ is
+        # a build artifact and is intentionally excluded from C++ borrowing.
         # reactor/ — (fiber_impl.cc, event.cc, quorum_event.cc, reactor.cc were
         # merged into rrr.reactor / reactor.cpp during modularization.)
         ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
@@ -171,7 +222,6 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/completion_tracker.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
@@ -179,7 +229,6 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp

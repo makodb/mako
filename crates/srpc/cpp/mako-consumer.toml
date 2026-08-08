@@ -1,0 +1,28 @@
+schema_version = 2
+profile = "mako-cpp-consumer-v1"
+crate_root = "crates/srpc"
+output_root = "crates/srpc/cpp/generated"
+cxx_namespace = "rrr"
+transpiler_git = "2b261ccc0915ea99cbab02631ccc5bea19ac82c7"
+transpiler_sha256 = "65f10285f4954c422c7a0968197c118025a0d8676d20a32f24edc4b2f68d1782"
+
+[[module]]
+source = "src/wire/internal_protocol.rs"
+module_name = "rrr.internal_protocol"
+output = "rrr.internal_protocol.cppm"
+kind = "interface"
+gmf_headers = []
+
+[[module]]
+source = "src/base/stat.rs"
+module_name = "rrr.stat"
+output = "rrr.stat.cppm"
+kind = "interface"
+gmf_headers = []
+
+[[module]]
+source = "src/rpc/connection_metrics.rs"
+module_name = "rrr.connection_metrics"
+output = "rrr.connection_metrics.cppm"
+kind = "interface"
+gmf_headers = []

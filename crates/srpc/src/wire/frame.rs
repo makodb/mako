@@ -1,9 +1,8 @@
 //! Frame codec — the 4-byte size prefix that delimits messages on the
 //! transport stream.
 //!
-//! Byte-exact port of `src/rrr/rpc/frame_codec.cpp` +
-//! `src/rrr/rpc/internal_protocol.cpp` (whose DSL blocks are the
-//! Rust-syntax source of these functions). Wire layout:
+//! Byte-exact port of `src/rrr/rpc/frame_codec.cpp`, sharing the response-size
+//! helpers now owned by [`super::internal_protocol`]. Wire layout:
 //!
 //! ```text
 //! [ i32 encoded_size (host byte order = little-endian) ][ payload... ]
@@ -24,8 +23,9 @@ pub const FRAME_HEADER_SIZE: usize = 4;
 /// Maximum payload size (low 31 bits of the header i32).
 pub const MAX_FRAME_PAYLOAD_SIZE: i32 = 0x7fff_ffff;
 
-const RESPONSE_HEADER_EXT_FLAG: u32 = 0x8000_0000;
-const RESPONSE_SIZE_MASK: u32 = 0x7fff_ffff;
+pub use super::internal_protocol::{
+    encode_response_size, response_has_extended_header, response_payload_size,
+};
 
 /// Result of peeking at a (possibly incomplete) frame header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,24 +47,6 @@ impl FrameHeader {
     pub fn total_frame_size(&self) -> i32 {
         FRAME_HEADER_SIZE as i32 + self.payload_size
     }
-}
-
-pub fn response_has_extended_header(encoded_size: i32) -> bool {
-    ((encoded_size as u32) & RESPONSE_HEADER_EXT_FLAG) != 0
-}
-
-pub fn response_payload_size(encoded_size: i32) -> i32 {
-    ((encoded_size as u32) & RESPONSE_SIZE_MASK) as i32
-}
-
-pub fn encode_response_size(payload_size: i32, extended_header: bool) -> i32 {
-    let base: u32 = (payload_size as u32) & RESPONSE_SIZE_MASK;
-    let out: u32 = if extended_header {
-        base | RESPONSE_HEADER_EXT_FLAG
-    } else {
-        base
-    };
-    out as i32
 }
 
 /// Write the 4-byte header into `out_buf`. Fails (returns false, like

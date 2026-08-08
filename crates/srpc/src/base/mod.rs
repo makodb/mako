@@ -16,5 +16,6 @@
 
 pub mod log;
 pub mod rand;
+pub mod stat;
 pub mod sync;
 pub mod time;
