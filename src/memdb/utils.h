@@ -17,7 +17,6 @@ using rrr::verify;
 using base::i32;
 using base::i64;
 using base::Log;
-using base::insert_into_map;
 
 typedef uint64_t version_t;
 typedef int colid_t;

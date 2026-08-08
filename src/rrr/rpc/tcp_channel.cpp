@@ -2737,8 +2737,7 @@ ChannelError connect_errno_to_channel_error(int32_t err) {
 // C return contract: >=0 fd; -1 errno in *out_errno; -2 timeout;
 // -3 self-connect guard (reported as ConnectionRefused so callers
 // retry like a not-yet-up server).
-extern "C" int32_t srpc_tcp_connect_socket(uint32_t addr_be, uint16_t port_be,
-                                           int32_t timeout_ms, int32_t* out_errno);
+extern "C" int32_t srpc_tcp_connect_socket(uint32_t addr_be, uint16_t port_be, int32_t timeout_ms, int32_t* out_errno);
 
 // Parse head + connection build/wiring as DSL over the C connect
 // ladder. The old tail's `const_cast<TcpConnection&>(*conn.get())` is

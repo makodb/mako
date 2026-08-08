@@ -19,7 +19,7 @@ export module rrr.misc;
 import std;
 import rrr.basetypes;
 
-// @safe - mostly templated helpers (clamp, insert_into_map) +
+// @safe - the clamp template +
 // Job/OneTimeJob/FrequentJob value classes. The syscall-touching
 // functions (`get_ncpu`, `time_now_str`) and `FrequentJob::Ready`
 // (calls rrr::Time::now(false)) carry per-method `// @unsafe`
@@ -59,34 +59,6 @@ T clamp(const T& v, const T1& lower, const T2& upper) {
 
 
 int get_ncpu();
-
-
-// `insert_into_map` -- 20 call sites across src/memdb. Authored as
-// inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
-// of truth; the transpiler regenerates the matching
-// `RUSTYCPP:GEN-BEGIN ... END` block as a real
-// `template<typename K, typename V, typename Map>` with a
-// byte-identical parameter list, so no call site changes.
-//
-// The body swapped `map.insert(typename Map::value_type(key, value))`
-// for `map.emplace(key, value)`: that dependent-type spelling was the
-// ONLY thing here that needed C++ template metaprogramming, and
-// emplace is semantically identical for every container this is
-// called with (std::map / multimap / unordered_map /
-// unordered_multimap -- C++11 requires multimap::emplace to insert at
-// the upper bound of the equivalent range, exactly like
-// insert(value_type)). The generic receiver makes the transpiler emit
-// `rusty::deref_call(map, rusty::detail::__mdisp_emplace{}, ...)`,
-// which is what grew the GEN-DISPATCH block at the top of the file.
-template <class K, class V, class Map>
-// @unsafe - uses the DEPENDENT TYPE `typename Map::value_type`, which is
-// C++ template metaprogramming with no DSL equivalent. (Converting it
-// emitted `rusty::deref_call(map, __mdisp_emplace{}, ...)`, which fails
-// at all 136 call sites — the emplace dispatcher is module-purview and
-// not exported.)
-inline void insert_into_map(Map &map, const K &key, const V &value) {
-  map.insert(typename Map::value_type(key, value));
-}
 
 
 // `Job` — abstract base trait for unit-of-work scheduling. Concrete

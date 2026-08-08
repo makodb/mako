@@ -992,8 +992,7 @@ struct ReconnectState {
 // flip) can reference it as a field type — the DSL parser rejects an
 // in-struct `using` alias, but a namespace-scope alias resolves fine as a
 // field/param type.
-using AsyncReplyCallback = rusty::Function<
-    void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
+using AsyncReplyCallback = rusty::Function<void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
 
 
 
@@ -2581,8 +2580,7 @@ export namespace rrr {
 // rrr/callbacks.cpp wrap the same Function shape in `rusty::Arc<…>`
 // (a shared, clone-friendly handle), so the two namespaces are distinct.
 using OnConnectedCallbackFn           = rusty::Function<void() const>;
-using OnErrorCallbackFn               = rusty::Function<void(RpcError,
-                                                             const std::string&) const>;
+using OnErrorCallbackFn               = rusty::Function<void(RpcError, const std::string&) const>;
 using OnReconnectedCallbackFn         = rusty::Function<void(bool) const>;
 
 

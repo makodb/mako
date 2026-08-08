@@ -29,7 +29,7 @@ TxnOCC::TxnOCC(const TxnMgr *mgr,
   for (auto &it: table_names) {
     SnapshotTable *tbl = get_snapshot_table(it);
     SnapshotTable *snapshot = tbl->snapshot();
-    insert_into_map(snapshots_, it, snapshot);
+    snapshots_.emplace(it, snapshot);
     snapshot_tables_.insert(snapshot);
   }
 }
@@ -183,9 +183,8 @@ bool TxnOCC::read_column(Row *row, colid_t col_id, Value *value) {
   // reading from actual table data, track version
   if (row->rtti() == symbol_t::ROW_VERSIONED) {
     VersionedRow *v_row = (VersionedRow *) row;
-    insert_into_map(ver_check_read_,
-                    row_column_pair(v_row, col_id),
-                    v_row->get_column_ver(col_id));
+    ver_check_read_.emplace(row_column_pair(v_row, col_id),
+                            v_row->get_column_ver(col_id));
     // increase row reference count because later we are going to check its version
     incr_row_refcount(row);
     __DebugCheckReadVersion(row_column_pair(v_row, col_id),
@@ -194,7 +193,7 @@ bool TxnOCC::read_column(Row *row, colid_t col_id, Value *value) {
     verify(row->rtti() == symbol_t::ROW_VERSIONED);
   }
   *value = row->get_column(col_id);
-  insert_into_map(reads_, row, col_id);
+  reads_.emplace(row, col_id);
 
   return true;
 }
@@ -239,14 +238,14 @@ bool TxnOCC::write_column(Row *row, colid_t col_id, const Value &value) {
     version_t ver_now = v_row->get_column_ver(col_id);
     auto row_col = row_column_pair(v_row, col_id);
     __DebugCheckReadVersion(row_col, ver_now);
-//    insert_into_map(ver_check_write_, row_col, ver_now); // ???
+//    ver_check_write_.emplace(row_col, ver_now); // ???
     // increase row reference count because later we are going to check its version
     incr_row_refcount(row);
   } else {
     // row must either be FineLockedRow or CoarseLockedRow
     verify(row->rtti() == symbol_t::ROW_VERSIONED);
   }
-  insert_into_map(updates_, row, std::make_pair(col_id, value));
+  updates_.emplace(row, std::make_pair(col_id, value));
 
   return true;
 }
@@ -293,9 +292,8 @@ bool TxnOCC::remove_row(Table *tbl, Row *row) {
         if (policy_ == symbol_t::OCC_EAGER) {
           v_row->incr_column_ver(col_id);
         }
-        insert_into_map(ver_check_write_,
-                        row_column_pair(v_row, col_id),
-                        v_row->get_column_ver(col_id));
+        ver_check_write_.emplace(row_column_pair(v_row, col_id),
+                                 v_row->get_column_ver(col_id));
         // increase row reference count because later we are going to check its version
         incr_row_refcount(row);
       }

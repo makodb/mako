@@ -77,7 +77,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
         txn->__debug_abort_ = 1;
         return false;
       }
-      insert_into_map(txn->locks_, row, -1);
+      txn->locks_.emplace(row, -1);
     }
     for (auto &it : txn->updates_) {
       Row *row = it.first;
@@ -103,7 +103,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
         txn->__debug_abort_ = 1;
         return false;
       }
-      insert_into_map(txn->locks_, row, -1);
+      txn->locks_.emplace(row, -1);
     }
     Log_debug("txn: {:x} occ locks succeed.", (int64_t)tx_id);
     txn->__debug_abort_ = 0;

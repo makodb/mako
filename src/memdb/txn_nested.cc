@@ -85,7 +85,7 @@ bool TxnNested::write_column(Row *row, colid_t col_id, const Value &value) {
   }
 
   // cache updates
-  insert_into_map(updates_, row, make_pair(col_id, value));
+  updates_.emplace(row, make_pair(col_id, value));
 
   return true;
 }

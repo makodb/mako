@@ -204,7 +204,7 @@ public:
         SortedMultiKey key = SortedMultiKey(row->get_key(), schema_);
         verify(row->schema() == schema_);
         row->set_table(this);
-        insert_into_map(rows_, key, row);
+        rows_.emplace(key, row);
     }
 
     Cursor query(const Value& kv) {
@@ -344,7 +344,7 @@ public:
         MultiBlob key = row->get_key();
         verify(row->schema() == schema_);
         row->set_table(this);
-        insert_into_map(rows_, key, row);
+        rows_.emplace(key, row);
     }
 
     Cursor query(const Value& kv) {
@@ -474,7 +474,7 @@ public:
         // make the row readonly, to gaurante snapshot is not changed
         row->make_readonly();
 
-        insert_into_map(rows_, key, RefCountedRow(row));
+        rows_.insert(key, RefCountedRow(row));
     }
     Cursor query(const Value& kv) {
         return query(kv.get_blob());

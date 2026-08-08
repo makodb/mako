@@ -1,5 +1,6 @@
 module;
 
+#include <rusty/array.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/once.hpp>
 #include <rusty/rusty.hpp>
@@ -26,12 +27,6 @@ import rrr.logging;
 // read_to_string + find/substr walking. The `cpu_stat()` factory hands
 // out the static instance and inherits namespace @safe.
 export namespace rrr {
-
-// C-array sample-history field types, aliased so the DSL can spell
-// them (the DSL type grammar has no array syntax).
-using CpuUlongSamples = unsigned long[10];
-using CpuClockSamples = clock_t[10];
-using CpuPid = pid_t;
 
 struct CPUInfo;
 
@@ -69,13 +64,17 @@ void cpuinfo_get_memory(CPUInfo& info, const std::string& pid,
 //     free fns (their bodies are platform-#ifdef syscall + /proc
 //     parsing kernels).
 #if RUSTYCPP_RUST
+// Preserve the pre-conversion C++ trait surface: the old opaque C-array
+// aliases kept CPUInfo out of rusty::is_send/is_sync. Rust still derives its
+// native auto traits because this rustc-visible cfg predicate is always false.
+#[cfg_attr(any(), cpp_no_auto_traits)]
 struct CPUInfo {
-    last_bytes_rxed: CpuUlongSamples,
-    last_bytes_txed: CpuUlongSamples,
-    last_mem_usage: CpuUlongSamples,
-    last_ticks_: CpuClockSamples,
-    last_user_ticks_: CpuClockSamples,
-    last_kernel_ticks_: CpuClockSamples,
+    last_bytes_rxed: [u64; 10],
+    last_bytes_txed: [u64; 10],
+    last_mem_usage: [u64; 10],
+    last_ticks_: [i64; 10],
+    last_user_ticks_: [i64; 10],
+    last_kernel_ticks_: [i64; 10],
     last_cpu: f64,
     last_txed: f64,
     last_rxed: f64,
@@ -83,7 +82,7 @@ struct CPUInfo {
     total_mem: i64,
     page_size: i64,
     index: i32,
-    pid_: CpuPid,
+    pid_: i32,
     // Mutex protecting the sample-history fields above (payload bool is
     // an unused placeholder; see get_cpu_stat below).
     mtx_: Mutex<bool>,
@@ -169,16 +168,16 @@ impl CPUInfo {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cpuinfo.info version=1 rust_sha256=d1fd3c4b352819ceb8684ad0e6ac6e58fb48f856778ea91f2e10884158565d2b*/
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.info version=1 rust_sha256=e65d90cff22552bf578c6da5a7cccd7540e235c6c9cd22746db10f0fe3f57340*/
 struct CPUInfo;
 
 struct CPUInfo {
-    CpuUlongSamples last_bytes_rxed;
-    CpuUlongSamples last_bytes_txed;
-    CpuUlongSamples last_mem_usage;
-    CpuClockSamples last_ticks_;
-    CpuClockSamples last_user_ticks_;
-    CpuClockSamples last_kernel_ticks_;
+    std::array<uint64_t, 10> last_bytes_rxed;
+    std::array<uint64_t, 10> last_bytes_txed;
+    std::array<uint64_t, 10> last_mem_usage;
+    std::array<int64_t, 10> last_ticks_;
+    std::array<int64_t, 10> last_user_ticks_;
+    std::array<int64_t, 10> last_kernel_ticks_;
     double last_cpu;
     double last_txed;
     double last_rxed;
@@ -186,7 +185,7 @@ struct CPUInfo {
     int64_t total_mem;
     int64_t page_size;
     int32_t index;
-    CpuPid pid_;
+    int32_t pid_;
     rusty::Mutex<bool> mtx_;
 
     static rusty::Vec<double> cpu_stat();
@@ -207,9 +206,9 @@ rusty::Vec<double> CPUInfo::get_cpu_stat() {
     auto utime = std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.user_ticks); }) { return (__r.user_ticks); } else if constexpr (requires { (__r.user_ticks_field); }) { return (__r.user_ticks_field); } else if constexpr (requires { ((*__r).user_ticks); }) { return ((*__r).user_ticks); } else { return ((*__r).user_ticks_field); } }(sample));
     int64_t last_ticks = static_cast<int64_t>(0);
     if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
-        last_ticks = this->last_ticks_[rusty::detail::deref_if_pointer_like(this->index) - 1];
+        last_ticks = this->last_ticks_.at(rusty::detail::deref_if_pointer_like(this->index) - 1);
     } else {
-        last_ticks = this->last_ticks_[static_cast<size_t>(9)];
+        last_ticks = this->last_ticks_.at(static_cast<size_t>(9));
     }
     cpuinfo_log_ticks(std::move(last_ticks), std::move(ticks));
     if (rusty::detail::deref_if_pointer_like(ticks) <= (rusty::detail::deref_if_pointer_like(last_ticks) + 60)) {
@@ -227,28 +226,28 @@ rusty::Vec<double> CPUInfo::get_cpu_stat() {
         return std::move(result);
     }
     if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
-        this->last_kernel_ticks_[this->index] = std::move(stime);
-        this->last_user_ticks_[this->index] = std::move(utime);
-        this->last_ticks_[this->index] = std::move(ticks);
+        this->last_kernel_ticks_.at(this->index) = std::move(stime);
+        this->last_user_ticks_.at(this->index) = std::move(utime);
+        this->last_ticks_.at(this->index) = std::move(ticks);
         this->index += 1;
     } else {
         auto i = 0;
         while (rusty::detail::deref_if_pointer_like(i) < 9) {
-            this->last_kernel_ticks_[i] = this->last_kernel_ticks_[rusty::detail::deref_if_pointer_like(i) + 1];
-            this->last_user_ticks_[i] = this->last_user_ticks_[rusty::detail::deref_if_pointer_like(i) + 1];
-            this->last_ticks_[i] = this->last_ticks_[rusty::detail::deref_if_pointer_like(i) + 1];
+            this->last_kernel_ticks_.at(i) = this->last_kernel_ticks_.at(rusty::detail::deref_if_pointer_like(i) + 1);
+            this->last_user_ticks_.at(i) = this->last_user_ticks_.at(rusty::detail::deref_if_pointer_like(i) + 1);
+            this->last_ticks_.at(i) = this->last_ticks_.at(rusty::detail::deref_if_pointer_like(i) + 1);
             rusty::detail::deref_if_pointer_like(i) += 1;
         }
-        this->last_kernel_ticks_[static_cast<size_t>(9)] = std::move(stime);
-        this->last_user_ticks_[static_cast<size_t>(9)] = std::move(utime);
-        this->last_ticks_[static_cast<size_t>(9)] = std::move(ticks);
+        this->last_kernel_ticks_.at(static_cast<size_t>(9)) = std::move(stime);
+        this->last_user_ticks_.at(static_cast<size_t>(9)) = std::move(utime);
+        this->last_ticks_.at(static_cast<size_t>(9)) = std::move(ticks);
     }
     auto cpu_total = 0.0;
     if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
         cpu_total = -1.0;
     } else {
-        const auto busy = ((rusty::detail::deref_if_pointer_like(stime) - this->last_kernel_ticks_[static_cast<size_t>(8)])) + ((rusty::detail::deref_if_pointer_like(utime) - this->last_user_ticks_[static_cast<size_t>(8)]));
-        cpu_total = ((static_cast<double>(busy))) / ((static_cast<double>((rusty::detail::deref_if_pointer_like(ticks) - this->last_ticks_[static_cast<size_t>(8)]))));
+        const auto busy = ((rusty::detail::deref_if_pointer_like(stime) - this->last_kernel_ticks_.at(static_cast<size_t>(8)))) + ((rusty::detail::deref_if_pointer_like(utime) - this->last_user_ticks_.at(static_cast<size_t>(8))));
+        cpu_total = ((static_cast<double>(busy))) / ((static_cast<double>((rusty::detail::deref_if_pointer_like(ticks) - this->last_ticks_.at(static_cast<size_t>(8))))));
     }
     this->last_cpu = std::move(cpu_total);
     if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
@@ -409,8 +408,8 @@ fn cpuinfo_get_network(info: &mut CPUInfo, pid: &std::string,
                        result: *mut rusty::Vec<f64>, ticks: i64) {
     let content = cpuinfo_read_proc(cpuinfo_net_path(pid));
     let line = cpuinfo_nth_line(content, 3);
-    let txed = cpuinfo_parse_ulong(cpuinfo_nth_field(line, 1));
-    let rxed = cpuinfo_parse_ulong(cpuinfo_nth_field(line, 9));
+    let txed = cpuinfo_parse_ulong(cpuinfo_nth_field(line, 1)) as u64;
+    let rxed = cpuinfo_parse_ulong(cpuinfo_nth_field(line, 9)) as u64;
 
     let mut tx_total: f64 = -1.0;
     let mut rx_total: f64 = -1.0;
@@ -506,9 +505,9 @@ fn cpuinfo_new() -> CPUInfo {
     // "C++11 only allows consecutive left square brackets when
     // introducing an attribute". A plain local for the index avoids it.
     let idx = info.index;
-    info.last_ticks_[idx]        = ticks.wall_ticks as clock_t;
-    info.last_kernel_ticks_[idx] = ticks.system_ticks as clock_t;
-    info.last_user_ticks_[idx]   = ticks.user_ticks as clock_t;
+    info.last_ticks_[idx]        = ticks.wall_ticks as i64;
+    info.last_kernel_ticks_[idx] = ticks.system_ticks as i64;
+    info.last_user_ticks_[idx]   = ticks.user_ticks as i64;
 
     info.pid_ = rusty::sys::process::getpid();
     let pid_str = std::to_string(info.pid_);
@@ -534,13 +533,13 @@ fn cpuinfo_new() -> CPUInfo {
     info
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cpuinfo.parsers version=1 rust_sha256=c2a6004cce9f84bd59104fc41d95e3d62a69c359410c7712abdc9581b410344a*/
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.parsers version=1 rust_sha256=d7be545115700d0350191c31b536e21621160faff9033474f96741d580833a52*/
 void cpuinfo_get_network(CPUInfo& info, const std::string& pid, rusty::Vec<double>* result, int64_t ticks) {
     CPUInfo* info_shadow1 = &info;
     const auto content = cpuinfo_read_proc(cpuinfo_net_path(pid));
     const auto line = cpuinfo_nth_line(std::move(content), 3);
-    auto txed = cpuinfo_parse_ulong(cpuinfo_nth_field(std::move(line), 1));
-    auto rxed = cpuinfo_parse_ulong(cpuinfo_nth_field(std::move(line), 9));
+    auto txed = static_cast<uint64_t>(cpuinfo_parse_ulong(cpuinfo_nth_field(std::move(line), 1)));
+    auto rxed = static_cast<uint64_t>(cpuinfo_parse_ulong(cpuinfo_nth_field(std::move(line), 9)));
     double tx_total = -1.0;
     double rx_total = -1.0;
     if (rusty::detail::deref_if_pointer_like((*info_shadow1).index) < 10) {
@@ -604,9 +603,9 @@ CPUInfo cpuinfo_new() {
     [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.page_size); }) { return (__r.page_size); } else if constexpr (requires { (__r.page_size_field); }) { return (__r.page_size_field); } else if constexpr (requires { ((*__r).page_size); }) { return ((*__r).page_size); } else { return ((*__r).page_size_field); } }(info) = rusty::sys::process::sysconf(_SC_PAGE_SIZE) / 1024;
     const auto ticks = rusty::sys::process::process_times();
     const auto idx = std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.index); }) { return (__r.index); } else if constexpr (requires { (__r.index_field); }) { return (__r.index_field); } else if constexpr (requires { ((*__r).index); }) { return ((*__r).index); } else { return ((*__r).index_field); } }(info));
-    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_ticks_); }) { return (__r.last_ticks_); } else if constexpr (requires { (__r.last_ticks__field); }) { return (__r.last_ticks__field); } else if constexpr (requires { ((*__r).last_ticks_); }) { return ((*__r).last_ticks_); } else { return ((*__r).last_ticks__field); } }(info)[idx] = static_cast<clock_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.wall_ticks); }) { return (__r.wall_ticks); } else if constexpr (requires { (__r.wall_ticks_field); }) { return (__r.wall_ticks_field); } else if constexpr (requires { ((*__r).wall_ticks); }) { return ((*__r).wall_ticks); } else { return ((*__r).wall_ticks_field); } }(ticks));
-    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_kernel_ticks_); }) { return (__r.last_kernel_ticks_); } else if constexpr (requires { (__r.last_kernel_ticks__field); }) { return (__r.last_kernel_ticks__field); } else if constexpr (requires { ((*__r).last_kernel_ticks_); }) { return ((*__r).last_kernel_ticks_); } else { return ((*__r).last_kernel_ticks__field); } }(info)[idx] = static_cast<clock_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.system_ticks); }) { return (__r.system_ticks); } else if constexpr (requires { (__r.system_ticks_field); }) { return (__r.system_ticks_field); } else if constexpr (requires { ((*__r).system_ticks); }) { return ((*__r).system_ticks); } else { return ((*__r).system_ticks_field); } }(ticks));
-    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_user_ticks_); }) { return (__r.last_user_ticks_); } else if constexpr (requires { (__r.last_user_ticks__field); }) { return (__r.last_user_ticks__field); } else if constexpr (requires { ((*__r).last_user_ticks_); }) { return ((*__r).last_user_ticks_); } else { return ((*__r).last_user_ticks__field); } }(info)[idx] = static_cast<clock_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.user_ticks); }) { return (__r.user_ticks); } else if constexpr (requires { (__r.user_ticks_field); }) { return (__r.user_ticks_field); } else if constexpr (requires { ((*__r).user_ticks); }) { return ((*__r).user_ticks); } else { return ((*__r).user_ticks_field); } }(ticks));
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_ticks_); }) { return (__r.last_ticks_); } else if constexpr (requires { (__r.last_ticks__field); }) { return (__r.last_ticks__field); } else if constexpr (requires { ((*__r).last_ticks_); }) { return ((*__r).last_ticks_); } else { return ((*__r).last_ticks__field); } }(info)[idx] = static_cast<int64_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.wall_ticks); }) { return (__r.wall_ticks); } else if constexpr (requires { (__r.wall_ticks_field); }) { return (__r.wall_ticks_field); } else if constexpr (requires { ((*__r).wall_ticks); }) { return ((*__r).wall_ticks); } else { return ((*__r).wall_ticks_field); } }(ticks));
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_kernel_ticks_); }) { return (__r.last_kernel_ticks_); } else if constexpr (requires { (__r.last_kernel_ticks__field); }) { return (__r.last_kernel_ticks__field); } else if constexpr (requires { ((*__r).last_kernel_ticks_); }) { return ((*__r).last_kernel_ticks_); } else { return ((*__r).last_kernel_ticks__field); } }(info)[idx] = static_cast<int64_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.system_ticks); }) { return (__r.system_ticks); } else if constexpr (requires { (__r.system_ticks_field); }) { return (__r.system_ticks_field); } else if constexpr (requires { ((*__r).system_ticks); }) { return ((*__r).system_ticks); } else { return ((*__r).system_ticks_field); } }(ticks));
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_user_ticks_); }) { return (__r.last_user_ticks_); } else if constexpr (requires { (__r.last_user_ticks__field); }) { return (__r.last_user_ticks__field); } else if constexpr (requires { ((*__r).last_user_ticks_); }) { return ((*__r).last_user_ticks_); } else { return ((*__r).last_user_ticks__field); } }(info)[idx] = static_cast<int64_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.user_ticks); }) { return (__r.user_ticks); } else if constexpr (requires { (__r.user_ticks_field); }) { return (__r.user_ticks_field); } else if constexpr (requires { ((*__r).user_ticks); }) { return ((*__r).user_ticks); } else { return ((*__r).user_ticks_field); } }(ticks));
     [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.pid_); }) { return (__r.pid_); } else if constexpr (requires { (__r.pid__field); }) { return (__r.pid__field); } else if constexpr (requires { ((*__r).pid_); }) { return ((*__r).pid_); } else { return ((*__r).pid__field); } }(info) = rusty::sys::process::getpid();
     const auto pid_str = std::to_string(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.pid_); }) { return (__r.pid_); } else if constexpr (requires { (__r.pid__field); }) { return (__r.pid__field); } else if constexpr (requires { ((*__r).pid_); }) { return ((*__r).pid_); } else { return ((*__r).pid__field); } }(info)));
     auto t0 = static_cast<int64_t>([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.last_ticks_); }) { return (__r.last_ticks_); } else if constexpr (requires { (__r.last_ticks__field); }) { return (__r.last_ticks__field); } else if constexpr (requires { ((*__r).last_ticks_); }) { return ((*__r).last_ticks_); } else { return ((*__r).last_ticks__field); } }(info)[idx]);
@@ -680,13 +679,36 @@ size_t cpuinfo_parse_ulong(const std::string& tok) {
 }
 /*RUSTYCPP:GEN-END id=cpuinfo.8*/
 
-// @unsafe - the one line of cpuinfo_new that has no DSL spelling: a
-// DESIGNATED initializer. mtx_ takes its placeholder payload and every
-// other member is value-initialized ({} per C++20 designated-init
-// rules). The rest of the factory is DSL in the parsers block above.
-CPUInfo cpuinfo_blank() {
-    return CPUInfo{.mtx_ = rusty::Mutex<bool>(false)};
+// Complete Rust construction of an empty sample history. Fixed-size Rust
+// arrays lower to std::array with the same layout as the former C arrays on
+// the supported Linux ABIs; spelling every field also keeps this valid Rust
+// instead of relying on C++ partial designated-initializer semantics.
+#if RUSTYCPP_RUST
+fn cpuinfo_blank() -> CPUInfo {
+    CPUInfo {
+        last_bytes_rxed: [0u64; 10],
+        last_bytes_txed: [0u64; 10],
+        last_mem_usage: [0u64; 10],
+        last_ticks_: [0i64; 10],
+        last_user_ticks_: [0i64; 10],
+        last_kernel_ticks_: [0i64; 10],
+        last_cpu: 0.0,
+        last_txed: 0.0,
+        last_rxed: 0.0,
+        last_mem: 0.0,
+        total_mem: 0i64,
+        page_size: 0i64,
+        index: 0i32,
+        pid_: 0i32,
+        mtx_: rusty::Mutex::<bool>::new(false),
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.9 version=1 rust_sha256=b68096924d097a8e218cfcdcad99b115373143e7ab89088c70685c3c828e97d4*/
+CPUInfo cpuinfo_blank() {
+    return CPUInfo{.last_bytes_rxed = rusty::array_repeat(static_cast<uint64_t>(0), 10), .last_bytes_txed = rusty::array_repeat(static_cast<uint64_t>(0), 10), .last_mem_usage = rusty::array_repeat(static_cast<uint64_t>(0), 10), .last_ticks_ = rusty::array_repeat(static_cast<int64_t>(0), 10), .last_user_ticks_ = rusty::array_repeat(static_cast<int64_t>(0), 10), .last_kernel_ticks_ = rusty::array_repeat(static_cast<int64_t>(0), 10), .last_cpu = 0.0, .last_txed = 0.0, .last_rxed = 0.0, .last_mem = 0.0, .total_mem = static_cast<int64_t>(0), .page_size = static_cast<int64_t>(0), .index = static_cast<int32_t>(0), .pid_ = static_cast<int32_t>(0), .mtx_ = rusty::Mutex<bool>::new_(false)};
+}
+/*RUSTYCPP:GEN-END id=cpuinfo.9*/
 
 
 // @unsafe - Log_debug varargs shim for the DSL delta method.

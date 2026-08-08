@@ -29,19 +29,32 @@ typedef struct srpc_fiber_ctx {
   uintptr_t r15;
 #elif defined(__aarch64__)
   /* AAPCS64 callee-saved: x19-x28, x29 (fp), x30 (lr used as pc), sp. */
-  void* sp;          /* offset  0 */
-  void* pc;          /* offset  8 (lr on entry = resume address) */
-  uintptr_t x19;     /* offset 16 */
-  uintptr_t x20;     /* offset 24 */
-  uintptr_t x21;     /* offset 32 */
-  uintptr_t x22;     /* offset 40 */
-  uintptr_t x23;     /* offset 48 */
-  uintptr_t x24;     /* offset 56 */
-  uintptr_t x25;     /* offset 64 */
-  uintptr_t x26;     /* offset 72 */
-  uintptr_t x27;     /* offset 80 */
-  uintptr_t x28;     /* offset 88 */
-  uintptr_t fp;      /* offset 96 (x29) */
+  /* offset 0 */
+  void* sp;
+  /* offset 8 (lr on entry = resume address) */
+  void* pc;
+  /* offset 16 */
+  uintptr_t x19;
+  /* offset 24 */
+  uintptr_t x20;
+  /* offset 32 */
+  uintptr_t x21;
+  /* offset 40 */
+  uintptr_t x22;
+  /* offset 48 */
+  uintptr_t x23;
+  /* offset 56 */
+  uintptr_t x24;
+  /* offset 64 */
+  uintptr_t x25;
+  /* offset 72 */
+  uintptr_t x26;
+  /* offset 80 */
+  uintptr_t x27;
+  /* offset 88 */
+  uintptr_t x28;
+  /* offset 96 (x29) */
+  uintptr_t fp;
 #endif
 } srpc_fiber_ctx;
 

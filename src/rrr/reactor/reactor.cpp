@@ -360,7 +360,8 @@ rusty::Arc<IntEvent> int_event_make(int32_t target);
 rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b);
 rusty::Arc<WaitAll> waitall_make();
 rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs);
-template<class Type> struct BoxEvent;
+template<class Type>
+struct BoxEvent;
 template<class Type> rusty::Arc<BoxEvent<Type>> boxevent_make();
 // Detect BoxEvent<T> instantiations so event_make can dispatch to the template
 // factory (concrete-type is_same_v can't match a class-template instantiation).
@@ -3601,8 +3602,7 @@ rusty::thread::ThreadId u64_to_thread_id(uint64_t bits) {
 }
 /*RUSTYCPP:GEN-END id=reactor.62*/
 
-using PollJoinSlot =
-    rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<rusty::Unit>>>;
+using PollJoinSlot = rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<rusty::Unit>>>;
 
 struct PollThread;
 
@@ -3951,8 +3951,7 @@ inline constexpr QuorumPolicy QuorumPolicy_ALWAYS_READY() { return QuorumPolicy:
 // The finalize callback type: the DSL cannot parse a bare fn-type template
 // argument as a field/param signature, so alias it outside the block (the
 // established rrr-dsl idiom for Function-typed members/params).
-using QuorumFinalizeFn =
-    rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)>;
+using QuorumFinalizeFn = rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)>;
 
 // Hand-written @unsafe kernels the DSL bodies call. Declared before the DSL
 // block so the generated method bodies resolve them by ordinary lookup.
