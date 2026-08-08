@@ -32,11 +32,7 @@ export namespace rrr {
 // @unsafe kernels for the DSL class below. Each is a construct the DSL
 // genuinely cannot express, kept minimal so the envelope's SHAPE stays
 // in Rust: C++ template metaprogramming (the TypeList membership
-// static_assert), the RTTI downcast, the const-escape that backs the
-// historical `T* unpack()` contract, and the four archive/registry
-// steps that touch v32 + the serde free functions. Signature rule: a
-// DSL `&mut` PARAMETER passes through as a C++ reference (the archives),
-// while `&mut local` lowers to a pointer (the proxy).
+// static_assert) and the RTTI downcast.
 
 // @unsafe - THE kernel: the C++ dependent-name `template` disambiguator.
 // `TypeList::contains::<T>()` IS spellable in the DSL and DOES lower to a
@@ -79,34 +75,21 @@ inline const details::SerializableSharedPtrHolder<T>* envelope_holder_of(
 
 // @unsafe - mutable escape from the const-view Arc. Backs the non-const
 // `T* unpack()` overload's historical contract; new code should prefer
-// the const overload or unpack_shared.
+// the const overload or unpack_shared. The current pointer-cast lowering
+// emits the required C++ const_cast.
+#if RUSTYCPP_RUST
+fn envelope_holder_ptr_mut<T>(h: *const details::SerializableSharedPtrHolder<T>) -> *mut T {
+    let p: *const T = unsafe { (*h).ptr.get() };
+    p as *mut T
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.5 version=1 rust_sha256=41ef3ab554f24af2903e22db350794dff41c32496158ba992a187b9f1eb9487c*/
 template<typename T>
-inline T* envelope_holder_ptr_mut(
-    const details::SerializableSharedPtrHolder<T>* h) {
-  return const_cast<details::SerializableSharedPtrHolder<T>*>(h)->ptr.as_ptr();
+std::add_pointer_t<T> envelope_holder_ptr_mut(std::add_pointer_t<std::add_const_t<details::SerializableSharedPtrHolder<T>>> h) {
+    const std::add_pointer_t<std::add_const_t<T>> p = (*h).ptr.get();
+    return const_cast<std::add_pointer_t<T>>(reinterpret_cast<std::add_pointer_t<std::add_const_t<T>>>(p));
 }
-
-// @unsafe - v32 construction + the Serialize_/Deserialize_ free functions.
-inline void envelope_write_kind(int32_t kind, BinaryWriteArchive& ar) {
-  rrr::Serialize_::serialize(v32(kind), ar);
-}
-inline int32_t envelope_read_kind(BinaryReadArchive& ar) {
-  v32 kind_v;
-  rrr::Deserialize_::deserialize(kind_v, ar);
-  return kind_v.get();
-}
-
-// @unsafe - virtual dispatch through the held base pointer.
-inline void envelope_base_save(const SerializableBase* base,
-                               BinaryWriteArchive& ar) {
-  base->save(ar);
-}
-// @unsafe - unique-owner mutation window: the proxy is factory-fresh
-// (strong_count 1); a shared proxy here would panic loudly.
-inline void envelope_proxy_load(SerializableProxy* proxy,
-                                BinaryReadArchive& ar) {
-  proxy->get_mut().unwrap().load(ar);
-}
+/*RUSTYCPP:GEN-END id=serializable_envelope.5*/
 
 // @safe - see file header. Authored as inline Rust DSL; the
 // `#if RUSTYCPP_RUST` block is the source of truth and the transpiler
@@ -222,14 +205,16 @@ impl<TypeList> SerializableEnvelope<TypeList> {
     fn save(&self, ar: &mut BinaryWriteArchive) {
         verify(self.has_value());
         let b = self.base_ptr();
-        envelope_write_kind(unsafe { (*b).kind() }, ar);
-        envelope_base_save(b, ar);
+        Serialize_::serialize(v32::new(unsafe { (*b).kind() }), ar);
+        unsafe { (*b).save(ar); }
     }
 
     fn load(&mut self, ar: &mut BinaryReadArchive) {
-        let kind: i32 = envelope_read_kind(ar);
+        let mut kind_v = v32::new(0i32);
+        Deserialize_::deserialize(&mut kind_v, ar);
+        let kind: i32 = kind_v.get();
         let mut proxy: SerializableProxy = SerializableRegistry::create(kind);
-        envelope_proxy_load(&mut proxy, ar);
+        proxy.get_mut().unwrap().load(ar);
         self.inner_ = Some(proxy);
         self.refresh_kind();
     }
@@ -264,7 +249,7 @@ impl<TypeList> PartialEq for SerializableEnvelope<TypeList> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.1 version=1 rust_sha256=c5351a4d5f60a2219b4671c4385703fc0943fa8057485d50d8da322ca5c81f7a*/
+/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.1 version=1 rust_sha256=29aecfc7a160a14f66fe764290ab18f3f398b40d4398c1e715a304cd48736997*/
 template<typename TypeList>
 struct SerializableEnvelope;
 
@@ -346,13 +331,18 @@ struct SerializableEnvelope {
     void save(BinaryWriteArchive& ar) const {
         verify(this->has_value());
         const auto b = this->base_ptr();
-        envelope_write_kind(((*b)).kind(), ar);
-        envelope_base_save(b, ar);
+        Serialize_::serialize(v32::new_(((*b)).kind()), ar);
+        // @unsafe
+        {
+            ((*b)).save(ar);
+        }
     }
     void load(BinaryReadArchive& ar) {
-        int32_t kind = envelope_read_kind(ar);
+        auto kind_v = v32::new_(static_cast<int32_t>(0));
+        Deserialize_::deserialize(kind_v, ar);
+        int32_t kind = kind_v.get();
         SerializableProxy proxy = SerializableRegistry::create(std::move(kind));
-        envelope_proxy_load(&proxy, ar);
+        proxy.get_mut().unwrap().load(ar);
         this->inner_ = rusty::Option<SerializableProxy>(std::move(proxy));
         this->refresh_kind();
     }

@@ -108,19 +108,30 @@ void verify_failed(std::string_view file, uint32_t line) {
 template <typename Expr>
 // @safe - pure precondition check; panics on failure (parity with Rust's
 // `assert!`). No memory operations, no caller-visible side effects.
-// @unsafe - a std::source_location DEFAULT ARGUMENT, which the DSL has
-// no spelling for. That default is the whole point of the shim: it
-// captures the CALLER's location across ~1,940 call sites, so it cannot
-// move into `verify_failed` and cannot be dropped without editing all
-// of them. Everything else that used to floor this function is gone —
-// the NDEBUG #ifdef split and the varargs fprintf both live in the DSL
-// tail above now.
+// The declaration stays hand-written because its source_location default
+// captures the CALLER across ~1,940 call sites. The body is DSL-authored
+// below; C++ carries this earlier default onto the generated definition.
 inline void verify(const Expr& expr,
-                   const std::source_location& loc = std::source_location::current()) {
-  if (unlikely(!static_cast<bool>(expr))) {
-    verify_failed(loc.file_name(), loc.line());
-  }
+                   const std::source_location& loc = std::source_location::current());
+
+#if RUSTYCPP_RUST
+fn verify<Expr>(expr: &Expr, loc: &std::source_location) {
+    if unlikely(!(expr as bool)) {
+        verify_failed(loc.file_name(), loc.line());
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=debugging.7 version=1 rust_sha256=caea79f92e7f1cbda02588acb39e8e98925b1bc5ebd843d0a792844be5ef5576*/
+template<typename Expr>
+void verify(const Expr& expr, const std::source_location& loc);
+
+template<typename Expr>
+void verify(const Expr& expr, const std::source_location& loc) {
+    if (unlikely(!(static_cast<bool>(expr)))) {
+        verify_failed(loc.file_name(), loc.line());
+    }
+}
+/*RUSTYCPP:GEN-END id=debugging.7*/
 
 } // export namespace rrr
 
@@ -237,22 +248,45 @@ std::string bt_render(const BtCapture& cap) {
 // so it cannot cross the C boundary, and the RENDERING is already DSL.
 extern "C" int srpc_backtrace_capture(char*** out_syms);
 extern "C" void srpc_backtrace_free(char** syms);
+using c_char = char;
 
 // @unsafe - walks the C-owned symbol array into the Vec.
-BtCapture bt_capture() {
-    BtCapture cap = BtCapture::new_();
-    char** str_frames = nullptr;
-    int frames = srpc_backtrace_capture(&str_frames);
+#if RUSTYCPP_RUST
+fn bt_capture() -> BtCapture {
+    let mut cap = BtCapture::new();
+    let mut str_frames: *mut *mut c_char = core::ptr::null_mut();
+    let frames = srpc_backtrace_capture(&raw mut str_frames);
     if (frames < 0) {
         return cap;
     }
     cap.ok = true;
-    for (int i = 0; i < frames - 1; i++) {
+    let mut i = 0;
+    while i < frames - 1 {
         cap.symbols.push(std::string(str_frames[i]));
+        i += 1;
     }
     srpc_backtrace_free(str_frames);
-    return cap;
+    cap
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=debugging.8 version=1 rust_sha256=9a88b2e8814f39355c27161714217cf75876ec82fa271626941f02e870254bf8*/
+BtCapture bt_capture() {
+    auto cap = BtCapture::new_();
+    c_char** str_frames = rusty::ptr::null_mut();
+    const auto frames = srpc_backtrace_capture(&str_frames);
+    if ((rusty::detail::deref_if_pointer_like(frames) < 0)) {
+        return std::move(cap);
+    }
+    cap.ok = true;
+    auto i = 0;
+    while (rusty::detail::deref_if_pointer_like(i) < (rusty::detail::deref_if_pointer_like(frames) - 1)) {
+        cap.symbols.push(std::string(str_frames[i]));
+        rusty::detail::deref_if_pointer_like(i) += 1;
+    }
+    srpc_backtrace_free(str_frames);
+    return std::move(cap);
+}
+/*RUSTYCPP:GEN-END id=debugging.8*/
 
 // @unsafe - snprintf into a raw `char[16]`.
 // (was an snprintf kernel; std::format's {:<3} covers %-3d)

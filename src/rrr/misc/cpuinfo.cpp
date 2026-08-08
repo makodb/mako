@@ -664,9 +664,21 @@ std::string cpuinfo_read_proc(const std::string& path) {
 
 // @unsafe - strtoul over the token bytes (empty token parses to 0,
 // replacing the legacy strtoul(NULL) crash on short input).
-unsigned long cpuinfo_parse_ulong(const std::string& tok) {
-    return strtoul(tok.c_str(), nullptr, 0);
+#if RUSTYCPP_RUST
+fn cpuinfo_parse_ulong(tok: &std::string) -> usize {
+    unsafe { strtoul(tok.c_str(), std::ptr::null_mut(), 0) }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.8 version=1 rust_sha256=7dade42978a7d6f745a3e1dfb8e2b07fc86b27bfe37c3b7a729060b897f58959*/
+size_t cpuinfo_parse_ulong(const std::string& tok);
+
+size_t cpuinfo_parse_ulong(const std::string& tok) {
+    // @unsafe
+    {
+        return strtoul(tok.c_str(), rusty::ptr::null_mut(), 0);
+    }
+}
+/*RUSTYCPP:GEN-END id=cpuinfo.8*/
 
 // @unsafe - the one line of cpuinfo_new that has no DSL spelling: a
 // DESIGNATED initializer. mtx_ takes its placeholder payload and every

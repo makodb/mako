@@ -3865,9 +3865,16 @@ namespace rrr {
 // ============================================================================
 
 // @safe - ctor helper: RequestQueue has a config-taking ctor, not a new_().
-inline RequestQueue make_pending_queue(const RequestQueueConfig& c) {
-  return RequestQueue(c);
+#if RUSTYCPP_RUST
+fn make_pending_queue(c: &RequestQueueConfig) -> RequestQueue {
+    RequestQueue(c)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.38 version=1 rust_sha256=b6ae865426332ccf95e9461479fbc2bde420aa762ef1e3b4e9a24255e45fb164*/
+RequestQueue make_pending_queue(const RequestQueueConfig& c) {
+    return RequestQueue(c);
+}
+/*RUSTYCPP:GEN-END id=client.38*/
 
 // @safe - delegates to rusty::sys::time::clock_monotonic_us.
 // Authored as inline Rust DSL (module-scope free fn, mirroring

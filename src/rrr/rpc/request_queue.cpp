@@ -339,9 +339,8 @@ RequestQueueConfig RequestQueueConfig::disabled() {
 // `RequestQueue` — buffers outgoing RPC requests for reconnect/replay, with
 // overflow + TTL-expiry policy, thread-safe via a rusty::Mutex<VecDeque>. Authored
 // as inline-Rust DSL: the struct + two `#[cpp_ctor]` factories + the simple
-// locking/accessor methods are DSL; the methods whose bodies use try/catch +
-// callback invocation + range-for (not expressible in inline-Rust) delegate to
-// hand-written free functions below. RequestQueueConfig / OverflowStrategy /
+// locking/accessor methods are DSL; callback exception isolation uses the DSL
+// catch_unwind helper below. RequestQueueConfig / OverflowStrategy /
 // QueuedRequest are already DSL aggregates (above). The locking methods are
 // `&mut self` (non-const): the C++ original used `mutable rusty::Mutex` to lock
 // from const methods; there are no `const RequestQueue` call sites
@@ -349,7 +348,25 @@ RequestQueueConfig RequestQueueConfig::disabled() {
 // and avoids a mutable-field annotation. `clear_all`'s default arg (-3) is
 // dropped (callers pass it explicitly; the one 0-arg test call is updated).
 struct RequestQueue;
-inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err);
+#if RUSTYCPP_RUST
+fn rq_invoke_callback_safely(cb: QueuedRequestCallback, err: i32) {
+    if cb {
+        unsafe { std::panic::catch_unwind(|| { cb(err); }); }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.7 version=1 rust_sha256=10717086dd3bf9a6ec43212203baae8472ccd2b5b2ca8c549250eb01728e15dd*/
+void rq_invoke_callback_safely(QueuedRequestCallback cb, int32_t err) {
+    if (cb) {
+        // @unsafe
+        {
+            rusty::panic::catch_unwind([&]() {
+cb(std::move(err));
+});
+        }
+    }
+}
+/*RUSTYCPP:GEN-END id=request_queue.7*/
 #if RUSTYCPP_RUST
 struct RequestQueue {
     // Cell: RequestQueue is reached through a shared handle, so a config
@@ -660,24 +677,12 @@ void RequestQueue::update_config(RequestQueueConfig config) const {
 }
 /*RUSTYCPP:GEN-END id=request_queue.queue*/
 
-// @safe - Invoke a queued-request callback, swallowing any exception. No-op if
-// the callback is null. Consumes the callback. The try/catch is not expressible
-// in inline-Rust, so callback invocation lives here (the callbacks.cpp pattern).
-inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err) {
-    if (cb) {
-        // @unsafe { invoking a stored rusty::Function + swallowing exceptions }
-        try { cb(err); } catch (...) {}
-    }
-}
+// @unsafe - enqueue: overflow policy + isolated callback invocation.
 
-// @unsafe - enqueue: overflow policy + try/catch callback invocation (the
-// try/catch and the interleaved rejection callbacks are not DSL-expressible).
+// @unsafe - expire_stale: extract_if + drain callbacks outside the lock.
 
-// @unsafe - expire_stale: extract_if + drain callbacks outside the lock with
-// try/catch (the try/catch is not DSL-expressible).
-
-// @unsafe - clear_all: drain callbacks (range-for over the guarded deque) +
-// clear, invoke outside the lock with try/catch.
+// @unsafe - clear_all: drain callbacks (range-for over the guarded deque),
+// clear, then invoke outside the lock.
 
 // @safe - update_config: lock to serialize with in-flight enqueue/dequeue, then
 // assign the POD config. (The lock-for-side-effect `(void)guard` reads cleaner

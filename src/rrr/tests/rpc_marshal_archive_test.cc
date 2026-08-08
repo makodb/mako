@@ -589,7 +589,7 @@ TEST(FdSinkSemantics, EmptyWriteIsNoop) {
   ScopedPipe p;
   FdSink sink(p.fds[1]);
   // Calling write(p, 0) should not block and should not consume bytes.
-  fd_sink_write(sink, nullptr, 0);
+  sink.write_bytes(nullptr, 0);
   // Close the write end. The read end should immediately see EOF.
   p.close_write();
   uint8_t buf[1];
@@ -600,7 +600,7 @@ TEST(FdSinkSemantics, EmptyWriteIsNoop) {
 TEST(FdSourceSemantics, EmptyReadIsNoop) {
   ScopedPipe p;
   FdSource src(p.fds[0]);
-  size_t got = fd_source_read(src, nullptr, 0);
+  size_t got = src.read_bytes(nullptr, 0);
   EXPECT_EQ(got, 0u);
 }
 
@@ -617,14 +617,14 @@ TEST(FdSourceSemantics, EofReturnsShortRead) {
   FdSource src(p.fds[0]);
   uint8_t buf[16];
   std::memset(buf, 0, sizeof(buf));
-  size_t got = fd_source_read(src, buf, sizeof(buf));
+  size_t got = src.read_bytes(buf, sizeof(buf));
   EXPECT_EQ(got, 3u);
   EXPECT_EQ(buf[0], 0x01);
   EXPECT_EQ(buf[1], 0x02);
   EXPECT_EQ(buf[2], 0x03);
 
   // Subsequent read on the closed pipe sees EOF immediately.
-  size_t again = fd_source_read(src, buf, 4);
+  size_t again = src.read_bytes(buf, 4);
   EXPECT_EQ(again, 0u);
 }
 

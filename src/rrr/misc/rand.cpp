@@ -230,12 +230,6 @@ void RandomGenerator::destroy() {
 
 namespace rrr {
 
-namespace {
-
-int randgen_nu_constant = 0;
-
-}  // namespace
-
 // The per-thread PRNG seed store (pthread_key plumbing, the raw
 // `unsigned int*` seed, rand_r over it, and the pthread_once teardown)
 // lives in srpc_rand.c now — plain C, Goal-0 C demotion. None of it
@@ -244,8 +238,9 @@ extern "C" int srpc_rand_raw(void);
 extern "C" void srpc_rand_destroy(void);
 
 // The last three shims are DSL too: two `unsafe {}` calls into the
-// srpc_rand.c kernels and one accessor over the impl-namespace nu_rand
-// constant. `i32` lowers to `int32_t`, which is the same type as the
+// srpc_rand.c kernels and the historical nu_rand constant, which was
+// never mutated and is therefore returned directly. `i32` lowers to
+// `int32_t`, which is the same type as the
 // `int` in the export-namespace declarations above (same redeclaration
 // pattern the sibling logging.cpp already uses for its kernels).
 #if RUSTYCPP_RUST
@@ -254,9 +249,9 @@ fn randgen_rand_raw() -> i32 {
     unsafe { return srpc_rand_raw(); }
 }
 
-// @safe - accessor over the impl-namespace nu_rand constant.
+// @safe - the historical nu_rand constant was always zero.
 fn randgen_nu_constant_now() -> i32 {
-    randgen_nu_constant
+    0
 }
 
 // @unsafe - thin shim over the C kernel (pthread teardown lives there).
@@ -264,7 +259,7 @@ fn randgen_destroy() {
     unsafe { srpc_rand_destroy(); }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=rand.4 version=1 rust_sha256=c7ab926c4aeff1c9c31719eadadae48c5b53c91e8544c8f6bd7e3a4cc6a758b4*/
+/*RUSTYCPP:GEN-BEGIN id=rand.4 version=1 rust_sha256=408aea116f89714376ed88f8bae046bbeaa53e69ceb271fe179d9de96f7ed311*/
 int32_t randgen_rand_raw();
 int32_t randgen_nu_constant_now();
 void randgen_destroy();
@@ -277,7 +272,7 @@ int32_t randgen_rand_raw() {
 }
 
 int32_t randgen_nu_constant_now() {
-    return std::move(randgen_nu_constant);
+    return static_cast<int32_t>(0);
 }
 
 void randgen_destroy() {

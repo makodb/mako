@@ -5027,13 +5027,6 @@ void shared_int_event_wait(SharedIntEvent& sie, EventTestFn f) {
 // --- from fiber_impl.cc --------------------------------------------------
 
 
-// @unsafe { const_cast<Fiber*> } The one fiber micro-kernel that stays
-// hand-written C++: the DSL `as *mut T` cast lowers to
-// `static_cast<T*>(ptr_or_addr(f))`, which is ill-formed when it would
-// cast away constness ("static_cast from 'const rrr::Fiber *' to
-// 'Fiber *' ... is not allowed"), and the DSL has no const_cast spelling.
-static Fiber* fiber_self_mut(const Fiber& f) { return const_cast<Fiber*>(&f); }
-
 // @unsafe { each body dereferences a raw pointer the caller owns }
 // The rest of the guard surgery is DSL now. Raw-pointer params because a
 // DSL `&fb.field` argument lowers to a pointer at the call site, so the
@@ -5223,14 +5216,16 @@ fn fiber_run(fb: &Fiber) {
     fb.status_.set(FiberStatus::STARTED);
     let sz = reactor_live_fiber_count();
     verify(sz > 0usize);
-    let self_ptr: *mut Fiber = fiber_self_mut(fb);
+    // The closure only reads through this pointer; keep the constness instead
+    // of manufacturing a mutable pointer with a const-removal kernel.
+    let self_ptr: *const Fiber = &raw const *fb;
     let mut task: FiberTaskFn = move |yy: &mut fiber_yield_t| {
         unsafe { fiber_run_wrapper(&*self_ptr, &raw mut *yy); }
     };
     fiber_install_task(&fb.fiber_task_, task);
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.fiber_run version=1 rust_sha256=0fd7be128824d73425c3f4505b2e6269886ad97622f98cf6963fa5825c29d04b*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.fiber_run version=1 rust_sha256=e5e72f67d7b00599414d86d10a5577fe1d8dfb486f4489d929c1a732ae97c45b*/
 void fiber_run(const Fiber& fb) {
     {
         auto&& tguard = rusty::borrow(fb.fiber_task_);
@@ -5240,7 +5235,7 @@ void fiber_run(const Fiber& fb) {
     fb.status_.set(rusty::clone(rusty::clone(FiberStatus_STARTED())));
     const auto sz = reactor_live_fiber_count();
     verify(rusty::detail::deref_if_pointer_like(sz) > static_cast<size_t>(0));
-    Fiber* self_ptr = fiber_self_mut(fb);
+    const Fiber* self_ptr = &fb;
     FiberTaskFn task = [=, self_ptr = std::move(self_ptr)](fiber_yield_t& yy) {
 // @unsafe
 {
@@ -5341,14 +5336,36 @@ void fiber_do_finalize(const Fiber& fb) {
 
 namespace {
 
-// @unsafe { ::getenv walks the raw process environment }
-// The env probe is the one genuine kernel here: `getenv` plus a raw
-// `const char*` walk. Pulling it out of the old lambda-IIFE lets the
-// enclosing decision function be plain DSL.
-bool stackless_profile_env() {
-  const char* env = ::getenv("MAKO_ASYNC_PROFILE");
-  return env != nullptr && env[0] != '\0' && env[0] != '0';
+// One-line bridge for libc's actual C `char`; Rust `char` is a four-byte
+// Unicode scalar and therefore cannot name getenv's pointer type.
+using c_char = char;
+
+// @unsafe { getenv returns a borrowed raw process-environment pointer }
+// Preserve the old first-byte policy exactly: absent, empty, or leading '0'
+// disables profiling; every other non-empty value enables it.
+#if RUSTYCPP_RUST
+fn stackless_profile_env() -> bool {
+    let env: *const c_char = unsafe { getenv("MAKO_ASYNC_PROFILE") };
+    if env.is_null() {
+        return false;
+    }
+    unsafe { *env != 0 as c_char && *env != 48 as c_char }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.73 version=1 rust_sha256=e74d57eb6b466eee0dafc670684476fc3696dc02d169028193fe565e822c08d5*/
+bool stackless_profile_env();
+
+bool stackless_profile_env() {
+    const c_char* env = getenv("MAKO_ASYNC_PROFILE");
+    if ((env == nullptr)) {
+        return false;
+    }
+    // @unsafe
+    {
+        return (*env != (static_cast<c_char>(0))) && (*env != (static_cast<c_char>(48)));
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.73*/
 
 // The "function-local static" blocker on this function has expired: a
 // fn-body `static` lowers to a real C++ magic static
@@ -5420,9 +5437,23 @@ struct StacklessProfileCounters {
     enqueue_calls: StacklessProfileCountU64,
     max_slots: StacklessProfileCountUsize,
 }
+
+// Atomics provide interior mutability, so the Rust binding itself need not be
+// `mut`. Explicit zero initializers preserve the former static-storage state.
+static g_stackless_profile: StacklessProfileCounters = StacklessProfileCounters {
+    reg_calls: rusty::sync::atomic::AtomicU64::new(0u64),
+    reg_scan_steps: rusty::sync::atomic::AtomicU64::new(0u64),
+    reg_reuse: rusty::sync::atomic::AtomicU64::new(0u64),
+    reg_new: rusty::sync::atomic::AtomicU64::new(0u64),
+    poll_calls: rusty::sync::atomic::AtomicU64::new(0u64),
+    poll_ready: rusty::sync::atomic::AtomicU64::new(0u64),
+    enqueue_calls: rusty::sync::atomic::AtomicU64::new(0u64),
+    max_slots: rusty::sync::atomic::AtomicUsize::new(0usize),
+};
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.stackless_profile version=1 rust_sha256=89b7d7978e54ae9761a6ce9cd806b5f954a010c626df7683c7b74daac49f9502*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.stackless_profile version=1 rust_sha256=46e4c9a9ec86f93311e77b7ca40217b25ba1e962497d9350fb5bf36b52f86841*/
 struct StacklessProfileCounters;
+extern StacklessProfileCounters g_stackless_profile;
 
 struct StacklessProfileCounters {
     StacklessProfileCountU64 reg_calls;
@@ -5434,9 +5465,9 @@ struct StacklessProfileCounters {
     StacklessProfileCountU64 enqueue_calls;
     StacklessProfileCountUsize max_slots;
 };
-/*RUSTYCPP:GEN-END id=reactor.stackless_profile*/
 
-StacklessProfileCounters g_stackless_profile;
+inline StacklessProfileCounters g_stackless_profile = StacklessProfileCounters{.reg_calls = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .reg_scan_steps = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .reg_reuse = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .reg_new = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .poll_calls = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .poll_ready = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .enqueue_calls = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .max_slots = rusty::sync::atomic::AtomicUsize::new_(static_cast<size_t>(0))};
+/*RUSTYCPP:GEN-END id=reactor.stackless_profile*/
 
 // The 7-line compare_exchange_weak loop collapsed into one call:
 // `rusty::sync::atomic::Atomic<T>::fetch_max` IS that CAS loop.
@@ -6684,22 +6715,47 @@ void pollworker_process_commands(PollThreadWorker& self_) {
 }
 /*RUSTYCPP:GEN-END id=reactor.78*/
 
-// 1-line arrow kernels for the trigger pass: rusty::Arc hands out a
-// `const Job*` only, so reaching the non-const virtuals needs a
-// const_cast, and Fiber::create_run is a function template. Neither
-// arrow crosses into the DSL.
+// The Job trait's legacy virtual surface takes `&mut self`, while the
+// scheduler owns jobs through shared Arcs. Keep the unsafe cast localized and
+// retain an Arc in the work closure so its raw pointer cannot outlive the job.
+#if RUSTYCPP_RUST
+fn job_ready(job: &rusty::Arc<Job>) -> bool {
+    let job_ptr: *const Job = &raw const **job;
+    let job_mut: *mut Job = job_ptr as *mut Job;
+    unsafe { (*job_mut).Ready() }
+}
 
-// @unsafe { const_cast<Job*> + virtual Ready() dispatch }
+fn job_spawn_work(job: &rusty::Arc<Job>) {
+    let owned = job.clone();
+    Fiber::create_run(move || {
+        let job_ptr: *const Job = &raw const *owned;
+        let job_mut: *mut Job = job_ptr as *mut Job;
+        unsafe { (*job_mut).Work(); }
+    });
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.94 version=1 rust_sha256=fa38b5b317e02ceaf358db4db0130d566be1e9fc8c92588bf55a49c048aa1b88*/
 bool job_ready(const rusty::Arc<Job>& job) {
-  return const_cast<Job*>(job.get())->Ready();
+    const Job* job_ptr = &rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer_like(job));
+    Job* const job_mut = const_cast<Job*>(reinterpret_cast<const Job*>(job_ptr));
+    // @unsafe
+    {
+        return ((*job_mut)).Ready();
+    }
 }
 
-// @unsafe { Fiber::create_run<Func> + const_cast<Job*> + virtual Work()
-// dispatch. The lambda captures the Arc BY VALUE so the job outlives
-// the trigger pass that spawned it. }
 void job_spawn_work(const rusty::Arc<Job>& job) {
-  Fiber::create_run([job]() { const_cast<Job*>(job.get())->Work(); });
+    const auto owned = rusty::clone(job);
+    Fiber::create_run([=]() {
+const Job* job_ptr = &rusty::detail::deref_if_pointer_like(owned);
+Job* const job_mut = const_cast<Job*>(reinterpret_cast<const Job*>(job_ptr));
+// @unsafe
+{
+    ((*job_mut)).Work();
 }
+});
+}
+/*RUSTYCPP:GEN-END id=reactor.94*/
 
 // Job trigger pass: run every ready job on a fiber, requeue the rest.
 // `jobs_` is a std::set with no drain(), so mem::take moves the whole
@@ -7169,8 +7225,6 @@ void fiber_yield_invoke(fiber_yield_t& y) {
 }
 /*RUSTYCPP:GEN-END id=reactor.23*/
 
-extern "C" void fiber_task_entry_thunk(void* self);
-
 // The srpc_fiber C-engine boundary, authored as inline Rust DSL. The
 // handles arrive as PARAMETERS (a `*mut srpc_fiber`, and the
 // Function/yield pair), so the deliberately hand-written fiber_task_t
@@ -7180,6 +7234,14 @@ extern "C" void fiber_task_entry_thunk(void* self);
 // is the DSL spelling of `static_cast<bool>(fn_)` — rusty::Function has
 // an explicit operator bool and no is_valid().
 #if RUSTYCPP_RUST
+// The one C -> C++ reentry point. C linkage and the raw void-pointer cast are
+// both authored here so the generated symbol remains the C engine's callback.
+#[no_mangle]
+pub unsafe extern "C" fn fiber_task_entry_thunk(arg: *mut core::ffi::c_void) {
+    let task: *mut fiber_task_t = arg as *mut fiber_task_t;
+    unsafe { (*task).run_body(); }
+}
+
 fn fiber_engine_start(fib: *mut srpc_fiber, arg: *mut core::ffi::c_void) {
     unsafe {
         srpc_fiber_init(fib, kDefaultStackBytes, fiber_task_entry_thunk, arg);
@@ -7206,11 +7268,21 @@ fn fiber_task_body_invoke(f: &mut FiberTaskFn, y: &mut fiber_yield_t) {
     (*f)(y);
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.87 version=1 rust_sha256=4d5bb753d7ddba7e1bd038589650d6999c915c8a2184f8f3d3a306340d493b02*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.87 version=1 rust_sha256=445bcc5e2dfe00f73bf3d695c59e02ebb942c6e72154ed510033c0205a4122af*/
+extern "C" void fiber_task_entry_thunk(rusty::ffi::c_void* arg);
 void fiber_engine_start(srpc_fiber* fib, rusty::ffi::c_void* arg);
 void fiber_engine_resume(srpc_fiber* fib);
 void fiber_engine_yield(srpc_fiber* fib);
 void fiber_engine_destroy(srpc_fiber* fib);
+
+// @unsafe
+extern "C" void fiber_task_entry_thunk(rusty::ffi::c_void* arg) {
+    fiber_task_t* const task = const_cast<fiber_task_t*>(reinterpret_cast<const fiber_task_t*>(arg));
+    // @unsafe
+    {
+        ((*task)).run_body();
+    }
+}
 
 void fiber_engine_start(srpc_fiber* fib, rusty::ffi::c_void* arg) {
     // @unsafe
@@ -7263,12 +7335,6 @@ void fiber_task_t::operator()() { fiber_engine_resume(&fib_); }
 void fiber_task_t::yield_to_caller() { fiber_engine_yield(&fib_); }
 
 void fiber_task_t::run_body() { fiber_task_body_invoke(fn_, yield_); }
-
-// @unsafe - the one C->C++ reentry: invoked by the C trampoline on the
-// fiber stack.
-extern "C" void fiber_task_entry_thunk(void* self) {
-  static_cast<fiber_task_t*>(self)->run_body();
-}
 
 }  // namespace rrr (definitions)
 

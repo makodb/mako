@@ -449,15 +449,13 @@ rusty::Box<SourceBase> make_source_proxy(BufferSource* source) {
 // the source of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 //
-// `write(const void*, size_t)` / `read(void*, size_t)` live OUTSIDE
-// the DSL block as `fd_sink_write` / `fd_source_read` — the body's
-// `::write`/`::read` libc syscalls take `const void*`/`void*` and
-// the loop's `static_cast<const uint8_t*>` aren't expressible in
-// inline-Rust today. The DSL `fn new(fd: i32)` factory keeps the
-// existing 1-arg paren-init form working via C++20 aggregate
-// paren-init.
+// The EINTR/short-I/O loops live in the plain-C srpc_io.c kernels. The
+// DSL methods call those kernels directly; their concrete u8 pointers
+// convert to the C ABI's void pointers without a C++ bridge.
+// The DSL `fn new(fd: i32)` factory keeps the existing 1-arg paren-init
+// form working via C++20 aggregate paren-init.
 struct FdSink;
-inline void fd_sink_write(FdSink& self, const void* p, size_t n);
+extern "C" void srpc_fd_write_all(int fd, const void* p, size_t n);
 #if RUSTYCPP_RUST
 struct FdSink {
     fd_: i32,
@@ -473,11 +471,11 @@ impl FdSink {
 
 impl SinkBase for FdSink {
     fn write_bytes(&mut self, p: *const u8, n: usize) {
-        fd_sink_write(self, p, n);
+        srpc_fd_write_all(self.fd_, p, n);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.fd_sink version=1 rust_sha256=9e2ba62c1d8eaa1ce731c1fb3782ff92affefcbd880c0e97221e86f52f88f303*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.fd_sink version=1 rust_sha256=eced1cd615ad7cc6998b698f2b352f0885da87c59429e5ced182b64019329aea*/
 struct FdSink;
 
 struct FdSink {
@@ -501,7 +499,7 @@ int32_t FdSink::fd() const {
 }
 
 void FdSink::write_bytes(const uint8_t* p, size_t n) {
-    fd_sink_write((*this), p, std::move(n));
+    srpc_fd_write_all(this->fd_, p, std::move(n));
 }
 
 template <>
@@ -536,18 +534,8 @@ public:
 };
 /*RUSTYCPP:GEN-END id=serializable.fd_sink*/
 
-// The ::write EINTR-retry ladder lives in srpc_io.c now (plain C,
-// Goal-0 C demotion). This shim keeps the FdSink& signature so every
-// call site — including the tests — is unchanged.
-extern "C" void srpc_fd_write_all(int fd, const void* p, size_t n);
-
-// @unsafe - thin shim over the C kernel; the fd is not owned here.
-inline void fd_sink_write(FdSink& self, const void* p, size_t n) {
-    srpc_fd_write_all(self.fd_, p, n);
-}
-
 struct FdSource;
-inline size_t fd_source_read(FdSource& self, void* p, size_t n);
+extern "C" size_t srpc_fd_read_upto(int fd, void* p, size_t n);
 #if RUSTYCPP_RUST
 struct FdSource {
     fd_: i32,
@@ -563,11 +551,11 @@ impl FdSource {
 
 impl SourceBase for FdSource {
     fn read_bytes(&mut self, p: *mut u8, n: usize) -> usize {
-        fd_source_read(self, p, n)
+        srpc_fd_read_upto(self.fd_, p, n)
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.fd_source version=1 rust_sha256=cc6fa226d5fe2f963b8915313a0153781c32b65b563261cdfb5924ab7540bfd3*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.fd_source version=1 rust_sha256=fd9f9a4dacdad557c7699900c24f31074538e95dce5f0fc13a0f779adde7e124*/
 struct FdSource;
 
 struct FdSource {
@@ -591,7 +579,7 @@ int32_t FdSource::fd() const {
 }
 
 size_t FdSource::read_bytes(uint8_t* p, size_t n) {
-    return fd_source_read((*this), p, std::move(n));
+    return srpc_fd_read_upto(this->fd_, p, std::move(n));
 }
 
 template <>
@@ -625,15 +613,6 @@ public:
     }
 };
 /*RUSTYCPP:GEN-END id=serializable.fd_source*/
-
-// The ::read ladder (EINTR retry, short read at EOF) lives in
-// srpc_io.c now. Same shim treatment as fd_sink_write above.
-extern "C" size_t srpc_fd_read_upto(int fd, void* p, size_t n);
-
-// @unsafe - thin shim over the C kernel; the fd is not owned here.
-inline size_t fd_source_read(FdSource& self, void* p, size_t n) {
-    return srpc_fd_read_upto(self.fd_, p, n);
-}
 
 // The FdSink / FdSource half of the make_*_proxy overload set — same
 // DSL spelling as the BufferSink / BufferSource block above

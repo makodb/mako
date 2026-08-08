@@ -208,15 +208,7 @@ void log_line(int32_t level, int32_t line, const int8_t* file, const std::string
 // @safe - impl namespace. Kernel definitions carry per-method @unsafe.
 namespace rrr {
 
-// @unsafe - the ostream sink POINTER stays hand-written C++: the DSL
-// has no spelling for `&std::cout`. (Probe-verified: a DSL
-// `static LOG_STM_S: *mut std::ostream = &mut std::cout;` lowers to a
-// lambda that COPIES the stream into a thread_local std::optional --
-// wrong, and not even compilable for a non-copyable ostream.) It was a
-// class static on `Log` until `Log` became a DSL struct.
-std::ostream* log_stm_s = &std::cout;
-
-// @safe - the sink WRITE is DSL. `os << line << std::endl` has no Rust
+// @safe - the sink write is DSL. `os << line << std::endl` has no Rust
 // spelling (`<<` is Shl, and `std::endl` is a function template that
 // the transpiler's argument unwrapping cannot name), so the same bytes
 // go out through the equivalent member calls: `operator<<(ostream&,
@@ -227,21 +219,21 @@ std::ostream* log_stm_s = &std::cout;
 #if RUSTYCPP_RUST
 fn log_sink_write(line: &std::string) {
     unsafe {
-        (*log_stm_s).write(line.data(), line.size());
-        (*log_stm_s).write("\n", 1);
-        (*log_stm_s).flush();
+        std::cout.write(line.data(), line.size());
+        std::cout.write("\n", 1);
+        std::cout.flush();
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=logging.4 version=1 rust_sha256=705011ada85f36a3369e64792163891a56d707b9d8e47e06959c8d0485c1ed0c*/
+/*RUSTYCPP:GEN-BEGIN id=logging.4 version=1 rust_sha256=b501a18a87a754612af13139a003e7b33485dfe0fb5ec2623d72d55caf1a9d28*/
 void log_sink_write(const std::string& line);
 
 void log_sink_write(const std::string& line) {
     // @unsafe
     {
-        ((rusty::detail::deref_if_pointer_like(log_stm_s))).write(line.data(), line.size());
-        ((rusty::detail::deref_if_pointer_like(log_stm_s))).write("\n", 1);
-        ((rusty::detail::deref_if_pointer_like(log_stm_s))).flush();
+        std::cout.write(line.data(), line.size());
+        std::cout.write("\n", 1);
+        std::cout.flush();
     }
 }
 /*RUSTYCPP:GEN-END id=logging.4*/

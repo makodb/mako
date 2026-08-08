@@ -1724,9 +1724,25 @@ void tcpconn_close(const TcpConnection& conn) {
 
 // @unsafe - the documented localized-const_cast fd teardown (plain
 // field assignment on the const facade; RAII-closes via OwnedFd).
-void tcpconn_reset_fd(const TcpConnection& conn) {
-    const_cast<TcpConnection&>(conn).fd_ = rusty::os::fd::OwnedFd{};
+#if RUSTYCPP_RUST
+fn tcpconn_reset_fd(conn: &TcpConnection) {
+    let p: *mut TcpConnection = conn as *const TcpConnection as *mut TcpConnection;
+    unsafe {
+        let empty: rusty::os::fd::OwnedFd = Default::default();
+        (*p).fd_ = empty;
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.26 version=1 rust_sha256=7c0d17bdd5bb3d0c8dac63d5cba9a037a53085836833874bf964c209d0775f73*/
+void tcpconn_reset_fd(const TcpConnection& conn) {
+    TcpConnection* const p = const_cast<TcpConnection*>(reinterpret_cast<const TcpConnection*>(static_cast<const TcpConnection*>(rusty::detail::ptr_or_addr(conn))));
+    // @unsafe
+    {
+        rusty::os::fd::OwnedFd empty = rusty::default_like<rusty::os::fd::OwnedFd>();
+        (*p).fd_ = std::move(empty);
+    }
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.26*/
 
 // @unsafe - last-writer-wins callback store under the spinlock.
 
@@ -2534,24 +2550,6 @@ bool tcplistener_is_bound(const TcpListener& lst) {
 /*RUSTYCPP:GEN-END id=tcp_channel.22*/
 
 
-// @unsafe - 1-line const_cast kernel: Arc<T>::get() yields `const T*` but
-// TcpConnection::set_poll_thread takes `&mut self`. Same idiom as the
-// mut_conn/mut_listener kernels elsewhere in this file. Deliberately NOT
-// Arc::get_mut(): that is conditional on uniqueness and would panic if the
-// handle were ever shared, whereas the original const_cast is unconditional.
-inline TcpConnection& tcpconn_mut(const rusty::Arc<TcpConnection>& c) {
-    return const_cast<TcpConnection&>(*c.get());
-}
-
-// @unsafe - 1-line kernel: add_proxy is a method on the POINTEE, and the
-// DSL cannot spell `->` on an Arc. `(*pt).add_proxy(..)` collapses back to
-// `pt.add_proxy(..)` (Arc is pointer-like, so the deref is folded away),
-// which does NOT compile: "no member named 'add_proxy' in rusty::Arc".
-// Compile-checked, not assumed.
-inline void pollthread_add_proxy(const rusty::Arc<PollThread>& pt, PollableProxy p) {
-    pt->add_proxy(std::move(p));
-}
-
 // The accept ladder, in DSL. Returns 1 accepted (out.proxy filled), 0
 // retriable/no-work, 2 nonblock-config failure (out.ch filled), -1 hard
 // error (out.ch + out.msg filled).
@@ -2595,22 +2593,27 @@ fn tcplistener_accept_step(lst: &TcpListener, out: *mut AcceptStep) -> i32 {
 
     // Hand the accepted fd to TcpConnection.
     let conn_fd = stream.into_owned_fd().into_raw_fd();
-    let conn = rusty::Arc::<TcpConnection>::make(conn_fd, peer_addr_str);
+    let mut conn: Arc<TcpConnection> =
+        rusty::Arc::<TcpConnection>::make(conn_fd, peer_addr_str);
 
     if lst.poll_thread_.is_some() {
-        // `pt` is an Arc<PollThread>; add_proxy is a method on the POINTEE,
-        // so it needs an explicit deref -- a bare `pt.add_proxy(..)` emits a
-        // dot and does not compile (the hand-written original used `->`).
-        let pt = lst.poll_thread_.as_ref().unwrap();
-        tcpconn_mut(&conn).set_poll_thread(pt.clone());
-        pollthread_add_proxy(pt, make_tcp_connection_pollable_proxy(conn.clone()));
+        // The explicit Arc type makes the pointee method lower to `pt->...`.
+        // `conn` is still uniquely owned here, before the first clone, so
+        // get_mut is the safe mint-window route to set_poll_thread.
+        let pt: &Arc<PollThread> = lst.poll_thread_.as_ref().unwrap();
+        {
+            let opt = conn.get_mut();
+            let mut_conn: &mut TcpConnection = opt.unwrap();
+            mut_conn.set_poll_thread(pt.clone());
+        }
+        pt.add_proxy(make_tcp_connection_pollable_proxy(conn.clone()));
     }
 
     (*out).proxy = rusty::Some(make_tcp_connection_channel_proxy(conn));
     1
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_scratch.34 version=1 rust_sha256=48dc2aaa9f57b14792eba50fe723ab7a724273ebc73ad0b974c61c95cc79c9a6*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_scratch.34 version=1 rust_sha256=f8c37fe871bc185aae65254620bc271ebaff69126288fef4b8567fb16a9e644f*/
 int32_t tcplistener_accept_step(const TcpListener& lst, AcceptStep* out) {
     auto&& listener_guard = rusty::borrow(lst.listener_);
     auto accept_result = rusty::deref_call(listener_guard, rusty::detail::__mdisp_accept{});
@@ -2632,11 +2635,15 @@ int32_t tcplistener_accept_step(const TcpListener& lst, AcceptStep* out) {
     }
     auto peer_addr_str = rusty::net::socket_addr_v4_to_string(std::move(peer_addr));
     auto conn_fd = stream.into_owned_fd().into_raw_fd();
-    const auto conn = rusty::Arc<TcpConnection>::make(std::move(conn_fd), std::move(peer_addr_str));
+    rusty::Arc<TcpConnection> conn = rusty::Arc<TcpConnection>::make(std::move(conn_fd), std::move(peer_addr_str));
     if (lst.poll_thread_.is_some()) {
-        auto& pt = lst.poll_thread_.as_ref().unwrap();
-        tcpconn_mut(conn).set_poll_thread(rusty::clone(pt));
-        pollthread_add_proxy(pt, make_tcp_connection_pollable_proxy(rusty::clone(conn)));
+        const rusty::Arc<PollThread>& pt = lst.poll_thread_.as_ref().unwrap();
+        {
+            auto opt = conn.get_mut();
+            TcpConnection& mut_conn = opt.unwrap();
+            mut_conn.set_poll_thread(rusty::clone(pt));
+        }
+        pt->add_proxy(make_tcp_connection_pollable_proxy(rusty::clone(conn)));
     }
     (*out).proxy = rusty::Some(make_tcp_connection_channel_proxy(std::move(conn)));
     return static_cast<int32_t>(1);
