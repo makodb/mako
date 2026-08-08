@@ -475,7 +475,7 @@ rusty::Arc<QuorumEvent> Communicator::SendReelect(){
 		rrr::FutureAttr fuattr;
 		int id = pair.first;
 		if(id != 1) continue;
-			fuattr.callback =
+			fuattr.callback = rrr::FutureCallback::from_callable(
 				[e, this, id] (rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
@@ -488,7 +488,7 @@ rusty::Arc<QuorumEvent> Communicator::SendReelect(){
 						e->vote_yes();
 						this->SetNewLeaderProxy(0, id);
 					}
-				};
+				});
 			ClassicProxy::RpcReElectRequest req;
 			auto f = pair.second->async_ReElect(req, fuattr);
 			if (f.is_ok()) {
@@ -510,7 +510,7 @@ void Communicator::BroadcastDispatch(
   auto par_id = sp_vec_piece->at(0)->PartitionId();
   
   rrr::FutureAttr fuattr;
-  fuattr.callback =
+  fuattr.callback = rrr::FutureCallback::from_callable(
       [coo, this, callback, par_id](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
@@ -533,7 +533,7 @@ void Communicator::BroadcastDispatch(
           }
         }
         callback(ret, outputs);
-      };
+      });
   
   std::pair<siteid_t, ClassicProxy*> pair_leader_proxy;
   if (Config::GetConfig()->replica_proto_==MODE_MENCIUS) {
@@ -630,7 +630,7 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
 
     phase_t phase = coo->phase_;
     rrr::FutureAttr fuattr;
-    fuattr.callback =
+    fuattr.callback = rrr::FutureCallback::from_callable(
         [e, coo, this, phase, txn, src_coroid, leader_id, par_id](rusty::Arc<Future> fu) {
           if (fu->get_error_code() != 0) {
             Log_info("Get a error message in reply");
@@ -693,7 +693,7 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
             // the field went away in the same commit.
             e->test();
 	  			}
-      };
+      });
     
     Log_debug("send dispatch to site {}",
               pair_leader_proxy.first);
@@ -728,7 +728,7 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
           //if(first) curr->n_total_++;
           auto follower_id = pair.first;
           rrr::FutureAttr fuattr;
-          fuattr.callback =
+          fuattr.callback = rrr::FutureCallback::from_callable(
               [e, coo, this, src_coroid, follower_id](rusty::Arc<Future> fu) {
                 if (fu->get_error_code() != 0) {
                   Log_info("Get a error message in reply");
@@ -745,7 +745,7 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
                 //e->add_dep(coo->cli_id_, src_coroid, follower_id, coro_id);
                 //coo->ids_.push_back(follower_id);
                 // do nothing
-              };
+              });
 					DepId di2;
 					di2.str = "dep";
 					di2.id = Communicator::global_id++;
@@ -796,7 +796,7 @@ Communicator::SendPrepare(Coordinator* coo,
     qe->id_.set(Communicator::global_id);
     qe->par_id_.set(quorum_id++);
     FutureAttr fuattr;
-    fuattr.callback = [this, e, qe, src_coroid, site_id, coo, phase, cmd, tid](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([this, e, qe, src_coroid, site_id, coo, phase, cmd, tid](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -822,7 +822,7 @@ Communicator::SendPrepare(Coordinator* coo,
       }
       qe->n_voted_yes_.set(qe->n_voted_yes_.get() + 1);
       e->test();
-    };
+    });
     
     ClassicProxy* proxy = LeaderProxyForPartition(partition_id).second;
     Log_debug("SendPrepare to {} sites gid:{}, tid:{}\n",
@@ -925,7 +925,7 @@ Communicator::SendCommit(Coordinator* coo,
     coo->n_finish_req_++;
     FutureAttr fuattr;
     auto phase = coo->phase_;
-    fuattr.callback = [this, e, qe, src_coroid, site_id, coo, phase, cmd, tid](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([this, e, qe, src_coroid, site_id, coo, phase, cmd, tid](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -971,7 +971,7 @@ Communicator::SendCommit(Coordinator* coo,
       if(coo->phase_ != phase) return;
       qe->n_voted_yes_.set(qe->n_voted_yes_.get() + 1);
       e->test();
-    };
+    });
 
 		DepId di;
 		di.str = "dep";
@@ -1020,7 +1020,7 @@ Communicator::SendCommit(Coordinator* coo,
   ___LogSent(pid, tid);
 #endif
   FutureAttr fuattr;
-  fuattr.callback = [callback](rusty::Arc<Future>) { callback(); };
+  fuattr.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future>) { callback(); });
   auto proxy_pair = LeaderProxyForPartition(pid);
   ClassicProxy* proxy = proxy_pair.second;
   SetLeaderCache(pid, proxy_pair);
@@ -1052,7 +1052,7 @@ Communicator::SendAbort(Coordinator* coo,
     coo->n_finish_req_++;
     FutureAttr fuattr;
     auto phase = coo->phase_;
-    fuattr.callback = [this, e, qe, coo, src_coroid, site_id, phase, cmd, tid](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([this, e, qe, coo, src_coroid, site_id, phase, cmd, tid](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1095,7 +1095,7 @@ Communicator::SendAbort(Coordinator* coo,
       if(coo->phase_ != phase) return;
       qe->n_voted_yes_.set(qe->n_voted_yes_.get() + 1);
       e->test();
-    };
+    });
 
     DepId di;
     di.str = "dep";
@@ -1142,7 +1142,7 @@ void Communicator::SendEarlyAbort(parid_t pid,
   ___LogSent(pid, tid);
 #endif
   FutureAttr fuattr;
-  fuattr.callback = [](rusty::Arc<Future>) {};
+  fuattr.callback = rrr::FutureCallback::from_callable([](rusty::Arc<Future>) {});
   ClassicProxy* proxy = LeaderProxyForPartition(pid).second;
   Log_debug("SendAbort to {} tid:{}\n", pid, tid);
   ClassicProxy::RpcEarlyAbortRequest early_abort_req;
@@ -1159,7 +1159,7 @@ void Communicator::SendEarlyAbort(parid_t pid,
   ___LogSent(pid, tid);
 #endif
   FutureAttr fuattr;
-  fuattr.callback = [callback](rusty::Arc<Future>) { callback(); };
+  fuattr.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future>) { callback(); });
   // ClassicProxy* proxy = LeaderProxyForPartition(pid).second;
   auto pair_proxies = PilotProxyForPartition(pid);
   Log_debug("SendAbort to {} tid:{}\n", pid, tid);
@@ -1186,7 +1186,7 @@ void Communicator::SendUpgradeEpoch(epoch_t curr_epoch,
         rrr::deserialize_from(fu->get_reply(), res);
         callback(par_id, site_id, res);
       };
-      fuattr.callback = cb;
+      fuattr.callback = rrr::FutureCallback::from_callable(cb);
       auto proxy = (ClassicProxy*) pair.second;
       ClassicProxy::RpcUpgradeEpochRequest req;
       req.curr_epoch = curr_epoch;
@@ -1202,7 +1202,7 @@ void Communicator::SendTruncateEpoch(epoch_t old_epoch) {
     auto& proxies = pair.second;
     for (auto& pair: proxies) {
       FutureAttr fuattr;
-      fuattr.callback = [](rusty::Arc<Future>) {};
+      fuattr.callback = rrr::FutureCallback::from_callable([](rusty::Arc<Future>) {});
       auto proxy = (ClassicProxy*) pair.second;
       ClassicProxy::RpcTruncateEpochRequest req;
       req.old_epoch = old_epoch;
@@ -1231,7 +1231,7 @@ void Communicator::SendForwardTxnRequest(
   dispatch_request.tx_type = req.tx_type_;
 
   FutureAttr future;
-  future.callback = [callback](rusty::Arc<Future> fu) {
+  future.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;
@@ -1239,7 +1239,7 @@ void Communicator::SendForwardTxnRequest(
     TxReply reply;
     rrr::deserialize_from(fu->get_reply(), reply);
     callback(reply);
-  };
+  });
   ClientControlProxy::RpcDispatchTxnRequest dispatch_rpc_req;
   dispatch_rpc_req.req = dispatch_request;
   auto fu_result = leader_proxy->async_DispatchTxn(dispatch_rpc_req, future);
@@ -1261,7 +1261,7 @@ shared_ptr<GetLeaderQuorumEvent> Communicator::BroadcastGetLeader(
     if (p.first == cur_pause) continue;
     auto proxy = p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, p](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, p](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1269,7 +1269,7 @@ shared_ptr<GetLeaderQuorumEvent> Communicator::BroadcastGetLeader(
       bool_t is_leader = false;
       rrr::deserialize_from(fu->get_reply(), is_leader);
       e->FeedResponse(is_leader, p.first);
-    };
+    });
     ClassicProxy::RpcIsFPGALeaderRequest req;
     req.cur_pause = par_id;
     auto is_leader_result = proxy->async_IsFPGALeader(req, fuattr);
@@ -1297,7 +1297,7 @@ rusty::Arc<QuorumEvent> Communicator::FailoverPauseSocketOut(
     if (p.first != loc_id) continue;
     auto proxy = p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1308,7 +1308,7 @@ rusty::Arc<QuorumEvent> Communicator::FailoverPauseSocketOut(
         e->vote_yes();
       else
         e->vote_no();
-    };
+    });
 #ifdef FAILOVER_DEBUG
     Log_info("!!!!!!!!!!!! Communicator::FailoverPauseSocketOut");
 #endif
@@ -1338,7 +1338,7 @@ rusty::Arc<QuorumEvent> Communicator::FailoverResumeSocketOut(
     if (p.first != loc_id) continue;
     auto proxy = p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1349,7 +1349,7 @@ rusty::Arc<QuorumEvent> Communicator::FailoverResumeSocketOut(
         e->vote_yes();
       else
         e->vote_no();
-    };
+    });
 #ifdef FAILOVER_DEBUG
     Log_info("!!!!!!!!!!!! Communicator::FailoverResumeSocketOut");
 #endif
@@ -1404,7 +1404,7 @@ void Communicator::SendSimpleCmd(groupid_t gid, SimpleCommand& cmd,
     rrr::deserialize_from(fu->get_reply(), res);
     callback(res);
   };
-  fuattr.callback = cb;
+  fuattr.callback = rrr::FutureCallback::from_callable(cb);
   ClassicProxy* proxy = LeaderProxyForPartition(gid).second;
   Log_debug("SendEmptyCmd to {} sites gid:{}\n", sids.size(), gid);
   ClassicProxy::RpcSimpleCmdRequest req;
@@ -1437,13 +1437,13 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
     // }
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
       }
       e->vote_yes();
-    };
+    });
     ClassicProxy::RpcJetpackBeginRecoveryRequest req;
     req.old_view = old_view_deputy;
     req.new_view = new_view_deputy;
@@ -1480,7 +1480,7 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
     // }
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1495,7 +1495,7 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
       rrr::deserialize_from(fu->get_reply(), reply_new_view);
       rrr::deserialize_from(fu->get_reply(), id_set);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, id_set);
-    };
+    });
     ClassicProxy::RpcJetpackPullIdSetRequest req;
     req.jepoch = jepoch;
     req.oepoch = oepoch;
@@ -1554,7 +1554,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
     // Log_info("[JETPACK-DEBUG] Sending JetpackPullCmd to site {}", p.first);
     
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1569,7 +1569,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
       rrr::deserialize_from(fu->get_reply(), reply_new_view);
       rrr::deserialize_from(fu->get_reply(), cmd);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd);
-    };
+    });
 
     // Log_info("[JETPACK-DEBUG] About to call async_JetpackPullCmd");
     ClassicProxy::RpcJetpackPullCmdRequest req;
@@ -1621,7 +1621,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
     // }
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, p](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, p](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         // Log_info("[JETPACK-DEBUG] RecordCmd error from site {}: error_code={}",
         //          p.first, fu->get_error_code());
@@ -1630,7 +1630,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
       }
       // Log_info("[JETPACK-DEBUG] RecordCmd success from site {}", p.first);
       e->vote_yes();
-    };
+    });
     // Log_info("[JETPACK-DEBUG] Sending RecordCmd to site {}", p.first);
     ClassicProxy::RpcJetpackRecordCmdRequest req;
     req.jepoch = jepoch;
@@ -1670,7 +1670,7 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
     // }
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1691,7 +1691,7 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
       rrr::deserialize_from(fu->get_reply(), replied_sid);
       rrr::deserialize_from(fu->get_reply(), replied_set_size);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, accepted_ballot, replied_sid, replied_set_size, reply_max_seen_ballot);
-    };
+    });
     ClassicProxy::RpcJetpackPrepareRequest req;
     req.jepoch = jepoch;
     req.oepoch = oepoch;
@@ -1715,7 +1715,7 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
   for (auto& p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1731,7 +1731,7 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
       rrr::deserialize_from(fu->get_reply(), reply_new_view);
       rrr::deserialize_from(fu->get_reply(), reply_max_seen_ballot);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, reply_max_seen_ballot);
-    };
+    });
     ClassicProxy::RpcJetpackAcceptRequest req;
     req.jepoch = jepoch;
     req.oepoch = oepoch;
@@ -1755,13 +1755,13 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastCommit(parid_t par_id, loc
   for (auto& p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
       }
       e->vote_yes();
-    };
+    });
     ClassicProxy::RpcJetpackCommitRequest req;
     req.jepoch = jepoch;
     req.oepoch = oepoch;
@@ -1784,7 +1784,7 @@ shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRe
   for (auto& p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1799,7 +1799,7 @@ shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRe
       rrr::deserialize_from(fu->get_reply(), reply_new_view);
       rrr::deserialize_from(fu->get_reply(), cmd);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd);
-    };
+    });
     ClassicProxy::RpcJetpackPullRecSetInsRequest req;
     req.jepoch = jepoch;
     req.oepoch = oepoch;
@@ -1822,13 +1822,13 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastFinishRecovery(parid_t par
   for (auto& p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
       }
       e->vote_yes();
-    };
+    });
     ClassicProxy::RpcJetpackFinishRecoveryRequest req;
     req.oepoch = oepoch;
     auto fu_result = proxy->async_JetpackFinishRecovery(req, fuattr);

@@ -1802,8 +1802,8 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
                 let ch = tcpconn_errno_to_channel_error(err);
                 {
                     let mut guard = conn.on_error_.lock().unwrap();
-                    if *guard {
-                        (*guard)(ch, strerror(err));
+                    if (*guard).has_value() {
+                        (*guard).callable()(ch, strerror(err));
                     }
                 }
                 conn.closed_.set(true);
@@ -1829,8 +1829,8 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
             let cf = ChannelFrame { payload: v.payload, size: v.payload_size };
             {
                 let mut guard = conn.on_frame_.lock().unwrap();
-                if *guard {
-                    (*guard)(cf);
+                if (*guard).has_value() {
+                    (*guard).callable()(cf);
                 }
             }
             tcpconn_consume_inbound(conn);
@@ -1840,8 +1840,8 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
             // Malformed inbound stream.
             {
                 let mut guard = conn.on_error_.lock().unwrap();
-                if *guard {
-                    (*guard)(ChannelError_Internal(), "malformed frame on inbound stream");
+                if (*guard).has_value() {
+                    (*guard).callable()(ChannelError_Internal(), "malformed frame on inbound stream");
                 }
             }
             conn.closed_.set(true);
@@ -1854,7 +1854,7 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
     any_progress
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_read version=1 rust_sha256=8591705f5dab2a5574c7bea73a4988507973252b5f6d20e4145bf3a199620373*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_read version=1 rust_sha256=ba78b6dc07d2873d7e70c4eebcb094f2e069c43cf62e3b07cd37b179e761a514*/
 FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView& v) {
     auto&& g = rusty::borrow(conn.inbound_);
     return ((rusty::detail::deref_if_pointer_like(g))).next_frame(v);
@@ -1888,8 +1888,8 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
                 const auto ch = tcpconn_errno_to_channel_error(std::move(err));
                 {
                     auto&& guard = rusty::deref_call(conn.on_error_.lock(), rusty::detail::__mdisp_unwrap{});
-                    if (rusty::detail::deref_if_pointer_like(guard)) {
-                        (rusty::detail::deref_if_pointer_like(guard))(std::move(ch), strerror(std::move(err)));
+                    if (((rusty::detail::deref_if_pointer_like(guard))).has_value()) {
+                        ((rusty::detail::deref_if_pointer_like(guard))).callable()(std::move(ch), strerror(std::move(err)));
                     }
                 }
                 conn.closed_.set(true);
@@ -1909,8 +1909,8 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
             const auto cf = ChannelFrame{.payload = std::move(v.payload), .size = std::move(v.payload_size)};
             {
                 auto&& guard = rusty::deref_call(conn.on_frame_.lock(), rusty::detail::__mdisp_unwrap{});
-                if (rusty::detail::deref_if_pointer_like(guard)) {
-                    (rusty::detail::deref_if_pointer_like(guard))(std::move(cf));
+                if (((rusty::detail::deref_if_pointer_like(guard))).has_value()) {
+                    ((rusty::detail::deref_if_pointer_like(guard))).callable()(std::move(cf));
                 }
             }
             tcpconn_consume_inbound(conn);
@@ -1919,8 +1919,8 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
         } else {
             {
                 auto&& guard = rusty::deref_call(conn.on_error_.lock(), rusty::detail::__mdisp_unwrap{});
-                if (rusty::detail::deref_if_pointer_like(guard)) {
-                    (rusty::detail::deref_if_pointer_like(guard))(ChannelError_Internal(), "malformed frame on inbound stream");
+                if (((rusty::detail::deref_if_pointer_like(guard))).has_value()) {
+                    ((rusty::detail::deref_if_pointer_like(guard))).callable()(ChannelError_Internal(), "malformed frame on inbound stream");
                 }
             }
             conn.closed_.set(true);
@@ -2040,8 +2040,8 @@ fn tcpconn_handle_write(conn: &TcpConnection) -> i32 {
     }
     {
         let mut eg = conn.on_error_.lock().unwrap();
-        if *eg {
-            (*eg)(result, "outbound write failed");
+        if (*eg).has_value() {
+            (*eg).callable()(result, "outbound write failed");
         }
     }
     conn.closed_.set(true);
@@ -2050,7 +2050,7 @@ fn tcpconn_handle_write(conn: &TcpConnection) -> i32 {
     PollMode::READ
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_write version=1 rust_sha256=d62ba418ca1472463bd8865b4c52d0479af7c5bb6213342601067267ca6672a4*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_write version=1 rust_sha256=e058a561a08637d129acc302b29e75d9edad332787d36eb3cac95c29e0dae886*/
 int32_t tcpconn_handle_write(const TcpConnection& conn) {
     if (conn.closed_.get()) {
         return PollMode::NO_CHANGE;
@@ -2071,8 +2071,8 @@ int32_t tcpconn_handle_write(const TcpConnection& conn) {
     }
     {
         auto&& eg = rusty::deref_call(conn.on_error_.lock(), rusty::detail::__mdisp_unwrap{});
-        if (rusty::detail::deref_if_pointer_like(eg)) {
-            (rusty::detail::deref_if_pointer_like(eg))(std::move(result), "outbound write failed");
+        if (((rusty::detail::deref_if_pointer_like(eg))).has_value()) {
+            ((rusty::detail::deref_if_pointer_like(eg))).callable()(std::move(result), "outbound write failed");
         }
     }
     conn.closed_.set(true);
@@ -2090,22 +2090,22 @@ fn tcpconn_handle_error(conn: &TcpConnection) {
     }
     {
         let mut guard = conn.on_error_.lock().unwrap();
-        if *guard {
-            (*guard)(ChannelError_Internal(), "epoll/poll signaled error");
+        if (*guard).has_value() {
+            (*guard).callable()(ChannelError_Internal(), "epoll/poll signaled error");
         }
     }
     tcpconn_close(conn);
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_error version=1 rust_sha256=5df98346f620c114fb5dbdaca8d90b11ce46b3e4b9772d4c81efc9f5017faa3b*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_error version=1 rust_sha256=3e86d6a25ed881dd9f219c3cd7e79a2e60f554cd2266ae8d523bcdefe4037dca*/
 void tcpconn_handle_error(const TcpConnection& conn) {
     if (conn.closed_.get()) {
         return;
     }
     {
         auto&& guard = rusty::deref_call(conn.on_error_.lock(), rusty::detail::__mdisp_unwrap{});
-        if (rusty::detail::deref_if_pointer_like(guard)) {
-            (rusty::detail::deref_if_pointer_like(guard))(ChannelError_Internal(), "epoll/poll signaled error");
+        if (((rusty::detail::deref_if_pointer_like(guard))).has_value()) {
+            ((rusty::detail::deref_if_pointer_like(guard))).callable()(ChannelError_Internal(), "epoll/poll signaled error");
         }
     }
     tcpconn_close(conn);
@@ -2261,20 +2261,20 @@ fn tcpconn_deliver_on_closed_locked(conn: &TcpConnection, reason: ChannelError) 
     }
     conn.on_closed_fired_.set(true);
     let mut guard = conn.on_closed_.lock().unwrap();
-    if *guard {
-        (*guard)(reason);
+    if (*guard).has_value() {
+        (*guard).callable()(reason);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.deliver_closed version=1 rust_sha256=2699de9cf591b5f113430eedd6805fb1b46f7d89bfa480ad8e10eaab84216aee*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.deliver_closed version=1 rust_sha256=1829672a4d2956bdac1f7c9e2f2db89f7c9d2fc2f8121b994958f29da27f0940*/
 void tcpconn_deliver_on_closed_locked(const TcpConnection& conn, ChannelError reason) {
     if (conn.on_closed_fired_.get()) {
         return;
     }
     conn.on_closed_fired_.set(true);
     auto&& guard = rusty::deref_call(conn.on_closed_.lock(), rusty::detail::__mdisp_unwrap{});
-    if (rusty::detail::deref_if_pointer_like(guard)) {
-        (rusty::detail::deref_if_pointer_like(guard))(std::move(reason));
+    if (((rusty::detail::deref_if_pointer_like(guard))).has_value()) {
+        ((rusty::detail::deref_if_pointer_like(guard))).callable()(std::move(reason));
     }
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.deliver_closed*/
@@ -2464,21 +2464,21 @@ fn tcplistener_handle_read(lst: &TcpListener) -> bool {
         if rc == 1 {
             any_progress = true;
             let mut guard = lst.on_accept_.lock().unwrap();
-            if *guard {
-                (*guard)(tcplistener_take_proxy(&mut step));
+            if (*guard).has_value() {
+                (*guard).callable()(tcplistener_take_proxy(&mut step));
             }
         } else if rc == 0 {
             accepting = false;
         } else if rc == 2 {
             let mut guard = lst.on_error_.lock().unwrap();
-            if *guard {
-                (*guard)(step.ch, "accept: failed to set non-blocking");
+            if (*guard).has_value() {
+                (*guard).callable()(step.ch, "accept: failed to set non-blocking");
             }
         } else {
             {
                 let mut guard = lst.on_error_.lock().unwrap();
-                if *guard {
-                    (*guard)(step.ch, step.msg);
+                if (*guard).has_value() {
+                    (*guard).callable()(step.ch, step.msg);
                 }
             }
             lst.close();
@@ -2488,7 +2488,7 @@ fn tcplistener_handle_read(lst: &TcpListener) -> bool {
     any_progress
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener_read version=1 rust_sha256=78d155dde08732cff336b4189984d42f08e6599dd4d858c95c8ab0166790e07d*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener_read version=1 rust_sha256=738b886905b20121623a9bcf15cd9bd88db0a430b5f6d5867e9c04de7f83e490*/
 ChannelConnectionProxy tcplistener_take_proxy(AcceptStep& s) {
     return s.proxy.take().unwrap();
 }
@@ -2508,21 +2508,21 @@ bool tcplistener_handle_read(const TcpListener& lst) {
         if (rusty::detail::deref_if_pointer_like(rc) == 1) {
             any_progress = true;
             auto&& guard = rusty::deref_call(lst.on_accept_.lock(), rusty::detail::__mdisp_unwrap{});
-            if (rusty::detail::deref_if_pointer_like(guard)) {
-                (rusty::detail::deref_if_pointer_like(guard))(tcplistener_take_proxy(rusty::detail::deref_if_pointer_like(step)));
+            if (((rusty::detail::deref_if_pointer_like(guard))).has_value()) {
+                ((rusty::detail::deref_if_pointer_like(guard))).callable()(tcplistener_take_proxy(rusty::detail::deref_if_pointer_like(step)));
             }
         } else if (rusty::detail::deref_if_pointer_like(rc) == 0) {
             accepting = false;
         } else if (rusty::detail::deref_if_pointer_like(rc) == 2) {
             auto&& guard = rusty::deref_call(lst.on_error_.lock(), rusty::detail::__mdisp_unwrap{});
-            if (rusty::detail::deref_if_pointer_like(guard)) {
-                (rusty::detail::deref_if_pointer_like(guard))(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ch); }) { return (__r.ch); } else if constexpr (requires { (__r.ch_field); }) { return (__r.ch_field); } else if constexpr (requires { ((*__r).ch); }) { return ((*__r).ch); } else { return ((*__r).ch_field); } }(step)), "accept: failed to set non-blocking");
+            if (((rusty::detail::deref_if_pointer_like(guard))).has_value()) {
+                ((rusty::detail::deref_if_pointer_like(guard))).callable()(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ch); }) { return (__r.ch); } else if constexpr (requires { (__r.ch_field); }) { return (__r.ch_field); } else if constexpr (requires { ((*__r).ch); }) { return ((*__r).ch); } else { return ((*__r).ch_field); } }(step)), "accept: failed to set non-blocking");
             }
         } else {
             {
                 auto&& guard = rusty::deref_call(lst.on_error_.lock(), rusty::detail::__mdisp_unwrap{});
-                if (rusty::detail::deref_if_pointer_like(guard)) {
-                    (rusty::detail::deref_if_pointer_like(guard))(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ch); }) { return (__r.ch); } else if constexpr (requires { (__r.ch_field); }) { return (__r.ch_field); } else if constexpr (requires { ((*__r).ch); }) { return ((*__r).ch); } else { return ((*__r).ch_field); } }(step)), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.msg); }) { return (__r.msg); } else if constexpr (requires { (__r.msg_field); }) { return (__r.msg_field); } else if constexpr (requires { ((*__r).msg); }) { return ((*__r).msg); } else { return ((*__r).msg_field); } }(step)));
+                if (((rusty::detail::deref_if_pointer_like(guard))).has_value()) {
+                    ((rusty::detail::deref_if_pointer_like(guard))).callable()(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ch); }) { return (__r.ch); } else if constexpr (requires { (__r.ch_field); }) { return (__r.ch_field); } else if constexpr (requires { ((*__r).ch); }) { return ((*__r).ch); } else { return ((*__r).ch_field); } }(step)), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.msg); }) { return (__r.msg); } else if constexpr (requires { (__r.msg_field); }) { return (__r.msg_field); } else if constexpr (requires { ((*__r).msg); }) { return ((*__r).msg); } else { return ((*__r).msg_field); } }(step)));
                 }
             }
             lst.close();
@@ -2660,22 +2660,22 @@ fn tcplistener_handle_error(listener: &TcpListener) {
     }
     {
         let mut guard = listener.on_error_.lock().unwrap();
-        if *guard {
-            (*guard)(ChannelError_Internal(), "epoll/poll signaled error");
+        if (*guard).has_value() {
+            (*guard).callable()(ChannelError_Internal(), "epoll/poll signaled error");
         }
     }
     listener.close();
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.20 version=1 rust_sha256=56a1514c092e75e73ea033dfa0cc5fae8d59a6f9cbe64128ea5253e1cf6efe36*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.20 version=1 rust_sha256=6a15039e529fd1f4f5a148b3646487ca34006b5c9c5b53a27576d18732043715*/
 void tcplistener_handle_error(const TcpListener& listener) {
     if (listener.closed_.get()) {
         return;
     }
     {
         auto&& guard = rusty::deref_call(listener.on_error_.lock(), rusty::detail::__mdisp_unwrap{});
-        if (rusty::detail::deref_if_pointer_like(guard)) {
-            (rusty::detail::deref_if_pointer_like(guard))(ChannelError_Internal(), "epoll/poll signaled error");
+        if (((rusty::detail::deref_if_pointer_like(guard))).has_value()) {
+            ((rusty::detail::deref_if_pointer_like(guard))).callable()(ChannelError_Internal(), "epoll/poll signaled error");
         }
     }
     listener.close();

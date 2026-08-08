@@ -43,10 +43,10 @@ class StubChannel {
     void set_on_error (OnErrorCallback  cb) { on_error_  = std::move(cb); }
 
     void deliver_closed(ChannelError reason) {
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
     void deliver_error(ChannelError err, std::string_view msg) {
-        if (on_error_) on_error_(err, msg);
+        if (on_error_.has_value()) on_error_.callable()(err, msg);
     }
 
  private:

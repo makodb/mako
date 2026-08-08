@@ -116,7 +116,7 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
     FutureAttr fuattr;
     // auto start2 = chrono::system_clock::now();
     auto start2 = 0;
-    fuattr.callback = [e, start2, ballot, leader_id, src_coroid, follower_id] (rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, start2, ballot, leader_id, src_coroid, follower_id] (rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -131,7 +131,7 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
       //Log_info("The duration of Suggest() for {} is: {}", follower_id, duration); // 20029
       // e->deps[leader_id][src_coroid][follower_id].erase(-1);
       // e->deps[leader_id][src_coroid][follower_id].insert(coro_id);
-    };
+    });
     auto start1 = chrono::system_clock::now();
     uint64_t sender = loc_id_;
     // time_t tstart = chrono::system_clock::to_time_t(start);
@@ -183,7 +183,7 @@ void MenciusCommo::BroadcastDecide(const parid_t par_id,
   for (auto& p : proxies) {
     auto proxy = (MenciusProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [](rusty::Arc<Future> fu) {};
+    fuattr.callback = rrr::FutureCallback::from_callable([](rusty::Arc<Future> fu) {});
     MenciusProxy::RpcDecideRequest req{};
     req.slot = slot_id;
     req.ballot = ballot;

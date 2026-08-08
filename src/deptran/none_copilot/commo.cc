@@ -45,7 +45,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
   verify(!sp_vec_piece->empty());
   auto par_id = sp_vec_piece->at(0)->PartitionId();
   rrr::FutureAttr fuattr;
-  fuattr.callback = [coo, this, callback, par_id](rusty::Arc<Future> fu) {
+  fuattr.callback = rrr::FutureCallback::from_callable([coo, this, callback, par_id](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;
@@ -71,7 +71,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     }
 
     callback(ret, outputs);
-  };
+  });
   // auto pair_leader_proxy = LeaderProxyForPartition(par_id);
   // Log_debug("send dispatch to site {}",
   //           pair_leader_proxy.first);
@@ -108,7 +108,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
   }
 
   rrr::FutureAttr fu2;
-  fu2.callback = [coo, this, callback, par_id](rusty::Arc<Future> fu) {
+  fu2.callback = rrr::FutureCallback::from_callable([coo, this, callback, par_id](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;
@@ -134,7 +134,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     }
 
     callback(ret, outputs);
-  };
+  });
 
   if (n_pending_rpc_[1] < max_pending_rpc_) {
     ClassicProxy::RpcDispatchRequest req1;

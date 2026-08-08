@@ -599,7 +599,7 @@ impl ServerConnection {
             // through the alias the pointer-like check fails and the calls
             // lower to `.set_on_frame(..)` (dot) instead of `->` (docs 7.50).
             let ch: &mut Box<ChannelConnectionBase> = &mut proxy;
-            ch.set_on_frame(move |f: &ChannelFrame| {
+            ch.set_on_frame(OnFrameCallback::from_callable(move |f: &ChannelFrame| {
                 let sconn_opt = weak_frame.upgrade();
                 if sconn_opt.is_none() {
                     return;
@@ -608,23 +608,23 @@ impl ServerConnection {
                 // Dispatch only READS the connection (status_ via Cell,
                 // ctx_ through the Arc), so it takes a const&.
                 sconn_decode_request_and_dispatch((*sconn), f.payload, f.size);
-            });
+            }));
             // on_closed runs the existing close path so the connection
             // transitions to CLOSED. The channel-layer contract guarantees
             // on_closed fires exactly once; close() is itself idempotent
             // (status_ == CLOSED short-circuits).
-            ch.set_on_closed(move |reason: ChannelError| {
+            ch.set_on_closed(OnClosedCallback::from_callable(move |reason: ChannelError| {
                 let sconn_opt = weak_closed.upgrade();
                 if sconn_opt.is_none() {
                     return;
                 }
                 let sconn = sconn_opt.unwrap();
                 (*sconn).close();
-            });
+            }));
             // on_error logs and force-closes. Per the channel-layer
             // contract, fatal errors are followed by on_closed, so the
             // close() here is also defensive — close() is idempotent.
-            ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
+            ch.set_on_error(OnErrorCallback::from_callable(move |err: ChannelError, msg: std::string_view| {
                 let sconn_opt = weak_error.upgrade();
                 if sconn_opt.is_none() {
                     return;
@@ -633,7 +633,7 @@ impl ServerConnection {
                 log_line(Log::WARN, 0i32, core::ptr::null(), std::format("rrr::ServerConnection: channel error {}: {}",
                          channel_error_to_string(err), msg));
                 (*sconn).close();
-            });
+            }));
         }
         {
             let mut guard = self.channel_proxy_.lock().unwrap();
@@ -652,7 +652,7 @@ impl ServerConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=c796671286e5465081483a267c4d4f7fbea70bf80d37ba60cf1a877a0f8353c8*/
+/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=6589e3c2c7b931f1af5055d0245757f49fd555a2113e8ee3a3a33e13df81c658*/
 enum class ServerConnStatus;
 constexpr ServerConnStatus ServerConnStatus_CONNECTED();
 constexpr ServerConnStatus ServerConnStatus_CLOSED();
@@ -735,23 +735,23 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
     WeakServerConnection weak_error = rusty::clone(this->weak_self_);
     {
         rusty::Box<ChannelConnectionBase>& ch = proxy;
-        ch->set_on_frame([=, weak_frame = std::move(weak_frame)](const ChannelFrame& f) {
+        ch->set_on_frame(OnFrameCallback::from_callable([=, weak_frame = std::move(weak_frame)](const ChannelFrame& f) {
 auto sconn_opt = weak_frame.upgrade();
 if (sconn_opt.is_none()) {
     return;
 }
 const auto sconn = sconn_opt.unwrap();
 sconn_decode_request_and_dispatch((rusty::detail::deref_if_pointer_like(sconn)), f.payload, f.size);
-});
-        ch->set_on_closed([=, weak_closed = std::move(weak_closed)](ChannelError reason) {
+}));
+        ch->set_on_closed(OnClosedCallback::from_callable([=, weak_closed = std::move(weak_closed)](ChannelError reason) {
 auto sconn_opt = weak_closed.upgrade();
 if (sconn_opt.is_none()) {
     return;
 }
 const auto sconn = sconn_opt.unwrap();
 ((rusty::detail::deref_if_pointer_like(sconn))).close();
-});
-        ch->set_on_error([=, weak_error = std::move(weak_error)](ChannelError err, std::string_view msg) {
+}));
+        ch->set_on_error(OnErrorCallback::from_callable([=, weak_error = std::move(weak_error)](ChannelError err, std::string_view msg) {
 auto sconn_opt = weak_error.upgrade();
 if (sconn_opt.is_none()) {
     return;
@@ -759,7 +759,7 @@ if (sconn_opt.is_none()) {
 const auto sconn = sconn_opt.unwrap();
 log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::ServerConnection: channel error {}: {}", channel_error_to_string(std::move(err)), std::move(msg)));
 ((rusty::detail::deref_if_pointer_like(sconn))).close();
-});
+}));
     }
     {
         auto guard = this->channel_proxy_.lock().unwrap();
@@ -1705,7 +1705,7 @@ impl Server {
 
             {
                 let ch: &mut Box<ChannelListenerBase> = &mut listener;
-                ch.set_on_accept(move |conn_proxy: ChannelConnectionProxy| {
+                ch.set_on_accept(OnAcceptCallback::from_callable(move |conn_proxy: ChannelConnectionProxy| {
                     if !conn_proxy.is_valid() {
                         return;
                     }
@@ -1738,11 +1738,11 @@ impl Server {
                         }
                         (*guard).conns.push(sconn);
                     }
-                });
-                ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
+                }));
+                ch.set_on_error(OnErrorCallback::from_callable(move |err: ChannelError, msg: std::string_view| {
                     log_line(Log::WARN, 0i32, core::ptr::null(), std::format("rrr::Server: channel listener error {}: {}",
                              channel_error_to_string(err), msg));
-                });
+                }));
             }
 
             let listen_err = {
@@ -1808,7 +1808,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=8cf2e1a10acd208fb69628a9e9d5de6df40b8d67891d3ec42059e6d5e6e67f14*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=9fa46ecca61e54dfc7e7656b86b333dd9516723afc791a2ead5702755eafdaab*/
 struct ChannelSconns;
 struct Server;
 
@@ -2065,7 +2065,7 @@ return factory->make_listener(); }();
         rusty::Arc<RpcServiceContext> ctx_arc = rusty::clone(this->ctx_field.as_ref().unwrap());
         {
             rusty::Box<ChannelListenerBase>& ch = listener;
-            ch->set_on_accept([=, ctx_arc = std::move(ctx_arc), sconns_arc = std::move(sconns_arc)](ChannelConnectionProxy conn_proxy) {
+            ch->set_on_accept(OnAcceptCallback::from_callable([=, ctx_arc = std::move(ctx_arc), sconns_arc = std::move(sconns_arc)](ChannelConnectionProxy conn_proxy) {
 if (rusty::detail::rust_not(conn_proxy.is_valid())) {
     return;
 }
@@ -2088,10 +2088,10 @@ rusty::Arc<ServerConnection> sconn = rusty::Arc<ServerConnection>::make(rusty::c
     }
     (rusty::detail::deref_if_pointer_like(guard)).conns.push(std::move(sconn));
 }
-});
-            ch->set_on_error([=](ChannelError err, std::string_view msg) {
+}));
+            ch->set_on_error(OnErrorCallback::from_callable([=](ChannelError err, std::string_view msg) {
 log_line(rusty::clone(rusty::clone(Log::WARN)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("rrr::Server: channel listener error {}: {}", channel_error_to_string(std::move(err)), std::move(msg)));
-});
+}));
         }
         const auto listen_err = [&]() { rusty::Box<ChannelListenerBase>& ch2 = listener;
 return ch2->listen(rusty::clone(addr_str)); }();

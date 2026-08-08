@@ -222,11 +222,11 @@ TEST_F(FutureBenchmark, CallbackOverhead) {
     auto start = high_resolution_clock::now();
 
     for (int i = 0; i < iterations; i++) {
-        FutureAttr attr([&callback_count](rusty::Arc<Future> f) {
+        FutureAttr attr{FutureCallback::from_callable([&callback_count](rusty::Arc<Future> f) {
             callback_count++;
             i32 result;
             rrr::deserialize_from(f->get_reply(), result);
-        });
+        })};
 
         i32 val = i;
         auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, attr, [&](BinaryWriteArchive& m) {

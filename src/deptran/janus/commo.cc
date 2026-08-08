@@ -40,7 +40,7 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
           verify(0);
         }
       };
-  fuattr.callback = cb;
+  fuattr.callback = rrr::FutureCallback::from_callable(cb);
   auto proxy = NearestProxyForPartition(cmd[0].PartitionId()).second;
   Log_debug("dispatch to {}", cmd[0].PartitionId());
 //  verify(cmd.type_ > 0);
@@ -75,7 +75,7 @@ void JanusCommo::SendInquire(parid_t pid,
     verify(sp_graph.is_some());
     callback(*sp_graph.unwrap());
   };
-  fuattr.callback = cb;
+  fuattr.callback = rrr::FutureCallback::from_callable(cb);
   // TODO fix.
   auto proxy = NearestProxyForPartition(pid).second;
   ClassicProxy::RpcJanusInquireRequest req;
@@ -101,7 +101,7 @@ void JanusCommo::BroadcastPreAccept(
     auto proxy = (p.second);
     verify(proxy != nullptr);
     FutureAttr fuattr;
-    fuattr.callback = [callback](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -113,7 +113,7 @@ void JanusCommo::BroadcastPreAccept(
       const auto sp_graph = am.unpack<RccGraph>();
       verify(sp_graph.is_some());
       callback(res, std::make_shared<RccGraph>(*sp_graph.unwrap()));
-    };
+    });
     verify(txn_id > 0);
     if (skip_graph) {
       ClassicProxy::RpcJanusPreAcceptWoGraphRequest req;
@@ -148,7 +148,7 @@ void JanusCommo::BroadcastAccept(parid_t par_id,
     auto proxy = (p.second);
     verify(proxy != nullptr);
     FutureAttr fuattr;
-    fuattr.callback = [callback](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -156,7 +156,7 @@ void JanusCommo::BroadcastAccept(parid_t par_id,
       int32_t res;
       rrr::deserialize_from(fu->get_reply(), res);
       callback(res);
-    };
+    });
     verify(cmd_id > 0);
     // graph field is `AnyMessage` directly.
     auto sp_graph = rusty::Arc<RccGraph>::make(*graph);
@@ -185,7 +185,7 @@ void JanusCommo::BroadcastCommit(
     auto proxy = (p.second);
     verify(proxy != nullptr);
     FutureAttr fuattr;
-    fuattr.callback = [callback](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -195,7 +195,7 @@ void JanusCommo::BroadcastCommit(
       rrr::deserialize_from(fu->get_reply(), res);
       rrr::deserialize_from(fu->get_reply(), output);
       callback(res, output);
-    };
+    });
     verify(cmd_id > 0);
     if (skip_graph) {
       ClassicProxy::RpcJanusCommitWoGraphRequest req;
@@ -223,7 +223,7 @@ rusty::Arc<QuorumEvent> JanusCommo::BroadcastInquireValidation(set<parid_t>& par
   for (auto par_id : pars) {
     auto proxy = NearestProxyForPartition(par_id).second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -237,7 +237,7 @@ rusty::Arc<QuorumEvent> JanusCommo::BroadcastInquireValidation(set<parid_t>& par
       } else {
         verify(0);
       }
-    };
+    });
     verify(0);
     int rank = RANK_D;
     ClassicProxy::RpcRccInquireValidationRequest req;
@@ -253,7 +253,7 @@ void JanusCommo::BroadcastNotifyValidation(txid_t txid, set<parid_t>& pars, int3
     for (auto pair : rpc_par_proxies_[par_id]) {
       auto proxy = pair.second;
       FutureAttr fuattr;
-      fuattr.callback = [](rusty::Arc<Future> fu) {};
+      fuattr.callback = rrr::FutureCallback::from_callable([](rusty::Arc<Future> fu) {});
       int rank = RANK_D;
       verify(0);
       ClassicProxy::RpcRccNotifyGlobalValidationRequest req;

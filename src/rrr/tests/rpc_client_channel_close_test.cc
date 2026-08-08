@@ -58,7 +58,7 @@ class CloseDriverChannelStub {
 
     void deliver_closed(ChannelError reason = ChannelError::ConnectionReset) {
         closed_ = true;
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
     std::size_t send_count() {
         std::lock_guard<std::mutex> g(mu_);

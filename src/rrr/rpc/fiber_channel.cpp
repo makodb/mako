@@ -163,16 +163,16 @@ impl FiberChannel {
         // teardown, which keeps the pointer live for their lifetime.
         let self_ptr: *mut FiberChannel = &raw mut *self;
         let ch: &mut Box<ChannelConnectionBase> = &mut self.ch_;
-        ch.set_on_frame(move |f: &ChannelFrame| {
+        ch.set_on_frame(OnFrameCallback::from_callable(move |f: &ChannelFrame| {
             unsafe { (*self_ptr).on_inbound_frame(f) };
-        });
-        ch.set_on_closed(move |reason: ChannelError| {
+        }));
+        ch.set_on_closed(OnClosedCallback::from_callable(move |reason: ChannelError| {
             unsafe { (*self_ptr).on_inbound_closed() };
-        });
+        }));
         // Fatal errors are followed by on_closed; non-fatal errors are
         // silently ignored at this layer.
-        ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
-        });
+        ch.set_on_error(OnErrorCallback::from_callable(move |err: ChannelError, msg: std::string_view| {
+        }));
     }
 
     // Fiber-blocking receive: drain the queue, else arm the pending
@@ -280,7 +280,7 @@ impl Drop for FiberChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=48f6f0ad0c7a7b8576d5170950a48247abe7caf9498dbb26e3e8235b58d6cd11*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=2a6a550b8a0ac485bf28d9ea5cf27b244c52c99d00d27a48fd4af65d7c910140*/
 struct FiberChannel;
 
 struct FiberChannel {
@@ -331,20 +331,20 @@ FiberChannel::FiberChannel(ChannelConnectionProxy ch)
 void FiberChannel::bind_callbacks() {
     FiberChannel* self_ptr = &(*this);
     rusty::Box<ChannelConnectionBase>& ch = this->ch_;
-    ch->set_on_frame([=, self_ptr = std::move(self_ptr)](const ChannelFrame& f) {
+    ch->set_on_frame(OnFrameCallback::from_callable([=, self_ptr = std::move(self_ptr)](const ChannelFrame& f) {
 // @unsafe
 {
     ((*self_ptr)).on_inbound_frame(f);
 }
-});
-    ch->set_on_closed([=, self_ptr = std::move(self_ptr)](ChannelError reason) {
+}));
+    ch->set_on_closed(OnClosedCallback::from_callable([=, self_ptr = std::move(self_ptr)](ChannelError reason) {
 // @unsafe
 {
     ((*self_ptr)).on_inbound_closed();
 }
-});
-    ch->set_on_error([=](ChannelError err, std::string_view msg) {
-});
+}));
+    ch->set_on_error(OnErrorCallback::from_callable([=](ChannelError err, std::string_view msg) {
+}));
 }
 
 rusty::Option<OwnedFrame> FiberChannel::try_pop() {

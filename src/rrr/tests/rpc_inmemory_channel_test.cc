@@ -105,12 +105,12 @@ TEST_F(InMemoryChannelTest, ConnectAndSendFrameClientToServer) {
     // Server-side state captured by the on_accept callback.
     std::vector<std::vector<std::uint8_t>> server_received;
     rusty::Option<ChannelConnectionProxy> server_side_proxy{rusty::None};
-    listener->set_on_accept([&](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy peer) {
         server_side_proxy = rusty::Some(std::move(peer));
-        server_side_proxy.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
+        server_side_proxy.as_mut().unwrap()->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
             server_received.emplace_back(f.payload, f.payload + f.size);
-        });
-    });
+        }));
+    }));
 
     auto result = factory().connect("inmemory://service-1");
     ASSERT_EQ(result.error, ChannelError::None);
@@ -138,19 +138,19 @@ TEST_F(InMemoryChannelTest, BidirectionalSendFrame) {
     std::vector<std::vector<std::uint8_t>> client_received;
     rusty::Option<ChannelConnectionProxy> server_side_proxy{rusty::None};
 
-    listener->set_on_accept([&](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy peer) {
         server_side_proxy = rusty::Some(std::move(peer));
-        server_side_proxy.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
+        server_side_proxy.as_mut().unwrap()->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
             server_received.emplace_back(f.payload, f.payload + f.size);
-        });
-    });
+        }));
+    }));
 
     auto result = factory().connect("inmemory://bidir");
     ASSERT_EQ(result.error, ChannelError::None);
     auto& client_proxy = result.connection;
-    client_proxy.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
+    client_proxy.as_mut().unwrap()->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
         client_received.emplace_back(f.payload, f.payload + f.size);
-    });
+    }));
 
     // Client → server.
     std::vector<std::uint8_t> req = {0xA, 0xB, 0xC};
@@ -188,10 +188,10 @@ TEST_F(InMemoryChannelTest, MultipleConnections) {
 
     int accept_count = 0;
     std::vector<ChannelConnectionProxy> server_proxies;
-    listener->set_on_accept([&](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy peer) {
         ++accept_count;
         server_proxies.push_back(std::move(peer));
-    });
+    }));
 
     auto c1 = factory().connect("inmemory://multi");
     auto c2 = factory().connect("inmemory://multi");
@@ -226,9 +226,9 @@ TEST_F(InMemoryChannelTest, PeerAddress) {
     ASSERT_EQ(listener->listen("inmemory://peer-addr-test"), ChannelError::None);
 
     rusty::Option<ChannelConnectionProxy> server_side_proxy{rusty::None};
-    listener->set_on_accept([&](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy peer) {
         server_side_proxy = rusty::Some(std::move(peer));
-    });
+    }));
 
     auto result = factory().connect("inmemory://peer-addr-test");
     ASSERT_EQ(result.error, ChannelError::None);
@@ -264,9 +264,9 @@ inline ConnectedPair make_connected_pair(
         ChannelListenerProxy& listener,
         std::string_view addr) {
     ConnectedPair pair;
-    listener->set_on_accept([&pair](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&pair](ChannelConnectionProxy peer) {
         pair.server = rusty::Some(std::move(peer));
-    });
+    }));
     auto result = factory.connect(addr);
     if (result.error == ChannelError::None) {
         pair.client = std::move(result.connection);
@@ -289,10 +289,10 @@ TEST_F(InMemoryChannelTest, ClientCloseFiresServerOnClosed) {
 
     int server_on_closed_calls = 0;
     ChannelError observed_reason = ChannelError::Internal;
-    pair.server_ref().set_on_closed([&](ChannelError r) {
+    pair.server_ref().set_on_closed(OnClosedCallback::from_callable([&](ChannelError r) {
         ++server_on_closed_calls;
         observed_reason = r;
-    });
+    }));
     EXPECT_EQ(server_on_closed_calls, 0);
 
     pair.client_ref().close();
@@ -308,9 +308,9 @@ TEST_F(InMemoryChannelTest, ServerCloseFiresClientOnClosed) {
         factory(), listener, "inmemory://close-2");
 
     int client_on_closed_calls = 0;
-    pair.client_ref().set_on_closed([&](ChannelError) {
+    pair.client_ref().set_on_closed(OnClosedCallback::from_callable([&](ChannelError) {
         ++client_on_closed_calls;
-    });
+    }));
 
     pair.server_ref().close();
 
@@ -329,9 +329,9 @@ TEST_F(InMemoryChannelTest, CloseIsIdempotent) {
         factory(), listener, "inmemory://close-idem");
 
     int server_on_closed_calls = 0;
-    pair.server_ref().set_on_closed([&](ChannelError) {
+    pair.server_ref().set_on_closed(OnClosedCallback::from_callable([&](ChannelError) {
         ++server_on_closed_calls;
-    });
+    }));
 
     pair.client_ref().close();
     pair.client_ref().close();
@@ -433,8 +433,10 @@ TEST_F(InMemoryChannelTest, BothSidesCloseFiresOnClosedOnce) {
 
     int client_on_closed_calls = 0;
     int server_on_closed_calls = 0;
-    pair.client_ref().set_on_closed([&](ChannelError) { ++client_on_closed_calls; });
-    pair.server_ref().set_on_closed([&](ChannelError) { ++server_on_closed_calls; });
+    pair.client_ref().set_on_closed(OnClosedCallback::from_callable(
+        [&](ChannelError) { ++client_on_closed_calls; }));
+    pair.server_ref().set_on_closed(OnClosedCallback::from_callable(
+        [&](ChannelError) { ++server_on_closed_calls; }));
 
     pair.client_ref().close();  // fires server's on_closed
     EXPECT_EQ(client_on_closed_calls, 0);
@@ -484,12 +486,12 @@ inline rusty::Box<PairAndProxies> make_pair_with_capture(
 
     auto* a_received_ptr = &out->a_received;
     auto* b_received_ptr = &out->b_received;
-    out->a_proxy_ref().set_on_frame([a_received_ptr](const ChannelFrame& f) {
+    out->a_proxy_ref().set_on_frame(OnFrameCallback::from_callable([a_received_ptr](const ChannelFrame& f) {
         a_received_ptr->emplace_back(f.payload, f.payload + f.size);
-    });
-    out->b_proxy_ref().set_on_frame([b_received_ptr](const ChannelFrame& f) {
+    }));
+    out->b_proxy_ref().set_on_frame(OnFrameCallback::from_callable([b_received_ptr](const ChannelFrame& f) {
         b_received_ptr->emplace_back(f.payload, f.payload + f.size);
-    });
+    }));
     return out;
 }
 

@@ -62,14 +62,14 @@ class RecvDriverChannelStub {
     // Test helpers — synchronous; both this and the recv fiber run
     // on the test thread.
     void deliver(const std::vector<std::uint8_t>& bytes) {
-        if (on_frame_) {
+        if (on_frame_.has_value()) {
             ChannelFrame f{bytes.data(), bytes.size()};
-            on_frame_(f);
+            on_frame_.callable()(f);
         }
     }
     void deliver_closed(ChannelError reason = ChannelError::None) {
         closed_ = true;
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
 
     std::vector<std::vector<std::uint8_t>> sent() {

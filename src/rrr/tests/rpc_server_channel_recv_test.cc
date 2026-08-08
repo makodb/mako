@@ -52,9 +52,9 @@ class StubChannel {
     void set_on_error (OnErrorCallback cb) { on_error_  = std::move(cb); }
 
     void deliver(const std::vector<std::uint8_t>& payload) {
-        if (!on_frame_) return;
+        if (!on_frame_.has_value()) return;
         ChannelFrame f{payload.data(), payload.size()};
-        on_frame_(f);
+        on_frame_.callable()(f);
     }
 
     const std::vector<std::vector<std::uint8_t>>& captured() const { return captured_; }

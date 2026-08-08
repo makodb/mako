@@ -223,12 +223,12 @@ TEST_F(TcpListenerTest, HandleReadAcceptsSingleConnection) {
 
     int accepts = 0;
     std::string accepted_peer;
-    mut_listener().set_on_accept([&](ChannelConnectionProxy proxy) {
+    mut_listener().set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy proxy) {
         ++accepts;
         if (proxy) {
             accepted_peer = proxy->peer_address();
         }
-    });
+    }));
 
     int client_fd = connect_and_track();
     ASSERT_GE(client_fd, 0);
@@ -243,12 +243,12 @@ TEST_F(TcpListenerTest, HandleReadAcceptsMultipleConnectionsInOnePass) {
 
     int accepts = 0;
     std::vector<std::string> peers;
-    mut_listener().set_on_accept([&](ChannelConnectionProxy proxy) {
+    mut_listener().set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy proxy) {
         ++accepts;
         if (proxy) {
             peers.push_back(proxy->peer_address());
         }
-    });
+    }));
 
     constexpr int kClients = 5;
     for (int i = 0; i < kClients; ++i) {
@@ -264,7 +264,8 @@ TEST_F(TcpListenerTest, HandleReadAcceptsMultipleConnectionsInOnePass) {
 TEST_F(TcpListenerTest, HandleReadReturnsFalseWhenIdle) {
     EXPECT_EQ(mut_listener().listen("127.0.0.1:0"), ChannelError::None);
     int accepts = 0;
-    mut_listener().set_on_accept([&](ChannelConnectionProxy) { ++accepts; });
+    mut_listener().set_on_accept(OnAcceptCallback::from_callable(
+        [&](ChannelConnectionProxy) { ++accepts; }));
 
     // No clients connecting → handle_read should return false (no
     // progress) without blocking.
@@ -275,7 +276,8 @@ TEST_F(TcpListenerTest, HandleReadReturnsFalseWhenIdle) {
 TEST_F(TcpListenerTest, HandleReadReturnsFalseAfterClose) {
     EXPECT_EQ(mut_listener().listen("127.0.0.1:0"), ChannelError::None);
     int accepts = 0;
-    mut_listener().set_on_accept([&](ChannelConnectionProxy) { ++accepts; });
+    mut_listener().set_on_accept(OnAcceptCallback::from_callable(
+        [&](ChannelConnectionProxy) { ++accepts; }));
 
     mut_listener().close();
     EXPECT_FALSE(mut_listener().handle_read());
@@ -286,9 +288,9 @@ TEST_F(TcpListenerTest, AcceptedConnectionIsUsableThroughProxy) {
     EXPECT_EQ(mut_listener().listen("127.0.0.1:0"), ChannelError::None);
 
     rusty::Option<ChannelConnectionProxy> received;
-    mut_listener().set_on_accept([&](ChannelConnectionProxy proxy) {
+    mut_listener().set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy proxy) {
         received = rusty::Some(std::move(proxy));
-    });
+    }));
 
     int client_fd = connect_and_track();
     ASSERT_GE(client_fd, 0);
@@ -335,7 +337,8 @@ TEST_F(TcpListenerTest, ChannelProxyForwardsAllOps) {
     EXPECT_FALSE(proxy->local_address().empty());
 
     int accepts = 0;
-    proxy->set_on_accept([&](ChannelConnectionProxy) { ++accepts; });
+    proxy->set_on_accept(OnAcceptCallback::from_callable(
+        [&](ChannelConnectionProxy) { ++accepts; }));
 
     int client_fd = connect_and_track();
     ASSERT_GE(client_fd, 0);

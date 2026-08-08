@@ -152,14 +152,14 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     rusty::Option<ChannelConnectionProxy> server_side_conn;
     std::vector<std::vector<std::uint8_t>> server_received;
 
-    listener->set_on_accept([&](ChannelConnectionProxy proxy) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy proxy) {
         std::lock_guard<std::mutex> g(accept_mu);
-        proxy->set_on_frame([&](const ChannelFrame& f) {
+        proxy->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
             std::lock_guard<std::mutex> g2(accept_mu);
             server_received.emplace_back(f.payload, f.payload + f.size);
-        });
+        }));
         server_side_conn = rusty::Some(std::move(proxy));
-    });
+    }));
 
     // Client side: factory.connect().
     auto cresult = tcp_factory_connect(mut_factory(), local_addr);
@@ -168,10 +168,10 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
 
     std::mutex client_mu;
     std::vector<std::vector<std::uint8_t>> client_received;
-    cresult.connection.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
+    cresult.connection.as_mut().unwrap()->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
         std::lock_guard<std::mutex> g(client_mu);
         client_received.emplace_back(f.payload, f.payload + f.size);
-    });
+    }));
 
     // Wait for accept to surface on the poll thread.
     EXPECT_TRUE(wait_for([&] {
@@ -238,14 +238,14 @@ TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
     std::mutex mu;
     rusty::Option<ChannelConnectionProxy> server_conn;
     int server_closes = 0;
-    listener->set_on_accept([&](ChannelConnectionProxy proxy) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy proxy) {
         std::lock_guard<std::mutex> g(mu);
-        proxy->set_on_closed([&](ChannelError) {
+        proxy->set_on_closed(OnClosedCallback::from_callable([&](ChannelError) {
             std::lock_guard<std::mutex> g2(mu);
             ++server_closes;
-        });
+        }));
         server_conn = rusty::Some(std::move(proxy));
-    });
+    }));
 
     auto cresult = tcp_factory_connect(mut_factory(), local_addr);
     ASSERT_EQ(cresult.error, ChannelError::None);
@@ -282,11 +282,11 @@ TEST_F(TcpFactoryTest, MultipleSequentialConnects) {
     std::mutex mu;
     int accepts = 0;
     std::vector<ChannelConnectionProxy> server_conns;
-    listener->set_on_accept([&](ChannelConnectionProxy proxy) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy proxy) {
         std::lock_guard<std::mutex> g(mu);
         ++accepts;
         server_conns.push_back(std::move(proxy));
-    });
+    }));
 
     constexpr int kClients = 5;
     std::vector<ChannelConnectionProxy> client_conns;
@@ -333,10 +333,10 @@ TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
     // accepted connection on the listener side.
     std::mutex mu;
     rusty::Option<ChannelConnectionProxy> server_conn;
-    listener->set_on_accept([&](ChannelConnectionProxy p) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy p) {
         std::lock_guard<std::mutex> g(mu);
         server_conn = rusty::Some(std::move(p));
-    });
+    }));
 
     auto r = proxy->connect(local_addr);
     ASSERT_EQ(r.error, ChannelError::None);

@@ -54,16 +54,16 @@ class FakeChannelStub {
     // Test helpers — synchronous; both this and the recv fiber run
     // on the reactor thread.
     void deliver(const std::vector<std::uint8_t>& bytes) {
-        if (on_frame_) {
+        if (on_frame_.has_value()) {
             ChannelFrame f{bytes.data(), bytes.size()};
-            on_frame_(f);
+            on_frame_.callable()(f);
         }
     }
     void deliver_closed(ChannelError reason = ChannelError::None) {
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
     void deliver_error(ChannelError e, std::string_view m) {
-        if (on_error_) on_error_(e, m);
+        if (on_error_.has_value()) on_error_.callable()(e, m);
     }
     void set_send_result(ChannelError e) { next_send_result_ = e; }
     const std::vector<std::vector<std::uint8_t>>& sent() const { return sent_; }

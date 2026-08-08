@@ -91,7 +91,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
     if (site_role!=2) continue;
      auto proxy = (MultiPaxosProxy*) p.second;
      FutureAttr fuattr;
-     fuattr.callback = [/*e, */cb] (rusty::Arc<Future> fu) {
+     fuattr.callback = rrr::FutureCallback::from_callable([/*e, */cb] (rusty::Arc<Future> fu) {
         if (fu->get_error_code()!=0) {
           Log_info("received an error message6");
           return;
@@ -104,7 +104,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         rrr::deserialize_from(fu->get_reply(), ballot);
         cb(slot, ballot);
         //e->FeedResponse(1);
-	      };
+	      });
 	     janus::Command md(cmd);
 	     //Log_info("ForwardToLearner: SENDING to learner site_id={}, slot={}", p.first, slot);
        MultiPaxosProxy::RpcForwardToLearnerServerRequest req;
@@ -184,7 +184,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
     if (Config::GetConfig()->SiteById(p.first).role==0) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message3");
         return;
@@ -198,7 +198,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
       auto sp_md = make_shared<janus::Command>(response_val);
       cb(sp_md, ballot, valid);
       e->FeedResponse(valid);
-    };
+    });
     verify(cmd.has_value());
     janus::Command md(cmd);
     MultiPaxosProxy::RpcSyncLogRequest req;
@@ -268,7 +268,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     auto proxy = (MultiPaxosProxy*) p.second;  // a Proxy pool for the concurrent request
     FutureAttr fuattr;
     int st = p.first;
-    fuattr.callback = [e, cb, st] (rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, cb, st] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message2");
         return;
@@ -282,7 +282,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
         Log_debug("Accept invalid response received from {} site", st);
       cb(ballot, valid);
       e->FeedResponse(valid);
-    };
+    });
     verify(cmd.has_value());
     janus::Command md(cmd);
     MultiPaxosProxy::RpcBulkAcceptRequest req;
@@ -312,7 +312,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
     if (Config::GetConfig()->SiteById(p.first).role==2) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message");
         return;
@@ -323,7 +323,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
       rrr::deserialize_from(fu->get_reply(), valid);
       cb(ballot, valid);
       e->FeedResponse(valid);
-    };
+    });
     janus::Command md(cmd);
     MultiPaxosProxy::RpcBulkDecideRequest req;
     req.cmd = md;

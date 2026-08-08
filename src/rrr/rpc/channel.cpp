@@ -130,7 +130,7 @@ struct ChannelFrame {
 
 // The three connection-tier callback typedefs, as DSL. This works only
 // because `detail::CallbackWrapper` is parameterised by the CALLABLE
-// TYPE (`CallbackWrapper<F> { Arc<F> inner }`) and not by the bare
+// TYPE (`CallbackWrapper<F> { Option<Arc<F>> inner }`) and not by the bare
 // signature: the abominable C++ function type `void(Args) const` has no
 // Rust spelling, and `CallbackWrapper<dyn Fn(..)>` would silently lower
 // to `CallbackWrapper<std::function<..>>` -- a DIFFERENT type that

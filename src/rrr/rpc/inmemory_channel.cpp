@@ -350,8 +350,8 @@ impl InMemoryChannel {
                 }
             }
         }
-        if fire_peer_closed && peer_on_closed {
-            peer_on_closed(ChannelError::None);
+        if fire_peer_closed && peer_on_closed.has_value() {
+            peer_on_closed.callable()(ChannelError::None);
         }
     }
 
@@ -383,7 +383,7 @@ impl InMemoryChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.channel version=1 rust_sha256=1b8ccf9c009063f74e0e7f9dfa30bbfec489614f229341a3c41e7a5c8e649bc5*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.channel version=1 rust_sha256=2145533929acb8185f1f96cd450f1127eafa67d2a2a03ae1d97a9c12f248ff9e*/
 struct InMemoryChannel;
 
 struct InMemoryChannel {
@@ -438,8 +438,8 @@ void InMemoryChannel::close() const {
             }
         }
     }
-    if (rusty::detail::deref_if_pointer_like(fire_peer_closed) && rusty::detail::deref_if_pointer_like(peer_on_closed)) {
-        peer_on_closed(ChannelError::None);
+    if (rusty::detail::deref_if_pointer_like(fire_peer_closed) && peer_on_closed.has_value()) {
+        peer_on_closed.callable()(ChannelError::None);
     }
 }
 
@@ -1167,13 +1167,13 @@ fn inmemory_channel_send_frame(ch: &InMemoryChannel, f: &ChannelFrame) -> Channe
     }
     let delivered = ChannelFrame { payload: bytes.as_ptr(), size: bytes.len() };
 
-    if peer_on_frame {
-        peer_on_frame(delivered);
+    if peer_on_frame.has_value() {
+        peer_on_frame.callable()(delivered);
     }
     ChannelError_None()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.14 version=1 rust_sha256=488bd7d4a5e17dab8f0540f73ba54d3077ab2f6f1b1db23f754232a1f9c9b3ac*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.14 version=1 rust_sha256=4e2cb21464239fca1f58448b03a4ce338362d2e73abed37485241eb03fbbea16*/
 ChannelError inmemory_channel_send_frame(const InMemoryChannel& ch, const ChannelFrame& f) {
     OnFrameCallback peer_on_frame = rusty::default_like<OnFrameCallback>();
     auto peer_already_closed = false;
@@ -1226,8 +1226,8 @@ ChannelError inmemory_channel_send_frame(const InMemoryChannel& ch, const Channe
         bytes.extend_from_slice(rusty::from_raw_parts(f.payload, f.size));
     }
     const auto delivered = ChannelFrame{.payload = rusty::as_ptr(bytes), .size = rusty::len(bytes)};
-    if (peer_on_frame) {
-        peer_on_frame(std::move(delivered));
+    if (peer_on_frame.has_value()) {
+        peer_on_frame.callable()(std::move(delivered));
     }
     return ChannelError_None();
 }
@@ -1362,7 +1362,7 @@ fn inmemory_listener_accept_for_connect(
         cb_to_fire = (*guard).on_accept.clone();
         server_address = (*guard).local_address.clone();
     }
-    if !cb_to_fire {
+    if !cb_to_fire.has_value() {
         // Listener exists but has no accept handler installed yet.
         // Mirror TCP: return None so the factory surfaces
         // ConnectionRefused.
@@ -1384,12 +1384,12 @@ fn inmemory_listener_accept_for_connect(
 
     // Hand the server-side proxy to the on_accept callback. The
     // callback typically wires server-side handlers inline.
-    cb_to_fire(make_inmemory_channel_proxy(server_side));
+    cb_to_fire.callable()(make_inmemory_channel_proxy(server_side));
 
     Some(client_side)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.16 version=1 rust_sha256=5cbbca2e53f8730446cc4549a8c3a0ef9eacb492caad68f9e42f2e1d0f99c0f0*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.16 version=1 rust_sha256=caf8e9787eaf259b83312414adcbeed0b14c8731bd752c5057ed52972a2cf40b*/
 rusty::Option<rusty::Arc<InMemoryChannel>> inmemory_listener_accept_for_connect(const InMemoryListener& lst, const std::string& client_address) {
     OnAcceptCallback cb_to_fire = rusty::default_like<OnAcceptCallback>();
     std::string server_address = rusty::default_like<std::string>();
@@ -1401,7 +1401,7 @@ rusty::Option<rusty::Arc<InMemoryChannel>> inmemory_listener_accept_for_connect(
         cb_to_fire = rusty::clone((rusty::detail::deref_if_pointer_like(guard)).on_accept);
         server_address = rusty::clone((rusty::detail::deref_if_pointer_like(guard)).local_address);
     }
-    if (rusty::detail::rust_not(cb_to_fire)) {
+    if (rusty::detail::rust_not(cb_to_fire.has_value())) {
         return rusty::Option<rusty::Arc<InMemoryChannel>>{rusty::None};
     }
     const auto state = rusty::Arc<InMemoryConnectionState>::new_(InMemoryConnectionState{.inner = rusty::Mutex<InMemoryConnectionStateInner>::new_(rusty::default_like<InMemoryConnectionStateInner>())});
@@ -1412,7 +1412,7 @@ rusty::Option<rusty::Arc<InMemoryChannel>> inmemory_listener_accept_for_connect(
     }
     auto client_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(rusty::clone(state), true));
     const auto server_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(rusty::clone(state), false));
-    cb_to_fire(make_inmemory_channel_proxy(std::move(server_side)));
+    cb_to_fire.callable()(make_inmemory_channel_proxy(std::move(server_side)));
     return rusty::Option<rusty::Arc<InMemoryChannel>>(std::move(client_side));
 }
 /*RUSTYCPP:GEN-END id=inmemory_channel.16*/

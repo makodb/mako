@@ -487,16 +487,17 @@ class ClientConnection;
 // Ok(Arc<Future>) on success, Err(error_code) on failure
 using FutureResult = rusty::Result<rusty::Arc<Future>, i32>;
 
-// FutureAttr's callback is the same `Arc<Function<...const>>`-backed
+// FutureAttr's callback is the same `Option<Arc<Function<...const>>>`-backed
 // wrapper used by the channel-tier callback typedefs in channel.hpp:
-// default-constructible (empty Function inside the Arc), copyable
-// (Arc clone = atomic refcount bump), implicit construction from any
-// compatible callable, `operator bool` / `operator()`.  Sharing the
-// wrapper keeps the API surface identical to the prior std::function
-// (so the 92+ existing `fuattr.callback = lambda;` callsites compile
-// unchanged) while letting FutureAttr propagate through generated
-// rcc_rpc.h proxy stubs cheaply.
+// default construction is `None`, copies clone the Arc, and callable
+// construction is explicit through `from_callable`. Sharing the wrapper
+// keeps FutureAttr cheap to propagate through generated rcc_rpc.h stubs.
+#if RUSTYCPP_RUST
+type FutureCallback = detail::CallbackWrapper<rusty::Function<dyn Fn(rusty::Arc<Future>)>>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.future_callback version=1 rust_sha256=fe900146cd1293c21b4714a130cdbf3d512adb1246c45be73c1aca6949ae0e40*/
 using FutureCallback = detail::CallbackWrapper<rusty::Function<void(rusty::Arc<Future>) const>>;
+/*RUSTYCPP:GEN-END id=client.future_callback*/
 
 // @safe - Simple attribute struct for Future callbacks.
 //
@@ -721,9 +722,9 @@ impl Future {
                 callback();
             }
         }
-        if should_callback && self.attr_.callback {
-            let x = self.attr_.callback;
-            x(self_arc);
+        if should_callback && self.attr_.callback.has_value() {
+            let x = self.attr_.callback.clone();
+            x.callable()(self_arc);
         }
     }
 
@@ -731,7 +732,7 @@ impl Future {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=ea710e217ac6301cf4b96dc998143e584687bc8640671c87b081c84dee6ba9fe*/
+/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=c458ab2eb0ed58076d4d82faaca96708452887b06787bd81ad02199ef40aa41c*/
 struct FutureState;
 struct Future;
 
@@ -919,9 +920,9 @@ void Future::notify_ready(rusty::Arc<Future> self_arc) const {
             callback();
         }
     }
-    if (rusty::detail::deref_if_pointer_like(should_callback) && rusty::detail::deref_if_pointer_like(this->attr_.callback)) {
-        const auto x = this->attr_.callback;
-        x(std::move(self_arc));
+    if (rusty::detail::deref_if_pointer_like(should_callback) && this->attr_.callback.has_value()) {
+        const auto x = rusty::clone(this->attr_.callback);
+        x.callable()(std::move(self_arc));
     }
 }
 
@@ -1295,26 +1296,26 @@ impl ClientConnection {
             // the alias the pointer-like check fails and the calls lower to
             // `channel.set_on_frame(..)` (dot) instead of `->` (docs 7.50).
             let ch: &mut Box<ChannelConnectionBase> = &mut channel;
-            ch.set_on_frame(move |f: &ChannelFrame| {
+            ch.set_on_frame(OnFrameCallback::from_callable(move |f: &ChannelFrame| {
                 let conn_opt = weak_frame.upgrade();
                 if conn_opt.is_none() {
                     return;
                 }
                 let conn = conn_opt.unwrap();
                 (*conn).decode_response_and_notify(f.payload, f.size);
-            });
-            ch.set_on_closed(move |reason: ChannelError| {
+            }));
+            ch.set_on_closed(OnClosedCallback::from_callable(move |reason: ChannelError| {
                 let conn_opt = weak_closed.upgrade();
                 if conn_opt.is_none() {
                     return;
                 }
                 let conn = conn_opt.unwrap();
                 (*conn).on_channel_closed_fan_out();
-            });
+            }));
             // on_error is not surfaced in this mode: the channel-layer contract
             // follows a fatal error with on_closed, so the fan-out covers it.
-            ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
-            });
+            ch.set_on_error(OnErrorCallback::from_callable(move |err: ChannelError, msg: std::string_view| {
+            }));
         }
         {
             let mut guard = self.direct_channel_.lock().unwrap();
@@ -1681,7 +1682,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=c15dc700533ee83b4e7c7bbacd74575c4e4132529fb6f997221dd0e47364389f*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=9f3b4a2030e0f4776be648d93e3b2de9087f53182e1edf11ca1f401a987c5fb2*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -2000,24 +2001,24 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) const
     WeakClientConnection weak_closed = rusty::clone(this->weak_self_);
     {
         rusty::Box<ChannelConnectionBase>& ch = channel;
-        ch->set_on_frame([=, weak_frame = std::move(weak_frame)](const ChannelFrame& f) {
+        ch->set_on_frame(OnFrameCallback::from_callable([=, weak_frame = std::move(weak_frame)](const ChannelFrame& f) {
 auto conn_opt = weak_frame.upgrade();
 if (conn_opt.is_none()) {
     return;
 }
 const auto conn = conn_opt.unwrap();
 ((rusty::detail::deref_if_pointer_like(conn))).decode_response_and_notify(f.payload, f.size);
-});
-        ch->set_on_closed([=, weak_closed = std::move(weak_closed)](ChannelError reason) {
+}));
+        ch->set_on_closed(OnClosedCallback::from_callable([=, weak_closed = std::move(weak_closed)](ChannelError reason) {
 auto conn_opt = weak_closed.upgrade();
 if (conn_opt.is_none()) {
     return;
 }
 const auto conn = conn_opt.unwrap();
 ((rusty::detail::deref_if_pointer_like(conn))).on_channel_closed_fan_out();
-});
-        ch->set_on_error([=](ChannelError err, std::string_view msg) {
-});
+}));
+        ch->set_on_error(OnErrorCallback::from_callable([=](ChannelError err, std::string_view msg) {
+}));
     }
     {
         auto guard = this->direct_channel_.lock().unwrap();

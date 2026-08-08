@@ -330,9 +330,9 @@ TEST_F(RPCTest, TimeoutHandling) {
 TEST_F(RPCTest, CallbackMechanism) {
     std::atomic<bool> callback_called{false};
 
-    FutureAttr attr([&](rusty::Arc<Future> f) {
+    FutureAttr attr{FutureCallback::from_callable([&](rusty::Arc<Future> f) {
         callback_called = true;
-    });
+    })};
 
     std::string input = "callback_test";
     auto fu_result = client.as_ref().unwrap()->request(

@@ -259,10 +259,10 @@ TEST_F(FutureTest, FutureCallback) {
     std::atomic<bool> callback_called{false};
     std::atomic<int> callback_error_code{-1};
 
-    FutureAttr attr([&](rusty::Arc<Future> f) {
+    FutureAttr attr{FutureCallback::from_callable([&](rusty::Arc<Future> f) {
         callback_called = true;
         callback_error_code = f->get_error_code();
-    });
+    })};
 
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, attr, [&](BinaryWriteArchive& m) {

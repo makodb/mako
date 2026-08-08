@@ -88,7 +88,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
     auto site = p.first;
 
     FutureAttr fuattr;
-    fuattr.callback = [e, ballot, is_pilot, slot_id, site](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, ballot, is_pilot, slot_id, site](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -114,7 +114,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
       e->FeedResponse(ok);
 
       e->remove_xid(site);
-    };
+    });
 
     CopilotProxy::RpcPrepareRequest req;
     req.is_pilot = is_pilot;
@@ -162,7 +162,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
       e->FeedRetDep(dep);
     } else {
       FutureAttr fuattr;
-      fuattr.callback = [e, dep, ballot, site, cmd_env](rusty::Arc<Future> fu) {
+      fuattr.callback = rrr::FutureCallback::from_callable([e, dep, ballot, site, cmd_env](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
@@ -182,7 +182,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
         }
 
         e->remove_xid(site);
-      };
+      });
 
       verify(cmd_env.has_value());
 
@@ -236,7 +236,7 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
       e->FeedResponse(true);
     } else {
       FutureAttr fuattr;
-      fuattr.callback = [e, ballot, site](rusty::Arc<Future> fu) {
+      fuattr.callback = rrr::FutureCallback::from_callable([e, ballot, site](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
@@ -246,7 +246,7 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
         e->FeedResponse(ballot == b);
 
         e->remove_xid(site);
-      };
+      });
 
       CopilotProxy::RpcAcceptRequest req;
       req.is_pilot = is_pilot;
@@ -285,9 +285,9 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
     if (site == 1) continue;
 #endif
     FutureAttr fuattr;
-    fuattr.callback = [e, site](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, site](rusty::Arc<Future> fu) {
       e->remove_xid(site);
-    };
+    });
     CopilotProxy::RpcCommitRequest req;
     req.is_pilot = is_pilot;
     req.slot = slot_id;

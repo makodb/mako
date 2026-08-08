@@ -147,7 +147,7 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
   WAN_WAIT;
   for (auto& pair : rpc_par_proxies_[par_id]) {
     rrr::FutureAttr fuattr;
-    fuattr.callback =
+    fuattr.callback = rrr::FutureCallback::from_callable(
         [e, this](rusty::Arc<Future> fu) {
           if (fu->get_error_code() != 0) {
             Log_info("Get a error message in reply");
@@ -160,7 +160,7 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
           rrr::deserialize_from(fu->get_reply(), result);
           rrr::deserialize_from(fu->get_reply(), is_leader);
           e->FeedResponse(accepted, result, is_leader);
-        };
+        });
     
     DepId di;
     di.str = "dep";
@@ -200,7 +200,7 @@ void CommunicatorRule::BroadcastDispatch(
   auto par_id = sp_vec_piece->at(0)->PartitionId();
 
   rrr::FutureAttr fuattr;
-  fuattr.callback =
+  fuattr.callback = rrr::FutureCallback::from_callable(
       [coo, this, callback, par_id](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
@@ -224,7 +224,7 @@ void CommunicatorRule::BroadcastDispatch(
         }
         
         callback(ret, outputs);
-      };
+      });
   
   VecPieceData vpd;
   vpd.sp_vec_piece_data_ = sp_vec_piece;

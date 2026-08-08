@@ -40,7 +40,7 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
           verify(0);
         }
       };
-  fuattr.callback = cb;
+  fuattr.callback = rrr::FutureCallback::from_callable(cb);
   auto proxy = NearestProxyForPartition(cmd[0].PartitionId()).second;
   Log_debug("dispatch to {}", cmd[0].PartitionId());
 //  verify(cmd.type_ > 0);
@@ -72,7 +72,7 @@ void RccCommo::SendFinish(parid_t pid,
     rrr::deserialize_from(fu->get_reply(), outputs);
     callback(outputs);
   };
-  fuattr.callback = cb;
+  fuattr.callback = rrr::FutureCallback::from_callable(cb);
   auto proxy = NearestProxyForPartition(pid).second;
   // graph field is `AnyMessage` directly.
   auto sp_graph = rusty::Arc<RccGraph>::make(*graph);
@@ -98,7 +98,7 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
     rrr::deserialize_from(fu->get_reply(), *ret);
     ev->set(1);
   };
-  fuattr.callback = cb;
+  fuattr.callback = rrr::FutureCallback::from_callable(cb);
   auto proxy = (ClassicProxy*)NearestProxyForPartition(pid).second;
   ClassicProxy::RpcRccInquireRequest req;
   req.txn_id = tid;
@@ -127,7 +127,7 @@ void RccCommo::SendInquire(parid_t pid,
     verify(sp_graph.is_some());
     callback(*sp_graph.unwrap());
   };
-  fuattr.callback = cb;
+  fuattr.callback = rrr::FutureCallback::from_callable(cb);
   auto proxy = (ClassicProxy*)NearestProxyForPartition(pid).second;
   ClassicProxy::RpcJanusInquireRequest req;
   req.epoch = epoch;
@@ -149,7 +149,7 @@ void RccCommo::BroadcastCommit(parid_t par_id,
     auto proxy = (p.second);
     verify(proxy != nullptr);
     FutureAttr fuattr;
-    fuattr.callback = [callback](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future> fu) {
                         if (fu->get_error_code() != 0) {
                           Log_info("Get a error message in reply");
                           return;
@@ -159,7 +159,7 @@ void RccCommo::BroadcastCommit(parid_t par_id,
                         rrr::deserialize_from(fu->get_reply(), res);
                         rrr::deserialize_from(fu->get_reply(), output);
                         callback(res, output);
-                      };
+                      });
     verify(cmd_id > 0);
     if (skip_graph) {
       ClassicProxy::RpcJanusCommitWoGraphRequest req;
@@ -197,8 +197,8 @@ void RccCommo::BroadcastValidation(txid_t id, set<parid_t> pars, int result) {
     for (auto& pair : rpc_par_proxies_[partition_id]) {
       auto proxy = pair.second;
       FutureAttr fuattr;
-      fuattr.callback = [] (rusty::Arc<Future> fu) {
-      };
+      fuattr.callback = rrr::FutureCallback::from_callable([] (rusty::Arc<Future> fu) {
+      });
       int rank = RANK_D;
       verify(0);
       ClassicProxy::RpcRccNotifyGlobalValidationRequest req;

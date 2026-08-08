@@ -42,11 +42,11 @@ void output_val(i32 val) {
 void *nc_start_client(void *input) {
   int par_id = ((struct args*)input)->par_id;
   FutureAttr fuattr;  // fuattr
-  fuattr.callback = [&] (rusty::Arc<Future> fu) {
+  fuattr.callback = rrr::FutureCallback::from_callable([&] (rusty::Arc<Future> fu) {
     i32 val;
     rrr::deserialize_from(fu->get_reply(), val);
     output_val(val);
-  };
+  });
   std::vector<int64_t> ret;
   ret.push_back(1);
   
