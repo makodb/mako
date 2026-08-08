@@ -156,11 +156,35 @@ TEST_F(GracefulShutdownTest, HookExceptionDoesNotStopOthers) {
     });
 
     // Should not throw, and all hooks should be attempted
+    testing::internal::CaptureStdout();
     EXPECT_NO_THROW(server.graceful_shutdown(100));
+    const auto log = testing::internal::GetCapturedStdout();
 
     ASSERT_EQ(2u, call_order.size());
     EXPECT_EQ(1, call_order[0]);
     EXPECT_EQ(3, call_order[1]);
+    EXPECT_NE(std::string::npos,
+              log.find("Server::graceful_shutdown: hook threw exception: Hook error"));
+}
+
+TEST_F(GracefulShutdownTest, OpaqueHookExceptionUsesUnknownMessageAndDoesNotStopOthers) {
+    auto server = Server::new_(rusty::None);
+    bool later_hook_called = false;
+
+    server.add_shutdown_hook([]() {
+        throw 7;
+    });
+    server.add_shutdown_hook([&later_hook_called]() {
+        later_hook_called = true;
+    });
+
+    testing::internal::CaptureStdout();
+    EXPECT_NO_THROW(server.graceful_shutdown(100));
+    const auto log = testing::internal::GetCapturedStdout();
+
+    EXPECT_TRUE(later_hook_called);
+    EXPECT_NE(std::string::npos,
+              log.find("Server::graceful_shutdown: hook threw unknown exception"));
 }
 
 // ========== Stop Accepting Tests ==========

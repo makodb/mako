@@ -4248,14 +4248,14 @@ void deserialize(T& v, BinaryReadArchive& ar) {
 // ---------------------------------------------------------------------------
 
 // Abstract base class for serializable payloads. Concrete derived
-// types implement `save`, `load`, and `kind`. The proxy is a
+// types implement `save`, `load`, `kind`, and exact payload type identity. The proxy is a
 // `std::shared_ptr<SerializableBase>` so SerializableEnvelope copies
 // share the underlying payload via refcount (matching the original
 // `support_copy<nontrivial>` semantics where copies via
 // SerializableSharedPtrHolder shared the inner shared_ptr).
 //
-// Downcasting: `dynamic_cast<T*>(proxy.get())` recovers the concrete
-// derived type.
+// Typed recovery compares the holder's `std::any::TypeId` first, then uses the
+// shared `serializable_holder_of<T>` checked cast below.
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -4273,9 +4273,10 @@ pub trait SerializableBase {
     fn save(&self, ar: &mut BinaryWriteArchive);
     fn load(&mut self, ar: &mut BinaryReadArchive);
     fn kind(&self) -> i32;
+    fn payload_type_id(&self) -> std::any::TypeId;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.1 version=1 rust_sha256=09faf724fbedcb9cf6f47203e2f6865062f27426a1e4b6a2f2c53a8bfe3afa60*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.1 version=1 rust_sha256=6916f97bcf38559da004cc48217408c430d325dacd17f5961d6519a43efb80c0*/
 class SerializableBase;
 
 class SerializableBase {
@@ -4284,6 +4285,7 @@ public:
     virtual void save(BinaryWriteArchive& ar) const = 0;
     virtual void load(BinaryReadArchive& ar) = 0;
     virtual int32_t kind() const = 0;
+    virtual std::type_index payload_type_id() const = 0;
     SerializableBase(const SerializableBase&) = delete;
     SerializableBase& operator=(const SerializableBase&) = delete;
     SerializableBase(SerializableBase&&) = delete;
@@ -4319,7 +4321,7 @@ struct SerializableSharedPtrHolder<T> {
 }
 
 #[cpp_inherit]
-impl<T> SerializableBase for SerializableSharedPtrHolder<T> {
+impl<T: 'static> SerializableBase for SerializableSharedPtrHolder<T> {
     fn save(&self, ar: &mut BinaryWriteArchive) {
         self.ptr.save(ar)
     }
@@ -4333,9 +4335,12 @@ impl<T> SerializableBase for SerializableSharedPtrHolder<T> {
     fn kind(&self) -> i32 {
         self.ptr.kind()
     }
+    fn payload_type_id(&self) -> std::any::TypeId {
+        std::any::TypeId::of::<T>()
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.shared_ptr_holder version=1 rust_sha256=f9923424bb2e555bb678cb6f74c62c51ec3ecbe45fccbc02a1585d91b6dccbf8*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.shared_ptr_holder version=1 rust_sha256=42c08469c2727c171554e2f7d93d01ef8e4e4d1abb575b9ab45ca8476de655c5*/
 template<typename T>
 struct SerializableSharedPtrHolder;
 
@@ -4355,6 +4360,9 @@ struct SerializableSharedPtrHolder : public SerializableBase {
     int32_t kind() const {
         return this->ptr->kind();
     }
+    std::type_index payload_type_id() const {
+        return std::type_index(typeid(T));
+    }
     // Rust derives Send/Sync from the field types; C++ cannot see them.
     static constexpr bool is_send = rusty::is_send<T>::value && rusty::is_sync<T>::value;
     static constexpr bool is_sync = rusty::is_send<T>::value && rusty::is_sync<T>::value;
@@ -4364,6 +4372,35 @@ struct SerializableSharedPtrHolder : public SerializableBase {
 
 
 }  // namespace details
+
+// @unsafe - checked recovery from the erased base. SerializableSharedPtrHolder
+// is the only SerializableBase implementation, and payload_type_id equality
+// proves its template argument before the raw cast. Null and mismatches remain
+// null, matching the former dynamic_cast contract.
+#if RUSTYCPP_RUST
+fn serializable_holder_of<T: 'static>(base: *const SerializableBase)
+    -> *const details::SerializableSharedPtrHolder<T> {
+    if base.is_null() {
+        return core::ptr::null();
+    }
+    if unsafe { (*base).payload_type_id() } != std::any::TypeId::of::<T>() {
+        return core::ptr::null();
+    }
+    base as *const details::SerializableSharedPtrHolder<T>
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.19 version=1 rust_sha256=f6581625353e6989d6f0ce911ef1522510095956e1006877b486083acb9c7d3c*/
+template<typename T>
+std::add_pointer_t<std::add_const_t<details::SerializableSharedPtrHolder<T>>> serializable_holder_of(const SerializableBase* base) {
+    if ((base == nullptr)) {
+        return rusty::ptr::null();
+    }
+    if (((*base)).payload_type_id() != std::type_index(typeid(T))) {
+        return rusty::ptr::null();
+    }
+    return reinterpret_cast<std::add_pointer_t<std::add_const_t<details::SerializableSharedPtrHolder<T>>>>(base);
+}
+/*RUSTYCPP:GEN-END id=serializable.19*/
 
 // CRTP base providing `kind()` (instance) + `static_kind()` (static)
 // derived from a TypeList position.  Production payload types
@@ -4400,8 +4437,7 @@ struct Serializable {
 //   - void load(BinaryReadArchive&)
 //   - int32_t kind() const
 // The factory wraps T in a SerializableSharedPtrHolder<T> so callers can
-// downcast back to T* via
-//   dynamic_cast<details::SerializableSharedPtrHolder<T>*>(proxy.get())
+// recover T through `serializable_holder_of<T>(proxy.get())`
 // (or via the envelope's unpack<T>() / unpack_shared<T>()).
 //
 // This was one `template<class T, class... Args>` perfect-forwarding
@@ -4423,12 +4459,12 @@ struct Serializable {
 // such a site ever appears, add a third block taking `value: T` rather
 // than widening these.
 #if RUSTYCPP_RUST
-fn make_serializable_proxy<T>() -> SerializableProxy {
+fn make_serializable_proxy<T: 'static>() -> SerializableProxy {
     let sp: Arc<T> = rusty::Arc::<T>::make();
     rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.20 version=1 rust_sha256=5301d8f9a9e419e55fcb15505fc25351b0c622caef3498bb957e6c0345184ddc*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.20 version=1 rust_sha256=a42f8ff395cbba6ada3d0c95bf209c4a3289d9bd510da1c2a78d3d43a6de843c*/
 template<typename T>
 SerializableProxy make_serializable_proxy() {
     rusty::Arc<T> sp = rusty::Arc<T>::make();
@@ -4437,12 +4473,12 @@ SerializableProxy make_serializable_proxy() {
 /*RUSTYCPP:GEN-END id=serializable.20*/
 
 #if RUSTYCPP_RUST
-fn make_serializable_proxy<T>(value: &T) -> SerializableProxy {
+fn make_serializable_proxy<T: 'static>(value: &T) -> SerializableProxy {
     let sp: Arc<T> = rusty::Arc::<T>::make(value);
     rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.21 version=1 rust_sha256=0363746061cf3e586373b1aa92d12482fee2deed9773df121c3665713a4c4b63*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.21 version=1 rust_sha256=74f125038edd4452782f26df7e376c3e0d48fccac0b2903277877470a38d9fb4*/
 template<typename T>
 SerializableProxy make_serializable_proxy(const T& value) {
     rusty::Arc<T> sp = rusty::Arc<T>::make(value);
@@ -4477,7 +4513,7 @@ impl SerializableRegistry {
     // without re-checking that; a by-reference capture would dangle.
     // The proxy is holder-shaped so SerializableEnvelope::load gives
     // unpack_shared<T> a refcount-shared Arc<T>.
-    fn reg<T>(kind: i32) -> i32 {
+    fn reg<T: 'static>(kind: i32) -> i32 {
         serializable_registry_register_factory(kind, || -> SerializableProxy {
             let sp: Arc<T> = rusty::Arc::<T>::make();
             rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp)
@@ -4500,7 +4536,7 @@ impl SerializableRegistry {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.registry version=1 rust_sha256=473d135505ad5c3b514224349bc2c441f01fb78b57d6f78e2a3dc69d1373b538*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.registry version=1 rust_sha256=f9e9c5051552af6c5a71c0b67ca56357ff6503a5907aa62ed3f16c08509f4eda*/
 struct SerializableRegistry;
 
 struct SerializableRegistry {

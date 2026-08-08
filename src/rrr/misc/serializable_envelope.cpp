@@ -22,7 +22,7 @@ import rrr.serializable;
 // @safe - SerializableEnvelope: rusty::Arc-backed sum type carried
 // over the Marshal wire. The kind/has_value/operator bool/operator==
 // accessors and `refresh_kind` are pure pointer-equality and integer
-// reads. The dynamic_cast-heavy unpack family, `marshallable_cast`'s
+// reads. The checked raw-holder unpack family, `marshallable_cast`'s
 // `const_cast` overload, and the four `operator<<` / `operator>>`
 // archive entry points carry per-method `// @unsafe` (Marshal
 // operator chains + raw `T*` returns).
@@ -32,7 +32,7 @@ export namespace rrr {
 // @unsafe kernels for the DSL class below. Each is a construct the DSL
 // genuinely cannot express, kept minimal so the envelope's SHAPE stays
 // in Rust: C++ template metaprogramming (the TypeList membership
-// static_assert) and the RTTI downcast.
+// static_assert). Checked holder recovery is shared by rrr.serializable.
 
 // @unsafe - THE kernel: the C++ dependent-name `template` disambiguator.
 // `TypeList::contains::<T>()` IS spellable in the DSL and DOES lower to a
@@ -65,13 +65,6 @@ void envelope_assert_in_type_list() {
     static_assert(type_list_contains<TypeList, T>(), "assert ! (type_list_contains ::< TypeList , T > () , \"SerializableEnvelope: T is not in TypeList. Add T to the TypeList declaration.\")");
 }
 /*RUSTYCPP:GEN-END id=serializable_envelope.2*/
-
-// @unsafe - RTTI downcast to the holder for T (nullptr on miss).
-template<typename T>
-inline const details::SerializableSharedPtrHolder<T>* envelope_holder_of(
-    const SerializableBase* base) {
-  return dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(base);
-}
 
 // @unsafe - mutable escape from the const-view Arc. Backs the non-const
 // `T* unpack()` overload's historical contract; new code should prefer
@@ -153,7 +146,7 @@ impl<TypeList> SerializableEnvelope<TypeList> {
     // Internally identical to pack_aliased(Arc<T>::make(value)) — gives
     // unpack_shared<T> proper refcounted ownership at the cost of one
     // extra heap allocation per pack.
-    fn pack<T>(value: &T) -> SerializableEnvelope<TypeList> {
+    fn pack<T: 'static>(value: &T) -> SerializableEnvelope<TypeList> {
         envelope_assert_in_type_list::<TypeList, T>();
         SerializableEnvelope::<TypeList>::pack_aliased::<T>(rusty::Arc::<T>::make(*value))
     }
@@ -162,7 +155,7 @@ impl<TypeList> SerializableEnvelope<TypeList> {
     // the caller's handle stay visible to the encoded payload;
     // unpack<T>() aliases the same instance and unpack_shared<T>()
     // returns a refcount-shared Arc<T>.
-    fn pack_aliased<T>(sp: rusty::Arc<T>) -> SerializableEnvelope<TypeList> {
+    fn pack_aliased<T: 'static>(sp: rusty::Arc<T>) -> SerializableEnvelope<TypeList> {
         envelope_assert_in_type_list::<TypeList, T>();
         let mut env: SerializableEnvelope<TypeList> = Default::default();
         env.inner_ = Some(
@@ -173,11 +166,11 @@ impl<TypeList> SerializableEnvelope<TypeList> {
 
     // INVARIANT: `inner_` is always holder-shaped — every construction
     // path and every SerializableRegistry factory wraps the payload in a
-    // SerializableSharedPtrHolder<T>, so one downcast suffices with no
+    // SerializableSharedPtrHolder<T>, so one checked TypeId cast suffices with no
     // direct-SerializableBase fallback.
-    fn unpack<T>(&self) -> *const T {
+    fn unpack<T: 'static>(&self) -> *const T {
         envelope_assert_in_type_list::<TypeList, T>();
-        let h = envelope_holder_of::<T>(self.base_ptr());
+        let h = serializable_holder_of::<T>(self.base_ptr());
         if h.is_null() {
             return core::ptr::null();
         }
@@ -187,16 +180,16 @@ impl<TypeList> SerializableEnvelope<TypeList> {
     // Recover the payload as a refcount-shared Arc<T> (for pack_aliased
     // envelopes this shares the caller's original Arc; for pack
     // envelopes the envelope-owned copy). None on empty or mismatch.
-    fn unpack_shared<T>(&self) -> rusty::Option<rusty::Arc<T>> {
+    fn unpack_shared<T: 'static>(&self) -> rusty::Option<rusty::Arc<T>> {
         envelope_assert_in_type_list::<TypeList, T>();
-        let h = envelope_holder_of::<T>(self.base_ptr());
+        let h = serializable_holder_of::<T>(self.base_ptr());
         if h.is_null() {
             return None;
         }
         Some(unsafe { (*h).ptr.clone() })
     }
 
-    fn is_a<T>(&self) -> bool {
+    fn is_a<T: 'static>(&self) -> bool {
         let p: *const T = self.unpack::<T>();
         !p.is_null()
     }
@@ -222,9 +215,9 @@ impl<TypeList> SerializableEnvelope<TypeList> {
 
 // The non-const half of the unpack overload pair (see the note above).
 impl<TypeList> SerializableEnvelope<TypeList> {
-    fn unpack<T>(&mut self) -> *mut T {
+    fn unpack<T: 'static>(&mut self) -> *mut T {
         envelope_assert_in_type_list::<TypeList, T>();
-        let h = envelope_holder_of::<T>(self.base_ptr());
+        let h = serializable_holder_of::<T>(self.base_ptr());
         if h.is_null() {
             return core::ptr::null_mut();
         }
@@ -249,7 +242,7 @@ impl<TypeList> PartialEq for SerializableEnvelope<TypeList> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.1 version=1 rust_sha256=29aecfc7a160a14f66fe764290ab18f3f398b40d4398c1e715a304cd48736997*/
+/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.1 version=1 rust_sha256=cf309c46539191dbb7d5c5d35f3f27a473593cb6889dc85044101c2b66ade464*/
 template<typename TypeList>
 struct SerializableEnvelope;
 
@@ -305,7 +298,7 @@ struct SerializableEnvelope {
     template<typename T>
     std::add_pointer_t<std::add_const_t<T>> unpack() const {
         envelope_assert_in_type_list<TypeList, T>();
-        const auto h = envelope_holder_of<T>(this->base_ptr());
+        const auto h = serializable_holder_of<T>(this->base_ptr());
         if ((h == nullptr)) {
             return rusty::ptr::null();
         }
@@ -317,7 +310,7 @@ struct SerializableEnvelope {
     template<typename T>
     rusty::Option<rusty::Arc<T>> unpack_shared() const {
         envelope_assert_in_type_list<TypeList, T>();
-        const auto h = envelope_holder_of<T>(this->base_ptr());
+        const auto h = serializable_holder_of<T>(this->base_ptr());
         if ((h == nullptr)) {
             return rusty::Option<rusty::Arc<T>>{rusty::None};
         }
@@ -349,7 +342,7 @@ struct SerializableEnvelope {
     template<typename T>
     std::add_pointer_t<T> unpack() {
         envelope_assert_in_type_list<TypeList, T>();
-        const auto h = envelope_holder_of<T>(this->base_ptr());
+        const auto h = serializable_holder_of<T>(this->base_ptr());
         if ((h == nullptr)) {
             return rusty::ptr::null_mut();
         }
@@ -371,15 +364,15 @@ struct SerializableEnvelope {
 // Returns Option<Arc<T>> — None on empty envelope / type mismatch.
 // (unpack_shared is const now; the old const_cast overload collapsed.)
 // @unsafe - authored as inline Rust DSL; the body is a pure delegation
-// to the dynamic_cast-backed `unpack_shared`. T is declared FIRST so the
+// to the TypeId-checked `unpack_shared`. T is declared FIRST so the
 // call sites keep spelling `marshallable_cast<T>(env)` with TypeList
 // deduced from the argument.
 #if RUSTYCPP_RUST
-fn marshallable_cast<T, TypeList>(env: &SerializableEnvelope<TypeList>) -> rusty::Option<rusty::Arc<T>> {
+fn marshallable_cast<T: 'static, TypeList>(env: &SerializableEnvelope<TypeList>) -> rusty::Option<rusty::Arc<T>> {
     env.unpack_shared::<T>()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.3 version=1 rust_sha256=3d1b6f75a3a014413617da69d485569cbbaa6909085948a11a4e9826ee664729*/
+/*RUSTYCPP:GEN-BEGIN id=serializable_envelope.3 version=1 rust_sha256=7d0802f7a6ec68cbddc1fdf8c15f8564e39795e46c1df06feb0aedbf4a0aff36*/
 template<typename T, typename TypeList>
 rusty::Option<rusty::Arc<T>> marshallable_cast(const SerializableEnvelope<TypeList>& env) {
     return env.template unpack_shared<T>();

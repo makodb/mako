@@ -20,8 +20,8 @@ import rrr.threading;
 // @safe - AnyMessage: rusty::Arc-backed typed wire payload; the
 // runtime AnyMessageRegistry maps registered names to factory
 // closures. Methods that drive a Marshal operator<</>> chain
-// (`save`, `load`, the four free operator helpers), do a
-// dynamic_cast to a raw `T*` (`unpack`), or escape a raw
+// (`save`, `load`, the four free operator helpers), recover a checked raw
+// holder pointer (`unpack`), or escape a raw
 // `const std::string*` (`name_for_type` and its callers) carry
 // per-method `// @unsafe` below.
 /*RUSTYCPP:GEN-DISPATCH-BEGIN*/
@@ -112,13 +112,13 @@ impl AnyMessage {
 
     // True iff this AnyMessage carries a value of type T (i.e., the
     // wire-carried type_name matches T's registered name).
-    fn is_a<T>(&self) -> bool {
+    fn is_a<T: 'static>(&self) -> bool {
         anymessage_is_a::<T>(self)
     }
 
     // Recover the typed payload. Returns nullptr if T is not the
     // carried type, or if T was never registered.
-    fn unpack<T>(&self) -> Option<Arc<T>> {
+    fn unpack<T: 'static>(&self) -> Option<Arc<T>> {
         anymessage_unpack::<T>(self)
     }
 
@@ -126,18 +126,18 @@ impl AnyMessage {
     // name does NOT need to have been pre-registered — pack_as is the
     // escape hatch for ad-hoc names. The receiver still needs a
     // factory registered under the same name to deserialize.
-    fn pack_as<T>(name: std::string, val: Arc<T>) -> AnyMessage {
+    fn pack_as<T: 'static>(name: std::string, val: Arc<T>) -> AnyMessage {
         anymessage_pack_as(name, val)
     }
 
     // Build an AnyMessage using T's registered name. Aborts via
     // verify() if T was not registered with `reg_any_message_as<T>(...)`.
-    fn pack<T>(val: Arc<T>) -> AnyMessage {
+    fn pack<T: 'static>(val: Arc<T>) -> AnyMessage {
         anymessage_pack(val)
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=d50e06d531351fe40caa5cc28f7507e64ac6bf67c5fc332203e77a121cc8931c*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=429ddd71c4f911c35e8c80cd4f1170da475eb3a66334721509e1c2da700ac806*/
 struct AnyMessage;
 
 struct AnyMessage {
@@ -247,17 +247,6 @@ void clear_for_testing();
 //
 // Returns 0 — suitable for `static int _reg = reg_any_message_as<T>("...");`.
 
-// @unsafe - THE kernel for this family: RTTI over a TEMPLATE PARAMETER.
-// `typeid(T)` is the one step with no Rust spelling; the factory closure,
-// the registry calls and the name compare are all DSL below and share
-// this single line. (The old "typeid / std::type_index is not
-// DSL-expressible, so the whole function must be C++" note was too broad:
-// only the typeid is.)
-template <typename T>
-inline std::type_index anymessage_type_index_of() {
-  return std::type_index(typeid(T));
-}
-
 // ---- Inlines that rely on the registry ------------------------------
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
@@ -270,32 +259,32 @@ inline std::type_index anymessage_type_index_of() {
 //   * its factory lambda gains a `[&]` capture-default it never uses —
 //     the closure captures nothing, exactly as the `[]` form did.
 #if RUSTYCPP_RUST
-fn reg_any_message_as<T>(name: std::string) -> i32 {
+fn reg_any_message_as<T: 'static>(name: std::string) -> i32 {
     any_message_registry::register_type(
         name,
-        anymessage_type_index_of::<T>(),
+        std::any::TypeId::of::<T>(),
         || -> SerializableProxy {
             let sp = rusty::Arc::<T>::make();
             rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(sp)
         })
 }
 
-fn anymessage_is_a<T>(self_: &AnyMessage) -> bool {
+fn anymessage_is_a<T: 'static>(self_: &AnyMessage) -> bool {
     let name: std::string =
-        any_message_registry::name_for_type_owned(anymessage_type_index_of::<T>());
+        any_message_registry::name_for_type_owned(std::any::TypeId::of::<T>());
     if name.is_empty() {
         return false;
     }
     self_.type_name_ == name
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.2 version=1 rust_sha256=b80403e3b74373cc319c52dced7e5dd7b4ffd358bba09ff479663ec24dd849ad*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.2 version=1 rust_sha256=ab3dd312a1954b178a677f612a7646bec8f3d79a786b51daab7c077b910c46bc*/
 template<typename T>
 int32_t reg_any_message_as(std::string name);
 
 template<typename T>
 int32_t reg_any_message_as(std::string name) {
-    return any_message_registry::register_type(std::move(name), anymessage_type_index_of<T>(), [&]() -> SerializableProxy {
+    return any_message_registry::register_type(std::move(name), std::type_index(typeid(T)), [&]() -> SerializableProxy {
 auto sp = rusty::Arc<T>::make();
 return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(sp));
 });
@@ -303,25 +292,13 @@ return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(sp));
 
 template<typename T>
 bool anymessage_is_a(const AnyMessage& self_) {
-    const std::string name = any_message_registry::name_for_type_owned(anymessage_type_index_of<T>());
+    const std::string name = any_message_registry::name_for_type_owned(std::type_index(typeid(T)));
     if (rusty::is_empty(name)) {
         return false;
     }
     return rusty::detail::deref_if_pointer_like(self_.type_name_) == rusty::detail::deref_if_pointer_like(name);
 }
 /*RUSTYCPP:GEN-END id=any_message.2*/
-
-// @unsafe - THE kernel for unpack: the RTTI downcast to the holder for T
-// (nullptr on miss). `dynamic_cast` over a template parameter is the one
-// step with no Rust spelling; this is the same 3-line shape
-// serializable_envelope.cpp already ships as `envelope_holder_of<T>`.
-// Everything around it -- the is_a guard, the empty-payload guard, the
-// null test and the Arc clone -- is DSL below.
-template <typename T>
-inline const details::SerializableSharedPtrHolder<T>* anymessage_holder_of(
-    const SerializableBase* base) {
-  return dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(base);
-}
 
 // Recover the typed payload. Returns None if T is not the carried type,
 // if T was never registered, or if the message carries no payload.
@@ -335,24 +312,24 @@ inline const details::SerializableSharedPtrHolder<T>* anymessage_holder_of(
 //
 // INVARIANT: `payload_` is always holder-shaped -- every construction path
 // and every any_message_registry factory wraps the payload in a
-// SerializableSharedPtrHolder<T>, so one downcast suffices with no
+// SerializableSharedPtrHolder<T>, so one checked TypeId cast suffices with no
 // direct-SerializableBase fallback.
 #if RUSTYCPP_RUST
-fn anymessage_unpack<T>(self_: &AnyMessage) -> rusty::Option<rusty::Arc<T>> {
+fn anymessage_unpack<T: 'static>(self_: &AnyMessage) -> rusty::Option<rusty::Arc<T>> {
     if !anymessage_is_a::<T>(self_) {
         return None;
     }
     if self_.payload_.is_none() {
         return None;
     }
-    let h = anymessage_holder_of::<T>(self_.payload_.as_ref().unwrap().get());
+    let h = serializable_holder_of::<T>(self_.payload_.as_ref().unwrap().get());
     if h.is_null() {
         return None;
     }
     Some(unsafe { (*h).ptr.clone() })
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.unpack version=1 rust_sha256=59a99d659dea7935b9fddca09e32f19686902d2e1f70f30a95155068423e5c68*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.unpack version=1 rust_sha256=708ed16abfc06c6c4a2c3f37b7d0c3b2f0a8ec6747edbdce0cb2101228e231d3*/
 template<typename T>
 rusty::Option<rusty::Arc<T>> anymessage_unpack(const AnyMessage& self_) {
     if (rusty::detail::rust_not(anymessage_is_a<T>(self_))) {
@@ -361,7 +338,7 @@ rusty::Option<rusty::Arc<T>> anymessage_unpack(const AnyMessage& self_) {
     if (self_.payload_.is_none()) {
         return rusty::Option<rusty::Arc<T>>{rusty::None};
     }
-    const auto h = anymessage_holder_of<T>(self_.payload_.as_ref().unwrap().get());
+    const auto h = serializable_holder_of<T>(self_.payload_.as_ref().unwrap().get());
     if ((h == nullptr)) {
         return rusty::Option<rusty::Arc<T>>{rusty::None};
     }
@@ -387,13 +364,13 @@ rusty::Option<rusty::Arc<T>> anymessage_unpack(const AnyMessage& self_) {
 // Arc<Derived> -> Arc<Base> upcast happens in Arc's implicit converting ctor
 // (one refcount bump, exactly as the hand-written version did).
 #if RUSTYCPP_RUST
-fn anymessage_pack_as<T>(name: std::string, val: rusty::Arc<T>) -> AnyMessage {
+fn anymessage_pack_as<T: 'static>(name: std::string, val: rusty::Arc<T>) -> AnyMessage {
     let payload: SerializableProxy =
         rusty::Arc::<details::SerializableSharedPtrHolder<T>>::make(val);
     AnyMessage { type_name_: name, payload_: rusty::Some(payload) }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.pack_as version=1 rust_sha256=a0555f77932caac4c454e9726bbeeb745f4100203ec855b99248c981e31ba75b*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.pack_as version=1 rust_sha256=1ed93ccbd459798928d26bd46661eabe611bb6e833ea3ba5e56a8edd11f858be*/
 template<typename T>
 AnyMessage anymessage_pack_as(std::string name, rusty::Arc<T> val) {
     SerializableProxy payload = rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(val));
@@ -403,25 +380,25 @@ AnyMessage anymessage_pack_as(std::string name, rusty::Arc<T> val) {
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
 // source of truth; the transpiler regenerates the matching
-// `RUSTYCPP:GEN-BEGIN ... END` block. The only C++ left is the shared
-// `anymessage_type_index_of<T>()` RTTI kernel above.
+// `RUSTYCPP:GEN-BEGIN ... END` block. Runtime type identity is the valid-Rust
+// `std::any::TypeId::of::<T>()`, lowered to C++ RTTI by rusty-cpp.
 //
 // The verify() loses its trailing `&& "AnyMessage::pack<T>: T not
 // registered. Call reg_any_message_as<T>('name') at static init."` string
 // literal — rrr's verify() reports file + line only and never printed it,
 // the same trade `AnyMessage::load` above already made.
 #if RUSTYCPP_RUST
-fn anymessage_pack<T>(val: rusty::Arc<T>) -> AnyMessage {
+fn anymessage_pack<T: 'static>(val: rusty::Arc<T>) -> AnyMessage {
     let name: std::string =
-        any_message_registry::name_for_type_owned(anymessage_type_index_of::<T>());
+        any_message_registry::name_for_type_owned(std::any::TypeId::of::<T>());
     verify(!name.is_empty());
     anymessage_pack_as::<T>(name, val)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.4 version=1 rust_sha256=119ef1ee5210854734cdf6e82a7dc71f7602d2352c36fba857dcb6f680224a9f*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.4 version=1 rust_sha256=0316ddf033c429543ddc1de87398f4ba58b4ba56f1d881637fef772a2bfcb49a*/
 template<typename T>
 AnyMessage anymessage_pack(rusty::Arc<T> val) {
-    const std::string name = any_message_registry::name_for_type_owned(anymessage_type_index_of<T>());
+    const std::string name = any_message_registry::name_for_type_owned(std::type_index(typeid(T)));
     verify(rusty::detail::rust_not(rusty::is_empty(name)));
     return anymessage_pack_as<T>(std::move(name), std::move(val));
 }

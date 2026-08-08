@@ -354,7 +354,7 @@ fn make_service_proxy_from_typed_box<T>(svc: Box<T>) -> ServiceProxy {
     rusty::make_box::<ServiceBoxShim<T>>(svc)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.service_shim version=1 rust_sha256=196690969dff94cb163e04fedd989bb804f097321cbaac347a83fa0438565f3a*/
+/*RUSTYCPP:GEN-BEGIN id=server.service_shim version=1 rust_sha256=71bdbcb2f99225aa985b040ffaf1fa25933899d73d65daace7d4bd9955cb935d*/
 template<typename T>
 struct ServiceBoxShim;
 
@@ -1341,28 +1341,18 @@ rusty::Option<int32_t> server_parse_port(const std::string& text) {
 }
 /*RUSTYCPP:GEN-END id=server.17*/
 
-// @unsafe - the one irreducible step: recovering an exception's message
-// needs a rethrow plus a typed catch. `None` is the old `catch (...)` arm —
-// a payload that is not a std::exception, and so has no what().
-inline rusty::Option<std::string> server_exception_message(std::exception_ptr p) {
-    try { std::rethrow_exception(p); }
-    catch (const std::exception& e) { return rusty::Some(std::string(e.what())); }
-    catch (...) { return rusty::None; }
-}
-
 // The invoker is DSL now: `std::panic::catch_unwind` lowers to
 // `rusty::panic::catch_unwind`, whose `catch (...)` + exception_ptr payload
-// IS the old two-arm try/catch. Both messages survive verbatim — the
-// std::exception arm still logs `e.what()`, which is what tells a throwing
-// hook apart from one that failed opaquely. Runtime-checked against the old
-// kernel: identical messages, nothing escapes, a later hook still runs.
+// IS the old two-arm try/catch. `rusty::panic::payload_message` keeps the
+// typed `std::exception::what()` recovery inside the runtime; an opaque
+// payload returns None. Both log messages therefore survive verbatim.
 #if RUSTYCPP_RUST
 fn server_invoke_shutdown_hook_safely(hook: &mut ShutdownHook) {
     let r = std::panic::catch_unwind(|| { hook(); });
     if r.is_ok() {
         return;
     }
-    let msg = server_exception_message(r.unwrap_err());
+    let msg = rusty::panic::payload_message(r.unwrap_err());
     if msg.is_some() {
         unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("Server::graceful_shutdown: hook threw exception: {}", msg.unwrap())); }
     } else {
@@ -1370,7 +1360,7 @@ fn server_invoke_shutdown_hook_safely(hook: &mut ShutdownHook) {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.20 version=1 rust_sha256=1ca0deb5c1447760fb7d71240c04a7e7f1af854c462aff0a96498cb50df08042*/
+/*RUSTYCPP:GEN-BEGIN id=server.20 version=1 rust_sha256=f597bbd2315c9514e86c18ac74ee0d40340f375068908b065ce77906791058fe*/
 void server_invoke_shutdown_hook_safely(ShutdownHook& hook) {
     auto r = rusty::panic::catch_unwind([&]() {
 hook();
@@ -1378,7 +1368,7 @@ hook();
     if (r.is_ok()) {
         return;
     }
-    auto msg = server_exception_message(r.unwrap_err());
+    auto msg = rusty::panic::payload_message(r.unwrap_err());
     if (msg.is_some()) {
         // @unsafe
         {
