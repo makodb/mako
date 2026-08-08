@@ -1,28 +1,66 @@
-schema_version = 2
+schema_version = 3
 profile = "mako-cpp-consumer-v1"
 crate_root = "crates/srpc"
 output_root = "crates/srpc/cpp/generated"
 cxx_namespace = "rrr"
-transpiler_git = "2b261ccc0915ea99cbab02631ccc5bea19ac82c7"
-transpiler_sha256 = "65f10285f4954c422c7a0968197c118025a0d8676d20a32f24edc4b2f68d1782"
+transpiler_git = "9032cb1945a2c4717af2a65c85065a47d0c23b54"
+transpiler_sha256 = "9eb024274c6e3588c9ea796f197c2b4da847bdb907af9e43504368d68b8013d9"
 
 [[module]]
 source = "src/wire/internal_protocol.rs"
+rust_module = "crate::wire::internal_protocol"
+legacy_source = "src/rrr/rpc/internal_protocol.cpp"
 module_name = "rrr.internal_protocol"
 output = "rrr.internal_protocol.cppm"
 kind = "interface"
+dependencies = []
 gmf_headers = []
 
 [[module]]
 source = "src/base/stat.rs"
+rust_module = "crate::base::stat"
+legacy_source = "src/rrr/misc/stat.cpp"
 module_name = "rrr.stat"
 output = "rrr.stat.cppm"
 kind = "interface"
+dependencies = []
 gmf_headers = []
 
 [[module]]
 source = "src/rpc/connection_metrics.rs"
+rust_module = "crate::rpc::connection_metrics"
+legacy_source = "src/rrr/rpc/connection_metrics.cpp"
 module_name = "rrr.connection_metrics"
 output = "rrr.connection_metrics.cppm"
 kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
+source = "src/rpc/errors.rs"
+rust_module = "crate::rpc::errors"
+legacy_source = "src/rrr/rpc/errors.cpp"
+module_name = "rrr.errors"
+output = "rrr.errors.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
+source = "src/base/monotonic.rs"
+rust_module = "crate::base::monotonic"
+module_name = "rrr.monotonic"
+output = "rrr.monotonic.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
+source = "src/rpc/circuit_breaker.rs"
+rust_module = "crate::rpc::circuit_breaker"
+legacy_source = "src/rrr/rpc/circuit_breaker.cpp"
+module_name = "rrr.circuit_breaker"
+output = "rrr.circuit_breaker.cppm"
+kind = "interface"
+dependencies = ["crate::base::monotonic"]
 gmf_headers = []

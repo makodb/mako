@@ -24,6 +24,10 @@ set(SRPC_CPP_CONSUMER_MANIFEST
     ${CMAKE_SOURCE_DIR}/crates/srpc/cpp/mako-consumer.toml)
 set(SRPC_CPP_GENERATOR
     ${CMAKE_SOURCE_DIR}/scripts/generate_srpc_cpp.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${SRPC_CPP_CONSUMER_MANIFEST}
+    ${SRPC_CPP_GENERATOR}
+)
 
 # Ordinary C++ builds consume checked-in modules and do not need rustc or the
 # transpiler. Fail closed at configure time if their offline ownership/source/
@@ -51,11 +55,27 @@ if(NOT SRPC_CPP_STAMP_CHECK_RESULT STREQUAL "0")
 endif()
 message(STATUS "Verified srpc generated C++ module integrity stamps")
 
-set(RRR_GENERATED_PILOT_LEGACY_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
+set(SRPC_CPP_CMAKE_MANIFEST
+    ${CMAKE_CURRENT_BINARY_DIR}/srpc-generated-modules.cmake)
+execute_process(
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${SRPC_CPP_GENERATOR}"
+        --emit-cmake
+        --manifest "${SRPC_CPP_CONSUMER_MANIFEST}"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    RESULT_VARIABLE SRPC_CPP_CMAKE_RESULT
+    OUTPUT_FILE "${SRPC_CPP_CMAKE_MANIFEST}"
+    ERROR_VARIABLE SRPC_CPP_CMAKE_STDERR
 )
+if(NOT SRPC_CPP_CMAKE_RESULT STREQUAL "0")
+    string(STRIP "${SRPC_CPP_CMAKE_STDERR}" SRPC_CPP_CMAKE_DIAGNOSTIC)
+    message(FATAL_ERROR
+        "srpc generated module manifest export failed:\n"
+        "${SRPC_CPP_CMAKE_DIAGNOSTIC}")
+endif()
+include("${SRPC_CPP_CMAKE_MANIFEST}")
+
 set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/basetypes.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/callback_wrapper.cpp
@@ -68,7 +88,6 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
-    ${SRPC_GENERATED_MODULE_DIR}/rrr.stat.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
@@ -78,7 +97,6 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/completion_tracker.cpp
-    ${SRPC_GENERATED_MODULE_DIR}/rrr.connection_metrics.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
@@ -86,7 +104,6 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
-    ${SRPC_GENERATED_MODULE_DIR}/rrr.internal_protocol.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp
@@ -95,13 +112,20 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
+    ${SRPC_GENERATED_MODULE_FILES}
 )
-# Remove the retired legacy pilot paths from the ordinary source glob so each
-# generated named module has exactly one compilation unit. Keeping the paths
-# explicit also makes stale files in a no-delete build mirror harmless.
+# A manifest entry atomically replaces its legacy module. This removal also
+# makes adding future generated units a profile-only operation rather than a
+# second hand-maintained CMake list.
+list(REMOVE_ITEM RRR_MODULE_SRC
+    ${SRPC_RETIRED_LEGACY_MODULE_FILES}
+)
+# Remove retired paths from the ordinary source glob so each generated named
+# module has exactly one compilation unit. Keeping the paths explicit also
+# makes stale files in a no-delete build mirror harmless.
 list(REMOVE_ITEM RRR_BENCH_SRC
     ${RRR_MODULE_SRC}
-    ${RRR_GENERATED_PILOT_LEGACY_SRC}
+    ${SRPC_RETIRED_LEGACY_MODULE_FILES}
 )
 # Platform implementation units for rrr.epoll_wrapper (Rust std's
 # sys-module pattern): exactly one is compiled, selected below.
@@ -206,10 +230,9 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
-        # Generated pilot modules (rrr.stat, rrr.connection_metrics, and
-        # rrr.internal_protocol) are emitted from crates/srpc Rust sources.
-        # rustc owns their source-level safety checks; the checked-in C++ is
-        # a build artifact and is intentionally excluded from C++ borrowing.
+        # Manifest-owned generated modules are emitted from crates/srpc Rust
+        # sources. rustc owns their source-level safety checks; checked-in C++
+        # artifacts are removed from this list below rather than borrow-checked.
         # reactor/ — (fiber_impl.cc, event.cc, quorum_event.cc, reactor.cc were
         # merged into rrr.reactor / reactor.cpp during modularization.)
         ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
@@ -251,6 +274,9 @@ if(NOT TARGET rrr)
         # - reactor/fiber_context_{aarch64,x86_64}.cc: arch-specific inline
         #   `__asm__ volatile(...)` context-switch trampolines (~30 lines
         #   each). C++ semantics don't reach them.
+    )
+    list(REMOVE_ITEM RRR_BORROW_SRC
+        ${SRPC_RETIRED_LEGACY_MODULE_FILES}
     )
 
     if(ENABLE_BORROW_CHECKING AND RRR_BORROW_SRC)

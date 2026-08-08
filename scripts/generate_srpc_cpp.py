@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -23,10 +24,10 @@ import tempfile
 import tomllib
 
 
-SCHEMA_VERSION = 2
-GENERATOR_VERSION = 2
+SCHEMA_VERSION = 3
+GENERATOR_VERSION = 3
 CANONICAL_TRANSPILER_SHA256 = (
-    "65f10285f4954c422c7a0968197c118025a0d8676d20a32f24edc4b2f68d1782"
+    "9eb024274c6e3588c9ea796f197c2b4da847bdb907af9e43504368d68b8013d9"
 )
 DEFAULT_MANIFEST = Path("crates/srpc/cpp/mako-consumer.toml")
 DEFAULT_TRANSPILER = Path(
@@ -43,6 +44,15 @@ HAND_SLOT_PREFIXES = (
 
 class ProfileError(RuntimeError):
     """A deterministic consumer-profile invariant was violated."""
+
+
+def validate_profile_path(label: str, value: str) -> None:
+    """Accept only repository-relative paths safe to quote in generated CMake."""
+    path = Path(value)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ProfileError(f"{label} must be a normalized repository-relative path")
+    if any(character in value for character in ('"', "'", ";", "$", "\\", "\n", "\r")):
+        raise ProfileError(f"{label} contains a character unsafe for generated CMake")
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -124,6 +134,14 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
             raise ProfileError(f"manifest key {key!r} must be a non-empty string")
         if "\n" in data[key] or "\r" in data[key]:
             raise ProfileError(f"manifest key {key!r} must fit on one line")
+    validate_profile_path("crate_root", data["crate_root"])
+    validate_profile_path("output_root", data["output_root"])
+    if not re.fullmatch(
+        r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*", data["cxx_namespace"]
+    ):
+        raise ProfileError(
+            "cxx_namespace must be an identifier or ::-qualified identifiers"
+        )
     pin = data.get("transpiler_git")
     if not isinstance(pin, str) or not re.fullmatch(r"[0-9a-f]{40}", pin):
         raise ProfileError("transpiler_git must be a full 40-character lowercase SHA")
@@ -144,8 +162,19 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
     data["_crate_dir"] = crate_dir
     data["_output_dir"] = output_dir
 
-    allowed_module = {"source", "module_name", "output", "kind", "gmf_headers"}
+    allowed_module = {
+        "source",
+        "rust_module",
+        "legacy_source",
+        "module_name",
+        "output",
+        "kind",
+        "dependencies",
+        "gmf_headers",
+    }
     seen_sources: set[str] = set()
+    seen_rust_modules: set[str] = set()
+    seen_legacy_sources: set[str] = set()
     seen_modules: set[str] = set()
     seen_outputs: set[str] = set()
     for index, entry in enumerate(modules, 1):
@@ -156,7 +185,7 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
             raise ProfileError(
                 f"module entry {index} has unknown keys: {', '.join(unknown)}"
             )
-        for key in ("source", "module_name", "output", "kind"):
+        for key in ("source", "rust_module", "module_name", "output", "kind"):
             if not isinstance(entry.get(key), str) or not entry[key]:
                 raise ProfileError(
                     f"module entry {index} key {key!r} must be a non-empty string"
@@ -169,6 +198,27 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
             raise ProfileError(
                 f"module entry {index} kind must be interface or implementation"
             )
+        if not re.fullmatch(
+            r"crate(?:::[A-Za-z_]\w*)+", entry["rust_module"]
+        ):
+            raise ProfileError(
+                f"module entry {index} has invalid Rust module path "
+                f"{entry['rust_module']!r}"
+            )
+        dependencies = entry.get("dependencies", [])
+        if not isinstance(dependencies, list) or not all(
+            isinstance(dependency, str) for dependency in dependencies
+        ):
+            raise ProfileError(
+                f"module entry {index} dependencies must be a string array"
+            )
+        if len(set(dependencies)) != len(dependencies):
+            raise ProfileError(f"module entry {index} has duplicate dependencies")
+        if entry["rust_module"] in dependencies:
+            raise ProfileError(f"module entry {index} depends on itself")
+        entry["dependencies"] = dependencies
+        validate_profile_path(f"module entry {index} source", entry["source"])
+        validate_profile_path(f"module entry {index} output", entry["output"])
         headers = entry.get("gmf_headers", [])
         if not isinstance(headers, list) or not all(isinstance(h, str) for h in headers):
             raise ProfileError(f"module entry {index} gmf_headers must be a string array")
@@ -180,13 +230,45 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
         entry["gmf_headers"] = headers
 
         source = (crate_dir / entry["source"]).resolve()
+        legacy_source_label = entry.get("legacy_source")
+        if legacy_source_label is not None and (
+            not isinstance(legacy_source_label, str) or not legacy_source_label
+        ):
+            raise ProfileError(
+                f"module entry {index} legacy_source must be a non-empty string"
+            )
+        if legacy_source_label is not None and (
+            "\n" in legacy_source_label or "\r" in legacy_source_label
+        ):
+            raise ProfileError(
+                f"module entry {index} legacy_source must fit on one line"
+            )
+        if legacy_source_label is not None:
+            validate_profile_path(
+                f"module entry {index} legacy_source", legacy_source_label
+            )
+        legacy_source = (
+            (root / legacy_source_label).resolve()
+            if legacy_source_label is not None
+            else None
+        )
         output = (output_dir / entry["output"]).resolve()
         if not within(source, crate_dir):
             raise ProfileError(f"module entry {index} source escapes crate_root")
+        if legacy_source is not None and not within(legacy_source, root):
+            raise ProfileError(f"module entry {index} legacy_source escapes repository")
         if not within(output, output_dir):
             raise ProfileError(f"module entry {index} output escapes output_root")
         if Path(entry["source"]).suffix != ".rs":
             raise ProfileError(f"module entry {index} source must end in .rs")
+        if legacy_source_label is not None and Path(legacy_source_label).suffix not in {
+            ".cpp",
+            ".cc",
+            ".cxx",
+        }:
+            raise ProfileError(
+                f"module entry {index} legacy_source must be a C++ source path"
+            )
         expected_suffix = ".cppm" if entry["kind"] == "interface" else ".cpp"
         if Path(entry["output"]).suffix != expected_suffix:
             raise ProfileError(
@@ -196,16 +278,43 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
             raise ProfileError(
                 f"module entry {index} has invalid C++ module name {entry['module_name']!r}"
             )
-        for label, value, seen in (
+        unique_values = [
             ("source", entry["source"], seen_sources),
+            ("rust_module", entry["rust_module"], seen_rust_modules),
             ("module_name", entry["module_name"], seen_modules),
             ("output", entry["output"], seen_outputs),
-        ):
+        ]
+        if legacy_source_label is not None:
+            unique_values.append(
+                ("legacy_source", legacy_source_label, seen_legacy_sources)
+            )
+        for label, value, seen in unique_values:
             if value in seen:
                 raise ProfileError(f"duplicate module {label}: {value}")
             seen.add(value)
         entry["_source"] = source
+        entry["_legacy_source"] = legacy_source
         entry["_output"] = output
+
+    mapped_rust_modules = {
+        entry["rust_module"]: index for index, entry in enumerate(modules)
+    }
+    for index, entry in enumerate(modules, 1):
+        for dependency in entry["dependencies"]:
+            if not re.fullmatch(r"crate(?:::[A-Za-z_]\w*)+", dependency):
+                raise ProfileError(
+                    f"module entry {index} has invalid dependency {dependency!r}"
+                )
+            dependency_index = mapped_rust_modules.get(dependency)
+            if dependency_index is None:
+                raise ProfileError(
+                    f"module entry {index} has unmapped dependency {dependency!r}"
+                )
+            if dependency_index >= index - 1:
+                raise ProfileError(
+                    f"module entry {index} dependency {dependency!r} must precede "
+                    "its consumer in topological manifest order"
+                )
     return data, raw
 
 
@@ -290,6 +399,67 @@ def apply_unit_kind(cpp: str, module_name: str, kind: str) -> str:
     return re.sub(r"(?m)^export (?!(?:module)\b)", "", cpp)
 
 
+def validate_dependency_imports(cpp: str, entry: dict, manifest: dict) -> None:
+    """Require the declared graph to match consumer-module imports exactly."""
+    module_by_rust_path = {
+        module["rust_module"]: module["module_name"]
+        for module in manifest["module"]
+    }
+    known_cpp_modules = set(module_by_rust_path.values())
+    expected = {
+        module_by_rust_path[dependency] for dependency in entry["dependencies"]
+    }
+    imports = set(
+        re.findall(
+            r"(?m)^import\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;",
+            cpp,
+        )
+    )
+    actual = imports & known_cpp_modules
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        parts = []
+        if missing:
+            parts.append(f"missing emitted imports: {', '.join(missing)}")
+        if extra:
+            parts.append(f"undeclared emitted imports: {', '.join(extra)}")
+        raise ProfileError(
+            f"dependency drift in {entry['module_name']}: {'; '.join(parts)}"
+        )
+
+    module_family = entry["module_name"].split(".", 1)[0] + "."
+    unmapped = sorted(
+        imported
+        for imported in imports
+        if imported.startswith(module_family) and imported not in known_cpp_modules
+    )
+    if unmapped:
+        raise ProfileError(
+            f"unmapped consumer imports in {entry['module_name']}: "
+            f"{', '.join(unmapped)}"
+        )
+
+
+def write_consumer_module_map(manifest: dict, path: Path) -> None:
+    """Write the emitter's complete consumer module map deterministically."""
+    document = {
+        "version": 1,
+        "module": [
+            {
+                "rust_module": entry["rust_module"],
+                "cpp_module": entry["module_name"],
+                "cpp_namespace": manifest["cxx_namespace"],
+            }
+            for entry in manifest["module"]
+        ],
+    }
+    path.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+
 def stamp_fields(
     *,
     manifest_path: Path,
@@ -306,6 +476,7 @@ def stamp_fields(
     manifest_label = manifest_path.resolve().relative_to(root).as_posix()
     return [
         ("generator-version", str(GENERATOR_VERSION)),
+        ("generator-sha256", sha256_file(Path(__file__).resolve())),
         ("profile", profile),
         ("profile-manifest", manifest_label),
         ("profile-sha256", manifest_sha),
@@ -342,6 +513,7 @@ def generate_one(
     scratch: Path,
     source_bytes: bytes,
     staged_source: Path,
+    consumer_module_map: Path,
 ) -> bytes:
     source: Path = entry["_source"]
     raw_output = scratch / entry["output"]
@@ -355,6 +527,8 @@ def generate_one(
         entry["module_name"],
         "--cxx-namespace",
         manifest["cxx_namespace"],
+        "--consumer-module-map",
+        str(consumer_module_map),
     ]
     run_checked(command, cwd=root)
     try:
@@ -370,6 +544,7 @@ def generate_one(
         )
     cpp = inject_gmf_headers(cpp, entry["gmf_headers"])
     cpp = apply_unit_kind(cpp, entry["module_name"], entry["kind"])
+    validate_dependency_imports(cpp, entry, manifest)
     if entry["kind"] == "interface":
         exported = [
             line
@@ -514,7 +689,29 @@ def check_stamps(
             root=root,
         )
         verify_stamped_output(output, output_bytes, fields)
+        try:
+            output_text = output_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ProfileError(f"generated output is not UTF-8: {output}: {exc}") from exc
+        validate_dependency_imports(output_text, entry, manifest)
         print(f"ok {output.relative_to(root)}")
+
+
+def emit_cmake_manifest(manifest: dict, root: Path) -> None:
+    """Print the generated/retired file sets for inclusion by CMake."""
+    print("# Generated by scripts/generate_srpc_cpp.py --emit-cmake")
+    print("set(SRPC_GENERATED_MODULE_FILES")
+    for entry in manifest["module"]:
+        relative = entry["_output"].relative_to(root).as_posix()
+        print(f'    "${{CMAKE_SOURCE_DIR}}/{relative}"')
+    print(")")
+    print("set(SRPC_RETIRED_LEGACY_MODULE_FILES")
+    for entry in manifest["module"]:
+        legacy_source = entry["_legacy_source"]
+        if legacy_source is not None:
+            relative = legacy_source.relative_to(root).as_posix()
+            print(f'    "${{CMAKE_SOURCE_DIR}}/{relative}"')
+    print(")")
 
 
 def atomic_write(path: Path, data: bytes) -> bool:
@@ -578,6 +775,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="offline source/profile/output integrity check (no Cargo or transpiler)",
     )
+    mode.add_argument(
+        "--emit-cmake",
+        action="store_true",
+        help="print manifest-owned generated and retired source sets for CMake",
+    )
     parser.add_argument(
         "--manifest",
         type=Path,
@@ -605,6 +807,9 @@ def main() -> int:
     try:
         manifest, manifest_raw = load_manifest(manifest_path.resolve(), root)
         check_unexpected_outputs(manifest)
+        if args.emit_cmake:
+            emit_cmake_manifest(manifest, root)
+            return 0
         if args.check_stamps:
             check_stamps(manifest, manifest_path, manifest_raw, root)
             return 0
@@ -628,6 +833,8 @@ def main() -> int:
             staged_sources = stage_sources(
                 manifest, snapshots, scratch / "sources"
             )
+            consumer_module_map = scratch / "consumer-module-map.json"
+            write_consumer_module_map(manifest, consumer_module_map)
             for entry in manifest["module"]:
                 source: Path = entry["_source"]
                 data = generate_one(
@@ -642,6 +849,7 @@ def main() -> int:
                     scratch,
                     snapshots[source],
                     staged_sources[source],
+                    consumer_module_map,
                 )
                 generated.append((entry["_output"], data))
         verify_source_snapshots(snapshots)

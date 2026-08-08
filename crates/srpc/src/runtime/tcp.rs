@@ -24,7 +24,7 @@
 //! returning an owned `Vec` per frame, is a per-request allocation on
 //! the hottest path in the system.
 
-use crate::rpc::errors::ChannelError;
+use crate::rpc::ChannelError;
 use crate::runtime::epoll::PollMode;
 use crate::runtime::poll_thread::{PollThread, Pollable};
 use crate::sys;

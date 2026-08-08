@@ -162,6 +162,10 @@ TEST(RpcErrorTest, UnknownCategoryStringFallsBackToUnknown) {
 TEST(RpcErrorTest, UnknownErrorStringFallsBackToUnknown) {
     auto unknown = static_cast<RpcError>(999999);
     EXPECT_EQ(rpc_error_to_string(unknown), "UNKNOWN");
+    EXPECT_EQ(get_error_category(unknown), RpcErrorCategory::INTERNAL);
+    EXPECT_FALSE(is_connection_error(unknown));
+    EXPECT_FALSE(is_timeout_error(unknown));
+    EXPECT_FALSE(is_retryable_error(unknown));
 }
 
 // ============================================================================

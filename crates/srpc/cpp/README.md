@@ -48,3 +48,20 @@ avoids a recursive checksum.
 Each module entry can add textual global-module-fragment headers through
 `gmf_headers`. `kind = "interface"` produces an exported `.cppm`; a future
 `kind = "implementation"` entry produces a non-exporting `.cpp` module unit.
+`rust_module` identifies the canonical crate path, `module_name` identifies
+the legacy consumer module, and `dependencies` lists already-migrated Rust
+modules in topological order. The generator derives a rusty-cpp consumer
+module map from those entries, so `crate::...` paths resolve to the correct
+`rrr.*` import and the flat `rrr` namespace.
+
+Replacement entries also record their retired `legacy_source`; generated-only
+support modules omit it. CMake consumes the generated and retired file sets
+directly from the same manifest:
+
+```sh
+python3 scripts/generate_srpc_cpp.py --emit-cmake
+```
+
+This mode is offline and emits only a CMake fragment; it does not invoke Cargo
+or the transpiler. Adding a generated module therefore does not require a
+second, manually synchronized source list in `src/rrr/CMakeLists.txt`.

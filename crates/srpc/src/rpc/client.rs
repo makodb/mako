@@ -22,7 +22,7 @@
 //! gets wrong by routing every send through a queue.
 
 use crate::base::sync::Counter;
-use crate::rpc::errors::ChannelError;
+use crate::rpc::ChannelError;
 use crate::runtime::poll_thread::{PollThread, Pollable};
 use crate::runtime::tcp::{TcpConnection, TcpFactory};
 use crate::wire::frame::encode_into;
