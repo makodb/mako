@@ -152,7 +152,17 @@ class RecordingService {
     i64 last_xid_       = 0;
     std::string last_payload_;
 };
-static_assert(ServiceLike<RecordingService>);
+static_assert(requires(
+    RecordingService& svc,
+    Server& server,
+    std::size_t svc_index,
+    i32 rpc_id,
+    rusty::Box<Request> req,
+    WeakServerConnection weak_sconn) {
+  { svc.__reg_to__(server, svc_index) } -> std::convertible_to<int>;
+  { svc.__dispatch__(rpc_id, std::move(req), std::move(weak_sconn)) }
+      -> std::same_as<void>;
+});
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching

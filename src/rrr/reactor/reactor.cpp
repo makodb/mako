@@ -90,7 +90,6 @@ RUSTY_METHOD_DISPATCH(pop)
 RUSTY_METHOD_DISPATCH(push_back)
 RUSTY_METHOD_DISPATCH(retain)
 RUSTY_METHOD_DISPATCH(set_self)
-RUSTY_METHOD_DISPATCH(size)
 RUSTY_METHOD_DISPATCH(unwrap)
 RUSTY_METHOD_DISPATCH(upgrade)
 } } // namespace rusty::detail (issue #31 deref_call dispatch)
@@ -1990,16 +1989,20 @@ bool Fiber::finished() const {
 }
 /*RUSTYCPP:GEN-END id=reactor.64*/
 
-// KERNEL that must stay hand-written C++ (3 lines): a free `operator<`
-// over a FOREIGN type (rusty::Rc<Fiber>) has no DSL trait-impl form -- a
-// PartialOrd impl on Fiber would order Fibers, not Rc<Fiber> handles.
-// Hoisted out of the class body (it was an in-class friend); at namespace
-// scope ADL still finds it from `std::less<Rc<Fiber>>` because Fiber's
-// namespace is an associated namespace of the template argument.
-// Required by Reactor's `RefCell<std::set<Rc<Fiber>>> fibers_`.
-inline bool operator<(const rusty::Rc<Fiber>& lhs, const rusty::Rc<Fiber>& rhs) {
-  return lhs.get() < rhs.get();
+// Key the live-fiber registry by Rc allocation identity.  The explicitly typed
+// pointer local makes the pointer-to-usize cast lower through uintptr_t.
+#if RUSTYCPP_RUST
+fn fiber_registry_key(fiber: &rusty::Rc<Fiber>) -> usize {
+    let ptr: *const Fiber = rusty::Rc::<Fiber>::as_ptr(fiber);
+    ptr as usize
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.74 version=1 rust_sha256=4132c24b5b43da7611594888829710c15066905d60f219783836c79c44baf7a4*/
+size_t fiber_registry_key(const rusty::Rc<Fiber>& fiber) {
+    const Fiber* ptr = rusty::Rc<Fiber>::as_ptr(fiber);
+    return static_cast<size_t>(reinterpret_cast<std::uintptr_t>(ptr));
+}
+/*RUSTYCPP:GEN-END id=reactor.74*/
 
 
 
@@ -2146,7 +2149,7 @@ struct Reactor {
     waiting_events_: rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>,
     timeout_events_: rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>,
     composite_events_: rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>,
-    fibers_: rusty::RefCell<std::set<rusty::Rc<Fiber>>>,
+    fibers_: rusty::RefCell<BTreeMap<usize, rusty::Rc<Fiber>>>,
     available_fibers_: rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>>,
     looping_: rusty::Cell<bool>,
     slow_: rusty::Cell<bool>,
@@ -2173,7 +2176,7 @@ impl Reactor {
             waiting_events_: Default::default(),
             timeout_events_: Default::default(),
             composite_events_: Default::default(),
-            fibers_: Default::default(),
+            fibers_: rusty::RefCell::new(BTreeMap::<usize, rusty::Rc<Fiber>>::new()),
             available_fibers_: Default::default(),
             looping_: Default::default(),
             slow_: Default::default(),
@@ -2278,7 +2281,7 @@ impl Reactor {
                                 let mut known = false;
                                 {
                                     let fibers_guard = self.fibers_.borrow();
-                                    known = (*fibers_guard).contains(fiber);
+                                    known = (*fibers_guard).contains_key(fiber_registry_key(&fiber));
                                 }
                                 if known {
                                     verify(fiber.status_.get() == FiberStatus::PAUSED);
@@ -2362,16 +2365,14 @@ impl Reactor {
     }
 
     fn register_fiber(&self, fiber: &rusty::Rc<Fiber>) {
-        // std::set::insert returns pair<iterator, bool>; `.second` is true
-        // when the value was newly inserted.
         let mut guard = self.fibers_.borrow_mut();
-        let inserted = guard.insert(fiber.clone()).second;
+        let inserted = guard.insert(fiber_registry_key(fiber), fiber.clone()).is_none();
         if !inserted {
-            unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!")); }
-            unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", guard.size(), REUSING_FIBER)); }
+            unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ registry!")); }
+            unsafe { log_line(Log::ERROR, 0i32, core::ptr::null(), std::format("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", guard.len(), REUSING_FIBER)); }
         }
         verify(inserted);
-        verify(guard.size() > 0usize);
+        verify(guard.len() > 0usize);
     }
 
     fn recycle(&self, fiber: &mut rusty::Rc<Fiber>) {
@@ -2384,7 +2385,7 @@ impl Reactor {
             self.available_fibers_.borrow_mut().push(fiber.clone());
         }
         self.n_busy_fibers_.set(self.n_busy_fibers_.get() - 1i64);
-        self.fibers_.borrow_mut().erase(fiber);
+        self.fibers_.borrow_mut().remove(fiber_registry_key(fiber));
     }
 
     fn enqueue_stackless_task(&self, idx: usize) {
@@ -2534,12 +2535,12 @@ impl Reactor {
 impl Drop for Reactor {
     fn drop(&mut self) {
         log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
-                  self.all_events_.borrow().len(), self.fibers_.borrow().size()));
+                  self.all_events_.borrow().len(), self.fibers_.borrow().len()));
         log_line(Log::DEBUG, 0i32, core::ptr::null(), std::format("[Reactor::~Reactor] Destructor body complete, about to destroy member variables"));
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=3372368d12188ddcf7bd79f42a201fe665094ba6659527f8388420df09b55dbc*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=b17f636c61d0f3c0c89481f4642e287c027e747fa6a8683cc8c22efcb860da45*/
 struct Reactor;
 
 struct Reactor {
@@ -2548,7 +2549,7 @@ struct Reactor {
     rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> waiting_events_;
     rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> timeout_events_;
     rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> composite_events_;
-    rusty::RefCell<std::set<rusty::Rc<Fiber>>> fibers_;
+    rusty::RefCell<rusty::BTreeMap<size_t, rusty::Rc<Fiber>>> fibers_;
     rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_;
     rusty::Cell<bool> looping_;
     rusty::Cell<bool> slow_;
@@ -2565,7 +2566,7 @@ struct Reactor {
     rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_;
     rusty::marker::PhantomPinned _pin;
     mutable bool _rusty_forgotten = false;
-    Reactor(rusty::Cell<int32_t> server_id__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> all_events__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> waiting_events__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> timeout_events__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> composite_events__init, rusty::RefCell<std::set<rusty::Rc<Fiber>>> fibers__init, rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers__init, rusty::Cell<bool> looping__init, rusty::Cell<bool> slow__init, rusty::Cell<int32_t> slow_count__init, rusty::Cell<int32_t> trying_count__init, rusty::Cell<rusty::thread::ThreadId> thread_id__init, rusty::Cell<int64_t> n_created_fibers__init, rusty::Cell<int64_t> n_busy_fibers__init, rusty::Cell<int64_t> n_active_fibers__init, rusty::Cell<int64_t> n_active_fibers_2__init, rusty::Cell<int64_t> n_idle_fibers__init, rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks__init, rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots__init, rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks__init, rusty::marker::PhantomPinned _pin_init) : server_id_(std::move(server_id__init)), all_events_(std::move(all_events__init)), waiting_events_(std::move(waiting_events__init)), timeout_events_(std::move(timeout_events__init)), composite_events_(std::move(composite_events__init)), fibers_(std::move(fibers__init)), available_fibers_(std::move(available_fibers__init)), looping_(std::move(looping__init)), slow_(std::move(slow__init)), slow_count_(std::move(slow_count__init)), trying_count_(std::move(trying_count__init)), thread_id_(std::move(thread_id__init)), n_created_fibers_(std::move(n_created_fibers__init)), n_busy_fibers_(std::move(n_busy_fibers__init)), n_active_fibers_(std::move(n_active_fibers__init)), n_active_fibers_2_(std::move(n_active_fibers_2__init)), n_idle_fibers_(std::move(n_idle_fibers__init)), stackless_tasks_(std::move(stackless_tasks__init)), free_stackless_task_slots_(std::move(free_stackless_task_slots__init)), ready_stackless_tasks_(std::move(ready_stackless_tasks__init)), _pin(std::move(_pin_init)) {}
+    Reactor(rusty::Cell<int32_t> server_id__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> all_events__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> waiting_events__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> timeout_events__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> composite_events__init, rusty::RefCell<rusty::BTreeMap<size_t, rusty::Rc<Fiber>>> fibers__init, rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers__init, rusty::Cell<bool> looping__init, rusty::Cell<bool> slow__init, rusty::Cell<int32_t> slow_count__init, rusty::Cell<int32_t> trying_count__init, rusty::Cell<rusty::thread::ThreadId> thread_id__init, rusty::Cell<int64_t> n_created_fibers__init, rusty::Cell<int64_t> n_busy_fibers__init, rusty::Cell<int64_t> n_active_fibers__init, rusty::Cell<int64_t> n_active_fibers_2__init, rusty::Cell<int64_t> n_idle_fibers__init, rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks__init, rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots__init, rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks__init, rusty::marker::PhantomPinned _pin_init) : server_id_(std::move(server_id__init)), all_events_(std::move(all_events__init)), waiting_events_(std::move(waiting_events__init)), timeout_events_(std::move(timeout_events__init)), composite_events_(std::move(composite_events__init)), fibers_(std::move(fibers__init)), available_fibers_(std::move(available_fibers__init)), looping_(std::move(looping__init)), slow_(std::move(slow__init)), slow_count_(std::move(slow_count__init)), trying_count_(std::move(trying_count__init)), thread_id_(std::move(thread_id__init)), n_created_fibers_(std::move(n_created_fibers__init)), n_busy_fibers_(std::move(n_busy_fibers__init)), n_active_fibers_(std::move(n_active_fibers__init)), n_active_fibers_2_(std::move(n_active_fibers_2__init)), n_idle_fibers_(std::move(n_idle_fibers__init)), stackless_tasks_(std::move(stackless_tasks__init)), free_stackless_task_slots_(std::move(free_stackless_task_slots__init)), ready_stackless_tasks_(std::move(ready_stackless_tasks__init)), _pin(std::move(_pin_init)) {}
     Reactor(const Reactor&) = delete;
     Reactor(Reactor&&) = delete;
     Reactor& operator=(const Reactor&) = delete;
@@ -2600,7 +2601,7 @@ Reactor::Reactor()
     , waiting_events_(rusty::default_like<rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>>())
     , timeout_events_(rusty::default_like<rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>>())
     , composite_events_(rusty::default_like<rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>>())
-    , fibers_(rusty::default_like<rusty::RefCell<std::set<rusty::Rc<Fiber>>>>())
+    , fibers_(rusty::RefCell<rusty::BTreeMap<size_t, rusty::Rc<Fiber>>>::new_(rusty::BTreeMap<size_t, rusty::Rc<Fiber>>::new_()))
     , available_fibers_(rusty::default_like<rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>>>())
     , looping_(rusty::default_like<rusty::Cell<bool>>())
     , slow_(rusty::default_like<rusty::Cell<bool>>())
@@ -2706,7 +2707,7 @@ return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(Eve
                             auto known = false;
                             {
                                 const auto fibers_guard = this->fibers_.borrow();
-                                known = rusty::contains((*fibers_guard), std::move(fiber));
+                                known = ((*fibers_guard)).contains_key(fiber_registry_key(fiber));
                             }
                             if (known) {
                                 verify([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.status_); }) { return (__r.status_); } else if constexpr (requires { (__r.status__field); }) { return (__r.status__field); } else if constexpr (requires { ((*__r).status_); }) { return ((*__r).status_); } else { return ((*__r).status__field); } }(fiber).get() == rusty::clone(FiberStatus_PAUSED()));
@@ -2789,19 +2790,19 @@ void Reactor::display_waiting_ev() const {
 
 void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
     auto guard = this->fibers_.borrow_mut();
-    const auto inserted = rusty::deref_call(guard, rusty::detail::__mdisp_insert{}, rusty::clone(fiber)).second;
+    const auto inserted = rusty::deref_call(guard, rusty::detail::__mdisp_insert{}, fiber_registry_key(fiber), rusty::clone(fiber)).is_none();
     if (rusty::detail::rust_not(inserted)) {
         // @unsafe
         {
-            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!"));
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ registry!"));
         }
         // @unsafe
         {
-            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", rusty::deref_call(guard, rusty::detail::__mdisp_size{}), REUSING_FIBER));
+            log_line(rusty::clone(rusty::clone(Log::ERROR)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", rusty::len(guard), REUSING_FIBER));
         }
     }
     verify(std::move(inserted));
-    verify(rusty::deref_call(guard, rusty::detail::__mdisp_size{}) > static_cast<size_t>(0));
+    verify(rusty::len(guard) > static_cast<size_t>(0));
 }
 
 void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
@@ -2813,7 +2814,7 @@ void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
         this->available_fibers_.borrow_mut()->push(rusty::clone(fiber));
     }
     this->n_busy_fibers_.set(this->n_busy_fibers_.get() - static_cast<int64_t>(1));
-    this->fibers_.borrow_mut()->erase(fiber);
+    this->fibers_.borrow_mut()->remove(fiber_registry_key(fiber));
 }
 
 void Reactor::enqueue_stackless_task(size_t idx) const {
@@ -2948,7 +2949,7 @@ return ((rusty::detail::deref_if_pointer_like(sp))).status() != rusty::clone(Eve
 
 Reactor::~Reactor() noexcept(false) {
     if (_rusty_forgotten) { return; }
-    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}", rusty::len(this->all_events_.borrow()), this->fibers_.borrow()->size()));
+    log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}", rusty::len(this->all_events_.borrow()), rusty::len(this->fibers_.borrow())));
     log_line(rusty::clone(rusty::clone(Log::DEBUG)), static_cast<int32_t>(0), rusty::ptr::null(), std::format("[Reactor::~Reactor] Destructor body complete, about to destroy member variables"));
 }
 /*RUSTYCPP:GEN-END id=reactor.15*/
@@ -5113,16 +5114,16 @@ void fiber_yield_invoke_ptr(fiber_yield_t* y) {
 fn reactor_live_fiber_count() -> usize {
     let reactor = Reactor::get_reactor();
     let guard = (*reactor).fibers_.borrow();
-    (*guard).size()
+    (*guard).len()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.reactor_live_fiber_count version=1 rust_sha256=620e2f989d54a2b33a85849d92e02ef3b47c3b9dd08f258a76e826516513f5ad*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.reactor_live_fiber_count version=1 rust_sha256=ae5aed4f3793d470503ff516ea6b631e7f717da92e1d1803340fbf7911e40b34*/
 size_t reactor_live_fiber_count();
 
 size_t reactor_live_fiber_count() {
     const auto reactor = Reactor::get_reactor();
     auto&& guard = rusty::borrow((rusty::detail::deref_if_pointer_like(reactor)).fibers_);
-    return ((rusty::detail::deref_if_pointer_like(guard))).size();
+    return rusty::len((rusty::detail::deref_if_pointer_like(guard)));
 }
 /*RUSTYCPP:GEN-END id=reactor.reactor_live_fiber_count*/
 

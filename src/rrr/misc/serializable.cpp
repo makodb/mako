@@ -2338,32 +2338,30 @@ namespace Serialize_ {
 // (At Phase 8, when operators are deleted, every type has a specific overload,
 // so this bridge is dropped.)
 // Phase 8 endgame: the generic bridge dispatches via ADL instead of the
-// operator layer. The deleted decoy in adl_detail_ poisons unqualified
-// lookup so the dispatcher can ONLY resolve through ADL (the type's own
-// namespace) — the catch-all cannot self-select, and a type with neither a
-// specific overload above nor an ADL serialize() fails to compile, with
+// operator layer. The zero-argument declaration in adl_detail_ poisons
+// unqualified lookup so the dispatcher can ONLY resolve through ADL (the
+// type's own namespace) — the catch-all cannot self-select, and a type with
+// neither a specific overload above nor an ADL serialize() fails to compile, with
 // the diagnostic naming the type through two instantiation notes.
 //
-// NB the decoy is never SELECTED (arity 0 vs 2), so the failure is an
+// NB the declaration is never SELECTED (arity 0 vs 2), so the failure is an
 // ordinary "no matching function for call to 'serialize'", NOT a
-// "deleted function" diagnostic — an earlier version of this comment
-// claimed the latter. Compile-verified: `= delete` and a plain
-// declaration give byte-identical diagnostics here. The `= delete` is
-// kept anyway because it also makes a stray 0-arg call a COMPILE error
-// rather than an undefined-symbol link error.
+// "deleted function" diagnostic. Compile-verified: deleted and ordinary
+// declarations give byte-identical diagnostics for the live 2-argument route.
+// There are no 0-argument callers; a hypothetical one would now fail at link.
 namespace adl_detail_ {
-void serialize() = delete;  // lookup poison: stops ascent past this scope
-// The two generic templates around the decoy are DSL now; the deleted
-// decoy above is the ONLY irreducible line. The guarantee is UNCHANGED,
-// probe-verified in both directions (scratchpad/recover3/probe_adl.cpp,
+// Lookup poison: stops ascent past this scope.
+void serialize();
+// The two generic templates around the declaration are DSL now. The lookup
+// guarantee is unchanged, probe-verified in both directions
+// (scratchpad/recover3/probe_adl.cpp,
 // probe_adl_neg.cpp, probe_adl_order.cpp): the emitted dispatcher's call
 // stays UNQUALIFIED, so it can only resolve through ADL, the catch-all
 // cannot self-select, and a type with neither a specific overload above
-// nor an ADL serialize() still fails with a hard "deleted function"
-// diagnostic naming the type -- byte-identical to what the hand-written
-// form emitted. The GEN drops `inline`, which is redundant on a function
-// template; this file already ships non-inline DSL-generated definitions
-// in this very namespace (the string/string_view leaves above).
+// nor an ADL serialize() still fails with a hard "no matching function"
+// diagnostic naming the type. The GEN drops `inline`, which is redundant on
+// a function template; this file already ships non-inline DSL-generated
+// definitions in this very namespace (the string/string_view leaves above).
 #if RUSTYCPP_RUST
 fn dispatch_serialize<T>(v: &T, ar: &mut BinaryWriteArchive) {
     serialize(v, ar);
@@ -4156,21 +4154,21 @@ namespace Deserialize_ {
 // generic ADL bridge below.
 namespace Deserialize_ {
 // Generic bridge (read side): mirror of the serialize catch-all.
-// Phase 8 endgame: ADL dispatch via poisoned decoy (see the serialize
+// Phase 8 endgame: ADL dispatch via a poison declaration (see the serialize
 // catch-all for the full rationale).
 namespace adl_detail_ {
-void deserialize() = delete;  // lookup poison: stops ascent past this scope
-// The two generic templates around the decoy are DSL now; the deleted
-// decoy above is the ONLY irreducible line. The guarantee is UNCHANGED,
-// probe-verified in both directions (scratchpad/recover3/probe_adl.cpp,
+// Lookup poison: stops ascent past this scope.
+void deserialize();
+// The two generic templates around the declaration are DSL now. The lookup
+// guarantee is unchanged, probe-verified in both directions
+// (scratchpad/recover3/probe_adl.cpp,
 // probe_adl_neg.cpp, probe_adl_order.cpp): the emitted dispatcher's call
 // stays UNQUALIFIED, so it can only resolve through ADL, the catch-all
 // cannot self-select, and a type with neither a specific overload nor an
-// ADL deserialize() still fails with a hard "deleted function"
-// diagnostic naming the type -- byte-identical to what the hand-written
-// form emitted. The GEN drops `inline`, which is redundant on a function
-// template (and the Deserialize_ forward-declaration wall above already
-// declares this catch-all inline, so its linkage is unchanged).
+// ADL deserialize() still fails with a hard "no matching function"
+// diagnostic naming the type. The GEN drops `inline`, which is redundant on
+// a function template (and the Deserialize_ forward-declaration wall above
+// already declares this catch-all inline, so its linkage is unchanged).
 #if RUSTYCPP_RUST
 fn dispatch_deserialize<T>(v: &mut T, ar: &mut BinaryReadArchive) {
     deserialize(v, ar);

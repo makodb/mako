@@ -326,21 +326,6 @@ ServiceProxy make_service_proxy_from_box(rusty::Box<Service> svc) {
 }
 /*RUSTYCPP:GEN-END id=server.5*/
 
-// Concept matching the structural shape of a service: the duck-typed
-// `__reg_to__` / `__dispatch__` pair. Generated rcc_rpc.h services
-// satisfy this without inheriting `Service`; `ServiceTypedBoxAdapter`
-// bridges them into a `Box<Service>`.
-template <typename T>
-concept ServiceLike = requires(
-    T& svc,
-    Server& server,
-    size_t svc_index,
-    i32 rpc_id,
-    rusty::Box<Request> req,
-    WeakServerConnection weak_sconn) {
-  { svc.__reg_to__(server, svc_index) } -> std::convertible_to<int>;
-  { svc.__dispatch__(rpc_id, std::move(req), std::move(weak_sconn)) } -> std::same_as<void>;
-};
 // `ServiceBoxShim<T>` — the generic Box-holding Service implementor
 // (generic #[cpp_inherit]; Box gives owning mutable access, so no
 // constness dance at all).
@@ -362,9 +347,9 @@ impl<T> Service for ServiceBoxShim<T> {
 
 // @safe - wraps a typed Box<T> in the ServiceBoxShim above; Box move
 // only. Merged into this block so the factory sits beside the shim it
-// builds. NOTE: a DSL generic emits a bare `template<typename T>`, so
-// the old `ServiceLike` constraint is dropped -- it was diagnostics-only
-// (the concept itself stays; tests static_assert on it).
+// builds. The generic deliberately remains unconstrained: an incompatible
+// service produces a diagnostic when this shim instantiates its forwarding
+// methods, which is the same check the registration path actually relies on.
 fn make_service_proxy_from_typed_box<T>(svc: Box<T>) -> ServiceProxy {
     rusty::make_box::<ServiceBoxShim<T>>(svc)
 }

@@ -1635,7 +1635,8 @@ Current codegen is typed-only for non-raw RPC methods:
 - Generated proxy sync/async methods use typed request/response objects end-to-end.
 - `raw` handlers remain raw (`void Method(Box<Request>, WeakServerConnection)`).
 - Generated service classes do not inherit `rrr::Service`. They register via
-  `Server::reg_service(Box<T>)` using the `ServiceLike` concept.
+  `Server::reg_service_typed(Box<T>)`, which wraps their concrete dispatch
+  methods in the server's internal type-erasure shim.
 - All in-tree generated headers (`rcc_rpc.h`, `network.h`, `helloworld.h`) use
   typed-only mode and all callsites use typed APIs.
 

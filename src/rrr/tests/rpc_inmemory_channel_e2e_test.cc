@@ -77,7 +77,17 @@ class EchoService {
     int         dispatch_count_ = 0;
     std::string last_payload_;
 };
-static_assert(ServiceLike<EchoService>);
+static_assert(requires(
+    EchoService& svc,
+    Server& server,
+    std::size_t svc_index,
+    i32 rpc_id,
+    rusty::Box<Request> req,
+    WeakServerConnection weak_sconn) {
+  { svc.__reg_to__(server, svc_index) } -> std::convertible_to<int>;
+  { svc.__dispatch__(rpc_id, std::move(req), std::move(weak_sconn)) }
+      -> std::same_as<void>;
+});
 
 class InMemoryE2ETest : public ::testing::Test {
  protected:
