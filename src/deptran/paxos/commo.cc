@@ -49,7 +49,7 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
   //   FutureAttr fuattr;
   //   fuattr.callback = [e, ballot] (Future* fu) {
   //     ballot_t b = 0;
-  //     fu->get_reply() >> b;
+  //     rrr::deserialize_from(fu->get_reply(), b);
   //     e->FeedResponse(b==ballot);
   //   };
   //   janus::Command md(cmd);
@@ -100,7 +100,8 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         ballot_t ballot;
         // if the learner is killed at this moment, throw an error
         // in datacenter failover, keep learners are alive
-        rrr::deserialize_from(fu->get_reply(), slot, ballot);
+        rrr::deserialize_from(fu->get_reply(), slot);
+        rrr::deserialize_from(fu->get_reply(), ballot);
         cb(slot, ballot);
         //e->FeedResponse(1);
 	      };
@@ -191,7 +192,9 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
       i32 valid;
       i32 ballot;
       janus::Command response_val;
-      rrr::deserialize_from(fu->get_reply(), ballot, valid, response_val);
+      rrr::deserialize_from(fu->get_reply(), ballot);
+      rrr::deserialize_from(fu->get_reply(), valid);
+      rrr::deserialize_from(fu->get_reply(), response_val);
       auto sp_md = make_shared<janus::Command>(response_val);
       cb(sp_md, ballot, valid);
       e->FeedResponse(valid);
@@ -233,7 +236,8 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
   //   fuattr.callback = [e, cb] (Future* fu) {
   //     i32 valid;
   //     i32 ballot;
-  //     fu->get_reply() >> ballot >> valid;
+  //     rrr::deserialize_from(fu->get_reply(), ballot);
+  //     rrr::deserialize_from(fu->get_reply(), valid);
   //     cb(ballot, valid);
   //     e->FeedResponse(valid);
   //   };
@@ -271,7 +275,8 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
       }
       i32 valid;
       i32 ballot;
-      rrr::deserialize_from(fu->get_reply(), ballot, valid);
+      rrr::deserialize_from(fu->get_reply(), ballot);
+      rrr::deserialize_from(fu->get_reply(), valid);
        // it's possible during failure because the client can receive reponse even the distant server shutdowns
       if (!valid)
         Log_debug("Accept invalid response received from {} site", st);
@@ -314,7 +319,8 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
       }
       i32 valid;
       i32 ballot;
-      rrr::deserialize_from(fu->get_reply(), ballot, valid);
+      rrr::deserialize_from(fu->get_reply(), ballot);
+      rrr::deserialize_from(fu->get_reply(), valid);
       cb(ballot, valid);
       e->FeedResponse(valid);
     };

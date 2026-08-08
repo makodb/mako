@@ -258,7 +258,7 @@ TEST_F(ClientChannelRecvTest, ResponseFrameResolvesPendingFuture) {
     // Check the reply payload survived.
     auto reply_guard = fu->get_reply();
     i32 got = 0;
-    reply_guard >> got;
+    rrr::deserialize_from(std::move(reply_guard), got);
     EXPECT_EQ(static_cast<std::uint32_t>(got), 0x12345678u);
 }
 
@@ -325,7 +325,7 @@ TEST_F(ClientChannelRecvTest, MultipleResponsesResolveFuturesInOrder) {
         EXPECT_EQ(futures[i]->get_error_code(), 0);
         auto reply = futures[i]->get_reply();
         i32 got = 0;
-        reply >> got;
+        rrr::deserialize_from(std::move(reply), got);
         EXPECT_EQ(static_cast<std::uint32_t>(got),
                   static_cast<std::uint32_t>(0xA000 + i)) << "future " << i;
     }

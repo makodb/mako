@@ -140,7 +140,7 @@ TEST_F(FutureBenchmark, CreateWaitReleaseThroughput) {
 
         fu->wait();
         i32 result;
-        fu->get_reply() >> result;
+        rrr::deserialize_from(fu->get_reply(), result);
         // Arc auto-released
     }
 
@@ -175,7 +175,7 @@ TEST_F(FutureBenchmark, BatchOperations) {
         for (auto& fu : futures) {
             fu->wait();
             i32 result;
-            fu->get_reply() >> result;
+            rrr::deserialize_from(fu->get_reply(), result);
             // Arc auto-released
         }
     }
@@ -225,7 +225,7 @@ TEST_F(FutureBenchmark, CallbackOverhead) {
         FutureAttr attr([&callback_count](rusty::Arc<Future> f) {
             callback_count++;
             i32 result;
-            f->get_reply() >> result;
+            rrr::deserialize_from(f->get_reply(), result);
         });
 
         i32 val = i;

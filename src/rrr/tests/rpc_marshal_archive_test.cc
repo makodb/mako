@@ -1053,24 +1053,15 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
 // removed earlier this session.
 
 // ---------------------------------------------------------------------------
-// TypeList::create_at(pos) compile-time-dispatched factory.
-//
-// Replaces the runtime `MarshallDeputy::reg_initializer(kind, factory)`
-// registry for the closed-set polymorphic path: the TypeList knows its
-// types at compile time, so wire-kind → fresh SerializableProxy is a
-// switch over `Ts...` with no static-init registration step. Used by
-// the L10b `SerializableEnvelope<TypeList>` carrier on its read path.
+// TypeList index/contains and SerializableEnvelope fixtures.
 // ---------------------------------------------------------------------------
 
-// Three small Serializable types for the TypeList factory tests. They
-// have distinct save/load shapes so an out-of-position dispatch
-// produces a recognizable type mismatch.
-// Test types use kind values 50/51/52 — fit in v32 single-byte range
+// Three small Serializable types shared by the compile-time TypeList
+// lookup tests and the runtime-registry envelope tests.
+// Test types use kind values 60/61/62 — fit in v32 single-byte range
 // (≤63), distinct from `MakoCommands` (1-19) and `ANY_MESSAGE` (24).
-// The L10c-cmds runtime-registry path on `SerializableEnvelope::load`
-// uses `MarshallDeputy::create_initializer(kind)` which requires the
-// kind to be registered; tests register their types via
-// `reg_serializable_in_deputy` below.  `TypeList::index_of<T>()`
+// `SerializableEnvelope::load` uses `SerializableRegistry::create(kind)`,
+// so the test types are registered below. `TypeList::index_of<T>()`
 // remains compile-time (1-indexed positions); the kind value the
 // test types report is independent of TypeList position.
 struct TypeListFactoryAlpha {
@@ -1101,8 +1092,8 @@ using TypeListFactoryList = TypeList<TypeListFactoryAlpha,
                                      TypeListFactoryBeta,
                                      TypeListFactoryGamma>;
 
-// Register with MarshallDeputy so SerializableEnvelope::load can find
-// them via the runtime registry path.  (Static-init ordering is fine:
+// Register with SerializableRegistry so SerializableEnvelope::load can
+// find them. (Static-init ordering is fine:
 // these run before any test body.)
 static int _reg_tl_factory_alpha =
     SerializableRegistry::reg<TypeListFactoryAlpha>(
@@ -1127,46 +1118,6 @@ TEST(TypeListFactory, ContainsTracksIndexOf) {
   EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryBeta>());
   EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryGamma>());
   EXPECT_FALSE(TypeListFactoryList::contains<int>());
-}
-
-namespace {
-// The proxy is a const-view rusty::Arc<SerializableBase>; downcast the
-// holder and return a const view of the carried payload.
-template<typename T>
-const T* serializable_proxy_cast(const SerializableProxy& proxy) {
-  if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(
-          proxy.get())) {
-    return h->ptr.get();
-  }
-  return nullptr;
-}
-}  // namespace
-
-TEST(TypeListFactory, CreateAtReturnsCorrectTypeForEachPosition) {
-  // pos=1 → Alpha
-  {
-    auto proxy = TypeListFactoryList::create_at(1);
-    auto* alpha = serializable_proxy_cast<TypeListFactoryAlpha>(proxy);
-    EXPECT_NE(alpha, nullptr);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryBeta>(proxy), nullptr);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryGamma>(proxy), nullptr);
-  }
-  // pos=2 → Beta
-  {
-    auto proxy = TypeListFactoryList::create_at(2);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryAlpha>(proxy), nullptr);
-    auto* beta = serializable_proxy_cast<TypeListFactoryBeta>(proxy);
-    EXPECT_NE(beta, nullptr);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryGamma>(proxy), nullptr);
-  }
-  // pos=3 → Gamma
-  {
-    auto proxy = TypeListFactoryList::create_at(3);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryAlpha>(proxy), nullptr);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryBeta>(proxy), nullptr);
-    auto* gamma = serializable_proxy_cast<TypeListFactoryGamma>(proxy);
-    EXPECT_NE(gamma, nullptr);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1327,34 +1278,6 @@ TEST(SerializableEnvelope, IsCopyableAndCopiesShareProxy) {
   const_cast<TypeListFactoryAlpha*>(sp.get())->a = 200;
   EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>()->a, 200);
   EXPECT_EQ(env_b.unpack<TypeListFactoryAlpha>()->a, 200);
-}
-
-TEST(TypeListFactory, CreateAtRoundTripsViaProxySaveLoad) {
-  // Pack a Beta via create_at(2), save + load through a proxy, verify
-  // the value survives. Demonstrates the L10b read-path shape:
-  //   1) Read v32 kind from wire.
-  //   2) create_at(kind) → fresh SerializableProxy for that type.
-  //   3) proxy.get_mut().unwrap().load(reader) — populates the typed
-  //      value through the factory-fresh Arc's unique-owner window.
-  //   4) Caller dispatches via dynamic_cast on the SerializableBase holder.
-  {
-    BufferSink sink;
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    TypeListFactoryBeta beta;
-    beta.b = "round-trip canary";
-    beta.save(writer);
-
-    BufferSource source(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy(&source));
-    auto proxy = TypeListFactoryList::create_at(2);
-    // @unsafe - unique-owner mutation window: proxy is factory-fresh
-    // (strong_count 1), so get_mut() is Some.
-    proxy.get_mut().unwrap().load(reader);
-
-    auto* recovered = serializable_proxy_cast<TypeListFactoryBeta>(proxy);
-    ASSERT_NE(recovered, nullptr);
-    EXPECT_EQ(recovered->b, "round-trip canary");
-  }
 }
 
 }  // namespace

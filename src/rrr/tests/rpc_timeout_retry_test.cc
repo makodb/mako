@@ -467,7 +467,7 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
     EXPECT_GE(elapsed_ms, 100);  // Timeout + configured deterministic backoff.
 
     v32 reply_value;
-    fu->get_reply() >> reply_value;
+    rrr::deserialize_from(fu->get_reply(), reply_value);
     EXPECT_EQ(reply_value.get(), 123);
     EXPECT_EQ(service->call_count.load(), 2);
     EXPECT_EQ(marshal_calls.load(), 1);  // Request payload serialized once.

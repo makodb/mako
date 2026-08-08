@@ -2935,8 +2935,11 @@ showed. A green gate on one type says nothing about the next.
  3. Leave the family alone; spend Phase A effort where conversions are
     independent.
 
-The single `std::list` conversion (commit d04fff23) stays: it is
-verified, and it is the worked example of the four placement rules.
+**Resolution:** route 1 later landed. All 12 container/pair impls now live
+in the original `Serialize` trait block; its GEN declares the complete
+`Serialize_` overload set before the first body. The temporary
+`WireSerialize_` namespace, its forwarding overloads, and their declaration
+walls are gone.
 
 ### 7.41 Default-init helpers: half of them are no longer needed
 

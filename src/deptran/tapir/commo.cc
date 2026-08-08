@@ -22,7 +22,8 @@ namespace janus {
 //      [coo, this, callback] (Future *fu) {
 //        int32_t res;
 //        TxnOutput output;
-//        fu->get_reply() >> res >> output;
+//        rrr::deserialize_from(fu->get_reply(), res);
+//        rrr::deserialize_from(fu->get_reply(), output);
 //        callback(res, output);
 //      };
 //  fuattr.callback = cb;

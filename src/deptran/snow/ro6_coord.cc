@@ -33,7 +33,7 @@ void RO6Coord::deptran_start(TxData *ch) {
 //        std::lock_guard<std::recursive_mutex> lock(this->mtx_);
 //
 //        ChopStartResponse  res;
-//        fu->get_reply() >> res;
+//        rrr::deserialize_from(fu->get_reply(), res);
 //
 //        if (IS_MODE_RO6) {
 //          std::vector<i64> ro;
@@ -109,7 +109,7 @@ void RO6Coord::deptran_finish(TxData *ch) {
 //
 //      Log_debug("receive finish response. tid: {:x}", cmd_->id_);
 //
-//      fu->get_reply() >> res;
+//      rrr::deserialize_from(fu->get_reply(), res);
 //
 //      if (n_finish_ack_ == ch->GetPartitionIds().size()) {
 //        ch->finish_callback(res);
@@ -187,7 +187,7 @@ void RO6Coord::ro6_start_ro(TxData *ch) {
 //        std::lock_guard<std::recursive_mutex> lock(this->mtx_);
 //
 //        map<int32_t, Value> res;
-//        fu->get_reply() >> res;
+//        rrr::deserialize_from(fu->get_reply(), res);
 //
 //        Log_debug("receive deptran RO start response, tid: {:x}, pid: {:x}, ",
 //                   header.tid,

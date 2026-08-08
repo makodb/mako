@@ -144,7 +144,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
 
     EXPECT_EQ(fu->get_error_code(), 0);
     std::string echoed;
-    fu->get_reply() >> echoed;
+    rrr::deserialize_from(fu->get_reply(), echoed);
     EXPECT_EQ(echoed, input);
 
     EXPECT_EQ(svc_raw->dispatch_count(), 1);
@@ -184,7 +184,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
 
     EXPECT_EQ(fu->get_error_code(), 0);
     std::string echoed;
-    fu->get_reply() >> echoed;
+    rrr::deserialize_from(fu->get_reply(), echoed);
     EXPECT_EQ(echoed, input);
 
     EXPECT_EQ(svc_raw->dispatch_count(), 1);
@@ -220,7 +220,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0);
         std::string echoed;
-        fu->get_reply() >> echoed;
+        rrr::deserialize_from(fu->get_reply(), echoed);
         EXPECT_EQ(echoed, input);
     }
     // Archive-flavoured request, same client.
@@ -231,7 +231,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0);
         std::string echoed;
-        fu->get_reply() >> echoed;
+        rrr::deserialize_from(fu->get_reply(), echoed);
         EXPECT_EQ(echoed, input);
     }
     EXPECT_EQ(svc_raw->dispatch_count(), 2);
@@ -264,7 +264,7 @@ TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0) << "iter=" << i;
         std::string echoed;
-        fu->get_reply() >> echoed;
+        rrr::deserialize_from(fu->get_reply(), echoed);
         EXPECT_EQ(echoed, input);
     }
     EXPECT_EQ(svc_raw->dispatch_count(), kIterations);

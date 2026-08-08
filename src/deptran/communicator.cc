@@ -520,7 +520,10 @@ void Communicator::BroadcastDispatch(
         TxnOutput outputs;
         uint64_t coro_id = 0;
         janus::Command view_md;
-        rrr::deserialize_from(fu->get_reply(), ret, outputs, coro_id, view_md);
+        rrr::deserialize_from(fu->get_reply(), ret);
+        rrr::deserialize_from(fu->get_reply(), outputs);
+        rrr::deserialize_from(fu->get_reply(), coro_id);
+        rrr::deserialize_from(fu->get_reply(), view_md);
         
         // Handle WRONG_LEADER response with view data
         if (ret == WRONG_LEADER && view_md.has_value()) {
@@ -639,7 +642,10 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
           janus::Command view_md;
 	  			double cpu = 0.0;
 	  			double net = 0.0;
-          rrr::deserialize_from(fu->get_reply(), ret, outputs, coro_id, view_md);
+          rrr::deserialize_from(fu->get_reply(), ret);
+          rrr::deserialize_from(fu->get_reply(), outputs);
+          rrr::deserialize_from(fu->get_reply(), coro_id);
+          rrr::deserialize_from(fu->get_reply(), view_md);
 
           e->value_.set(e->value_.get() + 1);
           if(phase != coo->phase_){
@@ -732,7 +738,10 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
                 TxnOutput outputs;
                 uint64_t coro_id = 0;
                 janus::Command view_md;
-                rrr::deserialize_from(fu->get_reply(), ret, outputs, coro_id, view_md);
+                rrr::deserialize_from(fu->get_reply(), ret);
+                rrr::deserialize_from(fu->get_reply(), outputs);
+                rrr::deserialize_from(fu->get_reply(), coro_id);
+                rrr::deserialize_from(fu->get_reply(), view_md);
                 //e->add_dep(coo->cli_id_, src_coroid, follower_id, coro_id);
                 //coo->ids_.push_back(follower_id);
                 // do nothing
@@ -795,7 +804,9 @@ Communicator::SendPrepare(Coordinator* coo,
       int32_t res;
 			bool_t slow;
       uint64_t coro_id = 0;
-      rrr::deserialize_from(fu->get_reply(), res, slow, coro_id);
+      rrr::deserialize_from(fu->get_reply(), res);
+      rrr::deserialize_from(fu->get_reply(), slow);
+      rrr::deserialize_from(fu->get_reply(), coro_id);
 
 			this->slow = slow;
       // qe->add_dep(coo->cli_id_, src_coroid, site_id, coro_id);
@@ -924,7 +935,11 @@ Communicator::SendCommit(Coordinator* coo,
       uint64_t coro_id = 0;
 			Profiling profile;
       janus::Command view_md;
-      rrr::deserialize_from(fu->get_reply(), res, slow, coro_id, profile, view_md);
+      rrr::deserialize_from(fu->get_reply(), res);
+      rrr::deserialize_from(fu->get_reply(), slow);
+      rrr::deserialize_from(fu->get_reply(), coro_id);
+      rrr::deserialize_from(fu->get_reply(), profile);
+      rrr::deserialize_from(fu->get_reply(), view_md);
 			this->slow = slow;
 			// removed `cpu = profile.cpu_util;`
 			// — the `cpu` field was deleted alongside the rest of the
@@ -1047,7 +1062,11 @@ Communicator::SendAbort(Coordinator* coo,
       uint64_t coro_id = 0;
       Profiling profile;
       janus::Command view_md;
-      rrr::deserialize_from(fu->get_reply(), res, slow, coro_id, profile, view_md);
+      rrr::deserialize_from(fu->get_reply(), res);
+      rrr::deserialize_from(fu->get_reply(), slow);
+      rrr::deserialize_from(fu->get_reply(), coro_id);
+      rrr::deserialize_from(fu->get_reply(), profile);
+      rrr::deserialize_from(fu->get_reply(), view_md);
       this->slow = slow;
 
       // Propagate the result status (including WRONG_LEADER) back to the coordinator
@@ -1469,7 +1488,12 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
       janus::Command reply_old_view, reply_new_view, id_set;
-      rrr::deserialize_from(fu->get_reply(), ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, id_set);
+      rrr::deserialize_from(fu->get_reply(), ok);
+      rrr::deserialize_from(fu->get_reply(), reply_jepoch);
+      rrr::deserialize_from(fu->get_reply(), reply_oepoch);
+      rrr::deserialize_from(fu->get_reply(), reply_old_view);
+      rrr::deserialize_from(fu->get_reply(), reply_new_view);
+      rrr::deserialize_from(fu->get_reply(), id_set);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, id_set);
     };
     ClassicProxy::RpcJetpackPullIdSetRequest req;
@@ -1538,7 +1562,12 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
       janus::Command reply_old_view, reply_new_view, cmd;
-      rrr::deserialize_from(fu->get_reply(), ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, cmd);
+      rrr::deserialize_from(fu->get_reply(), ok);
+      rrr::deserialize_from(fu->get_reply(), reply_jepoch);
+      rrr::deserialize_from(fu->get_reply(), reply_oepoch);
+      rrr::deserialize_from(fu->get_reply(), reply_old_view);
+      rrr::deserialize_from(fu->get_reply(), reply_new_view);
+      rrr::deserialize_from(fu->get_reply(), cmd);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd);
     };
 
@@ -1652,7 +1681,15 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
       ballot_t reply_max_seen_ballot;
       ballot_t accepted_ballot;
       int replied_sid, replied_set_size;
-      rrr::deserialize_from(fu->get_reply(), ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, reply_max_seen_ballot, accepted_ballot, replied_sid, replied_set_size);
+      rrr::deserialize_from(fu->get_reply(), ok);
+      rrr::deserialize_from(fu->get_reply(), reply_jepoch);
+      rrr::deserialize_from(fu->get_reply(), reply_oepoch);
+      rrr::deserialize_from(fu->get_reply(), reply_old_view);
+      rrr::deserialize_from(fu->get_reply(), reply_new_view);
+      rrr::deserialize_from(fu->get_reply(), reply_max_seen_ballot);
+      rrr::deserialize_from(fu->get_reply(), accepted_ballot);
+      rrr::deserialize_from(fu->get_reply(), replied_sid);
+      rrr::deserialize_from(fu->get_reply(), replied_set_size);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, accepted_ballot, replied_sid, replied_set_size, reply_max_seen_ballot);
     };
     ClassicProxy::RpcJetpackPrepareRequest req;

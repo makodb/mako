@@ -69,7 +69,10 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
         Log_debug("[APPEND_RPC] Error response from site {}, error_code={}", site_id, fu->get_error_code());
         return;
       }
-      rrr::deserialize_from(fu->get_reply(), response->status, response->term, response->last_log_index, response->ack_type);
+      rrr::deserialize_from(fu->get_reply(), response->status);
+      rrr::deserialize_from(fu->get_reply(), response->term);
+      rrr::deserialize_from(fu->get_reply(), response->last_log_index);
+      rrr::deserialize_from(fu->get_reply(), response->ack_type);
       Log_debug("[APPEND_RPC] Success response from site {}: status={}, term={}, lastLogIndex={}, ackType={}",
                site_id, response->status, response->term, response->last_log_index, response->ack_type);
       response->event.as_ref().unwrap()->set(1);

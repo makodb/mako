@@ -54,7 +54,10 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     TxnOutput outputs;
     uint64_t coro_id = 0;
     janus::Command view_md;
-    rrr::deserialize_from(fu->get_reply(), ret, outputs, coro_id, view_md);
+    rrr::deserialize_from(fu->get_reply(), ret);
+    rrr::deserialize_from(fu->get_reply(), outputs);
+    rrr::deserialize_from(fu->get_reply(), coro_id);
+    rrr::deserialize_from(fu->get_reply(), view_md);
     n_pending_rpc_[0]--;
     verify(n_pending_rpc_[0] >= 0);
     dispatch_quota.set(dispatch_quota.value_ + 1);
@@ -114,7 +117,10 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     TxnOutput outputs;
     uint64_t coro_id = 0;
     janus::Command view_md;
-    rrr::deserialize_from(fu->get_reply(), ret, outputs, coro_id, view_md);
+    rrr::deserialize_from(fu->get_reply(), ret);
+    rrr::deserialize_from(fu->get_reply(), outputs);
+    rrr::deserialize_from(fu->get_reply(), coro_id);
+    rrr::deserialize_from(fu->get_reply(), view_md);
     n_pending_rpc_[1]--;
     verify(n_pending_rpc_[1] >= 0);
     dispatch_quota.set(dispatch_quota.value_ + 1);

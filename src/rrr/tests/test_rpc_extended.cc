@@ -506,11 +506,11 @@ TEST_F(ExtendedRPCTest, InterleavedRequestTypes) {
 
         if (i % 3 == 1) {
             i8 result;
-            futures[i]->get_reply() >> result;
+            rrr::deserialize_from(futures[i]->get_reply(), result);
             prime_count++;
         } else if (i % 3 == 2) {
             std::vector<i64> result;
-            futures[i]->get_reply() >> result;
+            rrr::deserialize_from(futures[i]->get_reply(), result);
             EXPECT_EQ(result.size(), 10);
             vec_count++;
         }

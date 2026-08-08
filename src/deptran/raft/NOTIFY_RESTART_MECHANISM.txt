@@ -129,7 +129,7 @@ STEP 2: Broadcast to All Peers (commo.cc)
             return;
           }
           bool_t acknowledged;
-          fu->get_reply() >> acknowledged;
+          rrr::deserialize_from(fu->get_reply(), acknowledged);
           if (acknowledged) {
             notify_restart_status_[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
           } else {

@@ -22,7 +22,9 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
         int res;
         TxnOutput output;
         rrr::AnyMessage am;
-        rrr::deserialize_from(fu->get_reply(), res, output, am);
+        rrr::deserialize_from(fu->get_reply(), res);
+        rrr::deserialize_from(fu->get_reply(), output);
+        rrr::deserialize_from(fu->get_reply(), am);
         // graph reply rides directly as
         // an `AnyMessage`, no `janus::Command` wrapper.
         if (am.is_a<EmptyGraph>()) {
@@ -106,7 +108,8 @@ void JanusCommo::BroadcastPreAccept(
       }
       int32_t res;
       rrr::AnyMessage am;
-      rrr::deserialize_from(fu->get_reply(), res, am);
+      rrr::deserialize_from(fu->get_reply(), res);
+      rrr::deserialize_from(fu->get_reply(), am);
       const auto sp_graph = am.unpack<RccGraph>();
       verify(sp_graph.is_some());
       callback(res, std::make_shared<RccGraph>(*sp_graph.unwrap()));
@@ -189,7 +192,8 @@ void JanusCommo::BroadcastCommit(
       }
       int32_t res;
       TxnOutput output;
-      rrr::deserialize_from(fu->get_reply(), res, output);
+      rrr::deserialize_from(fu->get_reply(), res);
+      rrr::deserialize_from(fu->get_reply(), output);
       callback(res, output);
     };
     verify(cmd_id > 0);

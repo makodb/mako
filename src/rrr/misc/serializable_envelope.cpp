@@ -386,13 +386,6 @@ rusty::Option<rusty::Arc<T>> marshallable_cast(const SerializableEnvelope<TypeLi
 }
 /*RUSTYCPP:GEN-END id=serializable_envelope.3*/
 
-template<typename T, typename TypeList>
-inline rusty::Option<rusty::Arc<T>> marshallable_cast(
-    SerializableEnvelope<TypeList>* env) {
-  if (env == nullptr) return rusty::Option<rusty::Arc<T>>(rusty::None);
-  return env->template unpack_shared<T>();
-}
-
 // Free archive serde entry points — let SerializableEnvelope ride
 // directly in rpcgen-emitted RPC struct fields the same way any other
 // Serializable type does.

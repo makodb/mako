@@ -194,7 +194,7 @@ The two bucket-refinement passes (Phase 1a body-scan + Phase 1b file-wide call-s
   - `LoadBalancer` → `template <typename ClientVec>` static methods.
   - `InMemoryConnectionState` → nested `struct Inner { … };`.
   - `SharedIntEvent` / `BufferSink` / `CPUInfo` → default args on member functions.
-  - `DefaultPayloadList` / `SerializableRegistry` → template methods.
+  - `Serializable<Derived, PayloadList>` / `SerializableRegistry` → template methods.
 
 - **Call-site blockers (Phase 1b):**
   - `OwnedFrame` → `std::vector<uint8_t> bytes;` with `frame.bytes.assign(p, p + n)` in a sibling free function.

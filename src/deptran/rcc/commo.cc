@@ -23,7 +23,9 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
         int res;
         TxnOutput output;
         rrr::AnyMessage am;
-        rrr::deserialize_from(fu->get_reply(), res, output, am);
+        rrr::deserialize_from(fu->get_reply(), res);
+        rrr::deserialize_from(fu->get_reply(), output);
+        rrr::deserialize_from(fu->get_reply(), am);
         // graph field rides directly as AnyMessage.
         if (am.is_a<EmptyGraph>()) {
           RccGraph rgraph;
@@ -154,7 +156,8 @@ void RccCommo::BroadcastCommit(parid_t par_id,
                         }
                         int32_t res;
                         TxnOutput output;
-                        rrr::deserialize_from(fu->get_reply(), res, output);
+                        rrr::deserialize_from(fu->get_reply(), res);
+                        rrr::deserialize_from(fu->get_reply(), output);
                         callback(res, output);
                       };
     verify(cmd_id > 0);

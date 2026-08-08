@@ -320,7 +320,10 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       es_pww->step_down(ballot);
     else{
       if(!done){
-        auto x = marshallable_cast<SyncLogResponse>(md.get());
+        rusty::Option<rusty::Arc<SyncLogResponse>> x{rusty::None};
+        if (md != nullptr) {
+          x = marshallable_cast<SyncLogResponse>(*md);
+        }
         // last use — unwrap() intentionally moves the Arc out.
         responses.emplace_back(x.unwrap());
       } else{

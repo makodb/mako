@@ -168,7 +168,7 @@ After L10f lands, additional simplifications become possible:
 - Drop `as_marshallable(SerializableProxy)` and the
   `SerializableMarshallableAdapter` class itself once Command no
   longer routes through them.
-- Drop `MarshallDeputy::reg_initializer` in favor of the L10a
-  `TypeList::create_at` compile-time factory + the
-  L10c-cmds-prep2 runtime registry (the runtime registry can
-  still serve `AnyMessage`'s open-set lookup).
+- Drop `MarshallDeputy::reg_initializer` in favor of the
+  L10c-cmds-prep2 runtime registry. The experimental
+  `TypeList::create_at` compile-time factory was later retired after
+  envelope loading standardized on that registry.

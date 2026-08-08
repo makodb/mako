@@ -44,7 +44,7 @@ void *nc_start_client(void *input) {
   FutureAttr fuattr;  // fuattr
   fuattr.callback = [&] (rusty::Arc<Future> fu) {
     i32 val;
-    fu->get_reply() >> val;
+    rrr::deserialize_from(fu->get_reply(), val);
     output_val(val);
   };
   std::vector<int64_t> ret;

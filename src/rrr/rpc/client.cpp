@@ -126,41 +126,26 @@ void reply_buffer_fill(ReplyBuffer& rb, std::span<const uint8_t> bytes) {
 }
 /*RUSTYCPP:GEN-END id=client.reply_fill*/
 
-// Stream operator for RefMut<ReplyBuffer> — supports the
-// `fu->get_reply() >> x` pattern.  Each read dispatches through
-// a `BinaryReadArchive` over a RefMut proxy of the reply's
-// BufferSource cursor, so the format-decode contract matches the
-// rpcgen-emitted dispatchers. The archive is a thin format wrapper —
-// its read state lives on `src`, so constructing a new archive per
-// `>>` call produces the same byte stream as a single chained
-// reader.  We return the guard reference for chaining; subsequent
-// `>>` calls in a chain (`fu->get_reply() >> a >> b >> c`) all hit
-// this same overload.
-template<typename U>
-rusty::RefMut<ReplyBuffer>& operator>>(rusty::RefMut<ReplyBuffer>& guard, U& value) {
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&(*guard).src));
-    rrr::Deserialize_::deserialize(value, ar);  // Phase 8 2b: serde, not operator
-    return guard;
+// Decode one value from a reply. The cursor lives in ReplyBuffer::src, not in
+// the temporary RefMut or BinaryReadArchive, so repeated calls with fresh
+// `get_reply()` guards continue from the previous byte position. Keeping this
+// helper one-value-at-a-time gives it valid Rust syntax and removes the orphan
+// C++ stream operators plus the variadic parameter-pack bridge.
+#if RUSTYCPP_RUST
+fn deserialize_from<T>(mut src: rusty::RefMut<ReplyBuffer>, value: &mut T) {
+    let mut ar = BinaryReadArchive {
+        source_: make_source_proxy(&raw mut (*src).src),
+    };
+    Deserialize_::deserialize(value, &mut ar);
 }
-
-template<typename U>
-rusty::RefMut<ReplyBuffer>&& operator>>(rusty::RefMut<ReplyBuffer>&& guard, U& value) {
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&(*guard).src));
-    rrr::Deserialize_::deserialize(value, ar);  // Phase 8 2b: serde, not operator
-    return std::move(guard);
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.3 version=1 rust_sha256=65a6933e659e12626046310ba5aa0a14f321445c634728a40c0332cf74bb8dca*/
+template<typename T>
+void deserialize_from(rusty::RefMut<ReplyBuffer> src, T& value) {
+    auto ar = BinaryReadArchive{.source_ = make_source_proxy(&(*src).src)};
+    Deserialize_::deserialize(value, ar);
 }
-
-// Read several values in sequence from a reply guard, replacing the legacy
-// chain `fu->get_reply() >> a >> b >> c`. get_reply() returns a fresh
-// RefMut<ReplyBuffer> BY VALUE, so the reads must share ONE guard (a per-value
-// re-call would re-read from the reply start). We bind the guard once
-// (rvalue-ref param; the temporary lives across the whole call) and fold over
-// the SAME `operator>>` bridge above, so each arg decodes through a
-// BinaryReadArchive in order — byte-identical to the operator chain.
-template<typename... Ts>
-inline void deserialize_from(rusty::RefMut<ReplyBuffer>&& src, Ts&... args) {
-    ( (void)(src >> args), ... );
-}
+/*RUSTYCPP:GEN-END id=client.3*/
 
 }  // export namespace rrr
 

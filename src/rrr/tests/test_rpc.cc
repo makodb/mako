@@ -282,7 +282,7 @@ TEST_F(RPCTest, DifferentMethods) {
 
         EXPECT_EQ(fu_prime->get_error_code(), 0);
         i8 prime_result;
-        fu_prime->get_reply() >> prime_result;
+        rrr::deserialize_from(fu_prime->get_reply(), prime_result);
         EXPECT_EQ(prime_result, (i8)1);
         // Arc auto-released
     }
@@ -299,7 +299,7 @@ TEST_F(RPCTest, DifferentMethods) {
         fu_composite->wait();
 
         i8 composite_result;
-        fu_composite->get_reply() >> composite_result;
+        rrr::deserialize_from(fu_composite->get_reply(), composite_result);
         EXPECT_EQ(composite_result, (i8)0);
         // Arc auto-released
     }
