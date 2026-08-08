@@ -3388,10 +3388,12 @@ PollCommand_Shutdown Shutdown() { return PollCommand_Shutdown{};  }
 }  // export namespace rrr
 
 // --- from reactor.h (trait spec for PollCommand) -------------------------
-namespace rusty {
-template<>
-struct is_send<rrr::PollCommand> : std::true_type {};
-} // namespace rusty
+#if RUSTYCPP_RUST
+unsafe impl Send for rrr::PollCommand {}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.71 version=1 rust_sha256=e4cd59fa5ed7d0f2ccc7c55f9efeb7eda1ee3061306dc2cf4ab9522536e9df1f*/
+template<> struct rusty::is_send<rrr::PollCommand> : std::true_type {};
+/*RUSTYCPP:GEN-END id=reactor.71*/
 
 // @safe - PollThreadWorker / PollThread declarations. Class-level
 // annotations + per-method `// @unsafe` overrides on the syscalls
@@ -3792,13 +3794,14 @@ PollThread::~PollThread() noexcept(false) {
 }  // export namespace rrr
 
 // --- from reactor.h (trait specs for PollThread) -------------------------
-namespace rusty {
-template<>
-struct is_send<rrr::PollThread> : std::true_type {};
-
-template<>
-struct is_sync<rrr::PollThread> : std::true_type {};
-} // namespace rusty
+#if RUSTYCPP_RUST
+unsafe impl Send for rrr::PollThread {}
+unsafe impl Sync for rrr::PollThread {}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.72 version=1 rust_sha256=aa9c886955b892c3bcbdf54d85993794d1d7a99a4721abed7c8642ef51d221d3*/
+template<> struct rusty::is_send<rrr::PollThread> : std::true_type {};
+template<> struct rusty::is_sync<rrr::PollThread> : std::true_type {};
+/*RUSTYCPP:GEN-END id=reactor.72*/
 
 // --- from quorum_event.h --------------------------------------------------
 // @safe - QuorumEvent declarations under the janus namespace.
