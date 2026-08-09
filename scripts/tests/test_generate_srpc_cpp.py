@@ -920,6 +920,22 @@ cpp_module_index = "indexes/owner.toml"
             manifest,
         )
 
+        load_balancer = modules["crate::rpc::load_balancer"]
+        self.assertEqual(load_balancer["dependencies"], [])
+        self.assertEqual(load_balancer["legacy_dependencies"], [])
+        self.assertEqual(load_balancer["gmf_headers"], [])
+        self.assertEqual(load_balancer["type_mappings"], {})
+        self.assertIsNotNone(load_balancer["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rusty"',
+            load_balancer["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.load_balancer;\nimport rusty;\n",
+            load_balancer,
+            manifest,
+        )
+
         misc = modules["crate::base::misc"]
         self.assertEqual(misc["dependencies"], [])
         self.assertEqual(
@@ -1084,6 +1100,7 @@ cpp_module_index = "indexes/owner.toml"
                     legacy_cpuinfo,
                     serializable_envelope,
                     utils,
+                    load_balancer,
                 )
             ):
                 continue

@@ -71,6 +71,17 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+source = "src/rpc/load_balancer.rs"
+rust_module = "crate::rpc::load_balancer"
+legacy_source = "src/rrr/rpc/load_balancer.cpp"
+module_name = "rrr.load_balancer"
+output = "rrr.load_balancer.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+cpp_module_index = "crates/srpc/cpp/indexes/load_balancer.toml"
+
+[[module]]
 source = "src/rpc/errors.rs"
 rust_module = "crate::rpc::errors"
 legacy_source = "src/rrr/rpc/errors.cpp"
