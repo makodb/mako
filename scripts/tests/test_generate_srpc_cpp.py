@@ -1210,10 +1210,18 @@ cpp_module_index = "indexes/owner.toml"
         manifest_path = root / generator.DEFAULT_MANIFEST
         manifest, _ = generator.load_manifest(manifest_path, root)
         modules = {entry["rust_module"]: entry for entry in manifest["module"]}
-        self.assertEqual(len(manifest["module"]), 32)
+        self.assertEqual(len(manifest["module"]), 34)
         self.assertEqual(
             len({entry["unit_id"] for entry in manifest["module"]}),
-            32,
+            34,
+        )
+        self.assertEqual(
+            [entry["unit_id"] for entry in manifest["module"]][17:20],
+            [
+                "rrr.fiber.interface",
+                "rrr.epoll_wrapper.interface",
+                "rrr.epoll_wrapper.linux",
+            ],
         )
 
         callbacks = modules["crate::rpc::callbacks"]
@@ -1332,6 +1340,57 @@ cpp_module_index = "indexes/owner.toml"
             "import rrr.basetypes;\n"
             "import rrr.reactor;\n",
             legacy_fiber,
+            manifest,
+        )
+
+        legacy_epoll = modules["crate::runtime::legacy_epoll"]
+        legacy_epoll_linux = modules["crate::runtime::legacy_epoll_linux"]
+        self.assertEqual(
+            legacy_epoll["unit_id"], "rrr.epoll_wrapper.interface"
+        )
+        self.assertEqual(
+            legacy_epoll_linux["unit_id"], "rrr.epoll_wrapper.linux"
+        )
+        self.assertEqual(legacy_epoll["kind"], "interface")
+        self.assertEqual(legacy_epoll_linux["kind"], "implementation")
+        self.assertEqual(
+            legacy_epoll["module_name"], legacy_epoll_linux["module_name"]
+        )
+        self.assertIs(legacy_epoll_linux["_module_interface"], legacy_epoll)
+        self.assertEqual(legacy_epoll["dependencies"], [])
+        self.assertEqual(legacy_epoll["legacy_dependencies"], [])
+        self.assertEqual(legacy_epoll["gmf_headers"], [])
+        self.assertEqual(
+            legacy_epoll["type_mappings"],
+            {"LegacyOwnedFd": "rusty::os::fd::OwnedFd"},
+        )
+        self.assertIsNotNone(legacy_epoll["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rusty"',
+            legacy_epoll["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.epoll_wrapper;\nimport rusty;\n",
+            legacy_epoll,
+            manifest,
+        )
+        self.assertEqual(
+            legacy_epoll_linux["dependencies"],
+            ["crate::runtime::legacy_epoll"],
+        )
+        self.assertEqual(
+            legacy_epoll_linux["legacy_dependencies"], ["rrr.debugging"]
+        )
+        self.assertEqual(legacy_epoll_linux["gmf_headers"], [])
+        self.assertEqual(legacy_epoll_linux["type_mappings"], {})
+        self.assertIsNotNone(legacy_epoll_linux["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.debugging"',
+            legacy_epoll_linux["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "module rrr.epoll_wrapper;\nimport rrr.debugging;\n",
+            legacy_epoll_linux,
             manifest,
         )
 
@@ -1591,6 +1650,8 @@ cpp_module_index = "indexes/owner.toml"
                     legacy_basetypes,
                     legacy_future,
                     legacy_fiber,
+                    legacy_epoll,
+                    legacy_epoll_linux,
                     legacy_threading,
                     legacy_logging,
                     legacy_cpuinfo,
@@ -1621,6 +1682,7 @@ cpp_module_index = "indexes/owner.toml"
                 "crate::rpc::fiber_channel",
                 "crate::runtime::legacy_future",
                 "crate::runtime::legacy_fiber",
+                "crate::runtime::legacy_epoll",
                 "crate::base::misc",
                 "crate::base::legacy_threading",
                 "crate::base::legacy_logging",

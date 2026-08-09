@@ -5,6 +5,15 @@ Working tracker for the srpc campaign: eliminate hand-written C++ from
 Generated 2026-08-05 by a routed inventory over every file in `src/rrr`
 (tests excluded), then verified against transpiler pin `da6e9bf4`.
 
+> **Successor status 2026-08-09:** this is a frozen kernel/inline-DSL
+> inventory, not the live whole-module census. The
+> [sRPC scaffolding conversion plan](srpc-scaffolding-conversion-plan.md) now
+> owns that work: after Gate 149, 13 graph slices and 34 compilation units have
+> retired 528 of the 1,202 post-pilot scaffold lines, leaving 674 scaffold
+> lines plus the separate 35-line fiber C-ABI floor. Historical estimates and
+> tables below are retained as evidence and are not directly comparable with
+> that strict census.
+
 > **Status 2026-08-05: the convertible-now bucket is EXHAUSTED.** Every
 > item has either landed or been reclassified with a recorded reason.
 > What remains in this file is: items blocked on named transpiler
@@ -814,12 +823,15 @@ dangerous one because it builds green.
   own proposal would have broken all four call sites; the right move was to
   delete the struct entirely.
 
-### Remaining work is upstream, not here
+### Remaining work moved to the whole-module campaign
 
-The two open rows are transpiler defects (`emit_stmt.rs` statement-level cfg,
-`map_operator_trait` operator lowering) — 0 lines of `src/rrr`. Further
-progress on the 1,053 scaffolding lines needs a whole-file transpiler mode,
-which does not exist yet.
+The two open kernel rows remain transpiler defects (`emit_stmt.rs`
+statement-level cfg and `map_operator_trait` operator lowering) and account for
+zero lines of `src/rrr`. The former assertion that whole-file generation did
+not exist is superseded: schema 6 now owns grouped Rust-authored module units.
+The live census, completed slices, and six remaining soundness/emitter
+boundaries are maintained in the sRPC scaffolding conversion plan linked
+above.
 
 ## Idioms learned while landing these
 

@@ -1,5 +1,13 @@
 # Goal 0 completion plan
 
+> **Archived planning record (2026-08-02).** The later
+> [sRPC scaffolding conversion plan](../srpc-scaffolding-conversion-plan.md)
+> supersedes this document's source model, census, and ruling that Rust
+> validity was out of scope. Whole-module owners must now be valid,
+> warning-free Rust; after Gate 149 the live census is 674 scaffold lines plus
+> the separate 35-line fiber C-ABI floor. The historical analysis below is
+> retained to explain earlier decisions, not as the current execution queue.
+
 Goal 0: **no hand-written C++ in `src/rrr`.** The DSL is the target.
 
 **Scope ruling (owner, 2026-08-02): rustc compilation of the DSL is

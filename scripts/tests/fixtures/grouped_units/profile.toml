@@ -4,7 +4,7 @@ crate_root = "crate"
 output_root = "generated"
 cxx_namespace = "rrr"
 transpiler_git = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-transpiler_sha256 = "173bd3964ff9574334181515e82f0b5d24f92ce71d1311000c145f9037e63185"
+transpiler_sha256 = "fefc2b28b25150d00eefb8efbbbce87e54fba4fd73d654746852f374977c8e7f"
 
 [[module]]
 unit_id = "rrr.epoll_wrapper.interface"

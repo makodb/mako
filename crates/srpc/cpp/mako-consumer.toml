@@ -3,8 +3,8 @@ profile = "mako-cpp-consumer-v1"
 crate_root = "crates/srpc"
 output_root = "crates/srpc/cpp/generated"
 cxx_namespace = "rrr"
-transpiler_git = "7ac151bf8e30673a0ba3ee5b28d47a66d35691b5"
-transpiler_sha256 = "173bd3964ff9574334181515e82f0b5d24f92ce71d1311000c145f9037e63185"
+transpiler_git = "3bdfcbb5fa1c9e3314588746b8d49a297eb2c75c"
+transpiler_sha256 = "fefc2b28b25150d00eefb8efbbbce87e54fba4fd73d654746852f374977c8e7f"
 
 [[module]]
 unit_id = "rrr.basetypes.interface"
@@ -225,6 +225,32 @@ legacy_dependencies = ["rrr.reactor"]
 gmf_headers = []
 type_mappings = { LegacyFiber = "rrr::Fiber" }
 cpp_module_index = "crates/srpc/cpp/indexes/fiber.toml"
+
+[[module]]
+unit_id = "rrr.epoll_wrapper.interface"
+source = "src/runtime/legacy_epoll.rs"
+rust_module = "crate::runtime::legacy_epoll"
+legacy_source = "src/rrr/reactor/epoll_wrapper.cc"
+module_name = "rrr.epoll_wrapper"
+output = "rrr.epoll_wrapper.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+type_mappings = { LegacyOwnedFd = "rusty::os::fd::OwnedFd" }
+cpp_module_index = "crates/srpc/cpp/indexes/epoll_wrapper.toml"
+
+[[module]]
+unit_id = "rrr.epoll_wrapper.linux"
+source = "src/runtime/legacy_epoll_linux.rs"
+rust_module = "crate::runtime::legacy_epoll_linux"
+legacy_source = "src/rrr/reactor/epoll_platform_linux.cc"
+module_name = "rrr.epoll_wrapper"
+output = "rrr.epoll_wrapper-linux.cpp"
+kind = "implementation"
+dependencies = ["crate::runtime::legacy_epoll"]
+legacy_dependencies = ["rrr.debugging"]
+gmf_headers = []
+cpp_module_index = "crates/srpc/cpp/indexes/epoll_wrapper_linux.toml"
 
 [[module]]
 unit_id = "rrr.misc.interface"

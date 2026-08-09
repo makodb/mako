@@ -1,0 +1,13 @@
+version = 1
+
+[modules."rusty::os::fd"]
+cpp_module = "rusty"
+namespace = "rusty::os::fd"
+
+[modules."rusty::os::fd".symbols.OwnedFd]
+kind = "type"
+callable_signatures = []
+
+[modules."rusty::os::fd".symbols."OwnedFd::from_raw_fd"]
+kind = "function"
+callable_signatures = ["OwnedFd(int)"]

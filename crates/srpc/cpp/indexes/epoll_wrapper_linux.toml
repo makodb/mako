@@ -1,0 +1,9 @@
+version = 1
+
+[modules."rrr::debugging"]
+cpp_module = "rrr.debugging"
+namespace = "rrr"
+
+[modules."rrr::debugging".symbols.verify]
+kind = "function_template"
+callable_signatures = ["void(bool)"]

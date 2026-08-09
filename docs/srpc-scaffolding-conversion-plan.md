@@ -19,15 +19,19 @@ inside a legacy file that is about to be deleted is not progress.
 
 ## Execution status
 
-Twelve generated graph slices are complete and gated. The manifest now owns 32
-C++ modules. The latest slice retired `any_message`, preserving its open-set
-registry, `std::type_index::hash_code()` collision behavior, mutable move-only
-factories, exact archive bytes, and zero-argument in-place payload construction.
+Thirteen generated graph slices are complete and gated. The manifest now owns
+34 compilation units spanning 33 C++ modules: 33 interfaces and the Linux
+implementation unit of `rrr.epoll_wrapper`. The latest slice retired both the
+legacy epoll interface and the selected Linux unit while preserving their
+module ABI, descriptor ownership, and runtime behavior.
 
-Gate 147 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
+Gate 149 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
 only executed failure, and preserved the exact 62-entry Not-Run set. The
-current census is **709 scaffold lines** plus the unchanged **35-line C ABI
-floor**: 493 scaffold lines have been retired since the 1,202-line post-pilot
+normalized Not-Run audit is 2,421 bytes with SHA-256
+`8c809b5191edfe59bb0c86e95de5c14aa3273257f4a0d4f35b9dbf503fb5f9e7`,
+byte-identical to Gate 148. The
+current census is **674 scaffold lines** plus the unchanged **35-line C ABI
+floor**: 528 scaffold lines have been retired since the 1,202-line post-pilot
 baseline.
 
 The reusable enablers are now live rather than planned: the consumer-module
@@ -56,22 +60,38 @@ invocation-local Rust scope for grouped implementation units; 40 independent
 CPUInfo regenerations and ten complete profile checks were byte-stable under
 the source-order fix.
 
+The epoll slice advances the emitter pin to
+`3bdfcbb5fa1c9e3314588746b8d49a297eb2c75c` with release SHA-256
+`fefc2b28b25150d00eefb8efbbbce87e54fba4fd73d654746852f374977c8e7f`.
+Its exact `#[cfg_attr(any(), cpp_declaration)]` marker lets each public Rust
+forwarder keep an executable Cargo body while C++ emission produces only the
+exported declaration and suppresses the body's dependencies. The definition
+then comes from the same named module's implementation unit; this is ordinary
+C++ module linkage, not an `extern "C"` ABI or an `extern "Rust"` declaration.
+
 The AnyMessage slice additionally pins direct `FnMut` construction into
 `rusty::Function`, indexed mutable `HashMap` lookup, canonical type-index hash
 projection, and a provenance-gated zero-argument `Arc<T>::make()` intrinsic;
 same-spelled user paths remain ordinary Rust/C++ calls.
 
-The 7 remaining named-module interfaces account for exactly **529** of the
-current 709 scaffold lines. Retiring all of them leaves a precisely identified
-180-line non-interface envelope: `std_compat.hpp` (93), `rrr.hpp` (30), the
-fiber C header's scaffold portion (23), import shims (18), the selected epoll
-implementation unit (10), and `base/all.hpp` (6). The epoll interface plus
-Linux unit is the next small runtime candidate: schema v6 now owns its grouped
-multi-unit shape and the pinned emitter supplies the implementation unit's
-explicit Rust-scope override. Exact declaration/linkage and behavior proofs
-remain before retirement. `serializable`, `tcp_channel`, and `reactor` remain
-behind the explicit overload/ADL, synchronization, namespace, and ABI gates
-recorded below.
+The epoll interface and Linux implementation are generated as one schema-v6
+module group. Four native Rust tests exercise real epoll behavior, all 34 units
+pass generator write/check/stamp validation, and Clang 22 interface,
+implementation, API, layout, link, and runtime probes pass. The corrected
+own-module ABI comparison preserves all 26 authoritative legacy symbols; its
+normalized symbol-list SHA-256 is
+`45751d17456245ef745dcab3d8716a7632a6dab135da9c04686b73da29da0d2b`.
+The focused behavior proof covers `EEXIST` delete-and-re-add, `EBADF` add,
+`ENOENT`/`EBADF` update tolerance, unconditional read interest on add, the
+one-millisecond wait, readiness bits, the remove counter, the private 12-byte
+event carrier, and move-only `OwnedFd` cleanup.
+
+The 6 remaining named-module interfaces account for exactly **504** of the
+current 674 scaffold lines. The precisely identified 170-line non-interface
+envelope is `std_compat.hpp` (93), `rrr.hpp` (30), the fiber C header's
+scaffold portion (23), import shims (18), and `base/all.hpp` (6). Of that
+envelope, 147 lines need the planned generated-envelope work; the fiber
+header's 23 scaffold lines need the separate C-header backend described below.
 
 ## Non-negotiable invariants
 
@@ -132,6 +152,10 @@ The implementation is split into four enabling increments:
    `Option<Box<dyn Fn/FnMut>> -> rusty::Function` mapping is also required:
    Rust's `Option` and the C++ function wrapper represent the same nullable
    callback contract, while emitting `Option<Function>` changes layout.
+   When Cargo needs a real forwarding body but the C++ interface needs only a
+   declaration, the exact `#[cfg_attr(any(), cpp_declaration)]` marker suppresses
+   that body and its dependencies during C++ emission; it is not a general
+   facility for injecting arbitrary C++ declarations.
 4. **Generated envelopes.** Emit import shims, `rrr.hpp`, and `base/all.hpp`
    from the manifest.  A later, separate C-header backend may own
    `srpc_fiber.h`; the C++ module emitter must not pretend that C can consume a
@@ -157,20 +181,60 @@ lines.  It stays explicit until a Rust `repr(C)` to C11 header backend proves
 both x86-64 and AArch64 sizes, alignments, offsets, nullable raw callback
 layout, and assembly constants.
 
-The seven remaining interfaces are explicit, dependency-ordered engineering
-boundaries rather than invitations to approximate. `epoll_wrapper` plus its
-Linux implementation now has grouped multi-unit ownership and an exact
-invocation-local Rust-scope override; it still needs exact declaration/linkage
-handling. `debugging` needs caller-capturing
-`source_location`, default-argument and macro-fence metadata, and structural
-truthiness. `serializable` needs exact C++ overload names plus unqualified ADL
-fallbacks. `tcp_channel` needs a sound `Send + Sync` synchronization design
-before its shared `Arc` facade can be valid Rust without hiding races.
-`reactor` additionally spans `rrr` and `janus` namespaces and owns the pinned
-fiber ABI. `client` and `server` remain downstream of those runtime/transport
-decisions and retain their variadic, lifetime, structural-service, and
-type-erasure gates. Rust can own narrower kernels only when the resulting
-split has an explicit linkage contract and preserves those behaviors exactly.
+The six remaining interfaces are explicit, dependency-ordered engineering
+boundaries rather than invitations to approximate. `debugging` needs
+caller-capturing `source_location`, default-argument and macro-fence metadata,
+`noinline`, and structural truthiness. `serializable` needs exact C++ overload
+families, declaration ordering, and unqualified ADL fallbacks. `tcp_channel`
+needs a sound `Send + Sync` synchronization design before its shared `Arc`
+facade can be valid Rust without hiding races. `reactor` spans both `rrr` and
+`janus`, owns the pinned fiber C/assembly ABI, and depends on the transport
+decision. `client` remains downstream of those layers: its futures and
+connections put `Cell`/`RefCell` state behind shared `Arc`s used by detached
+and poll threads, while a raw `FiberChannel` pointer escapes its mutex across
+a yielding receive loop. Marking that graph `Send + Sync` would be unsound;
+changing the carriers or lock lifetime is a transport/API redesign. `server`
+is downstream too, but also fails the independent sound-owner proof below.
+Rust can own narrower kernels only when the split has an explicit linkage
+contract and preserves those behaviors exactly.
+
+### Server whole-owner soundness gate
+
+The `server` boundary is proved at the current representation rather than
+inferred from its size. The accept path in `src/rrr/rpc/server.cpp:1712`
+creates an `Arc<ServerConnection>`, derives a `Weak`, and then calls
+`Arc::get_mut` to install the Weak and bind callbacks. Safe Rust closes that
+exclusive-mutation window as soon as the Weak exists. `Arc::new_cyclic` is the
+appropriate construction primitive, but the pinned C++ runtime lacks it; even
+with runtime support, the public `install_self_weak_for_testing(&mut self,
+Weak<Self>)` surface would require callers to migrate to an Arc-returning
+factory.
+
+The reply path at `src/rrr/rpc/server.cpp:2440` locks
+`Mutex<Option<Box<dyn ChannelConnectionBase>>>`, extracts a raw pointer, drops
+the guard, and invokes `send_frame(&mut self)`. Concurrent or synchronously
+recursive replies therefore create overlapping mutable references before the
+concrete channel's internal lock can help. Retaining the proxy mutex through
+the call changes required behavior by blocking synchronous re-entry; the
+in-memory transport deliberately invokes its peer callback after dropping its
+own state lock (`crates/srpc/src/rpc/inmemory_channel.rs:246`). Moving the Box
+out instead leaves a nested reply with no proxy.
+
+Finally, the exact shape retains `Cell<ServerConnStatus>`, `Cell<bool>`, and a
+channel trait without `Send + Sync` bounds, so it cannot satisfy the documented
+cross-thread reply contract or `DeferredReply`'s `+ Send` callback surface.
+An unsafe auto-trait implementation would hide the Cell races and exclusive
+proxy aliasing rather than prove them. Retirement therefore requires tested
+`Arc::new_cyclic` parity plus factory migration, a cloneable owning send lease
+with a shared receiver (or another sound re-entrant abstraction), and an
+honestly `Send + Sync` connection graph—or an explicit one-thread behavior
+change.
+
+Under the current exact-surface, valid-Rust, and no-unapproved-redesign
+invariants, no additional whole-module retirement is executable. The six
+interfaces above require upstream emitter work or cross-module API and
+concurrency decisions; the 147-line generated envelope and 23-line C-header
+scaffold are separate backend projects.
 
 ## Per-module retirement protocol
 
