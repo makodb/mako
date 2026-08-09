@@ -66,13 +66,32 @@ module's output. A map therefore cannot affect a sibling module, and
 `--check-stamps` detects mapping drift offline along with the full manifest
 hash.
 
-`kind = "interface"` produces an exported `.cppm`; a future
-`kind = "implementation"` entry produces a non-exporting `.cpp` module unit.
-`rust_module` identifies the canonical crate path, `module_name` identifies
-the legacy consumer module, and `dependencies` lists already-migrated,
-manifest-owned Rust modules in topological order. The generator derives a
-rusty-cpp consumer module map from those entries, so `crate::...` paths resolve
-to the correct `rrr.*` import and the flat `rrr` namespace.
+Schema 6 gives every compilation unit a required, globally unique `unit_id`.
+The ID is stable ownership metadata rather than a display name: it keys
+invocation-local sidecars and scratch output, is stamped into the checked-in
+artifact, and remains unique even when several units share one C++ module.
+Source paths, Rust module paths, legacy source paths, and output paths also
+remain globally unique.
+
+`kind = "interface"` produces an exported `.cppm`; `kind = "implementation"`
+produces a non-exporting `.cpp` module unit. A `module_name` group contains
+exactly one interface plus zero or more implementations. The interface is the
+group's canonical Rust owner for external dependency mapping. Every
+implementation follows and directly depends on that interface; no unit may
+depend on an implementation. This explicit graph edge orders CMake's scanned
+target source graph, but it does not become `import rrr.same_module;`: a module
+implementation unit sees its own interface through the module declaration,
+and a named-module self-import is rejected.
+
+`rust_module` identifies each unit's crate path, `module_name` identifies its
+legacy consumer module, and `dependencies` lists already-migrated canonical
+interface paths in topological order. The generator derives a rusty-cpp
+consumer module map containing only those canonical interfaces, so external
+`crate::...` paths resolve to the correct `rrr.*` import and flat `rrr`
+namespace without duplicate C++ module entries. An implementation invocation
+additionally passes its exact manifest path as
+`--consumer-rust-module crate::...`; omission, mismatch, or applying that
+override to an interface fails closed before the emitter runs.
 
 A Rust owner that temporarily consumes a C++ module which has not migrated
 uses a separate declaration:
@@ -135,6 +154,13 @@ python3 scripts/generate_srpc_cpp.py --emit-cmake
 This mode is offline and emits only a CMake fragment; it does not invoke Cargo
 or the transpiler. The fragment makes every Rust owner, checked-in generated
 unit, and profile-owned index sidecar a configure dependency, so a build-only
-invocation reruns the offline stamp check after any of them changes. Adding a
-generated module therefore does not require a second, manually synchronized
-source list in `src/rrr/CMakeLists.txt`.
+invocation reruns the offline stamp check after any of them changes. Generated
+interfaces and implementations are emitted as separate, manifest-ordered
+lists: interfaces enter the `CXX_MODULES` file set, while primary module
+implementation units are ordinary private sources with CMake module scanning
+enabled. CMake rejects implementation units in a `CXX_MODULES` file set. This
+split keeps the interface registered before its implementations while dyndep
+provides the compile edge. Adding a generated module therefore does not require
+a second, manually synchronized source list in `src/rrr/CMakeLists.txt`;
+retiring the selected legacy epoll implementation is handled by the same
+ownership set as retiring its interface.

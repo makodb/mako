@@ -1,9 +1,10 @@
 # rrr: STATIC library compiled from .cpp/.cc implementation units.
 # Files migrated to C++23 named modules keep their .cpp/.cc extension
-# but are wired in via FILE_SET CXX_MODULES below (RRR_MODULE_SRC).
-# They are explicitly removed from the regular source glob to avoid
-# double-compile. Migration is incremental and measurement-gated — see
-# docs/dev/srpc_module_migration_plan.md.
+# when they are interfaces and are wired in via FILE_SET CXX_MODULES below
+# (RRR_MODULE_SRC). Primary module implementation units stay ordinary scanned
+# target sources. Migrated legacy paths are explicitly removed from the regular
+# source glob to avoid double-compile. Migration is incremental and
+# measurement-gated — see docs/dev/srpc_module_migration_plan.md.
 file(GLOB RRR_BENCH_SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/base/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/misc/*.cpp"
@@ -112,7 +113,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
-    ${SRPC_GENERATED_MODULE_FILES}
+    ${SRPC_GENERATED_MODULE_INTERFACE_FILES}
 )
 # A manifest entry atomically replaces its legacy module. This removal also
 # makes adding future generated units a profile-only operation rather than a
@@ -127,10 +128,17 @@ list(REMOVE_ITEM RRR_BENCH_SRC
     ${RRR_MODULE_SRC}
     ${SRPC_RETIRED_LEGACY_MODULE_FILES}
 )
-# Platform implementation units for rrr.epoll_wrapper (Rust std's
-# sys-module pattern): exactly one is compiled, selected below.
-list(REMOVE_ITEM RRR_BENCH_SRC
+# Legacy platform implementation units for rrr.epoll_wrapper (Rust std's
+# sys-module pattern): exactly one is compiled until the corresponding
+# manifest unit retires it.  Keep this as a list so generated implementation
+# units can atomically replace the selected legacy source through the same
+# SRPC_RETIRED_LEGACY_MODULE_FILES ownership set as interfaces.
+set(RRR_PLATFORM_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
+list(REMOVE_ITEM RRR_BENCH_SRC
+    ${RRR_PLATFORM_MODULE_SRC})
+list(REMOVE_ITEM RRR_PLATFORM_MODULE_SRC
+    ${SRPC_RETIRED_LEGACY_MODULE_FILES})
 
 set(RRR_CXXFLAGS ${BENCH_CXXFLAGS})
 
@@ -179,6 +187,19 @@ if(NOT TARGET rrr)
             FILES ${RRR_MODULE_SRC}
         )
     endif()
+    # Primary module implementation units are not valid members of a
+    # CXX_MODULES file set. Add generated implementations as ordinary private
+    # sources after their interfaces have been registered, and force module
+    # scanning so CMake's dyndep graph orders each unit after its interface.
+    if(SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES)
+        set_source_files_properties(
+            ${SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES}
+            PROPERTIES CXX_SCAN_FOR_MODULES ON
+        )
+        target_sources(rrr PRIVATE
+            ${SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES}
+        )
+    endif()
     # Goal-0 C demotion: syscall ladders that will never be Rust live as
     # plain C with C signatures (the crate's own extern-C kernels mirror
     # them); the C++ modules keep thin type-converting shims.
@@ -211,7 +232,9 @@ if(NOT TARGET rrr)
     )
     target_compile_options(rrr PUBLIC ${RRR_CXXFLAGS})
     target_link_libraries(rrr pthread rusty)
-    target_sources(rrr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
+    if(RRR_PLATFORM_MODULE_SRC)
+        target_sources(rrr PRIVATE ${RRR_PLATFORM_MODULE_SRC})
+    endif()
 
     # RRR files for borrow checking — every non-test, hand-maintained C++
     # module unit in rrr except for the two genuine exclusions called out at

@@ -34,10 +34,13 @@ The reusable enablers are now live rather than planned: the consumer-module
 map handles nested/aliased/glob paths; transparent nullable callbacks preserve
 `rusty::Function` layout; local trait objects and hidden C++ inheritance support
 the pollable façade; integer `repr` is emitted on declarations and definitions;
-and schema-v5 scoped type maps preserve legacy foreign types such as
-`std::string`. Schema v5 also separates manifest-owned Rust dependencies from
-declared legacy C++ imports and supplies a per-module, stamped foreign-symbol
-index. The indexed legacy-symbol seam is now live: Rust binding paths, named
+and scoped type maps preserve legacy foreign types such as `std::string`.
+Schema v5 separated manifest-owned Rust dependencies from declared legacy C++
+imports and supplied a per-module, stamped foreign-symbol index. Schema v6 now
+adds stable compilation-unit identity and grouped ownership: exactly one
+canonical interface plus any number of implementation units may share a C++
+module name while retaining unique Rust/source/output/retirement owners. The
+indexed legacy-symbol seam remains live: Rust binding paths, named
 C++ module imports, and projected C++ namespaces are independent and validated
 fail-closed. That unblocked `idempotency` and `request_queue`; both are now
 landed. The scoped foreign-symbol index also covers `rand`'s implicit standard
@@ -45,10 +48,13 @@ library carriers without weakening validation of project module edges.
 The pinned emitter now also projects standard `Arc::downgrade` to the existing
 `rusty::sync::downgrade` runtime function without rewriting shadowed user Arc
 types; `inmemory_channel` now exercises that seam in the built graph. Generator
-v6 additionally rejects emitted `UNSUPPORTED` diagnostics as incomplete hand
-slots. The emitter pin also preserves source order when generating aliases for
-reassigned parameters; 40 independent CPUInfo regenerations and ten complete
-profile checks were byte-stable under that fix.
+v6 added rejection of emitted `UNSUPPORTED` diagnostics as incomplete hand
+slots; generator v7 adds the schema-v6 grouped-unit invariants and unit-keyed
+stamps, staging, and CMake ownership. The emitter pin also preserves source
+order when generating aliases for reassigned parameters and accepts an
+invocation-local Rust scope for grouped implementation units; 40 independent
+CPUInfo regenerations and ten complete profile checks were byte-stable under
+the source-order fix.
 
 The AnyMessage slice additionally pins direct `FnMut` construction into
 `rusty::Function`, indexed mutable `HashMap` lookup, canonical type-index hash
@@ -60,10 +66,12 @@ current 709 scaffold lines. Retiring all of them leaves a precisely identified
 180-line non-interface envelope: `std_compat.hpp` (93), `rrr.hpp` (30), the
 fiber C header's scaffold portion (23), import shims (18), the selected epoll
 implementation unit (10), and `base/all.hpp` (6). The epoll interface plus
-Linux unit is the next small runtime candidate after schema-v6 gains grouped
-multi-unit module ownership; `serializable`, `tcp_channel`, and `reactor`
-remain behind the explicit overload/ADL, synchronization, namespace, and ABI
-gates recorded below.
+Linux unit is the next small runtime candidate: schema v6 now owns its grouped
+multi-unit shape and the pinned emitter supplies the implementation unit's
+explicit Rust-scope override. Exact declaration/linkage and behavior proofs
+remain before retirement. `serializable`, `tcp_channel`, and `reactor` remain
+behind the explicit overload/ADL, synchronization, namespace, and ABI gates
+recorded below.
 
 ## Non-negotiable invariants
 
@@ -88,6 +96,7 @@ gates recorded below.
 `crates/srpc/cpp/mako-consumer.toml` becomes the only project-side description
 of the C++ consumer.  Each unit records:
 
+- stable, globally unique unit ID;
 - Rust owner module and source;
 - legacy C++ module name;
 - C++ namespace (flat `rrr` for this consumer);
@@ -106,12 +115,16 @@ The implementation is split into four enabling increments:
    insufficient.
 2. **Graph generation.** Validate dependencies topologically and against the
    emitted imports, derive the CMake module source list, and reject unexpected
-   or privately exported output. Schema v5 treats Rust-owned and legacy C++
+   or privately exported output. Schema v6 treats Rust-owned and legacy C++
    edges as disjoint sets, validates every emitted non-runtime import, stages
-   deterministic per-module C++ symbol indexes, stamps both their source and
-   canonical bytes, and exposes them as CMake configure dependencies. It still
-   permits one unit per module; a later unit-ID extension must land before the
-   epoll interface can own one interface plus implementation units.
+   deterministic unit-keyed C++ symbol indexes, stamps both their source and
+   canonical bytes, and exposes them as CMake configure dependencies. A C++
+   module group owns exactly one interface plus zero or more implementations;
+   every implementation directly depends on and follows that interface, while
+   the corresponding same-module graph edge deliberately emits no self-import.
+   CMake receives interfaces and implementations in separate lists: only
+   interfaces enter `FILE_SET CXX_MODULES`, while implementation units are
+   scanned ordinary private sources ordered by the discovered module graph.
 3. **C++ surface metadata.** Add rustc-hidden mappings only where a valid-Rust
    compatibility facade would otherwise distort the crate: C++ names,
    declaration-only items, default arguments, `noinline`, `c_char`, and exact
@@ -146,8 +159,9 @@ layout, and assembly constants.
 
 The seven remaining interfaces are explicit, dependency-ordered engineering
 boundaries rather than invitations to approximate. `epoll_wrapper` plus its
-Linux implementation needs grouped multi-unit ownership in schema v6 and exact
-declaration/linkage handling. `debugging` needs caller-capturing
+Linux implementation now has grouped multi-unit ownership and an exact
+invocation-local Rust-scope override; it still needs exact declaration/linkage
+handling. `debugging` needs caller-capturing
 `source_location`, default-argument and macro-fence metadata, and structural
 truthiness. `serializable` needs exact C++ overload names plus unqualified ADL
 fallbacks. `tcp_channel` needs a sound `Send + Sync` synchronization design

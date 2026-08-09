@@ -1,12 +1,13 @@
-schema_version = 5
+schema_version = 6
 profile = "mako-cpp-consumer-v1"
 crate_root = "crates/srpc"
 output_root = "crates/srpc/cpp/generated"
 cxx_namespace = "rrr"
-transpiler_git = "b0d31cf6928ef3868db4b6f19907da3bc2479921"
-transpiler_sha256 = "4b5a806a6eb84c12d46368557b613769c9686f5b471b9608ad0c1004dee0090d"
+transpiler_git = "7ac151bf8e30673a0ba3ee5b28d47a66d35691b5"
+transpiler_sha256 = "173bd3964ff9574334181515e82f0b5d24f92ce71d1311000c145f9037e63185"
 
 [[module]]
+unit_id = "rrr.basetypes.interface"
 source = "src/base/legacy_basetypes.rs"
 rust_module = "crate::base::legacy_basetypes"
 legacy_source = "src/rrr/base/basetypes.cpp"
@@ -18,6 +19,7 @@ gmf_headers = []
 cpp_module_index = "crates/srpc/cpp/indexes/basetypes.toml"
 
 [[module]]
+unit_id = "rrr.internal_protocol.interface"
 source = "src/wire/internal_protocol.rs"
 rust_module = "crate::wire::internal_protocol"
 legacy_source = "src/rrr/rpc/internal_protocol.cpp"
@@ -28,6 +30,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.serializable_envelope.interface"
 source = "src/rpc/serializable_envelope.rs"
 rust_module = "crate::rpc::serializable_envelope"
 legacy_source = "src/rrr/misc/serializable_envelope.cpp"
@@ -40,6 +43,7 @@ gmf_headers = []
 cpp_module_index = "crates/srpc/cpp/indexes/serializable_envelope.toml"
 
 [[module]]
+unit_id = "rrr.any_message.interface"
 source = "src/rpc/any_message.rs"
 rust_module = "crate::rpc::any_message"
 legacy_source = "src/rrr/misc/any_message.cpp"
@@ -53,6 +57,7 @@ type_mappings = { LegacyStdString = "std::string" }
 cpp_module_index = "crates/srpc/cpp/indexes/any_message.toml"
 
 [[module]]
+unit_id = "rrr.frame_codec.interface"
 source = "src/rpc/frame_codec.rs"
 rust_module = "crate::rpc::frame_codec"
 legacy_source = "src/rrr/rpc/frame_codec.cpp"
@@ -64,6 +69,7 @@ gmf_headers = []
 type_mappings = { LegacyByteBuffer = "rusty::String", LegacyCChar = "std::string::value_type", LegacyCString = "const char*", LegacyStdVector = "std::vector" }
 
 [[module]]
+unit_id = "rrr.stat.interface"
 source = "src/base/stat.rs"
 rust_module = "crate::base::stat"
 legacy_source = "src/rrr/misc/stat.cpp"
@@ -74,6 +80,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.connection_metrics.interface"
 source = "src/rpc/connection_metrics.rs"
 rust_module = "crate::rpc::connection_metrics"
 legacy_source = "src/rrr/rpc/connection_metrics.cpp"
@@ -84,6 +91,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.load_balancer.interface"
 source = "src/rpc/load_balancer.rs"
 rust_module = "crate::rpc::load_balancer"
 legacy_source = "src/rrr/rpc/load_balancer.cpp"
@@ -95,6 +103,7 @@ gmf_headers = []
 cpp_module_index = "crates/srpc/cpp/indexes/load_balancer.toml"
 
 [[module]]
+unit_id = "rrr.errors.interface"
 source = "src/rpc/errors.rs"
 rust_module = "crate::rpc::errors"
 legacy_source = "src/rrr/rpc/errors.cpp"
@@ -105,6 +114,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.callbacks.interface"
 source = "src/rpc/callbacks.rs"
 rust_module = "crate::rpc::callbacks"
 legacy_source = "src/rrr/rpc/callbacks.cpp"
@@ -116,6 +126,7 @@ gmf_headers = []
 type_mappings = { LegacyStdString = "std::string" }
 
 [[module]]
+unit_id = "rrr.completion_tracker.interface"
 source = "src/rpc/completion_tracker.rs"
 rust_module = "crate::rpc::completion_tracker"
 legacy_source = "src/rrr/rpc/completion_tracker.cpp"
@@ -126,6 +137,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.idempotency.interface"
 source = "src/rpc/idempotency.rs"
 rust_module = "crate::rpc::idempotency"
 legacy_source = "src/rrr/rpc/idempotency.cpp"
@@ -138,6 +150,7 @@ gmf_headers = []
 cpp_module_index = "crates/srpc/cpp/indexes/idempotency.toml"
 
 [[module]]
+unit_id = "rrr.callback_wrapper.interface"
 source = "src/base/callback_wrapper.rs"
 rust_module = "crate::base::callback_wrapper"
 legacy_source = "src/rrr/base/callback_wrapper.cpp"
@@ -148,6 +161,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.channel.interface"
 source = "src/rpc/channel.rs"
 rust_module = "crate::rpc::channel"
 legacy_source = "src/rrr/rpc/channel.cpp"
@@ -159,6 +173,7 @@ gmf_headers = []
 type_mappings = { LegacyStdString = "std::string" }
 
 [[module]]
+unit_id = "rrr.inmemory_channel.interface"
 source = "src/rpc/inmemory_channel.rs"
 rust_module = "crate::rpc::inmemory_channel"
 legacy_source = "src/rrr/rpc/inmemory_channel.cpp"
@@ -170,6 +185,7 @@ gmf_headers = []
 type_mappings = { LegacyStdString = "std::string" }
 
 [[module]]
+unit_id = "rrr.fiber_channel.interface"
 source = "src/rpc/fiber_channel.rs"
 rust_module = "crate::rpc::fiber_channel"
 legacy_source = "src/rrr/rpc/fiber_channel.cpp"
@@ -183,6 +199,7 @@ type_mappings = { LegacyChannelConnectionBase = "rrr::ChannelConnectionBase", Le
 cpp_module_index = "crates/srpc/cpp/indexes/fiber_channel.toml"
 
 [[module]]
+unit_id = "rrr.future.interface"
 source = "src/runtime/legacy_future.rs"
 rust_module = "crate::runtime::legacy_future"
 legacy_source = "src/rrr/reactor/future.cpp"
@@ -196,6 +213,7 @@ type_mappings = { LegacyStdPair = "std::pair" }
 cpp_module_index = "crates/srpc/cpp/indexes/future.toml"
 
 [[module]]
+unit_id = "rrr.fiber.interface"
 source = "src/runtime/legacy_fiber.rs"
 rust_module = "crate::runtime::legacy_fiber"
 legacy_source = "src/rrr/reactor/fiber.cpp"
@@ -209,6 +227,7 @@ type_mappings = { LegacyFiber = "rrr::Fiber" }
 cpp_module_index = "crates/srpc/cpp/indexes/fiber.toml"
 
 [[module]]
+unit_id = "rrr.misc.interface"
 source = "src/base/misc.rs"
 rust_module = "crate::base::misc"
 legacy_source = "src/rrr/base/misc.cpp"
@@ -220,6 +239,7 @@ gmf_headers = []
 type_mappings = { LegacyStdString = "std::string" }
 
 [[module]]
+unit_id = "rrr.rand.interface"
 source = "src/base/legacy_rand.rs"
 rust_module = "crate::base::legacy_rand"
 legacy_source = "src/rrr/misc/rand.cpp"
@@ -231,6 +251,7 @@ gmf_headers = []
 cpp_module_index = "crates/srpc/cpp/indexes/rand.toml"
 
 [[module]]
+unit_id = "rrr.threading.interface"
 source = "src/base/legacy_threading.rs"
 rust_module = "crate::base::legacy_threading"
 legacy_source = "src/rrr/base/threading.cpp"
@@ -244,6 +265,7 @@ type_mappings = { LegacyPthreadCond = "pthread_cond_t", LegacyPthreadCondAttr = 
 cpp_module_index = "crates/srpc/cpp/indexes/threading.toml"
 
 [[module]]
+unit_id = "rrr.logging.interface"
 source = "src/base/legacy_logging.rs"
 rust_module = "crate::base::legacy_logging"
 legacy_source = "src/rrr/base/logging.cpp"
@@ -257,6 +279,7 @@ type_mappings = { LegacyCChar = "std::string::value_type", LegacyStdString = "st
 cpp_module_index = "crates/srpc/cpp/indexes/logging.toml"
 
 [[module]]
+unit_id = "rrr.cpuinfo.interface"
 source = "src/base/legacy_cpuinfo.rs"
 rust_module = "crate::base::legacy_cpuinfo"
 legacy_source = "src/rrr/misc/cpuinfo.cpp"
@@ -270,6 +293,7 @@ type_mappings = { LegacyCChar = "std::string::value_type" }
 cpp_module_index = "crates/srpc/cpp/indexes/cpuinfo.toml"
 
 [[module]]
+unit_id = "rrr.utils.interface"
 source = "src/rpc/utils.rs"
 rust_module = "crate::rpc::utils"
 legacy_source = "src/rrr/rpc/utils.cpp"
@@ -283,6 +307,7 @@ type_mappings = { LegacyAddrInfo = "addrinfo", LegacyStdString = "std::string" }
 cpp_module_index = "crates/srpc/cpp/indexes/utils.toml"
 
 [[module]]
+unit_id = "rrr.connection_state.interface"
 source = "src/rpc/connection_state.rs"
 rust_module = "crate::rpc::connection_state"
 legacy_source = "src/rrr/rpc/connection_state.cpp"
@@ -293,6 +318,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.monotonic.interface"
 source = "src/base/monotonic.rs"
 rust_module = "crate::base::monotonic"
 module_name = "rrr.monotonic"
@@ -302,6 +328,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.heartbeat.interface"
 source = "src/rpc/heartbeat.rs"
 rust_module = "crate::rpc::heartbeat"
 legacy_source = "src/rrr/rpc/heartbeat.cpp"
@@ -312,6 +339,7 @@ dependencies = ["crate::base::monotonic"]
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.request_queue.interface"
 source = "src/rpc/request_queue.rs"
 rust_module = "crate::rpc::request_queue"
 legacy_source = "src/rrr/rpc/request_queue.cpp"
@@ -322,6 +350,7 @@ dependencies = ["crate::base::monotonic"]
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.pollable_proxy.interface"
 source = "src/rpc/pollable_proxy.rs"
 rust_module = "crate::rpc::pollable_proxy"
 legacy_source = "src/rrr/rpc/pollable_proxy.cpp"
@@ -332,6 +361,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.request_options.interface"
 source = "src/rpc/request_options.rs"
 rust_module = "crate::rpc::request_options"
 legacy_source = "src/rrr/rpc/request_options.cpp"
@@ -342,6 +372,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.reconnect_policy.interface"
 source = "src/rpc/reconnect_policy.rs"
 rust_module = "crate::rpc::reconnect_policy"
 legacy_source = "src/rrr/rpc/reconnect_policy.cpp"
@@ -352,6 +383,7 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+unit_id = "rrr.circuit_breaker.interface"
 source = "src/rpc/circuit_breaker.rs"
 rust_module = "crate::rpc::circuit_breaker"
 legacy_source = "src/rrr/rpc/circuit_breaker.cpp"

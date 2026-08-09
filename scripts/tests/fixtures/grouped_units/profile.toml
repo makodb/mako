@@ -1,0 +1,29 @@
+schema_version = 6
+profile = "grouped-units-fixture"
+crate_root = "crate"
+output_root = "generated"
+cxx_namespace = "rrr"
+transpiler_git = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+transpiler_sha256 = "173bd3964ff9574334181515e82f0b5d24f92ce71d1311000c145f9037e63185"
+
+[[module]]
+unit_id = "rrr.epoll_wrapper.interface"
+source = "src/runtime/epoll.rs"
+rust_module = "crate::runtime::epoll"
+legacy_source = "src/rrr/reactor/epoll_wrapper.cc"
+module_name = "rrr.epoll_wrapper"
+output = "rrr.epoll_wrapper.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
+unit_id = "rrr.epoll_wrapper.linux"
+source = "src/runtime/epoll_linux.rs"
+rust_module = "crate::runtime::epoll_linux"
+legacy_source = "src/rrr/reactor/epoll_platform_linux.cc"
+module_name = "rrr.epoll_wrapper"
+output = "rrr.epoll_wrapper-linux.cpp"
+kind = "implementation"
+dependencies = ["crate::runtime::epoll"]
+gmf_headers = []

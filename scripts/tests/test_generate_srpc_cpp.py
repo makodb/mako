@@ -17,6 +17,8 @@ SPEC.loader.exec_module(generator)
 
 
 class GeneratorPolicyTest(unittest.TestCase):
+    GROUPED_FIXTURE = Path(__file__).resolve().parent / "fixtures/grouped_units"
+
     @staticmethod
     def valid_cpp_index_document() -> dict:
         return {
@@ -51,6 +53,7 @@ transpiler_git = "{'a' * 40}"
 transpiler_sha256 = "{generator.CANONICAL_TRANSPILER_SHA256}"
 
 [[module]]
+unit_id = "rrr.owner.interface"
 source = "src/rpc/owner.rs"
 rust_module = "crate::rpc::owner"
 module_name = "rrr.owner"
@@ -65,18 +68,346 @@ gmf_headers = []
             manifest, _ = generator.load_manifest(manifest_path, root)
             return manifest
 
+    def grouped_fixture_text(self) -> str:
+        return (self.GROUPED_FIXTURE / "profile.toml").read_text(encoding="utf-8")
+
+    def assert_grouped_profile_rejected(
+        self, manifest_text: str, diagnostic: str
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path = root / "profile.toml"
+            manifest_path.write_text(manifest_text, encoding="utf-8")
+            with self.assertRaisesRegex(generator.ProfileError, diagnostic):
+                generator.load_manifest(manifest_path, root)
+
+    def test_grouped_two_unit_fixture_is_canonical_and_topological(self) -> None:
+        root = self.GROUPED_FIXTURE
+        manifest, _ = generator.load_manifest(root / "profile.toml", root)
+        interface, implementation = manifest["module"]
+
+        self.assertEqual(interface["kind"], "interface")
+        self.assertEqual(implementation["kind"], "implementation")
+        self.assertEqual(interface["module_name"], implementation["module_name"])
+        self.assertIs(implementation["_module_interface"], interface)
+        self.assertEqual(
+            implementation["dependencies"], [interface["rust_module"]]
+        )
+
+        # The graph edge is real, but importing one's own named module from an
+        # implementation unit would be an illegal C++ self-import.
+        generator.validate_dependency_imports(
+            "module rrr.epoll_wrapper;\n", implementation, manifest
+        )
+        with self.assertRaisesRegex(
+            generator.ProfileError,
+            r"undeclared emitted imports: rrr\.epoll_wrapper",
+        ):
+            generator.validate_dependency_imports(
+                "module rrr.epoll_wrapper;\nimport rrr.epoll_wrapper;\n",
+                implementation,
+                manifest,
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            module_map_path = Path(temporary) / "consumer-map.json"
+            generator.write_consumer_module_map(manifest, module_map_path)
+            module_map = json.loads(module_map_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            module_map["module"],
+            [
+                {
+                    "rust_module": interface["rust_module"],
+                    "cpp_module": "rrr.epoll_wrapper",
+                    "cpp_namespace": "rrr",
+                }
+            ],
+        )
+
+        command = generator.build_transpiler_command(
+            transpiler=Path("/tool/rusty-cpp-transpiler"),
+            staged_source=Path("/scratch/epoll_linux.rs"),
+            raw_output=Path("/scratch/rrr.epoll_wrapper-linux.cpp"),
+            module_name=implementation["module_name"],
+            unit_kind=implementation["kind"],
+            rust_module=implementation["rust_module"],
+            cxx_namespace="rrr",
+            consumer_module_map=Path("/scratch/consumer-map.json"),
+            consumer_rust_module=implementation["rust_module"],
+            type_map=None,
+            cpp_module_index=None,
+        )
+        rust_scope = command.index("--consumer-rust-module")
+        self.assertEqual(
+            command[rust_scope : rust_scope + 2],
+            ["--consumer-rust-module", "crate::runtime::epoll_linux"],
+        )
+
+        cmake = io.StringIO()
+        with contextlib.redirect_stdout(cmake):
+            generator.emit_cmake_manifest(manifest, root)
+        rendered = cmake.getvalue()
+        interfaces = rendered.split(
+            "set(SRPC_GENERATED_MODULE_INTERFACE_FILES", 1
+        )[1].split("set(SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES", 1)[0]
+        implementations = rendered.split(
+            "set(SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES", 1
+        )[1].split(
+            "set(SRPC_RETIRED_LEGACY_MODULE_FILES", 1
+        )[0]
+        self.assertIn("rrr.epoll_wrapper.cppm", interfaces)
+        self.assertNotIn("rrr.epoll_wrapper-linux.cpp", interfaces)
+        self.assertIn("rrr.epoll_wrapper-linux.cpp", implementations)
+        self.assertNotIn("rrr.epoll_wrapper.cppm", implementations)
+        self.assertLess(
+            rendered.index("set(SRPC_GENERATED_MODULE_INTERFACE_FILES"),
+            rendered.index("set(SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES"),
+        )
+        self.assertLess(
+            rendered.index("reactor/epoll_wrapper.cc"),
+            rendered.index("reactor/epoll_platform_linux.cc"),
+        )
+        for source in (
+            "crate/src/runtime/epoll.rs",
+            "crate/src/runtime/epoll_linux.rs",
+        ):
+            self.assertEqual(rendered.count(source), 1)
+        for output in (
+            "generated/rrr.epoll_wrapper.cppm",
+            "generated/rrr.epoll_wrapper-linux.cpp",
+        ):
+            self.assertEqual(rendered.count(output), 2)
+
+    def test_group_allows_multiple_implementation_units(self) -> None:
+        second_implementation = '''
+[[module]]
+unit_id = "rrr.epoll_wrapper.instrumented"
+source = "src/runtime/epoll_instrumented.rs"
+rust_module = "crate::runtime::epoll_instrumented"
+legacy_source = "src/rrr/reactor/epoll_platform_instrumented.cc"
+module_name = "rrr.epoll_wrapper"
+output = "rrr.epoll_wrapper-instrumented.cpp"
+kind = "implementation"
+dependencies = ["crate::runtime::epoll"]
+gmf_headers = []
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path = root / "profile.toml"
+            manifest_path.write_text(
+                self.grouped_fixture_text() + second_implementation,
+                encoding="utf-8",
+            )
+            manifest, _ = generator.load_manifest(manifest_path, root)
+            self.assertEqual(len(manifest["module"]), 3)
+            interface = manifest["module"][0]
+            self.assertTrue(
+                all(
+                    entry["_module_interface"] is interface
+                    for entry in manifest["module"][1:]
+                )
+            )
+
+            module_map_path = root / "consumer-map.json"
+            generator.write_consumer_module_map(manifest, module_map_path)
+            module_map = json.loads(module_map_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(module_map["module"]), 1)
+
+    def test_rrr_cmake_does_not_readd_a_retired_platform_unit(self) -> None:
+        cmake = (generator.repo_root() / "src/rrr/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("set(RRR_PLATFORM_MODULE_SRC", cmake)
+        retirement = cmake.index(
+            "list(REMOVE_ITEM RRR_PLATFORM_MODULE_SRC\n"
+            "    ${SRPC_RETIRED_LEGACY_MODULE_FILES})"
+        )
+        selected_add = cmake.index(
+            "target_sources(rrr PRIVATE ${RRR_PLATFORM_MODULE_SRC})"
+        )
+        self.assertLess(retirement, selected_add)
+        self.assertNotIn(
+            "target_sources(rrr PRIVATE "
+            "${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)",
+            cmake,
+        )
+
+    def test_rrr_cmake_keeps_implementation_units_out_of_module_file_set(
+        self,
+    ) -> None:
+        cmake = (generator.repo_root() / "src/rrr/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        module_sources = cmake.split("set(RRR_MODULE_SRC", 1)[1].split(
+            "list(REMOVE_ITEM RRR_MODULE_SRC", 1
+        )[0]
+        self.assertIn(
+            "${SRPC_GENERATED_MODULE_INTERFACE_FILES}", module_sources
+        )
+        self.assertNotIn(
+            "${SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES}", module_sources
+        )
+
+        file_set = cmake.split(
+            "FILE_SET rrr_modules TYPE CXX_MODULES", 1
+        )[1].split("endif()", 1)[0]
+        self.assertIn("FILES ${RRR_MODULE_SRC}", file_set)
+        self.assertNotIn(
+            "${SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES}", file_set
+        )
+        self.assertIn(
+            "PROPERTIES CXX_SCAN_FOR_MODULES ON",
+            cmake,
+        )
+        private_implementations = (
+            "target_sources(rrr PRIVATE\n"
+            "            ${SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES}\n"
+            "        )"
+        )
+        self.assertIn(private_implementations, cmake)
+        self.assertLess(
+            cmake.index("FILE_SET rrr_modules TYPE CXX_MODULES"),
+            cmake.index(private_implementations),
+        )
+
+    def test_unit_id_is_required_unique_and_filename_safe(self) -> None:
+        text = self.grouped_fixture_text()
+        self.assert_grouped_profile_rejected(
+            text.replace('unit_id = "rrr.epoll_wrapper.interface"\n', "", 1),
+            "key 'unit_id' must be a non-empty string",
+        )
+        for invalid in ("../escape", "unit with space", "unit/child", ".hidden"):
+            with self.subTest(invalid=invalid):
+                self.assert_grouped_profile_rejected(
+                    text.replace(
+                        "rrr.epoll_wrapper.linux", invalid, 1
+                    ),
+                    "invalid unit_id",
+                )
+        self.assert_grouped_profile_rejected(
+            text.replace(
+                'unit_id = "rrr.epoll_wrapper.linux"',
+                'unit_id = "rrr.epoll_wrapper.interface"',
+                1,
+            ),
+            "duplicate module unit_id",
+        )
+
+    def test_module_group_requires_one_interface_before_implementations(self) -> None:
+        text = self.grouped_fixture_text()
+        no_interface = text.replace(
+            'output = "rrr.epoll_wrapper.cppm"\nkind = "interface"',
+            'output = "rrr.epoll_wrapper-interface.cpp"\nkind = "implementation"',
+            1,
+        )
+        self.assert_grouped_profile_rejected(no_interface, "exactly one interface")
+
+        two_interfaces = text.replace(
+            'output = "rrr.epoll_wrapper-linux.cpp"\nkind = "implementation"',
+            'output = "rrr.epoll_wrapper-linux.cppm"\nkind = "interface"',
+            1,
+        )
+        self.assert_grouped_profile_rejected(two_interfaces, "exactly one interface")
+
+        header, first, second = text.split("[[module]]")
+        self.assert_grouped_profile_rejected(
+            header + "[[module]]" + second + "[[module]]" + first,
+            "must follow interface unit",
+        )
+
+    def test_implementation_requires_its_interface_and_is_not_an_owner(self) -> None:
+        text = self.grouped_fixture_text()
+        self.assert_grouped_profile_rejected(
+            text.replace(
+                'dependencies = ["crate::runtime::epoll"]',
+                "dependencies = []",
+                1,
+            ),
+            "must depend on its interface",
+        )
+
+        consumer = '''
+[[module]]
+unit_id = "rrr.consumer.interface"
+source = "src/consumer.rs"
+rust_module = "crate::consumer"
+legacy_source = "src/rrr/consumer.cpp"
+module_name = "rrr.consumer"
+output = "rrr.consumer.cppm"
+kind = "interface"
+dependencies = ["crate::runtime::epoll_linux"]
+gmf_headers = []
+'''
+        self.assert_grouped_profile_rejected(
+            text + consumer,
+            "names implementation unit.*depend on canonical interface",
+        )
+
+    def test_grouped_units_keep_per_unit_owners_globally_unique(self) -> None:
+        text = self.grouped_fixture_text()
+        replacements = (
+            (
+                'source = "src/runtime/epoll_linux.rs"',
+                'source = "src/runtime/epoll.rs"',
+                "duplicate module source",
+            ),
+            (
+                'legacy_source = "src/rrr/reactor/epoll_platform_linux.cc"',
+                'legacy_source = "src/rrr/reactor/epoll_wrapper.cc"',
+                "duplicate module legacy_source",
+            ),
+        )
+        for old, new, diagnostic in replacements:
+            with self.subTest(field=diagnostic):
+                self.assert_grouped_profile_rejected(
+                    text.replace(old, new, 1), diagnostic
+                )
+
+        duplicate_rust_module = text.replace(
+            'rust_module = "crate::runtime::epoll_linux"',
+            'rust_module = "crate::runtime::epoll"',
+            1,
+        ).replace(
+            'dependencies = ["crate::runtime::epoll"]',
+            "dependencies = []",
+            1,
+        )
+        self.assert_grouped_profile_rejected(
+            duplicate_rust_module, "duplicate module rust_module"
+        )
+
+        duplicate_output = '''
+[[module]]
+unit_id = "rrr.epoll_wrapper.linux_debug"
+source = "src/runtime/epoll_linux_debug.rs"
+rust_module = "crate::runtime::epoll_linux_debug"
+legacy_source = "src/rrr/reactor/epoll_platform_linux_debug.cc"
+module_name = "rrr.epoll_wrapper"
+output = "rrr.epoll_wrapper-linux.cpp"
+kind = "implementation"
+dependencies = ["crate::runtime::epoll"]
+gmf_headers = []
+'''
+        self.assert_grouped_profile_rejected(
+            text + duplicate_output, "duplicate module output"
+        )
+
     def test_dependency_imports_must_match_exactly(self) -> None:
         manifest = {
             "module": [
                 {
+                    "unit_id": "rrr.clock.interface",
                     "rust_module": "crate::base::clock",
                     "module_name": "rrr.clock",
+                    "kind": "interface",
                     "dependencies": [],
                     "legacy_dependencies": [],
                 },
                 {
+                    "unit_id": "rrr.breaker.interface",
                     "rust_module": "crate::rpc::breaker",
                     "module_name": "rrr.breaker",
+                    "kind": "interface",
                     "dependencies": ["crate::base::clock"],
                     "legacy_dependencies": ["rrr.serializable"],
                 },
@@ -311,6 +642,7 @@ kind = "function"
         with tempfile.TemporaryDirectory() as temporary:
             path = generator.stage_cpp_module_index(
                 {
+                    "unit_id": "rrr.owner.interface",
                     "module_name": "rrr.owner",
                     "_cpp_module_index_bytes": json_bytes,
                 },
@@ -319,6 +651,48 @@ kind = "function"
             assert path is not None
             self.assertEqual(path.read_bytes(), json_bytes)
             self.assertEqual(path.stat().st_mode & 0o777, 0o400)
+
+    def test_grouped_sidecars_are_keyed_by_unit_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary)
+            interface = {
+                "unit_id": "rrr.shared.interface",
+                "module_name": "rrr.shared",
+                "type_mappings": {"Alias": "std::string"},
+                "_cpp_module_index_bytes": b'{"version":1}\n',
+            }
+            implementation = {
+                "unit_id": "rrr.shared.linux",
+                "module_name": "rrr.shared",
+                "type_mappings": {"Alias": "vendor::String"},
+                "_cpp_module_index_bytes": b'{"version":1,"modules":{}}\n',
+            }
+            interface_type_map = generator.stage_type_map(interface, destination)
+            implementation_type_map = generator.stage_type_map(
+                implementation, destination
+            )
+            interface_index = generator.stage_cpp_module_index(
+                interface, destination
+            )
+            implementation_index = generator.stage_cpp_module_index(
+                implementation, destination
+            )
+
+            assert interface_type_map is not None
+            assert implementation_type_map is not None
+            assert interface_index is not None
+            assert implementation_index is not None
+            self.assertNotEqual(interface_type_map, implementation_type_map)
+            self.assertNotEqual(interface_index, implementation_index)
+            self.assertEqual(interface_type_map.name, "rrr.shared.interface.toml")
+            self.assertEqual(implementation_index.name, "rrr.shared.linux.json")
+            self.assertEqual(
+                interface_type_map.read_bytes(), b'"Alias" = "std::string"\n'
+            )
+            self.assertEqual(
+                implementation_type_map.read_bytes(),
+                b'"Alias" = "vendor::String"\n',
+            )
 
     def test_manifest_loads_external_index_and_rejects_owned_legacy_overlap(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -346,6 +720,7 @@ cxx_namespace = "rrr"
 transpiler_git = "{'a' * 40}"
 transpiler_sha256 = "{generator.CANONICAL_TRANSPILER_SHA256}"
 [[module]]
+unit_id = "rrr.clock.interface"
 source = "clock.rs"
 rust_module = "crate::clock"
 module_name = "rrr.clock"
@@ -353,6 +728,7 @@ output = "rrr.clock.cppm"
 kind = "interface"
 dependencies = []
 [[module]]
+unit_id = "rrr.owner.interface"
 source = "owner.rs"
 rust_module = "crate::owner"
 module_name = "rrr.owner"
@@ -440,12 +816,16 @@ cpp_module_index = "indexes/owner.toml"
         manifest = {
             "module": [
                 {
+                    "unit_id": "support-interface",
+                    "kind": "interface",
                     "_source": root / "crate/support.rs",
                     "_output": root / "generated/support.cppm",
                     "_legacy_source": None,
                     "_cpp_module_index_path": None,
                 },
                 {
+                    "unit_id": "errors-interface",
+                    "kind": "interface",
                     "_source": root / "crate/errors.rs",
                     "_output": root / "generated/errors.cppm",
                     "_legacy_source": root / "src/rrr/errors.cpp",
@@ -505,8 +885,11 @@ cpp_module_index = "indexes/owner.toml"
             "staged_source": Path("/scratch/source with spaces.rs"),
             "raw_output": Path("/scratch/output.cppm"),
             "module_name": "rrr.owner",
+            "unit_kind": "interface",
+            "rust_module": "crate::rpc::owner",
             "cxx_namespace": "rrr",
             "consumer_module_map": Path("/scratch/module-map.json"),
+            "consumer_rust_module": None,
         }
         without_map = generator.build_transpiler_command(
             **common, type_map=None, cpp_module_index=None
@@ -530,6 +913,55 @@ cpp_module_index = "indexes/owner.toml"
         )
         self.assertNotIn("--type-map", with_index)
 
+    def test_consumer_rust_module_override_is_implementation_scoped(self) -> None:
+        common = {
+            "transpiler": Path("/tool/rusty-cpp-transpiler"),
+            "staged_source": Path("/scratch/epoll_linux.rs"),
+            "raw_output": Path("/scratch/epoll-linux.cpp"),
+            "module_name": "rrr.epoll_wrapper",
+            "unit_kind": "implementation",
+            "rust_module": "crate::runtime::epoll_linux",
+            "cxx_namespace": "rrr",
+            "consumer_module_map": Path("/scratch/module-map.json"),
+            "type_map": None,
+            "cpp_module_index": None,
+        }
+        with self.assertRaisesRegex(
+            generator.ProfileError, "requires --consumer-rust-module"
+        ):
+            generator.build_transpiler_command(
+                **common, consumer_rust_module=None
+            )
+        with self.assertRaisesRegex(
+            generator.ProfileError, "must equal manifest rust_module"
+        ):
+            generator.build_transpiler_command(
+                **common,
+                consumer_rust_module="crate::runtime::wrong_platform",
+            )
+
+        command = generator.build_transpiler_command(
+            **common,
+            consumer_rust_module="crate::runtime::epoll_linux",
+        )
+        position = command.index("--consumer-rust-module")
+        self.assertEqual(
+            command[position : position + 2],
+            ["--consumer-rust-module", "crate::runtime::epoll_linux"],
+        )
+
+        with self.assertRaisesRegex(
+            generator.ProfileError, "must not override its canonical"
+        ):
+            generator.build_transpiler_command(
+                **{
+                    **common,
+                    "unit_kind": "interface",
+                    "rust_module": "crate::runtime::epoll",
+                },
+                consumer_rust_module="crate::runtime::epoll",
+            )
+
     def test_output_stamp_binds_exact_module_type_map(self) -> None:
         common = {
             "manifest_path": Path("/repo/profile.toml"),
@@ -537,6 +969,7 @@ cpp_module_index = "indexes/owner.toml"
             "profile": "test",
             "source_label": "owner.rs",
             "source_sha": "2" * 64,
+            "unit_id": "rrr.owner.interface",
             "module_name": "rrr.owner",
             "kind": "interface",
             "transpiler_git": "3" * 40,
@@ -565,6 +998,15 @@ cpp_module_index = "indexes/owner.toml"
         with self.assertRaisesRegex(generator.ProfileError, "stale type-map-sha256"):
             generator.verify_stamped_output(Path("owner.cppm"), data, second_fields)
 
+        other_unit_fields = generator.stamp_fields(
+            **{**common, "unit_id": "rrr.owner.linux"},
+            type_map_sha=first_map_sha,
+        )
+        with self.assertRaisesRegex(generator.ProfileError, "stale unit-id"):
+            generator.verify_stamped_output(
+                Path("owner.cppm"), data, other_unit_fields
+            )
+
     def test_output_stamp_binds_legacy_set_and_both_index_byte_streams(self) -> None:
         common = {
             "manifest_path": Path("/repo/profile.toml"),
@@ -572,6 +1014,7 @@ cpp_module_index = "indexes/owner.toml"
             "profile": "test",
             "source_label": "owner.rs",
             "source_sha": "2" * 64,
+            "unit_id": "rrr.owner.interface",
             "module_name": "rrr.owner",
             "kind": "interface",
             "type_map_sha": generator.sha256_bytes(b""),
@@ -664,6 +1107,7 @@ cxx_namespace = "rrr"
 transpiler_git = "{'a' * 40}"
 transpiler_sha256 = "{generator.CANONICAL_TRANSPILER_SHA256}"
 [[module]]
+unit_id = "rrr.owner.interface"
 source = "owner.rs"
 rust_module = "crate::owner"
 module_name = "rrr.owner"
@@ -683,6 +1127,7 @@ cpp_module_index = "indexes/owner.toml"
                 profile=manifest["profile"],
                 source_label="crate/owner.rs",
                 source_sha=generator.sha256_bytes(source.read_bytes()),
+                unit_id="rrr.owner.interface",
                 module_name="rrr.owner",
                 kind="interface",
                 type_map_sha=generator.sha256_bytes(b""),
@@ -731,12 +1176,16 @@ cpp_module_index = "indexes/owner.toml"
         manifest = {
             "module": [
                 {
+                    "unit_id": "owner-interface",
+                    "kind": "interface",
                     "_source": owner,
                     "_output": root / "generated/owner.cppm",
                     "_legacy_source": root / "src/rrr/owner.cpp",
                     "_cpp_module_index_path": index,
                 },
                 {
+                    "unit_id": "sibling-interface",
+                    "kind": "interface",
                     "_source": sibling,
                     "_output": root / "generated/sibling.cppm",
                     "_legacy_source": None,
@@ -761,6 +1210,11 @@ cpp_module_index = "indexes/owner.toml"
         manifest_path = root / generator.DEFAULT_MANIFEST
         manifest, _ = generator.load_manifest(manifest_path, root)
         modules = {entry["rust_module"]: entry for entry in manifest["module"]}
+        self.assertEqual(len(manifest["module"]), 32)
+        self.assertEqual(
+            len({entry["unit_id"] for entry in manifest["module"]}),
+            32,
+        )
 
         callbacks = modules["crate::rpc::callbacks"]
         self.assertEqual(callbacks["dependencies"], ["crate::rpc::errors"])
@@ -921,6 +1375,7 @@ cpp_module_index = "indexes/owner.toml"
         )
 
         any_message = modules["crate::rpc::any_message"]
+        self.assertEqual(any_message["unit_id"], "rrr.any_message.interface")
         self.assertEqual(any_message["dependencies"], [])
         self.assertEqual(
             any_message["legacy_dependencies"],

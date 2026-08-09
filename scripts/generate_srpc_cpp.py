@@ -24,10 +24,10 @@ import tempfile
 import tomllib
 
 
-SCHEMA_VERSION = 5
-GENERATOR_VERSION = 6
+SCHEMA_VERSION = 6
+GENERATOR_VERSION = 7
 CANONICAL_TRANSPILER_SHA256 = (
-    "4b5a806a6eb84c12d46368557b613769c9686f5b471b9608ad0c1004dee0090d"
+    "173bd3964ff9574334181515e82f0b5d24f92ce71d1311000c145f9037e63185"
 )
 DEFAULT_MANIFEST = Path("crates/srpc/cpp/mako-consumer.toml")
 DEFAULT_TRANSPILER = Path(
@@ -58,6 +58,9 @@ CPP_BINDING_PATH_PATTERN = CPP_NAMESPACE_PATTERN
 CPP_SYMBOL_NAME_PATTERN = CPP_NAMESPACE_PATTERN
 CPP_SYMBOL_KIND_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 CPP_INDEX_PATH_PATTERN = re.compile(r"[A-Za-z0-9_./-]+\.(?:json|toml)")
+UNIT_ID_PATTERN = re.compile(
+    r"[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)*"
+)
 IMPLICIT_CPP_MODULE_IMPORTS = frozenset({"std", "rusty"})
 
 
@@ -414,6 +417,7 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
     data["_output_dir"] = output_dir
 
     allowed_module = {
+        "unit_id",
         "source",
         "rust_module",
         "legacy_source",
@@ -426,11 +430,12 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
         "type_mappings",
         "cpp_module_index",
     }
+    seen_unit_ids: set[str] = set()
     seen_sources: set[str] = set()
     seen_rust_modules: set[str] = set()
     seen_legacy_sources: set[str] = set()
-    seen_modules: set[str] = set()
     seen_outputs: set[str] = set()
+    module_groups: dict[str, list[dict]] = {}
     for index, entry in enumerate(modules, 1):
         if not isinstance(entry, dict):
             raise ProfileError(f"module entry {index} must be a table")
@@ -439,7 +444,14 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
             raise ProfileError(
                 f"module entry {index} has unknown keys: {', '.join(unknown)}"
             )
-        for key in ("source", "rust_module", "module_name", "output", "kind"):
+        for key in (
+            "unit_id",
+            "source",
+            "rust_module",
+            "module_name",
+            "output",
+            "kind",
+        ):
             if not isinstance(entry.get(key), str) or not entry[key]:
                 raise ProfileError(
                     f"module entry {index} key {key!r} must be a non-empty string"
@@ -448,6 +460,10 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
                 raise ProfileError(
                     f"module entry {index} key {key!r} must fit on one line"
                 )
+        if not UNIT_ID_PATTERN.fullmatch(entry["unit_id"]):
+            raise ProfileError(
+                f"module entry {index} has invalid unit_id {entry['unit_id']!r}"
+            )
         if entry["kind"] not in {"interface", "implementation"}:
             raise ProfileError(
                 f"module entry {index} kind must be interface or implementation"
@@ -601,9 +617,9 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
                 f"module entry {index} has invalid C++ module name {entry['module_name']!r}"
             )
         unique_values = [
+            ("unit_id", entry["unit_id"], seen_unit_ids),
             ("source", entry["source"], seen_sources),
             ("rust_module", entry["rust_module"], seen_rust_modules),
-            ("module_name", entry["module_name"], seen_modules),
             ("output", entry["output"], seen_outputs),
         ]
         if legacy_source_label is not None:
@@ -617,32 +633,78 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
         entry["_source"] = source
         entry["_legacy_source"] = legacy_source
         entry["_output"] = output
+        entry["_manifest_index"] = index
+        module_groups.setdefault(entry["module_name"], []).append(entry)
 
-    mapped_rust_modules = {
-        entry["rust_module"]: index for index, entry in enumerate(modules)
-    }
+    module_interfaces: dict[str, dict] = {}
+    for module_name, group in module_groups.items():
+        interfaces = [entry for entry in group if entry["kind"] == "interface"]
+        if len(interfaces) != 1:
+            unit_ids = ", ".join(entry["unit_id"] for entry in group)
+            raise ProfileError(
+                f"C++ module group {module_name!r} must contain exactly one "
+                f"interface unit; found {len(interfaces)} across: {unit_ids}"
+            )
+        interface = interfaces[0]
+        module_interfaces[module_name] = interface
+        for entry in group:
+            entry["_module_interface"] = interface
+            if (
+                entry["kind"] == "implementation"
+                and entry["_manifest_index"] < interface["_manifest_index"]
+            ):
+                raise ProfileError(
+                    f"implementation unit {entry['unit_id']!r} must follow interface "
+                    f"unit {interface['unit_id']!r} for {module_name}"
+                )
+
+    data["_module_interfaces"] = module_interfaces
+    mapped_rust_modules = {entry["rust_module"]: entry for entry in modules}
+    owned_module_names = set(module_groups)
     for index, entry in enumerate(modules, 1):
         for dependency in entry["dependencies"]:
             if not re.fullmatch(r"crate(?:::[A-Za-z_]\w*)+", dependency):
                 raise ProfileError(
                     f"module entry {index} has invalid dependency {dependency!r}"
                 )
-            dependency_index = mapped_rust_modules.get(dependency)
-            if dependency_index is None:
+            dependency_entry = mapped_rust_modules.get(dependency)
+            if dependency_entry is None:
                 raise ProfileError(
                     f"module entry {index} has unmapped dependency {dependency!r}"
                 )
-            if dependency_index >= index - 1:
+            if dependency_entry["_manifest_index"] >= entry["_manifest_index"]:
                 raise ProfileError(
                     f"module entry {index} dependency {dependency!r} must precede "
                     "its consumer in topological manifest order"
+                )
+            dependency_interface = dependency_entry["_module_interface"]
+            if dependency_entry is not dependency_interface:
+                raise ProfileError(
+                    f"module entry {index} dependency {dependency!r} names "
+                    f"implementation unit {dependency_entry['unit_id']!r}; depend on "
+                    f"canonical interface {dependency_interface['rust_module']!r} instead"
+                )
+            if dependency_entry["module_name"] == entry["module_name"] and (
+                entry["kind"] != "implementation"
+                or dependency_entry is not entry["_module_interface"]
+            ):
+                raise ProfileError(
+                    f"module entry {index} has invalid same-group dependency "
+                    f"{dependency!r}"
+                )
+        if entry["kind"] == "implementation":
+            interface_dependency = entry["_module_interface"]["rust_module"]
+            if interface_dependency not in entry["dependencies"]:
+                raise ProfileError(
+                    f"implementation unit {entry['unit_id']!r} must depend on its "
+                    f"interface {interface_dependency!r}"
                 )
         # A manifest-owned C++ module is never a legacy edge, even when the
         # corresponding Rust dependency was accidentally omitted above.  The
         # emitted-import check will independently diagnose that missing Rust
         # graph edge during generation, but --emit-cmake and schema validation
         # must already reject the contradictory ownership declaration.
-        overlap = sorted(seen_modules & set(entry["legacy_dependencies"]))
+        overlap = sorted(owned_module_names & set(entry["legacy_dependencies"]))
         if overlap:
             raise ProfileError(
                 f"module entry {index} declares manifest-owned dependency as legacy: "
@@ -699,14 +761,14 @@ def stage_type_map(entry: dict, destination: Path) -> Path | None:
     data = render_type_map(entry["type_mappings"])
     if not data:
         return None
-    path = destination / f"{entry['module_name']}.toml"
+    path = destination / f"{entry['unit_id']}.toml"
     try:
         destination.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         path.chmod(0o400)
     except OSError as exc:
         raise ProfileError(
-            f"cannot stage type mappings for {entry['module_name']}: {exc}"
+            f"cannot stage type mappings for unit {entry['unit_id']}: {exc}"
         ) from exc
     return path
 
@@ -716,14 +778,14 @@ def stage_cpp_module_index(entry: dict, destination: Path) -> Path | None:
     data: bytes = entry["_cpp_module_index_bytes"]
     if not data:
         return None
-    path = destination / f"{entry['module_name']}.json"
+    path = destination / f"{entry['unit_id']}.json"
     try:
         destination.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         path.chmod(0o400)
     except OSError as exc:
         raise ProfileError(
-            f"cannot stage C++ module index for {entry['module_name']}: {exc}"
+            f"cannot stage C++ module index for unit {entry['unit_id']}: {exc}"
         ) from exc
     return path
 
@@ -803,13 +865,17 @@ def emitted_cpp_imports(cpp: str, module_name: str) -> set[str]:
 
 def validate_dependency_imports(cpp: str, entry: dict, manifest: dict) -> None:
     """Require Rust-owned and declared-legacy imports to match exactly."""
-    module_by_rust_path = {
-        module["rust_module"]: module["module_name"]
+    unit_by_rust_path = {
+        module["rust_module"]: module
         for module in manifest["module"]
     }
-    known_cpp_modules = set(module_by_rust_path.values())
+    known_cpp_modules = {
+        module["module_name"] for module in manifest["module"]
+    }
     expected_owned = {
-        module_by_rust_path[dependency] for dependency in entry["dependencies"]
+        unit_by_rust_path[dependency]["module_name"]
+        for dependency in entry["dependencies"]
+        if unit_by_rust_path[dependency]["module_name"] != entry["module_name"]
     }
     expected_legacy = set(entry.get("legacy_dependencies", []))
     expected = expected_owned | expected_legacy
@@ -836,7 +902,13 @@ def validate_dependency_imports(cpp: str, entry: dict, manifest: dict) -> None:
 
 
 def write_consumer_module_map(manifest: dict, path: Path) -> None:
-    """Write the emitter's complete consumer module map deterministically."""
+    """Write one canonical Rust owner for every consumer C++ module.
+
+    Implementation-unit Rust paths deliberately do not appear here: two map
+    entries with the same ``cpp_module`` are ambiguous to the emitter and are
+    rejected by the pinned map parser.  An implementation invocation supplies
+    its own Rust scope separately through ``--consumer-rust-module``.
+    """
     document = {
         "version": 1,
         "module": [
@@ -846,6 +918,7 @@ def write_consumer_module_map(manifest: dict, path: Path) -> None:
                 "cpp_namespace": manifest["cxx_namespace"],
             }
             for entry in manifest["module"]
+            if entry["kind"] == "interface"
         ],
     }
     path.write_text(
@@ -861,6 +934,7 @@ def stamp_fields(
     profile: str,
     source_label: str,
     source_sha: str,
+    unit_id: str,
     module_name: str,
     kind: str,
     type_map_sha: str,
@@ -882,6 +956,7 @@ def stamp_fields(
         ("source-sha256", source_sha),
         ("transpiler-git", transpiler_git),
         ("transpiler-sha256", transpiler_sha256),
+        ("unit-id", unit_id),
         ("module", module_name),
         ("unit-kind", kind),
         ("type-map-sha256", type_map_sha),
@@ -909,12 +984,39 @@ def build_transpiler_command(
     staged_source: Path,
     raw_output: Path,
     module_name: str,
+    unit_kind: str,
+    rust_module: str,
     cxx_namespace: str,
     consumer_module_map: Path,
+    consumer_rust_module: str | None,
     type_map: Path | None,
     cpp_module_index: Path | None,
 ) -> list[str]:
-    """Build shell-free argv with invocation-local sidecars only."""
+    """Build shell-free argv with invocation-local sidecars only.
+
+    The pinned consumer-map format has one canonical entry per C++ module.
+    Therefore a grouped implementation unit must identify its distinct Rust
+    lexical scope through the proposed emitter CLI contract
+    ``--consumer-rust-module <crate::...>``.  Fail closed here if that
+    invocation-local value is absent or disagrees with the manifest owner.
+    """
+    if unit_kind == "implementation":
+        if consumer_rust_module is None:
+            raise ProfileError(
+                f"implementation module {module_name} requires "
+                "--consumer-rust-module"
+            )
+        if consumer_rust_module != rust_module:
+            raise ProfileError(
+                f"implementation module {module_name} consumer Rust scope "
+                f"must equal manifest rust_module {rust_module!r}, got "
+                f"{consumer_rust_module!r}"
+            )
+    elif consumer_rust_module is not None:
+        raise ProfileError(
+            f"interface module {module_name} must not override its canonical "
+            "consumer Rust scope"
+        )
     command = [
         str(transpiler),
         str(staged_source),
@@ -927,6 +1029,8 @@ def build_transpiler_command(
         "--consumer-module-map",
         str(consumer_module_map),
     ]
+    if consumer_rust_module is not None:
+        command.extend(["--consumer-rust-module", consumer_rust_module])
     if type_map is not None:
         command.extend(["--type-map", str(type_map)])
     if cpp_module_index is not None:
@@ -949,7 +1053,12 @@ def generate_one(
     consumer_module_map: Path,
 ) -> bytes:
     source: Path = entry["_source"]
-    raw_output = scratch / entry["output"]
+    raw_output = (
+        scratch
+        / "unit-output"
+        / entry["unit_id"]
+        / Path(entry["output"]).name
+    )
     raw_output.parent.mkdir(parents=True, exist_ok=True)
     type_map = stage_type_map(entry, scratch / "type-maps")
     cpp_module_index = stage_cpp_module_index(
@@ -960,8 +1069,13 @@ def generate_one(
         staged_source=staged_source,
         raw_output=raw_output,
         module_name=entry["module_name"],
+        unit_kind=entry["kind"],
+        rust_module=entry["rust_module"],
         cxx_namespace=manifest["cxx_namespace"],
         consumer_module_map=consumer_module_map,
+        consumer_rust_module=(
+            entry["rust_module"] if entry["kind"] == "implementation" else None
+        ),
         type_map=type_map,
         cpp_module_index=cpp_module_index,
     )
@@ -991,6 +1105,7 @@ def generate_one(
         profile=manifest["profile"],
         source_label=source_label,
         source_sha=sha256_bytes(source_bytes),
+        unit_id=entry["unit_id"],
         module_name=entry["module_name"],
         kind=entry["kind"],
         type_map_sha=sha256_bytes(render_type_map(entry["type_mappings"])),
@@ -1136,6 +1251,7 @@ def check_stamps(
             profile=manifest["profile"],
             source_label=source.relative_to(root).as_posix(),
             source_sha=sha256_bytes(source_bytes),
+            unit_id=entry["unit_id"],
             module_name=entry["module_name"],
             kind=entry["kind"],
             type_map_sha=sha256_bytes(render_type_map(entry["type_mappings"])),
@@ -1187,16 +1303,24 @@ def emit_cmake_manifest(manifest: dict, root: Path) -> None:
         print("set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS")
         print("    ${SRPC_CPP_PROFILE_INPUT_FILES}")
         print(")")
-    print("set(SRPC_GENERATED_MODULE_FILES")
-    for entry in manifest["module"]:
-        relative = entry["_output"].relative_to(root).as_posix()
-        print(f'    "${{CMAKE_SOURCE_DIR}}/{relative}"')
-    print(")")
+    for kind, variable in (
+        ("interface", "SRPC_GENERATED_MODULE_INTERFACE_FILES"),
+        ("implementation", "SRPC_GENERATED_MODULE_IMPLEMENTATION_FILES"),
+    ):
+        print(f"set({variable}")
+        for entry in manifest["module"]:
+            if entry["kind"] != kind:
+                continue
+            relative = entry["_output"].relative_to(root).as_posix()
+            print(f"    # unit {entry['unit_id']}")
+            print(f'    "${{CMAKE_SOURCE_DIR}}/{relative}"')
+        print(")")
     print("set(SRPC_RETIRED_LEGACY_MODULE_FILES")
     for entry in manifest["module"]:
         legacy_source = entry["_legacy_source"]
         if legacy_source is not None:
             relative = legacy_source.relative_to(root).as_posix()
+            print(f"    # unit {entry['unit_id']}")
             print(f'    "${{CMAKE_SOURCE_DIR}}/{relative}"')
     print(")")
 
