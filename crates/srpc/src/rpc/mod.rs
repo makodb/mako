@@ -4,6 +4,7 @@
 //! Ordered bottom-up: the pieces here depend only on [`crate::base`]
 //! and [`crate::wire`], never on the transport or the fiber runtime.
 
+pub mod any_message;
 pub mod callbacks;
 pub mod channel;
 pub mod inmemory_channel;

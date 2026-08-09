@@ -3,8 +3,8 @@ profile = "mako-cpp-consumer-v1"
 crate_root = "crates/srpc"
 output_root = "crates/srpc/cpp/generated"
 cxx_namespace = "rrr"
-transpiler_git = "8d747bec1206ea063fe9e6d35d90fce6d9c43537"
-transpiler_sha256 = "0541a8da9c3cb4b6568e46d3f4f7279e94b5f6330c68adb49b6d7d3653044cfb"
+transpiler_git = "b0d31cf6928ef3868db4b6f19907da3bc2479921"
+transpiler_sha256 = "4b5a806a6eb84c12d46368557b613769c9686f5b471b9608ad0c1004dee0090d"
 
 [[module]]
 source = "src/base/legacy_basetypes.rs"
@@ -38,6 +38,19 @@ dependencies = ["crate::base::legacy_basetypes"]
 legacy_dependencies = ["rrr.debugging", "rrr.serializable"]
 gmf_headers = []
 cpp_module_index = "crates/srpc/cpp/indexes/serializable_envelope.toml"
+
+[[module]]
+source = "src/rpc/any_message.rs"
+rust_module = "crate::rpc::any_message"
+legacy_source = "src/rrr/misc/any_message.cpp"
+module_name = "rrr.any_message"
+output = "rrr.any_message.cppm"
+kind = "interface"
+dependencies = []
+legacy_dependencies = ["rrr.debugging", "rrr.serializable"]
+gmf_headers = []
+type_mappings = { LegacyStdString = "std::string" }
+cpp_module_index = "crates/srpc/cpp/indexes/any_message.toml"
 
 [[module]]
 source = "src/rpc/frame_codec.rs"

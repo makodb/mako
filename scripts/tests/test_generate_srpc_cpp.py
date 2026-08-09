@@ -920,6 +920,47 @@ cpp_module_index = "indexes/owner.toml"
             manifest,
         )
 
+        any_message = modules["crate::rpc::any_message"]
+        self.assertEqual(any_message["dependencies"], [])
+        self.assertEqual(
+            any_message["legacy_dependencies"],
+            ["rrr.debugging", "rrr.serializable"],
+        )
+        self.assertEqual(any_message["gmf_headers"], [])
+        self.assertEqual(
+            any_message["type_mappings"],
+            {"LegacyStdString": "std::string"},
+        )
+        self.assertIsNotNone(any_message["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.debugging"',
+            any_message["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"cpp_module":"rrr.serializable"',
+            any_message["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"cpp_module":"rusty"',
+            any_message["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"arc_make_default"',
+            any_message["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"type_id_hash_code"',
+            any_message["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.any_message;\n"
+            "import rrr.debugging;\n"
+            "import rrr.serializable;\n"
+            "import rusty;\n",
+            any_message,
+            manifest,
+        )
+
         load_balancer = modules["crate::rpc::load_balancer"]
         self.assertEqual(load_balancer["dependencies"], [])
         self.assertEqual(load_balancer["legacy_dependencies"], [])
@@ -1099,6 +1140,7 @@ cpp_module_index = "indexes/owner.toml"
                     legacy_logging,
                     legacy_cpuinfo,
                     serializable_envelope,
+                    any_message,
                     utils,
                     load_balancer,
                 )
@@ -1116,6 +1158,7 @@ cpp_module_index = "indexes/owner.toml"
         self.assertEqual(
             mapped,
             [
+                "crate::rpc::any_message",
                 "crate::rpc::frame_codec",
                 "crate::rpc::callbacks",
                 "crate::rpc::channel",

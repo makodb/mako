@@ -19,16 +19,15 @@ inside a legacy file that is about to be deleted is not progress.
 
 ## Execution status
 
-Eleven generated graph slices are complete and gated. The manifest now owns 31
-C++ modules. The latest slice retired `load_balancer`, preserving its three
-structural helper templates and unconstrained C++ client-container surface
-while using a public, doc-hidden Rust trait protocol that is suppressed from
-generated C++.
+Twelve generated graph slices are complete and gated. The manifest now owns 32
+C++ modules. The latest slice retired `any_message`, preserving its open-set
+registry, `std::type_index::hash_code()` collision behavior, mutable move-only
+factories, exact archive bytes, and zero-argument in-place payload construction.
 
-Gate 146 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
+Gate 147 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
 only executed failure, and preserved the exact 62-entry Not-Run set. The
-current census is **751 scaffold lines** plus the unchanged **35-line C ABI
-floor**: 451 scaffold lines have been retired since the 1,202-line post-pilot
+current census is **709 scaffold lines** plus the unchanged **35-line C ABI
+floor**: 493 scaffold lines have been retired since the 1,202-line post-pilot
 baseline.
 
 The reusable enablers are now live rather than planned: the consumer-module
@@ -51,18 +50,20 @@ slots. The emitter pin also preserves source order when generating aliases for
 reassigned parameters; 40 independent CPUInfo regenerations and ten complete
 profile checks were byte-stable under that fix.
 
-The 8 remaining named-module interfaces account for exactly **571** of the
-current 751 scaffold lines. Retiring all of them leaves a precisely identified
+The AnyMessage slice additionally pins direct `FnMut` construction into
+`rusty::Function`, indexed mutable `HashMap` lookup, canonical type-index hash
+projection, and a provenance-gated zero-argument `Arc<T>::make()` intrinsic;
+same-spelled user paths remain ordinary Rust/C++ calls.
+
+The 7 remaining named-module interfaces account for exactly **529** of the
+current 709 scaffold lines. Retiring all of them leaves a precisely identified
 180-line non-interface envelope: `std_compat.hpp` (93), `rrr.hpp` (30), the
 fiber C header's scaffold portion (23), import shims (18), the selected epoll
-implementation unit (10), and `base/all.hpp` (6). `any_message` is the next
-bounded whole-file candidate: its public owner shape is proven, while exact
-registry behavior still needs direct `FnMut` carrier construction and a
-canonical `TypeId` hash-code lowering. The epoll interface plus Linux unit is
-the next small runtime candidate after schema-v6 gains grouped multi-unit
-module ownership; `serializable`, `tcp_channel`, and `reactor` remain behind
-the explicit overload/ADL, synchronization, namespace, and ABI gates recorded
-below.
+implementation unit (10), and `base/all.hpp` (6). The epoll interface plus
+Linux unit is the next small runtime candidate after schema-v6 gains grouped
+multi-unit module ownership; `serializable`, `tcp_channel`, and `reactor`
+remain behind the explicit overload/ADL, synchronization, namespace, and ABI
+gates recorded below.
 
 ## Non-negotiable invariants
 
@@ -143,13 +144,19 @@ lines.  It stays explicit until a Rust `repr(C)` to C11 header backend proves
 both x86-64 and AArch64 sizes, alignments, offsets, nullable raw callback
 layout, and assembly constants.
 
-Six interfaces are treated as explicit split/defer boundaries rather than
-being forced through an unsafe approximation: `debugging` (caller-capturing
-`source_location`), `serializable` (variadics, ADL and overload-set lookup),
-`any_message` (checked RTTI), `reactor` (fiber ABI and raw handles), `client`
-(variadic/lifetime bridges), and `server` (structural service checks and
-type-erasure).  Rust can own the rest of each module while a narrow companion
-kernel remains, but the replacement must preserve those contracts exactly.
+The seven remaining interfaces are explicit, dependency-ordered engineering
+boundaries rather than invitations to approximate. `epoll_wrapper` plus its
+Linux implementation needs grouped multi-unit ownership in schema v6 and exact
+declaration/linkage handling. `debugging` needs caller-capturing
+`source_location`, default-argument and macro-fence metadata, and structural
+truthiness. `serializable` needs exact C++ overload names plus unqualified ADL
+fallbacks. `tcp_channel` needs a sound `Send + Sync` synchronization design
+before its shared `Arc` facade can be valid Rust without hiding races.
+`reactor` additionally spans `rrr` and `janus` namespaces and owns the pinned
+fiber ABI. `client` and `server` remain downstream of those runtime/transport
+decisions and retain their variadic, lifetime, structural-service, and
+type-erasure gates. Rust can own narrower kernels only when the resulting
+split has an explicit linkage contract and preserves those behaviors exactly.
 
 ## Per-module retirement protocol
 
