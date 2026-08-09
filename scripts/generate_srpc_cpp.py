@@ -24,10 +24,10 @@ import tempfile
 import tomllib
 
 
-SCHEMA_VERSION = 3
-GENERATOR_VERSION = 3
+SCHEMA_VERSION = 4
+GENERATOR_VERSION = 4
 CANONICAL_TRANSPILER_SHA256 = (
-    "9eb024274c6e3588c9ea796f197c2b4da847bdb907af9e43504368d68b8013d9"
+    "ea4590aa8a5e0f2fc2b76f8f30ad9a01521eabaf559045cb5f1c77cc69e74819"
 )
 DEFAULT_MANIFEST = Path("crates/srpc/cpp/mako-consumer.toml")
 DEFAULT_TRANSPILER = Path(
@@ -39,6 +39,12 @@ HAND_SLOT_PREFIXES = (
     "// TODO(",
     "// TODO:",
     "// TODO ",
+)
+RUST_TYPE_PATH_PATTERN = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*"
+)
+CPP_TYPE_NAME_PATTERN = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*"
 )
 
 
@@ -53,6 +59,45 @@ def validate_profile_path(label: str, value: str) -> None:
         raise ProfileError(f"{label} must be a normalized repository-relative path")
     if any(character in value for character in ('"', "'", ";", "$", "\\", "\n", "\r")):
         raise ProfileError(f"{label} contains a character unsafe for generated CMake")
+
+
+def validate_type_mappings(index: int, value: object) -> dict[str, str]:
+    """Validate a module-local map of nominal Rust paths to C++ type names.
+
+    The deliberately narrow target grammar excludes templates, pointers,
+    references, cv-qualifiers, and arbitrary C++ tokens. Broader mappings need
+    an explicit schema review rather than becoming a code-injection surface.
+    """
+    if not isinstance(value, dict):
+        raise ProfileError(
+            f"module entry {index} type_mappings must be a string-to-string table"
+        )
+    normalized: dict[str, str] = {}
+    for rust_type, cpp_type in value.items():
+        if not isinstance(rust_type, str) or not RUST_TYPE_PATH_PATTERN.fullmatch(
+            rust_type
+        ):
+            raise ProfileError(
+                f"module entry {index} has invalid Rust type mapping key "
+                f"{rust_type!r}"
+            )
+        if not isinstance(cpp_type, str) or not CPP_TYPE_NAME_PATTERN.fullmatch(
+            cpp_type
+        ):
+            raise ProfileError(
+                f"module entry {index} has invalid C++ type mapping value "
+                f"{cpp_type!r} for {rust_type!r}"
+            )
+        normalized[rust_type] = cpp_type
+    return dict(sorted(normalized.items()))
+
+
+def render_type_map(type_mappings: dict[str, str]) -> bytes:
+    """Render the exact deterministic TOML bytes consumed by rusty-cpp."""
+    return "".join(
+        f"{json.dumps(rust_type)} = {json.dumps(cpp_type)}\n"
+        for rust_type, cpp_type in sorted(type_mappings.items())
+    ).encode("utf-8")
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -171,6 +216,7 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
         "kind",
         "dependencies",
         "gmf_headers",
+        "type_mappings",
     }
     seen_sources: set[str] = set()
     seen_rust_modules: set[str] = set()
@@ -228,6 +274,9 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
                     f"module entry {index} has invalid GMF header {header!r}"
                 )
         entry["gmf_headers"] = headers
+        entry["type_mappings"] = validate_type_mappings(
+            index, entry.get("type_mappings", {})
+        )
 
         source = (crate_dir / entry["source"]).resolve()
         legacy_source_label = entry.get("legacy_source")
@@ -361,6 +410,23 @@ def stage_transpiler(executable: Path, destination: Path, expected_sha256: str) 
     return staged
 
 
+def stage_type_map(entry: dict, destination: Path) -> Path | None:
+    """Write one read-only type map for one module invocation, if configured."""
+    data = render_type_map(entry["type_mappings"])
+    if not data:
+        return None
+    path = destination / f"{entry['module_name']}.toml"
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        path.chmod(0o400)
+    except OSError as exc:
+        raise ProfileError(
+            f"cannot stage type mappings for {entry['module_name']}: {exc}"
+        ) from exc
+    return path
+
+
 def hand_slots(cpp: str) -> list[tuple[int, str]]:
     slots: list[tuple[int, str]] = []
     for line_no, line in enumerate(cpp.splitlines(), 1):
@@ -375,6 +441,17 @@ def hand_slots(cpp: str) -> list[tuple[int, str]]:
         ) and ("skipped" in stripped or "omitted" in stripped):
             slots.append((line_no, stripped))
     return slots
+
+
+def has_exported_items(cpp: str) -> bool:
+    """Return whether an interface exports an item, including nested namespaces."""
+    for line in cpp.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("export ") and not stripped.startswith(
+            "export module "
+        ):
+            return True
+    return False
 
 
 def inject_gmf_headers(cpp: str, headers: list[str]) -> str:
@@ -469,6 +546,7 @@ def stamp_fields(
     source_sha: str,
     module_name: str,
     kind: str,
+    type_map_sha: str,
     transpiler_git: str,
     transpiler_sha256: str,
     root: Path,
@@ -486,6 +564,7 @@ def stamp_fields(
         ("transpiler-sha256", transpiler_sha256),
         ("module", module_name),
         ("unit-kind", kind),
+        ("type-map-sha256", type_map_sha),
     ]
 
 
@@ -499,6 +578,34 @@ def stamp_output(cpp: str, fields: list[tuple[str, str]]) -> bytes:
     unhashed = render_stamp(fields) + body
     integrity = sha256_bytes(unhashed)
     return render_stamp(fields + [("output-sha256", integrity)]) + body
+
+
+def build_transpiler_command(
+    *,
+    transpiler: Path,
+    staged_source: Path,
+    raw_output: Path,
+    module_name: str,
+    cxx_namespace: str,
+    consumer_module_map: Path,
+    type_map: Path | None,
+) -> list[str]:
+    """Build argv without a shell; a module-local map is one opaque argument."""
+    command = [
+        str(transpiler),
+        str(staged_source),
+        "-o",
+        str(raw_output),
+        "-m",
+        module_name,
+        "--cxx-namespace",
+        cxx_namespace,
+        "--consumer-module-map",
+        str(consumer_module_map),
+    ]
+    if type_map is not None:
+        command.extend(["--type-map", str(type_map)])
+    return command
 
 
 def generate_one(
@@ -518,18 +625,16 @@ def generate_one(
     source: Path = entry["_source"]
     raw_output = scratch / entry["output"]
     raw_output.parent.mkdir(parents=True, exist_ok=True)
-    command = [
-        str(transpiler),
-        str(staged_source),
-        "-o",
-        str(raw_output),
-        "-m",
-        entry["module_name"],
-        "--cxx-namespace",
-        manifest["cxx_namespace"],
-        "--consumer-module-map",
-        str(consumer_module_map),
-    ]
+    type_map = stage_type_map(entry, scratch / "type-maps")
+    command = build_transpiler_command(
+        transpiler=transpiler,
+        staged_source=staged_source,
+        raw_output=raw_output,
+        module_name=entry["module_name"],
+        cxx_namespace=manifest["cxx_namespace"],
+        consumer_module_map=consumer_module_map,
+        type_map=type_map,
+    )
     run_checked(command, cwd=root)
     try:
         cpp = raw_output.read_text(encoding="utf-8")
@@ -545,16 +650,10 @@ def generate_one(
     cpp = inject_gmf_headers(cpp, entry["gmf_headers"])
     cpp = apply_unit_kind(cpp, entry["module_name"], entry["kind"])
     validate_dependency_imports(cpp, entry, manifest)
-    if entry["kind"] == "interface":
-        exported = [
-            line
-            for line in cpp.splitlines()
-            if line.startswith("export ") and not line.startswith("export module ")
-        ]
-        if not exported:
-            raise ProfileError(
-                f"{entry['module_name']} exports no Rust items; mark its public API `pub`"
-            )
+    if entry["kind"] == "interface" and not has_exported_items(cpp):
+        raise ProfileError(
+            f"{entry['module_name']} exports no Rust items; mark its public API `pub`"
+        )
     source_label = source.relative_to(root).as_posix()
     fields = stamp_fields(
         manifest_path=manifest_path,
@@ -564,6 +663,7 @@ def generate_one(
         source_sha=sha256_bytes(source_bytes),
         module_name=entry["module_name"],
         kind=entry["kind"],
+        type_map_sha=sha256_bytes(render_type_map(entry["type_mappings"])),
         transpiler_git=transpiler_git,
         transpiler_sha256=transpiler_sha256,
         root=root,
@@ -684,6 +784,7 @@ def check_stamps(
             source_sha=sha256_bytes(source_bytes),
             module_name=entry["module_name"],
             kind=entry["kind"],
+            type_map_sha=sha256_bytes(render_type_map(entry["type_mappings"])),
             transpiler_git=manifest["transpiler_git"],
             transpiler_sha256=manifest["transpiler_sha256"],
             root=root,

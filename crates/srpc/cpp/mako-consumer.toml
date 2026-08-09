@@ -1,10 +1,10 @@
-schema_version = 3
+schema_version = 4
 profile = "mako-cpp-consumer-v1"
 crate_root = "crates/srpc"
 output_root = "crates/srpc/cpp/generated"
 cxx_namespace = "rrr"
-transpiler_git = "9032cb1945a2c4717af2a65c85065a47d0c23b54"
-transpiler_sha256 = "9eb024274c6e3588c9ea796f197c2b4da847bdb907af9e43504368d68b8013d9"
+transpiler_git = "71b389aaec9566df2e3c2f727172ee7cd85afe4b"
+transpiler_sha256 = "ea4590aa8a5e0f2fc2b76f8f30ad9a01521eabaf559045cb5f1c77cc69e74819"
 
 [[module]]
 source = "src/wire/internal_protocol.rs"
@@ -47,10 +47,91 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+source = "src/rpc/callbacks.rs"
+rust_module = "crate::rpc::callbacks"
+legacy_source = "src/rrr/rpc/callbacks.cpp"
+module_name = "rrr.callbacks"
+output = "rrr.callbacks.cppm"
+kind = "interface"
+dependencies = ["crate::rpc::errors"]
+gmf_headers = []
+type_mappings = { LegacyStdString = "std::string" }
+
+[[module]]
+source = "src/rpc/completion_tracker.rs"
+rust_module = "crate::rpc::completion_tracker"
+legacy_source = "src/rrr/rpc/completion_tracker.cpp"
+module_name = "rrr.completion_tracker"
+output = "rrr.completion_tracker.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
+source = "src/base/callback_wrapper.rs"
+rust_module = "crate::base::callback_wrapper"
+legacy_source = "src/rrr/base/callback_wrapper.cpp"
+module_name = "rrr.callback_wrapper"
+output = "rrr.callback_wrapper.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
+source = "src/rpc/connection_state.rs"
+rust_module = "crate::rpc::connection_state"
+legacy_source = "src/rrr/rpc/connection_state.cpp"
+module_name = "rrr.connection_state"
+output = "rrr.connection_state.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
 source = "src/base/monotonic.rs"
 rust_module = "crate::base::monotonic"
 module_name = "rrr.monotonic"
 output = "rrr.monotonic.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
+source = "src/rpc/heartbeat.rs"
+rust_module = "crate::rpc::heartbeat"
+legacy_source = "src/rrr/rpc/heartbeat.cpp"
+module_name = "rrr.heartbeat"
+output = "rrr.heartbeat.cppm"
+kind = "interface"
+dependencies = ["crate::base::monotonic"]
+gmf_headers = []
+
+[[module]]
+source = "src/rpc/pollable_proxy.rs"
+rust_module = "crate::rpc::pollable_proxy"
+legacy_source = "src/rrr/rpc/pollable_proxy.cpp"
+module_name = "rrr.pollable_proxy"
+output = "rrr.pollable_proxy.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
+source = "src/rpc/request_options.rs"
+rust_module = "crate::rpc::request_options"
+legacy_source = "src/rrr/rpc/request_options.cpp"
+module_name = "rrr.request_options"
+output = "rrr.request_options.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+
+[[module]]
+source = "src/rpc/reconnect_policy.rs"
+rust_module = "crate::rpc::reconnect_policy"
+legacy_source = "src/rrr/rpc/reconnect_policy.cpp"
+module_name = "rrr.reconnect_policy"
+output = "rrr.reconnect_policy.cppm"
 kind = "interface"
 dependencies = []
 gmf_headers = []

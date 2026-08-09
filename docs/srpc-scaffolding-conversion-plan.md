@@ -19,19 +19,28 @@ inside a legacy file that is about to be deleted is not progress.
 
 ## Execution status
 
-The first generated graph slice is complete and gated. `errors` and
-`circuit_breaker` now come from valid Rust owners, with a shared generated
-`monotonic` support module. Their two legacy module files are deleted. Gate 131
-built cleanly, enumerated all 179 tests, retained `rpcbench` as the only failure,
-and preserved the prior 124-entry Not-Run set. The current census is **1,181
-scaffold lines** plus the unchanged **35-line C ABI floor**.
+Two generated graph slices are complete and gated. The manifest now owns 14
+C++ modules: the three pilots, `errors`, `circuit_breaker`, eight modules from
+the reliability/callback layer, and the generated-only `monotonic` support
+module. The latest slice retired `callback_wrapper`, `callbacks`,
+`completion_tracker`, `connection_state`, `heartbeat`, `pollable_proxy`,
+`request_options`, and `reconnect_policy` in one batch. Their valid-Rust owners
+are the source of truth and the eight legacy module files are deleted.
 
-The next executable slice is deliberately feature-led: transparent nullable
-callback lowering unlocks `connection_state` and `heartbeat`; exact trait-object
-and inheritance lowering unlocks `pollable_proxy` and the channel leaves. The
-generator's consumer-module map is being hardened against nested modules,
-aliased/glob imports, and fully qualified paths before those graph layers are
-added.
+Gate 132 built all 566 targets cleanly, enumerated all 179 tests, retained
+`rpcbench` as the only executed failure, and preserved Gate 131's exact
+62-entry Not-Run set. The current census is **1,095 scaffold lines** plus the
+unchanged **35-line C ABI floor**: 107 scaffold lines have been retired since
+the 1,202-line post-pilot baseline.
+
+The reusable enablers are now live rather than planned: the consumer-module
+map handles nested/aliased/glob paths; transparent nullable callbacks preserve
+`rusty::Function` layout; local trait objects and hidden C++ inheritance support
+the pollable façade; integer `repr` is emitted on declarations and definitions;
+and schema-v4 scoped type maps preserve legacy foreign types such as
+`std::string`. The next graph edge, `idempotency`, is blocked specifically on
+legacy-module symbol-index namespace projection and generator plumbing for a
+legacy-only `rrr.serializable` dependency—not on its cache logic.
 
 The 35 remaining named-module interfaces account for exactly **1,022** of the
 1,202 scaffold lines.  Retiring all of them leaves a precisely identified

@@ -46,7 +46,22 @@ metadata are detected. The self-exclusion makes the format deterministic and
 avoids a recursive checksum.
 
 Each module entry can add textual global-module-fragment headers through
-`gmf_headers`. `kind = "interface"` produces an exported `.cppm`; a future
+`gmf_headers`. It can also define a module-local `type_mappings` table when a
+private Rust compatibility alias must retain an established C++ nominal type:
+
+```toml
+type_mappings = { LegacyStdString = "std::string" }
+```
+
+Both sides are restricted to bare or `::`-qualified identifiers. Templates,
+pointers, references, qualifiers, and arbitrary C++ tokens fail schema
+validation. The generator writes a separate temporary `--type-map` file for
+each module, passes it as a single argv element without a shell, and stamps the
+SHA256 of its deterministically sorted bytes into that module's output. A map
+therefore cannot affect a sibling module, and `--check-stamps` detects mapping
+drift offline along with the full manifest hash.
+
+`kind = "interface"` produces an exported `.cppm`; a future
 `kind = "implementation"` entry produces a non-exporting `.cpp` module unit.
 `rust_module` identifies the canonical crate path, `module_name` identifies
 the legacy consumer module, and `dependencies` lists already-migrated Rust

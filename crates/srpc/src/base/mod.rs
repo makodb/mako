@@ -11,9 +11,11 @@
 //!   * `strop.cpp` — `str::starts_with`/`ends_with`/`split_whitespace`.
 //!     Only the thousands-separator formatter had real logic, and it has
 //!     no consumer in the RPC path.
-//!   * `callback_wrapper.cpp` — an `Arc<Function<...>>` shim that
-//!     `Arc<dyn Fn>` makes unnecessary.
+//!   * `callback_wrapper.cpp` — [`callback_wrapper`] retains the legacy
+//!     generated-C++ compatibility surface while Rust callers can use ordinary
+//!     `Arc<dyn Fn>` directly.
 
+pub mod callback_wrapper;
 pub mod log;
 pub mod monotonic;
 pub mod rand;
