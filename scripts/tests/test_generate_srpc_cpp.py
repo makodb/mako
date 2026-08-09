@@ -226,6 +226,30 @@ gmf_headers = []
                 ["rrr.other"],
             )
 
+        implicit_std = {
+            "version": 1,
+            "modules": {
+                "std": {
+                    "cpp_module": "std",
+                    "namespace": "std",
+                    "symbols": {
+                        "string": {"kind": "type", "callable_signatures": []},
+                        "vector": {
+                            "kind": "type_template",
+                            "callable_signatures": [],
+                        },
+                    },
+                }
+            },
+        }
+        normalized, _ = generator.validate_cpp_module_index(
+            1,
+            Path("std-index.json"),
+            (json.dumps(implicit_std) + "\n").encode(),
+            [],
+        )
+        self.assertEqual(normalized["modules"]["std"]["cpp_module"], "std")
+
         duplicate_json = (
             '{"version":1,"version":1,"modules":{}}\n'.encode()
         )
@@ -753,8 +777,21 @@ cpp_module_index = "indexes/owner.toml"
             manifest,
         )
 
+        legacy_rand = modules["crate::base::legacy_rand"]
+        self.assertEqual(legacy_rand["dependencies"], [])
+        self.assertEqual(legacy_rand["legacy_dependencies"], [])
+        self.assertIsNotNone(legacy_rand["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"std"', legacy_rand["_cpp_module_index_bytes"]
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.rand;\nimport std;\n",
+            legacy_rand,
+            manifest,
+        )
+
         for entry in modules.values():
-            if entry is idempotency:
+            if entry is idempotency or entry is legacy_rand:
                 continue
             self.assertEqual(entry["legacy_dependencies"], [])
             self.assertIsNone(entry["_cpp_module_index_path"])

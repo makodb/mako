@@ -16,6 +16,7 @@
 //!     `Arc<dyn Fn>` directly.
 
 pub mod callback_wrapper;
+pub mod legacy_rand;
 pub mod log;
 pub mod misc;
 pub mod monotonic;

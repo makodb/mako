@@ -101,6 +101,17 @@ gmf_headers = []
 type_mappings = { LegacyStdString = "std::string" }
 
 [[module]]
+source = "src/base/legacy_rand.rs"
+rust_module = "crate::base::legacy_rand"
+legacy_source = "src/rrr/misc/rand.cpp"
+module_name = "rrr.rand"
+output = "rrr.rand.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+cpp_module_index = "crates/srpc/cpp/indexes/rand.toml"
+
+[[module]]
 source = "src/rpc/connection_state.rs"
 rust_module = "crate::rpc::connection_state"
 legacy_source = "src/rrr/rpc/connection_state.cpp"

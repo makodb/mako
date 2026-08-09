@@ -218,7 +218,10 @@ def validate_cpp_module_index(
                 f"module entry {index} C++ module index entry {binding_path!r} "
                 "has invalid namespace"
             )
-        if cpp_module not in declared_legacy:
+        if (
+            cpp_module not in declared_legacy
+            and cpp_module not in IMPLICIT_CPP_MODULE_IMPORTS
+        ):
             raise ProfileError(
                 f"module entry {index} C++ module index maps {binding_path!r} to "
                 f"undeclared legacy dependency {cpp_module!r}"

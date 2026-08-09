@@ -84,6 +84,10 @@ legacy import to appear, rejects every undeclared non-runtime import, and
 rejects labeling a manifest-owned module as legacy. `std` and `rusty` are the
 only implicit runtime imports.
 
+An index may bind specific symbols from the implicit `std` or `rusty` modules
+without listing those modules as legacy dependencies. They remain implicit
+imports; the index only makes their foreign type surface fail-closed.
+
 The optional index is a normalized repository-relative `.toml` or `.json`
 file. Its module key is the binding path below Rust's reserved `cpp::` root;
 the imported C++ module and the C++ namespace remain explicit, independent
