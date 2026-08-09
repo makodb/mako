@@ -25,7 +25,7 @@ import tomllib
 
 
 SCHEMA_VERSION = 5
-GENERATOR_VERSION = 5
+GENERATOR_VERSION = 6
 CANONICAL_TRANSPILER_SHA256 = (
     "f3e5a069c420ff13d826260e704b12a7dc8b6fc694a3aa1417e7ccf5f2672213"
 )
@@ -39,6 +39,8 @@ HAND_SLOT_PREFIXES = (
     "// TODO(",
     "// TODO:",
     "// TODO ",
+    "// UNSUPPORTED:",
+    "/* UNSUPPORTED:",
 )
 RUST_TYPE_PATH_PATTERN = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*"

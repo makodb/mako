@@ -112,6 +112,30 @@ gmf_headers = []
 type_mappings = { LegacyStdString = "std::string" }
 
 [[module]]
+source = "src/rpc/inmemory_channel.rs"
+rust_module = "crate::rpc::inmemory_channel"
+legacy_source = "src/rrr/rpc/inmemory_channel.cpp"
+module_name = "rrr.inmemory_channel"
+output = "rrr.inmemory_channel.cppm"
+kind = "interface"
+dependencies = ["crate::rpc::channel"]
+gmf_headers = []
+type_mappings = { LegacyStdString = "std::string" }
+
+[[module]]
+source = "src/rpc/fiber_channel.rs"
+rust_module = "crate::rpc::fiber_channel"
+legacy_source = "src/rrr/rpc/fiber_channel.cpp"
+module_name = "rrr.fiber_channel"
+output = "rrr.fiber_channel.cppm"
+kind = "interface"
+dependencies = ["crate::rpc::channel"]
+legacy_dependencies = ["rrr.reactor"]
+gmf_headers = []
+type_mappings = { LegacyChannelConnectionBase = "rrr::ChannelConnectionBase", LegacyStdDeque = "std::deque", "std::marker::PhantomPinned" = "rusty::marker::PhantomPinned" }
+cpp_module_index = "crates/srpc/cpp/indexes/fiber_channel.toml"
+
+[[module]]
 source = "src/base/misc.rs"
 rust_module = "crate::base::misc"
 legacy_source = "src/rrr/base/misc.cpp"
@@ -132,6 +156,32 @@ kind = "interface"
 dependencies = []
 gmf_headers = []
 cpp_module_index = "crates/srpc/cpp/indexes/rand.toml"
+
+[[module]]
+source = "src/base/legacy_threading.rs"
+rust_module = "crate::base::legacy_threading"
+legacy_source = "src/rrr/base/threading.cpp"
+module_name = "rrr.threading"
+output = "rrr.threading.cppm"
+kind = "interface"
+dependencies = []
+legacy_dependencies = ["rrr.debugging"]
+gmf_headers = ["<pthread.h>"]
+type_mappings = { LegacyPthreadCond = "pthread_cond_t", LegacyPthreadCondAttr = "pthread_condattr_t", LegacyPthreadMutex = "pthread_mutex_t", LegacyPthreadMutexAttr = "pthread_mutexattr_t", LegacyPthreadSpinlock = "pthread_spinlock_t" }
+cpp_module_index = "crates/srpc/cpp/indexes/threading.toml"
+
+[[module]]
+source = "src/base/legacy_cpuinfo.rs"
+rust_module = "crate::base::legacy_cpuinfo"
+legacy_source = "src/rrr/misc/cpuinfo.cpp"
+module_name = "rrr.cpuinfo"
+output = "rrr.cpuinfo.cppm"
+kind = "interface"
+dependencies = []
+legacy_dependencies = ["rrr.logging"]
+gmf_headers = []
+type_mappings = { LegacyCChar = "std::string::value_type" }
+cpp_module_index = "crates/srpc/cpp/indexes/cpuinfo.toml"
 
 [[module]]
 source = "src/rpc/connection_state.rs"

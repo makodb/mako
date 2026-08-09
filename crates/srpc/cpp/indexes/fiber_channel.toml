@@ -1,0 +1,21 @@
+version = 1
+
+[modules."rrr::reactor"]
+cpp_module = "rrr.reactor"
+namespace = "rrr"
+
+[modules."rrr::reactor".symbols.IntEvent]
+kind = "type"
+callable_signatures = []
+
+[modules."rrr::reactor".symbols.create_sp_int_event]
+kind = "function"
+callable_signatures = ["rusty::Arc<IntEvent>(int32_t)"]
+
+[modules."rrr::reactor".symbols."IntEvent::set"]
+kind = "method"
+callable_signatures = ["int32_t(int32_t)"]
+
+[modules."rrr::reactor".symbols."IntEvent::wait"]
+kind = "method"
+callable_signatures = ["void()"]

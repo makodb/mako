@@ -1,10 +1,10 @@
-//! Spin lock and atomic counter — the live part of
-//! `src/rrr/base/threading.cpp`.
+//! Rust-native spin-lock and atomic-counter helpers.
 //!
-//! The C++ file also wraps the `pthread_{spin,mutex,cond}_*` families
-//! in verify-checked helpers; those have no consumers outside the rrr
-//! benchmarks and are subsumed by `std::sync::{Mutex, Condvar}`, so
-//! they are deliberately not ported (see the conversion ledger).
+//! [`crate::base::legacy_threading`] separately owns the exact generated C++
+//! compatibility surface from `src/rrr/base/threading.cpp`, including its
+//! verify-checked `pthread_{spin,mutex,cond}_*` wrappers and legacy `SpinLock`.
+//! This module remains the ergonomic native-Rust API rather than a second
+//! owner for that C++ surface.
 //!
 //! `SpinLock` keeps the C++ backoff shape — bounded pause spinning,
 //! then yielding to the scheduler — because it guards the same very

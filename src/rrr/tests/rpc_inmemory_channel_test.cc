@@ -20,8 +20,8 @@
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
-#include "../rpc/inmemory_channel.hpp"
 
+import rrr.inmemory_channel;
 import std;
 
 namespace rrr {

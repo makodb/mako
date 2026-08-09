@@ -3,8 +3,9 @@
 //! What the C++ base/ holds and where it went:
 //!   * `basetypes.cpp` — SparseInt varints are already the [`crate::wire`]
 //!     layer; `Counter`/`Time`/`Timer` are here.
-//!   * `threading.cpp` — `SpinLock` is here; the pthread wrapper family
-//!     is subsumed by `std::sync`.
+//!   * `threading.cpp` — [`legacy_threading`] preserves the generated C++
+//!     compatibility surface; [`sync`] provides the separate Rust-native
+//!     synchronization helpers.
 //!   * `logging.cpp` — [`log`].
 //!   * `debugging.cpp` — `verify()` is Rust's `assert!`; backtraces are
 //!     `std::backtrace`. Nothing to port.
@@ -16,7 +17,9 @@
 //!     `Arc<dyn Fn>` directly.
 
 pub mod callback_wrapper;
+pub mod legacy_cpuinfo;
 pub mod legacy_rand;
+pub mod legacy_threading;
 pub mod log;
 pub mod misc;
 pub mod monotonic;

@@ -137,6 +137,20 @@ gmf_headers = []
                 manifest,
             )
 
+    def test_hand_slots_reject_unsupported_codegen_diagnostics(self) -> None:
+        rendered = (
+            "export module rrr.example;\n"
+            "// UNSUPPORTED: unresolved circular dependency\n"
+            "/* UNSUPPORTED: missing lowering */\n"
+        )
+        self.assertEqual(
+            generator.hand_slots(rendered),
+            [
+                (2, "// UNSUPPORTED: unresolved circular dependency"),
+                (3, "/* UNSUPPORTED: missing lowering */"),
+            ],
+        )
+
     def test_legacy_dependencies_and_index_paths_fail_closed(self) -> None:
         invalid_dependencies = (
             'legacy_dependencies = ["rrr.serializable;import evil"]',
@@ -763,6 +777,51 @@ cpp_module_index = "indexes/owner.toml"
         self.assertEqual(completion["dependencies"], [])
         self.assertEqual(completion["type_mappings"], {})
 
+        inmemory_channel = modules["crate::rpc::inmemory_channel"]
+        self.assertEqual(
+            inmemory_channel["dependencies"], ["crate::rpc::channel"]
+        )
+        self.assertEqual(inmemory_channel["legacy_dependencies"], [])
+        self.assertEqual(inmemory_channel["gmf_headers"], [])
+        self.assertEqual(
+            inmemory_channel["type_mappings"],
+            {"LegacyStdString": "std::string"},
+        )
+        self.assertIsNone(inmemory_channel["_cpp_module_index_path"])
+        self.assertEqual(inmemory_channel["_cpp_module_index_bytes"], b"")
+        generator.validate_dependency_imports(
+            "export module rrr.inmemory_channel;\nimport rrr.channel;\n",
+            inmemory_channel,
+            manifest,
+        )
+
+        fiber_channel = modules["crate::rpc::fiber_channel"]
+        self.assertEqual(
+            fiber_channel["dependencies"], ["crate::rpc::channel"]
+        )
+        self.assertEqual(fiber_channel["legacy_dependencies"], ["rrr.reactor"])
+        self.assertEqual(fiber_channel["gmf_headers"], [])
+        self.assertEqual(
+            fiber_channel["type_mappings"],
+            {
+                "LegacyChannelConnectionBase": "rrr::ChannelConnectionBase",
+                "LegacyStdDeque": "std::deque",
+                "std::marker::PhantomPinned": "rusty::marker::PhantomPinned",
+            },
+        )
+        self.assertIsNotNone(fiber_channel["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.reactor"',
+            fiber_channel["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.fiber_channel;\n"
+            "import rrr.channel;\n"
+            "import rrr.reactor;\n",
+            fiber_channel,
+            manifest,
+        )
+
         frame_codec = modules["crate::rpc::frame_codec"]
         self.assertEqual(
             frame_codec["type_mappings"]["LegacyCString"], "const char*"
@@ -801,8 +860,78 @@ cpp_module_index = "indexes/owner.toml"
             manifest,
         )
 
+        legacy_threading = modules["crate::base::legacy_threading"]
+        self.assertEqual(legacy_threading["dependencies"], [])
+        self.assertEqual(
+            legacy_threading["legacy_dependencies"], ["rrr.debugging"]
+        )
+        self.assertEqual(legacy_threading["gmf_headers"], ["<pthread.h>"])
+        self.assertEqual(
+            legacy_threading["type_mappings"],
+            {
+                "LegacyPthreadCond": "pthread_cond_t",
+                "LegacyPthreadCondAttr": "pthread_condattr_t",
+                "LegacyPthreadMutex": "pthread_mutex_t",
+                "LegacyPthreadMutexAttr": "pthread_mutexattr_t",
+                "LegacyPthreadSpinlock": "pthread_spinlock_t",
+            },
+        )
+        self.assertIsNotNone(legacy_threading["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.debugging"',
+            legacy_threading["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"cpp_module":"rusty"',
+            legacy_threading["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.threading;\nimport rrr.debugging;\n",
+            legacy_threading,
+            manifest,
+        )
+
+        legacy_cpuinfo = modules["crate::base::legacy_cpuinfo"]
+        self.assertEqual(legacy_cpuinfo["dependencies"], [])
+        self.assertEqual(legacy_cpuinfo["legacy_dependencies"], ["rrr.logging"])
+        self.assertEqual(legacy_cpuinfo["gmf_headers"], [])
+        self.assertEqual(
+            legacy_cpuinfo["type_mappings"],
+            {"LegacyCChar": "std::string::value_type"},
+        )
+        self.assertIsNotNone(legacy_cpuinfo["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.logging"',
+            legacy_cpuinfo["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"cpp_module":"rusty"',
+            legacy_cpuinfo["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"cpp_module":"std"',
+            legacy_cpuinfo["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.cpuinfo;\n"
+            "import rrr.logging;\n"
+            "import rusty;\n"
+            "import std;\n",
+            legacy_cpuinfo,
+            manifest,
+        )
+
         for entry in modules.values():
-            if entry is idempotency or entry is legacy_rand:
+            if any(
+                entry is indexed
+                for indexed in (
+                    idempotency,
+                    legacy_rand,
+                    fiber_channel,
+                    legacy_threading,
+                    legacy_cpuinfo,
+                )
+            ):
                 continue
             self.assertEqual(entry["legacy_dependencies"], [])
             self.assertIsNone(entry["_cpp_module_index_path"])
@@ -819,7 +948,11 @@ cpp_module_index = "indexes/owner.toml"
                 "crate::rpc::frame_codec",
                 "crate::rpc::callbacks",
                 "crate::rpc::channel",
+                "crate::rpc::inmemory_channel",
+                "crate::rpc::fiber_channel",
                 "crate::base::misc",
+                "crate::base::legacy_threading",
+                "crate::base::legacy_cpuinfo",
             ],
         )
 

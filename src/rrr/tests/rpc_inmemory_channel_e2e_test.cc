@@ -24,8 +24,7 @@
 // ReconnectPolicy lives in rrr.reconnect_policy (trimmed from the
 // consumer umbrella in 08b68144) — import directly.
 import rrr.reconnect_policy;
-#include "../rpc/inmemory_channel.hpp"
-
+import rrr.inmemory_channel;
 import std;
 
 namespace rrr {

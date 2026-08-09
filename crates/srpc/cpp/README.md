@@ -28,7 +28,8 @@ read-only staged copies, and reject a source change before or during emission.
 Generation accepts only the release `rusty-cpp-transpiler` whose Git revision
 and exact executable SHA256 are pinned by `mako-consumer.toml`; an executable
 with any other bytes is rejected. The generator also refuses tracked
-submodule edits, transpiler failures, incomplete hand-override/TODO slots,
+submodule edits, transpiler failures, incomplete hand-override/TODO slots or
+`UNSUPPORTED` lowering diagnostics,
 private-only module interfaces, unexpected generated files, or output drift.
 
 C++-only configure/build jobs can verify ownership and drift without Cargo,

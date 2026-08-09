@@ -6,12 +6,14 @@
 
 pub mod callbacks;
 pub mod channel;
+pub mod inmemory_channel;
 pub mod circuit_breaker;
 pub mod client;
 pub mod completion_tracker;
 pub mod connection_metrics;
 pub mod connection_state;
 pub mod errors;
+pub mod fiber_channel;
 pub mod frame_codec;
 pub mod heartbeat;
 pub mod idempotency;

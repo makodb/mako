@@ -261,11 +261,11 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
         # Notes on parse-recovery:
-        # - rpc/server.cpp and rpc/fiber_channel.cpp trip a libclang-22 crash
-        #   on the first parse attempt (clang++ CLI compiles them fine — it's
-        #   a libclang-specific bug). rusty-cpp's parser detects the crash
+        # - rpc/server.cpp trips a libclang-22 crash on the first parse attempt
+        #   (clang++ CLI compiles it fine — this is a libclang-specific bug).
+        #   rusty-cpp's parser detects the crash
         #   and retries with module args dropped (keeps `import std;` only),
-        #   producing a partial AST. Findings against these two files are
+        #   producing a partial AST. Findings against this file are
         #   missing cross-module callee-name resolution, so they show up as
         #   `Calling non-safe function 'unknown'` and may include false
         #   positives. Once upstream libclang is fixed the recovery will
