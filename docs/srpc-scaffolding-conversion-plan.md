@@ -19,31 +19,34 @@ inside a legacy file that is about to be deleted is not progress.
 
 ## Execution status
 
-Two generated graph slices are complete and gated. The manifest now owns 14
+Three generated graph slices are complete and gated. The manifest now owns 16
 C++ modules: the three pilots, `errors`, `circuit_breaker`, eight modules from
-the reliability/callback layer, and the generated-only `monotonic` support
-module. The latest slice retired `callback_wrapper`, `callbacks`,
-`completion_tracker`, `connection_state`, `heartbeat`, `pollable_proxy`,
-`request_options`, and `reconnect_policy` in one batch. Their valid-Rust owners
-are the source of truth and the eight legacy module files are deleted.
+the reliability/callback layer, the generated-only `monotonic` support module,
+and the new `misc` and `idempotency` owners. The latest slice retired the two
+legacy `misc.cpp` and `idempotency.cpp` module files; valid Rust now owns their
+live APIs and the idempotency archive seam is resolved through a stamped legacy
+symbol index.
 
-Gate 132 built all 566 targets cleanly, enumerated all 179 tests, retained
-`rpcbench` as the only executed failure, and preserved Gate 131's exact
-62-entry Not-Run set. The current census is **1,095 scaffold lines** plus the
-unchanged **35-line C ABI floor**: 107 scaffold lines have been retired since
-the 1,202-line post-pilot baseline.
+Gate 134 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
+only executed failure, and preserved Gate 132's exact 62-entry Not-Run set. The
+current census is **1,050 scaffold lines** plus the unchanged **35-line C ABI
+floor**: 152 scaffold lines have been retired since the 1,202-line post-pilot
+baseline.
 
 The reusable enablers are now live rather than planned: the consumer-module
 map handles nested/aliased/glob paths; transparent nullable callbacks preserve
 `rusty::Function` layout; local trait objects and hidden C++ inheritance support
 the pollable façade; integer `repr` is emitted on declarations and definitions;
-and schema-v4 scoped type maps preserve legacy foreign types such as
-`std::string`. The next graph edge, `idempotency`, is blocked specifically on
-legacy-module symbol-index namespace projection and generator plumbing for a
-legacy-only `rrr.serializable` dependency—not on its cache logic.
+and schema-v5 scoped type maps preserve legacy foreign types such as
+`std::string`. Schema v5 also separates manifest-owned Rust dependencies from
+declared legacy C++ imports and supplies a per-module, stamped foreign-symbol
+index. The indexed legacy-symbol seam is now live: Rust binding paths, named
+C++ module imports, and projected C++ namespaces are independent and validated
+fail-closed. That unblocked `idempotency`; `request_queue` is the next prepared
+graph edge.
 
-The 35 remaining named-module interfaces account for exactly **1,022** of the
-1,202 scaffold lines.  Retiring all of them leaves a precisely identified
+The 33 remaining named-module interfaces account for exactly **870** of the
+current 1,050 scaffold lines. Retiring all of them leaves a precisely identified
 180-line non-interface envelope: `std_compat.hpp` (93), `rrr.hpp` (30), the
 fiber C header's scaffold portion (23), import shims (18), the selected epoll
 implementation unit (10), and `base/all.hpp` (6).  The first realistic
@@ -76,7 +79,8 @@ of the C++ consumer.  Each unit records:
 - Rust owner module and source;
 - legacy C++ module name;
 - C++ namespace (flat `rrr` for this consumer);
-- direct Rust-module dependencies;
+- direct manifest-owned Rust-module dependencies;
+- exact legacy C++ imports and an optional module-local symbol-index sidecar;
 - interface or implementation-unit role;
 - global-module-fragment headers and compatibility shims;
 - API/layout probe metadata once that planned schema extension lands (for now,
@@ -90,9 +94,12 @@ The implementation is split into four enabling increments:
    insufficient.
 2. **Graph generation.** Validate dependencies topologically and against the
    emitted imports, derive the CMake module source list, and reject unexpected
-   or privately exported output. Schema v3 intentionally permits one unit per
-   module; a later unit-ID extension must land before the epoll interface can
-   own one interface plus implementation units.
+   or privately exported output. Schema v5 treats Rust-owned and legacy C++
+   edges as disjoint sets, validates every emitted non-runtime import, stages
+   deterministic per-module C++ symbol indexes, stamps both their source and
+   canonical bytes, and exposes them as CMake configure dependencies. It still
+   permits one unit per module; a later unit-ID extension must land before the
+   epoll interface can own one interface plus implementation units.
 3. **C++ surface metadata.** Add rustc-hidden mappings only where a valid-Rust
    compatibility facade would otherwise distort the crate: C++ names,
    declaration-only items, default arguments, `noinline`, `c_char`, and exact

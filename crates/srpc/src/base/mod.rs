@@ -17,6 +17,7 @@
 
 pub mod callback_wrapper;
 pub mod log;
+pub mod misc;
 pub mod monotonic;
 pub mod rand;
 pub mod stat;

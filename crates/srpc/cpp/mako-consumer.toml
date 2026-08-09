@@ -1,10 +1,10 @@
-schema_version = 4
+schema_version = 5
 profile = "mako-cpp-consumer-v1"
 crate_root = "crates/srpc"
 output_root = "crates/srpc/cpp/generated"
 cxx_namespace = "rrr"
-transpiler_git = "71b389aaec9566df2e3c2f727172ee7cd85afe4b"
-transpiler_sha256 = "ea4590aa8a5e0f2fc2b76f8f30ad9a01521eabaf559045cb5f1c77cc69e74819"
+transpiler_git = "382745644e2d271f96970cef99f52c3ac7f661fb"
+transpiler_sha256 = "6588ce85dc6c37ffbe5977661ecbaac22de68138f617eebe62720ae78e69aa88"
 
 [[module]]
 source = "src/wire/internal_protocol.rs"
@@ -68,6 +68,18 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+source = "src/rpc/idempotency.rs"
+rust_module = "crate::rpc::idempotency"
+legacy_source = "src/rrr/rpc/idempotency.cpp"
+module_name = "rrr.idempotency"
+output = "rrr.idempotency.cppm"
+kind = "interface"
+dependencies = []
+legacy_dependencies = ["rrr.serializable"]
+gmf_headers = []
+cpp_module_index = "crates/srpc/cpp/indexes/idempotency.toml"
+
+[[module]]
 source = "src/base/callback_wrapper.rs"
 rust_module = "crate::base::callback_wrapper"
 legacy_source = "src/rrr/base/callback_wrapper.cpp"
@@ -76,6 +88,17 @@ output = "rrr.callback_wrapper.cppm"
 kind = "interface"
 dependencies = []
 gmf_headers = []
+
+[[module]]
+source = "src/base/misc.rs"
+rust_module = "crate::base::misc"
+legacy_source = "src/rrr/base/misc.cpp"
+module_name = "rrr.misc"
+output = "rrr.misc.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+type_mappings = { LegacyStdString = "std::string" }
 
 [[module]]
 source = "src/rpc/connection_state.rs"

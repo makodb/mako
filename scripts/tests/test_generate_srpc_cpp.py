@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,6 +17,26 @@ SPEC.loader.exec_module(generator)
 
 
 class GeneratorPolicyTest(unittest.TestCase):
+    @staticmethod
+    def valid_cpp_index_document() -> dict:
+        return {
+            "version": 1,
+            "modules": {
+                "rrr::serializable": {
+                    "cpp_module": "rrr.serializable",
+                    "namespace": "rrr",
+                    "symbols": {
+                        "Serialize_::serialize": {
+                            "kind": "function",
+                            "callable_signatures": [
+                                "void(uint64_t,BinaryWriteArchive&)"
+                            ],
+                        }
+                    },
+                }
+            },
+        }
+
     def load_single_module_profile(self, module_extra: str = "") -> dict:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -51,36 +72,288 @@ gmf_headers = []
                     "rust_module": "crate::base::clock",
                     "module_name": "rrr.clock",
                     "dependencies": [],
+                    "legacy_dependencies": [],
                 },
                 {
                     "rust_module": "crate::rpc::breaker",
                     "module_name": "rrr.breaker",
                     "dependencies": ["crate::base::clock"],
+                    "legacy_dependencies": ["rrr.serializable"],
                 },
             ]
         }
         entry = manifest["module"][1]
         generator.validate_dependency_imports(
-            "export module rrr.breaker;\nimport rrr.clock;\n", entry, manifest
+            "export module rrr.breaker;\n"
+            "import std;\n"
+            "import rusty;\n"
+            "import rrr.clock;\n"
+            "import rrr.serializable;\n",
+            entry,
+            manifest,
         )
 
         with self.assertRaisesRegex(
-            generator.ProfileError, "missing emitted imports: rrr.clock"
+            generator.ProfileError,
+            r"missing emitted imports: rrr\.clock, rrr\.serializable",
         ):
             generator.validate_dependency_imports(
                 "export module rrr.breaker;\n", entry, manifest
             )
 
         with self.assertRaisesRegex(
-            generator.ProfileError, r"unmapped consumer imports.*rrr\.unknown"
+            generator.ProfileError, r"undeclared emitted imports: rrr\.unknown"
         ):
             generator.validate_dependency_imports(
                 "export module rrr.breaker;\n"
                 "import rrr.clock;\n"
+                "import rrr.serializable;\n"
                 "import rrr.unknown;\n",
                 entry,
                 manifest,
             )
+
+        with self.assertRaisesRegex(
+            generator.ProfileError, r"unsupported emitted import.*line 4"
+        ):
+            generator.validate_dependency_imports(
+                "export module rrr.breaker;\n"
+                "import rrr.clock;\n"
+                "import rrr.serializable;\n"
+                "import rrr.injected; import vendor.other;\n",
+                entry,
+                manifest,
+            )
+
+        with self.assertRaisesRegex(
+            generator.ProfileError, r"undeclared emitted imports: vendor\.other"
+        ):
+            generator.validate_dependency_imports(
+                "export module rrr.breaker;\n"
+                "import rrr.clock;\n"
+                "import rrr.serializable;\n"
+                "import vendor.other;\n",
+                entry,
+                manifest,
+            )
+
+    def test_legacy_dependencies_and_index_paths_fail_closed(self) -> None:
+        invalid_dependencies = (
+            'legacy_dependencies = ["rrr.serializable;import evil"]',
+            'legacy_dependencies = ["rrr::serializable"]',
+            'legacy_dependencies = ["rrr.serializable", "rrr.serializable"]',
+            'legacy_dependencies = [7]',
+            'legacy_dependencies = "rrr.serializable"',
+        )
+        for declaration in invalid_dependencies:
+            with self.subTest(declaration=declaration):
+                with self.assertRaises(generator.ProfileError):
+                    self.load_single_module_profile(declaration)
+
+        for path in (
+            "../index.toml",
+            "/index.json",
+            "index.txt",
+            "x;evil.json",
+            "indexes/index with spaces.json",
+            "indexes//index.json",
+        ):
+            with self.subTest(path=path):
+                with self.assertRaises(generator.ProfileError):
+                    self.load_single_module_profile(
+                        f'cpp_module_index = {json.dumps(path)}'
+                    )
+
+    def test_cpp_module_index_schema_fails_closed(self) -> None:
+        base = self.valid_cpp_index_document()
+
+        def rejected(document: object) -> None:
+            with self.assertRaises(generator.ProfileError):
+                generator.validate_cpp_module_index(
+                    1,
+                    Path("index.json"),
+                    (json.dumps(document) + "\n").encode(),
+                    ["rrr.serializable"],
+                )
+
+        malformed = []
+        for key, value in (
+            ("rrr::serializable;evil", base["modules"]["rrr::serializable"]),
+            ("rrr..serializable", base["modules"]["rrr::serializable"]),
+        ):
+            document = self.valid_cpp_index_document()
+            document["modules"] = {key: value}
+            malformed.append(document)
+
+        for field, value in (
+            ("cpp_module", "rrr.serializable;import evil"),
+            ("namespace", "rrr;evil"),
+        ):
+            document = self.valid_cpp_index_document()
+            document["modules"]["rrr::serializable"][field] = value
+            malformed.append(document)
+
+        document = self.valid_cpp_index_document()
+        symbol = document["modules"]["rrr::serializable"]["symbols"].pop(
+            "Serialize_::serialize"
+        )
+        document["modules"]["rrr::serializable"]["symbols"][
+            "Serialize_::serialize;evil"
+        ] = symbol
+        malformed.append(document)
+
+        document = self.valid_cpp_index_document()
+        document["modules"]["rrr::serializable"]["symbols"][
+            "Serialize_::serialize"
+        ]["callable_signatures"] = ["void(); import evil"]
+        malformed.append(document)
+
+        document = self.valid_cpp_index_document()
+        document["modules"]["rrr::serializable"]["unknown"] = "value"
+        malformed.append(document)
+
+        for document in malformed:
+            with self.subTest(document=document):
+                rejected(document)
+
+        with self.assertRaisesRegex(
+            generator.ProfileError, "undeclared legacy dependency"
+        ):
+            generator.validate_cpp_module_index(
+                1,
+                Path("index.json"),
+                (json.dumps(base) + "\n").encode(),
+                ["rrr.other"],
+            )
+
+        duplicate_json = (
+            '{"version":1,"version":1,"modules":{}}\n'.encode()
+        )
+        with self.assertRaisesRegex(generator.ProfileError, "duplicate JSON key"):
+            generator.validate_cpp_module_index(
+                1,
+                Path("index.json"),
+                duplicate_json,
+                ["rrr.serializable"],
+            )
+
+    def test_cpp_module_index_canonical_bytes_are_deterministic(self) -> None:
+        document = self.valid_cpp_index_document()
+        json_raw = json.dumps(document, indent=4).encode()
+        toml_raw = b'''version = 1
+
+[modules."rrr::serializable"]
+namespace = "rrr"
+cpp_module = "rrr.serializable"
+
+[modules."rrr::serializable".symbols."Serialize_::serialize"]
+callable_signatures = ["void(uint64_t,BinaryWriteArchive&)"]
+kind = "function"
+'''
+        json_index, json_bytes = generator.validate_cpp_module_index(
+            1, Path("index.json"), json_raw, ["rrr.serializable"]
+        )
+        toml_index, toml_bytes = generator.validate_cpp_module_index(
+            1, Path("index.toml"), toml_raw, ["rrr.serializable"]
+        )
+        self.assertEqual(json_index, toml_index)
+        self.assertEqual(json_bytes, toml_bytes)
+        self.assertNotEqual(
+            generator.sha256_bytes(json_raw), generator.sha256_bytes(toml_raw)
+        )
+        self.assertEqual(
+            generator.render_legacy_dependencies(
+                ["rrr.threading", "rrr.serializable"]
+            ),
+            generator.render_legacy_dependencies(
+                ["rrr.serializable", "rrr.threading"]
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = generator.stage_cpp_module_index(
+                {
+                    "module_name": "rrr.owner",
+                    "_cpp_module_index_bytes": json_bytes,
+                },
+                Path(temporary),
+            )
+            assert path is not None
+            self.assertEqual(path.read_bytes(), json_bytes)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o400)
+
+    def test_manifest_loads_external_index_and_rejects_owned_legacy_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            index_path = root / "indexes" / "owner.toml"
+            index_path.parent.mkdir()
+            index_path.write_text(
+                '''version = 1
+[modules."rrr::serializable"]
+cpp_module = "rrr.serializable"
+namespace = "rrr"
+[modules."rrr::serializable".symbols.serialize]
+kind = "function"
+callable_signatures = ["void(uint64_t)"]
+''',
+                encoding="utf-8",
+            )
+            manifest_path = root / "profile.toml"
+            manifest_path.write_text(
+                f'''schema_version = {generator.SCHEMA_VERSION}
+profile = "test"
+crate_root = "crate"
+output_root = "generated"
+cxx_namespace = "rrr"
+transpiler_git = "{'a' * 40}"
+transpiler_sha256 = "{generator.CANONICAL_TRANSPILER_SHA256}"
+[[module]]
+source = "clock.rs"
+rust_module = "crate::clock"
+module_name = "rrr.clock"
+output = "rrr.clock.cppm"
+kind = "interface"
+dependencies = []
+[[module]]
+source = "owner.rs"
+rust_module = "crate::owner"
+module_name = "rrr.owner"
+output = "rrr.owner.cppm"
+kind = "interface"
+dependencies = ["crate::clock"]
+legacy_dependencies = ["rrr.serializable"]
+cpp_module_index = "indexes/owner.toml"
+''',
+                encoding="utf-8",
+            )
+            manifest, _ = generator.load_manifest(manifest_path, root)
+            owner = manifest["module"][1]
+            self.assertEqual(owner["legacy_dependencies"], ["rrr.serializable"])
+            self.assertEqual(owner["_cpp_module_index_path"], index_path)
+            self.assertIn(b'"cpp_module":"rrr.serializable"', owner["_cpp_module_index_bytes"])
+
+            manifest_text = manifest_path.read_text(encoding="utf-8").replace(
+                'legacy_dependencies = ["rrr.serializable"]',
+                'legacy_dependencies = ["rrr.clock", "rrr.serializable"]',
+            )
+            manifest_path.write_text(manifest_text, encoding="utf-8")
+            with self.assertRaisesRegex(
+                generator.ProfileError, "manifest-owned dependency as legacy"
+            ):
+                generator.load_manifest(manifest_path, root)
+
+            # Ownership is global to the manifest, not conditional on the
+            # consumer also spelling the corresponding Rust dependency.  A
+            # missing dependency edge must not turn an owned module into a
+            # valid legacy import.
+            manifest_text = manifest_path.read_text(encoding="utf-8").replace(
+                'dependencies = ["crate::clock"]', "dependencies = []"
+            )
+            manifest_path.write_text(manifest_text, encoding="utf-8")
+            with self.assertRaisesRegex(
+                generator.ProfileError, "manifest-owned dependency as legacy"
+            ):
+                generator.load_manifest(manifest_path, root)
 
     def test_output_integrity_covers_every_non_checksum_byte(self) -> None:
         fields = [
@@ -115,6 +388,8 @@ gmf_headers = []
             "module;injected.cppm",
             "module${VAR}.cppm",
             "module\\windows.cppm",
+            "path//not-normal.cppm",
+            "path/./not-normal.cppm",
         ):
             with self.subTest(malicious=malicious):
                 with self.assertRaises(generator.ProfileError):
@@ -127,12 +402,16 @@ gmf_headers = []
         manifest = {
             "module": [
                 {
+                    "_source": root / "crate/support.rs",
                     "_output": root / "generated/support.cppm",
                     "_legacy_source": None,
+                    "_cpp_module_index_path": None,
                 },
                 {
+                    "_source": root / "crate/errors.rs",
                     "_output": root / "generated/errors.cppm",
                     "_legacy_source": root / "src/rrr/errors.cpp",
+                    "_cpp_module_index_path": None,
                 },
             ]
         }
@@ -185,15 +464,27 @@ gmf_headers = []
             "cxx_namespace": "rrr",
             "consumer_module_map": Path("/scratch/module-map.json"),
         }
-        without_map = generator.build_transpiler_command(**common, type_map=None)
+        without_map = generator.build_transpiler_command(
+            **common, type_map=None, cpp_module_index=None
+        )
         self.assertNotIn("--type-map", without_map)
+        self.assertNotIn("--cpp-module-index", without_map)
 
         map_path = Path("/scratch/maps with spaces/owner.toml")
         with_map = generator.build_transpiler_command(
-            **common, type_map=map_path
+            **common, type_map=map_path, cpp_module_index=None
         )
         self.assertEqual(with_map[-2:], ["--type-map", str(map_path)])
         self.assertIn(str(common["staged_source"]), with_map)
+
+        index_path = Path("/scratch/indexes with spaces/owner.json")
+        with_index = generator.build_transpiler_command(
+            **common, type_map=None, cpp_module_index=index_path
+        )
+        self.assertEqual(
+            with_index[-2:], ["--cpp-module-index", str(index_path)]
+        )
+        self.assertNotIn("--type-map", with_index)
 
     def test_output_stamp_binds_exact_module_type_map(self) -> None:
         common = {
@@ -207,6 +498,11 @@ gmf_headers = []
             "transpiler_git": "3" * 40,
             "transpiler_sha256": "4" * 64,
             "root": Path("/repo"),
+            "legacy_dependencies_sha": generator.sha256_bytes(
+                generator.render_legacy_dependencies([])
+            ),
+            "cpp_module_index_source_sha": generator.sha256_bytes(b""),
+            "cpp_module_index_sha": generator.sha256_bytes(b""),
         }
         first_map_sha = generator.sha256_bytes(
             generator.render_type_map({"Alias": "std::string"})
@@ -224,6 +520,197 @@ gmf_headers = []
         generator.verify_stamped_output(Path("owner.cppm"), data, first_fields)
         with self.assertRaisesRegex(generator.ProfileError, "stale type-map-sha256"):
             generator.verify_stamped_output(Path("owner.cppm"), data, second_fields)
+
+    def test_output_stamp_binds_legacy_set_and_both_index_byte_streams(self) -> None:
+        common = {
+            "manifest_path": Path("/repo/profile.toml"),
+            "manifest_sha": "1" * 64,
+            "profile": "test",
+            "source_label": "owner.rs",
+            "source_sha": "2" * 64,
+            "module_name": "rrr.owner",
+            "kind": "interface",
+            "type_map_sha": generator.sha256_bytes(b""),
+            "transpiler_git": "3" * 40,
+            "transpiler_sha256": "4" * 64,
+            "root": Path("/repo"),
+        }
+        base = generator.stamp_fields(
+            **common,
+            legacy_dependencies_sha=generator.sha256_bytes(
+                generator.render_legacy_dependencies(["rrr.serializable"])
+            ),
+            cpp_module_index_source_sha=generator.sha256_bytes(b"source-a"),
+            cpp_module_index_sha=generator.sha256_bytes(b"canonical-a"),
+        )
+        data = generator.stamp_output("export module rrr.owner;\n", base)
+
+        changes = (
+            (
+                "legacy-dependencies-sha256",
+                {
+                    "legacy_dependencies_sha": generator.sha256_bytes(
+                        generator.render_legacy_dependencies(["rrr.threading"])
+                    ),
+                    "cpp_module_index_source_sha": generator.sha256_bytes(b"source-a"),
+                    "cpp_module_index_sha": generator.sha256_bytes(b"canonical-a"),
+                },
+            ),
+            (
+                "cpp-module-index-source-sha256",
+                {
+                    "legacy_dependencies_sha": generator.sha256_bytes(
+                        generator.render_legacy_dependencies(["rrr.serializable"])
+                    ),
+                    "cpp_module_index_source_sha": generator.sha256_bytes(b"source-b"),
+                    "cpp_module_index_sha": generator.sha256_bytes(b"canonical-a"),
+                },
+            ),
+            (
+                "cpp-module-index-sha256",
+                {
+                    "legacy_dependencies_sha": generator.sha256_bytes(
+                        generator.render_legacy_dependencies(["rrr.serializable"])
+                    ),
+                    "cpp_module_index_source_sha": generator.sha256_bytes(b"source-a"),
+                    "cpp_module_index_sha": generator.sha256_bytes(b"canonical-b"),
+                },
+            ),
+        )
+        for stamp_name, values in changes:
+            with self.subTest(stamp_name=stamp_name):
+                changed = generator.stamp_fields(**common, **values)
+                with self.assertRaisesRegex(
+                    generator.ProfileError, f"stale {stamp_name}"
+                ):
+                    generator.verify_stamped_output(
+                        Path("owner.cppm"), data, changed
+                    )
+
+    def test_check_stamps_recomputes_external_index_bytes_offline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            crate = root / "crate"
+            output_dir = root / "generated"
+            indexes = root / "indexes"
+            crate.mkdir()
+            output_dir.mkdir()
+            indexes.mkdir()
+            source = crate / "owner.rs"
+            source.write_text("pub struct Owner {}\n", encoding="utf-8")
+            index_path = indexes / "owner.toml"
+            index_path.write_text(
+                '''version = 1
+[modules."rrr::serializable"]
+cpp_module = "rrr.serializable"
+namespace = "rrr"
+[modules."rrr::serializable".symbols.serialize]
+kind = "function"
+callable_signatures = ["void(uint64_t)"]
+''',
+                encoding="utf-8",
+            )
+            manifest_path = root / "profile.toml"
+            manifest_path.write_text(
+                f'''schema_version = {generator.SCHEMA_VERSION}
+profile = "test"
+crate_root = "crate"
+output_root = "generated"
+cxx_namespace = "rrr"
+transpiler_git = "{'a' * 40}"
+transpiler_sha256 = "{generator.CANONICAL_TRANSPILER_SHA256}"
+[[module]]
+source = "owner.rs"
+rust_module = "crate::owner"
+module_name = "rrr.owner"
+output = "rrr.owner.cppm"
+kind = "interface"
+dependencies = []
+legacy_dependencies = ["rrr.serializable"]
+cpp_module_index = "indexes/owner.toml"
+''',
+                encoding="utf-8",
+            )
+            manifest, manifest_raw = generator.load_manifest(manifest_path, root)
+            entry = manifest["module"][0]
+            fields = generator.stamp_fields(
+                manifest_path=manifest_path,
+                manifest_sha=generator.sha256_bytes(manifest_raw),
+                profile=manifest["profile"],
+                source_label="crate/owner.rs",
+                source_sha=generator.sha256_bytes(source.read_bytes()),
+                module_name="rrr.owner",
+                kind="interface",
+                type_map_sha=generator.sha256_bytes(b""),
+                legacy_dependencies_sha=generator.sha256_bytes(
+                    generator.render_legacy_dependencies(["rrr.serializable"])
+                ),
+                cpp_module_index_source_sha=generator.sha256_bytes(
+                    entry["_cpp_module_index_raw"]
+                ),
+                cpp_module_index_sha=generator.sha256_bytes(
+                    entry["_cpp_module_index_bytes"]
+                ),
+                transpiler_git=manifest["transpiler_git"],
+                transpiler_sha256=manifest["transpiler_sha256"],
+                root=root,
+            )
+            entry["_output"].write_bytes(
+                generator.stamp_output(
+                    "export module rrr.owner;\n"
+                    "import rrr.serializable;\n"
+                    "export struct Owner {};\n",
+                    fields,
+                )
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                generator.check_stamps(
+                    manifest, manifest_path, manifest_raw, root
+                )
+
+            with index_path.open("a", encoding="utf-8") as handle:
+                handle.write("\n# spelling-only source-byte drift\n")
+            changed, changed_raw = generator.load_manifest(manifest_path, root)
+            with self.assertRaisesRegex(
+                generator.ProfileError,
+                "stale cpp-module-index-source-sha256",
+            ):
+                generator.check_stamps(
+                    changed, manifest_path, changed_raw, root
+                )
+
+    def test_cmake_manifest_tracks_sources_and_index_as_configure_dependencies(self) -> None:
+        root = Path("/repo")
+        index = root / "crates/srpc/cpp/indexes/owner.toml"
+        owner = root / "crates/srpc/src/owner.rs"
+        sibling = root / "crates/srpc/src/sibling.rs"
+        manifest = {
+            "module": [
+                {
+                    "_source": owner,
+                    "_output": root / "generated/owner.cppm",
+                    "_legacy_source": root / "src/rrr/owner.cpp",
+                    "_cpp_module_index_path": index,
+                },
+                {
+                    "_source": sibling,
+                    "_output": root / "generated/sibling.cppm",
+                    "_legacy_source": None,
+                    "_cpp_module_index_path": index,
+                },
+            ]
+        }
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            generator.emit_cmake_manifest(manifest, root)
+        rendered = output.getvalue()
+        self.assertEqual(rendered.count(str(index.relative_to(root))), 1)
+        self.assertEqual(rendered.count(str(owner.relative_to(root))), 1)
+        self.assertEqual(rendered.count(str(sibling.relative_to(root))), 1)
+        self.assertEqual(rendered.count("generated/owner.cppm"), 2)
+        self.assertEqual(rendered.count("generated/sibling.cppm"), 2)
+        self.assertIn("CMAKE_CONFIGURE_DEPENDS", rendered)
+        self.assertIn("${SRPC_CPP_PROFILE_INPUT_FILES}", rendered)
 
     def test_repository_profile_scopes_callbacks_mapping_and_dependencies(self) -> None:
         root = generator.repo_root()
@@ -246,12 +733,39 @@ gmf_headers = []
         self.assertEqual(completion["dependencies"], [])
         self.assertEqual(completion["type_mappings"], {})
 
+        misc = modules["crate::base::misc"]
+        self.assertEqual(misc["dependencies"], [])
+        self.assertEqual(
+            misc["type_mappings"], {"LegacyStdString": "std::string"}
+        )
+
+        idempotency = modules["crate::rpc::idempotency"]
+        self.assertEqual(idempotency["dependencies"], [])
+        self.assertEqual(idempotency["legacy_dependencies"], ["rrr.serializable"])
+        self.assertIsNotNone(idempotency["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.serializable"',
+            idempotency["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.idempotency;\nimport rrr.serializable;\n",
+            idempotency,
+            manifest,
+        )
+
+        for entry in modules.values():
+            if entry is idempotency:
+                continue
+            self.assertEqual(entry["legacy_dependencies"], [])
+            self.assertIsNone(entry["_cpp_module_index_path"])
+            self.assertEqual(entry["_cpp_module_index_bytes"], b"")
+
         mapped = [
             entry["rust_module"]
             for entry in manifest["module"]
             if entry["type_mappings"]
         ]
-        self.assertEqual(mapped, ["crate::rpc::callbacks"])
+        self.assertEqual(mapped, ["crate::rpc::callbacks", "crate::base::misc"])
 
 
 if __name__ == "__main__":

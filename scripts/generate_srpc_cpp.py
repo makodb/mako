@@ -24,10 +24,10 @@ import tempfile
 import tomllib
 
 
-SCHEMA_VERSION = 4
-GENERATOR_VERSION = 4
+SCHEMA_VERSION = 5
+GENERATOR_VERSION = 5
 CANONICAL_TRANSPILER_SHA256 = (
-    "ea4590aa8a5e0f2fc2b76f8f30ad9a01521eabaf559045cb5f1c77cc69e74819"
+    "6588ce85dc6c37ffbe5977661ecbaac22de68138f617eebe62720ae78e69aa88"
 )
 DEFAULT_MANIFEST = Path("crates/srpc/cpp/mako-consumer.toml")
 DEFAULT_TRANSPILER = Path(
@@ -46,6 +46,17 @@ RUST_TYPE_PATH_PATTERN = re.compile(
 CPP_TYPE_NAME_PATTERN = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*"
 )
+CPP_MODULE_NAME_PATTERN = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
+)
+CPP_NAMESPACE_PATTERN = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*"
+)
+CPP_BINDING_PATH_PATTERN = CPP_NAMESPACE_PATTERN
+CPP_SYMBOL_NAME_PATTERN = CPP_NAMESPACE_PATTERN
+CPP_SYMBOL_KIND_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+CPP_INDEX_PATH_PATTERN = re.compile(r"[A-Za-z0-9_./-]+\.(?:json|toml)")
+IMPLICIT_CPP_MODULE_IMPORTS = frozenset({"std", "rusty"})
 
 
 class ProfileError(RuntimeError):
@@ -55,7 +66,11 @@ class ProfileError(RuntimeError):
 def validate_profile_path(label: str, value: str) -> None:
     """Accept only repository-relative paths safe to quote in generated CMake."""
     path = Path(value)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+    if (
+        path.is_absolute()
+        or path.as_posix() != value
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
         raise ProfileError(f"{label} must be a normalized repository-relative path")
     if any(character in value for character in ('"', "'", ";", "$", "\\", "\n", "\r")):
         raise ProfileError(f"{label} contains a character unsafe for generated CMake")
@@ -98,6 +113,191 @@ def render_type_map(type_mappings: dict[str, str]) -> bytes:
         f"{json.dumps(rust_type)} = {json.dumps(cpp_type)}\n"
         for rust_type, cpp_type in sorted(type_mappings.items())
     ).encode("utf-8")
+
+
+def render_legacy_dependencies(dependencies: list[str]) -> bytes:
+    """Render a dependency set deterministically for ownership stamps."""
+    return (json.dumps(sorted(dependencies), separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
+
+
+def _reject_duplicate_json_pairs(pairs: list[tuple[str, object]]) -> dict:
+    result: dict = {}
+    for key, value in pairs:
+        if key in result:
+            raise ProfileError(f"duplicate JSON key {key!r} in C++ module index")
+        result[key] = value
+    return result
+
+
+def _parse_cpp_module_index(path: Path, raw: bytes) -> object:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ProfileError(f"C++ module index is not UTF-8: {path}: {exc}") from exc
+    try:
+        if path.suffix == ".json":
+            return json.loads(text, object_pairs_hook=_reject_duplicate_json_pairs)
+        return tomllib.loads(text)
+    except (json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ProfileError(f"invalid C++ module index {path}: {exc}") from exc
+
+
+def validate_cpp_module_index(
+    index: int,
+    path: Path,
+    raw: bytes,
+    legacy_dependencies: list[str],
+) -> tuple[dict, bytes]:
+    """Validate and canonically render one module-local foreign symbol index.
+
+    The index key is the Rust binding path below ``cpp::``.  ``cpp_module`` is
+    the independently named C++ module import, and ``namespace`` is the C++
+    qualification root.  Keeping all three explicit avoids assuming that
+    ``rrr::serializable``, ``rrr.serializable``, and ``rrr`` are interchangeable.
+    """
+    parsed = _parse_cpp_module_index(path, raw)
+    if not isinstance(parsed, dict):
+        raise ProfileError(f"module entry {index} C++ module index must be a table")
+    unknown = sorted(set(parsed) - {"version", "modules"})
+    if unknown:
+        raise ProfileError(
+            f"module entry {index} C++ module index has unknown keys: "
+            f"{', '.join(unknown)}"
+        )
+    version = parsed.get("version")
+    if type(version) is not int or version != 1:
+        raise ProfileError(
+            f"module entry {index} C++ module index version must be integer 1"
+        )
+    modules = parsed.get("modules")
+    if not isinstance(modules, dict) or not modules:
+        raise ProfileError(
+            f"module entry {index} C++ module index must contain modules"
+        )
+
+    normalized_modules: dict[str, dict] = {}
+    seen_cpp_modules: set[str] = set()
+    declared_legacy = set(legacy_dependencies)
+    for binding_path, module in modules.items():
+        if not isinstance(binding_path, str) or not CPP_BINDING_PATH_PATTERN.fullmatch(
+            binding_path
+        ):
+            raise ProfileError(
+                f"module entry {index} C++ module index has invalid binding path "
+                f"{binding_path!r}"
+            )
+        if not isinstance(module, dict):
+            raise ProfileError(
+                f"module entry {index} C++ module index entry {binding_path!r} "
+                "must be a table"
+            )
+        module_unknown = sorted(
+            set(module) - {"cpp_module", "namespace", "symbols"}
+        )
+        if module_unknown:
+            raise ProfileError(
+                f"module entry {index} C++ module index entry {binding_path!r} "
+                f"has unknown keys: {', '.join(module_unknown)}"
+            )
+        cpp_module = module.get("cpp_module")
+        namespace = module.get("namespace")
+        symbols = module.get("symbols")
+        if not isinstance(cpp_module, str) or not CPP_MODULE_NAME_PATTERN.fullmatch(
+            cpp_module
+        ):
+            raise ProfileError(
+                f"module entry {index} C++ module index entry {binding_path!r} "
+                "has invalid cpp_module"
+            )
+        if not isinstance(namespace, str) or not CPP_NAMESPACE_PATTERN.fullmatch(
+            namespace
+        ):
+            raise ProfileError(
+                f"module entry {index} C++ module index entry {binding_path!r} "
+                "has invalid namespace"
+            )
+        if cpp_module not in declared_legacy:
+            raise ProfileError(
+                f"module entry {index} C++ module index maps {binding_path!r} to "
+                f"undeclared legacy dependency {cpp_module!r}"
+            )
+        if cpp_module in seen_cpp_modules:
+            raise ProfileError(
+                f"module entry {index} C++ module index repeats cpp_module "
+                f"{cpp_module!r}"
+            )
+        seen_cpp_modules.add(cpp_module)
+        if not isinstance(symbols, dict) or not symbols:
+            raise ProfileError(
+                f"module entry {index} C++ module index entry {binding_path!r} "
+                "must contain symbols"
+            )
+
+        normalized_symbols: dict[str, dict] = {}
+        for symbol_name, symbol in symbols.items():
+            if not isinstance(
+                symbol_name, str
+            ) or not CPP_SYMBOL_NAME_PATTERN.fullmatch(symbol_name):
+                raise ProfileError(
+                    f"module entry {index} C++ module index has invalid symbol "
+                    f"{symbol_name!r}"
+                )
+            if not isinstance(symbol, dict):
+                raise ProfileError(
+                    f"module entry {index} C++ module index symbol "
+                    f"{symbol_name!r} must be a table"
+                )
+            symbol_unknown = sorted(set(symbol) - {"kind", "callable_signatures"})
+            if symbol_unknown:
+                raise ProfileError(
+                    f"module entry {index} C++ module index symbol "
+                    f"{symbol_name!r} has unknown keys: {', '.join(symbol_unknown)}"
+                )
+            kind = symbol.get("kind")
+            signatures = symbol.get("callable_signatures", [])
+            if not isinstance(kind, str) or not CPP_SYMBOL_KIND_PATTERN.fullmatch(kind):
+                raise ProfileError(
+                    f"module entry {index} C++ module index symbol "
+                    f"{symbol_name!r} has invalid kind"
+                )
+            if not isinstance(signatures, list) or not all(
+                isinstance(signature, str)
+                and signature
+                and len(signature) <= 1024
+                and signature.isascii()
+                and all(character.isprintable() for character in signature)
+                and not any(character in signature for character in "{};#$`\"'\\")
+                for signature in signatures
+            ):
+                raise ProfileError(
+                    f"module entry {index} C++ module index symbol "
+                    f"{symbol_name!r} has invalid callable_signatures"
+                )
+            if len(set(signatures)) != len(signatures):
+                raise ProfileError(
+                    f"module entry {index} C++ module index symbol "
+                    f"{symbol_name!r} repeats a callable signature"
+                )
+            normalized_symbols[symbol_name] = {
+                "kind": kind,
+                "callable_signatures": signatures,
+            }
+        normalized_modules[binding_path] = {
+            "cpp_module": cpp_module,
+            "namespace": namespace,
+            "symbols": dict(sorted(normalized_symbols.items())),
+        }
+
+    normalized = {
+        "version": 1,
+        "modules": dict(sorted(normalized_modules.items())),
+    }
+    rendered = (
+        json.dumps(normalized, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    return normalized, rendered
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -181,9 +381,7 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
             raise ProfileError(f"manifest key {key!r} must fit on one line")
     validate_profile_path("crate_root", data["crate_root"])
     validate_profile_path("output_root", data["output_root"])
-    if not re.fullmatch(
-        r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*", data["cxx_namespace"]
-    ):
+    if not CPP_NAMESPACE_PATTERN.fullmatch(data["cxx_namespace"]):
         raise ProfileError(
             "cxx_namespace must be an identifier or ::-qualified identifiers"
         )
@@ -215,8 +413,10 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
         "output",
         "kind",
         "dependencies",
+        "legacy_dependencies",
         "gmf_headers",
         "type_mappings",
+        "cpp_module_index",
     }
     seen_sources: set[str] = set()
     seen_rust_modules: set[str] = set()
@@ -263,6 +463,28 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
         if entry["rust_module"] in dependencies:
             raise ProfileError(f"module entry {index} depends on itself")
         entry["dependencies"] = dependencies
+        legacy_dependencies = entry.get("legacy_dependencies", [])
+        if not isinstance(legacy_dependencies, list) or not all(
+            isinstance(dependency, str) for dependency in legacy_dependencies
+        ):
+            raise ProfileError(
+                f"module entry {index} legacy_dependencies must be a string array"
+            )
+        if len(set(legacy_dependencies)) != len(legacy_dependencies):
+            raise ProfileError(
+                f"module entry {index} has duplicate legacy_dependencies"
+            )
+        for dependency in legacy_dependencies:
+            if not CPP_MODULE_NAME_PATTERN.fullmatch(dependency):
+                raise ProfileError(
+                    f"module entry {index} has invalid legacy dependency "
+                    f"{dependency!r}"
+                )
+            if dependency == entry["module_name"]:
+                raise ProfileError(
+                    f"module entry {index} has self legacy dependency {dependency!r}"
+                )
+        entry["legacy_dependencies"] = sorted(legacy_dependencies)
         validate_profile_path(f"module entry {index} source", entry["source"])
         validate_profile_path(f"module entry {index} output", entry["output"])
         headers = entry.get("gmf_headers", [])
@@ -277,6 +499,49 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
         entry["type_mappings"] = validate_type_mappings(
             index, entry.get("type_mappings", {})
         )
+
+        cpp_module_index_label = entry.get("cpp_module_index")
+        if cpp_module_index_label is not None and (
+            not isinstance(cpp_module_index_label, str) or not cpp_module_index_label
+        ):
+            raise ProfileError(
+                f"module entry {index} cpp_module_index must be a non-empty string"
+            )
+        if cpp_module_index_label is not None:
+            validate_profile_path(
+                f"module entry {index} cpp_module_index", cpp_module_index_label
+            )
+            if not CPP_INDEX_PATH_PATTERN.fullmatch(cpp_module_index_label):
+                raise ProfileError(
+                    f"module entry {index} cpp_module_index must use a conservative "
+                    "repository-relative .json or .toml path"
+                )
+            cpp_module_index_path = (root / cpp_module_index_label).resolve()
+            if not within(cpp_module_index_path, root):
+                raise ProfileError(
+                    f"module entry {index} cpp_module_index escapes repository"
+                )
+            try:
+                cpp_module_index_raw = cpp_module_index_path.read_bytes()
+            except OSError as exc:
+                raise ProfileError(
+                    f"cannot read C++ module index {cpp_module_index_path}: {exc}"
+                ) from exc
+            cpp_module_index, cpp_module_index_bytes = validate_cpp_module_index(
+                index,
+                cpp_module_index_path,
+                cpp_module_index_raw,
+                entry["legacy_dependencies"],
+            )
+        else:
+            cpp_module_index_path = None
+            cpp_module_index_raw = b""
+            cpp_module_index = None
+            cpp_module_index_bytes = b""
+        entry["_cpp_module_index_path"] = cpp_module_index_path
+        entry["_cpp_module_index_raw"] = cpp_module_index_raw
+        entry["_cpp_module_index"] = cpp_module_index
+        entry["_cpp_module_index_bytes"] = cpp_module_index_bytes
 
         source = (crate_dir / entry["source"]).resolve()
         legacy_source_label = entry.get("legacy_source")
@@ -323,7 +588,7 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
             raise ProfileError(
                 f"module entry {index} {entry['kind']} output must end in {expected_suffix}"
             )
-        if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", entry["module_name"]):
+        if not CPP_MODULE_NAME_PATTERN.fullmatch(entry["module_name"]):
             raise ProfileError(
                 f"module entry {index} has invalid C++ module name {entry['module_name']!r}"
             )
@@ -364,6 +629,17 @@ def load_manifest(path: Path, root: Path) -> tuple[dict, bytes]:
                     f"module entry {index} dependency {dependency!r} must precede "
                     "its consumer in topological manifest order"
                 )
+        # A manifest-owned C++ module is never a legacy edge, even when the
+        # corresponding Rust dependency was accidentally omitted above.  The
+        # emitted-import check will independently diagnose that missing Rust
+        # graph edge during generation, but --emit-cmake and schema validation
+        # must already reject the contradictory ownership declaration.
+        overlap = sorted(seen_modules & set(entry["legacy_dependencies"]))
+        if overlap:
+            raise ProfileError(
+                f"module entry {index} declares manifest-owned dependency as legacy: "
+                f"{', '.join(overlap)}"
+            )
     return data, raw
 
 
@@ -427,6 +703,23 @@ def stage_type_map(entry: dict, destination: Path) -> Path | None:
     return path
 
 
+def stage_cpp_module_index(entry: dict, destination: Path) -> Path | None:
+    """Write one canonical, read-only foreign-symbol index for one invocation."""
+    data: bytes = entry["_cpp_module_index_bytes"]
+    if not data:
+        return None
+    path = destination / f"{entry['module_name']}.json"
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        path.chmod(0o400)
+    except OSError as exc:
+        raise ProfileError(
+            f"cannot stage C++ module index for {entry['module_name']}: {exc}"
+        ) from exc
+    return path
+
+
 def hand_slots(cpp: str) -> list[tuple[int, str]]:
     slots: list[tuple[int, str]] = []
     for line_no, line in enumerate(cpp.splitlines(), 1):
@@ -476,23 +769,44 @@ def apply_unit_kind(cpp: str, module_name: str, kind: str) -> str:
     return re.sub(r"(?m)^export (?!(?:module)\b)", "", cpp)
 
 
+def emitted_cpp_imports(cpp: str, module_name: str) -> set[str]:
+    """Parse emitted named-module imports and reject unsupported spellings."""
+    imports: set[str] = set()
+    for line_no, line in enumerate(cpp.splitlines(), 1):
+        stripped = line.strip()
+        if not (
+            stripped.startswith("import ")
+            or stripped.startswith("export import ")
+        ):
+            continue
+        match = re.fullmatch(
+            r"(?:export\s+)?import\s+"
+            r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*;",
+            stripped,
+        )
+        if match is None:
+            raise ProfileError(
+                f"unsupported emitted import in {module_name} at line {line_no}: "
+                f"{stripped!r}"
+            )
+        imports.add(match.group(1))
+    return imports
+
+
 def validate_dependency_imports(cpp: str, entry: dict, manifest: dict) -> None:
-    """Require the declared graph to match consumer-module imports exactly."""
+    """Require Rust-owned and declared-legacy imports to match exactly."""
     module_by_rust_path = {
         module["rust_module"]: module["module_name"]
         for module in manifest["module"]
     }
     known_cpp_modules = set(module_by_rust_path.values())
-    expected = {
+    expected_owned = {
         module_by_rust_path[dependency] for dependency in entry["dependencies"]
     }
-    imports = set(
-        re.findall(
-            r"(?m)^import\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;",
-            cpp,
-        )
-    )
-    actual = imports & known_cpp_modules
+    expected_legacy = set(entry.get("legacy_dependencies", []))
+    expected = expected_owned | expected_legacy
+    imports = emitted_cpp_imports(cpp, entry["module_name"])
+    actual = imports - IMPLICIT_CPP_MODULE_IMPORTS
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
@@ -505,16 +819,11 @@ def validate_dependency_imports(cpp: str, entry: dict, manifest: dict) -> None:
             f"dependency drift in {entry['module_name']}: {'; '.join(parts)}"
         )
 
-    module_family = entry["module_name"].split(".", 1)[0] + "."
-    unmapped = sorted(
-        imported
-        for imported in imports
-        if imported.startswith(module_family) and imported not in known_cpp_modules
-    )
-    if unmapped:
+    legacy_owned_overlap = sorted(expected_legacy & known_cpp_modules)
+    if legacy_owned_overlap:
         raise ProfileError(
-            f"unmapped consumer imports in {entry['module_name']}: "
-            f"{', '.join(unmapped)}"
+            f"manifest-owned imports declared legacy in {entry['module_name']}: "
+            f"{', '.join(legacy_owned_overlap)}"
         )
 
 
@@ -547,6 +856,9 @@ def stamp_fields(
     module_name: str,
     kind: str,
     type_map_sha: str,
+    legacy_dependencies_sha: str,
+    cpp_module_index_source_sha: str,
+    cpp_module_index_sha: str,
     transpiler_git: str,
     transpiler_sha256: str,
     root: Path,
@@ -565,6 +877,9 @@ def stamp_fields(
         ("module", module_name),
         ("unit-kind", kind),
         ("type-map-sha256", type_map_sha),
+        ("legacy-dependencies-sha256", legacy_dependencies_sha),
+        ("cpp-module-index-source-sha256", cpp_module_index_source_sha),
+        ("cpp-module-index-sha256", cpp_module_index_sha),
     ]
 
 
@@ -589,8 +904,9 @@ def build_transpiler_command(
     cxx_namespace: str,
     consumer_module_map: Path,
     type_map: Path | None,
+    cpp_module_index: Path | None,
 ) -> list[str]:
-    """Build argv without a shell; a module-local map is one opaque argument."""
+    """Build shell-free argv with invocation-local sidecars only."""
     command = [
         str(transpiler),
         str(staged_source),
@@ -605,6 +921,8 @@ def build_transpiler_command(
     ]
     if type_map is not None:
         command.extend(["--type-map", str(type_map)])
+    if cpp_module_index is not None:
+        command.extend(["--cpp-module-index", str(cpp_module_index)])
     return command
 
 
@@ -626,6 +944,9 @@ def generate_one(
     raw_output = scratch / entry["output"]
     raw_output.parent.mkdir(parents=True, exist_ok=True)
     type_map = stage_type_map(entry, scratch / "type-maps")
+    cpp_module_index = stage_cpp_module_index(
+        entry, scratch / "cpp-module-indexes"
+    )
     command = build_transpiler_command(
         transpiler=transpiler,
         staged_source=staged_source,
@@ -634,6 +955,7 @@ def generate_one(
         cxx_namespace=manifest["cxx_namespace"],
         consumer_module_map=consumer_module_map,
         type_map=type_map,
+        cpp_module_index=cpp_module_index,
     )
     run_checked(command, cwd=root)
     try:
@@ -664,6 +986,13 @@ def generate_one(
         module_name=entry["module_name"],
         kind=entry["kind"],
         type_map_sha=sha256_bytes(render_type_map(entry["type_mappings"])),
+        legacy_dependencies_sha=sha256_bytes(
+            render_legacy_dependencies(entry["legacy_dependencies"])
+        ),
+        cpp_module_index_source_sha=sha256_bytes(
+            entry["_cpp_module_index_raw"]
+        ),
+        cpp_module_index_sha=sha256_bytes(entry["_cpp_module_index_bytes"]),
         transpiler_git=transpiler_git,
         transpiler_sha256=transpiler_sha256,
         root=root,
@@ -695,6 +1024,23 @@ def verify_source_snapshots(snapshots: dict[Path, bytes]) -> None:
         if actual != expected:
             raise ProfileError(
                 f"Rust source changed during generation: {source}; retry from a stable tree"
+            )
+
+
+def verify_cpp_module_index_snapshots(manifest: dict) -> None:
+    """Reject a foreign-symbol sidecar changing after profile validation."""
+    for entry in manifest["module"]:
+        path: Path | None = entry["_cpp_module_index_path"]
+        if path is None:
+            continue
+        try:
+            actual = path.read_bytes()
+        except OSError as exc:
+            raise ProfileError(f"C++ module index changed during generation: {path}: {exc}") from exc
+        if actual != entry["_cpp_module_index_raw"]:
+            raise ProfileError(
+                f"C++ module index changed during generation: {path}; "
+                "retry from a stable tree"
             )
 
 
@@ -785,6 +1131,13 @@ def check_stamps(
             module_name=entry["module_name"],
             kind=entry["kind"],
             type_map_sha=sha256_bytes(render_type_map(entry["type_mappings"])),
+            legacy_dependencies_sha=sha256_bytes(
+                render_legacy_dependencies(entry["legacy_dependencies"])
+            ),
+            cpp_module_index_source_sha=sha256_bytes(
+                entry["_cpp_module_index_raw"]
+            ),
+            cpp_module_index_sha=sha256_bytes(entry["_cpp_module_index_bytes"]),
             transpiler_git=manifest["transpiler_git"],
             transpiler_sha256=manifest["transpiler_sha256"],
             root=root,
@@ -801,6 +1154,31 @@ def check_stamps(
 def emit_cmake_manifest(manifest: dict, root: Path) -> None:
     """Print the generated/retired file sets for inclusion by CMake."""
     print("# Generated by scripts/generate_srpc_cpp.py --emit-cmake")
+    print("set(SRPC_CPP_PROFILE_INPUT_FILES")
+    # Configure-time stamp validation is the build's offline stale-output
+    # gate.  Make every authored Rust owner, checked-in generated unit, and
+    # optional foreign-symbol sidecar a configure dependency.  A plain
+    # `cmake --build` must rerun the stamp check both when the source of truth
+    # changes and when someone edits an output that would otherwise merely be
+    # recompiled as an ordinary target source.
+    profile_input_paths = {
+        path
+        for entry in manifest["module"]
+        for path in (entry["_source"], entry["_output"])
+    }
+    profile_input_paths.update(
+        entry["_cpp_module_index_path"]
+        for entry in manifest["module"]
+        if entry.get("_cpp_module_index_path") is not None
+    )
+    for path in sorted(profile_input_paths):
+        relative = path.relative_to(root).as_posix()
+        print(f'    "${{CMAKE_SOURCE_DIR}}/{relative}"')
+    print(")")
+    if profile_input_paths:
+        print("set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS")
+        print("    ${SRPC_CPP_PROFILE_INPUT_FILES}")
+        print(")")
     print("set(SRPC_GENERATED_MODULE_FILES")
     for entry in manifest["module"]:
         relative = entry["_output"].relative_to(root).as_posix()
@@ -926,6 +1304,7 @@ def main() -> int:
         snapshots = snapshot_sources(manifest)
         validate_rust_crate(root)
         verify_source_snapshots(snapshots)
+        verify_cpp_module_index_snapshots(manifest)
         with tempfile.TemporaryDirectory(prefix="srpc-cpp-profile-") as temporary:
             scratch = Path(temporary)
             staged_transpiler = stage_transpiler(
@@ -954,6 +1333,7 @@ def main() -> int:
                 )
                 generated.append((entry["_output"], data))
         verify_source_snapshots(snapshots)
+        verify_cpp_module_index_snapshots(manifest)
 
         if args.write:
             for path, data in generated:

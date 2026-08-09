@@ -13,6 +13,7 @@ pub mod connection_metrics;
 pub mod connection_state;
 pub mod errors;
 pub mod heartbeat;
+pub mod idempotency;
 pub mod pollable_proxy;
 pub mod reconnect_policy;
 pub mod request_options;
