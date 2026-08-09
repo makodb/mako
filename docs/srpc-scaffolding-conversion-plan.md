@@ -19,17 +19,18 @@ inside a legacy file that is about to be deleted is not progress.
 
 ## Execution status
 
-Five generated graph slices are complete and gated. The manifest now owns 18
+Six generated graph slices are complete and gated. The manifest now owns 20
 C++ modules: the three pilots, `errors`, `circuit_breaker`, eight modules from
 the reliability/callback layer, the generated-only `monotonic` support module,
-the `misc` and `idempotency` owners, `request_queue`, and `rand`. The latest
-slice retired the legacy `rand.cpp` module while preserving its shared libc
-`rand_r` stream and current seven-method `RandomGenerator` surface.
+the `misc` and `idempotency` owners, `request_queue`, `rand`, `channel`, and
+`frame_codec`. The latest slice retired the legacy channel facade and frame
+codec while preserving channel proxy/callback ABI and restoring the frame
+codec's historical raw-pointer, `const char*`, and real-constructor surface.
 
-Gate 137 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
-only executed failure, and preserved Gate 135's exact 62-entry Not-Run set. The
-current census is **1,016 scaffold lines** plus the unchanged **35-line C ABI
-floor**: 186 scaffold lines have been retired since the 1,202-line post-pilot
+Gate 139 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
+only executed failure, and preserved Gate 138's exact 62-entry Not-Run set. The
+current census is **980 scaffold lines** plus the unchanged **35-line C ABI
+floor**: 222 scaffold lines have been retired since the 1,202-line post-pilot
 baseline.
 
 The reusable enablers are now live rather than planned: the consumer-module
@@ -44,15 +45,19 @@ C++ module imports, and projected C++ namespaces are independent and validated
 fail-closed. That unblocked `idempotency` and `request_queue`; both are now
 landed. The scoped foreign-symbol index also covers `rand`'s implicit standard
 library carriers without weakening validation of project module edges.
-`frame_codec` and `channel` are the next prepared independent nodes.
+The pinned emitter now also projects standard `Arc::downgrade` to the existing
+`rusty::sync::downgrade` runtime function without rewriting shadowed user Arc
+types. `fiber_channel` and `threading` are the next prepared nodes, and
+`inmemory_channel` is undergoing its final generated-C++ revalidation on that
+newly landed seam.
 
-The 31 remaining named-module interfaces account for exactly **836** of the
-current 1,016 scaffold lines. Retiring all of them leaves a precisely identified
+The 29 remaining named-module interfaces account for exactly **800** of the
+current 980 scaffold lines. Retiring all of them leaves a precisely identified
 180-line non-interface envelope: `std_compat.hpp` (93), `rrr.hpp` (30), the
 fiber C header's scaffold portion (23), import shims (18), the selected epoll
 implementation unit (10), and `base/all.hpp` (6).  The first realistic
-majority milestone is the remaining 28 interfaces without a hard C++ semantic
-boundary: retiring them removes another 369 lines and reduces total scaffold
+majority milestone is the remaining 26 interfaces without a hard C++ semantic
+boundary: retiring them removes another 333 lines and reduces total scaffold
 to 647.
 
 ## Non-negotiable invariants

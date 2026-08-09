@@ -54,13 +54,16 @@ private Rust compatibility alias must retain an established C++ nominal type:
 type_mappings = { LegacyStdString = "std::string" }
 ```
 
-Both sides are restricted to bare or `::`-qualified identifiers. Templates,
-pointers, references, qualifiers, and arbitrary C++ tokens fail schema
-validation. The generator writes a separate temporary `--type-map` file for
-each module, passes it as a single argv element without a shell, and stamps the
-SHA256 of its deterministically sorted bytes into that module's output. A map
-therefore cannot affect a sibling module, and `--check-stamps` detects mapping
-drift offline along with the full manifest hash.
+Both sides are normally restricted to bare or `::`-qualified identifiers. The
+single reviewed exception is the exact value `const char*`, used to retain
+historical constexpr C-string APIs from a private Rust `&'static str` alias.
+Other pointers, templates, references, qualifiers, and arbitrary C++ tokens
+fail schema validation. The generator writes a separate temporary
+`--type-map` file for each module, passes it as a single argv element without a
+shell, and stamps the SHA256 of its deterministically sorted bytes into that
+module's output. A map therefore cannot affect a sibling module, and
+`--check-stamps` detects mapping drift offline along with the full manifest
+hash.
 
 `kind = "interface"` produces an exported `.cppm`; a future
 `kind = "implementation"` entry produces a non-exporting `.cpp` module unit.

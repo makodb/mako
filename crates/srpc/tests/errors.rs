@@ -1,3 +1,4 @@
+use srpc::rpc::channel::channel_error_to_string;
 use srpc::rpc::errors::{
     get_error_category, is_connection_error, is_retryable_error, is_timeout_error,
     rpc_error_category_to_string, rpc_error_to_string, RpcError, RpcErrorCategory,
@@ -247,8 +248,14 @@ fn channel_error_remains_available_from_its_own_owner() {
     ];
     for (error, code, name) in values {
         assert_eq!(error as i32, code);
-        assert_eq!(error.as_str(), name);
+        assert_eq!(channel_error_to_string(error), name);
     }
+    assert_eq!(channel_error_to_string(ChannelError::None), "None");
+    assert_eq!(
+        channel_error_to_string(ChannelError::WouldBlock),
+        "WouldBlock"
+    );
     assert!(ChannelError::None.is_ok());
     assert!(!ChannelError::WouldBlock.is_ok());
+    assert_eq!(ChannelError::WouldBlock.as_str(), "WouldBlock");
 }

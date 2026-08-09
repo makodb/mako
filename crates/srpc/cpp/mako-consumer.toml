@@ -3,8 +3,8 @@ profile = "mako-cpp-consumer-v1"
 crate_root = "crates/srpc"
 output_root = "crates/srpc/cpp/generated"
 cxx_namespace = "rrr"
-transpiler_git = "382745644e2d271f96970cef99f52c3ac7f661fb"
-transpiler_sha256 = "6588ce85dc6c37ffbe5977661ecbaac22de68138f617eebe62720ae78e69aa88"
+transpiler_git = "2873c78268bdeceeb72da293572afbf6f6620a5c"
+transpiler_sha256 = "f3e5a069c420ff13d826260e704b12a7dc8b6fc694a3aa1417e7ccf5f2672213"
 
 [[module]]
 source = "src/wire/internal_protocol.rs"
@@ -15,6 +15,17 @@ output = "rrr.internal_protocol.cppm"
 kind = "interface"
 dependencies = []
 gmf_headers = []
+
+[[module]]
+source = "src/rpc/frame_codec.rs"
+rust_module = "crate::rpc::frame_codec"
+legacy_source = "src/rrr/rpc/frame_codec.cpp"
+module_name = "rrr.frame_codec"
+output = "rrr.frame_codec.cppm"
+kind = "interface"
+dependencies = ["crate::wire::internal_protocol"]
+gmf_headers = []
+type_mappings = { LegacyByteBuffer = "rusty::String", LegacyCChar = "std::string::value_type", LegacyCString = "const char*", LegacyStdVector = "std::vector" }
 
 [[module]]
 source = "src/base/stat.rs"
@@ -88,6 +99,17 @@ output = "rrr.callback_wrapper.cppm"
 kind = "interface"
 dependencies = []
 gmf_headers = []
+
+[[module]]
+source = "src/rpc/channel.rs"
+rust_module = "crate::rpc::channel"
+legacy_source = "src/rrr/rpc/channel.cpp"
+module_name = "rrr.channel"
+output = "rrr.channel.cppm"
+kind = "interface"
+dependencies = ["crate::base::callback_wrapper"]
+gmf_headers = []
+type_mappings = { LegacyStdString = "std::string" }
 
 [[module]]
 source = "src/base/misc.rs"

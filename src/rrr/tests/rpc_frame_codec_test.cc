@@ -33,16 +33,25 @@ namespace {
 
 using Bytes = std::vector<std::uint8_t>;
 
+constexpr const char* kCompleteStatusName =
+    frame_decode_status_to_string(FrameDecodeStatus::Complete);
+constexpr const char* kUnknownStatusName =
+    frame_decode_status_to_string(static_cast<FrameDecodeStatus>(99));
+static_assert(kCompleteStatusName[0] == 'C');
+static_assert(kCompleteStatusName[8] == '\0');
+static_assert(kUnknownStatusName[0] == 'U');
+static_assert(kUnknownStatusName[7] == '\0');
+
 // ---------------------------------------------------------------------------
 // Stateless header encode/decode
 // ---------------------------------------------------------------------------
 
 TEST(RpcFrameCodecTest, HeaderRoundTripRequest) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr, 17, /*ext=*/false));
+    EXPECT_TRUE(frame_codec_write_header(hdr.data(), 17, /*ext=*/false));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr, out),
+    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, 17);
     EXPECT_FALSE(out.extended_header_flag);
@@ -52,10 +61,10 @@ TEST(RpcFrameCodecTest, HeaderRoundTripRequest) {
 
 TEST(RpcFrameCodecTest, HeaderRoundTripResponseWithExtendedFlag) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr, 4096, /*ext=*/true));
+    EXPECT_TRUE(frame_codec_write_header(hdr.data(), 4096, /*ext=*/true));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr, out),
+    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, 4096);
     EXPECT_TRUE(out.extended_header_flag);
@@ -63,10 +72,10 @@ TEST(RpcFrameCodecTest, HeaderRoundTripResponseWithExtendedFlag) {
 
 TEST(RpcFrameCodecTest, HeaderZeroPayloadAllowed) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr, 0, /*ext=*/false));
+    EXPECT_TRUE(frame_codec_write_header(hdr.data(), 0, /*ext=*/false));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr, out),
+    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, 0);
     EXPECT_FALSE(out.extended_header_flag);
@@ -74,12 +83,12 @@ TEST(RpcFrameCodecTest, HeaderZeroPayloadAllowed) {
 
 TEST(RpcFrameCodecTest, HeaderMaxPayloadAtBoundary) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr,
+    EXPECT_TRUE(frame_codec_write_header(hdr.data(),
                                          kMaxFramePayloadSize,
                                          /*ext=*/false));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr, out),
+    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, kMaxFramePayloadSize);
     EXPECT_FALSE(out.extended_header_flag);
@@ -87,7 +96,7 @@ TEST(RpcFrameCodecTest, HeaderMaxPayloadAtBoundary) {
 
 TEST(RpcFrameCodecTest, HeaderRejectsNegativePayloadOnEncode) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{0xFF, 0xFF, 0xFF, 0xFF};
-    EXPECT_FALSE(frame_codec_write_header(hdr, -1, /*ext=*/false));
+    EXPECT_FALSE(frame_codec_write_header(hdr.data(), -1, /*ext=*/false));
     // Encoder must not modify the buffer when refusing.
     EXPECT_EQ(hdr[0], 0xFF);
     EXPECT_EQ(hdr[3], 0xFF);
@@ -95,7 +104,7 @@ TEST(RpcFrameCodecTest, HeaderRejectsNegativePayloadOnEncode) {
 
 TEST(RpcFrameCodecTest, HeaderRejectsOverlargePayloadOnEncode) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_FALSE(frame_codec_write_header(hdr,
+    EXPECT_FALSE(frame_codec_write_header(hdr.data(),
                                           kMaxFramePayloadSize + 1,
                                           /*ext=*/false));
 }
@@ -103,7 +112,7 @@ TEST(RpcFrameCodecTest, HeaderRejectsOverlargePayloadOnEncode) {
 TEST(RpcFrameCodecTest, HeaderPeekReportsNeedMoreOnShortBuffer) {
     std::array<std::uint8_t, 3> short_buf{0x10, 0x00, 0x00};
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(short_buf, out),
+    EXPECT_EQ(frame_codec_peek_header(short_buf.data(), short_buf.size(), out),
               FrameDecodeStatus::NeedMoreBytes);
 }
 
@@ -144,7 +153,7 @@ TEST(RpcFrameCodecTest, HeaderPeekReportsMalformedOnNegative) {
 
     FrameHeader out{};
     // High bit set + payload bits = 0 → ext flag with zero-length payload.
-    EXPECT_EQ(frame_codec_peek_header(hdr, out),
+    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
               FrameDecodeStatus::Complete);
     EXPECT_TRUE(out.extended_header_flag);
     EXPECT_EQ(out.payload_size, 0);
@@ -161,7 +170,7 @@ TEST(RpcFrameCodecTest, EncodeIntoAppendsHeaderThenPayload) {
 
     ASSERT_EQ(out.size(), kFrameHeaderSize + 4);
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(out, hdr),
+    EXPECT_EQ(frame_codec_peek_header(out.data(), out.size(), hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, 4);
     EXPECT_FALSE(hdr.extended_header_flag);
@@ -174,7 +183,7 @@ TEST(RpcFrameCodecTest, EncodeIntoSupportsZeroPayload) {
 
     ASSERT_EQ(out.size(), kFrameHeaderSize);
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(out, hdr),
+    EXPECT_EQ(frame_codec_peek_header(out.data(), out.size(), hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, 0);
     EXPECT_TRUE(hdr.extended_header_flag);
@@ -193,7 +202,7 @@ TEST(RpcFrameCodecTest, EncodeIntoCoalescesMultipleFrames) {
               3 * kFrameHeaderSize + sizeof(a) + sizeof(b) + 0);
 
     // Round-trip via FrameStreamReader to check ordering.
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     reader.append(out.data(), out.size());
 
     FrameView v{};
@@ -237,7 +246,7 @@ TEST(RpcFrameCodecTest, EncodeIntoRejectsNegativeSize) {
 // ---------------------------------------------------------------------------
 
 TEST(RpcFrameCodecTest, ReaderEmptyOnConstruction) {
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     EXPECT_EQ(reader.buffered_bytes(), 0u);
     EXPECT_TRUE(reader.empty());
     FrameView v{};
@@ -251,7 +260,7 @@ TEST(RpcFrameCodecTest, ReaderHandlesByteByByteFragmentation) {
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload),
                                         /*ext=*/false));
 
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     FrameView v{};
     for (std::size_t i = 0; i + 1 < wire.size(); ++i) {
         reader.append(wire.data() + i, 1);
@@ -273,7 +282,7 @@ TEST(RpcFrameCodecTest, ReaderEmitsMultipleFramesFromOneAppend) {
     ASSERT_TRUE(frame_codec_encode_into(wire, f2, 1, false));
     ASSERT_TRUE(frame_codec_encode_into(wire, f3, 2, false));
 
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     reader.append(wire.data(), wire.size());
 
     FrameView v{};
@@ -300,7 +309,7 @@ TEST(RpcFrameCodecTest, ReaderHandlesPartialHeaderThenRestOfFrame) {
     const std::uint8_t payload[] = {'a', 'b', 'c', 'd'};
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload), false));
 
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     // Feed first 2 bytes (incomplete header).
     reader.append(wire.data(), 2);
     FrameView v{};
@@ -326,7 +335,7 @@ TEST(RpcFrameCodecTest, ReaderConsumeWithoutPriorPeekIsNoOp) {
     const std::uint8_t payload[] = {0xAA, 0xBB};
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, 2, false));
 
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     // Empty buffer: consume should be a no-op.
     reader.consume_frame();
     EXPECT_TRUE(reader.empty());
@@ -343,7 +352,7 @@ TEST(RpcFrameCodecTest, ReaderResetClearsAllBufferedBytes) {
     const std::uint8_t payload[] = {1, 2, 3, 4, 5};
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, 5, false));
 
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     reader.append(wire.data(), wire.size());
     EXPECT_EQ(reader.buffered_bytes(), wire.size());
     reader.reset();
@@ -361,7 +370,7 @@ TEST(RpcFrameCodecTest, ReaderTracksExtendedHeaderFlag) {
     ASSERT_TRUE(frame_codec_encode_into(wire, plain,    1, /*ext=*/false));
     ASSERT_TRUE(frame_codec_encode_into(wire, with_ext, 2, /*ext=*/true));
 
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     reader.append(wire.data(), wire.size());
 
     FrameView v{};
@@ -380,7 +389,7 @@ TEST(RpcFrameCodecTest, ReaderCompactsAfterManyConsumedFrames) {
     // Push enough small frames through that the consumed prefix grows
     // past the compaction threshold; afterwards, additional frames must
     // still decode correctly.
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     constexpr std::size_t kFrameCount = 4096;  // 4096 * (4+8) ≈ 48 KiB header bytes
     const std::uint8_t payload[8] = {0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0x0, 0x1};
 
@@ -424,7 +433,7 @@ TEST(RpcFrameCodecTest, DecodesBytesProducedByDirectI32Write) {
     std::memcpy(header, &kSize, sizeof(kSize));
     const std::uint8_t payload[6] = {'r', 'e', 'q', 'X', 'Y', 'Z'};
 
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     reader.append(header, sizeof(header));
     reader.append(payload, sizeof(payload));
 
@@ -445,7 +454,7 @@ TEST(RpcFrameCodecTest, DecodesBytesProducedByEncodeResponseSize) {
     std::uint8_t payload[kPayloadSize];
     for (int i = 0; i < kPayloadSize; ++i) payload[i] = static_cast<std::uint8_t>(i);
 
-    auto reader = FrameStreamReader::new_();
+    FrameStreamReader reader{};
     reader.append(header, sizeof(header));
     reader.append(payload, sizeof(payload));
 
@@ -477,17 +486,14 @@ TEST(RpcFrameCodecTest, EncoderProducesBytesParseableByInternalProtocolHelpers) 
 }
 
 TEST(RpcFrameCodecTest, FrameDecodeStatusStringification) {
-    // EXPECT_EQ, not EXPECT_STREQ: the function is authored as inline
-    // Rust DSL now, and Rust's `&'static str` lowers to
-    // std::string_view rather than const char*. That lowering is
-    // correct, so the call site changes rather than the translator —
-    // rule 2 of docs/dev/rrr_migration_policy.md.
-    EXPECT_EQ("NeedMoreBytes",
-              frame_decode_status_to_string(FrameDecodeStatus::NeedMoreBytes));
-    EXPECT_EQ("Complete",
-              frame_decode_status_to_string(FrameDecodeStatus::Complete));
-    EXPECT_EQ("Malformed",
-              frame_decode_status_to_string(FrameDecodeStatus::Malformed));
+    // The crate owner restores the historical const-char-pointer surface;
+    // compare contents rather than static-storage addresses.
+    EXPECT_STREQ("NeedMoreBytes",
+                 frame_decode_status_to_string(FrameDecodeStatus::NeedMoreBytes));
+    EXPECT_STREQ("Complete",
+                 frame_decode_status_to_string(FrameDecodeStatus::Complete));
+    EXPECT_STREQ("Malformed",
+                 frame_decode_status_to_string(FrameDecodeStatus::Malformed));
 }
 
 

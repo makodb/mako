@@ -27,7 +27,7 @@ import tomllib
 SCHEMA_VERSION = 5
 GENERATOR_VERSION = 5
 CANONICAL_TRANSPILER_SHA256 = (
-    "6588ce85dc6c37ffbe5977661ecbaac22de68138f617eebe62720ae78e69aa88"
+    "f3e5a069c420ff13d826260e704b12a7dc8b6fc694a3aa1417e7ccf5f2672213"
 )
 DEFAULT_MANIFEST = Path("crates/srpc/cpp/mako-consumer.toml")
 DEFAULT_TRANSPILER = Path(
@@ -79,9 +79,11 @@ def validate_profile_path(label: str, value: str) -> None:
 def validate_type_mappings(index: int, value: object) -> dict[str, str]:
     """Validate a module-local map of nominal Rust paths to C++ type names.
 
-    The deliberately narrow target grammar excludes templates, pointers,
-    references, cv-qualifiers, and arbitrary C++ tokens. Broader mappings need
-    an explicit schema review rather than becoming a code-injection surface.
+    The deliberately narrow target grammar excludes templates, references,
+    arbitrary cv-qualifiers, and arbitrary C++ tokens.  The sole pointer form
+    is the reviewed `const char*` compatibility carrier used by historical
+    constexpr string APIs. Broader mappings need an explicit schema review
+    rather than becoming a code-injection surface.
     """
     if not isinstance(value, dict):
         raise ProfileError(
@@ -96,8 +98,9 @@ def validate_type_mappings(index: int, value: object) -> dict[str, str]:
                 f"module entry {index} has invalid Rust type mapping key "
                 f"{rust_type!r}"
             )
-        if not isinstance(cpp_type, str) or not CPP_TYPE_NAME_PATTERN.fullmatch(
-            cpp_type
+        if not isinstance(cpp_type, str) or (
+            not CPP_TYPE_NAME_PATTERN.fullmatch(cpp_type)
+            and cpp_type != "const char*"
         ):
             raise ProfileError(
                 f"module entry {index} has invalid C++ type mapping value "

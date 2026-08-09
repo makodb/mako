@@ -12,6 +12,7 @@ pub mod completion_tracker;
 pub mod connection_metrics;
 pub mod connection_state;
 pub mod errors;
+pub mod frame_codec;
 pub mod heartbeat;
 pub mod idempotency;
 pub mod pollable_proxy;
@@ -22,6 +23,18 @@ pub mod server;
 pub mod task;
 
 pub use channel::ChannelError;
+
+// Native-only conveniences remain outside the generated module owner so the
+// Rust API stays source-compatible without adding non-legacy C++ exports.
+impl ChannelError {
+    pub fn is_ok(self) -> bool {
+        self == ChannelError::None
+    }
+
+    pub fn as_str(self) -> &'static str {
+        channel::channel_error_to_string(self)
+    }
+}
 
 // REMOVED 2026-07-31: load_balancer — a hand-written module wired to NOTHING
 // and duplicating the rrr counterpart consulted by rrr's client.

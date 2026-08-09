@@ -452,18 +452,21 @@ cpp_module_index = "indexes/owner.toml"
     def test_module_type_mappings_are_validated_and_sorted(self) -> None:
         manifest = self.load_single_module_profile(
             'type_mappings = { Zed = "vendor::Zed", '
-            'LegacyStdString = "std::string" }'
+            'LegacyCString = "const char*", LegacyStdString = "std::string" }'
         )
         self.assertEqual(
             manifest["module"][0]["type_mappings"],
             {
+                "LegacyCString": "const char*",
                 "LegacyStdString": "std::string",
                 "Zed": "vendor::Zed",
             },
         )
         self.assertEqual(
             generator.render_type_map(manifest["module"][0]["type_mappings"]),
-            b'"LegacyStdString" = "std::string"\n"Zed" = "vendor::Zed"\n',
+            b'"LegacyCString" = "const char*"\n'
+            b'"LegacyStdString" = "std::string"\n'
+            b'"Zed" = "vendor::Zed"\n',
         )
 
     def test_module_type_mappings_fail_closed(self) -> None:
@@ -472,6 +475,9 @@ cpp_module_index = "indexes/owner.toml"
             'type_mappings = { "bad-path" = "std::string" }',
             'type_mappings = { LegacyStdString = "std::vector<int>" }',
             'type_mappings = { LegacyStdString = "std::string; injected" }',
+            'type_mappings = { LegacyPointer = "char*" }',
+            'type_mappings = { LegacyPointer = "const void*" }',
+            'type_mappings = { LegacyPointer = "const char *" }',
             'type_mappings = { LegacyStdString = 7 }',
         )
         for entry in invalid_entries:
@@ -736,7 +742,7 @@ cpp_module_index = "indexes/owner.toml"
         self.assertIn("CMAKE_CONFIGURE_DEPENDS", rendered)
         self.assertIn("${SRPC_CPP_PROFILE_INPUT_FILES}", rendered)
 
-    def test_repository_profile_scopes_callbacks_mapping_and_dependencies(self) -> None:
+    def test_repository_profile_scopes_type_mappings_and_dependencies(self) -> None:
         root = generator.repo_root()
         manifest_path = root / generator.DEFAULT_MANIFEST
         manifest, _ = generator.load_manifest(manifest_path, root)
@@ -756,6 +762,11 @@ cpp_module_index = "indexes/owner.toml"
         completion = modules["crate::rpc::completion_tracker"]
         self.assertEqual(completion["dependencies"], [])
         self.assertEqual(completion["type_mappings"], {})
+
+        frame_codec = modules["crate::rpc::frame_codec"]
+        self.assertEqual(
+            frame_codec["type_mappings"]["LegacyCString"], "const char*"
+        )
 
         misc = modules["crate::base::misc"]
         self.assertEqual(misc["dependencies"], [])
@@ -802,7 +813,15 @@ cpp_module_index = "indexes/owner.toml"
             for entry in manifest["module"]
             if entry["type_mappings"]
         ]
-        self.assertEqual(mapped, ["crate::rpc::callbacks", "crate::base::misc"])
+        self.assertEqual(
+            mapped,
+            [
+                "crate::rpc::frame_codec",
+                "crate::rpc::callbacks",
+                "crate::rpc::channel",
+                "crate::base::misc",
+            ],
+        )
 
 
 if __name__ == "__main__":
