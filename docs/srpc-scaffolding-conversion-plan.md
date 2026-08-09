@@ -19,18 +19,18 @@ inside a legacy file that is about to be deleted is not progress.
 
 ## Execution status
 
-Three generated graph slices are complete and gated. The manifest now owns 16
+Four generated graph slices are complete and gated. The manifest now owns 17
 C++ modules: the three pilots, `errors`, `circuit_breaker`, eight modules from
 the reliability/callback layer, the generated-only `monotonic` support module,
-and the new `misc` and `idempotency` owners. The latest slice retired the two
-legacy `misc.cpp` and `idempotency.cpp` module files; valid Rust now owns their
-live APIs and the idempotency archive seam is resolved through a stamped legacy
-symbol index.
+the `misc` and `idempotency` owners, and `request_queue`. The latest slice
+retired the legacy `request_queue.cpp` module after restoring the historical
+const query surface and preserving its deliberately under-lock overflow
+callback sequencing.
 
-Gate 134 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
-only executed failure, and preserved Gate 132's exact 62-entry Not-Run set. The
-current census is **1,050 scaffold lines** plus the unchanged **35-line C ABI
-floor**: 152 scaffold lines have been retired since the 1,202-line post-pilot
+Gate 135 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
+only executed failure, and preserved Gate 134's exact 62-entry Not-Run set. The
+current census is **1,034 scaffold lines** plus the unchanged **35-line C ABI
+floor**: 168 scaffold lines have been retired since the 1,202-line post-pilot
 baseline.
 
 The reusable enablers are now live rather than planned: the consumer-module
@@ -42,11 +42,12 @@ and schema-v5 scoped type maps preserve legacy foreign types such as
 declared legacy C++ imports and supplies a per-module, stamped foreign-symbol
 index. The indexed legacy-symbol seam is now live: Rust binding paths, named
 C++ module imports, and projected C++ namespaces are independent and validated
-fail-closed. That unblocked `idempotency`; `request_queue` is the next prepared
-graph edge.
+fail-closed. That unblocked `idempotency` and `request_queue`; both are now
+landed. `frame_codec` and the legacy-compatible `rand` surface are the next
+independent nodes under audit.
 
-The 33 remaining named-module interfaces account for exactly **870** of the
-current 1,050 scaffold lines. Retiring all of them leaves a precisely identified
+The 32 remaining named-module interfaces account for exactly **854** of the
+current 1,034 scaffold lines. Retiring all of them leaves a precisely identified
 180-line non-interface envelope: `std_compat.hpp` (93), `rrr.hpp` (30), the
 fiber C header's scaffold portion (23), import shims (18), the selected epoll
 implementation unit (10), and `base/all.hpp` (6).  The first realistic

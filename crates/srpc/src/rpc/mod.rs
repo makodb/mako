@@ -17,6 +17,7 @@ pub mod idempotency;
 pub mod pollable_proxy;
 pub mod reconnect_policy;
 pub mod request_options;
+pub mod request_queue;
 pub mod server;
 pub mod task;
 

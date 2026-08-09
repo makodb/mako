@@ -130,6 +130,16 @@ dependencies = ["crate::base::monotonic"]
 gmf_headers = []
 
 [[module]]
+source = "src/rpc/request_queue.rs"
+rust_module = "crate::rpc::request_queue"
+legacy_source = "src/rrr/rpc/request_queue.cpp"
+module_name = "rrr.request_queue"
+output = "rrr.request_queue.cppm"
+kind = "interface"
+dependencies = ["crate::base::monotonic"]
+gmf_headers = []
+
+[[module]]
 source = "src/rpc/pollable_proxy.rs"
 rust_module = "crate::rpc::pollable_proxy"
 legacy_source = "src/rrr/rpc/pollable_proxy.cpp"
