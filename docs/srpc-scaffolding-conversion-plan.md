@@ -19,18 +19,18 @@ inside a legacy file that is about to be deleted is not progress.
 
 ## Execution status
 
-Seven generated graph slices are complete and gated. The manifest now owns 24
-C++ modules: the prior 20-module graph plus `fiber_channel`, `threading`,
-`inmemory_channel`, and Linux `cpuinfo`. The latest slice retired those four
-legacy translation units while preserving the pinned fiber/event contract,
-pthread and SpinLock ABI, in-memory channel callback/lifetime behavior, and
-CPUInfo's Linux LP64 telemetry surface.
+Eight generated graph slices are complete and gated. The manifest now owns 27
+C++ modules. The latest slice retired `basetypes`, `future`, and `fiber` while
+preserving the current varint quirks and layouts, the unconstrained C++ future
+templates, and the reactor-facing fiber behavior.
 
-Gate 140 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
-only executed failure, and preserved Gate 139's exact 62-entry Not-Run set. The
-current census is **874 scaffold lines** plus the unchanged **35-line C ABI
-floor**: 328 scaffold lines have been retired since the 1,202-line post-pilot
-baseline.
+Gate 143 built cleanly. Its definitive serialized CTest pass enumerated all 179
+tests, retained `rpcbench` as the only executed failure, and preserved Gate
+140's exact 62-entry Not-Run set. (The first parallel pass hit the known test
+port-allocation collision; the affected timeout test passed immediately in
+isolation and in the serialized full pass.) The current census is **829
+scaffold lines** plus the unchanged **35-line C ABI floor**: 373 scaffold lines
+have been retired since the 1,202-line post-pilot baseline.
 
 The reusable enablers are now live rather than planned: the consumer-module
 map handles nested/aliased/glob paths; transparent nullable callbacks preserve
@@ -48,18 +48,20 @@ The pinned emitter now also projects standard `Arc::downgrade` to the existing
 `rusty::sync::downgrade` runtime function without rewriting shadowed user Arc
 types; `inmemory_channel` now exercises that seam in the built graph. Generator
 v6 additionally rejects emitted `UNSUPPORTED` diagnostics as incomplete hand
-slots. The next graph batch is `basetypes`, `load_balancer`, `future`, and
-`fiber`, with dedicated compatibility owners rather than incompatible reuse of
-the crate's idiomatic APIs.
+slots. The emitter pin also preserves source order when generating aliases for
+reassigned parameters; 40 independent CPUInfo regenerations and ten complete
+profile checks were byte-stable under that fix.
 
-The 15 remaining named-module interfaces account for exactly **694** of the
-current 874 scaffold lines. Retiring all of them leaves a precisely identified
+The 12 remaining named-module interfaces account for exactly **649** of the
+current 829 scaffold lines. Retiring all of them leaves a precisely identified
 180-line non-interface envelope: `std_compat.hpp` (93), `rrr.hpp` (30), the
 fiber C header's scaffold portion (23), import shims (18), the selected epoll
-implementation unit (10), and `base/all.hpp` (6).  The first realistic
-majority milestone is the remaining nine interfaces without a hard C++
-semantic boundary: retiring them removes another 227 lines and reduces total
-scaffold to 647.
+implementation unit (10), and `base/all.hpp` (6). The next exact-green slice is
+`logging` plus `utils` (48 lines), followed by a separately gated
+`serializable_envelope` owner (19). `load_balancer`'s remaining 11 lines are an
+active hidden-trait experiment: they retire only if both the structural C++
+template and a useful downstream Rust API can be preserved without additive
+C++ interfaces.
 
 ## Non-negotiable invariants
 

@@ -5,5 +5,7 @@
 
 pub mod epoll;
 pub mod fiber;
+pub mod legacy_fiber;
+pub mod legacy_future;
 pub mod poll_thread;
 pub mod tcp;

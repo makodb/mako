@@ -777,6 +777,22 @@ cpp_module_index = "indexes/owner.toml"
         self.assertEqual(completion["dependencies"], [])
         self.assertEqual(completion["type_mappings"], {})
 
+        legacy_basetypes = modules["crate::base::legacy_basetypes"]
+        self.assertEqual(legacy_basetypes["dependencies"], [])
+        self.assertEqual(legacy_basetypes["legacy_dependencies"], [])
+        self.assertEqual(legacy_basetypes["gmf_headers"], [])
+        self.assertEqual(legacy_basetypes["type_mappings"], {})
+        self.assertIsNotNone(legacy_basetypes["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rusty"',
+            legacy_basetypes["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.basetypes;\nimport rusty;\n",
+            legacy_basetypes,
+            manifest,
+        )
+
         inmemory_channel = modules["crate::rpc::inmemory_channel"]
         self.assertEqual(
             inmemory_channel["dependencies"], ["crate::rpc::channel"]
@@ -819,6 +835,49 @@ cpp_module_index = "indexes/owner.toml"
             "import rrr.channel;\n"
             "import rrr.reactor;\n",
             fiber_channel,
+            manifest,
+        )
+
+        legacy_future = modules["crate::runtime::legacy_future"]
+        self.assertEqual(legacy_future["dependencies"], [])
+        self.assertEqual(legacy_future["legacy_dependencies"], ["rrr.reactor"])
+        self.assertEqual(legacy_future["gmf_headers"], [])
+        self.assertEqual(
+            legacy_future["type_mappings"], {"LegacyStdPair": "std::pair"}
+        )
+        self.assertIsNotNone(legacy_future["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.reactor"',
+            legacy_future["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"cpp_module":"std"', legacy_future["_cpp_module_index_bytes"]
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.future;\nimport rrr.reactor;\nimport std;\n",
+            legacy_future,
+            manifest,
+        )
+
+        legacy_fiber = modules["crate::runtime::legacy_fiber"]
+        self.assertEqual(
+            legacy_fiber["dependencies"], ["crate::base::legacy_basetypes"]
+        )
+        self.assertEqual(legacy_fiber["legacy_dependencies"], ["rrr.reactor"])
+        self.assertEqual(legacy_fiber["gmf_headers"], [])
+        self.assertEqual(
+            legacy_fiber["type_mappings"], {"LegacyFiber": "rrr::Fiber"}
+        )
+        self.assertIsNotNone(legacy_fiber["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.reactor"',
+            legacy_fiber["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.fiber;\n"
+            "import rrr.basetypes;\n"
+            "import rrr.reactor;\n",
+            legacy_fiber,
             manifest,
         )
 
@@ -928,6 +987,9 @@ cpp_module_index = "indexes/owner.toml"
                     idempotency,
                     legacy_rand,
                     fiber_channel,
+                    legacy_basetypes,
+                    legacy_future,
+                    legacy_fiber,
                     legacy_threading,
                     legacy_cpuinfo,
                 )
@@ -950,6 +1012,8 @@ cpp_module_index = "indexes/owner.toml"
                 "crate::rpc::channel",
                 "crate::rpc::inmemory_channel",
                 "crate::rpc::fiber_channel",
+                "crate::runtime::legacy_future",
+                "crate::runtime::legacy_fiber",
                 "crate::base::misc",
                 "crate::base::legacy_threading",
                 "crate::base::legacy_cpuinfo",

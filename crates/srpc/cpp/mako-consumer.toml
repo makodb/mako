@@ -3,8 +3,19 @@ profile = "mako-cpp-consumer-v1"
 crate_root = "crates/srpc"
 output_root = "crates/srpc/cpp/generated"
 cxx_namespace = "rrr"
-transpiler_git = "2873c78268bdeceeb72da293572afbf6f6620a5c"
-transpiler_sha256 = "f3e5a069c420ff13d826260e704b12a7dc8b6fc694a3aa1417e7ccf5f2672213"
+transpiler_git = "8d747bec1206ea063fe9e6d35d90fce6d9c43537"
+transpiler_sha256 = "0541a8da9c3cb4b6568e46d3f4f7279e94b5f6330c68adb49b6d7d3653044cfb"
+
+[[module]]
+source = "src/base/legacy_basetypes.rs"
+rust_module = "crate::base::legacy_basetypes"
+legacy_source = "src/rrr/base/basetypes.cpp"
+module_name = "rrr.basetypes"
+output = "rrr.basetypes.cppm"
+kind = "interface"
+dependencies = []
+gmf_headers = []
+cpp_module_index = "crates/srpc/cpp/indexes/basetypes.toml"
 
 [[module]]
 source = "src/wire/internal_protocol.rs"
@@ -134,6 +145,32 @@ legacy_dependencies = ["rrr.reactor"]
 gmf_headers = []
 type_mappings = { LegacyChannelConnectionBase = "rrr::ChannelConnectionBase", LegacyStdDeque = "std::deque", "std::marker::PhantomPinned" = "rusty::marker::PhantomPinned" }
 cpp_module_index = "crates/srpc/cpp/indexes/fiber_channel.toml"
+
+[[module]]
+source = "src/runtime/legacy_future.rs"
+rust_module = "crate::runtime::legacy_future"
+legacy_source = "src/rrr/reactor/future.cpp"
+module_name = "rrr.future"
+output = "rrr.future.cppm"
+kind = "interface"
+dependencies = []
+legacy_dependencies = ["rrr.reactor"]
+gmf_headers = []
+type_mappings = { LegacyStdPair = "std::pair" }
+cpp_module_index = "crates/srpc/cpp/indexes/future.toml"
+
+[[module]]
+source = "src/runtime/legacy_fiber.rs"
+rust_module = "crate::runtime::legacy_fiber"
+legacy_source = "src/rrr/reactor/fiber.cpp"
+module_name = "rrr.fiber"
+output = "rrr.fiber.cppm"
+kind = "interface"
+dependencies = ["crate::base::legacy_basetypes"]
+legacy_dependencies = ["rrr.reactor"]
+gmf_headers = []
+type_mappings = { LegacyFiber = "rrr::Fiber" }
+cpp_module_index = "crates/srpc/cpp/indexes/fiber.toml"
 
 [[module]]
 source = "src/base/misc.rs"
