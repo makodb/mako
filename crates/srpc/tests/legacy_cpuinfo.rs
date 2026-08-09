@@ -1,3 +1,12 @@
+mod base {
+    pub mod legacy_logging {
+        pub fn log_line(_level: i32, _line: i32, _file: *const i8, _message: &String) {
+            // The path-included CPUInfo owner uses this native-only sink so its
+            // parsing tests do not require the C++ logging runtime.
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[path = "../src/base/legacy_cpuinfo.rs"]
 mod legacy_cpuinfo;

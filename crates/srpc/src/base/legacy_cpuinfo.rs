@@ -23,8 +23,13 @@
 
 #![allow(non_camel_case_types)]
 #![allow(unsafe_code)]
+// The two logging calls retain their existing explicit unsafe scopes so the
+// generated C++ bodies remain byte-for-byte stable below ownership stamps.
+// Logging is now an owned safe Rust dependency, making those scopes redundant
+// to rustc but still useful as C++ safety-boundary annotations.
+#![allow(unused_unsafe)]
 
-use cpp::rrr::logging as cpp_logging;
+use crate::base::legacy_logging as cpp_logging;
 use cpp::rusty::sys as cpp_sys;
 use cpp::std as cpp_std;
 use std::sync::Mutex;
@@ -366,7 +371,8 @@ fn cpuinfo_parse_ulong_range(bytes: &[u8], start: usize, end: usize) -> u64 {
 
 // Cargo-only definitions for reserved `cpp::` imports.  The C++ consumer
 // suppresses this module and resolves the calls through a fail-closed symbol
-// index against `std`, `rusty`, and the legacy `rrr.logging` module.
+// index against `std` and `rusty`. Logging is an ordinary owned crate
+// dependency and therefore needs no Cargo-only shim here.
 #[allow(dead_code)]
 pub(crate) mod cpp {
     #[cfg(test)]
@@ -403,15 +409,6 @@ pub(crate) mod cpp {
             base: i32,
         ) -> usize {
             unsafe { ffi::strtoul(value, end, base) }
-        }
-    }
-
-    pub mod rrr {
-        pub mod logging {
-            pub unsafe fn log_line(_level: i32, _line: i32, _file: *const i8, _message: &String) {
-                // Native tests do not install the C++ logging sink.  Generated
-                // consumers call the real rrr.logging function directly.
-            }
         }
     }
 

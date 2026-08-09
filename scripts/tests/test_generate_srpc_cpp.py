@@ -950,16 +950,48 @@ cpp_module_index = "indexes/owner.toml"
             manifest,
         )
 
+        legacy_logging = modules["crate::base::legacy_logging"]
+        self.assertEqual(legacy_logging["dependencies"], [])
+        self.assertEqual(
+            legacy_logging["legacy_dependencies"], ["rrr.debugging"]
+        )
+        self.assertEqual(legacy_logging["gmf_headers"], [])
+        self.assertEqual(
+            legacy_logging["type_mappings"],
+            {
+                "LegacyCChar": "std::string::value_type",
+                "LegacyStdString": "std::string",
+            },
+        )
+        self.assertIsNotNone(legacy_logging["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.debugging"',
+            legacy_logging["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"cpp_module":"std"',
+            legacy_logging["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.logging;\n"
+            "import rrr.debugging;\n"
+            "import std;\n",
+            legacy_logging,
+            manifest,
+        )
+
         legacy_cpuinfo = modules["crate::base::legacy_cpuinfo"]
-        self.assertEqual(legacy_cpuinfo["dependencies"], [])
-        self.assertEqual(legacy_cpuinfo["legacy_dependencies"], ["rrr.logging"])
+        self.assertEqual(
+            legacy_cpuinfo["dependencies"], ["crate::base::legacy_logging"]
+        )
+        self.assertEqual(legacy_cpuinfo["legacy_dependencies"], [])
         self.assertEqual(legacy_cpuinfo["gmf_headers"], [])
         self.assertEqual(
             legacy_cpuinfo["type_mappings"],
             {"LegacyCChar": "std::string::value_type"},
         )
         self.assertIsNotNone(legacy_cpuinfo["_cpp_module_index_path"])
-        self.assertIn(
+        self.assertNotIn(
             b'"cpp_module":"rrr.logging"',
             legacy_cpuinfo["_cpp_module_index_bytes"],
         )
@@ -980,6 +1012,29 @@ cpp_module_index = "indexes/owner.toml"
             manifest,
         )
 
+        utils = modules["crate::rpc::utils"]
+        self.assertEqual(utils["dependencies"], ["crate::base::legacy_logging"])
+        self.assertEqual(utils["legacy_dependencies"], [])
+        self.assertEqual(utils["gmf_headers"], ["<netdb.h>"])
+        self.assertEqual(
+            utils["type_mappings"],
+            {
+                "LegacyAddrInfo": "addrinfo",
+                "LegacyStdString": "std::string",
+            },
+        )
+        self.assertIsNotNone(utils["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rusty"', utils["_cpp_module_index_bytes"]
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.utils;\n"
+            "import rrr.logging;\n"
+            "import rusty;\n",
+            utils,
+            manifest,
+        )
+
         for entry in modules.values():
             if any(
                 entry is indexed
@@ -991,7 +1046,9 @@ cpp_module_index = "indexes/owner.toml"
                     legacy_future,
                     legacy_fiber,
                     legacy_threading,
+                    legacy_logging,
                     legacy_cpuinfo,
+                    utils,
                 )
             ):
                 continue
@@ -1016,7 +1073,9 @@ cpp_module_index = "indexes/owner.toml"
                 "crate::runtime::legacy_fiber",
                 "crate::base::misc",
                 "crate::base::legacy_threading",
+                "crate::base::legacy_logging",
                 "crate::base::legacy_cpuinfo",
+                "crate::rpc::utils",
             ],
         )
 

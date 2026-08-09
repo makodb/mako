@@ -208,17 +208,43 @@ type_mappings = { LegacyPthreadCond = "pthread_cond_t", LegacyPthreadCondAttr = 
 cpp_module_index = "crates/srpc/cpp/indexes/threading.toml"
 
 [[module]]
+source = "src/base/legacy_logging.rs"
+rust_module = "crate::base::legacy_logging"
+legacy_source = "src/rrr/base/logging.cpp"
+module_name = "rrr.logging"
+output = "rrr.logging.cppm"
+kind = "interface"
+dependencies = []
+legacy_dependencies = ["rrr.debugging"]
+gmf_headers = []
+type_mappings = { LegacyCChar = "std::string::value_type", LegacyStdString = "std::string" }
+cpp_module_index = "crates/srpc/cpp/indexes/logging.toml"
+
+[[module]]
 source = "src/base/legacy_cpuinfo.rs"
 rust_module = "crate::base::legacy_cpuinfo"
 legacy_source = "src/rrr/misc/cpuinfo.cpp"
 module_name = "rrr.cpuinfo"
 output = "rrr.cpuinfo.cppm"
 kind = "interface"
-dependencies = []
-legacy_dependencies = ["rrr.logging"]
+dependencies = ["crate::base::legacy_logging"]
+legacy_dependencies = []
 gmf_headers = []
 type_mappings = { LegacyCChar = "std::string::value_type" }
 cpp_module_index = "crates/srpc/cpp/indexes/cpuinfo.toml"
+
+[[module]]
+source = "src/rpc/utils.rs"
+rust_module = "crate::rpc::utils"
+legacy_source = "src/rrr/rpc/utils.cpp"
+module_name = "rrr.utils"
+output = "rrr.utils.cppm"
+kind = "interface"
+dependencies = ["crate::base::legacy_logging"]
+legacy_dependencies = []
+gmf_headers = ["<netdb.h>"]
+type_mappings = { LegacyAddrInfo = "addrinfo", LegacyStdString = "std::string" }
+cpp_module_index = "crates/srpc/cpp/indexes/utils.toml"
 
 [[module]]
 source = "src/rpc/connection_state.rs"

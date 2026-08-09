@@ -19,6 +19,7 @@
 pub mod callback_wrapper;
 pub mod legacy_basetypes;
 pub mod legacy_cpuinfo;
+pub mod legacy_logging;
 pub mod legacy_rand;
 pub mod legacy_threading;
 pub mod log;

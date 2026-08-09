@@ -35,11 +35,3 @@ callable_signatures = ["SysInfo()"]
 [modules."rusty::sys".symbols."fs::read_to_string"]
 kind = "function"
 callable_signatures = ["Result<std::string,io::Error>(std::string_view)"]
-
-[modules."rrr::logging"]
-cpp_module = "rrr.logging"
-namespace = "rrr"
-
-[modules."rrr::logging".symbols.log_line]
-kind = "function"
-callable_signatures = ["void(int32_t,int32_t,const int8_t*,const std::string&)"]

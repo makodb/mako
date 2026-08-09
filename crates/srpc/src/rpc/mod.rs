@@ -23,6 +23,7 @@ pub mod request_options;
 pub mod request_queue;
 pub mod server;
 pub mod task;
+pub mod utils;
 
 pub use channel::ChannelError;
 
