@@ -28,6 +28,18 @@ dependencies = []
 gmf_headers = []
 
 [[module]]
+source = "src/rpc/serializable_envelope.rs"
+rust_module = "crate::rpc::serializable_envelope"
+legacy_source = "src/rrr/misc/serializable_envelope.cpp"
+module_name = "rrr.serializable_envelope"
+output = "rrr.serializable_envelope.cppm"
+kind = "interface"
+dependencies = ["crate::base::legacy_basetypes"]
+legacy_dependencies = ["rrr.debugging", "rrr.serializable"]
+gmf_headers = []
+cpp_module_index = "crates/srpc/cpp/indexes/serializable_envelope.toml"
+
+[[module]]
 source = "src/rpc/frame_codec.rs"
 rust_module = "crate::rpc::frame_codec"
 legacy_source = "src/rrr/rpc/frame_codec.cpp"

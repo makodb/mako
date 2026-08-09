@@ -21,6 +21,7 @@ pub mod pollable_proxy;
 pub mod reconnect_policy;
 pub mod request_options;
 pub mod request_queue;
+pub mod serializable_envelope;
 pub mod server;
 pub mod task;
 pub mod utils;

@@ -19,16 +19,16 @@ inside a legacy file that is about to be deleted is not progress.
 
 ## Execution status
 
-Nine generated graph slices are complete and gated. The manifest now owns 29
-C++ modules. The latest slice retired `logging` and `utils`, preserving their
-current C++ symbols, log bytes, and `AddrInfo` ownership while changing
-CPUInfo's logging edge from a declared legacy import to an ordinary
-manifest-owned Rust dependency.
+Ten generated graph slices are complete and gated. The manifest now owns 30
+C++ modules. The latest slice retired `serializable_envelope`, preserving its
+payload constraints, object layout, aliasing, registry lookup, and archive wire
+bytes while moving the native-Rust registry and type-erasure support into a
+Cargo-only shim that is suppressed from generated C++.
 
-Gate 144 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
+Gate 145 built cleanly, enumerated all 179 tests, retained `rpcbench` as the
 only executed failure, and preserved the exact 62-entry Not-Run set. The
-current census is **781 scaffold lines** plus the unchanged **35-line C ABI
-floor**: 421 scaffold lines have been retired since the 1,202-line post-pilot
+current census is **762 scaffold lines** plus the unchanged **35-line C ABI
+floor**: 440 scaffold lines have been retired since the 1,202-line post-pilot
 baseline.
 
 The reusable enablers are now live rather than planned: the consumer-module
@@ -51,16 +51,15 @@ slots. The emitter pin also preserves source order when generating aliases for
 reassigned parameters; 40 independent CPUInfo regenerations and ten complete
 profile checks were byte-stable under that fix.
 
-The 10 remaining named-module interfaces account for exactly **601** of the
-current 781 scaffold lines. Retiring all of them leaves a precisely identified
+The 9 remaining named-module interfaces account for exactly **582** of the
+current 762 scaffold lines. Retiring all of them leaves a precisely identified
 180-line non-interface envelope: `std_compat.hpp` (93), `rrr.hpp` (30), the
 fiber C header's scaffold portion (23), import shims (18), the selected epoll
-implementation unit (10), and `base/all.hpp` (6). Independently proven owners
-for `serializable_envelope` (19 lines) and `load_balancer` (11) are next; they
-are kept as separate gates because one crosses the legacy serialization
-registry and the other uses a Rust-only hidden trait protocol. Landing both
-would leave **751** scaffold lines: 571 in eight hard named interfaces and the
-fixed 180-line envelope.
+implementation unit (10), and `base/all.hpp` (6). The independently proven
+`load_balancer` owner (11 lines) is next and remains a separate gate because it
+uses a public, doc-hidden Rust trait protocol that is intentionally suppressed
+from generated C++. Landing it would leave **751** scaffold lines: 571 in eight
+hard named interfaces and the fixed 180-line envelope.
 
 ## Non-negotiable invariants
 

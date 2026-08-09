@@ -886,6 +886,40 @@ cpp_module_index = "indexes/owner.toml"
             frame_codec["type_mappings"]["LegacyCString"], "const char*"
         )
 
+        serializable_envelope = modules["crate::rpc::serializable_envelope"]
+        self.assertEqual(
+            serializable_envelope["dependencies"],
+            ["crate::base::legacy_basetypes"],
+        )
+        self.assertEqual(
+            serializable_envelope["legacy_dependencies"],
+            ["rrr.debugging", "rrr.serializable"],
+        )
+        self.assertEqual(serializable_envelope["gmf_headers"], [])
+        self.assertEqual(serializable_envelope["type_mappings"], {})
+        self.assertIsNotNone(serializable_envelope["_cpp_module_index_path"])
+        self.assertIn(
+            b'"cpp_module":"rrr.debugging"',
+            serializable_envelope["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"cpp_module":"rrr.serializable"',
+            serializable_envelope["_cpp_module_index_bytes"],
+        )
+        self.assertIn(
+            b'"cpp_module":"rusty"',
+            serializable_envelope["_cpp_module_index_bytes"],
+        )
+        generator.validate_dependency_imports(
+            "export module rrr.serializable_envelope;\n"
+            "import rrr.basetypes;\n"
+            "import rrr.debugging;\n"
+            "import rrr.serializable;\n"
+            "import rusty;\n",
+            serializable_envelope,
+            manifest,
+        )
+
         misc = modules["crate::base::misc"]
         self.assertEqual(misc["dependencies"], [])
         self.assertEqual(
@@ -1048,6 +1082,7 @@ cpp_module_index = "indexes/owner.toml"
                     legacy_threading,
                     legacy_logging,
                     legacy_cpuinfo,
+                    serializable_envelope,
                     utils,
                 )
             ):

@@ -1,0 +1,61 @@
+version = 1
+
+[modules."rrr::debugging"]
+cpp_module = "rrr.debugging"
+namespace = "rrr"
+
+[modules."rrr::debugging".symbols.verify]
+kind = "function_template"
+callable_signatures = ["void(bool)"]
+
+[modules."rrr::serializable"]
+cpp_module = "rrr.serializable"
+namespace = "rrr"
+
+[modules."rrr::serializable".symbols.BinaryWriteArchive]
+kind = "type"
+callable_signatures = []
+
+[modules."rrr::serializable".symbols.BinaryReadArchive]
+kind = "type"
+callable_signatures = []
+
+[modules."rrr::serializable".symbols.SerializableBase]
+kind = "type"
+callable_signatures = []
+
+[modules."rrr::serializable".symbols.SerializableProxy]
+kind = "type"
+callable_signatures = []
+
+[modules."rrr::serializable".symbols."details::SerializableSharedPtrHolder"]
+callable_signatures = ["details::SerializableSharedPtrHolder<T>(rusty::Arc<T>)"]
+kind = "type_template_constructor"
+
+[modules."rrr::serializable".symbols.serializable_holder_of]
+kind = "function_template"
+callable_signatures = ["const details::SerializableSharedPtrHolder<T>*(const SerializableBase*)"]
+
+[modules."rrr::serializable".symbols."Serialize_::serialize"]
+kind = "function_template"
+callable_signatures = ["void(const v32&,BinaryWriteArchive&)"]
+
+[modules."rrr::serializable".symbols."Deserialize_::deserialize"]
+kind = "function_template"
+callable_signatures = ["void(v32&,BinaryReadArchive&)"]
+
+[modules."rrr::serializable".symbols."SerializableRegistry::create"]
+kind = "function"
+callable_signatures = ["SerializableProxy(int32_t)"]
+
+[modules."rusty"]
+cpp_module = "rusty"
+namespace = "rusty"
+
+[modules."rusty".symbols."Arc::get"]
+kind = "method"
+callable_signatures = ["const T*()"]
+
+[modules."rusty".symbols."ptr::null"]
+kind = "function_template"
+callable_signatures = ["const SerializableBase*()"]
