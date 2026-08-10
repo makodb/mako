@@ -17,6 +17,75 @@ permissions:
 #  cancel-in-progress: false
 
 jobs:
+  rrr-goal0-provider-matrix:
+    name: Goal-0 RRR providers (${{ matrix.crate_cpp_modules }})
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        crate_cpp_modules: [OFF, ON]
+    env:
+      CMAKE_GENERATOR: "Ninja"
+      CI_MAKE_JOBS: "4"
+      GOAL0_BUILD_DIR: build-goal0-${{ matrix.crate_cpp_modules }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure provider mode
+        run: >-
+          cmake -S . -B "${GOAL0_BUILD_DIR}" -G "${CMAKE_GENERATOR}"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          -DRRR_USE_CRATE_CPP_MODULES=${{ matrix.crate_cpp_modules }}
+
+      - name: Build production, independent oracle, and dual gate
+        run: >-
+          cmake --build "${GOAL0_BUILD_DIR}"
+          --parallel "${CI_MAKE_JOBS}"
+          --target rrr_goal0_dual_compile test_rpc_frame_codec
+          -- -k 0
+
+      - name: Verify emitter rebuild invalidates crate generation
+        shell: bash
+        run: |
+          set -euo pipefail
+          emitter_path="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-executable.txt")"
+          emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-input.txt")"
+          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.internal_protocol.cppm"
+
+          steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
+          printf '%s\n' "${steady_output}"
+          if grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${steady_output}"; then
+            echo 'crate generation reran without an emitter or source change' >&2
+            exit 1
+          fi
+
+          emitter_before="$(stat -c %Y "${emitter_path}")"
+          generated_before="$(stat -c %Y "${generated_path}")"
+          sleep 1
+          touch "${emitter_input}"
+          changed_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
+          printf '%s\n' "${changed_output}"
+
+          grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${changed_output}"
+          test "$(stat -c %Y "${emitter_path}")" -gt "${emitter_before}"
+          test "$(stat -c %Y "${generated_path}")" -gt "${generated_before}"
+
+      - name: Run focused production consumer
+        run: >-
+          ctest --test-dir "${GOAL0_BUILD_DIR}"
+          --output-on-failure
+          -R '^test_rpc_frame_codec$'
+
   build-and-test:
     runs-on: ubuntu-24.04
     container:

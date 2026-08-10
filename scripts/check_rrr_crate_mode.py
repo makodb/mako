@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check rusty-cpp crate output against the production rrr module ABI."""
+"""Check rusty-cpp crate output against independent and production rrr ABIs."""
 
 from __future__ import annotations
 
@@ -502,20 +502,23 @@ def compile_module(
     clang: Path,
     root: Path,
     include: Path,
-    output: Path,
+    source_dir: Path,
+    work_dir: Path,
     module_name: str,
+    cxx_flags: list[str],
 ) -> Path:
-    source = output / f"{module_name}.cppm"
-    pcm = output / f"{module_name}.pcm"
-    object_file = output / f"{module_name}.o"
+    source = source_dir / f"{module_name}.cppm"
+    pcm = work_dir / f"{module_name}.pcm"
+    object_file = work_dir / f"{module_name}.o"
     run(
         [
             str(clang),
             "-std=c++23",
+            *cxx_flags,
             "-Wno-deprecated-declarations",
             "-I",
             str(include),
-            f"-fprebuilt-module-path={output}",
+            f"-fprebuilt-module-path={work_dir}",
             "--precompile",
             str(source),
             "-o",
@@ -527,7 +530,8 @@ def compile_module(
         [
             str(clang),
             "-std=c++23",
-            f"-fprebuilt-module-path={output}",
+            *cxx_flags,
+            f"-fprebuilt-module-path={work_dir}",
             "-c",
             str(pcm),
             "-o",
@@ -538,61 +542,88 @@ def compile_module(
     return object_file
 
 
-def check(args: argparse.Namespace) -> None:
-    root = repository_root()
-    transpiler = executable(root, args.transpiler, "rusty-cpp transpiler")
-    verify_pinned_toolchain(root, transpiler)
-    require_extraction_check(root, transpiler)
-    modules = load_owned_modules(root)
-    clang = executable(root, args.clang, "Clang C++ compiler")
-    nm = executable(root, args.nm, "nm")
-    reference = Path(args.reference_library)
-    if not reference.is_absolute():
-        reference = root / reference
-    reference = reference.resolve()
-    if not reference.is_file():
-        raise GateError(f"production reference library is unavailable: {reference}")
+def grouped_link_inputs(paths: list[Path]) -> list[str]:
+    rendered = [str(path) for path in paths]
+    if sys.platform.startswith("linux"):
+        return ["-Wl,--start-group", *rendered, "-Wl,--end-group"]
+    return rendered
 
-    with tempfile.TemporaryDirectory(prefix="rrr-crate-mode-") as temporary:
-        output = Path(temporary)
-        run(
-            [
-                str(transpiler),
-                "--crate",
-                "src/rrr/Cargo.toml",
-                "--output-dir",
-                str(output),
-                "--cxx-namespace",
-                "rrr",
-            ],
-            root,
-        )
 
-        require_cpp_surfaces(output, modules)
-        require_zero_hand_slots(output / "rusty_hand_slots.md")
-        include = root / "third-party/rusty-cpp/include"
+def resolve_file(root: Path, raw: str, description: str) -> Path:
+    path = Path(raw)
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    if not path.is_file():
+        raise GateError(f"{description} is unavailable: {path}")
+    return path
+
+
+def resolve_generated_dir(root: Path, raw: str) -> Path:
+    output = Path(raw)
+    if not output.is_absolute():
+        output = root / output
+    output = output.resolve()
+    if not output.is_dir():
+        raise GateError(f"generated crate directory is unavailable: {output}")
+    return output
+
+
+def check_generated_output(
+    *,
+    root: Path,
+    output: Path,
+    modules: list[extraction.ModuleEntry],
+    clang: Path,
+    nm: Path,
+    reference: Path,
+    production: Path | None,
+    runtime_libraries: list[Path],
+    cxx_flags: list[str],
+    link_flags: list[str],
+) -> None:
+    require_cpp_surfaces(output, modules)
+    require_zero_hand_slots(output / "rusty_hand_slots.md")
+    include = root / "third-party/rusty-cpp/include"
+
+    # Compilation products live outside the build-tree generation directory.
+    # That directory remains a deterministic crate-output census shared by the
+    # production target and this gate.
+    with tempfile.TemporaryDirectory(prefix="rrr-crate-mode-compile-") as temporary:
+        work = Path(temporary)
         generated_objects = [
             compile_module(
                 clang,
                 root,
                 include,
                 output,
+                work,
                 module.cpp_module,
+                cxx_flags,
             )
             for module in modules
         ]
-        compile_module(clang, root, include, output, "rrr")
+        # Compile the partial umbrella only after every child BMI exists. It is
+        # a syntax/import-closure proof, not a production provider or link input.
+        compile_module(
+            clang,
+            root,
+            include,
+            output,
+            work,
+            "rrr",
+            cxx_flags,
+        )
 
-        importer = output / "importer.cpp"
-        importer_object = output / "importer.o"
-        generated_importer = output / "importer-generated"
-        production_importer = output / "importer-production"
+        importer = work / "importer.cpp"
+        importer_object = work / "importer.o"
         importer.write_text(importer_source(), encoding="utf-8")
         run(
             [
                 str(clang),
                 "-std=c++23",
-                f"-fprebuilt-module-path={output}",
+                *cxx_flags,
+                f"-fprebuilt-module-path={work}",
                 "-c",
                 str(importer),
                 "-o",
@@ -600,30 +631,31 @@ def check(args: argparse.Namespace) -> None:
             ],
             root,
         )
-        run(
-            [
-                str(clang),
-                "-std=c++23",
-                str(importer_object),
-                *(str(path) for path in generated_objects),
-                "-o",
-                str(generated_importer),
-            ],
-            root,
-        )
-        run([str(generated_importer)], root)
-        run(
-            [
-                str(clang),
-                "-std=c++23",
-                str(importer_object),
-                str(reference),
-                "-o",
-                str(production_importer),
-            ],
-            root,
-        )
-        run([str(production_importer)], root)
+
+        link_sets: list[tuple[str, list[Path]]] = [
+            ("generated", [*generated_objects, *runtime_libraries]),
+            ("inline-reference", [reference, *runtime_libraries]),
+        ]
+        if production is not None:
+            link_sets.append(
+                ("production", [production, *runtime_libraries])
+            )
+        for label, link_inputs in link_sets:
+            executable_path = work / f"importer-{label}"
+            run(
+                [
+                    str(clang),
+                    "-std=c++23",
+                    *cxx_flags,
+                    str(importer_object),
+                    *grouped_link_inputs(link_inputs),
+                    *link_flags,
+                    "-o",
+                    str(executable_path),
+                ],
+                root,
+            )
+            run([str(executable_path)], root)
 
         for module, generated_object in zip(
             modules, generated_objects, strict=True
@@ -636,7 +668,7 @@ def check(args: argparse.Namespace) -> None:
             )
             require_expected_symbols(
                 module.cpp_module,
-                "production reference library",
+                "independent inline reference library",
                 reference_symbols,
             )
             require_expected_symbols(
@@ -647,13 +679,105 @@ def check(args: argparse.Namespace) -> None:
             if generated_symbols != reference_symbols:
                 raise GateError(
                     f"crate-generated {module.cpp_module} ABI differs from "
-                    "production reference ABI"
+                    "the independent inline reference ABI"
                 )
 
+            if production is not None:
+                production_symbols = module_symbols(
+                    nm, root, production, module.cpp_module
+                )
+                require_expected_symbols(
+                    module.cpp_module,
+                    "production library",
+                    production_symbols,
+                )
+                if production_symbols != reference_symbols:
+                    raise GateError(
+                        f"production {module.cpp_module} ABI differs from "
+                        "the independent inline reference ABI"
+                    )
+
+
+def check(args: argparse.Namespace) -> None:
+    root = repository_root()
+    transpiler = executable(root, args.transpiler, "rusty-cpp transpiler")
+    verify_pinned_toolchain(root, transpiler)
+    require_extraction_check(root, transpiler)
+    modules = load_owned_modules(root)
+    clang = executable(root, args.clang, "Clang C++ compiler")
+    nm = executable(root, args.nm, "nm")
+    reference = resolve_file(
+        root, args.reference_library, "independent inline reference library"
+    )
+    production_raw = getattr(args, "production_library", None)
+    production = (
+        resolve_file(root, production_raw, "production library")
+        if production_raw
+        else None
+    )
+    if production is not None and production == reference:
+        raise GateError(
+            "production library and independent inline reference library "
+            "must be different artifacts"
+        )
+    runtime_libraries = [
+        resolve_file(root, raw, "runtime library")
+        for raw in (getattr(args, "runtime_library", None) or [])
+    ]
+    cxx_flags = list(getattr(args, "cxx_flag", None) or [])
+    link_flags = list(getattr(args, "link_flag", None) or [])
+
+    generated_raw = getattr(args, "generated_dir", None)
+    if generated_raw:
+        output = resolve_generated_dir(root, generated_raw)
+        check_generated_output(
+            root=root,
+            output=output,
+            modules=modules,
+            clang=clang,
+            nm=nm,
+            reference=reference,
+            production=production,
+            runtime_libraries=runtime_libraries,
+            cxx_flags=cxx_flags,
+            link_flags=link_flags,
+        )
+    else:
+        with tempfile.TemporaryDirectory(prefix="rrr-crate-mode-") as temporary:
+            output = Path(temporary)
+            run(
+                [
+                    str(transpiler),
+                    "--crate",
+                    "src/rrr/Cargo.toml",
+                    "--output-dir",
+                    str(output),
+                    "--cxx-namespace",
+                    "rrr",
+                ],
+                root,
+            )
+            check_generated_output(
+                root=root,
+                output=output,
+                modules=modules,
+                clang=clang,
+                nm=nm,
+                reference=reference,
+                production=production,
+                runtime_libraries=runtime_libraries,
+                cxx_flags=cxx_flags,
+                link_flags=link_flags,
+            )
+
     symbol_count = sum(len(spec.symbols) for spec in ABI_SPECS.values())
+    production_label = (
+        " and production libraries" if production is not None else ""
+    )
     print(
-        f"checked whole rrr crate ({len(modules) + 1} modules, 0 hand slots), "
-        "combined importer against generated objects and production library, "
+        f"checked whole rrr crate ({len(modules) + 1} modules compiled, "
+        "partial root compile-only, 0 hand slots), combined importer against generated "
+        f"objects and the independent inline reference{production_label}, "
         f"AvgStat layout/runtime, and {symbol_count} exact ABI symbols"
     )
 
@@ -665,7 +789,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--reference-object",
         dest="reference_library",
         required=True,
-        help="production librrr archive (legacy --reference-object is accepted)",
+        help=(
+            "independently compiled inline-carrier archive "
+            "(legacy --reference-object is accepted)"
+        ),
+    )
+    parser.add_argument(
+        "--production-library",
+        help="production librrr archive to link/run and compare against the oracle",
+    )
+    parser.add_argument(
+        "--generated-dir",
+        help=(
+            "pre-generated rusty-cpp crate output directory; when omitted, "
+            "the gate generates into a temporary directory"
+        ),
+    )
+    parser.add_argument(
+        "--runtime-library",
+        action="append",
+        default=[],
+        help=(
+            "support archive appended to every link lane; may be repeated"
+        ),
+    )
+    parser.add_argument(
+        "--cxx-flag",
+        action="append",
+        default=[],
+        help="compiler-driver flag used for module compilation and linking",
+    )
+    parser.add_argument(
+        "--link-flag",
+        action="append",
+        default=[],
+        help="additional flag appended to every link command",
     )
     parser.add_argument(
         "--transpiler",

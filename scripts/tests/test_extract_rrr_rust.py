@@ -768,6 +768,164 @@ class CrateModeGateTests(unittest.TestCase):
         ), mock.patch.object(GATE.subprocess, "run", return_value=clean):
             GATE.verify_pinned_toolchain(Path("/repository"), Path("/tool"))
 
+    def test_build_tree_output_is_reused_without_second_generation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-gate-reuse-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            generated.mkdir()
+            reference = root / "inline.a"
+            production = root / "production.a"
+            reference.touch()
+            production.touch()
+            args = GATE.argparse.Namespace(
+                transpiler="transpiler",
+                clang="clang++",
+                nm="nm",
+                reference_library=str(reference),
+                production_library=str(production),
+                generated_dir=str(generated),
+                runtime_library=[],
+                cxx_flag=["-stdlib=libc++"],
+                link_flag=["-lc++abi"],
+            )
+            modules = [mock.Mock(cpp_module="rrr.internal_protocol")]
+            with mock.patch.object(
+                GATE, "repository_root", return_value=root
+            ), mock.patch.object(
+                GATE,
+                "executable",
+                side_effect=[Path("/transpiler"), Path("/clang++"), Path("/nm")],
+            ), mock.patch.object(
+                GATE, "verify_pinned_toolchain"
+            ), mock.patch.object(
+                GATE, "require_extraction_check"
+            ), mock.patch.object(
+                GATE, "load_owned_modules", return_value=modules
+            ), mock.patch.object(
+                GATE, "check_generated_output"
+            ) as check_output, mock.patch.object(
+                GATE, "run"
+            ) as run:
+                GATE.check(args)
+
+            run.assert_not_called()
+            check_output.assert_called_once_with(
+                root=root,
+                output=generated,
+                modules=modules,
+                clang=Path("/clang++"),
+                nm=Path("/nm"),
+                reference=reference,
+                production=production,
+                runtime_libraries=[],
+                cxx_flags=["-stdlib=libc++"],
+                link_flags=["-lc++abi"],
+            )
+
+    def test_production_archive_cannot_be_its_own_reference(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-gate-oracle-test-") as temporary:
+            root = Path(temporary)
+            archive = root / "librrr.a"
+            archive.touch()
+            args = GATE.argparse.Namespace(
+                transpiler="transpiler",
+                clang="clang++",
+                nm="nm",
+                reference_library=str(archive),
+                production_library=str(archive),
+                generated_dir=str(root),
+                runtime_library=[],
+                cxx_flag=[],
+                link_flag=[],
+            )
+            with mock.patch.object(
+                GATE, "repository_root", return_value=root
+            ), mock.patch.object(
+                GATE,
+                "executable",
+                side_effect=[Path("/transpiler"), Path("/clang++"), Path("/nm")],
+            ), mock.patch.object(
+                GATE, "verify_pinned_toolchain"
+            ), mock.patch.object(
+                GATE, "require_extraction_check"
+            ), mock.patch.object(
+                GATE, "load_owned_modules", return_value=[]
+            ):
+                with self.assertRaisesRegex(
+                    GATE.GateError, "must be different artifacts"
+                ):
+                    GATE.check(args)
+
+    def test_generated_gate_compiles_children_before_partial_root(self) -> None:
+        modules = [
+            mock.Mock(cpp_module="rrr.internal_protocol"),
+            mock.Mock(cpp_module="rrr.stat"),
+        ]
+
+        def symbols_for_module(
+            _nm: Path, _root: Path, _path: Path, module_name: str
+        ) -> frozenset[tuple[str, str]]:
+            return GATE.ABI_SPECS[module_name].symbols
+
+        def compiled_object(
+            _clang: Path,
+            _root: Path,
+            _include: Path,
+            _source: Path,
+            _work: Path,
+            module_name: str,
+            _cxx_flags: list[str],
+        ) -> Path:
+            return Path(f"/{module_name}.o")
+
+        with tempfile.TemporaryDirectory(prefix="rrr-gate-children-test-") as temporary:
+            output = Path(temporary)
+            with mock.patch.object(
+                GATE, "require_cpp_surfaces"
+            ), mock.patch.object(
+                GATE, "require_zero_hand_slots"
+            ), mock.patch.object(
+                GATE,
+                "compile_module",
+                side_effect=compiled_object,
+            ) as compile_module, mock.patch.object(
+                GATE, "run"
+            ) as run, mock.patch.object(
+                GATE, "module_symbols", side_effect=symbols_for_module
+            ):
+                GATE.check_generated_output(
+                    root=Path("/repository"),
+                    output=output,
+                    modules=modules,
+                    clang=Path("/clang++"),
+                    nm=Path("/nm"),
+                    reference=Path("/inline.a"),
+                    production=Path("/production.a"),
+                    runtime_libraries=[Path("/rusty.a")],
+                    cxx_flags=["-stdlib=libc++"],
+                    link_flags=["-lc++abi"],
+                )
+
+        compiled_names = [call.args[-2] for call in compile_module.call_args_list]
+        self.assertEqual(
+            compiled_names,
+            ["rrr.internal_protocol", "rrr.stat", "rrr"],
+        )
+        link_commands = [
+            call.args[0]
+            for call in run.call_args_list
+            if "-o" in call.args[0]
+            and any("importer-" in argument for argument in call.args[0])
+        ]
+        self.assertEqual(len(link_commands), 3)
+        for command in link_commands:
+            self.assertIn("-stdlib=libc++", command)
+            self.assertIn("/rusty.a", command)
+            self.assertIn("-lc++abi", command)
+            if GATE.sys.platform.startswith("linux"):
+                self.assertIn("-Wl,--start-group", command)
+                self.assertIn("-Wl,--end-group", command)
+
     def test_gate_abi_ratchet_covers_every_manifest_module(self) -> None:
         root = Path("/repository")
         modules = [
