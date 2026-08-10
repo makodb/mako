@@ -18,7 +18,11 @@
 # Usage: scripts/rrr_dsl_check.sh [path/to/rusty-cpp-transpiler]
 set -uo pipefail
 
-TRANSPILER="${1:-/var/tmp/rusty-cpp-fix/target/release/rusty-cpp-transpiler}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPOSITORY_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${REPOSITORY_ROOT}" || exit 2
+
+TRANSPILER="${1:-${REPOSITORY_ROOT}/third-party/rusty-cpp/target/release/rusty-cpp-transpiler}"
 if [[ ! -x "$TRANSPILER" ]]; then
   echo "no transpiler at $TRANSPILER" >&2
   exit 2

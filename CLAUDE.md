@@ -96,6 +96,13 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 - `src/rrr/`: Custom RPC framework and networking layer
 - `config/`: YAML configuration files for experiments and cluster topology
 
+The `rrr` Rust package is rooted at `src/rrr/Cargo.toml`. Its `.rs` module
+inputs are generated mechanically from the inline `RUSTYCPP_RUST` blocks named
+by `src/rrr/rust-extraction.toml`; they are not a parallel implementation.
+Never recreate a top-level `crates/srpc` hand port. A successful Cargo build
+proves only the manifest-selected extraction coverage, not that all of
+`src/rrr` has been converted or accepted by rustc.
+
 ### Key Protocol Implementations
 The system implements multiple distributed transaction protocols:
 - **Janus** (`src/deptran/janus/`): Main protocol with graph-based dependency tracking
@@ -210,14 +217,18 @@ Exceptions that stay std:
  - Pre-existing code not in your change's blast radius. File a
    follow-up if it's blocking something.
 
-**IMPORTANT**: The `third-party/rusty-cpp` submodule is pinned to the
-`verify-stack` branch of shuaimu/rusty-cpp (upstream `main` plus the rrr
-transpiler fixes not yet landed on main). Keep that branch
-**frequently synced with upstream `main`** (merge main in, run the
-transpiler test suite, push, bump the pin) so we never fall behind
-upstream bug fixes. Do not re-pin to `main` until the fix branches
-land there; do not carry uncommitted local patches — every pinned SHA
-must be reachable from a pushed branch.
+**IMPORTANT**: For Goal 0 extraction, the `third-party/rusty-cpp`
+gitlink is pinned to commit
+`ba70b6ab6d8b38bfc5107ce963c6766d460b0e42` on the pushed
+`goal0-inline-rust-extract` branch. That branch descends from the
+pre-pivot `2b261ccc0915ea99cbab02631ccc5bea19ac82c7` pin only through
+the Goal 0 extractor and build-attestation commits. Do not move this
+gitlink to `verify-stack`: that branch contains
+support for the discarded parallel `crates/srpc` pivot. Base any further
+Goal 0 transpiler work on the current approved pin (or a separately
+reviewed upstream base), run the transpiler suite, push the commit to a
+reachable branch, and bump the gitlink in the same Mako commit. Never pin
+uncommitted local patches.
 
 #### Required Safety Annotations
 Every function and significant code block must have safety annotations:

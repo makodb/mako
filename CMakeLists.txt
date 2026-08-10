@@ -217,6 +217,8 @@ set(ENABLE_BORROW_CHECKING OFF CACHE BOOL "Enable RustyCpp borrow checking")
 # Configure and enable rusty-cpp-checker
 include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake)
 set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
+include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppTranspiler.cmake)
+create_rustycpp_transpiler_build_target()
 
 # NOTE: RustyCppSubmodule.cmake already computes CPP_BORROW_CHECKER and creates
 # build targets. Do not override checker paths here or Docker CARGO_TARGET_DIR
@@ -229,7 +231,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED libdpdk)
 
 # Find Python for txlog_core/txlog_bench build surfaces.
-find_package(Python3 COMPONENTS Development REQUIRED)
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 
 # Define paths
 set(mkfile_path "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
@@ -2625,6 +2627,7 @@ if(BUILD_TESTS)
     if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_rrr)
         add_dependencies(run_tests borrow_check_rrr)
     endif()
+    add_dependencies(run_tests rrr_goal0_dual_compile)
 
     # Add borrow checking for test files if enabled
     # NOTE: Test borrow checking is currently disabled due to false positives

@@ -1046,7 +1046,7 @@ impl<T1, T2> Serialize for std::pair<T1, T2> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=824c09293bee6aa969b42d82543638d9154e9673ff8b44f8ad754fc82e0f8755*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=5d3ef56b43300c71459919ff087e1c50aa5c0260c4d85e694559672482aeff6f*/
 class Serialize;
 
 // Extension trait free-function forward declarations

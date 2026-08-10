@@ -286,7 +286,7 @@ compile() {
     cmake -S . -B "${BUILD_DIR}" -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 2>&1 | tee build.log
     # -- -k 0: keep going past the first failure so one build surfaces ALL
     # compile errors (ninja default stops at the first batch).
-    cmake --build "${BUILD_DIR}" --parallel "${jobs}" -- -k 0 2>&1 | tee -a build.log
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" --target all rrr_goal0_dual_compile -- -k 0 2>&1 | tee -a build.log
     # Generate configuration
     bash ./src/mako/update_config.sh
 }

@@ -20,25 +20,25 @@ export namespace rrr {
 // carries `<server_instance_id>` after `<error_code>`); the low 31
 // bits hold the payload size.
 #if RUSTYCPP_RUST
-const kInternalHeartbeatRpcId: i32 = i32::MIN;
-const kResponseHeaderExtFlag: u32 = 0x80000000;
-const kResponseSizeMask: u32 = 0x7fffffff;
+pub const kInternalHeartbeatRpcId: i32 = i32::MIN;
+pub const kResponseHeaderExtFlag: u32 = 0x80000000;
+pub const kResponseSizeMask: u32 = 0x7fffffff;
 
-fn response_has_extended_header(encoded_size: i32) -> bool {
+pub fn response_has_extended_header(encoded_size: i32) -> bool {
     ((encoded_size as u32) & kResponseHeaderExtFlag) != 0
 }
 
-fn response_payload_size(encoded_size: i32) -> i32 {
+pub fn response_payload_size(encoded_size: i32) -> i32 {
     ((encoded_size as u32) & kResponseSizeMask) as i32
 }
 
-fn encode_response_size(payload_size: i32, extended_header: bool) -> i32 {
+pub fn encode_response_size(payload_size: i32, extended_header: bool) -> i32 {
     let base: u32 = (payload_size as u32) & kResponseSizeMask;
     let out: u32 = if extended_header { base | kResponseHeaderExtFlag } else { base };
     out as i32
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=internal_protocol.1 version=1 rust_sha256=94c111947385b2bc7e509d619d81feea1b690f97166051d92f3c10f3dae88f6e*/
+/*RUSTYCPP:GEN-BEGIN id=internal_protocol.1 version=1 rust_sha256=bd1d65d821abf33a30b8d3e4ac1b01c58c35d53b3bdb8a31772eb30b8b1d692c*/
 constexpr int32_t kInternalHeartbeatRpcId = std::numeric_limits<int32_t>::min();
 constexpr uint32_t kResponseHeaderExtFlag = static_cast<uint32_t>(2147483648);
 constexpr uint32_t kResponseSizeMask = static_cast<uint32_t>(2147483647);

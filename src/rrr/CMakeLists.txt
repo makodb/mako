@@ -247,3 +247,57 @@ if(NOT TARGET rrr)
         )
     endif()
 endif()
+
+# Goal 0 is guarded at both source and produced-archive boundaries. These are
+# custom targets (rather than configure-time checks) so every production build
+# observes changes made after CMake configuration.
+if(NOT TARGET build_rusty_cpp_transpiler)
+    message(FATAL_ERROR "rrr Goal-0 gates require build_rusty_cpp_transpiler")
+endif()
+find_program(RRR_BASH_EXECUTABLE NAMES bash REQUIRED)
+find_program(RRR_CARGO_EXECUTABLE NAMES cargo REQUIRED)
+
+add_custom_target(rrr_goal0_source_gate
+    COMMAND
+        "${RRR_BASH_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/rrr_dsl_check.sh"
+        "${RUSTYCPP_TRANSPILER}"
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/extract_rrr_rust.py"
+        --check
+        --transpiler "${RUSTYCPP_TRANSPILER}"
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/tests/test_extract_rrr_rust.py"
+    COMMAND
+        "${CMAKE_COMMAND}"
+        -E env
+        "RUSTFLAGS=-Dwarnings"
+        "${RRR_CARGO_EXECUTABLE}"
+        test
+        --locked
+        --all-targets
+        --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Checking rrr inline Rust, extraction, and rustc crate mode"
+    USES_TERMINAL
+    VERBATIM
+)
+add_dependencies(rrr_goal0_source_gate build_rusty_cpp_transpiler)
+add_dependencies(rrr rrr_goal0_source_gate)
+
+add_custom_target(rrr_goal0_dual_compile ALL
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/check_rrr_crate_mode.py"
+        --transpiler "${RUSTYCPP_TRANSPILER}"
+        --reference-object "$<TARGET_FILE:rrr>"
+        --clang "${CMAKE_CXX_COMPILER}"
+        --nm "${CMAKE_NM}"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Checking whole rrr crate through rustc and rusty-cpp"
+    USES_TERMINAL
+    VERBATIM
+)
+add_dependencies(rrr_goal0_dual_compile rrr)
