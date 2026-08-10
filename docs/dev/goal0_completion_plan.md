@@ -10,17 +10,21 @@ been removed; it cannot be used as evidence for either half.
 The actual Cargo package now starts at `src/rrr/Cargo.toml`. Its checked-in
 Rust module inputs are generated from ordered inline-DSL block IDs through
 `scripts/extract_rrr_rust.py`; rustc and rusty-cpp consume those same generated
-bytes. The first two slices cover `rpc/internal_protocol.cpp` block
-`internal_protocol.1` and `misc/stat.cpp` block `stat.1`. They preserve the
-production `rrr.internal_protocol` and `rrr.stat` namespaces, their exact
-twelve-symbol combined ABI, and the `AvgStat` aggregate layout and runtime
-behavior.
+bytes. The first three slices cover `rpc/internal_protocol.cpp` block
+`internal_protocol.1`, `misc/stat.cpp` block `stat.1`, and all seven DSL blocks
+in `rpc/errors.cpp`. They preserve the production `rrr.internal_protocol`,
+`rrr.stat`, and `rrr.errors` module identities, their exact 18-symbol combined
+strong ABI, the `AvgStat` aggregate layout/runtime behavior, and every public
+RPC-error discriminant, name, category, and retry predicate.
 
-This is deliberately partial: two selected production blocks are not the whole
-rrr source graph. `cargo test --manifest-path src/rrr/Cargo.toml` must never be
-reported as full Goal 0 completion until the extraction manifest covers the
-entire intended DSL graph and the hand-written-C++ half below also reaches
-zero.
+This is deliberately partial: the manifest owns three of 38 named modules,
+three of 39 module-source units, nine of 446 DSL blocks, and 184 of 11,482
+noncomment DSL code lines. The 11,482-line denominator is the pre-enrollment
+semantic DSL baseline; extraction copies owned bytes into the crate without
+deleting their inline source blocks. `cargo test --manifest-path
+src/rrr/Cargo.toml` must never be reported as full Goal 0 completion until the
+extraction manifest covers the entire intended DSL graph and the
+hand-written-C++ half below also reaches zero.
 
 ## Terminal states
 
@@ -39,7 +43,30 @@ The order of attack per kernel stays the standing rule
 demote to external C. C is last because it is *permanently* not Rust —
 every line sent to C is a line the eventual rustc pass can never cover.
 
-## What is left — CORRECTED measurement
+## Current source boundary
+
+The executable C++ bodies have been burned down: an anchored delimiter census
+and line-level audit at `2f02672c` found **zero hand-written C++ function or
+object-definition bodies** outside the inline Rust and generated regions.
+What remains is still material Goal-0 work:
+
+- 1,940 noncomment lines of module declarations, global-module fragments,
+  includes, imports, namespace framing, aliases, forward declarations, and two
+  semantic preprocessor constants across the 39 `.cpp`/`.cc` module sources;
+- 147 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
+- the 58-line `srpc_fiber.h` C ABI surface;
+- seven tolerated external-C kernels (382 noncomment code lines); and
+- 437 production DSL blocks not yet enrolled in the rustc crate.
+
+The immediate path is therefore generated module framing plus structured GMF
+preamble metadata, followed by complete manifest enrollment. The C kernels and
+assembly remain explicit terminal-state exceptions; C++ scaffolding does not.
+
+## Historical measurement (superseded)
+
+The remainder of this section records the earlier body-burndown campaign. Its
+line counts and phase ordering are historical and must not be used as the
+current Goal-0 status; the current boundary is the census above.
 
 > **The kernel count below is the wrong metric and its file ranking is
 > wrong.** It counts lines matching `^inline|^static|^template<`, which

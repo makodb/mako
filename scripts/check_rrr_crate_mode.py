@@ -21,7 +21,7 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "ba70b6ab6d8b38bfc5107ce963c6766d460b0e42"
+REQUIRED_RUSTY_CPP_COMMIT = "707650e4021b163ea37783c14c7a182eef8a9a63"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-extraction.toml"
 NM_LINE = re.compile(r"^[0-9A-Fa-f]+\s+([A-Za-z])\s+(.+)$")
@@ -100,6 +100,50 @@ ABI_SPECS = {
             }
         ),
     ),
+    "rrr.errors": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.errors;",
+                "namespace rrr {",
+                "export enum class RpcErrorCategory",
+                "export enum class RpcError",
+                "export std::string_view rpc_error_category_to_string(RpcErrorCategory cat);",
+                "export std::string_view rpc_error_to_string(RpcError err);",
+                "export RpcErrorCategory get_error_category(RpcError err);",
+                "export bool is_connection_error(RpcError err);",
+                "export bool is_timeout_error(RpcError err);",
+                "export bool is_retryable_error(RpcError err);",
+            }
+        ),
+        symbols=frozenset(
+            {
+                (
+                    "T",
+                    "rrr::get_error_category@rrr.errors(rrr::RpcError@rrr.errors)",
+                ),
+                (
+                    "T",
+                    "rrr::is_connection_error@rrr.errors(rrr::RpcError@rrr.errors)",
+                ),
+                (
+                    "T",
+                    "rrr::is_retryable_error@rrr.errors(rrr::RpcError@rrr.errors)",
+                ),
+                (
+                    "T",
+                    "rrr::is_timeout_error@rrr.errors(rrr::RpcError@rrr.errors)",
+                ),
+                (
+                    "T",
+                    "rrr::rpc_error_category_to_string@rrr.errors(rrr::RpcErrorCategory@rrr.errors)",
+                ),
+                (
+                    "T",
+                    "rrr::rpc_error_to_string@rrr.errors(rrr::RpcError@rrr.errors)",
+                ),
+            }
+        ),
+    ),
 }
 
 
@@ -120,7 +164,10 @@ def executable(root: Path, value: str, description: str) -> Path:
         if found is None:
             raise GateError(f"{description} is unavailable: {value}")
         resolved = Path(found)
-    resolved = resolved.resolve()
+    # Preserve the invoked basename. Clang selects C++ driver behavior from
+    # argv[0], and resolving a `clang++ -> clang-N` symlink silently drops the
+    # implicit C++ standard-library link in the direct gate commands.
+    resolved = Path(os.path.abspath(resolved))
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
         raise GateError(f"{description} is unavailable: {resolved}")
     return resolved
@@ -364,9 +411,113 @@ def module_symbols(
     symbols: set[tuple[str, str]] = set()
     for line in output.splitlines():
         match = NM_LINE.match(line)
-        if match is not None and f"@{module_name}" in match.group(2):
-            symbols.add((match.group(1), match.group(2)))
+        if match is None:
+            continue
+        kind, symbol = match.groups()
+        # Template instantiations and lambda helpers are optimization-sensitive
+        # weak implementation details, not the strong module ABI ratcheted here.
+        if not kind.isupper() or kind in {"U", "V", "W"}:
+            continue
+        if symbol_owner_module(symbol) == module_name:
+            symbols.add((kind, symbol))
     return symbols
+
+
+def function_parameter_open(symbol: str) -> int:
+    """Return the outer function-parameter `(`, or the end for a data symbol."""
+
+    close = symbol.rfind(")")
+    if close == -1:
+        return len(symbol)
+    depth = 0
+    for index in range(close, -1, -1):
+        character = symbol[index]
+        if character == ")":
+            depth += 1
+        elif character == "(":
+            depth -= 1
+            if depth == 0:
+                return index
+    return len(symbol)
+
+
+def is_operator_angle(text: str, index: int) -> bool:
+    """Return whether `<` at index spells a C++ operator rather than a template."""
+
+    operator = text.rfind("operator", 0, index + 1)
+    if operator == -1:
+        return False
+    candidate = "".join(text[operator : index + 1].split())
+    return any(
+        spelling.startswith(candidate)
+        for spelling in (
+            "operator<",
+            "operator<=",
+            "operator<=>",
+            "operator<<",
+            "operator<<=",
+        )
+    )
+
+
+def actual_entity_declarator(symbol: str) -> str:
+    """Remove parameter and optional return-type text from a demangled symbol."""
+
+    prefix = symbol[: function_parameter_open(symbol)].rstrip()
+    angle_depth = 0
+    last_separator = -1
+    for index, character in enumerate(prefix):
+        if character == "<" and not is_operator_angle(prefix, index):
+            angle_depth += 1
+        elif character == ">" and angle_depth > 0:
+            angle_depth -= 1
+        elif character.isspace() and angle_depth == 0:
+            last_separator = index
+    return prefix[last_separator + 1 :]
+
+
+def top_level_module_attachment(declarator: str) -> str | None:
+    """Return the last module attachment outside template arguments."""
+
+    angle_depth = 0
+    owner: str | None = None
+    for index, character in enumerate(declarator):
+        if character == "<" and not is_operator_angle(declarator, index):
+            angle_depth += 1
+        elif character == ">" and angle_depth > 0:
+            angle_depth -= 1
+        elif character == "@" and angle_depth == 0:
+            end = index + 1
+            while end < len(declarator) and (
+                declarator[end].isalnum() or declarator[end] in "._"
+            ):
+                end += 1
+            module = declarator[index + 1 : end]
+            if module and (
+                end == len(declarator) or declarator[end] in "<:"
+            ):
+                owner = module
+    return owner
+
+
+def symbol_owner_module(symbol: str) -> str | None:
+    """Return the module attached to the symbol's actual declared entity."""
+
+    prefix = symbol[: function_parameter_open(symbol)].rstrip()
+    qualified_operator = prefix.rfind("::operator")
+    if qualified_operator != -1:
+        # Conversion-operator target types may carry their own attachments.
+        # A module attached to the qualified class owns the member operator;
+        # namespace-qualified free operators instead fall through to the
+        # attachment on the operator name itself.
+        qualified_entity = actual_entity_declarator(
+            prefix[:qualified_operator]
+        )
+        owner = top_level_module_attachment(qualified_entity)
+        if owner is not None:
+            return owner
+
+    return top_level_module_attachment(actual_entity_declarator(symbol))
 
 
 def format_symbols(symbols: set[tuple[str, str]]) -> str:
@@ -398,11 +549,21 @@ def importer_source() -> str:
     return """\
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <type_traits>
 
+import rrr.errors;
 import rrr.internal_protocol;
 import rrr.stat;
 
+static_assert(sizeof(rrr::RpcErrorCategory) == sizeof(std::int32_t));
+static_assert(sizeof(rrr::RpcError) == sizeof(std::int32_t));
+static_assert(std::is_same_v<
+              std::underlying_type_t<rrr::RpcErrorCategory>, std::int32_t>);
+static_assert(std::is_same_v<
+              std::underlying_type_t<rrr::RpcError>, std::int32_t>);
+static_assert(std::is_trivially_copyable_v<rrr::RpcErrorCategory>);
+static_assert(std::is_trivially_copyable_v<rrr::RpcError>);
 static_assert(std::is_standard_layout_v<rrr::AvgStat>);
 static_assert(std::is_trivially_copyable_v<rrr::AvgStat>);
 static_assert(sizeof(rrr::AvgStat) == 5 * sizeof(std::int64_t));
@@ -492,6 +653,113 @@ int main() {
     stat.clear();
     if (!stat_is(stat, 0, 0, 0, 0, 0)) {
         return 15;
+    }
+
+    struct CategoryRow {
+        rrr::RpcErrorCategory category;
+        int discriminant;
+        std::string_view name;
+    };
+    constexpr CategoryRow categories[] = {
+        {rrr::RpcErrorCategory::NONE, 0, "NONE"},
+        {rrr::RpcErrorCategory::CONNECTION, 1, "CONNECTION"},
+        {rrr::RpcErrorCategory::PROTOCOL, 2, "PROTOCOL"},
+        {rrr::RpcErrorCategory::APPLICATION, 3, "APPLICATION"},
+        {rrr::RpcErrorCategory::TIMEOUT, 4, "TIMEOUT"},
+        {rrr::RpcErrorCategory::INTERNAL, 5, "INTERNAL"},
+    };
+    for (const auto& row : categories) {
+        if (static_cast<int>(row.category) != row.discriminant ||
+            rrr::rpc_error_category_to_string(row.category) != row.name) {
+            return 20;
+        }
+    }
+    constexpr int invalid_categories[] = {-1, 6, 999};
+    for (const auto value : invalid_categories) {
+        if (rrr::rpc_error_category_to_string(
+                static_cast<rrr::RpcErrorCategory>(value)) != "UNKNOWN") {
+            return 21;
+        }
+    }
+
+    struct ErrorRow {
+        rrr::RpcError error;
+        int discriminant;
+        std::string_view name;
+        rrr::RpcErrorCategory category;
+        bool retryable;
+    };
+    constexpr ErrorRow errors[] = {
+        {rrr::RpcError::OK, 0, "OK", rrr::RpcErrorCategory::NONE, false},
+        {rrr::RpcError::NOT_CONNECTED, 100, "NOT_CONNECTED", rrr::RpcErrorCategory::CONNECTION, false},
+        {rrr::RpcError::CONNECTION_REFUSED, 101, "CONNECTION_REFUSED", rrr::RpcErrorCategory::CONNECTION, false},
+        {rrr::RpcError::CONNECTION_RESET, 102, "CONNECTION_RESET", rrr::RpcErrorCategory::CONNECTION, true},
+        {rrr::RpcError::NETWORK_UNREACHABLE, 103, "NETWORK_UNREACHABLE", rrr::RpcErrorCategory::CONNECTION, true},
+        {rrr::RpcError::HOST_UNREACHABLE, 104, "HOST_UNREACHABLE", rrr::RpcErrorCategory::CONNECTION, true},
+        {rrr::RpcError::CONNECTION_CLOSED, 105, "CONNECTION_CLOSED", rrr::RpcErrorCategory::CONNECTION, false},
+        {rrr::RpcError::CIRCUIT_OPEN, 106, "CIRCUIT_OPEN", rrr::RpcErrorCategory::CONNECTION, false},
+        {rrr::RpcError::INVALID_MESSAGE, 200, "INVALID_MESSAGE", rrr::RpcErrorCategory::PROTOCOL, false},
+        {rrr::RpcError::UNKNOWN_RPC_ID, 201, "UNKNOWN_RPC_ID", rrr::RpcErrorCategory::PROTOCOL, false},
+        {rrr::RpcError::MARSHALLING_ERROR, 202, "MARSHALLING_ERROR", rrr::RpcErrorCategory::PROTOCOL, false},
+        {rrr::RpcError::VERSION_MISMATCH, 203, "VERSION_MISMATCH", rrr::RpcErrorCategory::PROTOCOL, false},
+        {rrr::RpcError::CHECKSUM_ERROR, 204, "CHECKSUM_ERROR", rrr::RpcErrorCategory::PROTOCOL, false},
+        {rrr::RpcError::RPC_FAILED, 300, "RPC_FAILED", rrr::RpcErrorCategory::APPLICATION, false},
+        {rrr::RpcError::SERVICE_UNAVAILABLE, 301, "SERVICE_UNAVAILABLE", rrr::RpcErrorCategory::APPLICATION, true},
+        {rrr::RpcError::PERMISSION_DENIED, 302, "PERMISSION_DENIED", rrr::RpcErrorCategory::APPLICATION, false},
+        {rrr::RpcError::INVALID_ARGUMENT, 303, "INVALID_ARGUMENT", rrr::RpcErrorCategory::APPLICATION, false},
+        {rrr::RpcError::NOT_FOUND, 304, "NOT_FOUND", rrr::RpcErrorCategory::APPLICATION, false},
+        {rrr::RpcError::ALREADY_EXISTS, 305, "ALREADY_EXISTS", rrr::RpcErrorCategory::APPLICATION, false},
+        {rrr::RpcError::CONNECT_TIMEOUT, 400, "CONNECT_TIMEOUT", rrr::RpcErrorCategory::TIMEOUT, true},
+        {rrr::RpcError::REQUEST_TIMEOUT, 401, "REQUEST_TIMEOUT", rrr::RpcErrorCategory::TIMEOUT, true},
+        {rrr::RpcError::RESPONSE_TIMEOUT, 402, "RESPONSE_TIMEOUT", rrr::RpcErrorCategory::TIMEOUT, true},
+        {rrr::RpcError::IDLE_TIMEOUT, 403, "IDLE_TIMEOUT", rrr::RpcErrorCategory::TIMEOUT, false},
+        {rrr::RpcError::HEARTBEAT_TIMEOUT, 404, "HEARTBEAT_TIMEOUT", rrr::RpcErrorCategory::TIMEOUT, false},
+        {rrr::RpcError::UNKNOWN_ERROR, 500, "UNKNOWN_ERROR", rrr::RpcErrorCategory::INTERNAL, false},
+        {rrr::RpcError::OUT_OF_MEMORY, 501, "OUT_OF_MEMORY", rrr::RpcErrorCategory::INTERNAL, false},
+        {rrr::RpcError::INVALID_STATE, 502, "INVALID_STATE", rrr::RpcErrorCategory::INTERNAL, false},
+        {rrr::RpcError::INTERNAL_ERROR, 503, "INTERNAL_ERROR", rrr::RpcErrorCategory::INTERNAL, false},
+    };
+    for (const auto& row : errors) {
+        if (static_cast<int>(row.error) != row.discriminant ||
+            rrr::rpc_error_to_string(row.error) != row.name ||
+            rrr::get_error_category(row.error) != row.category ||
+            rrr::is_connection_error(row.error) !=
+                (row.category == rrr::RpcErrorCategory::CONNECTION) ||
+            rrr::is_timeout_error(row.error) !=
+                (row.category == rrr::RpcErrorCategory::TIMEOUT) ||
+            rrr::is_retryable_error(row.error) != row.retryable) {
+            return 22;
+        }
+    }
+
+    struct ErrorBoundaryRow {
+        int code;
+        std::string_view name;
+        rrr::RpcErrorCategory category;
+        bool connection;
+        bool timeout;
+        bool retryable;
+    };
+    constexpr ErrorBoundaryRow boundaries[] = {
+        {99, "UNKNOWN", rrr::RpcErrorCategory::INTERNAL, false, false, false},
+        {100, "NOT_CONNECTED", rrr::RpcErrorCategory::CONNECTION, true, false, false},
+        {199, "UNKNOWN", rrr::RpcErrorCategory::CONNECTION, true, false, false},
+        {200, "INVALID_MESSAGE", rrr::RpcErrorCategory::PROTOCOL, false, false, false},
+        {399, "UNKNOWN", rrr::RpcErrorCategory::APPLICATION, false, false, false},
+        {400, "CONNECT_TIMEOUT", rrr::RpcErrorCategory::TIMEOUT, false, true, true},
+        {499, "UNKNOWN", rrr::RpcErrorCategory::TIMEOUT, false, true, false},
+        {500, "UNKNOWN_ERROR", rrr::RpcErrorCategory::INTERNAL, false, false, false},
+        {999, "UNKNOWN", rrr::RpcErrorCategory::INTERNAL, false, false, false},
+    };
+    for (const auto& row : boundaries) {
+        const auto error = static_cast<rrr::RpcError>(row.code);
+        if (rrr::rpc_error_to_string(error) != row.name ||
+            rrr::get_error_category(error) != row.category ||
+            rrr::is_connection_error(error) != row.connection ||
+            rrr::is_timeout_error(error) != row.timeout ||
+            rrr::is_retryable_error(error) != row.retryable) {
+            return 23;
+        }
     }
     return 0;
 }
@@ -778,7 +1046,8 @@ def check(args: argparse.Namespace) -> None:
         f"checked whole rrr crate ({len(modules) + 1} modules compiled, "
         "partial root compile-only, 0 hand slots), combined importer against generated "
         f"objects and the independent inline reference{production_label}, "
-        f"AvgStat layout/runtime, and {symbol_count} exact ABI symbols"
+        "AvgStat and RpcError runtime contracts, and "
+        f"{symbol_count} exact strong ABI symbols"
     )
 
 

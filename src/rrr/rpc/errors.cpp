@@ -24,8 +24,10 @@ export namespace rrr {
 // the source of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 #if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
-enum RpcErrorCategory {
+pub enum RpcErrorCategory {
     NONE = 0,
     CONNECTION = 1,
     PROTOCOL = 2,
@@ -34,7 +36,7 @@ enum RpcErrorCategory {
     INTERNAL = 5,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=errors.error_category version=1 rust_sha256=0764a7d798d1c61ccbd2010d539ce49df144abf40538af1d419f855a4adac3af*/
+/*RUSTYCPP:GEN-BEGIN id=errors.error_category version=1 rust_sha256=b49318ba0d0fd89655a4cef52ba5a1dd95993cdb26170cd73241dd3150fe4290*/
 enum class RpcErrorCategory;
 constexpr RpcErrorCategory RpcErrorCategory_NONE();
 constexpr RpcErrorCategory RpcErrorCategory_CONNECTION();
@@ -68,7 +70,8 @@ inline constexpr RpcErrorCategory RpcErrorCategory_INTERNAL() { return RpcErrorC
 // (which needs a char*) becomes EXPECT_EQ against a string_view — the same
 // assertion, since string_view compares equal to a string literal.
 #if RUSTYCPP_RUST
-fn rpc_error_category_to_string(cat: RpcErrorCategory) -> &'static str {
+#[allow(unreachable_patterns)]
+pub fn rpc_error_category_to_string(cat: RpcErrorCategory) -> &'static str {
     match cat {
         RpcErrorCategory::NONE => "NONE",
         RpcErrorCategory::CONNECTION => "CONNECTION",
@@ -80,7 +83,7 @@ fn rpc_error_category_to_string(cat: RpcErrorCategory) -> &'static str {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=errors.2 version=1 rust_sha256=a4dce9e46029aff6d693510d0194f96abf0a97726d637cac59cf3788c9e7c49d*/
+/*RUSTYCPP:GEN-BEGIN id=errors.2 version=1 rust_sha256=58e771d7a80ef9c53be7616a616025a583b3d9de23e3dc11c3da57e27987142a*/
 std::string_view rpc_error_category_to_string(RpcErrorCategory cat) {
     return ({ auto&& _m = cat; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == RpcErrorCategory::NONE)) { _match_value.emplace(std::move(std::string_view("NONE"))); _m_matched = true; } if (!_m_matched && (_m == RpcErrorCategory::CONNECTION)) { _match_value.emplace(std::move(std::string_view("CONNECTION"))); _m_matched = true; } if (!_m_matched && (_m == RpcErrorCategory::PROTOCOL)) { _match_value.emplace(std::move(std::string_view("PROTOCOL"))); _m_matched = true; } if (!_m_matched && (_m == RpcErrorCategory::APPLICATION)) { _match_value.emplace(std::move(std::string_view("APPLICATION"))); _m_matched = true; } if (!_m_matched && (_m == RpcErrorCategory::TIMEOUT)) { _match_value.emplace(std::move(std::string_view("TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == RpcErrorCategory::INTERNAL)) { _match_value.emplace(std::move(std::string_view("INTERNAL"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
 }
@@ -93,8 +96,10 @@ std::string_view rpc_error_category_to_string(RpcErrorCategory cat) {
 // of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 #if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
-enum RpcError {
+pub enum RpcError {
     OK = 0,
     NOT_CONNECTED = 100,
     CONNECTION_REFUSED = 101,
@@ -125,7 +130,7 @@ enum RpcError {
     INTERNAL_ERROR = 503,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=errors.rpc_error version=1 rust_sha256=4ab5aa6ba1d0a134f33836da246ce2b68115b5bda9668ef467e1d4b44863c4af*/
+/*RUSTYCPP:GEN-BEGIN id=errors.rpc_error version=1 rust_sha256=fb530e84d23c7b7da289c1fe988a7669cb706de21b2e095f6a2abc54fa251db8*/
 enum class RpcError;
 constexpr RpcError RpcError_OK();
 constexpr RpcError RpcError_NOT_CONNECTED();
@@ -219,7 +224,8 @@ inline constexpr RpcError RpcError_INTERNAL_ERROR() { return RpcError::INTERNAL_
 // See rpc_error_category_to_string above for why this returns
 // `&'static str` rather than `const char*`.
 #if RUSTYCPP_RUST
-fn rpc_error_to_string(err: RpcError) -> &'static str {
+#[allow(unreachable_patterns)]
+pub fn rpc_error_to_string(err: RpcError) -> &'static str {
     match err {
         RpcError::OK => "OK",
 
@@ -259,7 +265,7 @@ fn rpc_error_to_string(err: RpcError) -> &'static str {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=errors.4 version=1 rust_sha256=5034d48b607add72bdebe540114c0bcade56c593c176060b52816d6bc01f12d3*/
+/*RUSTYCPP:GEN-BEGIN id=errors.4 version=1 rust_sha256=056916364ae4d4de6e112bf9f73b7132d676ecc6e1e5588eb26d113a5e9a4ef1*/
 std::string_view rpc_error_to_string(RpcError err) {
     return ({ auto&& _m = err; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == RpcError::OK)) { _match_value.emplace(std::move(std::string_view("OK"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::NOT_CONNECTED)) { _match_value.emplace(std::move(std::string_view("NOT_CONNECTED"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::CONNECTION_REFUSED)) { _match_value.emplace(std::move(std::string_view("CONNECTION_REFUSED"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::CONNECTION_RESET)) { _match_value.emplace(std::move(std::string_view("CONNECTION_RESET"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::NETWORK_UNREACHABLE)) { _match_value.emplace(std::move(std::string_view("NETWORK_UNREACHABLE"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::HOST_UNREACHABLE)) { _match_value.emplace(std::move(std::string_view("HOST_UNREACHABLE"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::CONNECTION_CLOSED)) { _match_value.emplace(std::move(std::string_view("CONNECTION_CLOSED"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::CIRCUIT_OPEN)) { _match_value.emplace(std::move(std::string_view("CIRCUIT_OPEN"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::INVALID_MESSAGE)) { _match_value.emplace(std::move(std::string_view("INVALID_MESSAGE"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::UNKNOWN_RPC_ID)) { _match_value.emplace(std::move(std::string_view("UNKNOWN_RPC_ID"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::MARSHALLING_ERROR)) { _match_value.emplace(std::move(std::string_view("MARSHALLING_ERROR"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::VERSION_MISMATCH)) { _match_value.emplace(std::move(std::string_view("VERSION_MISMATCH"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::CHECKSUM_ERROR)) { _match_value.emplace(std::move(std::string_view("CHECKSUM_ERROR"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::RPC_FAILED)) { _match_value.emplace(std::move(std::string_view("RPC_FAILED"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::SERVICE_UNAVAILABLE)) { _match_value.emplace(std::move(std::string_view("SERVICE_UNAVAILABLE"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::PERMISSION_DENIED)) { _match_value.emplace(std::move(std::string_view("PERMISSION_DENIED"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::INVALID_ARGUMENT)) { _match_value.emplace(std::move(std::string_view("INVALID_ARGUMENT"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::NOT_FOUND)) { _match_value.emplace(std::move(std::string_view("NOT_FOUND"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::ALREADY_EXISTS)) { _match_value.emplace(std::move(std::string_view("ALREADY_EXISTS"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::CONNECT_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("CONNECT_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::REQUEST_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("REQUEST_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::RESPONSE_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("RESPONSE_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::IDLE_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("IDLE_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::HEARTBEAT_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("HEARTBEAT_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::UNKNOWN_ERROR)) { _match_value.emplace(std::move(std::string_view("UNKNOWN_ERROR"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::OUT_OF_MEMORY)) { _match_value.emplace(std::move(std::string_view("OUT_OF_MEMORY"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::INVALID_STATE)) { _match_value.emplace(std::move(std::string_view("INVALID_STATE"))); _m_matched = true; } if (!_m_matched && (_m == RpcError::INTERNAL_ERROR)) { _match_value.emplace(std::move(std::string_view("INTERNAL_ERROR"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
 }
@@ -273,7 +279,8 @@ std::string_view rpc_error_to_string(RpcError err) {
 // the source of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 #if RUSTYCPP_RUST
-fn get_error_category(err: RpcError) -> RpcErrorCategory {
+#[allow(clippy::manual_range_contains)]
+pub fn get_error_category(err: RpcError) -> RpcErrorCategory {
     let code: i32 = err as i32;
     if code == 0 { RpcErrorCategory::NONE }
     else if code >= 100 && code < 200 { RpcErrorCategory::CONNECTION }
@@ -283,7 +290,7 @@ fn get_error_category(err: RpcError) -> RpcErrorCategory {
     else { RpcErrorCategory::INTERNAL }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=errors.get_error_category version=1 rust_sha256=71b769d6fee42f5465b681fe532b9cd6124afb9272e918bf615f5cb30fa52a4c*/
+/*RUSTYCPP:GEN-BEGIN id=errors.get_error_category version=1 rust_sha256=728a8eecffd61bc475db2072163b7f380a6f4aa8d20ed08550c4930552aaa42a*/
 RpcErrorCategory get_error_category(RpcError err) {
     const int32_t code = static_cast<int32_t>(err);
     if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(0)) {
@@ -313,17 +320,19 @@ RpcErrorCategory get_error_category(RpcError err) {
 // the source of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 #if RUSTYCPP_RUST
-fn is_connection_error(err: RpcError) -> bool {
+#[allow(clippy::manual_range_contains)]
+pub fn is_connection_error(err: RpcError) -> bool {
     let code: i32 = err as i32;
     code >= 100 && code < 200
 }
 
-fn is_timeout_error(err: RpcError) -> bool {
+#[allow(clippy::manual_range_contains)]
+pub fn is_timeout_error(err: RpcError) -> bool {
     let code: i32 = err as i32;
     code >= 400 && code < 500
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=errors.category_predicates version=1 rust_sha256=c5eddf66e526cd616e15478c813b595e710de432e6cc505ba0d9bd63c0e4c690*/
+/*RUSTYCPP:GEN-BEGIN id=errors.category_predicates version=1 rust_sha256=2735077e85ea93dec88e4ed780c1a4fffc15b48b290983376168bfbb34e9bba0*/
 bool is_connection_error(RpcError err) {
     const int32_t code = static_cast<int32_t>(err);
     return (rusty::detail::deref_if_pointer_like(code) >= 100) && (rusty::detail::deref_if_pointer_like(code) < 200);
@@ -348,7 +357,8 @@ bool is_timeout_error(RpcError err) {
 // equivalent if/else-if chain emits cleanly. Switch back to `match`
 // once the transpiler stops shipping cmp/Ord adapters for enum-match.
 #if RUSTYCPP_RUST
-fn is_retryable_error(err: RpcError) -> bool {
+#[allow(clippy::if_same_then_else, clippy::needless_bool)]
+pub fn is_retryable_error(err: RpcError) -> bool {
     if err == RpcError::CONNECTION_RESET { true }
     else if err == RpcError::NETWORK_UNREACHABLE { true }
     else if err == RpcError::HOST_UNREACHABLE { true }
@@ -359,7 +369,7 @@ fn is_retryable_error(err: RpcError) -> bool {
     else { false }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=errors.is_retryable_error version=1 rust_sha256=20628b5cb37cb5cf5202b6560f0b7edeb76f104ebacbe703565a1812cad0a44e*/
+/*RUSTYCPP:GEN-BEGIN id=errors.is_retryable_error version=1 rust_sha256=bf2440d30369e09ff9627ff5c425c1bee358ce2047cef0f11ec986634538b887*/
 bool is_retryable_error(RpcError err) {
     if (rusty::detail::deref_if_pointer_like(err) == rusty::clone(RpcError_CONNECTION_RESET())) {
         return true;

@@ -33,7 +33,7 @@ PACKAGE_NAME = "rrr"
 GENERATED_ROOT = PurePosixPath("src/rrr/src")
 GENERATED_LIB = GENERATED_ROOT / "lib.rs"
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "ba70b6ab6d8b38bfc5107ce963c6766d460b0e42"
+REQUIRED_RUSTY_CPP_COMMIT = "707650e4021b163ea37783c14c7a182eef8a9a63"
 APPROVED_PRODUCTION_ROOTS = (
     PurePosixPath("src/rrr/base"),
     PurePosixPath("src/rrr/misc"),

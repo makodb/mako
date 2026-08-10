@@ -219,10 +219,11 @@ Exceptions that stay std:
 
 **IMPORTANT**: For Goal 0 extraction, the `third-party/rusty-cpp`
 gitlink is pinned to commit
-`ba70b6ab6d8b38bfc5107ce963c6766d460b0e42` on the pushed
+`707650e4021b163ea37783c14c7a182eef8a9a63` on the pushed
 `goal0-inline-rust-extract` branch. That branch descends from the
 pre-pivot `2b261ccc0915ea99cbab02631ccc5bea19ac82c7` pin only through
-the Goal 0 extractor and build-attestation commits. Do not move this
+reviewed Goal 0 extractor, codegen, preamble, build-attestation, and runtime
+commits. Do not move this
 gitlink to `verify-stack`: that branch contains
 support for the discarded parallel `crates/srpc` pivot. Base any further
 Goal 0 transpiler work on the current approved pin (or a separately

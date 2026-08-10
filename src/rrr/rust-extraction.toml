@@ -18,3 +18,19 @@ output = "src/rrr/src/stat.rs"
 [[module.input]]
 source = "src/rrr/misc/stat.cpp"
 block_ids = ["stat.1"]
+
+[[module]]
+cpp_module = "rrr.errors"
+output = "src/rrr/src/errors.rs"
+
+[[module.input]]
+source = "src/rrr/rpc/errors.cpp"
+block_ids = [
+    "errors.error_category",
+    "errors.2",
+    "errors.rpc_error",
+    "errors.4",
+    "errors.get_error_category",
+    "errors.category_predicates",
+    "errors.is_retryable_error",
+]

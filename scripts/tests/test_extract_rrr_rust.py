@@ -101,6 +101,25 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "src/rrr/src/stat.rs",
                     [("src/rrr/misc/stat.cpp", ("stat.1",))],
                 ),
+                (
+                    "rrr.errors",
+                    "errors",
+                    "src/rrr/src/errors.rs",
+                    [
+                        (
+                            "src/rrr/rpc/errors.cpp",
+                            (
+                                "errors.error_category",
+                                "errors.2",
+                                "errors.rpc_error",
+                                "errors.4",
+                                "errors.get_error_category",
+                                "errors.category_predicates",
+                                "errors.is_retryable_error",
+                            ),
+                        )
+                    ],
+                ),
             ],
         )
 
@@ -109,24 +128,41 @@ class CheckedInCanaryTests(unittest.TestCase):
             (
                 "rrr.internal_protocol",
                 "src/rrr/rpc/internal_protocol.cpp",
-                "internal_protocol.1",
+                ("internal_protocol.1",),
                 "src/rrr/src/internal_protocol.rs",
             ),
             (
                 "rrr.stat",
                 "src/rrr/misc/stat.cpp",
-                "stat.1",
+                ("stat.1",),
                 "src/rrr/src/stat.rs",
             ),
+            (
+                "rrr.errors",
+                "src/rrr/rpc/errors.cpp",
+                (
+                    "errors.error_category",
+                    "errors.2",
+                    "errors.rpc_error",
+                    "errors.4",
+                    "errors.get_error_category",
+                    "errors.category_predicates",
+                    "errors.is_retryable_error",
+                ),
+                "src/rrr/src/errors.rs",
+            ),
         ]
-        for cpp_module, source_label, block_id, output_label in cases:
+        for cpp_module, source_label, block_ids, output_label in cases:
             with self.subTest(cpp_module=cpp_module):
                 source_path = REPOSITORY / source_label
                 output_path = REPOSITORY / output_label
                 source_bytes = source_path.read_bytes()
                 source = source_bytes.decode("utf-8")
                 header, payload = split_generated(output_path.read_bytes())
-                expected = source_block(source, block_id).encode("utf-8")
+                expected = "\n\n".join(
+                    source_block(source, block_id).rstrip("\n")
+                    for block_id in block_ids
+                ).encode("utf-8") + b"\n"
 
                 self.assertEqual(payload, expected)
                 self.assertIn(
@@ -136,7 +172,9 @@ class CheckedInCanaryTests(unittest.TestCase):
                     f"// provenance-input[0]-source: {source_label}", header
                 )
                 self.assertIn(
-                    f"// provenance-input[0]-block-ids: {block_id}", header
+                    "// provenance-input[0]-block-ids: "
+                    + ", ".join(block_ids),
+                    header,
                 )
                 self.assertIn(
                     "// provenance-input[0]-source-sha256: "
@@ -170,6 +208,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/lib.rs",
                 "src/rrr/src/internal_protocol.rs",
                 "src/rrr/src/stat.rs",
+                "src/rrr/src/errors.rs",
             },
         )
 
@@ -696,6 +735,66 @@ class DriverBehaviorTests(unittest.TestCase):
 
 
 class CrateModeGateTests(unittest.TestCase):
+    def test_executable_preserves_cxx_driver_symlink_spelling(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-gate-driver-test-") as temporary:
+            root = Path(temporary)
+            real_driver = root / "clang-22"
+            real_driver.write_text("", encoding="utf-8")
+            real_driver.chmod(0o755)
+            cxx_driver = root / "clang++"
+            cxx_driver.symlink_to(real_driver.name)
+
+            self.assertEqual(
+                GATE.executable(root, str(cxx_driver), "Clang C++ compiler"),
+                cxx_driver,
+            )
+
+    def test_symbol_owner_ignores_module_attachments_in_types(self) -> None:
+        cases = {
+            "rrr::f@rrr.errors(rrr::RpcError@rrr.errors)": "rrr.errors",
+            "rrr::AvgStat@rrr.stat::avg() const": "rrr.stat",
+            "rrr::value@rrr.internal_protocol": "rrr.internal_protocol",
+            (
+                "rrr::Facade<rrr::RpcError@rrr.errors>"
+                "@rrr.client::call()"
+            ): "rrr.client",
+            "rrr::Facade<rrr::RpcError@rrr.errors>::call()": None,
+            (
+                "rrr::RpcError@rrr.errors "
+                "rusty::clone<rrr::RpcError@rrr.errors>(int)"
+            ): None,
+            "rrr::Facade@rrr.types<int> rrr::make@rrr.errors<int>()": "rrr.errors",
+            "rrr::operator<@rrr.errors(rrr::RpcError@rrr.errors, rrr::RpcError@rrr.errors)": "rrr.errors",
+            "rrr::Widget@rrr.errors::operator bool() const": "rrr.errors",
+            "rrr::Widget@rrr.errors::operator rrr::Facade@rrr.types<int>() const": "rrr.errors",
+            "rrr::plain(int)": None,
+        }
+        for symbol, expected in cases.items():
+            with self.subTest(symbol=symbol):
+                self.assertEqual(GATE.symbol_owner_module(symbol), expected)
+
+    def test_module_symbols_ratchets_only_strong_owned_definitions(self) -> None:
+        output = "\n".join(
+            [
+                "0001 T rrr::f@rrr.errors(rrr::RpcError@rrr.errors)",
+                "0002 W rrr::helper@rrr.errors()",
+                "0003 t rrr::local@rrr.errors()",
+                "0004 T rrr::other@rrr.client(rrr::RpcError@rrr.errors)",
+                "0005 W rrr::RpcError@rrr.errors rusty::clone<int>(int)",
+            ]
+        )
+        with mock.patch.object(GATE, "run", return_value=output):
+            symbols = GATE.module_symbols(
+                Path("/usr/bin/nm"),
+                Path("/repository"),
+                Path("/repository/librrr.a"),
+                "rrr.errors",
+            )
+        self.assertEqual(
+            symbols,
+            {("T", "rrr::f@rrr.errors(rrr::RpcError@rrr.errors)")},
+        )
+
     def test_gate_rechecks_extracted_rust_with_the_same_transpiler(self) -> None:
         root = Path("/repository")
         transpiler = Path("/tools/rusty-cpp-transpiler")
@@ -860,6 +959,7 @@ class CrateModeGateTests(unittest.TestCase):
         modules = [
             mock.Mock(cpp_module="rrr.internal_protocol"),
             mock.Mock(cpp_module="rrr.stat"),
+            mock.Mock(cpp_module="rrr.errors"),
         ]
 
         def symbols_for_module(
@@ -909,7 +1009,7 @@ class CrateModeGateTests(unittest.TestCase):
         compiled_names = [call.args[-2] for call in compile_module.call_args_list]
         self.assertEqual(
             compiled_names,
-            ["rrr.internal_protocol", "rrr.stat", "rrr"],
+            ["rrr.internal_protocol", "rrr.stat", "rrr.errors", "rrr"],
         )
         link_commands = [
             call.args[0]
@@ -931,6 +1031,7 @@ class CrateModeGateTests(unittest.TestCase):
         modules = [
             mock.Mock(cpp_module="rrr.internal_protocol"),
             mock.Mock(cpp_module="rrr.stat"),
+            mock.Mock(cpp_module="rrr.errors"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules
