@@ -1,9 +1,0 @@
-version = 1
-
-[modules.rusty]
-cpp_module = "rusty"
-namespace = "rusty"
-
-[modules.rusty.symbols.len]
-kind = "function_template"
-callable_signatures = ["size_t(const C&)"]

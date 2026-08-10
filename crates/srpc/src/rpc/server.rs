@@ -16,7 +16,7 @@
 //! counterpart in the request. Both are easy to omit and neither fails
 //! loudly — the client simply reads the following field as this one.
 
-use crate::rpc::ChannelError;
+use crate::rpc::errors::ChannelError;
 use crate::runtime::epoll::PollMode;
 use crate::runtime::poll_thread::{PollThread, Pollable};
 use crate::runtime::tcp::{errno_to_channel_error, parse_addr_v4, TcpConnection};

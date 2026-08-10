@@ -19,13 +19,9 @@
 
 pub mod archive;
 pub mod frame;
-pub mod internal_protocol;
 pub mod serde;
 pub mod varint;
 
 pub use archive::{ReadArchive, WireError, WriteArchive};
 pub use frame::{FrameDecodeStatus, FrameHeader, FrameReader};
-pub use internal_protocol::{
-    encode_response_size, response_has_extended_header, response_payload_size,
-};
 pub use serde::{Deserialize, Serialize, V32, V64};

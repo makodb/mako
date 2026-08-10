@@ -150,7 +150,7 @@ TEST_F(TcpConnectionTest, SendFramePushesEncodedBytesOnHandleWrite) {
     ASSERT_EQ(got.size(), 4u + sizeof(payload));
 
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(got.data(), got.size(), hdr),
+    EXPECT_EQ(frame_codec_peek_header(got, hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, static_cast<std::int32_t>(sizeof(payload)));
     EXPECT_FALSE(hdr.extended_header_flag);
@@ -165,7 +165,7 @@ TEST_F(TcpConnectionTest, SendZeroLengthPayload) {
     std::vector<std::uint8_t> got;
     ASSERT_EQ(peer_read(got), 4);  // Just the size header.
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(got.data(), 4, hdr),
+    EXPECT_EQ(frame_codec_peek_header(std::span<const std::uint8_t>(got).first(4), hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, 0);
 }
@@ -183,7 +183,7 @@ TEST_F(TcpConnectionTest, MultipleSendFramesCoalesceIntoOneWrite) {
     ASSERT_EQ(n, static_cast<ssize_t>(4 + sizeof(a) + 4 + sizeof(b)));
 
     // Decode both frames out of the coalesced buffer.
-    FrameStreamReader reader{};
+    auto reader = FrameStreamReader::new_();
     reader.append(got.data(), got.size());
     FrameView v{};
     ASSERT_EQ(reader.next_frame(v), FrameDecodeStatus::Complete);

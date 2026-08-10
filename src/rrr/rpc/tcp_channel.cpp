@@ -177,7 +177,7 @@ impl TcpConnection {
             peer_address_: peer_address,
             outbound_high_water_: kTcpConnectionOutboundHighWaterDefault,
             outbound_: rusty::Mutex::<std::vector<u8>>::new(Default::default()),
-            inbound_: RefCell::new(Default::default()),
+            inbound_: RefCell::new(FrameStreamReader::new()),
             closed_: Cell::new(false),
             on_closed_fired_: Cell::new(false),
             pending_write_update_: Cell::new(false),
@@ -271,7 +271,7 @@ impl TcpConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=35736bb131893b95f16a8966cb235e3c3d60646822726475b0428543d133d498*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=507a31d0ba9ede2f0fa4d18f9beb1b7ebca9ec25db7def479f7e3339e264ed05*/
 struct TcpConnection;
 
 struct TcpConnection {
@@ -314,7 +314,7 @@ TcpConnection::TcpConnection(int32_t fd, std::string peer_address)
     , peer_address_(std::move(peer_address))
     , outbound_high_water_(kTcpConnectionOutboundHighWaterDefault)
     , outbound_(rusty::Mutex<std::vector<uint8_t>>::new_(rusty::default_like<std::vector<uint8_t>>()))
-    , inbound_(rusty::RefCell<FrameStreamReader>::new_(rusty::default_like<FrameStreamReader>()))
+    , inbound_(rusty::RefCell<FrameStreamReader>::new_(FrameStreamReader::new_()))
     , closed_(rusty::Cell<bool>::new_(false))
     , on_closed_fired_(rusty::Cell<bool>::new_(false))
     , pending_write_update_(rusty::Cell<bool>::new_(false))

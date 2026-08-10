@@ -12,7 +12,7 @@
 //! while giving an independent implementation to check against. A bug
 //! in our own listener cannot mask a bug in our own connection.
 
-use srpc::rpc::ChannelError;
+use srpc::rpc::errors::ChannelError;
 use srpc::runtime::poll_thread::PollThread;
 use srpc::runtime::tcp::{TcpConnection, TcpFactory};
 use srpc::wire::frame::encode_into;

@@ -5,15 +5,6 @@ Working tracker for the srpc campaign: eliminate hand-written C++ from
 Generated 2026-08-05 by a routed inventory over every file in `src/rrr`
 (tests excluded), then verified against transpiler pin `da6e9bf4`.
 
-> **Successor status 2026-08-09:** this is a frozen kernel/inline-DSL
-> inventory, not the live whole-module census. The
-> [sRPC scaffolding conversion plan](srpc-scaffolding-conversion-plan.md) now
-> owns that work: after Gate 149, 13 graph slices and 34 compilation units have
-> retired 528 of the 1,202 post-pilot scaffold lines, leaving 674 scaffold
-> lines plus the separate 35-line fiber C-ABI floor. Historical estimates and
-> tables below are retained as evidence and are not directly comparable with
-> that strict census.
-
 > **Status 2026-08-05: the convertible-now bucket is EXHAUSTED.** Every
 > item has either landed or been reclassified with a recorded reason.
 > What remains in this file is: items blocked on named transpiler
@@ -177,7 +168,7 @@ Each row's *first step* is the idiom to use. These are ordered by size.
 | [x] | `rpc/server.cpp` | `server_dsl_addr_to_cstr` | 1055 | 3 | Zero callers repo-wide (grep for the symbol hits only its own definition); the DSL `start()` uses the sibling `server_dsl_addr_to_string` instead. |  **← DELETED (verified dead)**
 | [x] | `rpc/client.cpp` | `client_dsl_addr_to_cstr` | 2620 | 3 | Dead: zero callers repo-wide (grep over src/ and test/ returns only the definition at 2620). Its documented consumer, the DSL `Client::connect` body, no longer uses it. |  **← DELETED (verified dead)**
 | [x] | `rpc/client.cpp` | `operator==(const rusty::Arc<ClientConnection>&, const rusty::Arc<ClientConnection>&)` | 3881 | 3 | Redundant: `rusty::operator==` (third-party/rusty-cpp/include/rusty/arc.hpp:309) is a template over Arc<T> with the identical body `lhs.get() == rhs.get()`, found by ADL on rusty::Arc; the rrr non-template only shadows it. Delete this and its declaration at line 1068, then rebuild to confirm. |  **← DELETED (verified dead)**
-| [~] | `rpc/inmemory_channel.hpp` | `inmemory_channel import shim` | 2 | 2 | `#pragma once` + `import rrr.inmemory_channel;`. Its two in-tree test consumers now import the generated module directly after their textual includes; `rrr.hpp` does not include it and no repository consumer remains. | **← DEFERRED: remove or generate this zero-consumer compatibility shim with the rest of the envelope/shim batch.**
+| [~] | `rpc/inmemory_channel.hpp` | `inmemory_channel import shim` | 2 | 2 | `#pragma once` + `import rrr.inmemory_channel;`. Both consumers are in-tree tests (src/rrr/tests/rpc_inmemory_channel_test.cc:23, rpc_inmemory_channel_e2e_test.cc:27) and rrr.hpp does NOT include it, so deletion is fully contained in src/rrr. Caveat: the two tests include it mid-include-block, so the replacement `import rrr.inmemory_channel;` must be placed after each test's last textual `#include`, not in place. |  **← KEPT ALIVE: same as the other shims — in-tree test consumers include it.**
 | [x] | `misc/serializable.cpp` | `empty `namespace Deserialize_ { }` block` | 3865 | 2 | Lines 3865 and 3875 open and close a namespace whose entire body is three comments saying the contents moved into the Deserialize trait GEN block. Nothing declares into it. Pure residue from the pair/container migration — delete both lines and the comments. |  **← DELETED (verified dead)**
 | [x] | `rpc/server.cpp` | `DeferredReplyArchiveCb / DeferredReplyCleanupCb aliases` | 797 | 2 | Zero users repo-wide (grep hits only these two definition lines); the DSL DeferredReply spells its callbacks as `Option<Box<dyn FnOnce...>>`, which lowers straight to `rusty::Option<rusty::Function<...>>` without the aliases. |  **← DELETED (verified dead)**
 | [x] | `base/basetypes.cpp` | `empty impl `namespace rrr { }`` | 840 | 2 | The non-exported impl namespace at 840-847 is now completely empty (five blank lines) — every method that used to live there is DSL. Delete the braces and the stale 8-line comment above them (:835-839) which still describes `reinterpret_cast<char*>` byte slicing and `Rand::*`/`pthread_self` code that no longer exists in this file. |  **← DELETED (verified dead)**
@@ -305,7 +296,7 @@ Each row's *first step* is the idiom to use. These are ordered by size.
 | [ ] | `rpc/load_balancer.cpp` | `module preamble + export namespace braces` | 1 | 11 | Lines 1-14, 328. DONE — the strategy enum, to-string, LoadBalancerState, the generic (template-lowered) selection helpers and LoadBalancer are all DSL. |
 | [ ] | `rpc/circuit_breaker.cpp` | `module preamble + export namespace braces` | 1 | 11 | Lines 1-14, 533. DONE — current_time_us, CircuitState, to-string, CircuitBreakerConfig and CircuitBreaker are all DSL. |
 | [ ] | `misc/any_message.cpp` | `any_message_registry API declaration block` | 207 | 11 | The `using Factory = rusty::Function<SerializableProxy()>;` alias plus the six function prototypes (register_type, create, name_for_type_owned, is_registered_name, is_registered_type, clear_for_testing) — the DSL emits definitions at 448-498 but callers above need the declarations here. |
-| [x] | `rpc/connection_metrics.cpp` | `generated from crates/srpc` | 1 | 0 | Deleted. `crates/srpc/src/rpc/connection_metrics.rs` now generates the checked-in `rrr.connection_metrics.cppm`; configure verifies source/profile/output integrity offline. |
+| [ ] | `rpc/connection_metrics.cpp` | `module preamble + export namespace braces` | 1 | 10 | Lines 1-15, 564. DONE — even the two `using rusty::sync::atomic::…` bridges are now emitted from a DSL `use` block (the last hand-written C++ here, cleared upstream). |
 | [ ] | `rpc/reconnect_policy.cpp` | `module preamble + export namespace braces` | 1 | 10 | Lines 1-15, 334. DONE — ReconnectPolicy and ReconnectCalculator are all DSL. |
 | [ ] | `rpc/callbacks.cpp` | `module preamble + export namespace braces` | 1 | 10 | Lines 1-11, 27, 507. Module plumbing only. |
 | [ ] | `rpc/pollable_proxy.cpp` | `module/namespace scaffolding` | 1 | 10 | ZERO hand-written logic in this file. Only lines 1-14 (module;/<rusty/arc.hpp>,<rusty/box.hpp>,<rusty/traits.hpp> — the last one required because the generic PollableArcShim<T> GEN names rusty::is_send/is_sync and inline-rust cannot add includes/export module rrr.pollable_proxy/import std), `export namespace rrr {` at 36, close at 183. Trait, Box alias, generic #[cpp_inherit] shim and the make_ factory are all DSL. Use this file as the reference shape for what "done" looks like. |
@@ -322,8 +313,8 @@ Each row's *first step* is the idiom to use. These are ordered by size.
 | [ ] | `rpc/client.cpp` | `rusty::Function / Weak type-alias cluster (WeakClientConnection 944, AsyncReplyCallback 1000, OnReconnectCompleteCallbackFn + OnServerRestartCallbackFn 1043, OnConnected/OnError/OnReconnectedCallbackFn 2607)` | 944 | 8 | Deliberate DSL-support scaffolding: the inline-Rust grammar cannot spell C++ function-type template arguments (`void(bool) const`), so these named aliases exist precisely so DSL field/param types can refer to them opaquely — the same pattern as HeartbeatTimeoutCallback. They stay. |
 | [ ] | `rpc/client.cpp` | `ClientPool fwd decl + clientpool_* free-fn declarations` | 3539 | 8 | Seven declarations the DSL ClientPool's generated methods delegate to (network-I/O get_client + the get_mut-mutating cleanup helpers). Plumbing; shrinks as each helper is converted. |
 | [ ] | `rpc/fiber_channel.cpp` | `fiberchannel_* free-fn forward declarations` | 121 | 8 | Lines 121-128 (`struct FiberChannel;` + 7 declarations). Six of the seven targets are already DSL further down; the declarations exist purely so the GEN'd FiberChannel methods can call them before their definitions. Not generatable from Rust — keep. Once fiberchannel_owned_copy is DSL, all seven targets are DSL and this block is the file's only remaining hand C++ besides module plumbing. |
-| [x] | `rpc/internal_protocol.cpp` | `generated from crates/srpc` | 1 | 0 | Deleted. `crates/srpc/src/wire/internal_protocol.rs` owns all constants/helpers and generates `rrr.internal_protocol.cppm`. |
-| [x] | `misc/stat.cpp` | `generated from crates/srpc` | 1 | 0 | Deleted. `crates/srpc/src/base/stat.rs` generates `rrr.stat.cppm` with the legacy API/layout preserved. |
+| [ ] | `rpc/internal_protocol.cpp` | `module/namespace scaffolding` | 1 | 8 | ZERO hand-written logic. Lines 1-8 (module;/<stdint.h>,<rusty/rusty.hpp>/export module rrr.internal_protocol/import std), `export namespace rrr {` at 17, close at 67. All three wire constants and all three bit-twiddling functions are DSL. Done. |
+| [ ] | `misc/stat.cpp` | `module preamble + export namespace braces` | 1 | 7 | Lines 1-9, 19, 153. This file is DONE — AvgStat is 100% DSL; only module plumbing remains. |
 | [ ] | `misc/serializable.hpp` | `externally-consumed import shims (serializable / any_message / serializable_envelope)` | 11 | 6 | Three `#pragma once` + `import rrr.X;` shims: misc/serializable.hpp:11 (14 real consumers — 11 in src/deptran, 3 in src/rrr/tests, plus rrr.hpp:17), misc/any_message.hpp:5 (4 consumers: src/deptran/rcc_rpc.h:14, rcc/dep_graph.h:14, rcc/dep_graph.cc:4, one rrr test), misc/serializable_envelope.hpp:2 (2 consumers: src/deptran/mako_commands.h:30, one rrr test). Keep as scaffolding: eliminating them means flipping ~15 include sites outside src/rrr to direct `import`, each with the same after-the-includes placement constraint, which is deptran churn rather than Goal-0 progress. |
 | [x] | `reactor/future.cpp` | `forward declarations (FiberPromise/FiberFuture templates, fiber_promise_get_future)` | 46 | 6 | Lines 46-49 and 135-136. Needed because the free functions are declared before the GEN'd structs; same declaration-only situation as the epoll platform prototypes — a DSL block cannot emit a bodiless declaration. |  **← LANDED 2026-08-05**
 | [ ] | `base/all.hpp` | `whole file (pragma once + 5 module imports)` | 1 | 6 | Pure import aggregator, no C++ logic at all. Exactly one consumer: src/rrr/rrr.hpp:16. Could be folded into rrr.hpp (which already carries `import rrr.misc` directly) and deleted, but that is cosmetic — it contributes no hand-written logic to the Goal-0 burndown either way. |
@@ -823,15 +814,12 @@ dangerous one because it builds green.
   own proposal would have broken all four call sites; the right move was to
   delete the struct entirely.
 
-### Remaining work moved to the whole-module campaign
+### Remaining work is upstream, not here
 
-The two open kernel rows remain transpiler defects (`emit_stmt.rs`
-statement-level cfg and `map_operator_trait` operator lowering) and account for
-zero lines of `src/rrr`. The former assertion that whole-file generation did
-not exist is superseded: schema 6 now owns grouped Rust-authored module units.
-The live census, completed slices, and six remaining soundness/emitter
-boundaries are maintained in the sRPC scaffolding conversion plan linked
-above.
+The two open rows are transpiler defects (`emit_stmt.rs` statement-level cfg,
+`map_operator_trait` operator lowering) — 0 lines of `src/rrr`. Further
+progress on the 1,053 scaffolding lines needs a whole-file transpiler mode,
+which does not exist yet.
 
 ## Idioms learned while landing these
 
@@ -949,3 +937,4 @@ to discover.
   `}` and you will delete half a function, orphaning a brace. Anchor on
   the exact line text, and never substring-match a GEN id (`server.1`
   also matches `server.14`).
+

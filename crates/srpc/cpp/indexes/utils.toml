@@ -1,9 +1,0 @@
-version = 1
-
-[modules."rusty::sys"]
-cpp_module = "rusty"
-namespace = "rusty::sys"
-
-[modules."rusty::sys".symbols."env::hostname"]
-kind = "function"
-callable_signatures = ["std::string()"]
