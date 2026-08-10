@@ -106,6 +106,17 @@ class CheckedInCanaryTests(unittest.TestCase):
             ],
             [
                 (
+                    "rrr.callback_wrapper",
+                    "callback_wrapper",
+                    "src/rrr/src/callback_wrapper.rs",
+                    [
+                        (
+                            "src/rrr/base/callback_wrapper.cpp",
+                            ("callback_wrapper.wrapper",),
+                        )
+                    ],
+                ),
+                (
                     "rrr.internal_protocol",
                     "internal_protocol",
                     "src/rrr/src/internal_protocol.rs",
@@ -160,6 +171,12 @@ class CheckedInCanaryTests(unittest.TestCase):
 
     def test_checked_in_payload_is_exactly_the_authored_inline_rust(self) -> None:
         cases = [
+            (
+                "rrr.callback_wrapper",
+                "src/rrr/base/callback_wrapper.cpp",
+                ("callback_wrapper.wrapper",),
+                "src/rrr/src/callback_wrapper.rs",
+            ),
             (
                 "rrr.internal_protocol",
                 "src/rrr/rpc/internal_protocol.cpp",
@@ -249,6 +266,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertEqual(
             DRIVER.rust_source_census(REPOSITORY),
             {
+                "src/rrr/src/callback_wrapper.rs",
                 "src/rrr/src/lib.rs",
                 "src/rrr/src/internal_protocol.rs",
                 "src/rrr/src/stat.rs",
@@ -1114,6 +1132,7 @@ class CrateModeGateTests(unittest.TestCase):
 
     def test_generated_gate_compiles_children_before_partial_root(self) -> None:
         modules = [
+            mock.Mock(cpp_module="rrr.callback_wrapper"),
             mock.Mock(cpp_module="rrr.internal_protocol"),
             mock.Mock(cpp_module="rrr.stat"),
             mock.Mock(cpp_module="rrr.errors"),
@@ -1168,12 +1187,25 @@ class CrateModeGateTests(unittest.TestCase):
         self.assertEqual(
             compiled_names,
             [
+                "rrr.callback_wrapper",
                 "rrr.internal_protocol",
                 "rrr.stat",
                 "rrr.errors",
                 "rrr.connection_metrics",
                 "rrr",
             ],
+        )
+        importer_compile_commands = [
+            call.args[0]
+            for call in run.call_args_list
+            if "-c" in call.args[0]
+            and any(argument.endswith("/importer.cpp") for argument in call.args[0])
+        ]
+        self.assertEqual(len(importer_compile_commands), 1)
+        self.assertIn("-I", importer_compile_commands[0])
+        self.assertIn(
+            "/repository/third-party/rusty-cpp/include",
+            importer_compile_commands[0],
         )
         link_commands = [
             call.args[0]
@@ -1193,6 +1225,7 @@ class CrateModeGateTests(unittest.TestCase):
     def test_gate_abi_ratchet_covers_every_manifest_module(self) -> None:
         root = Path("/repository")
         modules = [
+            mock.Mock(cpp_module="rrr.callback_wrapper"),
             mock.Mock(cpp_module="rrr.internal_protocol"),
             mock.Mock(cpp_module="rrr.stat"),
             mock.Mock(cpp_module="rrr.errors"),

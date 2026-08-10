@@ -25,6 +25,7 @@ REQUIRED_RUSTY_CPP_COMMIT = "707650e4021b163ea37783c14c7a182eef8a9a63"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-extraction.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
+CALLBACK_INLINE_SOURCE = "src/rrr/base/callback_wrapper.cpp"
 NM_LINE = re.compile(r"^[0-9A-Fa-f]+\s+([A-Za-z])\s+(.+)$")
 PLACEHOLDER = re.compile(r"\b(?:TODO|UNSUPPORTED|skipped)\b", re.IGNORECASE)
 
@@ -38,6 +39,30 @@ class AbiSpec:
 
 
 ABI_SPECS = {
+    "rrr.callback_wrapper": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.callback_wrapper;",
+                "namespace rrr {",
+                "namespace detail {",
+                "export template<typename F>",
+                "struct CallbackWrapper",
+                "rusty::Option<rusty::Arc<F>> inner;",
+                "static CallbackWrapper<F> from_callable(F callable) {",
+                "rusty::Arc<F>::new_(std::move(callable))",
+                "bool has_value() const {",
+                "const F& callable() const {",
+                "CallbackWrapper<F> clone() const {",
+                "static CallbackWrapper<F> default_() {",
+                "static constexpr bool is_send",
+                "static constexpr bool is_sync",
+            }
+        ),
+        # CallbackWrapper is an exported class template. Its concrete weak
+        # instantiations belong to importers, so module provider objects must
+        # not acquire an out-of-line specialization ABI.
+        symbols=frozenset(),
+    ),
     "rrr.internal_protocol": AbiSpec(
         surface=frozenset(
             {
@@ -534,6 +559,44 @@ def require_connection_metrics_text_parity(root: Path, generated: str) -> None:
         )
 
 
+def callback_wrapper_definition(text: str, description: str) -> str:
+    matches = re.findall(
+        r"(?:export )?template<typename F>\s+"
+        r"struct CallbackWrapper\s*\{.*?^\s*\};",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    if len(matches) != 1:
+        raise GateError(
+            f"{description} must contain exactly one CallbackWrapper definition; "
+            f"found {len(matches)}"
+        )
+    return re.sub(r"\s+", " ", matches[0].replace("export ", "")).strip()
+
+
+def require_callback_source_gen_parity(root: Path, output: Path) -> None:
+    inline_path = root / CALLBACK_INLINE_SOURCE
+    try:
+        inline_text = inline_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise GateError(f"cannot read callback inline carrier {inline_path}: {exc}") from exc
+    generated_text = read_generated(
+        output / "rrr.callback_wrapper.cppm",
+        "child module rrr.callback_wrapper",
+    )
+    inline_definition = callback_wrapper_definition(
+        inline_text, "inline callback GEN region"
+    )
+    generated_definition = callback_wrapper_definition(
+        generated_text, "crate-generated callback module"
+    )
+    if inline_definition != generated_definition:
+        raise GateError(
+            "crate-generated CallbackWrapper definition differs from the "
+            "inline carrier GEN definition"
+        )
+
+
 def require_cpp_surfaces(
     root: Path, output: Path, modules: list[extraction.ModuleEntry]
 ) -> None:
@@ -603,6 +666,7 @@ def require_cpp_surfaces(
             "generated root module is missing required surface:\n  "
             + "\n  ".join(root_missing)
         )
+    require_callback_source_gen_parity(root, output)
 
 
 def require_zero_hand_slots(path: Path) -> None:
@@ -767,16 +831,26 @@ def require_expected_symbols(
 
 def importer_source() -> str:
     return """\
+#include <rusty/function.hpp>
+#include <rusty/move.hpp>
+#include <rusty/option.hpp>
+#include <rusty/slice.hpp>
 #include <rusty/sync/atomic.hpp>
+#include <rusty/traits.hpp>
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <memory>
 #include <string_view>
 #include <thread>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
+import rrr.callback_wrapper;
 import rrr.connection_metrics;
 import rrr.errors;
 import rrr.internal_protocol;
@@ -790,6 +864,115 @@ static_assert(std::is_same_v<
               std::underlying_type_t<rrr::RpcError>, std::int32_t>);
 static_assert(std::is_trivially_copyable_v<rrr::RpcErrorCategory>);
 static_assert(std::is_trivially_copyable_v<rrr::RpcError>);
+
+namespace callback_oracle {
+
+template<typename F>
+struct CallbackWrapper {
+    rusty::Option<rusty::Arc<F>> inner;
+
+    static CallbackWrapper<F> from_callable(F callable) {
+        return CallbackWrapper<F>{.inner = rusty::Option<rusty::Arc<F>>(
+            rusty::Arc<F>::make(std::move(callable)))};
+    }
+    bool has_value() const {
+        return this->inner.is_some();
+    }
+    const F& callable() const {
+        return rusty::detail::deref_if_pointer_like(
+            rusty::detail::deref_if_pointer_like(
+                this->inner.as_ref().unwrap()));
+    }
+    CallbackWrapper<F> clone() const {
+        return CallbackWrapper<F>{.inner = rusty::clone(this->inner)};
+    }
+    static CallbackWrapper<F> default_() {
+        return CallbackWrapper<F>{
+            .inner = rusty::Option<rusty::Arc<F>>{rusty::None}};
+    }
+    static constexpr bool is_send =
+        rusty::is_send<F>::value && rusty::is_sync<F>::value;
+    static constexpr bool is_sync =
+        rusty::is_send<F>::value && rusty::is_sync<F>::value;
+};
+
+} // namespace callback_oracle
+
+struct CallbackStatefulCallable {
+    std::vector<int>* observations;
+    mutable int calls = 0;
+
+    void operator()(int) const {
+        observations->push_back(++calls);
+    }
+};
+
+struct CallbackMoveObservedCallable {
+    std::shared_ptr<int> moves;
+
+    explicit CallbackMoveObservedCallable(std::shared_ptr<int> count)
+        : moves(std::move(count)) {}
+    CallbackMoveObservedCallable(const CallbackMoveObservedCallable&) = delete;
+    CallbackMoveObservedCallable& operator=(
+        const CallbackMoveObservedCallable&) = delete;
+    CallbackMoveObservedCallable(CallbackMoveObservedCallable&& other) noexcept
+        : moves(std::move(other.moves)) {
+        ++*moves;
+    }
+    CallbackMoveObservedCallable& operator=(
+        CallbackMoveObservedCallable&&) = delete;
+
+    void operator()() const {}
+};
+
+using CallbackFunction = rusty::Function<void(int) const>;
+using CallbackActual =
+    rrr::detail::CallbackWrapper<CallbackFunction>;
+using CallbackOracle =
+    callback_oracle::CallbackWrapper<CallbackFunction>;
+
+static_assert(std::is_standard_layout_v<CallbackActual>);
+static_assert(std::is_standard_layout_v<CallbackOracle>);
+static_assert(sizeof(CallbackActual) == sizeof(CallbackOracle));
+static_assert(alignof(CallbackActual) == alignof(CallbackOracle));
+static_assert(sizeof(CallbackActual) == 2 * sizeof(void*));
+static_assert(alignof(CallbackActual) == alignof(void*));
+static_assert(offsetof(CallbackActual, inner) == 0);
+static_assert(offsetof(CallbackActual, inner) ==
+              offsetof(CallbackOracle, inner));
+static_assert(
+    std::is_default_constructible_v<CallbackActual> ==
+    std::is_default_constructible_v<CallbackOracle>);
+static_assert(
+    std::is_copy_constructible_v<CallbackActual> ==
+    std::is_copy_constructible_v<CallbackOracle>);
+static_assert(
+    std::is_copy_assignable_v<CallbackActual> ==
+    std::is_copy_assignable_v<CallbackOracle>);
+static_assert(
+    std::is_move_constructible_v<CallbackActual> ==
+    std::is_move_constructible_v<CallbackOracle>);
+static_assert(
+    std::is_move_assignable_v<CallbackActual> ==
+    std::is_move_assignable_v<CallbackOracle>);
+static_assert(
+    std::is_nothrow_move_constructible_v<CallbackActual> ==
+    std::is_nothrow_move_constructible_v<CallbackOracle>);
+static_assert(
+    std::is_nothrow_move_assignable_v<CallbackActual> ==
+    std::is_nothrow_move_assignable_v<CallbackOracle>);
+static_assert(
+    std::is_trivially_destructible_v<CallbackActual> ==
+    std::is_trivially_destructible_v<CallbackOracle>);
+static_assert(std::is_same_v<
+    decltype(CallbackActual::from_callable(
+        std::declval<CallbackFunction>())),
+    CallbackActual>);
+static_assert(std::is_same_v<
+    decltype(std::declval<const CallbackActual&>().callable()),
+    const CallbackFunction&>);
+static_assert(CallbackActual::is_send == CallbackOracle::is_send);
+static_assert(CallbackActual::is_sync == CallbackOracle::is_sync);
 static_assert(std::is_standard_layout_v<rrr::AvgStat>);
 static_assert(std::is_trivially_copyable_v<rrr::AvgStat>);
 static_assert(sizeof(rrr::AvgStat) == 5 * sizeof(std::int64_t));
@@ -1246,6 +1429,71 @@ int main() {
     if (!metrics_concurrent_updates_are_atomic()) {
         return 41;
     }
+
+    CallbackActual empty;
+    if (empty.has_value() || CallbackActual::default_().has_value()) {
+        return 50;
+    }
+
+    std::vector<int> observations;
+    auto original = CallbackActual::from_callable(
+        CallbackStatefulCallable{&observations});
+    auto copy = original;
+    auto cloned = original.clone();
+    original.callable()(1);
+    copy.callable()(2);
+    cloned.callable()(3);
+    if (observations != std::vector<int>{1, 2, 3}) {
+        return 51;
+    }
+    if (&original.callable() != &copy.callable() ||
+        &original.callable() != &cloned.callable()) {
+        return 52;
+    }
+
+    auto owned = std::make_unique<int>(41);
+    int result = 0;
+    auto move_only = CallbackActual::from_callable(
+        [payload = std::move(owned), &result](int value) {
+            result = *payload + value;
+        });
+    if (owned != nullptr || !move_only.has_value()) {
+        return 53;
+    }
+    move_only.callable()(1);
+    if (result != 42) {
+        return 54;
+    }
+
+    int named_result = 0;
+    std::function<void(int)> named =
+        [&](int value) { named_result = value; };
+    auto named_wrapper = CallbackActual::from_callable(std::move(named));
+    named_wrapper.callable()(17);
+    if (named_result != 17) {
+        return 55;
+    }
+
+    using CallbackActualMove =
+        rrr::detail::CallbackWrapper<CallbackMoveObservedCallable>;
+    using CallbackOracleMove =
+        callback_oracle::CallbackWrapper<CallbackMoveObservedCallable>;
+    static_assert(sizeof(CallbackActualMove) == sizeof(CallbackOracleMove));
+    static_assert(alignof(CallbackActualMove) == alignof(CallbackOracleMove));
+    auto actual_moves = std::make_shared<int>(0);
+    auto oracle_moves = std::make_shared<int>(0);
+    auto actual_move_wrapper = CallbackActualMove::from_callable(
+        CallbackMoveObservedCallable{actual_moves});
+    auto oracle_move_wrapper = CallbackOracleMove::from_callable(
+        CallbackMoveObservedCallable{oracle_moves});
+    if (!actual_move_wrapper.has_value() ||
+        !oracle_move_wrapper.has_value()) {
+        return 56;
+    }
+    if (*actual_moves != 1 || *oracle_moves != 1 ||
+        *actual_moves != *oracle_moves) {
+        return 57;
+    }
     return 0;
 }
 """
@@ -1535,9 +1783,10 @@ def check(args: argparse.Namespace) -> None:
         f"checked whole rrr crate ({len(modules) + 1} modules compiled, "
         "partial root compile-only, 0 hand slots), combined importer against generated "
         f"objects and the independent inline reference{production_label}, "
-        "AvgStat, RpcError, and ConnectionMetrics layout/concurrent/wrapping "
+        "CallbackWrapper C++ layout/runtime/move parity, AvgStat layout/runtime, "
+        "RpcError runtime contracts, ConnectionMetrics layout/concurrent/wrapping "
         "runtime contracts, and "
-        f"{symbol_count} exact strong ABI symbols"
+        f"{symbol_count} exact provider-owned strong ABI symbols"
     )
 
 

@@ -4,13 +4,14 @@ The `rrr` Cargo package in this directory compiles Rust extracted from the real
 inline-Rust DSL in the production `src/rrr` module sources. It is deliberately
 not a second implementation.
 
-The current ratchet owns four of 38 production named modules, four of 39
-module-source units, and 11 of 446 DSL blocks: `internal_protocol.1`, `stat.1`,
-all seven blocks in `rpc/errors.cpp`, and `connection_metrics.usings` plus
-`connection_metrics.1`. That is 364 of the 11,482 noncomment DSL code lines.
-These counts describe partial coverage, not Goal 0 completion. The 11,482-line
-denominator is the pre-enrollment semantic DSL baseline; extraction copies
-owned bytes into the crate without deleting their inline source blocks.
+The current ratchet owns five of 38 production named modules, five of 39
+module-source units, and 12 of 446 DSL blocks: `callback_wrapper.wrapper`,
+`internal_protocol.1`, `stat.1`, all seven blocks in `rpc/errors.cpp`, and
+`connection_metrics.usings` plus `connection_metrics.1`. That is 390 of the
+11,482 noncomment DSL code lines. These counts describe partial coverage, not
+Goal 0 completion. The 11,482-line denominator is the pre-enrollment semantic
+DSL baseline; extraction copies owned bytes into the crate without deleting
+their inline source blocks.
 
 `rust-extraction.toml` maps each generated Rust module to its production C++
 module identity and an ordered, nonempty list of `[[module.input]]` groups.
@@ -63,18 +64,22 @@ symlink components. Generated outputs, `src/lib.rs`, and their parents also may
 not be symlinks; these paths are checked while loading the manifest and again
 before census or write operations.
 
-The conventional `src/lib.rs` layout and direct `src/internal_protocol.rs`,
-`src/stat.rs`, `src/errors.rs`, and `src/connection_metrics.rs` modules are
-intentional: they map to the existing `rrr.internal_protocol`, `rrr.stat`,
-`rrr.errors`, and `rrr.connection_metrics` C++ modules rather than inventing an
-`srpc.extracted.*` namespace. The current rusty-cpp crate collector discovers
-`<package>/src`; it does not honor Cargo's optional `[lib] path` override.
+The conventional `src/lib.rs` layout and direct `src/callback_wrapper.rs`,
+`src/internal_protocol.rs`, `src/stat.rs`, `src/errors.rs`, and
+`src/connection_metrics.rs` modules are intentional: they map to the existing
+`rrr.callback_wrapper`, `rrr.internal_protocol`, `rrr.stat`, `rrr.errors`, and
+`rrr.connection_metrics` C++ modules rather than inventing an
+`srpc.extracted.*` namespace. The callback source itself owns
+`pub mod detail`, so ordinary file-module lowering produces the exact
+`rrr::detail::CallbackWrapper` API without an ownership map. The current
+rusty-cpp crate collector discovers `<package>/src`; it does not honor Cargo's
+optional `[lib] path` override.
 
 Crate-mode generation must preserve the production C++ namespace as well as
 the module name. `--auto-namespace` is wrong here because it nests APIs below
 their module names. The checked gate forces `--cxx-namespace rrr` and generates
 the entire partial crate once in the build tree. Production compiles only the
-four child modules derived from the extraction manifest. The temporary gate
+five child modules derived from the extraction manifest. The temporary gate
 compiles those children first and then the partial `rrr.cppm` root as an
 umbrella syntax/import-closure proof; that root is never linked, installed, or
 added as a production provider.
@@ -89,15 +94,16 @@ standard-library imports and needs no ownership map.
 
 Production substitution is opt-in. The default
 `RRR_USE_CRATE_CPP_MODULES=OFF` keeps every inline C++ carrier. With the option
-ON, the `rrr` target removes exactly `rpc/internal_protocol.cpp`,
-`misc/stat.cpp`, `rpc/errors.cpp`, and `rpc/connection_metrics.cpp` from its
-module-provider list and replaces them with the generated
-`rrr.internal_protocol.cppm`, `rrr.stat.cppm`, `rrr.errors.cppm`, and
-`rrr.connection_metrics.cppm` children. The full inline-carrier census remains
+ON, the `rrr` target removes exactly `base/callback_wrapper.cpp`,
+`rpc/internal_protocol.cpp`, `misc/stat.cpp`, `rpc/errors.cpp`, and
+`rpc/connection_metrics.cpp` from its module-provider list and replaces them
+with the generated `rrr.callback_wrapper.cppm`, `rrr.internal_protocol.cppm`,
+`rrr.stat.cppm`, `rrr.errors.cppm`, and `rrr.connection_metrics.cppm` children.
+The full inline-carrier census remains
 immutable so the source glob cannot compile an old carrier accidentally.
 
 The dual gate builds a separate `rrr_goal0_inline_reference` archive directly
-from the four inline carriers. Its combined importer is linked and run three
+from the five inline carriers. Its combined importer is linked and run three
 ways: against the standalone generated objects, against that independent
 inline reference, and against the selected production `librrr` archive. Thus
 the ON-mode comparison never uses the generated production archive as its own
@@ -105,24 +111,38 @@ oracle. Every lane also receives the complete static `rusty` target archive
 closure under linker-group/rescan semantics, and direct compile/link commands
 use the configured Clang/libc++ ABI. This matters as soon as an enrolled module
 imports `rusty` or returns a libc++ type; `$<TARGET_FILE:rusty>` alone does not
-carry CMake's transitive archive dependencies. The gate checks `AvgStat` size,
-alignment, field offsets, type properties, and state transitions; every
-`RpcError` and `RpcErrorCategory` discriminant, name, category, and retry
-predicate; and the `ConnectionMetrics` size, alignment, 18 field offsets, type
-properties, and state transitions. It also compares the exact strong
-per-module ABI (six `internal_protocol`, six `stat`, six `errors`, and 39
-`connection_metrics` symbols, 57 total). Compiler-generated weak
+carry CMake's transitive archive dependencies.
+
+The callback has separate backend layout contracts; the gate does not claim
+that Rust `Option<Arc<F>>` and C++ `rusty::Option<rusty::Arc<F>>` have the same
+record size. The Rust test pins the `#[repr(C)]` wrapper's public `inner` field
+at offset zero and pins its current niche-optimized, one-pointer size/alignment.
+The C++ gate independently pins the two-pointer C++ record and compares the
+crate-generated definition with both the inline GEN definition and an
+independent C++ oracle for size, alignment, field offset, type properties,
+default/copy/clone/move-only behavior, and the one-move `Arc::new_` path.
+
+The gate also checks `AvgStat` size, alignment, field offsets, type properties,
+and state transitions; every `RpcError` and `RpcErrorCategory` discriminant,
+name, category, and retry predicate; and the `ConnectionMetrics` size,
+alignment, 18 field offsets, type properties, and state transitions. The exact
+provider-owned strong ABI remains 57 symbols: six each from
+`internal_protocol`, `stat`, and `errors`, 39 from `connection_metrics`, and
+zero from the importer-instantiated callback template. Compiler-generated weak
 template/lambda definitions are deliberately outside that strong ABI set.
-After normalizing only crate mode's `export` spelling, the gate requires the
-complete metrics using declarations, struct declaration, and all method bodies
-to match the inline provider text exactly. Rust integration tests independently
-cover the public 18-field `repr(C)` layout and all counter, latency, uptime,
-saturation, reset, and unsigned-wrapping behavior, including repeated
-eight-thread stress. The combined C++ importer repeats the same concurrent
-counter/extrema/gauge stress in all three generated, inline-reference, and
-selected-production lanes. Before crate translation, the gate runs the
-extraction driver's `--check` with that same transpiler, so a hand-edited
-generated Rust file cannot pass crate mode independently.
+The callback parity gate removes crate mode's `export` spelling, normalizes
+whitespace, and compares the complete definition with its inline provider. The
+metrics gate normalizes only the crate-mode `export` spelling and requires its
+complete using declarations, struct declaration, and all method bodies to match
+the inline provider exactly. Rust integration tests independently cover the
+callback's sharing and move behavior plus the public 18-field metrics `repr(C)`
+layout and all counter, latency, uptime, saturation, reset, and
+unsigned-wrapping behavior, including
+repeated eight-thread stress. The combined C++ importer repeats those contracts
+in all three generated, inline-reference, and selected-production lanes. Before
+crate translation, the gate runs the extraction driver's `--check` with that
+same transpiler, so a hand-edited generated Rust file cannot pass crate mode
+independently.
 
 The build also fingerprints the transpiler executable after Cargo's build
 edge. Crate generation consumes that declared fingerprint as a normal input,

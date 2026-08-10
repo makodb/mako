@@ -4,6 +4,14 @@
 schema_version = 1
 
 [[module]]
+cpp_module = "rrr.callback_wrapper"
+output = "src/rrr/src/callback_wrapper.rs"
+
+[[module.input]]
+source = "src/rrr/base/callback_wrapper.cpp"
+block_ids = ["callback_wrapper.wrapper"]
+
+[[module]]
 cpp_module = "rrr.internal_protocol"
 output = "src/rrr/src/internal_protocol.rs"
 

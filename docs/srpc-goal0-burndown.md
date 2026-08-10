@@ -305,7 +305,7 @@ Each row's *first step* is the idiom to use. These are ordered by size.
 | [ ] | `rpc/request_options.cpp` | `module preamble + export namespace braces` | 1 | 9 | Lines 1-16, 342. DONE — TimeoutType, RequestOptions (incl. calculate_delay_ms jitter math) and the to-string fn are all DSL. |
 | [ ] | `misc/any_message.cpp` | `forward declarations + SerializableProxy alias` | 36 | 9 | `struct AnyMessage;` (36), the SerializableProxy alias (41), the early `any_message_registry::create` prototype (42-44) that DSL `AnyMessage::load` calls before the registry namespace exists, and the four `anymessage_*` template prototypes (53-56). The 53-56 block is NOT cosmetic: pack/pack_as take only non-rrr argument types, so ADL never reaches namespace rrr and ordinary lookup at the template definition point must find them. |
 | [ ] | `rpc/errors.cpp` | `module/namespace scaffolding` | 1 | 9 | ZERO hand-written logic. Lines 1-15 (module;/<rusty/move.hpp>,<rusty/slice.hpp>,<rusty/intrinsics.hpp> for the match fallthrough,<cstdint>/export module rrr.errors/import std/import rusty), `export namespace rrr {` at 20, close at 384. Both enums, both to_string tables, get_error_category and the three predicates are DSL. Nothing to burn down here. |
-| [ ] | `base/callback_wrapper.cpp` | `module preamble + namespace braces` | 1 | 9 | `module;` + 2 rusty includes + `export module rrr.callback_wrapper;` + `import std;` (1-8) plus the `export namespace rrr { namespace detail {` brace pairs (14/16, 49/50). This file is 100% scaffolding + one class template. |
+| [x] | `base/callback_wrapper.cpp` | `module preamble + namespace braces` | 1 | 12 | The file now owns one canonical `pub mod detail` Rust block. Its remaining hand-authored C++ is only `module;`, the runtime includes, `export module rrr.callback_wrapper;`, `import std;`, and the enclosing `export namespace rrr` braces. The class template is generated inline and is also enrolled in the rustc/rusty-cpp crate ratchet. |
 | [ ] | `reactor/reactor.cpp` | `export namespace / brace scaffolding (rrr, janus, impl)` | 96 | 9 | `export namespace janus {` (96-100) with the two QuorumEvent factory decls, plus the `export namespace rrr {` / `}` pairs at 102, 3034, 3045, 3406, 3419, 3875 and the impl-namespace open at 3886. The DSL emits into the enclosing namespace, so these braces stay. |
 | [ ] | `reactor/reactor.cpp` | `using PollCommand = std::variant<7 Cmd structs>` | 3024 | 9 | A type alias over the 7 DSL-generated Cmd structs; keep as-is. Turning it into a payload-carrying DSL enum is not worth it — the consumer (pollworker_poll_loop's dispatch) would then hit match-arm-payload-not-movable on the Box<PollableBase>/Arc<Job> payloads. |  **← DELETED: the DSL enum emits the variant alias itself.**
 | [ ] | `misc/serializable.cpp` | `namespace braces (export namespace rrr / details / anon / reopened rrr)` | 36 | 8 | Lines 36, 3970, 4036, 4296, 4306, 4308, 4342, 4396. Pure brace plumbing around the DSL/GEN blocks. |
@@ -778,9 +778,6 @@ route raised the line count and weakened a load-bearing guard.
   `fiber_engine_start(&fib_, this)` in place on a non-movable object.
 - **Both `adl_detail_` decoys** — `= delete` on a free function has no DSL
   spelling.
-- **`CallbackWrapper`** — the SFINAE converting ctor (~194 implicit-conversion
-  sites). Because a DSL struct's GEN cannot host hand-written members, that
-  ONE floor pins the entire struct.
 - **`verify`** — the `std::source_location` default argument, at ~1,940 sites.
 - **`is_send`/`is_sync`** and **`Serializable<D,PL>`** — blocked on transpiler
   defects that would ship SILENT correctness bugs (see below).
