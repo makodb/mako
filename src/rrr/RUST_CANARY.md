@@ -55,23 +55,26 @@ symlink components. Generated outputs, `src/lib.rs`, and their parents also may
 not be symlinks; these paths are checked while loading the manifest and again
 before census or write operations.
 
-The conventional `src/lib.rs` layout and direct `src/internal_protocol.rs`
-module are intentional: they map to the existing `rrr.internal_protocol` C++
-module rather than inventing an `srpc.extracted.*` namespace. The current rusty-cpp
-crate collector discovers `<package>/src`; it does not honor Cargo's optional
-`[lib] path` override.
+The conventional `src/lib.rs` layout and direct `src/internal_protocol.rs` and
+`src/stat.rs` modules are intentional: they map to the existing
+`rrr.internal_protocol` and `rrr.stat` C++ modules rather than inventing an
+`srpc.extracted.*` namespace. The current rusty-cpp crate collector discovers
+`<package>/src`; it does not honor Cargo's optional `[lib] path` override.
 
 Crate-mode generation must preserve the production C++ namespace as well as
-the module name. `--auto-namespace` is wrong here because it nests the API in
-`rrr::internal_protocol`. The checked gate forces `--cxx-namespace rrr`, builds
-both generated modules in dependency order, rejects hand slots and placeholder
-markers, compiles the importer once, links and runs it separately against both
-the crate-generated and production objects, then compares their exact three
-`R` constants and three `T` functions. Before crate translation, the gate runs
-the extraction driver's `--check` with that same transpiler, so a hand-edited
-generated Rust file cannot pass crate mode independently:
+the module name. `--auto-namespace` is wrong here because it nests APIs below
+their module names. The checked gate forces `--cxx-namespace rrr`, derives both
+child modules from the extraction manifest, builds them and the generated root,
+rejects hand slots and placeholder markers, and compiles one combined importer.
+That importer is linked and run separately against the crate-generated objects
+and the production `librrr` archive. The gate checks `AvgStat` size, alignment,
+field offsets, type properties, and state transitions; it also compares the
+exact per-module ABI (six `internal_protocol` symbols and six `stat` symbols).
+Before crate translation, the gate runs the extraction driver's `--check` with
+that same transpiler, so a hand-edited generated Rust file cannot pass crate
+mode independently:
 
 ```sh
 python3 scripts/check_rrr_crate_mode.py \
-  --reference-object build/src/rrr/CMakeFiles/rrr.dir/rpc/internal_protocol.cpp.o
+  --reference-library build/src/rrr/librrr.a
 ```

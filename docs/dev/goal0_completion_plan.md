@@ -5,16 +5,18 @@ the actual Rust DSL authored there must compile both with rustc and through
 rusty-cpp. The old parallel hand-port was not the DSL and has
 been removed; it cannot be used as evidence for either half.
 
-## Current dual-compilation ratchet (2026-08-09)
+## Current dual-compilation ratchet (2026-08-10)
 
 The actual Cargo package now starts at `src/rrr/Cargo.toml`. Its checked-in
 Rust module inputs are generated from ordered inline-DSL block IDs through
 `scripts/extract_rrr_rust.py`; rustc and rusty-cpp consume those same generated
-bytes. The first canary covers `rpc/internal_protocol.cpp` block
-`internal_protocol.1` and preserves the production `rrr.internal_protocol`
-module namespace and six-symbol ABI.
+bytes. The first two slices cover `rpc/internal_protocol.cpp` block
+`internal_protocol.1` and `misc/stat.cpp` block `stat.1`. They preserve the
+production `rrr.internal_protocol` and `rrr.stat` namespaces, their exact
+twelve-symbol combined ABI, and the `AvgStat` aggregate layout and runtime
+behavior.
 
-This is deliberately partial: one selected production block is not the whole
+This is deliberately partial: two selected production blocks are not the whole
 rrr source graph. `cargo test --manifest-path src/rrr/Cargo.toml` must never be
 reported as full Goal 0 completion until the extraction manifest covers the
 entire intended DSL graph and the hand-written-C++ half below also reaches

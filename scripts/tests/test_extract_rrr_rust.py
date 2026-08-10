@@ -70,50 +70,89 @@ class CheckedInCanaryTests(unittest.TestCase):
         modules = DRIVER.load_manifest(
             REPOSITORY, REPOSITORY / "src/rrr/rust-extraction.toml"
         )
-        self.assertEqual(len(modules), 1)
-        module = modules[0]
-        self.assertEqual(module.cpp_module, "rrr.internal_protocol")
-        self.assertEqual(module.rust_module, "internal_protocol")
-        self.assertEqual(module.output_label, "src/rrr/src/internal_protocol.rs")
-        self.assertEqual(len(module.inputs), 1)
         self.assertEqual(
-            module.inputs[0].source_label,
-            "src/rrr/rpc/internal_protocol.cpp",
+            [
+                (
+                    module.cpp_module,
+                    module.rust_module,
+                    module.output_label,
+                    [
+                        (source.source_label, source.block_ids)
+                        for source in module.inputs
+                    ],
+                )
+                for module in modules
+            ],
+            [
+                (
+                    "rrr.internal_protocol",
+                    "internal_protocol",
+                    "src/rrr/src/internal_protocol.rs",
+                    [
+                        (
+                            "src/rrr/rpc/internal_protocol.cpp",
+                            ("internal_protocol.1",),
+                        )
+                    ],
+                ),
+                (
+                    "rrr.stat",
+                    "stat",
+                    "src/rrr/src/stat.rs",
+                    [("src/rrr/misc/stat.cpp", ("stat.1",))],
+                ),
+            ],
         )
-        self.assertEqual(module.inputs[0].block_ids, ("internal_protocol.1",))
 
     def test_checked_in_payload_is_exactly_the_authored_inline_rust(self) -> None:
-        source_path = REPOSITORY / "src/rrr/rpc/internal_protocol.cpp"
-        output_path = REPOSITORY / "src/rrr/src/internal_protocol.rs"
-        source_bytes = source_path.read_bytes()
-        source = source_bytes.decode("utf-8")
-        header, payload = split_generated(output_path.read_bytes())
-        expected = source_block(source, "internal_protocol.1").encode("utf-8")
+        cases = [
+            (
+                "rrr.internal_protocol",
+                "src/rrr/rpc/internal_protocol.cpp",
+                "internal_protocol.1",
+                "src/rrr/src/internal_protocol.rs",
+            ),
+            (
+                "rrr.stat",
+                "src/rrr/misc/stat.cpp",
+                "stat.1",
+                "src/rrr/src/stat.rs",
+            ),
+        ]
+        for cpp_module, source_label, block_id, output_label in cases:
+            with self.subTest(cpp_module=cpp_module):
+                source_path = REPOSITORY / source_label
+                output_path = REPOSITORY / output_label
+                source_bytes = source_path.read_bytes()
+                source = source_bytes.decode("utf-8")
+                header, payload = split_generated(output_path.read_bytes())
+                expected = source_block(source, block_id).encode("utf-8")
 
-        self.assertEqual(payload, expected)
-        self.assertIn("// provenance-cpp-module: rrr.internal_protocol", header)
-        self.assertIn(
-            "// provenance-input[0]-source: src/rrr/rpc/internal_protocol.cpp",
-            header,
-        )
-        self.assertIn(
-            "// provenance-input[0]-block-ids: internal_protocol.1",
-            header,
-        )
-        self.assertIn(
-            "// provenance-input[0]-source-sha256: "
-            f"{hashlib.sha256(source_bytes).hexdigest()}",
-            header,
-        )
-        self.assertIn(
-            "// provenance-input[0]-rust-sha256: "
-            f"{hashlib.sha256(payload).hexdigest()}",
-            header,
-        )
-        self.assertIn(
-            f"// provenance-rust-sha256: {hashlib.sha256(payload).hexdigest()}",
-            header,
-        )
+                self.assertEqual(payload, expected)
+                self.assertIn(
+                    f"// provenance-cpp-module: {cpp_module}", header
+                )
+                self.assertIn(
+                    f"// provenance-input[0]-source: {source_label}", header
+                )
+                self.assertIn(
+                    f"// provenance-input[0]-block-ids: {block_id}", header
+                )
+                self.assertIn(
+                    "// provenance-input[0]-source-sha256: "
+                    f"{hashlib.sha256(source_bytes).hexdigest()}",
+                    header,
+                )
+                self.assertIn(
+                    "// provenance-input[0]-rust-sha256: "
+                    f"{hashlib.sha256(payload).hexdigest()}",
+                    header,
+                )
+                self.assertIn(
+                    "// provenance-rust-sha256: "
+                    f"{hashlib.sha256(payload).hexdigest()}",
+                    header,
+                )
 
     def test_lib_is_manifest_generated_and_census_has_no_orphans(self) -> None:
         manifest = REPOSITORY / "src/rrr/rust-extraction.toml"
@@ -130,6 +169,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             {
                 "src/rrr/src/lib.rs",
                 "src/rrr/src/internal_protocol.rs",
+                "src/rrr/src/stat.rs",
             },
         )
 
@@ -679,7 +719,7 @@ class CrateModeGateTests(unittest.TestCase):
             transpiler=str(transpiler),
             clang="clang++",
             nm="nm",
-            reference_object="reference.o",
+            reference_library="librrr.a",
         )
         with mock.patch.object(
             GATE, "repository_root", return_value=root
@@ -727,6 +767,28 @@ class CrateModeGateTests(unittest.TestCase):
             side_effect=[gitlink, required, ""],
         ), mock.patch.object(GATE.subprocess, "run", return_value=clean):
             GATE.verify_pinned_toolchain(Path("/repository"), Path("/tool"))
+
+    def test_gate_abi_ratchet_covers_every_manifest_module(self) -> None:
+        root = Path("/repository")
+        modules = [
+            mock.Mock(cpp_module="rrr.internal_protocol"),
+            mock.Mock(cpp_module="rrr.stat"),
+        ]
+        with mock.patch.object(
+            GATE.extraction, "load_manifest", return_value=modules
+        ) as load:
+            self.assertEqual(GATE.load_owned_modules(root), modules)
+        load.assert_called_once_with(root, root / GATE.EXTRACTION_MANIFEST)
+
+        with mock.patch.object(
+            GATE.extraction,
+            "load_manifest",
+            return_value=[*modules, mock.Mock(cpp_module="rrr.orphan")],
+        ):
+            with self.assertRaisesRegex(
+                GATE.GateError, "missing ABI specification"
+            ):
+                GATE.load_owned_modules(root)
 
 
 if __name__ == "__main__":

@@ -617,7 +617,8 @@ def render_lib(
     for module in sorted(modules, key=lambda entry: entry.rust_module):
         lines.extend(
             [
-                "#[allow(dead_code, non_upper_case_globals)]",
+                "#[allow(dead_code, non_upper_case_globals, "
+                "clippy::new_without_default)]",
                 f"pub mod {module.rust_module};",
             ]
         )

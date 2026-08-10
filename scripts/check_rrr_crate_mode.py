@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,8 @@ import subprocess
 import sys
 import tempfile
 
+import extract_rrr_rust as extraction
+
 
 DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
@@ -20,26 +23,84 @@ DEFAULT_TRANSPILER = (
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
 REQUIRED_RUSTY_CPP_COMMIT = "ba70b6ab6d8b38bfc5107ce963c6766d460b0e42"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
-MODULE_NAME = "rrr.internal_protocol"
-EXPECTED_SYMBOLS = {
-    ("R", "rrr::kInternalHeartbeatRpcId@rrr.internal_protocol"),
-    ("R", "rrr::kResponseHeaderExtFlag@rrr.internal_protocol"),
-    ("R", "rrr::kResponseSizeMask@rrr.internal_protocol"),
-    (
-        "T",
-        "rrr::encode_response_size@rrr.internal_protocol(int, bool)",
-    ),
-    (
-        "T",
-        "rrr::response_has_extended_header@rrr.internal_protocol(int)",
-    ),
-    (
-        "T",
-        "rrr::response_payload_size@rrr.internal_protocol(int)",
-    ),
-}
+EXTRACTION_MANIFEST = "src/rrr/rust-extraction.toml"
 NM_LINE = re.compile(r"^[0-9A-Fa-f]+\s+([A-Za-z])\s+(.+)$")
 PLACEHOLDER = re.compile(r"\b(?:TODO|UNSUPPORTED|skipped)\b", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class AbiSpec:
+    """Checked C++ surface and exact symbols for one extracted module."""
+
+    surface: frozenset[str]
+    symbols: frozenset[tuple[str, str]]
+
+
+ABI_SPECS = {
+    "rrr.internal_protocol": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.internal_protocol;",
+                "namespace rrr {",
+                "export constexpr int32_t kInternalHeartbeatRpcId",
+                "export constexpr uint32_t kResponseHeaderExtFlag",
+                "export constexpr uint32_t kResponseSizeMask",
+                "export bool response_has_extended_header(int32_t encoded_size);",
+                "export int32_t response_payload_size(int32_t encoded_size);",
+                "export int32_t encode_response_size(int32_t payload_size, bool extended_header);",
+            }
+        ),
+        symbols=frozenset(
+            {
+                ("R", "rrr::kInternalHeartbeatRpcId@rrr.internal_protocol"),
+                ("R", "rrr::kResponseHeaderExtFlag@rrr.internal_protocol"),
+                ("R", "rrr::kResponseSizeMask@rrr.internal_protocol"),
+                (
+                    "T",
+                    "rrr::encode_response_size@rrr.internal_protocol(int, bool)",
+                ),
+                (
+                    "T",
+                    "rrr::response_has_extended_header@rrr.internal_protocol(int)",
+                ),
+                (
+                    "T",
+                    "rrr::response_payload_size@rrr.internal_protocol(int)",
+                ),
+            }
+        ),
+    ),
+    "rrr.stat": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.stat;",
+                "namespace rrr {",
+                "export struct AvgStat",
+                "int64_t n_stat_;",
+                "int64_t sum_;",
+                "int64_t avg_;",
+                "int64_t max_;",
+                "int64_t min_;",
+                "static AvgStat new_();",
+                "void sample(int64_t s);",
+                "void clear();",
+                "AvgStat reset();",
+                "AvgStat peek() const;",
+                "int64_t avg() const;",
+            }
+        ),
+        symbols=frozenset(
+            {
+                ("T", "rrr::AvgStat@rrr.stat::new_()"),
+                ("T", "rrr::AvgStat@rrr.stat::sample(long)"),
+                ("T", "rrr::AvgStat@rrr.stat::clear()"),
+                ("T", "rrr::AvgStat@rrr.stat::reset()"),
+                ("T", "rrr::AvgStat@rrr.stat::peek() const"),
+                ("T", "rrr::AvgStat@rrr.stat::avg() const"),
+            }
+        ),
+    ),
+}
 
 
 class GateError(RuntimeError):
@@ -140,14 +201,13 @@ def verify_transpiler_build_info(root: Path, transpiler: Path) -> None:
             "rusty-cpp transpiler --build-info JSON keys must be exactly "
             "git_hash and git_dirty"
         )
-    git_hash = build_info["git_hash"]
-    git_dirty = build_info["git_dirty"]
-    if git_hash != REQUIRED_RUSTY_CPP_COMMIT:
+    if build_info["git_hash"] != REQUIRED_RUSTY_CPP_COMMIT:
         raise GateError(
             "rusty-cpp transpiler build commit mismatch: "
-            f"expected {REQUIRED_RUSTY_CPP_COMMIT}, got {git_hash!r}"
+            f"expected {REQUIRED_RUSTY_CPP_COMMIT}, "
+            f"got {build_info['git_hash']!r}"
         )
-    if git_dirty is not False:
+    if build_info["git_dirty"] is not False:
         raise GateError("rusty-cpp transpiler build must report git_dirty=false")
 
 
@@ -197,6 +257,27 @@ def require_extraction_check(root: Path, transpiler: Path) -> None:
     )
 
 
+def load_owned_modules(root: Path) -> list[extraction.ModuleEntry]:
+    try:
+        modules = extraction.load_manifest(root, root / EXTRACTION_MANIFEST)
+    except extraction.ExtractionError as exc:
+        raise GateError(f"cannot load extraction ownership: {exc}") from exc
+    actual = {module.cpp_module for module in modules}
+    expected = set(ABI_SPECS)
+    if actual != expected:
+        details = ["crate-mode ABI ratchet does not match extraction manifest"]
+        if expected - actual:
+            details.append(
+                "missing manifest module(s): " + ", ".join(sorted(expected - actual))
+            )
+        if actual - expected:
+            details.append(
+                "missing ABI specification(s): " + ", ".join(sorted(actual - expected))
+            )
+        raise GateError("\n".join(details))
+    return modules
+
+
 def read_generated(path: Path, description: str) -> str:
     try:
         text = path.read_text(encoding="utf-8")
@@ -211,31 +292,41 @@ def read_generated(path: Path, description: str) -> str:
     return text
 
 
-def require_cpp_surface(child_module: Path, root_module: Path) -> None:
-    text = read_generated(child_module, "child module")
-    required = {
-        "export module rrr.internal_protocol;",
-        "namespace rrr {",
-        "export constexpr int32_t kInternalHeartbeatRpcId",
-        "export constexpr uint32_t kResponseHeaderExtFlag",
-        "export constexpr uint32_t kResponseSizeMask",
-        "export bool response_has_extended_header(int32_t encoded_size);",
-        "export int32_t response_payload_size(int32_t encoded_size);",
-        "export int32_t encode_response_size(int32_t payload_size, bool extended_header);",
-    }
-    missing = sorted(fragment for fragment in required if fragment not in text)
-    if missing:
-        raise GateError("generated module is missing required surface:\n  " + "\n  ".join(missing))
-    if "namespace rrr::internal_protocol" in text:
+def require_cpp_surfaces(
+    output: Path, modules: list[extraction.ModuleEntry]
+) -> None:
+    expected_files = {f"{module.cpp_module}.cppm" for module in modules}
+    expected_files.add("rrr.cppm")
+    actual_files = {path.name for path in output.glob("*.cppm") if path.is_file()}
+    if actual_files != expected_files:
         raise GateError(
-            "generated module drifted to nested namespace rrr::internal_protocol"
+            "generated C++ module census mismatch: expected "
+            f"{sorted(expected_files)!r}, got {sorted(actual_files)!r}"
         )
 
-    root_text = read_generated(root_module, "root module")
+    for module in modules:
+        path = output / f"{module.cpp_module}.cppm"
+        text = read_generated(path, f"child module {module.cpp_module}")
+        missing = sorted(
+            fragment
+            for fragment in ABI_SPECS[module.cpp_module].surface
+            if fragment not in text
+        )
+        if missing:
+            raise GateError(
+                f"generated module {module.cpp_module} is missing required surface:\n  "
+                + "\n  ".join(missing)
+            )
+        if "namespace rrr::" in text:
+            raise GateError(
+                f"generated module {module.cpp_module} drifted to a nested namespace"
+            )
+
+    root_text = read_generated(output / "rrr.cppm", "root module")
     root_required = {
         "export module rrr;",
-        "export import rrr.internal_protocol;",
         "namespace rrr {",
+        *(f"export import {module.cpp_module};" for module in modules),
     }
     root_missing = sorted(
         fragment for fragment in root_required if fragment not in root_text
@@ -260,15 +351,20 @@ def require_zero_hand_slots(path: Path) -> None:
         raise GateError(f"generated crate does not report zero hand slots: {path}")
 
 
-def module_symbols(nm: Path, root: Path, object_file: Path) -> set[tuple[str, str]]:
+def module_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+    module_name: str,
+) -> set[tuple[str, str]]:
     output = run(
-        [str(nm), "--defined-only", "--demangle", str(object_file)],
+        [str(nm), "--defined-only", "--demangle", str(binary)],
         root,
     )
     symbols: set[tuple[str, str]] = set()
     for line in output.splitlines():
         match = NM_LINE.match(line)
-        if match is not None and f"@{MODULE_NAME}" in match.group(2):
+        if match is not None and f"@{module_name}" in match.group(2):
             symbols.add((match.group(1), match.group(2)))
     return symbols
 
@@ -277,12 +373,20 @@ def format_symbols(symbols: set[tuple[str, str]]) -> str:
     return "\n".join(f"  {kind} {name}" for kind, name in sorted(symbols))
 
 
-def require_expected_symbols(label: str, symbols: set[tuple[str, str]]) -> None:
-    if symbols == EXPECTED_SYMBOLS:
+def require_expected_symbols(
+    module_name: str,
+    label: str,
+    symbols: set[tuple[str, str]],
+) -> None:
+    expected = set(ABI_SPECS[module_name].symbols)
+    if symbols == expected:
         return
-    missing = EXPECTED_SYMBOLS - symbols
-    unexpected = symbols - EXPECTED_SYMBOLS
-    details = [f"{label} does not define the exact six-symbol rrr ABI"]
+    missing = expected - symbols
+    unexpected = symbols - expected
+    details = [
+        f"{label} does not define the exact {len(expected)}-symbol "
+        f"{module_name} ABI"
+    ]
     if missing:
         details.append("missing:\n" + format_symbols(missing))
     if unexpected:
@@ -292,11 +396,38 @@ def require_expected_symbols(label: str, symbols: set[tuple[str, str]]) -> None:
 
 def importer_source() -> str:
     return """\
+#include <cstddef>
+#include <cstdint>
+#include <type_traits>
+
 import rrr.internal_protocol;
+import rrr.stat;
+
+static_assert(std::is_standard_layout_v<rrr::AvgStat>);
+static_assert(std::is_trivially_copyable_v<rrr::AvgStat>);
+static_assert(sizeof(rrr::AvgStat) == 5 * sizeof(std::int64_t));
+static_assert(alignof(rrr::AvgStat) == alignof(std::int64_t));
+static_assert(offsetof(rrr::AvgStat, n_stat_) == 0 * sizeof(std::int64_t));
+static_assert(offsetof(rrr::AvgStat, sum_) == 1 * sizeof(std::int64_t));
+static_assert(offsetof(rrr::AvgStat, avg_) == 2 * sizeof(std::int64_t));
+static_assert(offsetof(rrr::AvgStat, max_) == 3 * sizeof(std::int64_t));
+static_assert(offsetof(rrr::AvgStat, min_) == 4 * sizeof(std::int64_t));
+
+static bool stat_is(
+    const rrr::AvgStat& stat,
+    std::int64_t count,
+    std::int64_t sum,
+    std::int64_t average,
+    std::int64_t maximum,
+    std::int64_t minimum) {
+    return stat.n_stat_ == count && stat.sum_ == sum &&
+           stat.avg_ == average && stat.max_ == maximum &&
+           stat.min_ == minimum;
+}
 
 int main() {
     constexpr int kMin = (-2147483647 - 1);
-    if (rrr::kInternalHeartbeatRpcId != (-2147483647 - 1)) {
+    if (rrr::kInternalHeartbeatRpcId != kMin) {
         return 1;
     }
     if (rrr::kResponseHeaderExtFlag != 0x80000000u ||
@@ -332,9 +463,79 @@ int main() {
             return 6;
         }
     }
+
+    auto stat = rrr::AvgStat::new_();
+    if (!stat_is(stat, 0, 0, 0, 0, 0) || stat.avg() != 0) {
+        return 10;
+    }
+    stat.sample(3);
+    stat.sample(-5);
+    stat.sample(8);
+    if (!stat_is(stat, 3, 6, 2, 8, -5) || stat.avg() != 2) {
+        return 11;
+    }
+    const auto peeked = stat.peek();
+    if (!stat_is(peeked, 3, 6, 2, 8, -5) ||
+        !stat_is(stat, 3, 6, 2, 8, -5)) {
+        return 12;
+    }
+    const auto reset = stat.reset();
+    if (!stat_is(reset, 3, 6, 2, 8, -5) ||
+        !stat_is(stat, 0, 0, 0, 0, 0)) {
+        return 13;
+    }
+    stat.sample(-7);
+    stat.sample(-2);
+    if (!stat_is(stat, 2, -9, -4, 0, -7) || stat.avg() != -4) {
+        return 14;
+    }
+    stat.clear();
+    if (!stat_is(stat, 0, 0, 0, 0, 0)) {
+        return 15;
+    }
     return 0;
 }
 """
+
+
+def compile_module(
+    clang: Path,
+    root: Path,
+    include: Path,
+    output: Path,
+    module_name: str,
+) -> Path:
+    source = output / f"{module_name}.cppm"
+    pcm = output / f"{module_name}.pcm"
+    object_file = output / f"{module_name}.o"
+    run(
+        [
+            str(clang),
+            "-std=c++23",
+            "-Wno-deprecated-declarations",
+            "-I",
+            str(include),
+            f"-fprebuilt-module-path={output}",
+            "--precompile",
+            str(source),
+            "-o",
+            str(pcm),
+        ],
+        root,
+    )
+    run(
+        [
+            str(clang),
+            "-std=c++23",
+            f"-fprebuilt-module-path={output}",
+            "-c",
+            str(pcm),
+            "-o",
+            str(object_file),
+        ],
+        root,
+    )
+    return object_file
 
 
 def check(args: argparse.Namespace) -> None:
@@ -342,14 +543,15 @@ def check(args: argparse.Namespace) -> None:
     transpiler = executable(root, args.transpiler, "rusty-cpp transpiler")
     verify_pinned_toolchain(root, transpiler)
     require_extraction_check(root, transpiler)
+    modules = load_owned_modules(root)
     clang = executable(root, args.clang, "Clang C++ compiler")
     nm = executable(root, args.nm, "nm")
-    reference = Path(args.reference_object)
+    reference = Path(args.reference_library)
     if not reference.is_absolute():
         reference = root / reference
     reference = reference.resolve()
     if not reference.is_file():
-        raise GateError(f"production reference object is unavailable: {reference}")
+        raise GateError(f"production reference library is unavailable: {reference}")
 
     with tempfile.TemporaryDirectory(prefix="rrr-crate-mode-") as temporary:
         output = Path(temporary)
@@ -366,73 +568,26 @@ def check(args: argparse.Namespace) -> None:
             root,
         )
 
-        child_module = output / "rrr.internal_protocol.cppm"
-        root_module = output / "rrr.cppm"
-        require_cpp_surface(child_module, root_module)
+        require_cpp_surfaces(output, modules)
         require_zero_hand_slots(output / "rusty_hand_slots.md")
-        child_pcm = output / "rrr.internal_protocol.pcm"
-        generated_object = output / "rrr.internal_protocol.o"
-        root_pcm = output / "rrr.pcm"
-        root_object = output / "rrr.o"
+        include = root / "third-party/rusty-cpp/include"
+        generated_objects = [
+            compile_module(
+                clang,
+                root,
+                include,
+                output,
+                module.cpp_module,
+            )
+            for module in modules
+        ]
+        compile_module(clang, root, include, output, "rrr")
+
         importer = output / "importer.cpp"
         importer_object = output / "importer.o"
         generated_importer = output / "importer-generated"
         production_importer = output / "importer-production"
         importer.write_text(importer_source(), encoding="utf-8")
-        include = root / "third-party/rusty-cpp/include"
-
-        run(
-            [
-                str(clang),
-                "-std=c++23",
-                "-Wno-deprecated-declarations",
-                "-I",
-                str(include),
-                "--precompile",
-                str(child_module),
-                "-o",
-                str(child_pcm),
-            ],
-            root,
-        )
-        run(
-            [
-                str(clang),
-                "-std=c++23",
-                "-c",
-                str(child_pcm),
-                "-o",
-                str(generated_object),
-            ],
-            root,
-        )
-        run(
-            [
-                str(clang),
-                "-std=c++23",
-                "-Wno-deprecated-declarations",
-                "-I",
-                str(include),
-                f"-fprebuilt-module-path={output}",
-                "--precompile",
-                str(root_module),
-                "-o",
-                str(root_pcm),
-            ],
-            root,
-        )
-        run(
-            [
-                str(clang),
-                "-std=c++23",
-                f"-fprebuilt-module-path={output}",
-                "-c",
-                str(root_pcm),
-                "-o",
-                str(root_object),
-            ],
-            root,
-        )
         run(
             [
                 str(clang),
@@ -450,7 +605,7 @@ def check(args: argparse.Namespace) -> None:
                 str(clang),
                 "-std=c++23",
                 str(importer_object),
-                str(generated_object),
+                *(str(path) for path in generated_objects),
                 "-o",
                 str(generated_importer),
             ],
@@ -470,22 +625,48 @@ def check(args: argparse.Namespace) -> None:
         )
         run([str(production_importer)], root)
 
-        reference_symbols = module_symbols(nm, root, reference)
-        generated_symbols = module_symbols(nm, root, generated_object)
-        require_expected_symbols("production reference object", reference_symbols)
-        require_expected_symbols("crate-generated object", generated_symbols)
-        if generated_symbols != reference_symbols:
-            raise GateError("crate-generated ABI differs from production reference ABI")
+        for module, generated_object in zip(
+            modules, generated_objects, strict=True
+        ):
+            reference_symbols = module_symbols(
+                nm, root, reference, module.cpp_module
+            )
+            generated_symbols = module_symbols(
+                nm, root, generated_object, module.cpp_module
+            )
+            require_expected_symbols(
+                module.cpp_module,
+                "production reference library",
+                reference_symbols,
+            )
+            require_expected_symbols(
+                module.cpp_module,
+                "crate-generated object",
+                generated_symbols,
+            )
+            if generated_symbols != reference_symbols:
+                raise GateError(
+                    f"crate-generated {module.cpp_module} ABI differs from "
+                    "production reference ABI"
+                )
 
+    symbol_count = sum(len(spec.symbols) for spec in ABI_SPECS.values())
     print(
-        "checked whole rrr crate (2 modules, 0 hand slots), importer against "
-        "both objects, and six-symbol ABI"
+        f"checked whole rrr crate ({len(modules) + 1} modules, 0 hand slots), "
+        "combined importer against generated objects and production library, "
+        f"AvgStat layout/runtime, and {symbol_count} exact ABI symbols"
     )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference-object", required=True)
+    parser.add_argument(
+        "--reference-library",
+        "--reference-object",
+        dest="reference_library",
+        required=True,
+        help="production librrr archive (legacy --reference-object is accepted)",
+    )
     parser.add_argument(
         "--transpiler",
         default=os.environ.get("RUSTY_CPP_TRANSPILER", DEFAULT_TRANSPILER),

@@ -10,3 +10,11 @@ output = "src/rrr/src/internal_protocol.rs"
 [[module.input]]
 source = "src/rrr/rpc/internal_protocol.cpp"
 block_ids = ["internal_protocol.1"]
+
+[[module]]
+cpp_module = "rrr.stat"
+output = "src/rrr/src/stat.rs"
+
+[[module.input]]
+source = "src/rrr/misc/stat.cpp"
+block_ids = ["stat.1"]

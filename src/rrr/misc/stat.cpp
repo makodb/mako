@@ -19,16 +19,16 @@ import std;
 export namespace rrr {
 
 #if RUSTYCPP_RUST
-struct AvgStat {
-    n_stat_: i64,
-    sum_: i64,
-    avg_: i64,
-    max_: i64,
-    min_: i64,
+pub struct AvgStat {
+    pub n_stat_: i64,
+    pub sum_: i64,
+    pub avg_: i64,
+    pub max_: i64,
+    pub min_: i64,
 }
 
 impl AvgStat {
-    fn new() -> AvgStat {
+    pub fn new() -> AvgStat {
         AvgStat {
             n_stat_: 0i64,
             sum_: 0i64,
@@ -38,7 +38,7 @@ impl AvgStat {
         }
     }
 
-    fn sample(&mut self, s: i64) {
+    pub fn sample(&mut self, s: i64) {
         self.n_stat_ += 1i64;
         self.sum_ += s;
         self.avg_ = self.sum_ / self.n_stat_;
@@ -50,7 +50,7 @@ impl AvgStat {
         }
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.n_stat_ = 0i64;
         self.sum_ = 0i64;
         self.avg_ = 0i64;
@@ -62,7 +62,7 @@ impl AvgStat {
     // the cpp_ctor is gone, AvgStat is a plain aggregate and the
     // populated form `AvgStat { n_stat_: ..., ... }` lowers to a clean
     // C++ designated initializer `AvgStat{.n_stat_ = ...}`.
-    fn reset(&mut self) -> AvgStat {
+    pub fn reset(&mut self) -> AvgStat {
         let stat: AvgStat = AvgStat {
             n_stat_: self.n_stat_,
             sum_: self.sum_,
@@ -74,7 +74,7 @@ impl AvgStat {
         stat
     }
 
-    fn peek(&self) -> AvgStat {
+    pub fn peek(&self) -> AvgStat {
         AvgStat {
             n_stat_: self.n_stat_,
             sum_: self.sum_,
@@ -84,12 +84,12 @@ impl AvgStat {
         }
     }
 
-    fn avg(&self) -> i64 {
+    pub fn avg(&self) -> i64 {
         self.avg_
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=stat.1 version=1 rust_sha256=0bbe5b3e3e26aea0e9b876b99ab620516e2c0f20e79b9664bc8e8d190e33e9eb*/
+/*RUSTYCPP:GEN-BEGIN id=stat.1 version=1 rust_sha256=516f78fcce6fbcc1a9568b2b00733af846649ccdf89a29809516613e2e1abdf2*/
 struct AvgStat;
 
 struct AvgStat {
