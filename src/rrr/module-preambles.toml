@@ -1,0 +1,7 @@
+version = 1
+
+[[module]]
+name = "rrr.connection_metrics"
+includes = [
+    { path = "rusty/sync/atomic.hpp", form = "angle" },
+]

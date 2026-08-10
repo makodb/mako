@@ -51,7 +51,7 @@ jobs:
         run: >-
           cmake --build "${GOAL0_BUILD_DIR}"
           --parallel "${CI_MAKE_JOBS}"
-          --target rrr_goal0_dual_compile test_rpc_errors test_rpc_frame_codec
+          --target rrr_goal0_dual_compile test_rpc_errors test_rpc_frame_codec test_rpc_metrics
           -- -k 0
 
       - name: Verify emitter rebuild invalidates crate generation
@@ -84,7 +84,7 @@ jobs:
         run: >-
           ctest --test-dir "${GOAL0_BUILD_DIR}"
           --output-on-failure
-          -R '^(test_rpc_errors|test_rpc_frame_codec)$'
+          -R '^(test_rpc_errors|test_rpc_frame_codec|test_rpc_metrics)$'
 
   build-and-test:
     runs-on: ubuntu-24.04

@@ -34,3 +34,14 @@ block_ids = [
     "errors.category_predicates",
     "errors.is_retryable_error",
 ]
+
+[[module]]
+cpp_module = "rrr.connection_metrics"
+output = "src/rrr/src/connection_metrics.rs"
+
+[[module.input]]
+source = "src/rrr/rpc/connection_metrics.cpp"
+block_ids = [
+    "connection_metrics.usings",
+    "connection_metrics.1",
+]

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import tomllib
 import unittest
 from unittest import mock
 
@@ -66,6 +67,26 @@ def subprocess_result(
 
 
 class CheckedInCanaryTests(unittest.TestCase):
+    def test_connection_metrics_has_the_only_structured_module_preamble(self) -> None:
+        with (REPOSITORY / "src/rrr/module-preambles.toml").open("rb") as stream:
+            self.assertEqual(
+                tomllib.load(stream),
+                {
+                    "version": 1,
+                    "module": [
+                        {
+                            "name": "rrr.connection_metrics",
+                            "includes": [
+                                {
+                                    "path": "rusty/sync/atomic.hpp",
+                                    "form": "angle",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
     def test_manifest_names_the_real_module_source_and_output(self) -> None:
         modules = DRIVER.load_manifest(
             REPOSITORY, REPOSITORY / "src/rrr/rust-extraction.toml"
@@ -120,6 +141,20 @@ class CheckedInCanaryTests(unittest.TestCase):
                         )
                     ],
                 ),
+                (
+                    "rrr.connection_metrics",
+                    "connection_metrics",
+                    "src/rrr/src/connection_metrics.rs",
+                    [
+                        (
+                            "src/rrr/rpc/connection_metrics.cpp",
+                            (
+                                "connection_metrics.usings",
+                                "connection_metrics.1",
+                            ),
+                        )
+                    ],
+                ),
             ],
         )
 
@@ -150,6 +185,15 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "errors.is_retryable_error",
                 ),
                 "src/rrr/src/errors.rs",
+            ),
+            (
+                "rrr.connection_metrics",
+                "src/rrr/rpc/connection_metrics.cpp",
+                (
+                    "connection_metrics.usings",
+                    "connection_metrics.1",
+                ),
+                "src/rrr/src/connection_metrics.rs",
             ),
         ]
         for cpp_module, source_label, block_ids, output_label in cases:
@@ -209,6 +253,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/internal_protocol.rs",
                 "src/rrr/src/stat.rs",
                 "src/rrr/src/errors.rs",
+                "src/rrr/src/connection_metrics.rs",
             },
         )
 
@@ -795,6 +840,81 @@ class CrateModeGateTests(unittest.TestCase):
             {("T", "rrr::f@rrr.errors(rrr::RpcError@rrr.errors)")},
         )
 
+    def test_connection_metrics_text_parity_rejects_method_body_drift(self) -> None:
+        using_lines = textwrap.dedent(
+            """\
+            using rusty::sync::atomic::AtomicU64;
+
+            using rusty::sync::atomic::Ordering;
+            """
+        ).strip()
+        declaration = textwrap.dedent(
+            """\
+            struct ConnectionMetrics;
+
+            struct ConnectionMetrics {
+                static ConnectionMetrics new_();
+            };
+            """
+        ).strip()
+        bodies = textwrap.dedent(
+            """\
+            ConnectionMetrics ConnectionMetrics::new_() {
+                return ConnectionMetrics{};
+            }
+            """
+        ).strip()
+        inline = (
+            "/*RUSTYCPP:GEN-BEGIN id=connection_metrics.usings "
+            "version=1 rust_sha256=x*/\n"
+            f"{using_lines}\n"
+            "/*RUSTYCPP:GEN-END id=connection_metrics.usings*/\n"
+            "/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 "
+            "version=1 rust_sha256=y*/\n"
+            f"{declaration}\n\n{bodies}\n"
+            "/*RUSTYCPP:GEN-END id=connection_metrics.1*/\n"
+        )
+        generated = (
+            "export struct ConnectionMetrics;\n\n"
+            f"{using_lines}\n\n"
+            "export struct ConnectionMetrics {\n"
+            "    static ConnectionMetrics new_();\n"
+            "};\n\n"
+            f"{bodies}\n\n"
+            "} // namespace rrr\n"
+        )
+
+        with tempfile.TemporaryDirectory(prefix="rrr-parity-test-") as temporary:
+            root = Path(temporary)
+            source = root / "src/rrr/rpc/connection_metrics.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text(inline, encoding="utf-8")
+            GATE.require_connection_metrics_text_parity(root, generated)
+            with self.assertRaisesRegex(GATE.GateError, "method bodies differ"):
+                GATE.require_connection_metrics_text_parity(
+                    root, generated.replace("ConnectionMetrics{}", "ConnectionMetrics{1}")
+                )
+
+    def test_symbol_census_uses_the_definition_owner_not_parameter_types(self) -> None:
+        owned = (
+            "rrr::ConnectionMetrics@rrr.connection_metrics::reset() const"
+        )
+        foreign = (
+            "rrr::Client@rrr.client::Client("
+            "rrr::ConnectionMetrics@rrr.connection_metrics)"
+        )
+        nm_output = f"0001 T {owned}\n0002 T {foreign}\n"
+        with mock.patch.object(GATE, "run", return_value=nm_output):
+            self.assertEqual(
+                GATE.module_symbols(
+                    Path("/nm"),
+                    Path("/repository"),
+                    Path("/library.a"),
+                    "rrr.connection_metrics",
+                ),
+                {("T", owned)},
+            )
+
     def test_gate_rechecks_extracted_rust_with_the_same_transpiler(self) -> None:
         root = Path("/repository")
         transpiler = Path("/tools/rusty-cpp-transpiler")
@@ -921,6 +1041,43 @@ class CrateModeGateTests(unittest.TestCase):
                 link_flags=["-lc++abi"],
             )
 
+    def test_standalone_generation_consumes_the_structured_preamble(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-gate-generate-test-") as temporary:
+            root = Path(temporary)
+            reference = root / "inline.a"
+            reference.touch()
+            args = GATE.argparse.Namespace(
+                transpiler="transpiler",
+                clang="clang++",
+                nm="nm",
+                reference_library=str(reference),
+                production_library=None,
+                generated_dir=None,
+                runtime_library=[],
+                cxx_flag=[],
+                link_flag=[],
+            )
+            modules = [mock.Mock(cpp_module="rrr.internal_protocol")]
+            with mock.patch.object(
+                GATE, "repository_root", return_value=root
+            ), mock.patch.object(
+                GATE,
+                "executable",
+                side_effect=[Path("/transpiler"), Path("/clang++"), Path("/nm")],
+            ), mock.patch.object(
+                GATE, "verify_pinned_toolchain"
+            ), mock.patch.object(
+                GATE, "require_extraction_check"
+            ), mock.patch.object(
+                GATE, "load_owned_modules", return_value=modules
+            ), mock.patch.object(
+                GATE, "check_generated_output"
+            ), mock.patch.object(GATE, "run") as run:
+                GATE.check(args)
+
+            command = run.call_args.args[0]
+            self.assertEqual(command[-2:], ["--module-preamble", GATE.MODULE_PREAMBLE])
+
     def test_production_archive_cannot_be_its_own_reference(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-gate-oracle-test-") as temporary:
             root = Path(temporary)
@@ -960,6 +1117,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.internal_protocol"),
             mock.Mock(cpp_module="rrr.stat"),
             mock.Mock(cpp_module="rrr.errors"),
+            mock.Mock(cpp_module="rrr.connection_metrics"),
         ]
 
         def symbols_for_module(
@@ -1009,7 +1167,13 @@ class CrateModeGateTests(unittest.TestCase):
         compiled_names = [call.args[-2] for call in compile_module.call_args_list]
         self.assertEqual(
             compiled_names,
-            ["rrr.internal_protocol", "rrr.stat", "rrr.errors", "rrr"],
+            [
+                "rrr.internal_protocol",
+                "rrr.stat",
+                "rrr.errors",
+                "rrr.connection_metrics",
+                "rrr",
+            ],
         )
         link_commands = [
             call.args[0]
@@ -1032,6 +1196,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.internal_protocol"),
             mock.Mock(cpp_module="rrr.stat"),
             mock.Mock(cpp_module="rrr.errors"),
+            mock.Mock(cpp_module="rrr.connection_metrics"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

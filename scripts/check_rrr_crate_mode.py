@@ -24,6 +24,7 @@ RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
 REQUIRED_RUSTY_CPP_COMMIT = "707650e4021b163ea37783c14c7a182eef8a9a63"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-extraction.toml"
+MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
 NM_LINE = re.compile(r"^[0-9A-Fa-f]+\s+([A-Za-z])\s+(.+)$")
 PLACEHOLDER = re.compile(r"\b(?:TODO|UNSUPPORTED|skipped)\b", re.IGNORECASE)
 
@@ -141,6 +142,121 @@ ABI_SPECS = {
                     "T",
                     "rrr::rpc_error_to_string@rrr.errors(rrr::RpcError@rrr.errors)",
                 ),
+            }
+        ),
+    ),
+    "rrr.connection_metrics": AbiSpec(
+        surface=frozenset(
+            {
+                "#include <rusty/sync/atomic.hpp>",
+                "export module rrr.connection_metrics;",
+                "namespace rrr {",
+                "export struct ConnectionMetrics",
+                "using rusty::sync::atomic::AtomicU64;",
+                "using rusty::sync::atomic::Ordering;",
+                "rusty::sync::atomic::AtomicU64 requests_sent_field;",
+                "rusty::sync::atomic::AtomicU64 requests_completed_field;",
+                "rusty::sync::atomic::AtomicU64 requests_failed_field;",
+                "rusty::sync::atomic::AtomicU64 requests_timed_out_field;",
+                "rusty::sync::atomic::AtomicU64 in_flight_requests_field;",
+                "rusty::sync::atomic::AtomicU64 bytes_sent_field;",
+                "rusty::sync::atomic::AtomicU64 bytes_received_field;",
+                "rusty::sync::atomic::AtomicU64 reconnect_count_field;",
+                "rusty::sync::atomic::AtomicU64 retry_attempts_field;",
+                "rusty::sync::atomic::AtomicU64 queue_dropped_requests_field;",
+                "rusty::sync::atomic::AtomicU64 circuit_open_rejections_field;",
+                "rusty::sync::atomic::AtomicU64 circuit_open_transitions_field;",
+                "rusty::sync::atomic::AtomicU64 circuit_half_open_transitions_field;",
+                "rusty::sync::atomic::AtomicU64 circuit_closed_transitions_field;",
+                "rusty::sync::atomic::AtomicU64 connect_time_ms_field;",
+                "rusty::sync::atomic::AtomicU64 total_latency_us_field;",
+                "rusty::sync::atomic::AtomicU64 min_latency_us_field;",
+                "rusty::sync::atomic::AtomicU64 max_latency_us_field;",
+                "static ConnectionMetrics new_();",
+                "uint64_t requests_sent() const;",
+                "uint64_t requests_completed() const;",
+                "uint64_t requests_failed() const;",
+                "uint64_t requests_timed_out() const;",
+                "uint64_t in_flight_requests() const;",
+                "uint64_t bytes_sent() const;",
+                "uint64_t bytes_received() const;",
+                "uint64_t reconnect_count() const;",
+                "uint64_t retry_attempts() const;",
+                "uint64_t queue_dropped_requests() const;",
+                "uint64_t circuit_open_rejections() const;",
+                "uint64_t circuit_open_transitions() const;",
+                "uint64_t circuit_half_open_transitions() const;",
+                "uint64_t circuit_closed_transitions() const;",
+                "uint64_t connect_time_ms() const;",
+                "uint64_t min_latency_us() const;",
+                "uint64_t max_latency_us() const;",
+                "uint64_t success_rate_percent() const;",
+                "uint64_t avg_latency_us() const;",
+                "uint64_t uptime_ms(uint64_t current_time_ms) const;",
+                "void record_request_sent() const;",
+                "void record_request_completed_with_latency(uint64_t latency_us) const;",
+                "void record_request_completed() const;",
+                "void record_request_failed() const;",
+                "void record_request_timeout() const;",
+                "void record_request_dropped() const;",
+                "void record_bytes_sent(uint64_t bytes) const;",
+                "void record_bytes_received(uint64_t bytes) const;",
+                "void record_reconnect() const;",
+                "void record_retry_attempt() const;",
+                "void record_queue_drop() const;",
+                "void record_circuit_open_rejection() const;",
+                "void record_circuit_open_transition() const;",
+                "void record_circuit_half_open_transition() const;",
+                "void record_circuit_closed_transition() const;",
+                "void record_connect(uint64_t current_time_ms) const;",
+                "void reset() const;",
+                "void decrement_in_flight() const;",
+                "static constexpr bool is_send = true;",
+                "static constexpr bool is_sync = true;",
+            }
+        ),
+        symbols=frozenset(
+            ("T", symbol)
+            for symbol in {
+                "rrr::ConnectionMetrics@rrr.connection_metrics::new_()",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::requests_sent() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::requests_completed() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::requests_failed() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::requests_timed_out() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::in_flight_requests() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::bytes_sent() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::bytes_received() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::reconnect_count() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::retry_attempts() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::queue_dropped_requests() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::circuit_open_rejections() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::circuit_open_transitions() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::circuit_half_open_transitions() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::circuit_closed_transitions() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::connect_time_ms() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::min_latency_us() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::max_latency_us() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::success_rate_percent() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::avg_latency_us() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::uptime_ms(unsigned long) const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_request_sent() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_request_completed_with_latency(unsigned long) const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_request_completed() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_request_failed() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_request_timeout() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_request_dropped() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_bytes_sent(unsigned long) const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_bytes_received(unsigned long) const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_reconnect() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_retry_attempt() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_queue_drop() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_circuit_open_rejection() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_circuit_open_transition() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_circuit_half_open_transition() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_circuit_closed_transition() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::record_connect(unsigned long) const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::reset() const",
+                "rrr::ConnectionMetrics@rrr.connection_metrics::decrement_in_flight() const",
             }
         ),
     ),
@@ -339,8 +455,87 @@ def read_generated(path: Path, description: str) -> str:
     return text
 
 
+def inline_generated_block(source: str, block_id: str) -> str:
+    begin = f"/*RUSTYCPP:GEN-BEGIN id={block_id} "
+    end = f"/*RUSTYCPP:GEN-END id={block_id}*/"
+    try:
+        payload_start = source.index("\n", source.index(begin)) + 1
+        payload_end = source.index(end, payload_start)
+    except ValueError as exc:
+        raise GateError(
+            f"cannot locate inline generated block {block_id}"
+        ) from exc
+    return source[payload_start:payload_end].strip()
+
+
+def require_connection_metrics_text_parity(root: Path, generated: str) -> None:
+    source_path = root / "src/rrr/rpc/connection_metrics.cpp"
+    try:
+        inline = source_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise GateError(
+            f"cannot read inline connection-metrics oracle {source_path}: {exc}"
+        ) from exc
+
+    inline_usings = inline_generated_block(
+        inline, "connection_metrics.usings"
+    )
+    using_start = generated.find(
+        "using rusty::sync::atomic::AtomicU64;"
+    )
+    definition_start = generated.find("export struct ConnectionMetrics {")
+    if using_start < 0 or definition_start < 0:
+        raise GateError(
+            "cannot locate generated connection-metrics using/declaration surface"
+        )
+    generated_usings = generated[using_start:definition_start].strip()
+    if generated_usings != inline_usings:
+        raise GateError(
+            "crate-generated connection-metrics using declarations differ "
+            "from the inline provider"
+        )
+
+    inline_payload = inline_generated_block(inline, "connection_metrics.1")
+    body_token = "ConnectionMetrics ConnectionMetrics::new_()"
+    try:
+        inline_body_start = inline_payload.index(body_token)
+        generated_body_start = generated.index(body_token, definition_start)
+        generated_body_end = generated.rindex("\n} // namespace rrr")
+    except ValueError as exc:
+        raise GateError(
+            "cannot locate the full connection-metrics declaration/body surface"
+        ) from exc
+
+    inline_declarations = inline_payload[:inline_body_start].strip()
+    inline_bodies = inline_payload[inline_body_start:].strip()
+    generated_forward = "struct ConnectionMetrics;"
+    generated_definition = generated[
+        definition_start:generated_body_start
+    ].strip().replace(
+        "export struct ConnectionMetrics {",
+        "struct ConnectionMetrics {",
+        1,
+    )
+    generated_declarations = (
+        generated_forward + "\n\n" + generated_definition
+    )
+    generated_bodies = generated[
+        generated_body_start:generated_body_end
+    ].strip()
+    if generated_declarations != inline_declarations:
+        raise GateError(
+            "crate-generated connection-metrics declarations differ from "
+            "the inline provider"
+        )
+    if generated_bodies != inline_bodies:
+        raise GateError(
+            "crate-generated connection-metrics method bodies differ from "
+            "the inline provider"
+        )
+
+
 def require_cpp_surfaces(
-    output: Path, modules: list[extraction.ModuleEntry]
+    root: Path, output: Path, modules: list[extraction.ModuleEntry]
 ) -> None:
     expected_files = {f"{module.cpp_module}.cppm" for module in modules}
     expected_files.add("rrr.cppm")
@@ -368,8 +563,33 @@ def require_cpp_surfaces(
             raise GateError(
                 f"generated module {module.cpp_module} drifted to a nested namespace"
             )
+        atomic_preamble = "#include <rusty/sync/atomic.hpp>"
+        if module.cpp_module == "rrr.connection_metrics":
+            if text.count(atomic_preamble) != 1:
+                raise GateError(
+                    "generated rrr.connection_metrics must contain exactly one "
+                    "structured atomic preamble include"
+                )
+            ordered = (
+                text.find("\nmodule;\n"),
+                text.find(atomic_preamble),
+                text.find("#include <cstdint>"),
+                text.find("export module rrr.connection_metrics;"),
+            )
+            if -1 in ordered or list(ordered) != sorted(ordered):
+                raise GateError(
+                    "generated rrr.connection_metrics atomic preamble is not "
+                    "between the global module fragment and standard includes"
+                )
+            require_connection_metrics_text_parity(root, text)
+        elif atomic_preamble in text:
+            raise GateError(
+                f"connection-metrics preamble leaked into {module.cpp_module}"
+            )
 
     root_text = read_generated(output / "rrr.cppm", "root module")
+    if "#include <rusty/sync/atomic.hpp>" in root_text:
+        raise GateError("connection-metrics preamble leaked into the crate root")
     root_required = {
         "export module rrr;",
         "namespace rrr {",
@@ -547,11 +767,17 @@ def require_expected_symbols(
 
 def importer_source() -> str:
     return """\
+#include <rusty/sync/atomic.hpp>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
+#include <thread>
 #include <type_traits>
+#include <vector>
 
+import rrr.connection_metrics;
 import rrr.errors;
 import rrr.internal_protocol;
 import rrr.stat;
@@ -574,6 +800,58 @@ static_assert(offsetof(rrr::AvgStat, avg_) == 2 * sizeof(std::int64_t));
 static_assert(offsetof(rrr::AvgStat, max_) == 3 * sizeof(std::int64_t));
 static_assert(offsetof(rrr::AvgStat, min_) == 4 * sizeof(std::int64_t));
 
+using MetricsAtomicU64 = rusty::sync::atomic::AtomicU64;
+static_assert(sizeof(MetricsAtomicU64) == sizeof(std::uint64_t));
+static_assert(alignof(MetricsAtomicU64) == alignof(std::uint64_t));
+static_assert(std::is_standard_layout_v<rrr::ConnectionMetrics>);
+static_assert(std::is_copy_constructible_v<rrr::ConnectionMetrics>);
+static_assert(std::is_copy_assignable_v<rrr::ConnectionMetrics>);
+static_assert(std::is_move_constructible_v<rrr::ConnectionMetrics>);
+static_assert(std::is_move_assignable_v<rrr::ConnectionMetrics>);
+static_assert(!std::is_trivially_copyable_v<rrr::ConnectionMetrics>);
+static_assert(rrr::ConnectionMetrics::is_send);
+static_assert(rrr::ConnectionMetrics::is_sync);
+static_assert(
+    sizeof(rrr::ConnectionMetrics) == 18 * sizeof(std::uint64_t));
+static_assert(
+    alignof(rrr::ConnectionMetrics) == alignof(std::uint64_t));
+static_assert(offsetof(rrr::ConnectionMetrics, requests_sent_field) ==
+              0 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, requests_completed_field) ==
+              1 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, requests_failed_field) ==
+              2 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, requests_timed_out_field) ==
+              3 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, in_flight_requests_field) ==
+              4 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, bytes_sent_field) ==
+              5 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, bytes_received_field) ==
+              6 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, reconnect_count_field) ==
+              7 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, retry_attempts_field) ==
+              8 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, queue_dropped_requests_field) ==
+              9 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, circuit_open_rejections_field) ==
+              10 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, circuit_open_transitions_field) ==
+              11 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, circuit_half_open_transitions_field) ==
+              12 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, circuit_closed_transitions_field) ==
+              13 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, connect_time_ms_field) ==
+              14 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, total_latency_us_field) ==
+              15 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, min_latency_us_field) ==
+              16 * sizeof(MetricsAtomicU64));
+static_assert(offsetof(rrr::ConnectionMetrics, max_latency_us_field) ==
+              17 * sizeof(MetricsAtomicU64));
+
 static bool stat_is(
     const rrr::AvgStat& stat,
     std::int64_t count,
@@ -584,6 +862,118 @@ static bool stat_is(
     return stat.n_stat_ == count && stat.sum_ == sum &&
            stat.avg_ == average && stat.max_ == maximum &&
            stat.min_ == minimum;
+}
+
+static bool metrics_are_reset(const rrr::ConnectionMetrics& metrics) {
+    using rusty::sync::atomic::Ordering;
+    return metrics.requests_sent() == 0 &&
+           metrics.requests_completed() == 0 &&
+           metrics.requests_failed() == 0 &&
+           metrics.requests_timed_out() == 0 &&
+           metrics.in_flight_requests() == 0 &&
+           metrics.bytes_sent() == 0 &&
+           metrics.bytes_received() == 0 &&
+           metrics.reconnect_count() == 0 &&
+           metrics.retry_attempts() == 0 &&
+           metrics.queue_dropped_requests() == 0 &&
+           metrics.circuit_open_rejections() == 0 &&
+           metrics.circuit_open_transitions() == 0 &&
+           metrics.circuit_half_open_transitions() == 0 &&
+           metrics.circuit_closed_transitions() == 0 &&
+           metrics.connect_time_ms() == 0 &&
+           metrics.total_latency_us_field.load(Ordering::Relaxed) == 0 &&
+           metrics.min_latency_us_field.load(Ordering::Relaxed) ==
+               std::numeric_limits<std::uint64_t>::max() &&
+           metrics.min_latency_us() == 0 &&
+           metrics.max_latency_us() == 0 &&
+           metrics.avg_latency_us() == 0 &&
+           metrics.success_rate_percent() == 100;
+}
+
+static bool metrics_concurrent_updates_are_atomic() {
+    constexpr std::uint64_t kThreads = 8;
+    constexpr std::uint64_t kOpsPerThread = 2000;
+    constexpr std::uint64_t kRounds = 3;
+    constexpr std::uint64_t kUpdates = kThreads * kOpsPerThread;
+    constexpr std::uint64_t kLatencyTotal =
+        kOpsPerThread * kThreads * (kThreads + 1) / 2;
+
+    for (std::uint64_t round = 0; round < kRounds; ++round) {
+        auto metrics = rrr::ConnectionMetrics::new_();
+        std::atomic<std::uint64_t> ready{0};
+        std::atomic<bool> start{false};
+        std::vector<std::thread> workers;
+        workers.reserve(kThreads);
+
+        for (std::uint64_t thread_index = 0;
+             thread_index < kThreads;
+             ++thread_index) {
+            workers.emplace_back([&, latency = thread_index + 1] {
+                ready.fetch_add(1, std::memory_order_relaxed);
+                while (!start.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+                for (std::uint64_t operation = 0;
+                     operation < kOpsPerThread;
+                     ++operation) {
+                    metrics.record_request_sent();
+                    metrics.record_request_completed_with_latency(latency);
+                    metrics.record_request_sent();
+                    metrics.record_request_failed();
+                    metrics.record_request_sent();
+                    metrics.record_request_timeout();
+                    metrics.record_request_sent();
+                    metrics.record_request_dropped();
+                    metrics.record_bytes_sent(3);
+                    metrics.record_bytes_received(5);
+                    metrics.record_reconnect();
+                    metrics.record_retry_attempt();
+                    metrics.record_queue_drop();
+                    metrics.record_circuit_open_rejection();
+                    metrics.record_circuit_open_transition();
+                    metrics.record_circuit_half_open_transition();
+                    metrics.record_circuit_closed_transition();
+                }
+            });
+        }
+        while (ready.load(std::memory_order_acquire) != kThreads) {
+            std::this_thread::yield();
+        }
+        start.store(true, std::memory_order_release);
+        for (auto& worker : workers) {
+            worker.join();
+        }
+
+        if (metrics.requests_sent() != 4 * kUpdates ||
+            metrics.requests_completed() != kUpdates ||
+            metrics.requests_failed() != kUpdates ||
+            metrics.requests_timed_out() != kUpdates ||
+            metrics.in_flight_requests() != 0 ||
+            metrics.bytes_sent() != 3 * kUpdates ||
+            metrics.bytes_received() != 5 * kUpdates ||
+            metrics.reconnect_count() != kUpdates ||
+            metrics.retry_attempts() != kUpdates ||
+            metrics.queue_dropped_requests() != kUpdates ||
+            metrics.circuit_open_rejections() != kUpdates ||
+            metrics.circuit_open_transitions() != kUpdates ||
+            metrics.circuit_half_open_transitions() != kUpdates ||
+            metrics.circuit_closed_transitions() != kUpdates ||
+            metrics.total_latency_us_field.load(
+                rusty::sync::atomic::Ordering::Relaxed) != kLatencyTotal ||
+            metrics.min_latency_us() != 1 ||
+            metrics.max_latency_us() != kThreads ||
+            metrics.avg_latency_us() != kLatencyTotal / kUpdates ||
+            metrics.success_rate_percent() != 25) {
+            return false;
+        }
+        for (std::uint64_t extra = 0; extra < kThreads; ++extra) {
+            metrics.record_request_dropped();
+        }
+        if (metrics.in_flight_requests() != 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 int main() {
@@ -761,6 +1151,101 @@ int main() {
             return 23;
         }
     }
+
+    auto metrics = rrr::ConnectionMetrics::new_();
+    if (!metrics_are_reset(metrics) || metrics.uptime_ms(1234) != 0) {
+        return 30;
+    }
+    metrics.record_request_dropped();
+    if (metrics.in_flight_requests() != 0) {
+        return 31;
+    }
+    metrics.record_request_sent();
+    metrics.record_request_sent();
+    metrics.record_request_sent();
+    metrics.record_request_completed_with_latency(30);
+    metrics.record_request_completed_with_latency(10);
+    if (metrics.requests_sent() != 3 ||
+        metrics.requests_completed() != 2 ||
+        metrics.in_flight_requests() != 1 ||
+        metrics.total_latency_us_field.load(
+            rusty::sync::atomic::Ordering::Relaxed) != 40 ||
+        metrics.min_latency_us() != 10 || metrics.max_latency_us() != 30 ||
+        metrics.avg_latency_us() != 20 ||
+        metrics.success_rate_percent() != 66) {
+        return 32;
+    }
+    metrics.record_request_failed();
+    metrics.record_request_timeout();
+    metrics.record_request_dropped();
+    if (metrics.requests_failed() != 1 ||
+        metrics.requests_timed_out() != 1 ||
+        metrics.in_flight_requests() != 0) {
+        return 33;
+    }
+    metrics.record_request_completed();
+    if (metrics.requests_completed() != 3 ||
+        metrics.avg_latency_us() != 13 ||
+        metrics.success_rate_percent() != 100 ||
+        metrics.in_flight_requests() != 0) {
+        return 34;
+    }
+
+    metrics.record_bytes_sent(11);
+    metrics.record_bytes_sent(7);
+    metrics.record_bytes_received(23);
+    metrics.record_reconnect();
+    metrics.record_retry_attempt();
+    metrics.record_queue_drop();
+    metrics.record_circuit_open_rejection();
+    metrics.record_circuit_open_transition();
+    metrics.record_circuit_half_open_transition();
+    metrics.record_circuit_closed_transition();
+    if (metrics.bytes_sent() != 18 || metrics.bytes_received() != 23 ||
+        metrics.reconnect_count() != 1 || metrics.retry_attempts() != 1 ||
+        metrics.queue_dropped_requests() != 1 ||
+        metrics.circuit_open_rejections() != 1 ||
+        metrics.circuit_open_transitions() != 1 ||
+        metrics.circuit_half_open_transitions() != 1 ||
+        metrics.circuit_closed_transitions() != 1) {
+        return 35;
+    }
+
+    metrics.record_connect(1000);
+    if (metrics.connect_time_ms() != 1000 || metrics.uptime_ms(999) != 0 ||
+        metrics.uptime_ms(1000) != 0 || metrics.uptime_ms(1123) != 123) {
+        return 36;
+    }
+    const auto metrics_snapshot = metrics;
+    metrics.record_bytes_sent(1);
+    if (metrics_snapshot.bytes_sent() != 18 || metrics.bytes_sent() != 19) {
+        return 37;
+    }
+    metrics.reset();
+    if (!metrics_are_reset(metrics)) {
+        return 38;
+    }
+    metrics.bytes_sent_field.store(
+        std::numeric_limits<std::uint64_t>::max(),
+        rusty::sync::atomic::Ordering::Relaxed);
+    metrics.record_bytes_sent(1);
+    if (metrics.bytes_sent() != 0) {
+        return 39;
+    }
+    metrics.requests_completed_field.store(
+        std::numeric_limits<std::uint64_t>::max(),
+        rusty::sync::atomic::Ordering::Relaxed);
+    metrics.requests_sent_field.store(
+        3, rusty::sync::atomic::Ordering::Relaxed);
+    constexpr auto kWrappedPercent =
+        (std::numeric_limits<std::uint64_t>::max() * std::uint64_t{100}) /
+        std::uint64_t{3};
+    if (metrics.success_rate_percent() != kWrappedPercent) {
+        return 40;
+    }
+    if (!metrics_concurrent_updates_are_atomic()) {
+        return 41;
+    }
     return 0;
 }
 """
@@ -850,7 +1335,7 @@ def check_generated_output(
     cxx_flags: list[str],
     link_flags: list[str],
 ) -> None:
-    require_cpp_surfaces(output, modules)
+    require_cpp_surfaces(root, output, modules)
     require_zero_hand_slots(output / "rusty_hand_slots.md")
     include = root / "third-party/rusty-cpp/include"
 
@@ -891,6 +1376,8 @@ def check_generated_output(
                 str(clang),
                 "-std=c++23",
                 *cxx_flags,
+                "-I",
+                str(include),
                 f"-fprebuilt-module-path={work}",
                 "-c",
                 str(importer),
@@ -1022,6 +1509,8 @@ def check(args: argparse.Namespace) -> None:
                     str(output),
                     "--cxx-namespace",
                     "rrr",
+                    "--module-preamble",
+                    MODULE_PREAMBLE,
                 ],
                 root,
             )
@@ -1046,7 +1535,8 @@ def check(args: argparse.Namespace) -> None:
         f"checked whole rrr crate ({len(modules) + 1} modules compiled, "
         "partial root compile-only, 0 hand slots), combined importer against generated "
         f"objects and the independent inline reference{production_label}, "
-        "AvgStat and RpcError runtime contracts, and "
+        "AvgStat, RpcError, and ConnectionMetrics layout/concurrent/wrapping "
+        "runtime contracts, and "
         f"{symbol_count} exact strong ABI symbols"
     )
 
