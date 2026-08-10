@@ -1,7 +1,7 @@
 # rpcbench C++ baseline (Goal-1 parity reference)
 
 Captured 2026-07-29 on the development host. This is the reference the
-Rust port's end-to-end performance is measured against; before it, the
+eventual extracted Rust owner's end-to-end performance is measured against; before it, the
 only rpcbench numbers in the repo were unpinned and from a previous
 kernel, so "parity against measured baselines" had nothing to measure
 against.
@@ -26,7 +26,7 @@ Regenerate with `/var/tmp/mako-srpc/segv/bench/capture_baseline.sh`
 **Counting semantics are frozen, not fixed.** Callback mode counts
 successful *sends*; await mode counts *OK responses*; a pipeline slot
 dies silently on an error reply, so effective concurrency can decay
-while the run still prints a confident average. The Rust harness must
+while the run still prints a confident average. The extracted-Rust harness must
 mirror these rather than correct them, or the comparison is between
 different quantities.
 
@@ -50,7 +50,7 @@ lands in 36–40k qps whether the RPC is `fast` or `fiber`, 10 bytes or
 1 KiB. At depth 1 nothing is being measured except the round-trip
 wakeup path, so the dispatch mode is invisible. This is the 1 ms
 `epoll_wait` tick and the absence of a wakeup fd, exactly as the plan
-predicted. **A Rust port that adds an eventfd will beat these numbers
+predicted. **An extracted Rust owner that adds an eventfd will beat these numbers
 for reasons that have nothing to do with Rust**, so depth-1 parity must
 be judged against a like-for-like wakeup model, or excluded.
 
@@ -74,7 +74,7 @@ The Goal-1 criterion is "within 10%". At depth 1 the *noise alone*
 reaches or exceeds that, so a single depth-1 comparison cannot decide
 parity. Either raise the trial count until the confidence interval is
 comfortably inside 10%, or gate on depth-100 cells and treat depth-1 as
-directional. Recording this now, before any Rust number exists, so the
+directional. Recording this now, before any extracted-Rust number exists, so the
 gate is not quietly redefined later to fit a result.
 
 ## Not yet captured

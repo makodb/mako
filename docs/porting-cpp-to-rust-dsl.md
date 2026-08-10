@@ -3983,11 +3983,11 @@ Plus four non-test files with no DSL at all (`base/callback_wrapper.cpp`,
 assembly, and 79 test files. `serializable.cpp` alone is 44% of the
 remainder.
 
-**(b) — structurally unreachable for the inline DSL.** The `#if
-RUSTYCPP_RUST` blocks in src/rrr name C++ types (`CallbackWrapper`,
-`ChannelFrame`, rrr module types). rustc cannot compile them: this is not
-Rust that happens to be untested, it is Rust that cannot stand alone.
-Only `crates/srpc` is genuinely dual-compiled.
+**(b) — not wired yet.** The `#if RUSTYCPP_RUST` blocks in src/rrr name
+cross-file and foreign types (`CallbackWrapper`, `ChannelFrame`, rrr module
+types), so they need a crate-level extraction and explicit boundary modules
+before rustc can compile them. No parallel hand-written port counts as dual
+compilation.
 
 **So finishing (a) does not deliver (b).** It yields a codebase whose DSL
 is *shaped* like Rust and checked only by the C++ compiler — which is
@@ -3996,11 +3996,10 @@ where `as_mut` was required, a missing `let mut` on a guard, and a `let`
 binding that made a move-only type copy. Every one lowered to correct C++
 and would have been a rustc error.
 
-That is worth stating plainly because it reframes the remaining work:
-the inline DSL is a **migration vehicle**, not an end state. The end state
-where (b) holds is the crate. Whether to keep converting C++ in place, or
-to move logic into `crates/srpc` instead, is a direction call about the
-project — not something the kernel count answers.
+That is worth stating plainly because it defines the remaining work: the
+inline DSL must become the crate mechanically. The same extracted source must
+be accepted by rustc and rusty-cpp; hand-moving or rewriting the logic into a
+second source tree does not satisfy Goal 0.
 
 ### 7.55 The transpiler suite was reading a degraded sample (NFS + SIGBUS)
 

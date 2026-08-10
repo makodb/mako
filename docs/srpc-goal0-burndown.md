@@ -360,7 +360,7 @@ hoist the split to item level.
 |---|---|---:|---|---|
 | [x] | STALE | 42 | `src/rrr/reactor/reactor.cpp:5940 — reactor_spawn_stackless_task_impl (` | Recommended: DELETE lines 2052 and 5940-5981 (zero callers). If kept, the exact DSL is /home/shuai/tmp/claude-3000/-home-users-shuai-mako/3fb8630e-47ec-4ca7-9840-13a2baa3269b/scratchpad/kern |  **← LANDED (recover batch 2)**
 | [x] | STALE | 42 | `src/rrr/reactor/reactor.cpp:5940 reactor_spawn_stackless_task_impl` | using TaskVoid = rusty::Task<void>;  // 1 line of scaffolding, then: fn reactor_spawn_stackless_task_impl(self_: &Reactor, task: TaskVoid) {     struct EarlyWakeState { reactor: *const React |  **← LANDED (recover batch 2)**
-| [x] | STALE | 40 | `docs/srpc-rust-port.md:1763 + :386 — the CLASS-LEVEL claim itself ("`#` | #[cfg(target_os = "macos")] fn f() {…}   /   #[cfg(not(target_os = "macos"))] fn f() {…}   (two same-named free fns; each lowers inside its own #if/#endif) |  **← LANDED batch 5 (capped at 18 lines, not 40)**
+| [x] | STALE | 40 | historical class-level platform-cfg claim | #[cfg(target_os = "macos")] fn f() {…} / #[cfg(not(target_os = "macos"))] fn f() {…} (two same-named free fns; each lowers inside its own #if/#endif) | **← LANDED batch 5 (capped at 18 lines, not 40)**
 | [~] | STALE | 30 | `src/rrr/misc/serializable.cpp:1725 Serialize_ <-> WireSerialize_ looku` | Move the container/pair impls out of `pub trait WireSerialize` and into the EXISTING `serializable.serialize_trait` DSL block (or rename the trait to `Serialize`), i.e.:   impl<T> Serialize  |  **← SKIPPED with cause: the audit's VERDICT (recoverable) is right but its RECIPE is wrong, and the prior KEEP's MECHANISM (overload-set residency for nested-container resolution) is right while its CONCLUSION was wrong. Recoverable, but not as one ~56-line edit — needs its own build-verified slice.**
 | [x] | STALE | 28 | `src/rrr/reactor/reactor.cpp:6690 — pollthread_create (tracker row cite` | /home/shuai/tmp/claude-3000/-home-users-shuai-mako/3fb8630e-47ec-4ca7-9840-13a2baa3269b/scratchpad/kernelaudit/probe_pollthread_create3.cpp — key lines:   let (sender, receiver) = rusty::syn |  **← LANDED (recover batch 2)**
 | [~] | STALE | 26 | `src/rrr/misc/serializable.cpp:1768 Serialize_ container forwarders, pa` | Same as the part-1 row: author the container impls as `impl<T> Serialize for <Container>` inside the trait block whose name is `Serialize`, and delete all seven (in fact all twelve) `Seriali |  **← SKIPPED with cause: the audit's VERDICT (recoverable) is right but its RECIPE is wrong, and the prior KEEP's MECHANISM (overload-set residency for nested-container resolution) is right while its CONCLUSION was wrong. Recoverable, but not as one ~56-line edit — needs its own build-verified slice.**
@@ -473,7 +473,7 @@ hoist the split to item level.
 | batch 5A — 30 small items across 15 files | 157 | (batch 5A) | logging `class Log` 24, server 22, client 19, frame_codec 18, epoll_platform_linux 17, any_message 13, callbacks 10, + 8 more files |
 
 | batch 5B — reactor.cpp: 3 enum hoists + poll_one + 5 more | 130 | (batch 5B) | the 3 hoisted enums became `#[repr(i32)]` DSL enums |
-| batch 5C — serializable.cpp (7 items) + tcp_channel.cpp (6 of 8) | 114 | (batch 5C) | includes the string serialize leaves on every RPC path; `test_wire_golden` + marshal/archive suites verify byte-exactness |
+| batch 5C — serializable.cpp (7 items) + tcp_channel.cpp (6 of 8) | 114 | (batch 5C) | includes the string serialize leaves on every RPC path; marshal/archive suites verify byte-exactness |
 
 | C demotion — `misc/srpc_rand.c` + `misc/srpc_io.c` | 65 | (c-demote) | the pthread-keyed PRNG seed store and the two fd EINTR ladders; C++ keeps 4 two-line shims so every call site and test is unchanged |
 
@@ -937,4 +937,3 @@ to discover.
   `}` and you will delete half a function, orphaning a brace. Anchor on
   the exact line text, and never substring-match a GEN id (`server.1`
   also matches `server.14`).
-

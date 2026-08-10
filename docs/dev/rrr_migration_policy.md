@@ -156,8 +156,9 @@ can be cut.
 
 `write_header` was classified as kernel from its signature. Its BODY is
 validate -> encode -> store 4 bytes; the only raw-pointer act is a
-4-byte store. `crates/srpc/src/wire/frame.rs` already expresses exactly
-this safely over a slice, under `deny(unsafe_code)`.
+4-byte store. The inline Rust body in `src/rrr/rpc/frame_codec.cpp` already
+expresses this safely over a slice; the rustc extraction must compile that
+same body rather than a parallel reimplementation.
 
 Its callers are four test sites passing `hdr.data()` from a
 `std::array`. Taking a slice instead costs a 4-line test change and

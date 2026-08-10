@@ -1,12 +1,9 @@
 # Goal 0 completion plan
 
-Goal 0: **no hand-written C++ in `src/rrr`.** The DSL is the target.
-
-**Scope ruling (owner, 2026-08-02): rustc compilation of the DSL is
-REMOVED from Goal 0.** The goal is complete when the hand-written C++ is
-gone — DSL, generated C++, external C, or assembly. Whether the inline
-blocks ever compile under rustc is a separate, later question; Phase 6
-below is struck.
+Goal 0 has two required halves: **no hand-written C++ in `src/rrr`**, and
+the actual Rust DSL authored there must compile both with rustc and through
+rusty-cpp. The old parallel hand-port was not the DSL and has
+been removed; it cannot be used as evidence for either half.
 
 ## Terminal states
 
@@ -146,9 +143,12 @@ effort with no runtime payoff; leaving them is a documented exception.
 This should be decided before Phase 1 finishes, because it changes the
 finish line by roughly a third.
 
-### ~~Phase 6 — attempt rustc on the inline DSL~~ (struck: out of scope)
-Removed from Goal 0 by owner ruling. Kept here so the strike-through is
-visible history rather than silent deletion.
+### Phase 6 — compile the actual inline DSL with rustc
+
+This is an active Goal 0 requirement. Extract the `RUSTYCPP_RUST` blocks
+mechanically into a clean crate, preserve file/module identity, and make
+rustc and rusty-cpp consume that same extracted source. Do not hand-port the
+logic into a second implementation.
 
 ## Throughput
 

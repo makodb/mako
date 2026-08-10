@@ -852,9 +852,8 @@ impl Serialize for f64 {
 // emitted and stops (the same hazard the container impls below avoid).
 //
 // Only behavioural delta vs. the deleted hand overloads: string_view
-// goes from by-value to `const std::string_view&`. Identical semantics
-// at every call site (all five in tests/wire_golden_translated_test.cc
-// pass rvalues, which bind to const&).
+// goes from by-value to `const std::string_view&`; rvalues bind to that
+// reference with identical semantics.
 impl Serialize for std::string_view {
     fn serialize(&self, ar: &mut BinaryWriteArchive) {
         let v_len: rrr::v64 = rrr::v64::new(self.size() as i64);

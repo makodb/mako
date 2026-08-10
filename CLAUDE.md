@@ -211,9 +211,8 @@ Exceptions that stay std:
    follow-up if it's blocking something.
 
 **IMPORTANT**: The `third-party/rusty-cpp` submodule is pinned to the
-`verify-stack` branch of shuaimu/rusty-cpp (upstream `main` + the srpc
-transpiler fixes not yet landed on main — see
-`docs/srpc-rust-port.md` § Translator work). Keep that branch
+`verify-stack` branch of shuaimu/rusty-cpp (upstream `main` plus the rrr
+transpiler fixes not yet landed on main). Keep that branch
 **frequently synced with upstream `main`** (merge main in, run the
 transpiler test suite, push, bump the pin) so we never fall behind
 upstream bug fixes. Do not re-pin to `main` until the fix branches

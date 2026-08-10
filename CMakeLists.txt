@@ -1751,13 +1751,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_marshal ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_marshal COMMAND test_marshal)
 
-    # Wire-format golden corpus (C++ <-> crates/srpc Rust contract).
-    add_executable(test_wire_golden src/rrr/tests/wire_golden_test.cc)
-    target_include_directories(test_wire_golden PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_wire_golden PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_wire_golden ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_wire_golden COMMAND test_wire_golden)
-
     # Marshal Microbenchmark (no gtest — standalone main; prints ns/op).
     # Measures the Vec<uint8_t>+read_pos Marshal — same harness used
     # during the chunk-list → Vec rewrite (see
