@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+#include "srpc_rand.h"
+
 /* The cycle-counter read lives in srpc_timing.c (also plain C). */
 uint64_t srpc_rdtsc(void);
 

@@ -3,83 +3,102 @@ module;
 #include <rusty/rusty.hpp>
 #include <pthread.h>
 #include <time.h>
+#include "srpc_rand.h"
 
 export module rrr.rand;
 
 import std;
-import rrr.debugging;
+import rusty;
 
-// @safe - RandomGenerator: mostly pure helpers (int2str_n, formatting,
-// percentage math). The pthread-keyed seed plumbing (create_key,
-// delete_key, get_seed, rdtsc, destroy) and the rand_r entry points
-// (rand/rand_double/rand_str) carry per-method `// @unsafe` overrides
-// because they touch raw `unsigned int*` from pthread_getspecific,
-// inline asm, malloc, and pthread C-API calls.
+// Canonical Rust owns all range, formatting, and weighted-selection logic.
+// Its only unsafe operations are the two one-call extern-C wrappers around
+// the raw draw and teardown functions declared by srpc_rand.h; seed storage,
+// pthread handling, rand_r, and cycle-counter access live in plain C.
 export namespace rrr {
 
 struct RandomGenerator;
 
-// Hand-written kernels for the DSL statics below (rand_r on the
-// pthread-keyed / thread_local seed, pthread teardown, foreign
-// std::string / std::vector surgery). Definitions in the impl
-// namespace; the seed plumbing lives in an anonymous namespace there.
+// Declaration-order bridges for the Rust methods below. The generated ABI
+// facades perform byte-string and vector/span conversion; the only external
+// kernels are the plain-C raw draw and teardown functions.
 int randgen_rand_raw();
-// Authored as inline Rust DSL — RAND_MAX widened to double, no kernel.
+// Authored as inline Rust DSL — i32::MAX matches the C kernel's RAND_MAX
+// contract and is widened to double without a kernel call.
 #if RUSTYCPP_RUST
-fn randgen_rand_max() -> f64 {
-    RAND_MAX as f64
+pub fn randgen_rand_max() -> f64 {
+    i32::MAX as f64
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=rand.rand_max version=1 rust_sha256=e16936a0504c4b38cef24916eeb30d744f0e03cca557de7876579749f19eb0fc*/
+/*RUSTYCPP:GEN-BEGIN id=rand.rand_max version=1 rust_sha256=7d1c8d854739c082fde745f7bda9a748d5ce2954610377bfe2f76183a6682134*/
 double randgen_rand_max();
 
 double randgen_rand_max() {
-    return static_cast<double>(RAND_MAX);
+    return static_cast<double>(std::numeric_limits<int32_t>::max());
 }
 /*RUSTYCPP:GEN-END id=rand.rand_max*/
 int randgen_nu_constant_now();
 // Left-pad (or right-truncate) `s` to exactly `length` chars. Authored as
-// inline Rust DSL — pure std::string control flow, no kernel needed.
+// inline Rust DSL over bytes; the generated facade preserves std::string.
 #if RUSTYCPP_RUST
-fn randgen_zero_pad(s: std::string, length: i32) -> std::string {
-    let mut ret: std::string = s;
-    if (ret.length() as i32) < length {
-        while (ret.length() as i32) < length {
-            ret.insert(0, "0");
-        }
-        return ret;
+#[cfg_attr(any(), cpp_abi(
+    param(s, std_string_bytes),
+    returns(std_string_bytes)
+))]
+pub fn randgen_zero_pad(s: Vec<u8>, length: i32) -> Vec<u8> {
+    let mut ret = s;
+    while (ret.len() as i32) < length {
+        ret.insert(0usize, 48u8);
     }
-    if (ret.length() as i32) > length {
-        let cur: usize = ret.length();
-        return ret.substr(cur - (length as usize), length as usize);
+    while (ret.len() as i32) > length {
+        ret.remove(0usize);
     }
     ret
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=rand.zero_pad version=1 rust_sha256=093fc9bc66d0ac77ad4481006931018c15e0b61ba124eba2d1d7582b9c5295ab*/
+/*RUSTYCPP:GEN-BEGIN id=rand.zero_pad version=1 rust_sha256=986f35249ad982636c86cc47220f90da194dbf80906aa649428d19c3c31df700*/
+namespace rusty_cpp_abi_detail_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd {
+    inline rusty::Vec<uint8_t> bytes_from_std_string(const std::string& input) {
+        auto output = rusty::Vec<uint8_t>::with_capacity(input.size());
+        for (unsigned char byte : input) {
+            output.push(static_cast<uint8_t>(byte));
+        }
+        return output;
+    }
+    inline std::string std_string_from_bytes(rusty::Vec<uint8_t> input) {
+        if (input.size() == 0) {
+            return {};
+        }
+        return std::string(reinterpret_cast<const char*>(input.data()), input.size());
+    }
+    inline std::span<const double> f64_span_from_std_vector(const std::vector<double>& input) {
+        return std::span<const double>(input.data(), input.size());
+    }
+} // namespace rusty_cpp_abi_detail_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd
+
+inline rusty::Vec<uint8_t> rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_randgen_zero_pad(rusty::Vec<uint8_t> s, int32_t length);
 std::string randgen_zero_pad(std::string s, int32_t length);
 
-std::string randgen_zero_pad(std::string s, int32_t length) {
-    std::string ret = s;
-    if (((static_cast<int32_t>(ret.length()))) < rusty::detail::deref_if_pointer_like(length)) {
-        while (((static_cast<int32_t>(ret.length()))) < rusty::detail::deref_if_pointer_like(length)) {
-            ret.insert(0, "0");
-        }
-        return std::move(ret);
+inline rusty::Vec<uint8_t> rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_randgen_zero_pad(rusty::Vec<uint8_t> s, int32_t length) {
+    auto ret = std::move(s);
+    while (((static_cast<int32_t>(rusty::len(ret)))) < rusty::detail::deref_if_pointer_like(length)) {
+        ret.insert(static_cast<size_t>(0), static_cast<uint8_t>(48));
     }
-    if (((static_cast<int32_t>(ret.length()))) > rusty::detail::deref_if_pointer_like(length)) {
-        const size_t cur = ret.length();
-        return ret.substr(rusty::detail::deref_if_pointer_like(cur) - ((static_cast<size_t>(length))), static_cast<size_t>(length));
+    while (((static_cast<int32_t>(rusty::len(ret)))) > rusty::detail::deref_if_pointer_like(length)) {
+        ret.remove(static_cast<size_t>(0));
     }
     return std::move(ret);
+}
+
+std::string randgen_zero_pad(std::string s, int32_t length) {
+    auto rusty_cpp_abi_arg_0 = rusty_cpp_abi_detail_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd::bytes_from_std_string(s);
+    auto rusty_cpp_abi_result = rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_randgen_zero_pad(std::move(rusty_cpp_abi_arg_0), length);
+    return rusty_cpp_abi_detail_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd::std_string_from_bytes(std::move(rusty_cpp_abi_result));
 }
 /*RUSTYCPP:GEN-END id=rand.zero_pad*/
 void randgen_destroy();
 
-// std::vector<double> spelled via an alias for the DSL param grammar.
-using RandWeightVec = std::vector<double>;
-
-// `RandomGenerator` — all-static PRNG helpers over a per-thread seed.
+// `RandomGenerator` — all-static PRNG helpers over the C kernel's per-thread
+// seed.
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
 // `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
@@ -91,70 +110,106 @@ using RandWeightVec = std::vector<double>;
 //   * rand_str(length = 0) and the percentage_true(double) overload
 //     are DROPPED — zero callers repo-wide (and a Rust impl cannot
 //     hold two fns named percentage_true anyway).
-//   * The private static seed machinery (pthread key/once state,
-//     get_seed, rdtsc, nu_constant) moved to file-scope statics in the
-//     impl namespace — a DSL struct cannot carry static data members.
+//   * The private seed machinery moved to srpc_rand.c; this carrier retains
+//     only generated C++ ABI facades and their declaration-order scaffolding.
 #if RUSTYCPP_RUST
-struct RandomGenerator {}
+#[cfg_attr(any(), cpp_abi_alias(std_vector))]
+pub type RandWeightVec = Vec<f64>;
+
+pub struct RandomGenerator {}
 
 impl RandomGenerator {
-    fn rand(min: i32, max: i32) -> i32 {
-        verify(max >= min);
+    pub fn rand(min: i32, max: i32) -> i32 {
+        assert!(max >= min);
         let r = randgen_rand_raw();
-        (r % ((max - min) + 1)) + min
+        let width = max.wrapping_sub(min).wrapping_add(1i32);
+        assert!(width != 0i32);
+        (r % width).wrapping_add(min)
     }
 
-    fn rand_double(min: f64, max: f64) -> f64 {
+    pub fn rand_double(min: f64, max: f64) -> f64 {
         if max == min {
             return min;
         }
-        verify(max > min);
+        assert!(max > min);
         let r = randgen_rand_raw();
         ((r as f64) / (randgen_rand_max() / (max - min))) + min
     }
 
-    fn int2str_n(i: i32, length: i32) -> std::string {
-        let s = std::to_string(i);
+    #[cfg_attr(any(), cpp_abi(returns(std_string_bytes)))]
+    pub fn int2str_n(i: i32, length: i32) -> Vec<u8> {
+        let negative = i < 0i32;
+        let mut magnitude: u32 = i.unsigned_abs();
+        let mut reversed = Vec::<u8>::new();
+        loop {
+            reversed.push(((magnitude % 10u32) as u8).wrapping_add(48u8));
+            magnitude /= 10u32;
+            if magnitude == 0u32 {
+                break;
+            }
+        }
+        let mut s = Vec::<u8>::with_capacity(
+            reversed.len() + if negative { 1usize } else { 0usize },
+        );
+        if negative {
+            s.push(45u8);
+        }
+        let mut position = reversed.len();
+        while position > 0usize {
+            position -= 1usize;
+            s.push(reversed[position]);
+        }
         randgen_zero_pad(s, length)
     }
 
-    fn percentage_true(p: i32) -> bool {
+    pub fn percentage_true(p: i32) -> bool {
         RandomGenerator::rand(0, 99) < p
     }
 
-    fn nu_rand(a: i32, x: i32, y: i32) -> i32 {
+    pub fn nu_rand(a: i32, x: i32, y: i32) -> i32 {
         let r1 = RandomGenerator::rand(0, a);
         let r2 = RandomGenerator::rand(x, y);
-        (((r1 | r2) + randgen_nu_constant_now()) % ((y - x) + 1)) + x
+        let width = y.wrapping_sub(x).wrapping_add(1i32);
+        assert!(width != 0i32);
+        ((r1 | r2).wrapping_add(randgen_nu_constant_now()) % width)
+            .wrapping_add(x)
     }
 
-    fn weighted_select(weight_vector: &RandWeightVec) -> u32 {
+    #[cfg_attr(any(), cpp_abi(param(
+        weight_vector,
+        const_ref(RandWeightVec)
+    )))]
+    pub fn weighted_select(weight_vector: &[f64]) -> u32 {
         let mut sum: f64 = 0.0;
-        let mut i: u32 = 0;
-        while i < weight_vector.size() {
+        let mut i: usize = 0usize;
+        while i < weight_vector.len() {
             sum += weight_vector[i];
-            i += 1;
+            i += 1usize;
         }
         let r = RandomGenerator::rand_double(0.0, sum);
         let mut stage_sum: f64 = 0.0;
-        let mut k: u32 = 0;
-        while k < weight_vector.size() {
+        let mut k: usize = 0usize;
+        while k < weight_vector.len() {
             stage_sum += weight_vector[k];
             if r <= stage_sum {
-                return k;
+                return k as u32;
             }
-            k += 1;
+            k += 1usize;
         }
-        k - 1
+        (k as u32).wrapping_sub(1u32)
     }
 
-    fn destroy() {
+    pub fn destroy() {
         randgen_destroy()
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=rand.generator version=1 rust_sha256=4603415f808960c109d21fa5e77e27254cbf95f5a76de89d5f2e818abff9a430*/
+/*RUSTYCPP:GEN-BEGIN id=rand.generator version=1 rust_sha256=f9aa0fb7e87f4131d094d571602ac3b768705c09324fb8c7e9ef4d98436d08ed*/
 struct RandomGenerator;
+using RandWeightVec = std::vector<double>;
+inline rusty::Vec<uint8_t> rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_RandomGenerator_int2str_n(int32_t i, int32_t length);
+inline uint32_t rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_RandomGenerator_weighted_select(std::span<const double> weight_vector);
+
 
 struct RandomGenerator {
 
@@ -170,25 +225,70 @@ struct RandomGenerator {
     static constexpr bool is_sync = true;
 };
 
+inline rusty::Vec<uint8_t> rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_RandomGenerator_int2str_n(int32_t i, int32_t length) {
+    const auto negative = rusty::detail::deref_if_pointer_like(i) < static_cast<int32_t>(0);
+    uint32_t magnitude = ([&]() { auto&& _v = i; using _V = std::remove_cv_t<std::remove_reference_t<decltype(_v)>>; using _U = std::make_unsigned_t<_V>; if constexpr (std::is_signed_v<_V>) { auto _u = static_cast<_U>(_v); return (_v < 0) ? static_cast<_U>(static_cast<_U>(0) - _u) : _u; } else { return static_cast<_U>(_v); } })();
+    auto reversed = rusty::Vec<uint8_t>::new_();
+    while (true) {
+        reversed.push(rusty::wrapping_add(((static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(magnitude) % static_cast<uint32_t>(10))))), static_cast<std::remove_cvref_t<decltype(((static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(magnitude) % static_cast<uint32_t>(10))))))>>(static_cast<uint8_t>(48))));
+        magnitude /= static_cast<uint32_t>(10);
+        if (rusty::detail::deref_if_pointer_like(magnitude) == static_cast<uint32_t>(0)) {
+            break;
+        }
+    }
+    auto s = rusty::Vec<uint8_t>::with_capacity(rusty::len(reversed) + (negative ? static_cast<size_t>(1) : static_cast<size_t>(0)));
+    if (negative) {
+        s.push(static_cast<uint8_t>(45));
+    }
+    auto position = rusty::len(reversed);
+    while (rusty::detail::deref_if_pointer_like(position) > static_cast<size_t>(0)) {
+        rusty::detail::deref_if_pointer_like(position) -= static_cast<size_t>(1);
+        s.push(reversed[position]);
+    }
+    return rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_randgen_zero_pad(std::move(s), std::move(length));
+}
+
+inline uint32_t rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_RandomGenerator_weighted_select(std::span<const double> weight_vector) {
+    double sum = 0.0;
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(weight_vector)) {
+        sum += weight_vector[i];
+        i += static_cast<size_t>(1);
+    }
+    const auto r = RandomGenerator::rand_double(0.0, std::move(sum));
+    double stage_sum = 0.0;
+    size_t k = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(k) < rusty::len(weight_vector)) {
+        stage_sum += weight_vector[k];
+        if (rusty::detail::deref_if_pointer_like(r) <= rusty::detail::deref_if_pointer_like(stage_sum)) {
+            return static_cast<uint32_t>(k);
+        }
+        k += static_cast<size_t>(1);
+    }
+    return rusty::wrapping_sub(((static_cast<uint32_t>(k))), static_cast<std::remove_cvref_t<decltype(((static_cast<uint32_t>(k))))>>(static_cast<uint32_t>(1)));
+}
+
 
 int32_t RandomGenerator::rand(int32_t min, int32_t max) {
-    verify(rusty::detail::deref_if_pointer_like(max) >= rusty::detail::deref_if_pointer_like(min));
+    if (!(rusty::detail::deref_if_pointer_like(max) >= rusty::detail::deref_if_pointer_like(min))) { rusty::panic::do_panic("assertion failed: max >= min"); }
     const auto r = randgen_rand_raw();
-    return ((rusty::detail::deref_if_pointer_like(r) % ((((rusty::detail::deref_if_pointer_like(max) - rusty::detail::deref_if_pointer_like(min))) + static_cast<int32_t>(1))))) + rusty::detail::deref_if_pointer_like(min);
+    const auto width = rusty::wrapping_add(rusty::wrapping_sub(max, static_cast<std::remove_cvref_t<decltype(max)>>(std::move(min))), static_cast<std::remove_cvref_t<decltype(rusty::wrapping_sub(max, static_cast<std::remove_cvref_t<decltype(max)>>(std::move(min))))>>(static_cast<int32_t>(1)));
+    if (!(rusty::detail::deref_if_pointer_like(width) != static_cast<int32_t>(0))) { rusty::panic::do_panic("assertion failed: width != 0i32"); }
+    return rusty::wrapping_add((rusty::detail::deref_if_pointer_like(r) % rusty::detail::deref_if_pointer_like(width)), static_cast<std::remove_cvref_t<decltype((rusty::detail::deref_if_pointer_like(r) % rusty::detail::deref_if_pointer_like(width)))>>(std::move(min)));
 }
 
 double RandomGenerator::rand_double(double min, double max) {
     if (rusty::detail::deref_if_pointer_like(max) == rusty::detail::deref_if_pointer_like(min)) {
         return std::move(min);
     }
-    verify(rusty::detail::deref_if_pointer_like(max) > rusty::detail::deref_if_pointer_like(min));
+    if (!(rusty::detail::deref_if_pointer_like(max) > rusty::detail::deref_if_pointer_like(min))) { rusty::panic::do_panic("assertion failed: max > min"); }
     const auto r = randgen_rand_raw();
     return ((((static_cast<double>(r))) / ((randgen_rand_max() / ((rusty::detail::deref_if_pointer_like(max) - rusty::detail::deref_if_pointer_like(min))))))) + rusty::detail::deref_if_pointer_like(min);
 }
 
 std::string RandomGenerator::int2str_n(int32_t i, int32_t length) {
-    const auto s = std::to_string(std::move(i));
-    return randgen_zero_pad(std::move(s), std::move(length));
+    auto rusty_cpp_abi_result = rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_RandomGenerator_int2str_n(i, length);
+    return rusty_cpp_abi_detail_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd::std_string_from_bytes(std::move(rusty_cpp_abi_result));
 }
 
 bool RandomGenerator::percentage_true(int32_t p) {
@@ -198,27 +298,14 @@ bool RandomGenerator::percentage_true(int32_t p) {
 int32_t RandomGenerator::nu_rand(int32_t a, int32_t x, int32_t y) {
     const auto r1 = RandomGenerator::rand(static_cast<int32_t>(0), std::move(a));
     const auto r2 = RandomGenerator::rand(std::move(x), std::move(y));
-    return ((((((rusty::detail::deref_if_pointer_like(r1) | rusty::detail::deref_if_pointer_like(r2))) + randgen_nu_constant_now())) % ((((rusty::detail::deref_if_pointer_like(y) - rusty::detail::deref_if_pointer_like(x))) + static_cast<int32_t>(1))))) + rusty::detail::deref_if_pointer_like(x);
+    const auto width = rusty::wrapping_add(rusty::wrapping_sub(y, static_cast<std::remove_cvref_t<decltype(y)>>(std::move(x))), static_cast<std::remove_cvref_t<decltype(rusty::wrapping_sub(y, static_cast<std::remove_cvref_t<decltype(y)>>(std::move(x))))>>(static_cast<int32_t>(1)));
+    if (!(rusty::detail::deref_if_pointer_like(width) != static_cast<int32_t>(0))) { rusty::panic::do_panic("assertion failed: width != 0i32"); }
+    return rusty::wrapping_add((rusty::wrapping_add((rusty::detail::deref_if_pointer_like(r1) | rusty::detail::deref_if_pointer_like(r2)), static_cast<std::remove_cvref_t<decltype((rusty::detail::deref_if_pointer_like(r1) | rusty::detail::deref_if_pointer_like(r2)))>>(randgen_nu_constant_now())) % rusty::detail::deref_if_pointer_like(width)), static_cast<std::remove_cvref_t<decltype((rusty::wrapping_add((rusty::detail::deref_if_pointer_like(r1) | rusty::detail::deref_if_pointer_like(r2)), static_cast<std::remove_cvref_t<decltype((rusty::detail::deref_if_pointer_like(r1) | rusty::detail::deref_if_pointer_like(r2)))>>(randgen_nu_constant_now())) % rusty::detail::deref_if_pointer_like(width)))>>(std::move(x)));
 }
 
 uint32_t RandomGenerator::weighted_select(const RandWeightVec& weight_vector) {
-    double sum = 0.0;
-    uint32_t i = static_cast<uint32_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < weight_vector.size()) {
-        sum += weight_vector[i];
-        i += 1;
-    }
-    const auto r = RandomGenerator::rand_double(0.0, std::move(sum));
-    double stage_sum = 0.0;
-    uint32_t k = static_cast<uint32_t>(0);
-    while (rusty::detail::deref_if_pointer_like(k) < weight_vector.size()) {
-        stage_sum += weight_vector[k];
-        if (rusty::detail::deref_if_pointer_like(r) <= rusty::detail::deref_if_pointer_like(stage_sum)) {
-            return std::move(k);
-        }
-        k += 1;
-    }
-    return rusty::detail::deref_if_pointer_like(k) - static_cast<uint32_t>(1);
+    auto rusty_cpp_abi_arg_0 = rusty_cpp_abi_detail_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd::f64_span_from_std_vector(weight_vector);
+    return rusty_cpp_abi_sem_m_410e5b522c6dc9a94f23570cd0ebca4459da8b88f9a5170ba166350adf9474dd_RandomGenerator_weighted_select(rusty_cpp_abi_arg_0);
 }
 
 void RandomGenerator::destroy() {
@@ -234,9 +321,6 @@ namespace rrr {
 // `unsigned int*` seed, rand_r over it, and the pthread_once teardown)
 // lives in srpc_rand.c now — plain C, Goal-0 C demotion. None of it
 // needed C++, and none of it could ever be inline-Rust DSL.
-extern "C" int srpc_rand_raw(void);
-extern "C" void srpc_rand_destroy(void);
-
 // The last three shims are DSL too: two `unsafe {}` calls into the
 // srpc_rand.c kernels and the historical nu_rand constant, which was
 // never mutated and is therefore returned directly. `i32` lowers to
@@ -244,25 +328,38 @@ extern "C" void srpc_rand_destroy(void);
 // `int` in the export-namespace declarations above (same redeclaration
 // pattern the sibling logging.cpp already uses for its kernels).
 #if RUSTYCPP_RUST
+#[allow(unsafe_code)]
+unsafe extern "C" {
+    fn srpc_rand_raw() -> i32;
+    fn srpc_rand_destroy();
+}
+
 // @unsafe - thin shim over the C kernel.
-fn randgen_rand_raw() -> i32 {
-    unsafe { return srpc_rand_raw(); }
+#[allow(unsafe_code)]
+pub fn randgen_rand_raw() -> i32 {
+    unsafe { srpc_rand_raw() }
 }
 
 // @safe - the historical nu_rand constant was always zero.
-fn randgen_nu_constant_now() -> i32 {
+pub fn randgen_nu_constant_now() -> i32 {
     0
 }
 
 // @unsafe - thin shim over the C kernel (pthread teardown lives there).
-fn randgen_destroy() {
+#[allow(unsafe_code)]
+pub fn randgen_destroy() {
     unsafe { srpc_rand_destroy(); }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=rand.4 version=1 rust_sha256=408aea116f89714376ed88f8bae046bbeaa53e69ceb271fe179d9de96f7ed311*/
+/*RUSTYCPP:GEN-BEGIN id=rand.4 version=1 rust_sha256=e5c4688a4961ef556b302e4c74693f8e92749d12c0a8cb1372659fe76eadc49e*/
 int32_t randgen_rand_raw();
 int32_t randgen_nu_constant_now();
 void randgen_destroy();
+
+extern "C" {
+    int32_t srpc_rand_raw();
+    void srpc_rand_destroy();
+}
 
 int32_t randgen_rand_raw() {
     // @unsafe

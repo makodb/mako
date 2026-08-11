@@ -68,3 +68,16 @@ block_ids = [
     "completion_tracker.3",
     "completion_tracker.6",
 ]
+
+[[module]]
+cpp_module = "rrr.rand"
+output = "src/rrr/src/rand.rs"
+
+[[module.input]]
+source = "src/rrr/misc/rand.cpp"
+block_ids = [
+    "rand.rand_max",
+    "rand.zero_pad",
+    "rand.generator",
+    "rand.4",
+]

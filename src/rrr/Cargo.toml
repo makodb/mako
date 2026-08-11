@@ -10,4 +10,4 @@ path = "src/lib.rs"
 [dependencies]
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"

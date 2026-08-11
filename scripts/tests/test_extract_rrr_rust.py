@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -67,7 +68,16 @@ def subprocess_result(
 
 
 class CheckedInCanaryTests(unittest.TestCase):
-    def test_atomic_modules_have_the_only_structured_preambles(self) -> None:
+    def test_rand_carrier_has_only_its_direct_module_imports(self) -> None:
+        source = (REPOSITORY / "src/rrr/misc/rand.cpp").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(
+            re.findall(r"^import ([^;]+);$", source, flags=re.MULTILINE),
+            ["std", "rusty"],
+        )
+
+    def test_modules_have_only_the_expected_structured_preambles(self) -> None:
         with (REPOSITORY / "src/rrr/module-preambles.toml").open("rb") as stream:
             self.assertEqual(
                 tomllib.load(stream),
@@ -89,6 +99,15 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 {
                                     "path": "rusty/sync/atomic.hpp",
                                     "form": "angle",
+                                }
+                            ],
+                        },
+                        {
+                            "name": "rrr.rand",
+                            "includes": [
+                                {
+                                    "path": "misc/srpc_rand.h",
+                                    "form": "quote",
                                 }
                             ],
                         },
@@ -193,6 +212,22 @@ class CheckedInCanaryTests(unittest.TestCase):
                         )
                     ],
                 ),
+                (
+                    "rrr.rand",
+                    "rand",
+                    "src/rrr/src/rand.rs",
+                    [
+                        (
+                            "src/rrr/misc/rand.cpp",
+                            (
+                                "rand.rand_max",
+                                "rand.zero_pad",
+                                "rand.generator",
+                                "rand.4",
+                            ),
+                        )
+                    ],
+                ),
             ],
         )
 
@@ -251,6 +286,17 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "completion_tracker.6",
                 ),
                 "src/rrr/src/completion_tracker.rs",
+            ),
+            (
+                "rrr.rand",
+                "src/rrr/misc/rand.cpp",
+                (
+                    "rand.rand_max",
+                    "rand.zero_pad",
+                    "rand.generator",
+                    "rand.4",
+                ),
+                "src/rrr/src/rand.rs",
             ),
         ]
         for cpp_module, source_label, block_ids, output_label in cases:
@@ -313,7 +359,68 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/errors.rs",
                 "src/rrr/src/connection_metrics.rs",
                 "src/rrr/src/completion_tracker.rs",
+                "src/rrr/src/rand.rs",
             },
+        )
+
+    def test_rand_unsafe_allowances_are_confined_to_the_c_boundary(self) -> None:
+        with (REPOSITORY / "src/rrr/Cargo.toml").open("rb") as stream:
+            cargo = tomllib.load(stream)
+        self.assertEqual(cargo["lints"]["rust"]["unsafe_code"], "deny")
+
+        unsafe_syntax = re.compile(
+            r"#\s*\[\s*allow\s*\(\s*unsafe_code\s*\)\s*\]"
+            r"|#\s*\[\s*unsafe\b"
+            r"|\bunsafe\s+(?:(?:async|const)\s+)*fn\b"
+            r"|\bunsafe\s+(?:extern|impl|trait)\b"
+            r"|\bunsafe\s*\{"
+        )
+        rust_root = REPOSITORY / "src/rrr/src"
+        rand_path = rust_root / "rand.rs"
+        for path in sorted(rust_root.rglob("*.rs")):
+            if path == rand_path:
+                continue
+            self.assertIsNone(
+                unsafe_syntax.search(path.read_text(encoding="utf-8")),
+                f"unsafe Rust escaped the audited rand boundary: {path}",
+            )
+
+        _, payload = split_generated(rand_path.read_bytes())
+        rust = payload.decode("utf-8")
+        allowed_sections = (
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                unsafe extern "C" {
+                    fn srpc_rand_raw() -> i32;
+                    fn srpc_rand_destroy();
+                }
+                """
+            ).strip(),
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                pub fn randgen_rand_raw() -> i32 {
+                    unsafe { srpc_rand_raw() }
+                }
+                """
+            ).strip(),
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                pub fn randgen_destroy() {
+                    unsafe { srpc_rand_destroy(); }
+                }
+                """
+            ).strip(),
+        )
+        remainder = rust
+        for section in allowed_sections:
+            self.assertEqual(rust.count(section), 1)
+            remainder = remainder.replace(section, "", 1)
+        self.assertIsNone(
+            unsafe_syntax.search(remainder),
+            "rand.rs gained unsafe syntax outside its three exact C-boundary scopes",
         )
 
 
@@ -839,6 +946,21 @@ class DriverBehaviorTests(unittest.TestCase):
 
 
 class CrateModeGateTests(unittest.TestCase):
+    def test_generated_rand_has_only_its_direct_runtime_import(self) -> None:
+        GATE.require_exact_module_imports(
+            "export module rrr.rand;\nimport rusty;\n",
+            "rrr.rand",
+            ["rusty"],
+        )
+        with self.assertRaisesRegex(GATE.GateError, "must be exactly"):
+            GATE.require_exact_module_imports(
+                "export module rrr.rand;\n"
+                "import rusty;\n"
+                "import rrr.debugging;\n",
+                "rrr.rand",
+                ["rusty"],
+            )
+
     def test_executable_preserves_cxx_driver_symlink_spelling(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-gate-driver-test-") as temporary:
             root = Path(temporary)
@@ -953,6 +1075,173 @@ class CrateModeGateTests(unittest.TestCase):
                 GATE.require_connection_metrics_text_parity(
                     root, generated.replace("ConnectionMetrics{}", "ConnectionMetrics{1}")
                 )
+
+    def test_rand_text_parity_normalizes_only_inline_local_helpers(self) -> None:
+        inline = (REPOSITORY / "src/rrr/misc/rand.cpp").read_text(
+            encoding="utf-8"
+        )
+        block_ids = (
+            "rand.rand_max",
+            "rand.zero_pad",
+            "rand.generator",
+            "rand.4",
+        )
+        inline_payload = "\n\n".join(
+            GATE.inline_generated_block(inline, block_id)
+            for block_id in block_ids
+        )
+        generated = re.sub(
+            r"\brusty_cpp_abi_detail_m_[0-9a-f]{64}\b",
+            "rusty_cpp_abi_detail",
+            inline_payload,
+        )
+        generated = re.sub(
+            r"\brusty_cpp_abi_sem_m_[0-9a-f]{64}_",
+            "rusty_cpp_abi_sem_",
+            generated,
+        )
+
+        qualification_rows = (
+            (
+                "rusty::Vec<uint8_t> "
+                "rusty_cpp_abi_sem_RandomGenerator_int2str_n("
+                "int32_t i, int32_t length) {",
+                "rusty_cpp_abi_sem_randgen_zero_pad(",
+                "::rrr::rusty_cpp_abi_sem_randgen_zero_pad(",
+            ),
+            (
+                "int32_t randgen_rand_raw() {",
+                "srpc_rand_raw(",
+                "::srpc_rand_raw(",
+            ),
+            (
+                "void randgen_destroy() {",
+                "srpc_rand_destroy(",
+                "::srpc_rand_destroy(",
+            ),
+            (
+                "int32_t RandomGenerator::rand(int32_t min, int32_t max) {",
+                "randgen_rand_raw(",
+                "::rrr::randgen_rand_raw(",
+            ),
+            (
+                "double RandomGenerator::rand_double(double min, double max) {",
+                "randgen_rand_raw(",
+                "::rrr::randgen_rand_raw(",
+            ),
+            (
+                "double RandomGenerator::rand_double(double min, double max) {",
+                "randgen_rand_max(",
+                "::rrr::randgen_rand_max(",
+            ),
+            (
+                "int32_t RandomGenerator::nu_rand("
+                "int32_t a, int32_t x, int32_t y) {",
+                "randgen_nu_constant_now(",
+                "::rrr::randgen_nu_constant_now(",
+            ),
+            (
+                "void RandomGenerator::destroy() {",
+                "randgen_destroy(",
+                "::rrr::randgen_destroy(",
+            ),
+        )
+        for owner, unqualified, qualified in qualification_rows:
+            definition = GATE.balanced_cpp_definition(
+                generated, owner, "synthetic crate rand module"
+            )
+            qualified_definition = definition.replace(unqualified, qualified)
+            self.assertNotEqual(definition, qualified_definition)
+            generated = generated.replace(definition, qualified_definition, 1)
+
+        with tempfile.TemporaryDirectory(prefix="rrr-rand-parity-test-") as temporary:
+            root = Path(temporary)
+            source = root / "src/rrr/misc/rand.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text(inline, encoding="utf-8")
+            GATE.require_rand_text_parity(root, generated)
+
+            with self.assertRaisesRegex(
+                GATE.GateError, "qualification contract"
+            ):
+                GATE.require_rand_text_parity(
+                    root,
+                    generated.replace(
+                        "return ::rrr::rusty_cpp_abi_sem_randgen_zero_pad(",
+                        "return rusty_cpp_abi_sem_randgen_zero_pad(",
+                    ),
+                )
+            with self.assertRaisesRegex(
+                GATE.GateError, "qualification contract"
+            ):
+                GATE.require_rand_text_parity(
+                    root,
+                    generated.replace(
+                        "const auto r = ::rrr::randgen_rand_raw();",
+                        "const auto r = ::rrr::randgen_rand_raw() + "
+                        "::rrr::randgen_rand_raw();",
+                        1,
+                    ),
+                )
+
+            with self.assertRaisesRegex(GATE.GateError, "definition differs"):
+                GATE.require_rand_text_parity(
+                    root,
+                    generated.replace("return std::move(ret);", "return {};"),
+                )
+            with self.assertRaisesRegex(GATE.GateError, "exact public"):
+                GATE.require_rand_text_parity(
+                    root,
+                    generated.replace(
+                        "using RandWeightVec = std::vector<double>;",
+                        "using RandWeightVec = std::vector<float>;",
+                    ),
+                )
+
+    def test_rand_text_parity_rejects_helper_identity_drift(self) -> None:
+        inline = (REPOSITORY / "src/rrr/misc/rand.cpp").read_text(
+            encoding="utf-8"
+        )
+        identity_match = re.search(
+            r"\brusty_cpp_abi_detail_(m_[0-9a-f]{64})\b", inline
+        )
+        self.assertIsNotNone(identity_match)
+        assert identity_match is not None
+        identity = identity_match.group(1)
+        other_identity = "m_" + ("f" * 64)
+        self.assertNotEqual(identity, other_identity)
+        drifted = inline.replace(identity, other_identity, 1)
+
+        block_ids = (
+            "rand.rand_max",
+            "rand.zero_pad",
+            "rand.generator",
+            "rand.4",
+        )
+        generated = "\n\n".join(
+            GATE.inline_generated_block(inline, block_id)
+            for block_id in block_ids
+        )
+        generated = re.sub(
+            r"\brusty_cpp_abi_detail_m_[0-9a-f]{64}\b",
+            "rusty_cpp_abi_detail",
+            generated,
+        )
+        generated = re.sub(
+            r"\brusty_cpp_abi_sem_m_[0-9a-f]{64}_",
+            "rusty_cpp_abi_sem_",
+            generated,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="rrr-rand-parity-test-") as temporary:
+            root = Path(temporary)
+            source = root / "src/rrr/misc/rand.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text(drifted, encoding="utf-8")
+            with self.assertRaisesRegex(
+                GATE.GateError, "share exactly one module identity"
+            ):
+                GATE.require_rand_text_parity(root, generated)
 
     def test_symbol_census_uses_the_definition_owner_not_parameter_types(self) -> None:
         owned = (
@@ -1183,6 +1472,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.errors"),
             mock.Mock(cpp_module="rrr.connection_metrics"),
             mock.Mock(cpp_module="rrr.completion_tracker"),
+            mock.Mock(cpp_module="rrr.rand"),
         ]
 
         def symbols_for_module(
@@ -1207,6 +1497,8 @@ class CrateModeGateTests(unittest.TestCase):
                 ("T", "initializer for module rrr.completion_tracker"),
             ]
         )
+        rand_raw = list(GATE.ABI_SPECS["rrr.rand"].symbols)
+        rand_raw.append(("T", "initializer for module rrr.rand"))
 
         def compiled_object(
             _clang: Path,
@@ -1236,6 +1528,8 @@ class CrateModeGateTests(unittest.TestCase):
                 GATE, "module_symbols", side_effect=symbols_for_module
             ), mock.patch.object(
                 GATE, "completion_raw_symbols", return_value=completion_raw
+            ), mock.patch.object(
+                GATE, "rand_raw_symbols", return_value=rand_raw
             ):
                 GATE.check_generated_output(
                     root=Path("/repository"),
@@ -1261,6 +1555,7 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.errors",
                 "rrr.connection_metrics",
                 "rrr.completion_tracker",
+                "rrr.rand",
                 "rrr",
             ],
         )
@@ -1324,6 +1619,14 @@ class CrateModeGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GATE.GateError, "exactly 33 raw"):
             GATE.require_completion_raw_symbols("test provider", entries[:-1])
 
+    def test_rand_raw_symbol_ratchet_pins_all_13_entries(self) -> None:
+        entries = list(GATE.ABI_SPECS["rrr.rand"].symbols)
+        entries.append(("T", "initializer for module rrr.rand"))
+        self.assertEqual(len(entries), 13)
+        GATE.require_rand_raw_symbols("test provider", entries)
+        with self.assertRaisesRegex(GATE.GateError, "exactly 13 raw"):
+            GATE.require_rand_raw_symbols("test provider", entries[:-1])
+
     def test_runtime_module_root_must_exist_and_contain_rusty_pcm(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-runtime-pcm-test-") as temporary:
             root = Path(temporary)
@@ -1369,6 +1672,7 @@ class CrateModeGateTests(unittest.TestCase):
         for call in run.call_args_list:
             command = call.args[0]
             self.assertIn("-std=gnu++23", command)
+            self.assertIn("/repository/src/rrr", command)
             self.assertIn("-fprebuilt-module-path=/work", command)
             self.assertIn("-fprebuilt-module-path=/runtime-z", command)
             self.assertIn("-fprebuilt-module-path=/runtime-a", command)
@@ -1382,6 +1686,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.errors"),
             mock.Mock(cpp_module="rrr.connection_metrics"),
             mock.Mock(cpp_module="rrr.completion_tracker"),
+            mock.Mock(cpp_module="rrr.rand"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

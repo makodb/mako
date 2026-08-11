@@ -22,12 +22,13 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "707650e4021b163ea37783c14c7a182eef8a9a63"
+REQUIRED_RUSTY_CPP_COMMIT = "2581829a77dd99aebb22338ebf8f1da57fd4dcc4"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-extraction.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
 CALLBACK_INLINE_SOURCE = "src/rrr/base/callback_wrapper.cpp"
 COMPLETION_INLINE_SOURCE = "src/rrr/rpc/completion_tracker.cpp"
+RAND_INLINE_SOURCE = "src/rrr/misc/rand.cpp"
 NM_LINE = re.compile(r"^[0-9A-Fa-f]+\s+([A-Za-z])\s+(.+)$")
 PLACEHOLDER = re.compile(r"\b(?:TODO|UNSUPPORTED|skipped)\b", re.IGNORECASE)
 
@@ -369,6 +370,74 @@ ABI_SPECS = {
                 "rrr::CompletionQueryResult@rrr.completion_tracker::expired()",
                 "rrr::CompletionQueryResult@rrr.completion_tracker::is_completed() const",
                 "rrr::completion_status_to_string@rrr.completion_tracker(rrr::CompletionStatus@rrr.completion_tracker)",
+            }
+        ),
+    ),
+    "rrr.rand": AbiSpec(
+        surface=frozenset(
+            {
+                '#include "misc/srpc_rand.h"',
+                "export module rrr.rand;",
+                "import rusty;",
+                "namespace rusty_cpp_abi_detail {",
+                "bytes_from_std_string(const std::string& input)",
+                "std_string_from_bytes(rusty::Vec<uint8_t> input)",
+                "f64_span_from_std_vector(const std::vector<double>& input)",
+                "export using RandWeightVec = std::vector<double>;",
+                "export struct RandomGenerator",
+                "export double randgen_rand_max();",
+                "export std::string randgen_zero_pad(std::string s, int32_t length);",
+                "export int32_t randgen_rand_raw();",
+                "export int32_t randgen_nu_constant_now();",
+                "export void randgen_destroy();",
+                "static int32_t rand(int32_t min, int32_t max);",
+                "static double rand_double(double min, double max);",
+                "static std::string int2str_n(int32_t i, int32_t length);",
+                "static bool percentage_true(int32_t p);",
+                "static int32_t nu_rand(int32_t a, int32_t x, int32_t y);",
+                "static uint32_t weighted_select(const RandWeightVec& weight_vector);",
+                "static void destroy();",
+                "rusty::wrapping_sub(max",
+                "rusty::wrapping_add((rusty::detail::deref_if_pointer_like(r)",
+                "rusty::wrapping_sub(((static_cast<uint32_t>(k)))",
+                "static constexpr bool is_send = true;",
+                "static constexpr bool is_sync = true;",
+            }
+        ),
+        symbols=frozenset(
+            {
+                ("T", "rrr::randgen_rand_max@rrr.rand()"),
+                (
+                    "T",
+                    "rrr::randgen_zero_pad@rrr.rand(std::__1::basic_string<char, "
+                    "std::__1::char_traits<char>, std::__1::allocator<char>>, int)",
+                ),
+                ("T", "rrr::randgen_rand_raw@rrr.rand()"),
+                ("T", "rrr::randgen_nu_constant_now@rrr.rand()"),
+                ("T", "rrr::randgen_destroy@rrr.rand()"),
+                ("T", "rrr::RandomGenerator@rrr.rand::rand(int, int)"),
+                (
+                    "T",
+                    "rrr::RandomGenerator@rrr.rand::rand_double(double, double)",
+                ),
+                (
+                    "T",
+                    "rrr::RandomGenerator@rrr.rand::int2str_n(int, int)",
+                ),
+                (
+                    "T",
+                    "rrr::RandomGenerator@rrr.rand::percentage_true(int)",
+                ),
+                (
+                    "T",
+                    "rrr::RandomGenerator@rrr.rand::nu_rand(int, int, int)",
+                ),
+                (
+                    "T",
+                    "rrr::RandomGenerator@rrr.rand::weighted_select("
+                    "std::__1::vector<double, std::__1::allocator<double>> const&)",
+                ),
+                ("T", "rrr::RandomGenerator@rrr.rand::destroy()"),
             }
         ),
     ),
@@ -840,6 +909,259 @@ def require_completion_tracker_text_parity(root: Path, generated: str) -> None:
         )
 
 
+def canonicalize_rand_inline_local_helpers(inline_payload: str) -> str:
+    """Normalize only the carrier-unique names of rand's local ABI helpers."""
+
+    detail_identity_pattern = re.compile(
+        r"\brusty_cpp_abi_detail_(m_[0-9a-f]{64})\b"
+    )
+    semantic_identity_pattern = re.compile(
+        r"\brusty_cpp_abi_sem_(m_[0-9a-f]{64})_"
+    )
+    detail_identities = set(detail_identity_pattern.findall(inline_payload))
+    semantic_identities = set(semantic_identity_pattern.findall(inline_payload))
+    identities = detail_identities | semantic_identities
+    if (
+        len(identities) != 1
+        or detail_identities != identities
+        or semantic_identities != identities
+    ):
+        raise GateError(
+            "inline rand ABI helpers must share exactly one module identity; "
+            f"detail={sorted(detail_identities)!r}, "
+            f"semantic={sorted(semantic_identities)!r}"
+        )
+
+    identity = next(iter(identities))
+    expected_detail = f"rusty_cpp_abi_detail_{identity}"
+    expected_semantic_prefix = f"rusty_cpp_abi_sem_{identity}_"
+    detail_tokens = set(
+        re.findall(r"\brusty_cpp_abi_detail[A-Za-z0-9_]*", inline_payload)
+    )
+    semantic_tokens = set(
+        re.findall(r"\brusty_cpp_abi_sem_[A-Za-z0-9_]+", inline_payload)
+    )
+    unexpected_detail = sorted(
+        token for token in detail_tokens if token != expected_detail
+    )
+    unexpected_semantic = sorted(
+        token
+        for token in semantic_tokens
+        if not token.startswith(expected_semantic_prefix)
+    )
+    if unexpected_detail or unexpected_semantic:
+        raise GateError(
+            "inline rand ABI helper spelling is outside the single accepted "
+            "module identity; "
+            f"detail={unexpected_detail!r}, semantic={unexpected_semantic!r}"
+        )
+
+    return inline_payload.replace(
+        expected_detail, "rusty_cpp_abi_detail"
+    ).replace(expected_semantic_prefix, "rusty_cpp_abi_sem_")
+
+
+def canonicalize_rand_crate_call_qualifiers(
+    inline_payload: str, generated_payload: str
+) -> str:
+    """Normalize only the exact call qualifiers emitted in crate mode."""
+
+    rows = (
+        (
+            "rusty_cpp_abi_sem_randgen_zero_pad",
+            "::rrr::",
+            1,
+            (
+                "rusty::Vec<uint8_t> "
+                "rusty_cpp_abi_sem_RandomGenerator_int2str_n("
+                "int32_t i, int32_t length) {",
+            ),
+        ),
+        ("srpc_rand_raw", "::", 1, ("int32_t randgen_rand_raw() {",)),
+        ("srpc_rand_destroy", "::", 1, ("void randgen_destroy() {",)),
+        (
+            "randgen_rand_raw",
+            "::rrr::",
+            2,
+            (
+                "int32_t RandomGenerator::rand(int32_t min, int32_t max) {",
+                "double RandomGenerator::rand_double(double min, double max) {",
+            ),
+        ),
+        (
+            "randgen_rand_max",
+            "::rrr::",
+            1,
+            ("double RandomGenerator::rand_double(double min, double max) {",),
+        ),
+        (
+            "randgen_nu_constant_now",
+            "::rrr::",
+            2,
+            ("int32_t RandomGenerator::nu_rand(int32_t a, int32_t x, int32_t y) {",),
+        ),
+        (
+            "randgen_destroy",
+            "::rrr::",
+            1,
+            ("void RandomGenerator::destroy() {",),
+        ),
+    )
+
+    for name, qualifier, expected_count, owners in rows:
+        qualified_call = f"{qualifier}{name}("
+        unqualified_call = f"{name}("
+        if inline_payload.count(qualified_call) != 0:
+            raise GateError(
+                f"inline rand call qualification contract drifted for {name!r}"
+            )
+        if generated_payload.count(qualified_call) != expected_count:
+            raise GateError(
+                "crate-generated rand call qualification contract drifted for "
+                f"{name!r}: expected {expected_count} {qualified_call!r} "
+                f"occurrence(s), got {generated_payload.count(qualified_call)}"
+            )
+
+        inline_definitions = [
+            balanced_cpp_definition(inline_payload, owner, "inline rand provider")
+            for owner in owners
+        ]
+        generated_definitions = [
+            balanced_cpp_definition(
+                generated_payload, owner, "crate-generated rand module"
+            )
+            for owner in owners
+        ]
+        unqualified_pattern = re.compile(
+            rf"(?<![\w:]){re.escape(name)}\("
+        )
+        inline_count = sum(
+            len(unqualified_pattern.findall(definition))
+            for definition in inline_definitions
+        )
+        generated_unqualified_count = sum(
+            len(unqualified_pattern.findall(definition))
+            for definition in generated_definitions
+        )
+        if inline_count != expected_count or generated_unqualified_count != 0:
+            raise GateError(
+                "rand call qualification contract has an unexpected lexical "
+                f"shape for {name!r}: inline-unqualified={inline_count}, "
+                f"crate-unqualified={generated_unqualified_count}"
+            )
+        if name == "rusty_cpp_abi_sem_randgen_zero_pad" and (
+            inline_definitions[0].count(f"return {unqualified_call}") != 1
+            or generated_definitions[0].count(f"return {qualified_call}") != 1
+        ):
+            raise GateError(
+                "rand int2str_n zero-pad return-call qualification contract drifted"
+            )
+
+        for definition in generated_definitions:
+            normalized = definition.replace(qualified_call, unqualified_call)
+            if normalized == definition:
+                continue
+            if generated_payload.count(definition) != 1:
+                raise GateError(
+                    f"crate-generated rand owner for {name!r} is not unique"
+                )
+            generated_payload = generated_payload.replace(
+                definition, normalized, 1
+            )
+
+    return generated_payload
+
+
+def require_rand_text_parity(root: Path, generated: str) -> None:
+    """Keep rand's inline and crate providers on one exact lowering."""
+
+    source_path = root / RAND_INLINE_SOURCE
+    try:
+        inline = source_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise GateError(f"cannot read inline rand oracle {source_path}: {exc}") from exc
+
+    block_ids = (
+        "rand.rand_max",
+        "rand.zero_pad",
+        "rand.generator",
+        "rand.4",
+    )
+    inline_payload = "\n\n".join(
+        inline_generated_block(inline, block_id) for block_id in block_ids
+    )
+    inline_payload = canonicalize_rand_inline_local_helpers(inline_payload)
+    generated_payload = re.sub(r"^export ", "", generated, flags=re.MULTILINE)
+    generated_payload = canonicalize_rand_crate_call_qualifiers(
+        inline_payload, generated_payload
+    )
+
+    # Inline helpers have inline linkage while named-module helpers have
+    # internal linkage. Start each token after that one intentional linkage
+    # distinction and compare the complete declarations/bodies byte-for-byte.
+    definitions = (
+        "struct RandomGenerator {",
+        "rusty::Vec<uint8_t> bytes_from_std_string(const std::string& input) {",
+        "std::string std_string_from_bytes(rusty::Vec<uint8_t> input) {",
+        "std::span<const double> f64_span_from_std_vector("
+        "const std::vector<double>& input) {",
+        "double randgen_rand_max() {",
+        "rusty::Vec<uint8_t> rusty_cpp_abi_sem_randgen_zero_pad("
+        "rusty::Vec<uint8_t> s, int32_t length) {",
+        "std::string randgen_zero_pad(std::string s, int32_t length) {",
+        "rusty::Vec<uint8_t> rusty_cpp_abi_sem_RandomGenerator_int2str_n("
+        "int32_t i, int32_t length) {",
+        "uint32_t rusty_cpp_abi_sem_RandomGenerator_weighted_select("
+        "std::span<const double> weight_vector) {",
+        "int32_t randgen_rand_raw() {",
+        "int32_t randgen_nu_constant_now() {",
+        "void randgen_destroy() {",
+        "int32_t RandomGenerator::rand(int32_t min, int32_t max) {",
+        "double RandomGenerator::rand_double(double min, double max) {",
+        "std::string RandomGenerator::int2str_n(int32_t i, int32_t length) {",
+        "bool RandomGenerator::percentage_true(int32_t p) {",
+        "int32_t RandomGenerator::nu_rand(int32_t a, int32_t x, int32_t y) {",
+        "uint32_t RandomGenerator::weighted_select(",
+        "void RandomGenerator::destroy() {",
+    )
+    for token in definitions:
+        inline_definition = balanced_cpp_definition(
+            inline_payload, token, "inline rand provider"
+        )
+        generated_definition = balanced_cpp_definition(
+            generated_payload, token, "crate-generated rand module"
+        )
+        if generated_definition != inline_definition:
+            raise GateError(
+                "crate-generated rand definition differs from the inline "
+                f"provider at {token!r}"
+            )
+
+    alias = "using RandWeightVec = std::vector<double>;"
+    if inline_payload.count(alias) != 1 or generated_payload.count(alias) != 1:
+        raise GateError(
+            "rand inline/crate providers must each contain the exact public "
+            "std::vector<double> alias once"
+        )
+
+
+def require_exact_module_imports(
+    text: str, module_name: str, expected: list[str]
+) -> None:
+    """Reject undeclared named-module dependencies in a generated child."""
+
+    actual = re.findall(
+        r"^(?:export )?import ([^;\n]+);[ \t]*$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if actual != expected:
+        raise GateError(
+            f"generated {module_name} module imports must be exactly "
+            f"{expected!r}; got {actual!r}"
+        )
+
+
 def callback_wrapper_definition(text: str, description: str) -> str:
     matches = re.findall(
         r"(?:export )?template<typename F>\s+"
@@ -938,9 +1260,41 @@ def require_cpp_surfaces(
                 f"atomic module preamble leaked into {module.cpp_module}"
             )
 
+        rand_preamble = '#include "misc/srpc_rand.h"'
+        if module.cpp_module == "rrr.rand":
+            require_exact_module_imports(text, "rrr.rand", ["rusty"])
+            if text.count(rand_preamble) != 1:
+                raise GateError(
+                    "generated rrr.rand must contain exactly one structured "
+                    "C-kernel preamble include"
+                )
+            ordered = (
+                text.find("\nmodule;\n"),
+                text.find(rand_preamble),
+                text.find("#include <cstdint>"),
+                text.find("export module rrr.rand;"),
+            )
+            if -1 in ordered or list(ordered) != sorted(ordered):
+                raise GateError(
+                    "generated rrr.rand C-kernel preamble is not between the "
+                    "global module fragment and standard includes"
+                )
+            if "std::abort()" in text:
+                raise GateError(
+                    "generated rrr.rand hard-aborts a Rust assertion instead "
+                    "of preserving panic/unwind failure semantics"
+                )
+            require_rand_text_parity(root, text)
+        elif rand_preamble in text:
+            raise GateError(
+                f"rand C-kernel preamble leaked into {module.cpp_module}"
+            )
+
     root_text = read_generated(output / "rrr.cppm", "root module")
     if "#include <rusty/sync/atomic.hpp>" in root_text:
         raise GateError("atomic module preamble leaked into the crate root")
+    if '#include "misc/srpc_rand.h"' in root_text:
+        raise GateError("rand C-kernel preamble leaked into the crate root")
     root_required = {
         "export module rrr;",
         "namespace rrr {",
@@ -1055,6 +1409,51 @@ def require_completion_raw_symbols(
         f"{description} completion ABI must contain exactly 33 raw strong "
         "entries (30 unique API symbols, two constructor aliases, and the "
         f"module initializer); missing={missing!r}, unexpected={unexpected!r}"
+    )
+
+
+def rand_raw_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+) -> list[tuple[str, str]]:
+    """Return rand's strong entries, including its module initializer."""
+
+    output = run(
+        [str(nm), "--defined-only", "--demangle", str(binary)],
+        root,
+    )
+    initializer = "initializer for module rrr.rand"
+    entries: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        match = NM_LINE.match(line)
+        if match is None:
+            continue
+        kind, symbol = match.groups()
+        if not kind.isupper() or kind in {"U", "V", "W"}:
+            continue
+        if symbol_owner_module(symbol) == "rrr.rand" or symbol == initializer:
+            entries.append((kind, symbol))
+    return entries
+
+
+def require_rand_raw_symbols(
+    description: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    """Pin rand's 12-function ABI and sole module initializer exactly."""
+
+    expected = Counter(ABI_SPECS["rrr.rand"].symbols)
+    expected[("T", "initializer for module rrr.rand")] += 1
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} rand ABI must contain exactly 13 raw strong entries "
+        "(12 API symbols and the module initializer); "
+        f"missing={missing!r}, unexpected={unexpected!r}"
     )
 
 
@@ -1195,6 +1594,7 @@ def importer_source() -> str:
 #include <functional>
 #include <limits>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <type_traits>
@@ -1206,7 +1606,53 @@ import rrr.completion_tracker;
 import rrr.connection_metrics;
 import rrr.errors;
 import rrr.internal_protocol;
+import rrr.rand;
 import rrr.stat;
+
+static std::int32_t rand_raw_value = 0;
+static std::uint32_t rand_raw_draws = 0;
+static std::uint32_t rand_destroy_calls = 0;
+static std::uint32_t rand_string_evaluations = 0;
+static std::uint32_t rand_weight_evaluations = 0;
+
+extern "C" int srpc_rand_raw(void) {
+    ++rand_raw_draws;
+    return rand_raw_value;
+}
+
+extern "C" void srpc_rand_destroy(void) {
+    ++rand_destroy_calls;
+}
+
+static void install_rand_raw(std::int32_t value) {
+    rand_raw_value = value;
+    rand_raw_draws = 0;
+}
+
+static std::string make_rand_binary_string() {
+    ++rand_string_evaluations;
+    return std::string({
+        static_cast<char>(0x00),
+        static_cast<char>(0x80),
+        static_cast<char>(0xff),
+    });
+}
+
+static std::vector<double> make_rand_weights() {
+    ++rand_weight_evaluations;
+    return {1.0, 2.0, 3.0};
+}
+
+static_assert(std::is_same_v<rrr::RandWeightVec, std::vector<double>>);
+static_assert(std::is_same_v<
+              decltype(&rrr::randgen_zero_pad),
+              std::string (*)(std::string, std::int32_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RandomGenerator::int2str_n),
+              std::string (*)(std::int32_t, std::int32_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RandomGenerator::weighted_select),
+              std::uint32_t (*)(const std::vector<double>&)>);
 
 static_assert(sizeof(rrr::RpcErrorCategory) == sizeof(std::int32_t));
 static_assert(sizeof(rrr::RpcError) == sizeof(std::int32_t));
@@ -2122,6 +2568,209 @@ int main() {
     if (!completion_tracker_concurrent_operations_are_safe()) {
         return 70;
     }
+
+    if (rrr::randgen_rand_max() !=
+            static_cast<double>(std::numeric_limits<std::int32_t>::max()) ||
+        rrr::randgen_nu_constant_now() != 0) {
+        return 71;
+    }
+
+    rand_string_evaluations = 0;
+    const auto padded_binary =
+        rrr::randgen_zero_pad(make_rand_binary_string(), 5);
+    const auto truncated_binary =
+        rrr::randgen_zero_pad(make_rand_binary_string(), 2);
+    if (rand_string_evaluations != 2 || padded_binary.size() != 5 ||
+        padded_binary[0] != '0' || padded_binary[1] != '0' ||
+        static_cast<unsigned char>(padded_binary[2]) != 0x00 ||
+        static_cast<unsigned char>(padded_binary[3]) != 0x80 ||
+        static_cast<unsigned char>(padded_binary[4]) != 0xff ||
+        truncated_binary.size() != 2 ||
+        static_cast<unsigned char>(truncated_binary[0]) != 0x80 ||
+        static_cast<unsigned char>(truncated_binary[1]) != 0xff ||
+        rrr::randgen_zero_pad("7", 3) != "007" ||
+        rrr::randgen_zero_pad("1234", 3) != "234" ||
+        rrr::randgen_zero_pad("1234", 0) != "") {
+        return 72;
+    }
+
+    if (rrr::RandomGenerator::int2str_n(0, 1) != "0" ||
+        rrr::RandomGenerator::int2str_n(42, 5) != "00042" ||
+        rrr::RandomGenerator::int2str_n(-7, 4) != "00-7" ||
+        rrr::RandomGenerator::int2str_n(12345, 3) != "345" ||
+        rrr::RandomGenerator::int2str_n(-12345, 4) != "2345" ||
+        rrr::RandomGenerator::int2str_n(
+            std::numeric_limits<std::int32_t>::max(), 10) != "2147483647" ||
+        rrr::RandomGenerator::int2str_n(
+            std::numeric_limits<std::int32_t>::min(), 11) != "-2147483648" ||
+        rrr::RandomGenerator::int2str_n(
+            std::numeric_limits<std::int32_t>::min(), 10) != "2147483648") {
+        return 73;
+    }
+
+    install_rand_raw(17);
+    if (rrr::randgen_rand_raw() != 17 || rand_raw_draws != 1) {
+        return 74;
+    }
+    install_rand_raw(5);
+    if (rrr::RandomGenerator::rand(-10, -5) != -5 || rand_raw_draws != 1) {
+        return 75;
+    }
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    if (rrr::RandomGenerator::rand(
+            0, std::numeric_limits<std::int32_t>::max()) !=
+            std::numeric_limits<std::int32_t>::max() ||
+        rand_raw_draws != 1) {
+        return 76;
+    }
+
+    install_rand_raw(123);
+    if (rrr::RandomGenerator::rand_double(4.5, 4.5) != 4.5 ||
+        rand_raw_draws != 0) {
+        return 77;
+    }
+    const auto scaled_rand = rrr::RandomGenerator::rand_double(-1.0, 1.0);
+    const auto expected_scaled_rand =
+        (123.0 /
+         (static_cast<double>(std::numeric_limits<std::int32_t>::max()) / 2.0)) -
+        1.0;
+    if (scaled_rand != expected_scaled_rand || rand_raw_draws != 1) {
+        return 78;
+    }
+
+    install_rand_raw(0);
+    if (rrr::RandomGenerator::percentage_true(0) || rand_raw_draws != 1) {
+        return 79;
+    }
+    install_rand_raw(0);
+    if (!rrr::RandomGenerator::percentage_true(1) || rand_raw_draws != 1) {
+        return 80;
+    }
+    install_rand_raw(5);
+    if (rrr::RandomGenerator::nu_rand(1022, 0, 999) != 5 ||
+        rand_raw_draws != 2) {
+        return 81;
+    }
+
+    install_rand_raw(99);
+    const std::vector<double> empty_weights;
+    if (rrr::RandomGenerator::weighted_select(empty_weights) !=
+            std::numeric_limits<std::uint32_t>::max() ||
+        rand_raw_draws != 0) {
+        return 82;
+    }
+    install_rand_raw(99);
+    const std::vector<double> zero_weights{0.0, 0.0};
+    if (rrr::RandomGenerator::weighted_select(zero_weights) != 0 ||
+        rand_raw_draws != 0) {
+        return 83;
+    }
+
+    const std::vector<double> weights{1.0, 2.0, 3.0};
+    install_rand_raw(0);
+    if (rrr::RandomGenerator::weighted_select(weights) != 0 ||
+        rand_raw_draws != 1) {
+        return 84;
+    }
+    install_rand_raw(std::numeric_limits<std::int32_t>::max() / 2);
+    if (rrr::RandomGenerator::weighted_select(weights) != 1 ||
+        rand_raw_draws != 1) {
+        return 85;
+    }
+    rand_weight_evaluations = 0;
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    if (rrr::RandomGenerator::weighted_select(make_rand_weights()) != 2 ||
+        rand_raw_draws != 1 || rand_weight_evaluations != 1) {
+        return 86;
+    }
+
+    const auto destroys_before = rand_destroy_calls;
+    rrr::randgen_destroy();
+    rrr::RandomGenerator::destroy();
+    if (rand_destroy_calls != destroys_before + 2) {
+        return 87;
+    }
+
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    if (rrr::RandomGenerator::rand(7, 7) != 7 || rand_raw_draws != 1) {
+        return 88;
+    }
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    if (rrr::RandomGenerator::rand(
+            std::numeric_limits<std::int32_t>::min(), -1) != -1 ||
+        rand_raw_draws != 1) {
+        return 89;
+    }
+
+    bool rand_failed = false;
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    try {
+        static_cast<void>(rrr::RandomGenerator::rand(
+            std::numeric_limits<std::int32_t>::min(),
+            std::numeric_limits<std::int32_t>::max()));
+    } catch (...) {
+        rand_failed = true;
+    }
+    if (!rand_failed || rand_raw_draws != 1) {
+        return 90;
+    }
+
+    rand_failed = false;
+    install_rand_raw(11);
+    try {
+        static_cast<void>(rrr::RandomGenerator::rand(9, 8));
+    } catch (...) {
+        rand_failed = true;
+    }
+    if (!rand_failed || rand_raw_draws != 0) {
+        return 91;
+    }
+
+    rand_failed = false;
+    install_rand_raw(123);
+    try {
+        static_cast<void>(rrr::RandomGenerator::rand_double(2.0, 1.0));
+    } catch (...) {
+        rand_failed = true;
+    }
+    if (!rand_failed || rand_raw_draws != 0) {
+        return 92;
+    }
+
+    rand_failed = false;
+    install_rand_raw(123);
+    try {
+        static_cast<void>(rrr::RandomGenerator::rand_double(
+            0.0, std::numeric_limits<double>::quiet_NaN()));
+    } catch (...) {
+        rand_failed = true;
+    }
+    if (!rand_failed || rand_raw_draws != 0) {
+        return 93;
+    }
+
+    rand_failed = false;
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    try {
+        static_cast<void>(rrr::RandomGenerator::nu_rand(
+            0, std::numeric_limits<std::int32_t>::min(),
+            std::numeric_limits<std::int32_t>::max()));
+    } catch (...) {
+        rand_failed = true;
+    }
+    if (!rand_failed || rand_raw_draws != 2) {
+        return 94;
+    }
+
+    const std::vector<double> positive_boundary_weights{
+        1.0,
+        static_cast<double>(std::numeric_limits<std::int32_t>::max() - 1),
+    };
+    install_rand_raw(1);
+    if (rrr::RandomGenerator::weighted_select(positive_boundary_weights) != 0 ||
+        rand_raw_draws != 1) {
+        return 95;
+    }
     return 0;
 }
 """
@@ -2152,6 +2801,8 @@ def compile_module(
             "-Wno-deprecated-declarations",
             "-I",
             str(include),
+            "-I",
+            str(root / "src/rrr"),
             *module_path_flags,
             "--precompile",
             str(source),
@@ -2165,6 +2816,8 @@ def compile_module(
             str(clang),
             "-std=gnu++23",
             *cxx_flags,
+            "-I",
+            str(root / "src/rrr"),
             *module_path_flags,
             "-c",
             str(pcm),
@@ -2357,6 +3010,15 @@ def check_generated_output(
                     "crate-generated object",
                     completion_raw_symbols(nm, root, generated_object),
                 )
+            elif module.cpp_module == "rrr.rand":
+                require_rand_raw_symbols(
+                    "independent inline reference library",
+                    rand_raw_symbols(nm, root, reference),
+                )
+                require_rand_raw_symbols(
+                    "crate-generated object",
+                    rand_raw_symbols(nm, root, generated_object),
+                )
 
             if production is not None:
                 production_symbols = module_symbols(
@@ -2376,6 +3038,11 @@ def check_generated_output(
                     require_completion_raw_symbols(
                         "production library",
                         completion_raw_symbols(nm, root, production),
+                    )
+                elif module.cpp_module == "rrr.rand":
+                    require_rand_raw_symbols(
+                        "production library",
+                        rand_raw_symbols(nm, root, production),
                     )
 
 
@@ -2469,7 +3136,8 @@ def check(args: argparse.Namespace) -> None:
         "CallbackWrapper C++ layout/runtime/move parity, AvgStat layout/runtime, "
         "RpcError runtime contracts, ConnectionMetrics layout/concurrent/wrapping "
         "runtime contracts, CompletionTracker C++ layout/thread-safe lifecycle/"
-        "wrapping runtime contracts, and "
+        "wrapping runtime contracts, RandomGenerator byte-adapter/single-evaluation/"
+        "precondition/wrapping/empty-weight/C-FFI runtime contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )
 

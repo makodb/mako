@@ -5,26 +5,28 @@ the actual Rust DSL authored there must compile both with rustc and through
 rusty-cpp. The old parallel hand-port was not the DSL and has
 been removed; it cannot be used as evidence for either half.
 
-## Current dual-compilation ratchet (2026-08-10)
+## Current dual-compilation ratchet (2026-08-11)
 
 The actual Cargo package now starts at `src/rrr/Cargo.toml`. Its checked-in
 Rust module inputs are generated from ordered inline-DSL block IDs through
 `scripts/extract_rrr_rust.py`; rustc and rusty-cpp consume those same generated
-bytes. The first six slices cover `base/callback_wrapper.cpp` block
+bytes. The first seven slices cover `base/callback_wrapper.cpp` block
 `callback_wrapper.wrapper`, `rpc/internal_protocol.cpp` block
 `internal_protocol.1`, `misc/stat.cpp` block `stat.1`, all seven DSL blocks in
 `rpc/errors.cpp`, and `rpc/connection_metrics.cpp` blocks
 `connection_metrics.usings` and `connection_metrics.1`, plus all six selected
-blocks in `rpc/completion_tracker.cpp`. They preserve the
+blocks in `rpc/completion_tracker.cpp`, plus all four blocks in
+`misc/rand.cpp`. They preserve the
 production `rrr::detail::CallbackWrapper`, `rrr.internal_protocol`, `rrr.stat`,
-`rrr.errors`, `rrr.connection_metrics`, and `rrr.completion_tracker` surfaces,
-their exact 87-symbol
+`rrr.errors`, `rrr.connection_metrics`, `rrr.completion_tracker`, and
+`rrr.rand` surfaces, their exact 99-symbol
 combined provider-owned strong ABI, the callback, `AvgStat`, and public
 18-field `ConnectionMetrics` layouts and runtime behavior, every public
 RPC-error discriminant, name, category, and retry predicate. The callback
 template has no provider-owned specialization symbols. The metrics and
 completion children each use one module-scoped structured preamble row for the
-same direct atomic runtime include; neither needs an ownership map. Metrics
+same direct atomic runtime include. Rand uses a quoted structured preamble for
+its plain-C PRNG kernel boundary; none needs an ownership map. Metrics
 counter updates are atomic
 read/modify/write operations, its in-flight gauge saturates through a CAS loop,
 and unsigned addition/multiplication deliberately retain the legacy wrapping
@@ -42,8 +44,20 @@ and the unchanged 30-symbol completion API (33 raw entries with constructor
 aliases and the module initializer) are all gated. Relaxed individual counters
 do not make `reset_stats` or `hit_rate` linearizable multi-field snapshots.
 
-This is deliberately partial: the manifest owns six of 38 named modules,
-six of 39 module-source units, 18 of 446 DSL blocks, and 654 of 11,482
+Rand keeps its legacy public C++ facade through inert Rust ABI markers:
+`Vec<u8>` lowers to byte-preserving `std::string`, and the public
+`RandWeightVec` alias lowers to `std::vector<double>` with a const-reference
+weighted-selection parameter. Rust owns all range, formatting, and selection
+logic with explicit wrapping and the empty-weight `u32::MAX` sentinel; only
+the raw draw and teardown calls use narrowly allowed unsafe C FFI. The 12 API
+symbols plus one initializer are pinned as exactly 13 raw strong entries, and
+the real C kernel has a separate runtime smoke test. Rust `assert!` preserves
+the legacy `verify` panic/unwind failure category for invalid ranges and zero
+wrapped widths, including pre-draw rejection of reversed and NaN floating
+ranges; diagnostic text and stack formatting need not be byte-identical.
+
+This is deliberately partial: the manifest owns seven of 38 named modules,
+seven of 39 module-source units, 22 of 446 DSL blocks, and 730 of 11,482
 noncomment DSL code lines. The 11,482-line denominator is the pre-enrollment
 semantic DSL baseline; extraction copies owned bytes into the crate without
 deleting their inline source blocks. `cargo test --manifest-path
@@ -79,9 +93,9 @@ What remains is still material Goal-0 work:
   includes, imports, namespace framing, aliases, forward declarations, and two
   semantic preprocessor constants across the 39 `.cpp`/`.cc` module sources;
 - 147 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
-- the 58-line `srpc_fiber.h` C ABI surface;
-- seven tolerated external-C kernels (382 noncomment code lines); and
-- 428 production DSL blocks not yet enrolled in the rustc crate.
+- 69 noncomment C ABI header lines across `srpc_fiber.h` and `srpc_rand.h`;
+- seven tolerated external-C kernels (383 noncomment code lines); and
+- 424 production DSL blocks not yet enrolled in the rustc crate.
 
 The immediate path is therefore generated module framing plus structured GMF
 preamble metadata, followed by complete manifest enrollment. The C kernels and

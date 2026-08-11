@@ -33,7 +33,7 @@ PACKAGE_NAME = "rrr"
 GENERATED_ROOT = PurePosixPath("src/rrr/src")
 GENERATED_LIB = GENERATED_ROOT / "lib.rs"
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "707650e4021b163ea37783c14c7a182eef8a9a63"
+REQUIRED_RUSTY_CPP_COMMIT = "2581829a77dd99aebb22338ebf8f1da57fd4dcc4"
 APPROVED_PRODUCTION_ROOTS = (
     PurePosixPath("src/rrr/base"),
     PurePosixPath("src/rrr/misc"),
@@ -611,7 +611,7 @@ def render_lib(
         f"// provenance-manifest: {manifest_label}",
         f"// provenance-manifest-sha256: {sha256(manifest_path.read_bytes())}",
         "//",
-        "#![forbid(unsafe_code)]",
+        "#![deny(unsafe_code)]",
         "",
     ]
     for module in sorted(modules, key=lambda entry: entry.rust_module):

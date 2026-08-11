@@ -11,3 +11,9 @@ name = "rrr.completion_tracker"
 includes = [
     { path = "rusty/sync/atomic.hpp", form = "angle" },
 ]
+
+[[module]]
+name = "rrr.rand"
+includes = [
+    { path = "misc/srpc_rand.h", form = "quote" },
+]
