@@ -4,12 +4,13 @@ The `rrr` Cargo package in this directory compiles Rust extracted from the real
 inline-Rust DSL in the production `src/rrr` module sources. It is deliberately
 not a second implementation.
 
-The current ratchet owns seven of 38 production named modules, seven of 39
-module-source units, and 22 of 446 DSL blocks: `callback_wrapper.wrapper`,
+The current ratchet owns eight of 38 production named modules, eight of 39
+module-source units, and 25 of 446 DSL blocks: `callback_wrapper.wrapper`,
 `internal_protocol.1`, `stat.1`, all seven blocks in `rpc/errors.cpp`, and
 `connection_metrics.usings` plus `connection_metrics.1`, together with
 `completion_tracker.1`, `.2`, `.tracker`, `.status`, `.3`, and `.6`, plus all
-four `rand.cpp` blocks. That is 730 of the 11,482 noncomment DSL code lines.
+four `rand.cpp` blocks and all three `request_options.cpp` blocks. That is 867
+of the 11,482 noncomment DSL code lines.
 These counts describe partial
 coverage, not Goal 0 completion. The 11,482-line denominator is the
 pre-enrollment semantic
@@ -40,12 +41,12 @@ cargo test --locked --manifest-path src/rrr/Cargo.toml --all-targets
 ```
 
 The approved Goal 0 transpiler/runtime stack is the clean rusty-cpp commit
-`2581829a77dd99aebb22338ebf8f1da57fd4dcc4`, which is the exact required
+`f6d9a0f62510c6335e172cebe3164d2570840284`, which is the exact required
 submodule pin for this canary. The transpiler must identify that exact clean
 source through its one-line build-information response:
 
 ```json
-{"git_hash":"2581829a77dd99aebb22338ebf8f1da57fd4dcc4","git_dirty":false}
+{"git_hash":"f6d9a0f62510c6335e172cebe3164d2570840284","git_dirty":false}
 ```
 
 Extraction uses this interface:
@@ -69,11 +70,13 @@ before census or write operations.
 
 The conventional `src/lib.rs` layout and direct `src/callback_wrapper.rs`,
 `src/internal_protocol.rs`, `src/stat.rs`, `src/errors.rs`,
-`src/connection_metrics.rs`, `src/completion_tracker.rs`, and `src/rand.rs`
+`src/connection_metrics.rs`, `src/completion_tracker.rs`, `src/rand.rs`, and
+`src/request_options.rs`
 modules are
 intentional: they map to the existing `rrr.callback_wrapper`,
 `rrr.internal_protocol`, `rrr.stat`, `rrr.errors`, `rrr.connection_metrics`,
-`rrr.completion_tracker`, and `rrr.rand` C++ modules rather than inventing an
+`rrr.completion_tracker`, `rrr.rand`, and `rrr.request_options` C++ modules
+rather than inventing an
 `srpc.extracted.*` namespace. The callback source itself owns
 `pub mod detail`, so ordinary file-module lowering produces the exact
 `rrr::detail::CallbackWrapper` API without an ownership map. The current
@@ -84,7 +87,7 @@ Crate-mode generation must preserve the production C++ namespace as well as
 the module name. `--auto-namespace` is wrong here because it nests APIs below
 their module names. The checked gate forces `--cxx-namespace rrr` and generates
 the entire partial crate once in the build tree. Production compiles only the
-seven child modules derived from the extraction manifest. The temporary gate
+eight child modules derived from the extraction manifest. The temporary gate
 compiles those children first and then the partial `rrr.cppm` root as an
 umbrella syntax/import-closure proof; that root is never linked, installed, or
 added as a production provider.
@@ -105,21 +108,29 @@ declarations from global-fragment headers and imports exactly `rusty`; neither
 provider retains the dead `rrr.debugging` dependency because `assert!` lowers
 directly to the `rusty` panic runtime.
 
+Request options uses the source-owned inert
+`cpp_import_namespace(rrr)` contract for its private Rust import of the two
+unadapted rand kernel leaves. The inline carrier imports exactly `std`, then
+`rrr.rand`; the generated child imports exactly `rrr.rand`. Neither provider
+emits a C++ namespace alias or `using` declaration, so those private Rust names
+do not become an accidental exported C++ API.
+
 Production substitution is opt-in. The default
 `RRR_USE_CRATE_CPP_MODULES=OFF` keeps every inline C++ carrier. With the option
 ON, the `rrr` target removes exactly `base/callback_wrapper.cpp`,
 `rpc/internal_protocol.cpp`, `misc/stat.cpp`, `rpc/errors.cpp`, and
 `rpc/connection_metrics.cpp`, `rpc/completion_tracker.cpp`, and
-`misc/rand.cpp` from its
+`misc/rand.cpp`, and `rpc/request_options.cpp` from its
 module-provider list and replaces them
 with the generated `rrr.callback_wrapper.cppm`, `rrr.internal_protocol.cppm`,
 `rrr.stat.cppm`, `rrr.errors.cppm`, `rrr.connection_metrics.cppm`, and
-`rrr.completion_tracker.cppm`, and `rrr.rand.cppm` children.
+`rrr.completion_tracker.cppm`, `rrr.rand.cppm`, and
+`rrr.request_options.cppm` children.
 The full inline-carrier census remains
 immutable so the source glob cannot compile an old carrier accidentally.
 
 The dual gate builds a separate `rrr_goal0_inline_reference` archive directly
-from the seven inline carriers. Its combined importer is linked and run three
+from the eight inline carriers. Its combined importer is linked and run three
 ways: against the standalone generated objects, against that independent
 inline reference, and against the selected production `librrr` archive. Thus
 the ON-mode comparison never uses the generated production archive as its own
@@ -153,15 +164,18 @@ the generated, inline-reference, and production C++ `CompletionTracker`
 instead: 256/8 with offsets 0/64/136/224/232/240/248. The synchronized carrier
 is intentionally larger than the legacy 216-byte `Cell` carrier.
 
-The exact provider-owned strong ABI is now 99 unique symbols: six each from
+The exact provider-owned strong ABI is now 111 unique symbols: six each from
 `internal_protocol`, `stat`, and `errors`, 39 from `connection_metrics`, 30
-from `completion_tracker`, 12 from `rand`, and zero from the
+from `completion_tracker`, 12 from `rand`, 12 from `request_options`, and zero
+from the
 importer-instantiated callback template. The completion object has 33 raw
 strong entries when the module
 initializer and duplicate constructor aliases are counted; its 30 unique API
 symbols match the legacy provider exactly. The rand provider has exactly 13
 raw strong entries: its 12-function API and one module initializer. Its three
 semantic adapter helpers remain local and never expand the public ABI.
+Request options likewise has exactly 13 raw strong entries: 11 record methods,
+the timeout formatter, and one module initializer.
 Compiler-generated weak
 template/lambda definitions are deliberately outside that strong ABI set.
 The callback parity gate removes crate mode's `export` spelling, normalizes
@@ -197,6 +211,16 @@ before or after the kernel draw. A separate smoke
 executable links the real `srpc_rand.c`/`srpc_timing.c` kernel and checks raw
 draw range and teardown rather than replacing that boundary with test stubs.
 
+The request-options gate compares the complete `TimeoutType` definition,
+`RequestOptions` record, and all 11 method definitions between inline and
+crate providers. Its timeout formatter is emitted through different
+block-local/whole-crate match carriers, so the gate parses and pins the exact
+five mappings plus `UNKNOWN` instead of normalizing function bodies. The C++
+importer pins the enum at 4/4 with an `i32` underlying type, the record at 32/8
+with offsets 0/8/16/18/20/24/28, every factory/retry/timeout boundary, cap-before-
+jitter ordering, deterministic endpoint draws, NaN/nonpositive no-draw paths,
+negative clamping, and saturating float-to-`u64` conversion.
+
 `CompletionTracker` uses a mutex-protected configuration, mutex-protected set
 and list, and relaxed atomic counters. Every operation snapshots configuration
 before taking either container lock, and operations needing both containers
@@ -211,10 +235,12 @@ Rust integration tests independently cover the
 callback's sharing and move behavior plus the public 18-field metrics `repr(C)`
 layout and all counter, latency, uptime, saturation, reset, and
 unsigned-wrapping behavior, including
-repeated eight-thread stress. The combined C++ importer repeats those contracts
+repeated eight-thread stress. Rust request-options tests independently pin the
+same public layout, factories, timeout boundaries, backoff/jitter ordering, and
+draw counts. The combined C++ importer repeats those contracts
 and the completion contracts in all three generated, inline-reference, and
-selected-production lanes. All seven children plus the partial root are
-compiled (eight C++ modules total), with zero hand slots. Before
+selected-production lanes. All eight children plus the partial root are
+compiled (nine C++ modules total), with zero hand slots. Before
 crate translation, the gate runs the extraction driver's `--check` with that
 same transpiler, so a hand-edited generated Rust file cannot pass crate mode
 independently.

@@ -219,8 +219,8 @@ Exceptions that stay std:
 
 **IMPORTANT**: For Goal 0 extraction, the `third-party/rusty-cpp`
 gitlink is pinned to commit
-`2581829a77dd99aebb22338ebf8f1da57fd4dcc4` on the pushed
-`goal0-inline-rust-extract` branch. That branch descends from the
+`f6d9a0f62510c6335e172cebe3164d2570840284` on the pushed
+`goal0-flat-sibling-import` branch. That branch descends from the
 pre-pivot `2b261ccc0915ea99cbab02631ccc5bea19ac82c7` pin only through
 reviewed Goal 0 extractor, codegen, preamble, build-attestation, and runtime
 commits. Do not move this

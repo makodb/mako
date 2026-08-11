@@ -22,13 +22,14 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "2581829a77dd99aebb22338ebf8f1da57fd4dcc4"
+REQUIRED_RUSTY_CPP_COMMIT = "f6d9a0f62510c6335e172cebe3164d2570840284"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-extraction.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
 CALLBACK_INLINE_SOURCE = "src/rrr/base/callback_wrapper.cpp"
 COMPLETION_INLINE_SOURCE = "src/rrr/rpc/completion_tracker.cpp"
 RAND_INLINE_SOURCE = "src/rrr/misc/rand.cpp"
+REQUEST_OPTIONS_INLINE_SOURCE = "src/rrr/rpc/request_options.cpp"
 NM_LINE = re.compile(r"^[0-9A-Fa-f]+\s+([A-Za-z])\s+(.+)$")
 PLACEHOLDER = re.compile(r"\b(?:TODO|UNSUPPORTED|skipped)\b", re.IGNORECASE)
 
@@ -438,6 +439,66 @@ ABI_SPECS = {
                     "std::__1::vector<double, std::__1::allocator<double>> const&)",
                 ),
                 ("T", "rrr::RandomGenerator@rrr.rand::destroy()"),
+            }
+        ),
+    ),
+    "rrr.request_options": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.request_options;",
+                "import rrr.rand;",
+                "export enum class TimeoutType",
+                "export constexpr TimeoutType TimeoutType_NONE();",
+                "export constexpr TimeoutType TimeoutType_CONNECT_TIMEOUT();",
+                "export constexpr TimeoutType TimeoutType_REQUEST_TIMEOUT();",
+                "export constexpr TimeoutType TimeoutType_RESPONSE_TIMEOUT();",
+                "export constexpr TimeoutType TimeoutType_TOTAL_TIMEOUT();",
+                "inline constexpr TimeoutType TimeoutType_NONE()",
+                "inline constexpr TimeoutType TimeoutType_CONNECT_TIMEOUT()",
+                "inline constexpr TimeoutType TimeoutType_REQUEST_TIMEOUT()",
+                "inline constexpr TimeoutType TimeoutType_RESPONSE_TIMEOUT()",
+                "inline constexpr TimeoutType TimeoutType_TOTAL_TIMEOUT()",
+                "export struct RequestOptions",
+                "uint64_t timeout_ms;",
+                "uint64_t total_timeout_ms;",
+                "uint16_t max_retries;",
+                "uint16_t base_delay_ms;",
+                "uint16_t max_delay_ms;",
+                "float jitter_factor;",
+                "bool idempotent;",
+                "static RequestOptions new_();",
+                "static RequestOptions defaults();",
+                "static RequestOptions with_retry(uint16_t max_retries, uint64_t timeout_ms);",
+                "static RequestOptions idempotent_retry(uint16_t max_retries);",
+                "static RequestOptions no_timeout();",
+                "static RequestOptions fast();",
+                "static RequestOptions patient();",
+                "bool can_retry(uint16_t current_retry_count) const;",
+                "uint64_t calculate_delay_ms(uint16_t attempt) const;",
+                "bool is_total_timeout_exceeded(uint64_t elapsed_ms) const;",
+                "uint64_t remaining_time_ms(uint64_t elapsed_ms) const;",
+                "static constexpr bool is_send = true;",
+                "static constexpr bool is_sync = true;",
+                "export std::string_view timeout_type_to_string(TimeoutType ty);",
+                "static_cast<double>(randgen_rand_raw())",
+                "randgen_rand_max()",
+            }
+        ),
+        symbols=frozenset(
+            ("T", symbol)
+            for symbol in {
+                "rrr::RequestOptions@rrr.request_options::new_()",
+                "rrr::RequestOptions@rrr.request_options::defaults()",
+                "rrr::RequestOptions@rrr.request_options::with_retry(unsigned short, unsigned long)",
+                "rrr::RequestOptions@rrr.request_options::idempotent_retry(unsigned short)",
+                "rrr::RequestOptions@rrr.request_options::no_timeout()",
+                "rrr::RequestOptions@rrr.request_options::fast()",
+                "rrr::RequestOptions@rrr.request_options::patient()",
+                "rrr::RequestOptions@rrr.request_options::can_retry(unsigned short) const",
+                "rrr::RequestOptions@rrr.request_options::calculate_delay_ms(unsigned short) const",
+                "rrr::RequestOptions@rrr.request_options::is_total_timeout_exceeded(unsigned long) const",
+                "rrr::RequestOptions@rrr.request_options::remaining_time_ms(unsigned long) const",
+                "rrr::timeout_type_to_string@rrr.request_options(rrr::TimeoutType@rrr.request_options)",
             }
         ),
     ),
@@ -1145,20 +1206,158 @@ def require_rand_text_parity(root: Path, generated: str) -> None:
         )
 
 
+def require_request_options_text_parity(root: Path, generated: str) -> None:
+    """Compare request-options declarations/bodies across both providers."""
+
+    source_path = root / REQUEST_OPTIONS_INLINE_SOURCE
+    try:
+        inline = source_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise GateError(
+            f"cannot read inline request-options oracle {source_path}: {exc}"
+        ) from exc
+
+    inline_enum = inline_generated_block(inline, "request_options.timeout_type")
+    inline_options = inline_generated_block(inline, "request_options.0")
+    inline_to_string = inline_generated_block(inline, "request_options.3")
+    generated_plain = re.sub(r"^export ", "", generated, flags=re.MULTILINE)
+
+    inline_enum_definition = balanced_cpp_definition(
+        inline_enum,
+        "enum class TimeoutType {",
+        "inline request-options TimeoutType",
+    )
+    generated_enum_definition = balanced_cpp_definition(
+        generated_plain,
+        "enum class TimeoutType {",
+        "crate-generated request-options TimeoutType",
+    )
+    if generated_enum_definition != inline_enum_definition:
+        raise GateError(
+            "crate-generated TimeoutType definition differs from the inline provider"
+        )
+    for name in (
+        "NONE",
+        "CONNECT_TIMEOUT",
+        "REQUEST_TIMEOUT",
+        "RESPONSE_TIMEOUT",
+        "TOTAL_TIMEOUT",
+    ):
+        token = f"inline constexpr TimeoutType TimeoutType_{name}()"
+        if balanced_cpp_definition(
+            generated_plain,
+            token,
+            "crate-generated request-options enum accessors",
+        ) != balanced_cpp_definition(
+            inline_enum,
+            token,
+            "inline request-options enum accessors",
+        ):
+            raise GateError(
+                "crate-generated TimeoutType accessor differs from the inline "
+                f"provider at {name}"
+            )
+
+    inline_struct = balanced_cpp_definition(
+        inline_options,
+        "struct RequestOptions {",
+        "inline request-options record",
+    )
+    generated_struct = balanced_cpp_definition(
+        generated_plain,
+        "struct RequestOptions {",
+        "crate-generated request-options record",
+    )
+    if generated_struct != inline_struct:
+        raise GateError(
+            "crate-generated RequestOptions record differs from the inline provider"
+        )
+
+    method_tokens = (
+        "RequestOptions RequestOptions::new_()",
+        "RequestOptions RequestOptions::defaults()",
+        "RequestOptions RequestOptions::with_retry(",
+        "RequestOptions RequestOptions::idempotent_retry(",
+        "RequestOptions RequestOptions::no_timeout()",
+        "RequestOptions RequestOptions::fast()",
+        "RequestOptions RequestOptions::patient()",
+        "bool RequestOptions::can_retry(",
+        "uint64_t RequestOptions::calculate_delay_ms(",
+        "bool RequestOptions::is_total_timeout_exceeded(",
+        "uint64_t RequestOptions::remaining_time_ms(",
+    )
+    for token in method_tokens:
+        inline_definition = balanced_cpp_definition(
+            inline_options, token, "inline request-options methods"
+        )
+        generated_definition = balanced_cpp_definition(
+            generated_plain, token, "crate-generated request-options methods"
+        )
+        if generated_definition != inline_definition:
+            raise GateError(
+                "crate-generated request-options definition differs from the "
+                f"inline provider at {token!r}"
+            )
+
+    expected_mappings = [
+        ("NONE", "NONE"),
+        ("CONNECT_TIMEOUT", "CONNECT_TIMEOUT"),
+        ("REQUEST_TIMEOUT", "REQUEST_TIMEOUT"),
+        ("RESPONSE_TIMEOUT", "RESPONSE_TIMEOUT"),
+        ("TOTAL_TIMEOUT", "TOTAL_TIMEOUT"),
+    ]
+    mapping_pattern = re.compile(
+        r"TimeoutType::([A-Z_]+).*?std::string_view\(\"([A-Z_]+)\"\)",
+        re.DOTALL,
+    )
+    string_pattern = re.compile(r"std::string_view\(\"([A-Z_]+)\"\)")
+    generated_to_string = balanced_cpp_definition(
+        generated_plain,
+        "std::string_view timeout_type_to_string(TimeoutType ty) {",
+        "crate-generated request-options timeout formatter",
+    )
+    for description, definition in (
+        ("inline request-options timeout formatter", inline_to_string),
+        ("crate-generated request-options timeout formatter", generated_to_string),
+    ):
+        if mapping_pattern.findall(definition) != expected_mappings or (
+            string_pattern.findall(definition)
+            != [name for _, name in expected_mappings] + ["UNKNOWN"]
+        ):
+            raise GateError(
+                f"{description} does not contain the exact TimeoutType mapping"
+            )
+
+    forbidden_import_surfaces = (
+        "namespace rand =",
+        "using ::rand::",
+        "using ::rrr::rand::",
+        "using ::rrr::randgen_",
+    )
+    for surface in forbidden_import_surfaces:
+        if surface in inline_options or surface in generated:
+            raise GateError(
+                "request-options private flat import leaked a C++ alias/using "
+                f"surface: {surface!r}"
+            )
+
+
 def require_exact_module_imports(
     text: str, module_name: str, expected: list[str]
 ) -> None:
-    """Reject undeclared named-module dependencies in a generated child."""
+    """Require the exact private named-module dependencies of a child."""
 
-    actual = re.findall(
-        r"^(?:export )?import ([^;\n]+);[ \t]*$",
+    matches = re.findall(
+        r"^(export )?import ([^;\n]+);[ \t]*$",
         text,
         flags=re.MULTILINE,
     )
-    if actual != expected:
+    actual = [imported for _, imported in matches]
+    exported = [imported for prefix, imported in matches if prefix]
+    if actual != expected or exported:
         raise GateError(
-            f"generated {module_name} module imports must be exactly "
-            f"{expected!r}; got {actual!r}"
+            f"generated {module_name} module private imports must be exactly "
+            f"{expected!r}; got {actual!r}, exported={exported!r}"
         )
 
 
@@ -1289,6 +1488,12 @@ def require_cpp_surfaces(
             raise GateError(
                 f"rand C-kernel preamble leaked into {module.cpp_module}"
             )
+
+        if module.cpp_module == "rrr.request_options":
+            require_exact_module_imports(
+                text, "rrr.request_options", ["rrr.rand"]
+            )
+            require_request_options_text_parity(root, text)
 
     root_text = read_generated(output / "rrr.cppm", "root module")
     if "#include <rusty/sync/atomic.hpp>" in root_text:
@@ -1457,6 +1662,54 @@ def require_rand_raw_symbols(
     )
 
 
+def request_options_raw_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+) -> list[tuple[str, str]]:
+    """Return request-options strong entries, including its initializer."""
+
+    output = run(
+        [str(nm), "--defined-only", "--demangle", str(binary)],
+        root,
+    )
+    initializer = "initializer for module rrr.request_options"
+    entries: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        match = NM_LINE.match(line)
+        if match is None:
+            continue
+        kind, symbol = match.groups()
+        if not kind.isupper() or kind in {"U", "V", "W"}:
+            continue
+        if (
+            symbol_owner_module(symbol) == "rrr.request_options"
+            or symbol == initializer
+        ):
+            entries.append((kind, symbol))
+    return entries
+
+
+def require_request_options_raw_symbols(
+    description: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    """Pin request-options' 12-function ABI and initializer exactly."""
+
+    expected = Counter(ABI_SPECS["rrr.request_options"].symbols)
+    expected[("T", "initializer for module rrr.request_options")] += 1
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} request-options ABI must contain exactly 13 raw strong "
+        "entries (12 API symbols and the module initializer); "
+        f"missing={missing!r}, unexpected={unexpected!r}"
+    )
+
+
 def function_parameter_open(symbol: str) -> int:
     """Return the outer function-parameter `(`, or the end for a data symbol."""
 
@@ -1607,6 +1860,7 @@ import rrr.connection_metrics;
 import rrr.errors;
 import rrr.internal_protocol;
 import rrr.rand;
+import rrr.request_options;
 import rrr.stat;
 
 static std::int32_t rand_raw_value = 0;
@@ -1653,6 +1907,46 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
               decltype(&rrr::RandomGenerator::weighted_select),
               std::uint32_t (*)(const std::vector<double>&)>);
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<rrr::TimeoutType>, std::int32_t>);
+static_assert(sizeof(rrr::TimeoutType) == 4);
+static_assert(alignof(rrr::TimeoutType) == 4);
+static_assert(std::is_trivially_copyable_v<rrr::TimeoutType>);
+static_assert(std::is_standard_layout_v<rrr::RequestOptions>);
+static_assert(std::is_trivially_copyable_v<rrr::RequestOptions>);
+static_assert(rrr::RequestOptions::is_send);
+static_assert(rrr::RequestOptions::is_sync);
+static_assert(sizeof(rrr::RequestOptions) == 32);
+static_assert(alignof(rrr::RequestOptions) == 8);
+static_assert(offsetof(rrr::RequestOptions, timeout_ms) == 0);
+static_assert(offsetof(rrr::RequestOptions, total_timeout_ms) == 8);
+static_assert(offsetof(rrr::RequestOptions, max_retries) == 16);
+static_assert(offsetof(rrr::RequestOptions, base_delay_ms) == 18);
+static_assert(offsetof(rrr::RequestOptions, max_delay_ms) == 20);
+static_assert(offsetof(rrr::RequestOptions, jitter_factor) == 24);
+static_assert(offsetof(rrr::RequestOptions, idempotent) == 28);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestOptions::new_),
+              rrr::RequestOptions (*)()>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestOptions::with_retry),
+              rrr::RequestOptions (*)(std::uint16_t, std::uint64_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestOptions::can_retry),
+              bool (rrr::RequestOptions::*)(std::uint16_t) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestOptions::calculate_delay_ms),
+              std::uint64_t (rrr::RequestOptions::*)(std::uint16_t) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestOptions::is_total_timeout_exceeded),
+              bool (rrr::RequestOptions::*)(std::uint64_t) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestOptions::remaining_time_ms),
+              std::uint64_t (rrr::RequestOptions::*)(std::uint64_t) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::timeout_type_to_string),
+              std::string_view (*)(rrr::TimeoutType)>);
 
 static_assert(sizeof(rrr::RpcErrorCategory) == sizeof(std::int32_t));
 static_assert(sizeof(rrr::RpcError) == sizeof(std::int32_t));
@@ -2771,6 +3065,169 @@ int main() {
         rand_raw_draws != 1) {
         return 95;
     }
+
+    if (static_cast<std::int32_t>(rrr::TimeoutType::NONE) != 0 ||
+        static_cast<std::int32_t>(rrr::TimeoutType::CONNECT_TIMEOUT) != 1 ||
+        static_cast<std::int32_t>(rrr::TimeoutType::REQUEST_TIMEOUT) != 2 ||
+        static_cast<std::int32_t>(rrr::TimeoutType::RESPONSE_TIMEOUT) != 3 ||
+        static_cast<std::int32_t>(rrr::TimeoutType::TOTAL_TIMEOUT) != 4 ||
+        rrr::TimeoutType_NONE() != rrr::TimeoutType::NONE ||
+        rrr::TimeoutType_CONNECT_TIMEOUT() !=
+            rrr::TimeoutType::CONNECT_TIMEOUT ||
+        rrr::TimeoutType_REQUEST_TIMEOUT() !=
+            rrr::TimeoutType::REQUEST_TIMEOUT ||
+        rrr::TimeoutType_RESPONSE_TIMEOUT() !=
+            rrr::TimeoutType::RESPONSE_TIMEOUT ||
+        rrr::TimeoutType_TOTAL_TIMEOUT() != rrr::TimeoutType::TOTAL_TIMEOUT ||
+        rrr::timeout_type_to_string(rrr::TimeoutType::NONE) != "NONE" ||
+        rrr::timeout_type_to_string(rrr::TimeoutType::CONNECT_TIMEOUT) !=
+            "CONNECT_TIMEOUT" ||
+        rrr::timeout_type_to_string(rrr::TimeoutType::REQUEST_TIMEOUT) !=
+            "REQUEST_TIMEOUT" ||
+        rrr::timeout_type_to_string(rrr::TimeoutType::RESPONSE_TIMEOUT) !=
+            "RESPONSE_TIMEOUT" ||
+        rrr::timeout_type_to_string(rrr::TimeoutType::TOTAL_TIMEOUT) !=
+            "TOTAL_TIMEOUT" ||
+        rrr::timeout_type_to_string(static_cast<rrr::TimeoutType>(99)) !=
+            "UNKNOWN") {
+        return 96;
+    }
+
+    const auto request_defaults = rrr::RequestOptions::defaults();
+    const auto request_new = rrr::RequestOptions::new_();
+    if (request_defaults.timeout_ms != 1000 ||
+        request_defaults.total_timeout_ms != 0 ||
+        request_defaults.max_retries != 0 ||
+        request_defaults.base_delay_ms != 50 ||
+        request_defaults.max_delay_ms != 5000 ||
+        request_defaults.jitter_factor != 0.1f ||
+        request_defaults.idempotent ||
+        request_new.timeout_ms != request_defaults.timeout_ms ||
+        request_new.total_timeout_ms != request_defaults.total_timeout_ms ||
+        request_new.max_retries != request_defaults.max_retries ||
+        request_new.base_delay_ms != request_defaults.base_delay_ms ||
+        request_new.max_delay_ms != request_defaults.max_delay_ms ||
+        request_new.jitter_factor != request_defaults.jitter_factor ||
+        request_new.idempotent != request_defaults.idempotent ||
+        request_defaults.can_retry(0)) {
+        return 97;
+    }
+
+    const auto request_retry = rrr::RequestOptions::with_retry(3, 2000);
+    const auto request_idempotent =
+        rrr::RequestOptions::idempotent_retry(10);
+    const auto request_no_timeout = rrr::RequestOptions::no_timeout();
+    const auto request_fast = rrr::RequestOptions::fast();
+    const auto request_patient = rrr::RequestOptions::patient();
+    if (request_retry.timeout_ms != 2000 || request_retry.max_retries != 3 ||
+        !request_retry.idempotent || !request_retry.can_retry(0) ||
+        !request_retry.can_retry(2) || request_retry.can_retry(3) ||
+        request_idempotent.timeout_ms != 1000 ||
+        request_idempotent.max_retries != 10 ||
+        !request_idempotent.idempotent || request_no_timeout.timeout_ms != 0 ||
+        request_fast.timeout_ms != 100 || request_fast.max_retries != 2 ||
+        request_fast.base_delay_ms != 10 || request_fast.max_delay_ms != 100 ||
+        request_patient.timeout_ms != 10000 ||
+        request_patient.total_timeout_ms != 60000 ||
+        request_patient.max_retries != 5 ||
+        request_patient.base_delay_ms != 500 ||
+        request_patient.max_delay_ms != 10000) {
+        return 98;
+    }
+
+    auto request_limited = request_defaults;
+    request_limited.total_timeout_ms = 5000;
+    if (request_limited.is_total_timeout_exceeded(4999) ||
+        !request_limited.is_total_timeout_exceeded(5000) ||
+        request_limited.remaining_time_ms(0) != 5000 ||
+        request_limited.remaining_time_ms(4999) != 1 ||
+        request_limited.remaining_time_ms(5000) != 0 ||
+        request_limited.remaining_time_ms(
+            std::numeric_limits<std::uint64_t>::max()) != 0 ||
+        request_defaults.remaining_time_ms(
+            std::numeric_limits<std::uint64_t>::max()) !=
+            std::numeric_limits<std::uint64_t>::max()) {
+        return 99;
+    }
+
+    auto request_delay = request_defaults;
+    request_delay.base_delay_ms = 100;
+    request_delay.max_delay_ms = 500;
+    request_delay.jitter_factor = 0.0f;
+    install_rand_raw(17);
+    if (request_delay.calculate_delay_ms(0) != 100 ||
+        request_delay.calculate_delay_ms(1) != 200 ||
+        request_delay.calculate_delay_ms(2) != 400 ||
+        request_delay.calculate_delay_ms(3) != 500 ||
+        request_delay.calculate_delay_ms(
+            std::numeric_limits<std::uint16_t>::max()) != 500 ||
+        rand_raw_draws != 0) {
+        return 100;
+    }
+
+    request_delay.jitter_factor = -0.1f;
+    if (request_delay.calculate_delay_ms(0) != 100 || rand_raw_draws != 0) {
+        return 101;
+    }
+    request_delay.jitter_factor = std::numeric_limits<float>::quiet_NaN();
+    if (request_delay.calculate_delay_ms(0) != 100 || rand_raw_draws != 0) {
+        return 102;
+    }
+
+    request_delay.jitter_factor = 0.2f;
+    install_rand_raw(0);
+    const auto request_low_expected = static_cast<std::uint64_t>(
+        100.0 + 100.0 * static_cast<double>(request_delay.jitter_factor) *
+                    ((0.0 / static_cast<double>(
+                                std::numeric_limits<std::int32_t>::max())) -
+                     0.5));
+    if (request_delay.calculate_delay_ms(0) != request_low_expected ||
+        rand_raw_draws != 1) {
+        return 103;
+    }
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    const auto request_high_expected = static_cast<std::uint64_t>(
+        100.0 + 100.0 * static_cast<double>(request_delay.jitter_factor) * 0.5);
+    if (request_delay.calculate_delay_ms(0) != request_high_expected ||
+        rand_raw_draws != 1) {
+        return 104;
+    }
+
+    request_delay.base_delay_ms = 1000;
+    request_delay.max_delay_ms = 500;
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    const auto request_capped_expected = static_cast<std::uint64_t>(
+        500.0 + 500.0 * static_cast<double>(request_delay.jitter_factor) * 0.5);
+    if (request_delay.calculate_delay_ms(0) != request_capped_expected ||
+        rand_raw_draws != 1) {
+        return 105;
+    }
+
+    request_delay.base_delay_ms = 0;
+    install_rand_raw(123);
+    if (request_delay.calculate_delay_ms(
+            std::numeric_limits<std::uint16_t>::max()) != 0 ||
+        rand_raw_draws != 1) {
+        return 106;
+    }
+
+    request_delay.base_delay_ms = 100;
+    request_delay.max_delay_ms = 500;
+    request_delay.jitter_factor = 10.0f;
+    install_rand_raw(-std::numeric_limits<std::int32_t>::max());
+    if (request_delay.calculate_delay_ms(0) != 0 || rand_raw_draws != 1) {
+        return 107;
+    }
+
+    request_delay.base_delay_ms = std::numeric_limits<std::uint16_t>::max();
+    request_delay.max_delay_ms = std::numeric_limits<std::uint16_t>::max();
+    request_delay.jitter_factor = std::numeric_limits<float>::max();
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    if (request_delay.calculate_delay_ms(0) !=
+            std::numeric_limits<std::uint64_t>::max() ||
+        rand_raw_draws != 1) {
+        return 108;
+    }
     return 0;
 }
 """
@@ -3019,6 +3476,15 @@ def check_generated_output(
                     "crate-generated object",
                     rand_raw_symbols(nm, root, generated_object),
                 )
+            elif module.cpp_module == "rrr.request_options":
+                require_request_options_raw_symbols(
+                    "independent inline reference library",
+                    request_options_raw_symbols(nm, root, reference),
+                )
+                require_request_options_raw_symbols(
+                    "crate-generated object",
+                    request_options_raw_symbols(nm, root, generated_object),
+                )
 
             if production is not None:
                 production_symbols = module_symbols(
@@ -3043,6 +3509,11 @@ def check_generated_output(
                     require_rand_raw_symbols(
                         "production library",
                         rand_raw_symbols(nm, root, production),
+                    )
+                elif module.cpp_module == "rrr.request_options":
+                    require_request_options_raw_symbols(
+                        "production library",
+                        request_options_raw_symbols(nm, root, production),
                     )
 
 
@@ -3137,7 +3608,8 @@ def check(args: argparse.Namespace) -> None:
         "RpcError runtime contracts, ConnectionMetrics layout/concurrent/wrapping "
         "runtime contracts, CompletionTracker C++ layout/thread-safe lifecycle/"
         "wrapping runtime contracts, RandomGenerator byte-adapter/single-evaluation/"
-        "precondition/wrapping/empty-weight/C-FFI runtime contracts, and "
+        "precondition/wrapping/empty-weight/C-FFI runtime contracts, "
+        "RequestOptions layout/factory/retry/timeout/jitter runtime contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )
 

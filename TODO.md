@@ -1066,7 +1066,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Marshal operators for IdempotencyKey serialization
         - Created test/test_idempotency.cc with 32 tests (all passing)
       - [x] *medium* 2.4 Request Timeout and Retry Logic [deps: 1.2] [Plan: doc/rpc/phase2_timeout_retry.md] [DONE 2026-01-10]
-        - Created `src/rrr/rpc/request_options.hpp` (~230 LOC)
+        - Created the `rrr.request_options` module in `src/rrr/rpc/request_options.cpp`
         - TimeoutType enum: NONE, CONNECT_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_TIMEOUT, TOTAL_TIMEOUT
         - RequestOptions struct: timeout_ms, total_timeout_ms, max_retries, base/max_delay_ms, jitter_factor, idempotent
         - Presets: defaults(), with_retry(), idempotent_retry(), no_timeout(), fast(), patient()

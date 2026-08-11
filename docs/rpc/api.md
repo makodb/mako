@@ -270,12 +270,12 @@ public:
 
 ## Request Options
 
-**Header:** `src/rrr/rpc/request_options.hpp`
+**Module:** `rrr.request_options` (source: `src/rrr/rpc/request_options.cpp`)
 
 ### TimeoutType Enum
 
 ```cpp
-enum class TimeoutType : uint8_t {
+enum class TimeoutType {
     NONE,             // No timeout occurred
     CONNECT_TIMEOUT,  // Connection establishment timeout
     REQUEST_TIMEOUT,  // Request send timeout
@@ -284,27 +284,30 @@ enum class TimeoutType : uint8_t {
 };
 ```
 
+The supported ABI pins the default enum backing to signed 32-bit storage.
+
 ### RequestOptions Struct
 
 ```cpp
 struct RequestOptions {
     // Timeout configuration
-    uint64_t timeout_ms = 1000;         // Per-attempt timeout
-    uint64_t total_timeout_ms = 0;      // Total operation timeout (0 = no limit)
+    uint64_t timeout_ms;                 // Per-attempt timeout
+    uint64_t total_timeout_ms;           // Total operation timeout (0 = no limit)
 
     // Retry configuration
-    uint16_t max_retries = 0;           // Max retry attempts
-    uint16_t base_delay_ms = 50;        // Base backoff delay
-    uint16_t max_delay_ms = 5000;       // Maximum backoff delay
-    float jitter_factor = 0.1f;         // Backoff jitter
+    uint16_t max_retries;                // Max retry attempts
+    uint16_t base_delay_ms;              // Base backoff delay
+    uint16_t max_delay_ms;               // Maximum backoff delay
+    float jitter_factor;                 // Backoff jitter
 
     // Idempotency
-    bool idempotent = false;            // Safe to retry
+    bool idempotent;                     // Safe to retry
 
     // Presets
-    static RequestOptions defaults();            // 1s timeout, no retry
-    static RequestOptions with_retry(uint16_t max_retries, uint64_t timeout_ms = 1000);
-    static RequestOptions idempotent_retry(uint16_t max_retries = 3);
+    static RequestOptions new_();                 // 1s timeout, no retry
+    static RequestOptions defaults();             // Same as new_()
+    static RequestOptions with_retry(uint16_t max_retries, uint64_t timeout_ms);
+    static RequestOptions idempotent_retry(uint16_t max_retries);
     static RequestOptions no_timeout();          // Wait indefinitely
     static RequestOptions fast();                // 100ms, 2 retries
     static RequestOptions patient();             // 10s, 5 retries

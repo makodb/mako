@@ -68,6 +68,15 @@ def subprocess_result(
 
 
 class CheckedInCanaryTests(unittest.TestCase):
+    def test_request_options_carrier_has_only_its_direct_module_imports(self) -> None:
+        source = (REPOSITORY / "src/rrr/rpc/request_options.cpp").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(
+            re.findall(r"^import ([^;]+);$", source, flags=re.MULTILINE),
+            ["std", "rrr.rand"],
+        )
+
     def test_rand_carrier_has_only_its_direct_module_imports(self) -> None:
         source = (REPOSITORY / "src/rrr/misc/rand.cpp").read_text(
             encoding="utf-8"
@@ -228,6 +237,21 @@ class CheckedInCanaryTests(unittest.TestCase):
                         )
                     ],
                 ),
+                (
+                    "rrr.request_options",
+                    "request_options",
+                    "src/rrr/src/request_options.rs",
+                    [
+                        (
+                            "src/rrr/rpc/request_options.cpp",
+                            (
+                                "request_options.timeout_type",
+                                "request_options.0",
+                                "request_options.3",
+                            ),
+                        )
+                    ],
+                ),
             ],
         )
 
@@ -298,6 +322,16 @@ class CheckedInCanaryTests(unittest.TestCase):
                 ),
                 "src/rrr/src/rand.rs",
             ),
+            (
+                "rrr.request_options",
+                "src/rrr/rpc/request_options.cpp",
+                (
+                    "request_options.timeout_type",
+                    "request_options.0",
+                    "request_options.3",
+                ),
+                "src/rrr/src/request_options.rs",
+            ),
         ]
         for cpp_module, source_label, block_ids, output_label in cases:
             with self.subTest(cpp_module=cpp_module):
@@ -360,6 +394,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/connection_metrics.rs",
                 "src/rrr/src/completion_tracker.rs",
                 "src/rrr/src/rand.rs",
+                "src/rrr/src/request_options.rs",
             },
         )
 
@@ -946,19 +981,31 @@ class DriverBehaviorTests(unittest.TestCase):
 
 
 class CrateModeGateTests(unittest.TestCase):
-    def test_generated_rand_has_only_its_direct_runtime_import(self) -> None:
+    def test_generated_children_have_only_their_direct_module_imports(self) -> None:
         GATE.require_exact_module_imports(
             "export module rrr.rand;\nimport rusty;\n",
             "rrr.rand",
             ["rusty"],
         )
-        with self.assertRaisesRegex(GATE.GateError, "must be exactly"):
+        GATE.require_exact_module_imports(
+            "export module rrr.request_options;\nimport rrr.rand;\n",
+            "rrr.request_options",
+            ["rrr.rand"],
+        )
+        with self.assertRaisesRegex(GATE.GateError, "private imports must be exactly"):
             GATE.require_exact_module_imports(
                 "export module rrr.rand;\n"
                 "import rusty;\n"
                 "import rrr.debugging;\n",
                 "rrr.rand",
                 ["rusty"],
+            )
+        with self.assertRaisesRegex(GATE.GateError, "exported=\\['rrr.rand'\\]"):
+            GATE.require_exact_module_imports(
+                "export module rrr.request_options;\n"
+                "export import rrr.rand;\n",
+                "rrr.request_options",
+                ["rrr.rand"],
             )
 
     def test_executable_preserves_cxx_driver_symlink_spelling(self) -> None:
@@ -1243,6 +1290,54 @@ class CrateModeGateTests(unittest.TestCase):
             ):
                 GATE.require_rand_text_parity(root, generated)
 
+    def test_request_options_text_parity_is_exact_and_flat_import_is_private(
+        self,
+    ) -> None:
+        inline = (REPOSITORY / "src/rrr/rpc/request_options.cpp").read_text(
+            encoding="utf-8"
+        )
+        generated = "\n\n".join(
+            GATE.inline_generated_block(inline, block_id)
+            for block_id in (
+                "request_options.timeout_type",
+                "request_options.0",
+                "request_options.3",
+            )
+        )
+
+        with tempfile.TemporaryDirectory(
+            prefix="rrr-request-options-parity-test-"
+        ) as temporary:
+            root = Path(temporary)
+            source = root / "src/rrr/rpc/request_options.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text(inline, encoding="utf-8")
+            GATE.require_request_options_text_parity(root, generated)
+
+            with self.assertRaisesRegex(GATE.GateError, "record differs"):
+                GATE.require_request_options_text_parity(
+                    root,
+                    generated.replace("uint16_t base_delay_ms;", "uint32_t base_delay_ms;"),
+                )
+            with self.assertRaisesRegex(GATE.GateError, "definition differs"):
+                GATE.require_request_options_text_parity(
+                    root,
+                    generated.replace("delay *= 2.0;", "delay *= 3.0;"),
+                )
+            with self.assertRaisesRegex(GATE.GateError, "exact TimeoutType mapping"):
+                GATE.require_request_options_text_parity(
+                    root,
+                    generated.replace(
+                        'std::string_view("CONNECT_TIMEOUT")',
+                        'std::string_view("REQUEST_TIMEOUT")',
+                        1,
+                    ),
+                )
+            with self.assertRaisesRegex(GATE.GateError, "flat import leaked"):
+                GATE.require_request_options_text_parity(
+                    root, generated + "\nusing ::rrr::randgen_rand_raw;\n"
+                )
+
     def test_symbol_census_uses_the_definition_owner_not_parameter_types(self) -> None:
         owned = (
             "rrr::ConnectionMetrics@rrr.connection_metrics::reset() const"
@@ -1473,6 +1568,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.connection_metrics"),
             mock.Mock(cpp_module="rrr.completion_tracker"),
             mock.Mock(cpp_module="rrr.rand"),
+            mock.Mock(cpp_module="rrr.request_options"),
         ]
 
         def symbols_for_module(
@@ -1499,6 +1595,12 @@ class CrateModeGateTests(unittest.TestCase):
         )
         rand_raw = list(GATE.ABI_SPECS["rrr.rand"].symbols)
         rand_raw.append(("T", "initializer for module rrr.rand"))
+        request_options_raw = list(
+            GATE.ABI_SPECS["rrr.request_options"].symbols
+        )
+        request_options_raw.append(
+            ("T", "initializer for module rrr.request_options")
+        )
 
         def compiled_object(
             _clang: Path,
@@ -1530,6 +1632,10 @@ class CrateModeGateTests(unittest.TestCase):
                 GATE, "completion_raw_symbols", return_value=completion_raw
             ), mock.patch.object(
                 GATE, "rand_raw_symbols", return_value=rand_raw
+            ), mock.patch.object(
+                GATE,
+                "request_options_raw_symbols",
+                return_value=request_options_raw,
             ):
                 GATE.check_generated_output(
                     root=Path("/repository"),
@@ -1556,6 +1662,7 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.connection_metrics",
                 "rrr.completion_tracker",
                 "rrr.rand",
+                "rrr.request_options",
                 "rrr",
             ],
         )
@@ -1627,6 +1734,16 @@ class CrateModeGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GATE.GateError, "exactly 13 raw"):
             GATE.require_rand_raw_symbols("test provider", entries[:-1])
 
+    def test_request_options_raw_symbol_ratchet_pins_all_13_entries(self) -> None:
+        entries = list(GATE.ABI_SPECS["rrr.request_options"].symbols)
+        entries.append(("T", "initializer for module rrr.request_options"))
+        self.assertEqual(len(entries), 13)
+        GATE.require_request_options_raw_symbols("test provider", entries)
+        with self.assertRaisesRegex(GATE.GateError, "exactly 13 raw"):
+            GATE.require_request_options_raw_symbols(
+                "test provider", entries[:-1]
+            )
+
     def test_runtime_module_root_must_exist_and_contain_rusty_pcm(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-runtime-pcm-test-") as temporary:
             root = Path(temporary)
@@ -1687,6 +1804,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.connection_metrics"),
             mock.Mock(cpp_module="rrr.completion_tracker"),
             mock.Mock(cpp_module="rrr.rand"),
+            mock.Mock(cpp_module="rrr.request_options"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

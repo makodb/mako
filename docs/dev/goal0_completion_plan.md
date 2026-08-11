@@ -10,16 +10,17 @@ been removed; it cannot be used as evidence for either half.
 The actual Cargo package now starts at `src/rrr/Cargo.toml`. Its checked-in
 Rust module inputs are generated from ordered inline-DSL block IDs through
 `scripts/extract_rrr_rust.py`; rustc and rusty-cpp consume those same generated
-bytes. The first seven slices cover `base/callback_wrapper.cpp` block
+bytes. The first eight slices cover `base/callback_wrapper.cpp` block
 `callback_wrapper.wrapper`, `rpc/internal_protocol.cpp` block
 `internal_protocol.1`, `misc/stat.cpp` block `stat.1`, all seven DSL blocks in
 `rpc/errors.cpp`, and `rpc/connection_metrics.cpp` blocks
 `connection_metrics.usings` and `connection_metrics.1`, plus all six selected
 blocks in `rpc/completion_tracker.cpp`, plus all four blocks in
-`misc/rand.cpp`. They preserve the
+`misc/rand.cpp`, plus all three blocks in `rpc/request_options.cpp`. They
+preserve the
 production `rrr::detail::CallbackWrapper`, `rrr.internal_protocol`, `rrr.stat`,
-`rrr.errors`, `rrr.connection_metrics`, `rrr.completion_tracker`, and
-`rrr.rand` surfaces, their exact 99-symbol
+`rrr.errors`, `rrr.connection_metrics`, `rrr.completion_tracker`, `rrr.rand`,
+and `rrr.request_options` surfaces, their exact 111-symbol
 combined provider-owned strong ABI, the callback, `AvgStat`, and public
 18-field `ConnectionMetrics` layouts and runtime behavior, every public
 RPC-error discriminant, name, category, and retry predicate. The callback
@@ -56,8 +57,18 @@ the legacy `verify` panic/unwind failure category for invalid ranges and zero
 wrapped widths, including pre-draw rejection of reversed and NaN floating
 ranges; diagnostic text and stack formatting need not be byte-identical.
 
-This is deliberately partial: the manifest owns seven of 38 named modules,
-seven of 39 module-source units, 22 of 446 DSL blocks, and 730 of 11,482
+Request options preserves the live 32-bit `TimeoutType` enum and 32-byte
+`RequestOptions` POD while replacing its dependency on the adapted
+`RandomGenerator` owner with one private, source-owned flat import of
+`randgen_rand_raw` and `randgen_rand_max`. Both provider modes retain
+`import rrr.rand;`, but emit no C++ alias or `using`; the import stays private
+and the existing 12-symbol request-options API is unchanged. Rust and the
+three C++ lanes pin every factory, retry/timeout boundary, exponential cap,
+jitter endpoint/draw count, NaN/nonpositive no-draw path, negative clamp, and
+saturating float-to-integer conversion.
+
+This is deliberately partial: the manifest owns eight of 38 named modules,
+eight of 39 module-source units, 25 of 446 DSL blocks, and 867 of 11,482
 noncomment DSL code lines. The 11,482-line denominator is the pre-enrollment
 semantic DSL baseline; extraction copies owned bytes into the crate without
 deleting their inline source blocks. `cargo test --manifest-path
@@ -95,7 +106,7 @@ What remains is still material Goal-0 work:
 - 147 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
 - 69 noncomment C ABI header lines across `srpc_fiber.h` and `srpc_rand.h`;
 - seven tolerated external-C kernels (383 noncomment code lines); and
-- 424 production DSL blocks not yet enrolled in the rustc crate.
+- 421 production DSL blocks not yet enrolled in the rustc crate.
 
 The immediate path is therefore generated module framing plus structured GMF
 preamble metadata, followed by complete manifest enrollment. The C kernels and

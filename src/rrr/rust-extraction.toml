@@ -81,3 +81,15 @@ block_ids = [
     "rand.generator",
     "rand.4",
 ]
+
+[[module]]
+cpp_module = "rrr.request_options"
+output = "src/rrr/src/request_options.rs"
+
+[[module.input]]
+source = "src/rrr/rpc/request_options.cpp"
+block_ids = [
+    "request_options.timeout_type",
+    "request_options.0",
+    "request_options.3",
+]

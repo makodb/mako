@@ -161,7 +161,7 @@ client->reconnect();
 Requests can be configured with timeout and retry options:
 
 ```cpp
-#include "rpc/request_options.hpp"
+import rrr.request_options;
 
 // Preset options
 auto fast = RequestOptions::fast();            // 100ms timeout, 2 retries
@@ -169,7 +169,7 @@ auto patient = RequestOptions::patient();      // 10s timeout, 5 retries
 auto no_timeout = RequestOptions::no_timeout(); // Wait indefinitely
 
 // Custom options
-RequestOptions opts;
+auto opts = RequestOptions::defaults();
 opts.timeout_ms = 1000;          // 1 second per-attempt timeout
 opts.total_timeout_ms = 5000;    // 5 seconds total (across all retries)
 opts.max_retries = 3;            // Up to 3 retry attempts
@@ -435,7 +435,7 @@ auto result = pool.reconnect_all(config);
 | `reconnect_policy.hpp` | Reconnection policy and backoff |
 | `circuit_breaker.hpp` | Circuit breaker pattern |
 | `request_queue.hpp` | Request queue for buffering |
-| `request_options.hpp` | Timeout and retry configuration |
+| `rrr.request_options` | Timeout and retry configuration C++ module |
 | `heartbeat.hpp` | Heartbeat/keep-alive mechanism |
 | `connection_metrics.hpp` | Connection metrics tracking |
 | `errors.hpp` | Structured error types |

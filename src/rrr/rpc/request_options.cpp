@@ -19,10 +19,12 @@ export namespace rrr {
 // request lifecycle. Authored as inline Rust DSL: the
 // `#if RUSTYCPP_RUST` block below is the source of truth; the
 // transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
-// block with the C++ `enum class : uint8_t`.
+// block with the current C++ `enum class` ABI (32-bit signed backing).
 #if RUSTYCPP_RUST
-#[repr(u8)]
-enum TimeoutType {
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum TimeoutType {
     NONE = 0,
     CONNECT_TIMEOUT,
     REQUEST_TIMEOUT,
@@ -30,7 +32,7 @@ enum TimeoutType {
     TOTAL_TIMEOUT,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_options.timeout_type version=1 rust_sha256=ee966c5adf41577267e2ffd0f3b6ddaf04f80abb05651cb07d588f30cfe6cfac*/
+/*RUSTYCPP:GEN-BEGIN id=request_options.timeout_type version=1 rust_sha256=4cbbc2d695ad65ca588260432cd847bc37b5584085c918a20e3e007b6f404fe6*/
 enum class TimeoutType;
 constexpr TimeoutType TimeoutType_NONE();
 constexpr TimeoutType TimeoutType_CONNECT_TIMEOUT();
@@ -73,24 +75,29 @@ inline constexpr TimeoutType TimeoutType_TOTAL_TIMEOUT() { return TimeoutType::T
 //     becomes `idempotent_retry(max_retries)`). The defaults are
 //     baked into the only known caller paths or repeated explicitly
 //     at each site.
-//   * `static_cast<uint64_t>(delay)` (which is UB for negative
-//     doubles in standard C++) becomes the Rust `as u64` lowering,
-//     which the transpiler emits as `static_cast<uint64_t>(delay)`
-//     too — but the body still guards `delay < 0.0` before reaching
-//     it, so the conversion only ever sees a non-negative value.
+//   * The Rust `as u64` conversion lowers through
+//     `rusty::float_to_int_cast<uint64_t>`, preserving Rust's saturating
+//     float-to-integer semantics. The body also clamps negative jittered
+//     delays to zero before conversion.
 #if RUSTYCPP_RUST
-struct RequestOptions {
-    timeout_ms: u64,
-    total_timeout_ms: u64,
-    max_retries: u16,
-    base_delay_ms: u16,
-    max_delay_ms: u16,
-    jitter_factor: f32,
-    idempotent: bool,
+#[cfg_attr(any(), cpp_import_namespace(rrr))]
+use crate::rand::{randgen_rand_max, randgen_rand_raw};
+
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, PartialEq))]
+#[repr(C)]
+pub struct RequestOptions {
+    pub timeout_ms: u64,
+    pub total_timeout_ms: u64,
+    pub max_retries: u16,
+    pub base_delay_ms: u16,
+    pub max_delay_ms: u16,
+    pub jitter_factor: f32,
+    pub idempotent: bool,
 }
 
 impl RequestOptions {
-    fn new() -> RequestOptions {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> RequestOptions {
         RequestOptions {
             timeout_ms: 1000u64,
             total_timeout_ms: 0u64,
@@ -102,15 +109,15 @@ impl RequestOptions {
         }
     }
 
-    fn defaults() -> RequestOptions {
+    pub fn defaults() -> RequestOptions {
         RequestOptions::new()
     }
 
-    fn with_retry(max_retries: u16, timeout_ms: u64) -> RequestOptions {
+    pub fn with_retry(max_retries: u16, timeout_ms: u64) -> RequestOptions {
         RequestOptions {
-            timeout_ms: timeout_ms,
+            timeout_ms,
             total_timeout_ms: 0u64,
-            max_retries: max_retries,
+            max_retries,
             base_delay_ms: 50u16,
             max_delay_ms: 5000u16,
             jitter_factor: 0.1f32,
@@ -118,11 +125,11 @@ impl RequestOptions {
         }
     }
 
-    fn idempotent_retry(max_retries: u16) -> RequestOptions {
+    pub fn idempotent_retry(max_retries: u16) -> RequestOptions {
         RequestOptions {
             timeout_ms: 1000u64,
             total_timeout_ms: 0u64,
-            max_retries: max_retries,
+            max_retries,
             base_delay_ms: 50u16,
             max_delay_ms: 5000u16,
             jitter_factor: 0.1f32,
@@ -130,7 +137,7 @@ impl RequestOptions {
         }
     }
 
-    fn no_timeout() -> RequestOptions {
+    pub fn no_timeout() -> RequestOptions {
         RequestOptions {
             timeout_ms: 0u64,
             total_timeout_ms: 0u64,
@@ -142,7 +149,7 @@ impl RequestOptions {
         }
     }
 
-    fn fast() -> RequestOptions {
+    pub fn fast() -> RequestOptions {
         RequestOptions {
             timeout_ms: 100u64,
             total_timeout_ms: 0u64,
@@ -154,7 +161,7 @@ impl RequestOptions {
         }
     }
 
-    fn patient() -> RequestOptions {
+    pub fn patient() -> RequestOptions {
         RequestOptions {
             timeout_ms: 10000u64,
             total_timeout_ms: 60000u64,
@@ -166,11 +173,11 @@ impl RequestOptions {
         }
     }
 
-    fn can_retry(&self, current_retry_count: u16) -> bool {
+    pub fn can_retry(&self, current_retry_count: u16) -> bool {
         self.idempotent && current_retry_count < self.max_retries
     }
 
-    fn calculate_delay_ms(&self, attempt: u16) -> u64 {
+    pub fn calculate_delay_ms(&self, attempt: u16) -> u64 {
         let mut delay: f64 = self.base_delay_ms as f64;
         let mut i: u16 = 0u16;
         while i < attempt {
@@ -188,7 +195,8 @@ impl RequestOptions {
 
         if self.jitter_factor > 0.0f32 {
             let jitter: f64 = delay * (self.jitter_factor as f64) *
-                              RandomGenerator::rand_double(-0.5f64, 0.5f64);
+                              (((randgen_rand_raw() as f64) /
+                                randgen_rand_max()) - 0.5f64);
             delay += jitter;
 
             if delay < 0.0f64 {
@@ -199,11 +207,11 @@ impl RequestOptions {
         delay as u64
     }
 
-    fn is_total_timeout_exceeded(&self, elapsed_ms: u64) -> bool {
+    pub fn is_total_timeout_exceeded(&self, elapsed_ms: u64) -> bool {
         self.total_timeout_ms > 0u64 && elapsed_ms >= self.total_timeout_ms
     }
 
-    fn remaining_time_ms(&self, elapsed_ms: u64) -> u64 {
+    pub fn remaining_time_ms(&self, elapsed_ms: u64) -> u64 {
         if self.total_timeout_ms == 0u64 {
             return u64::MAX;
         }
@@ -214,8 +222,9 @@ impl RequestOptions {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_options.0 version=1 rust_sha256=0623c5692e9125fe0d56fba3ef332ada7bf338dd6c196ba13b8bfbb61bfa18ea*/
+/*RUSTYCPP:GEN-BEGIN id=request_options.0 version=1 rust_sha256=f2b06fea5c0b24c1a76bb51274bc6d718f224c0c947800950db76dd7e4eb5881*/
 struct RequestOptions;
+
 
 struct RequestOptions {
     uint64_t timeout_ms;
@@ -290,7 +299,7 @@ uint64_t RequestOptions::calculate_delay_ms(uint16_t attempt) const {
         delay = static_cast<double>(this->max_delay_ms);
     }
     if (rusty::detail::deref_if_pointer_like(this->jitter_factor) > 0.0f) {
-        const double jitter = (rusty::detail::deref_if_pointer_like(delay) * ((static_cast<double>(this->jitter_factor)))) * RandomGenerator::rand_double(-0.5, 0.5);
+        const double jitter = (rusty::detail::deref_if_pointer_like(delay) * ((static_cast<double>(this->jitter_factor)))) * ((((((static_cast<double>(randgen_rand_raw()))) / randgen_rand_max())) - 0.5));
         delay += jitter;
         if (rusty::detail::deref_if_pointer_like(delay) < 0.0) {
             delay = 0.0;
@@ -322,7 +331,8 @@ uint64_t RequestOptions::remaining_time_ms(uint64_t elapsed_ms) const {
 // NOTE: the parameter is `ty`, not `type` -- `type` is a Rust keyword and
 // the DSL parser rejects it (CLAUDE.md documents this for fields; it applies
 // to parameters too). C++ callers pass positionally, so the rename is local.
-fn timeout_type_to_string(ty: TimeoutType) -> &'static str {
+#[allow(unreachable_patterns)]
+pub fn timeout_type_to_string(ty: TimeoutType) -> &'static str {
     match ty {
         TimeoutType::NONE => "NONE",
         TimeoutType::CONNECT_TIMEOUT => "CONNECT_TIMEOUT",
@@ -333,7 +343,7 @@ fn timeout_type_to_string(ty: TimeoutType) -> &'static str {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_options.3 version=1 rust_sha256=eb3d5bd030447754c91ca6c42382923cb6a5afd8eb4a352b096d694a7bcdf35a*/
+/*RUSTYCPP:GEN-BEGIN id=request_options.3 version=1 rust_sha256=f3856c535be2231dad8160cdae987347d4dfb0e918939f3c00a17dbad05ef872*/
 std::string_view timeout_type_to_string(TimeoutType ty) {
     return ({ auto&& _m = ty; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == TimeoutType::NONE)) { _match_value.emplace(std::move(std::string_view("NONE"))); _m_matched = true; } if (!_m_matched && (_m == TimeoutType::CONNECT_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("CONNECT_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == TimeoutType::REQUEST_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("REQUEST_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == TimeoutType::RESPONSE_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("RESPONSE_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == TimeoutType::TOTAL_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("TOTAL_TIMEOUT"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
 }

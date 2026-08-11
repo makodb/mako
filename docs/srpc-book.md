@@ -118,7 +118,7 @@ src/rrr/
     load_balancer.hpp   # Pool load-balancing strategies
     reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
-    request_options.hpp # Per-request configuration
+    request_options.cpp # Per-request configuration module
     pollable_proxy.h    # Pollable proxy facade + typed Arc adapter helpers
     errors.hpp          # Error code definitions
     utils.hpp/cpp       # RPC utilities
@@ -788,7 +788,7 @@ if (client_opt.is_some()) {
 Per-request configuration:
 
 ```cpp srpc-no-compile
-RequestOptions opts;
+auto opts = RequestOptions::defaults();
 opts.timeout_ms = 5000;       // 5 second timeout
 opts.max_retries = 3;         // Retry up to 3 times
 opts.idempotent = true;       // Safe to retry
@@ -1519,7 +1519,8 @@ enum class RpcError {
 };
 ```
 
-`TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in `request_options.hpp`.
+`TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in the
+`rrr.request_options` module.
 SRPC handles failures through `RpcError` values and helper predicates rather
 than an RPC-specific exception class.
 

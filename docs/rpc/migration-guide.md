@@ -87,7 +87,7 @@ git submodule update --init third-party/rusty-cpp
 | `rpc/reconnect_policy.hpp` | Reconnection configuration |
 | `rpc/circuit_breaker.hpp` | Circuit breaker pattern |
 | `rpc/request_queue.hpp` | Request buffering |
-| `rpc/request_options.hpp` | Per-request options |
+| `rrr.request_options` | Per-request options C++ module |
 | `rpc/heartbeat.hpp` | Keep-alive management |
 | `rpc/connection_metrics.hpp` | Connection statistics |
 | `rpc/errors.hpp` | Structured error types |
@@ -188,12 +188,9 @@ if (success) {
 Configure per-request behavior:
 
 ```cpp
-#include "rpc/request_options.hpp"
+import rrr.request_options;
 
-RequestOptions opts = RequestOptions::with_retry();
-opts.timeout_ms = 5000;      // 5 second timeout
-opts.max_retries = 3;        // Retry up to 3 times
-opts.idempotent = true;      // Safe to retry
+RequestOptions opts = RequestOptions::with_retry(3, 5000);
 
 auto future = client->request_with_options(RPC_ID, opts, writer);
 ```
