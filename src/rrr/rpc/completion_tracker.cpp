@@ -3,15 +3,14 @@ module;
 #include <cstdint>
 #include <cstdlib>
 
-#include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/rusty.hpp>
+#include <rusty/sync/atomic.hpp>
 
 export module rrr.completion_tracker;
 
 import std;
 import rusty;
-import rrr.idempotency;
 
 export namespace rrr {
 
@@ -32,14 +31,21 @@ export namespace rrr {
 // `CompletionTrackerConfig { ttl_ms: ..., ... }` which lowers to a
 // clean designated initializer.
 #if RUSTYCPP_RUST
-struct CompletionTrackerConfig {
-    ttl_ms: u64,
-    max_entries: usize,
-    enabled: bool,
+use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::sync::Mutex;
+
+#[repr(C)]
+#[cfg_attr(not(any()), derive(Clone, Copy))]
+pub struct CompletionTrackerConfig {
+    pub ttl_ms: u64,
+    pub max_entries: usize,
+    pub enabled: bool,
 }
 
 impl CompletionTrackerConfig {
-    fn new() -> CompletionTrackerConfig {
+    pub fn new() -> CompletionTrackerConfig {
         CompletionTrackerConfig {
             ttl_ms: 60000u64,
             max_entries: 100000usize,
@@ -47,11 +53,11 @@ impl CompletionTrackerConfig {
         }
     }
 
-    fn defaults() -> CompletionTrackerConfig {
+    pub fn defaults() -> CompletionTrackerConfig {
         CompletionTrackerConfig::new()
     }
 
-    fn small() -> CompletionTrackerConfig {
+    pub fn small() -> CompletionTrackerConfig {
         CompletionTrackerConfig {
             ttl_ms: 30000u64,
             max_entries: 10000usize,
@@ -59,7 +65,7 @@ impl CompletionTrackerConfig {
         }
     }
 
-    fn large() -> CompletionTrackerConfig {
+    pub fn large() -> CompletionTrackerConfig {
         CompletionTrackerConfig {
             ttl_ms: 300000u64,
             max_entries: 1000000usize,
@@ -67,7 +73,7 @@ impl CompletionTrackerConfig {
         }
     }
 
-    fn disabled() -> CompletionTrackerConfig {
+    pub fn disabled() -> CompletionTrackerConfig {
         CompletionTrackerConfig {
             ttl_ms: 60000u64,
             max_entries: 100000usize,
@@ -76,8 +82,17 @@ impl CompletionTrackerConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.1 version=1 rust_sha256=7e32fc065aab499e699818c6fb08acf209183d782c763409b341bb17eead3316*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.1 version=1 rust_sha256=60c59fb827b8b892f219e58326898ed3e109756b328828d2a69a757990a8892a*/
 struct CompletionTrackerConfig;
+
+using rusty::HashSet;
+using rusty::VecDeque;
+
+using rusty::sync::atomic::AtomicU64;
+
+using rusty::sync::atomic::Ordering;
+
+using rusty::Mutex;
 
 struct CompletionTrackerConfig {
     uint64_t ttl_ms;
@@ -135,23 +150,24 @@ CompletionTrackerConfig CompletionTrackerConfig::disabled() {
  * to an explicit `CompletedEntry::new_(0, 0)`.
  */
 #if RUSTYCPP_RUST
-struct CompletedEntry {
-    xid: i64,
-    timestamp_ms: u64,
+#[repr(C)]
+pub struct CompletedEntry {
+    pub xid: i64,
+    pub timestamp_ms: u64,
 }
 
 impl CompletedEntry {
-    fn new(x: i64, ts: u64) -> CompletedEntry {
+    pub fn new(x: i64, ts: u64) -> CompletedEntry {
         CompletedEntry { xid: x, timestamp_ms: ts }
     }
 
-    fn is_expired(&self, current_time_ms: u64, ttl_ms: u64) -> bool {
+    pub fn is_expired(&self, current_time_ms: u64, ttl_ms: u64) -> bool {
         if ttl_ms == 0u64 { return false; }
-        current_time_ms > self.timestamp_ms + ttl_ms
+        current_time_ms > self.timestamp_ms.wrapping_add(ttl_ms)
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.2 version=1 rust_sha256=a8f4fe4b150667270eeed4db72615d281ea9b0c0ba0d468201cf4e60c3e856c3*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.2 version=1 rust_sha256=d118c50b3f9ce25edc668f69eaa26437072c6a6364bf716aab53d733bcd5f2d3*/
 struct CompletedEntry;
 
 struct CompletedEntry {
@@ -174,7 +190,7 @@ bool CompletedEntry::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const
     if (rusty::detail::deref_if_pointer_like(ttl_ms) == static_cast<uint64_t>(0)) {
         return false;
     }
-    return rusty::detail::deref_if_pointer_like(current_time_ms) > (rusty::detail::deref_if_pointer_like(this->timestamp_ms) + rusty::detail::deref_if_pointer_like(ttl_ms));
+    return rusty::detail::deref_if_pointer_like(current_time_ms) > rusty::wrapping_add(this->timestamp_ms, static_cast<std::remove_cvref_t<decltype(this->timestamp_ms)>>(std::move(ttl_ms)));
 }
 /*RUSTYCPP:GEN-END id=completion_tracker.2*/
 
@@ -183,7 +199,7 @@ bool CompletedEntry::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const
 // ===========================================================================
 
 /**
- * @unsafe - Server-side tracker for completed request XIDs
+ * @safe - Server-side tracker for completed request XIDs
  *
  * Uses LRU eviction when at capacity. Thread-safe via rusty::Mutex.
  *
@@ -194,7 +210,12 @@ bool CompletedEntry::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const
  * Can be used standalone or integrated with IdempotencyCache.
  */
 // `CompletionTracker` — server-side LRU tracker of completed request XIDs with
-// TTL-based expiry, thread-safe via rusty::Mutex. Authored as inline-Rust DSL:
+// TTL-based expiry. The mutable config and containers are protected by
+// rusty::Mutex and the statistics use relaxed AtomicU64 operations. Config is
+// snapshotted before container locks, and every two-container operation locks
+// completed_set_ before lru_list_. Individual counters are atomic; hit_rate()
+// and reset_stats() intentionally are not multi-counter linearizable snapshots.
+// Authored as inline-Rust DSL:
 // the whole class (struct + two #[cpp_ctor] factories + all methods) is the
 // source of truth; the transpiler regenerates the matching GEN block. The
 // config / entry / status / query-result types are already DSL (above).
@@ -204,100 +225,107 @@ bool CompletedEntry::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const
 // `with_config(config)`. The LRU storage is a rusty::VecDeque<CompletedEntry>
 // (front = most recent; push_front / pop_back); mid-list removal in
 // is_completed / remove / evict_expired uses the VecDeque port's
-// `remove(index)`. All bodies are pure rusty (Cell get/set, Mutex guard,
+// `remove(index)`. All bodies are pure rusty (Mutex guards, relaxed atomics,
 // HashSet + VecDeque ops, index loops) — no raw pointers, syscalls, iterators,
 // or operator-overload chains.
 #if RUSTYCPP_RUST
-struct CompletionTracker {
-    config_: Cell<CompletionTrackerConfig>,
-    lru_list_: Mutex<VecDeque<CompletedEntry>>,
-    completed_set_: Mutex<HashSet<i64>>,
-    total_tracked_: Cell<u64>,
-    queries_: Cell<u64>,
-    query_hits_: Cell<u64>,
-    evictions_: Cell<u64>,
+#[repr(C)]
+pub struct CompletionTracker {
+    pub config_: Mutex<CompletionTrackerConfig>,
+    pub lru_list_: Mutex<VecDeque<CompletedEntry>>,
+    pub completed_set_: Mutex<HashSet<i64>>,
+    pub total_tracked_: AtomicU64,
+    pub queries_: AtomicU64,
+    pub query_hits_: AtomicU64,
+    pub evictions_: AtomicU64,
 }
 
 impl CompletionTracker {
-    #[cpp_ctor] fn new() -> CompletionTracker {
+    #[cfg_attr(any(), cpp_ctor)]
+    pub fn new() -> CompletionTracker {
         CompletionTracker {
-            config_: Cell::new(CompletionTrackerConfig::defaults()),
+            config_: Mutex::new(CompletionTrackerConfig::defaults()),
             lru_list_: Mutex::<VecDeque<CompletedEntry>>::new(VecDeque::<CompletedEntry>::new()),
             completed_set_: Mutex::<HashSet<i64>>::new(HashSet::<i64>::new()),
-            total_tracked_: Cell::new(0u64),
-            queries_: Cell::new(0u64),
-            query_hits_: Cell::new(0u64),
-            evictions_: Cell::new(0u64),
+            total_tracked_: AtomicU64::new(0u64),
+            queries_: AtomicU64::new(0u64),
+            query_hits_: AtomicU64::new(0u64),
+            evictions_: AtomicU64::new(0u64),
         }
     }
 
-    #[cpp_ctor] fn with_config(config: CompletionTrackerConfig) -> CompletionTracker {
+    #[cfg_attr(any(), cpp_ctor)]
+    pub fn with_config(config: self::CompletionTrackerConfig) -> CompletionTracker {
         CompletionTracker {
-            config_: Cell::new(config),
+            config_: Mutex::new(config),
             lru_list_: Mutex::<VecDeque<CompletedEntry>>::new(VecDeque::<CompletedEntry>::new()),
             completed_set_: Mutex::<HashSet<i64>>::new(HashSet::<i64>::new()),
-            total_tracked_: Cell::new(0u64),
-            queries_: Cell::new(0u64),
-            query_hits_: Cell::new(0u64),
-            evictions_: Cell::new(0u64),
+            total_tracked_: AtomicU64::new(0u64),
+            queries_: AtomicU64::new(0u64),
+            query_hits_: AtomicU64::new(0u64),
+            evictions_: AtomicU64::new(0u64),
         }
     }
 
-    fn enabled(&self) -> bool {
-        self.config_.get().enabled
+    pub fn enabled(&self) -> bool {
+        let guard = self.config_.lock().unwrap();
+        guard.enabled
     }
 
-    fn config(&self) -> CompletionTrackerConfig {
-        self.config_.get()
+    pub fn config(&self) -> CompletionTrackerConfig {
+        let guard = self.config_.lock().unwrap();
+        *guard
     }
 
-    fn set_config(&mut self, config: CompletionTrackerConfig) {
-        self.config_.set(config);
+    pub fn set_config(&mut self, config: self::CompletionTrackerConfig) {
+        let mut guard = self.config_.lock().unwrap();
+        *guard = config;
     }
 
-    fn mark_completed(&mut self, xid: i64, current_time_ms: u64) {
-        let cfg = self.config_.get();
+    #[allow(clippy::len_zero)]
+    pub fn mark_completed(&mut self, xid: i64, current_time_ms: u64) {
+        let cfg = self.config();
         if !cfg.enabled {
             return;
         }
-        let set_guard = self.completed_set_.lock().unwrap();
-        if set_guard.contains(xid) {
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        if set_guard.contains(&xid) {
             return;
         }
-        let list_guard = self.lru_list_.lock().unwrap();
+        let mut list_guard = self.lru_list_.lock().unwrap();
         while list_guard.len() >= cfg.max_entries && list_guard.len() > 0usize {
             // Loop condition guarantees non-empty; VecDeque::back()
             // returns Option<&T> in real Rust.
             let oldest_xid: i64 = list_guard.back().unwrap().xid;
-            set_guard.remove(oldest_xid);
+            set_guard.remove(&oldest_xid);
             list_guard.pop_back();
-            self.evictions_.set(self.evictions_.get() + 1u64);
+            self.evictions_.fetch_add(1u64, Ordering::Relaxed);
         }
         list_guard.push_front(CompletedEntry::new(xid, current_time_ms));
         set_guard.insert(xid);
-        self.total_tracked_.set(self.total_tracked_.get() + 1u64);
+        self.total_tracked_.fetch_add(1u64, Ordering::Relaxed);
     }
 
-    fn is_completed(&mut self, xid: i64, current_time_ms: u64) -> bool {
-        let cfg = self.config_.get();
-        self.queries_.set(self.queries_.get() + 1u64);
+    pub fn is_completed(&mut self, xid: i64, current_time_ms: u64) -> bool {
+        let cfg = self.config();
+        self.queries_.fetch_add(1u64, Ordering::Relaxed);
         if !cfg.enabled {
             return false;
         }
-        let set_guard = self.completed_set_.lock().unwrap();
-        if !set_guard.contains(xid) {
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        if !set_guard.contains(&xid) {
             return false;
         }
-        let list_guard = self.lru_list_.lock().unwrap();
+        let mut list_guard = self.lru_list_.lock().unwrap();
         let mut i: usize = 0;
         while i < list_guard.len() {
             if list_guard[i].xid == xid {
                 if list_guard[i].is_expired(current_time_ms, cfg.ttl_ms) {
-                    set_guard.remove(xid);
+                    set_guard.remove(&xid);
                     list_guard.remove(i);
                     return false;
                 }
-                self.query_hits_.set(self.query_hits_.get() + 1u64);
+                self.query_hits_.fetch_add(1u64, Ordering::Relaxed);
                 return true;
             }
             i += 1usize;
@@ -305,13 +333,13 @@ impl CompletionTracker {
         false
     }
 
-    fn remove(&mut self, xid: i64) -> bool {
-        let set_guard = self.completed_set_.lock().unwrap();
-        if !set_guard.contains(xid) {
+    pub fn remove(&mut self, xid: i64) -> bool {
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        if !set_guard.contains(&xid) {
             return false;
         }
-        set_guard.remove(xid);
-        let list_guard = self.lru_list_.lock().unwrap();
+        set_guard.remove(&xid);
+        let mut list_guard = self.lru_list_.lock().unwrap();
         let mut i: usize = 0;
         while i < list_guard.len() {
             if list_guard[i].xid == xid {
@@ -323,84 +351,84 @@ impl CompletionTracker {
         true
     }
 
-    fn clear(&mut self) {
-        let set_guard = self.completed_set_.lock().unwrap();
-        let list_guard = self.lru_list_.lock().unwrap();
+    pub fn clear(&mut self) {
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        let mut list_guard = self.lru_list_.lock().unwrap();
         set_guard.clear();
         list_guard.clear();
     }
 
-    fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         let guard = self.completed_set_.lock().unwrap();
         guard.len()
     }
 
-    fn total_tracked(&self) -> u64 {
-        self.total_tracked_.get()
+    pub fn total_tracked(&self) -> u64 {
+        self.total_tracked_.load(Ordering::Relaxed)
     }
 
-    fn queries(&self) -> u64 {
-        self.queries_.get()
+    pub fn queries(&self) -> u64 {
+        self.queries_.load(Ordering::Relaxed)
     }
 
-    fn query_hits(&self) -> u64 {
-        self.query_hits_.get()
+    pub fn query_hits(&self) -> u64 {
+        self.query_hits_.load(Ordering::Relaxed)
     }
 
-    fn hit_rate(&self) -> f64 {
-        let q: u64 = self.queries_.get();
+    pub fn hit_rate(&self) -> f64 {
+        let q: u64 = self.queries_.load(Ordering::Relaxed);
         if q == 0u64 {
             return 0.0f64;
         }
-        (self.query_hits_.get() as f64) / (q as f64)
+        (self.query_hits_.load(Ordering::Relaxed) as f64) / (q as f64)
     }
 
-    fn evictions(&self) -> u64 {
-        self.evictions_.get()
+    pub fn evictions(&self) -> u64 {
+        self.evictions_.load(Ordering::Relaxed)
     }
 
-    fn reset_stats(&mut self) {
-        self.total_tracked_.set(0u64);
-        self.queries_.set(0u64);
-        self.query_hits_.set(0u64);
-        self.evictions_.set(0u64);
+    pub fn reset_stats(&mut self) {
+        self.total_tracked_.store(0u64, Ordering::Relaxed);
+        self.queries_.store(0u64, Ordering::Relaxed);
+        self.query_hits_.store(0u64, Ordering::Relaxed);
+        self.evictions_.store(0u64, Ordering::Relaxed);
     }
 
-    fn evict_expired(&mut self, current_time_ms: u64) -> usize {
-        let cfg = self.config_.get();
+    pub fn evict_expired(&mut self, current_time_ms: u64) -> usize {
+        let cfg = self.config();
         if !cfg.enabled || cfg.ttl_ms == 0u64 {
             return 0usize;
         }
-        let set_guard = self.completed_set_.lock().unwrap();
-        let list_guard = self.lru_list_.lock().unwrap();
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        let mut list_guard = self.lru_list_.lock().unwrap();
         let mut evicted: usize = 0;
         let mut i: usize = 0;
         while i < list_guard.len() {
             if list_guard[i].is_expired(current_time_ms, cfg.ttl_ms) {
                 let xid: i64 = list_guard[i].xid;
-                set_guard.remove(xid);
+                set_guard.remove(&xid);
                 list_guard.remove(i);
                 evicted += 1usize;
             } else {
                 i += 1usize;
             }
         }
-        self.evictions_.set(self.evictions_.get() + (evicted as u64));
+        self.evictions_.fetch_add(evicted as u64, Ordering::Relaxed);
         evicted
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.tracker version=1 rust_sha256=ad88fddf217dfa56bb4e686a0ab08e23eb77f902d20551585794bee074759536*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.tracker version=1 rust_sha256=f65ca56a038809bf28b765f068450c0154d7335b73ead3244957864132ec0b13*/
 struct CompletionTracker;
 
 struct CompletionTracker {
-    rusty::Cell<CompletionTrackerConfig> config_;
+    rusty::Mutex<CompletionTrackerConfig> config_;
     rusty::Mutex<rusty::VecDeque<CompletedEntry>> lru_list_;
     rusty::Mutex<rusty::HashSet<int64_t>> completed_set_;
-    rusty::Cell<uint64_t> total_tracked_;
-    rusty::Cell<uint64_t> queries_;
-    rusty::Cell<uint64_t> query_hits_;
-    rusty::Cell<uint64_t> evictions_;
+    rusty::sync::atomic::AtomicU64 total_tracked_;
+    rusty::sync::atomic::AtomicU64 queries_;
+    rusty::sync::atomic::AtomicU64 query_hits_;
+    rusty::sync::atomic::AtomicU64 evictions_;
 
     CompletionTracker();
     CompletionTracker(CompletionTrackerConfig config);
@@ -423,78 +451,81 @@ struct CompletionTracker {
 
 
 CompletionTracker::CompletionTracker()
-    : config_(rusty::Cell<CompletionTrackerConfig>::new_(CompletionTrackerConfig::defaults()))
+    : config_(rusty::Mutex<CompletionTrackerConfig>::new_(CompletionTrackerConfig::defaults()))
     , lru_list_(rusty::Mutex<rusty::VecDeque<CompletedEntry>>::new_(rusty::VecDeque<CompletedEntry>::new_()))
     , completed_set_(rusty::Mutex<rusty::HashSet<int64_t>>::new_(rusty::HashSet<int64_t>::new_()))
-    , total_tracked_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , queries_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , query_hits_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , evictions_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , total_tracked_(AtomicU64::new_(static_cast<uint64_t>(0)))
+    , queries_(AtomicU64::new_(static_cast<uint64_t>(0)))
+    , query_hits_(AtomicU64::new_(static_cast<uint64_t>(0)))
+    , evictions_(AtomicU64::new_(static_cast<uint64_t>(0)))
 {}
 
 CompletionTracker::CompletionTracker(CompletionTrackerConfig config)
-    : config_(rusty::Cell<CompletionTrackerConfig>::new_(std::move(config)))
+    : config_(rusty::Mutex<CompletionTrackerConfig>::new_(std::move(config)))
     , lru_list_(rusty::Mutex<rusty::VecDeque<CompletedEntry>>::new_(rusty::VecDeque<CompletedEntry>::new_()))
     , completed_set_(rusty::Mutex<rusty::HashSet<int64_t>>::new_(rusty::HashSet<int64_t>::new_()))
-    , total_tracked_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , queries_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , query_hits_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , evictions_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , total_tracked_(AtomicU64::new_(static_cast<uint64_t>(0)))
+    , queries_(AtomicU64::new_(static_cast<uint64_t>(0)))
+    , query_hits_(AtomicU64::new_(static_cast<uint64_t>(0)))
+    , evictions_(AtomicU64::new_(static_cast<uint64_t>(0)))
 {}
 
 bool CompletionTracker::enabled() const {
-    return this->config_.get().enabled;
+    auto guard = this->config_.lock().unwrap();
+    return std::move((*guard).enabled);
 }
 
 CompletionTrackerConfig CompletionTracker::config() const {
-    return this->config_.get();
+    auto guard = this->config_.lock().unwrap();
+    return std::move(*guard);
 }
 
 void CompletionTracker::set_config(CompletionTrackerConfig config) {
-    this->config_.set(std::move(config));
+    auto guard = this->config_.lock().unwrap();
+    *guard = std::move(config);
 }
 
 void CompletionTracker::mark_completed(int64_t xid, uint64_t current_time_ms) {
-    const auto cfg = this->config_.get();
-    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg))) {
+    const auto cfg = this->config();
+    if (rusty::detail::rust_not(cfg.enabled)) {
         return;
     }
     auto set_guard = this->completed_set_.lock().unwrap();
-    if (rusty::contains(set_guard, std::move(xid))) {
+    if (rusty::contains(set_guard, &xid)) {
         return;
     }
     auto list_guard = this->lru_list_.lock().unwrap();
-    while ((rusty::len(list_guard) >= rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.max_entries); }) { return (__r.max_entries); } else if constexpr (requires { (__r.max_entries_field); }) { return (__r.max_entries_field); } else if constexpr (requires { ((*__r).max_entries); }) { return ((*__r).max_entries); } else { return ((*__r).max_entries_field); } }(cfg))) && (rusty::len(list_guard) > static_cast<size_t>(0))) {
+    while ((rusty::len(list_guard) >= rusty::detail::deref_if_pointer_like(cfg.max_entries)) && (rusty::len(list_guard) > static_cast<size_t>(0))) {
         int64_t oldest_xid = (*list_guard).back().unwrap().xid;
-        (*set_guard).remove(std::move(oldest_xid));
+        (*set_guard).remove(oldest_xid);
         (*list_guard).pop_back();
-        this->evictions_.set(this->evictions_.get() + static_cast<uint64_t>(1));
+        this->evictions_.fetch_add(static_cast<uint64_t>(1), Ordering::Relaxed);
     }
     (*list_guard).push_front(CompletedEntry::new_(std::move(xid), std::move(current_time_ms)));
     (*set_guard).insert(std::move(xid));
-    this->total_tracked_.set(this->total_tracked_.get() + static_cast<uint64_t>(1));
+    this->total_tracked_.fetch_add(static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 
 bool CompletionTracker::is_completed(int64_t xid, uint64_t current_time_ms) {
-    const auto cfg = this->config_.get();
-    this->queries_.set(this->queries_.get() + static_cast<uint64_t>(1));
-    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg))) {
+    const auto cfg = this->config();
+    this->queries_.fetch_add(static_cast<uint64_t>(1), Ordering::Relaxed);
+    if (rusty::detail::rust_not(cfg.enabled)) {
         return false;
     }
     auto set_guard = this->completed_set_.lock().unwrap();
-    if (rusty::detail::rust_not(rusty::contains(set_guard, std::move(xid)))) {
+    if (rusty::detail::rust_not(rusty::contains(set_guard, &xid))) {
         return false;
     }
     auto list_guard = this->lru_list_.lock().unwrap();
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
         if (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.xid); }) { return (__r.xid); } else if constexpr (requires { (__r.xid_field); }) { return (__r.xid_field); } else if constexpr (requires { ((*__r).xid); }) { return ((*__r).xid); } else { return ((*__r).xid_field); } }(list_guard[i])) == rusty::detail::deref_if_pointer_like(xid)) {
-            if (list_guard[i].is_expired(std::move(current_time_ms), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)))) {
-                (*set_guard).remove(std::move(xid));
+            if (list_guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
+                (*set_guard).remove(xid);
                 (*list_guard).remove(std::move(i));
                 return false;
             }
-            this->query_hits_.set(this->query_hits_.get() + static_cast<uint64_t>(1));
+            this->query_hits_.fetch_add(static_cast<uint64_t>(1), Ordering::Relaxed);
             return true;
         }
         i += static_cast<size_t>(1);
@@ -504,10 +535,10 @@ bool CompletionTracker::is_completed(int64_t xid, uint64_t current_time_ms) {
 
 bool CompletionTracker::remove(int64_t xid) {
     auto set_guard = this->completed_set_.lock().unwrap();
-    if (rusty::detail::rust_not(rusty::contains(set_guard, std::move(xid)))) {
+    if (rusty::detail::rust_not(rusty::contains(set_guard, &xid))) {
         return false;
     }
-    (*set_guard).remove(std::move(xid));
+    (*set_guard).remove(xid);
     auto list_guard = this->lru_list_.lock().unwrap();
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
@@ -533,39 +564,39 @@ size_t CompletionTracker::size() const {
 }
 
 uint64_t CompletionTracker::total_tracked() const {
-    return this->total_tracked_.get();
+    return this->total_tracked_.load(Ordering::Relaxed);
 }
 
 uint64_t CompletionTracker::queries() const {
-    return this->queries_.get();
+    return this->queries_.load(Ordering::Relaxed);
 }
 
 uint64_t CompletionTracker::query_hits() const {
-    return this->query_hits_.get();
+    return this->query_hits_.load(Ordering::Relaxed);
 }
 
 double CompletionTracker::hit_rate() const {
-    const uint64_t q = this->queries_.get();
+    const uint64_t q = this->queries_.load(Ordering::Relaxed);
     if (rusty::detail::deref_if_pointer_like(q) == static_cast<uint64_t>(0)) {
         return 0.0;
     }
-    return ((static_cast<double>(this->query_hits_.get()))) / ((static_cast<double>(q)));
+    return ((static_cast<double>(this->query_hits_.load(Ordering::Relaxed)))) / ((static_cast<double>(q)));
 }
 
 uint64_t CompletionTracker::evictions() const {
-    return this->evictions_.get();
+    return this->evictions_.load(Ordering::Relaxed);
 }
 
 void CompletionTracker::reset_stats() {
-    this->total_tracked_.set(static_cast<uint64_t>(0));
-    this->queries_.set(static_cast<uint64_t>(0));
-    this->query_hits_.set(static_cast<uint64_t>(0));
-    this->evictions_.set(static_cast<uint64_t>(0));
+    this->total_tracked_.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->queries_.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->query_hits_.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->evictions_.store(static_cast<uint64_t>(0), Ordering::Relaxed);
 }
 
 size_t CompletionTracker::evict_expired(uint64_t current_time_ms) {
-    const auto cfg = this->config_.get();
-    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg)) || (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)) == static_cast<uint64_t>(0))) {
+    const auto cfg = this->config();
+    if (rusty::detail::rust_not(cfg.enabled) || (rusty::detail::deref_if_pointer_like(cfg.ttl_ms) == static_cast<uint64_t>(0))) {
         return static_cast<size_t>(0);
     }
     auto set_guard = this->completed_set_.lock().unwrap();
@@ -573,16 +604,16 @@ size_t CompletionTracker::evict_expired(uint64_t current_time_ms) {
     size_t evicted = static_cast<size_t>(0);
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
-        if (list_guard[i].is_expired(std::move(current_time_ms), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)))) {
+        if (list_guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
             int64_t xid = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.xid); }) { return (__r.xid); } else if constexpr (requires { (__r.xid_field); }) { return (__r.xid_field); } else if constexpr (requires { ((*__r).xid); }) { return ((*__r).xid); } else { return ((*__r).xid_field); } }(list_guard[i]);
-            (*set_guard).remove(std::move(xid));
+            (*set_guard).remove(xid);
             (*list_guard).remove(std::move(i));
             evicted += static_cast<size_t>(1);
         } else {
             i += static_cast<size_t>(1);
         }
     }
-    this->evictions_.set(this->evictions_.get() + ((static_cast<uint64_t>(evicted))));
+    this->evictions_.fetch_add(static_cast<uint64_t>(evicted), Ordering::Relaxed);
     return std::move(evicted);
 }
 /*RUSTYCPP:GEN-END id=completion_tracker.tracker*/
@@ -599,15 +630,17 @@ size_t CompletionTracker::evict_expired(uint64_t current_time_ms) {
 // of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 #if RUSTYCPP_RUST
-#[repr(u8)]
-enum CompletionStatus {
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum CompletionStatus {
     NOT_FOUND = 0,
     COMPLETED = 1,
     COMPLETED_WITH_ERROR = 2,
     EXPIRED = 3,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.status version=1 rust_sha256=5a8ff53e7d4b35269cb9d71788d0564ed2bb5f64332622e6888d5048af0616fd*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.status version=1 rust_sha256=a48fefff92903ed338b3c0842d2a4a63514fb845f76077202420b596527a6995*/
 enum class CompletionStatus;
 constexpr CompletionStatus CompletionStatus_NOT_FOUND();
 constexpr CompletionStatus CompletionStatus_COMPLETED();
@@ -639,14 +672,15 @@ inline constexpr CompletionStatus CompletionStatus_EXPIRED() { return Completion
  * passes both args explicitly.
  */
 #if RUSTYCPP_RUST
-struct CompletionQueryResult {
-    status: CompletionStatus,
-    error_code: i32,
-    has_cached_response: bool,
+#[repr(C)]
+pub struct CompletionQueryResult {
+    pub status: CompletionStatus,
+    pub error_code: i32,
+    pub has_cached_response: bool,
 }
 
 impl CompletionQueryResult {
-    fn new() -> CompletionQueryResult {
+    pub fn new() -> CompletionQueryResult {
         CompletionQueryResult {
             status: CompletionStatus::NOT_FOUND,
             error_code: 0i32,
@@ -654,11 +688,11 @@ impl CompletionQueryResult {
         }
     }
 
-    fn not_found() -> CompletionQueryResult {
+    pub fn not_found() -> CompletionQueryResult {
         CompletionQueryResult::new()
     }
 
-    fn completed(err_code: i32, has_response: bool) -> CompletionQueryResult {
+    pub fn completed(err_code: i32, has_response: bool) -> CompletionQueryResult {
         let s: CompletionStatus = if err_code == 0i32 {
             CompletionStatus::COMPLETED
         } else {
@@ -667,7 +701,7 @@ impl CompletionQueryResult {
         CompletionQueryResult { status: s, error_code: err_code, has_cached_response: has_response }
     }
 
-    fn expired() -> CompletionQueryResult {
+    pub fn expired() -> CompletionQueryResult {
         CompletionQueryResult {
             status: CompletionStatus::EXPIRED,
             error_code: 0i32,
@@ -675,12 +709,12 @@ impl CompletionQueryResult {
         }
     }
 
-    fn is_completed(&self) -> bool {
+    pub fn is_completed(&self) -> bool {
         self.status == CompletionStatus::COMPLETED || self.status == CompletionStatus::COMPLETED_WITH_ERROR
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.3 version=1 rust_sha256=6742787d7b990417abb19cf8a8c18444d1bc7ba24218f8e51589d36d4426058a*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.3 version=1 rust_sha256=fbfdcdd3c0d60edae5db0b70989deacca5bd8424fa0629ce36bc9b8fb258dc43*/
 struct CompletionQueryResult;
 
 struct CompletionQueryResult {
@@ -727,7 +761,8 @@ bool CompletionQueryResult::is_completed() const {
 // EXPECT_STREQ. The varargs-UB objection to this is expired -- Log_* is a
 // std::format variadic template now, not C varargs. See playbook 7.26.
 #if RUSTYCPP_RUST
-fn completion_status_to_string(status: CompletionStatus) -> &'static str {
+#[allow(unreachable_patterns)]
+pub fn completion_status_to_string(status: CompletionStatus) -> &'static str {
     match status {
         CompletionStatus::NOT_FOUND => "NOT_FOUND",
         CompletionStatus::COMPLETED => "COMPLETED",
@@ -737,7 +772,7 @@ fn completion_status_to_string(status: CompletionStatus) -> &'static str {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.6 version=1 rust_sha256=cc7a16602ea1f2ba3342bc5ca3f07b901f63fed50240ecfc1d8958c7da4e7cb8*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.6 version=1 rust_sha256=3888f61daa438b0021425e7f0554606f4f7b9e0a24e1dd6a4b7b09aff8275456*/
 std::string_view completion_status_to_string(CompletionStatus status) {
     return ({ auto&& _m = status; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == CompletionStatus::NOT_FOUND)) { _match_value.emplace(std::move(std::string_view("NOT_FOUND"))); _m_matched = true; } if (!_m_matched && (_m == CompletionStatus::COMPLETED)) { _match_value.emplace(std::move(std::string_view("COMPLETED"))); _m_matched = true; } if (!_m_matched && (_m == CompletionStatus::COMPLETED_WITH_ERROR)) { _match_value.emplace(std::move(std::string_view("COMPLETED_WITH_ERROR"))); _m_matched = true; } if (!_m_matched && (_m == CompletionStatus::EXPIRED)) { _match_value.emplace(std::move(std::string_view("EXPIRED"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
 }

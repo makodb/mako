@@ -322,34 +322,45 @@ TEST_F(CompletionTrackerTest, EvictExpired) {
 }
 
 TEST_F(CompletionTrackerTest, ThreadSafety) {
-    const int num_threads = 4;
-    const int ops_per_thread = 1000;
-    std::atomic<int> completed{0};
+    constexpr int num_threads = 8;
+    constexpr int ops_per_thread = 500;
+    constexpr int rounds = 3;
+    constexpr uint64_t expected = num_threads * ops_per_thread;
 
-    auto worker = [&](int thread_id) {
-        int64_t base_xid = thread_id * ops_per_thread;
-        uint64_t now = current_time_ms();
+    for (int round = 0; round < rounds; ++round) {
+        tracker_.clear();
+        tracker_.reset_stats();
+        std::atomic<int> failures{0};
 
-        for (int i = 0; i < ops_per_thread; i++) {
-            tracker_.mark_completed(base_xid + i, now);
-            tracker_.is_completed(base_xid + i, now);
+        auto worker = [&](int thread_id) {
+            int64_t base_xid = thread_id * ops_per_thread;
+            uint64_t now = current_time_ms();
+
+            for (int i = 0; i < ops_per_thread; i++) {
+                tracker_.mark_completed(base_xid + i, now);
+                if (!tracker_.is_completed(base_xid + i, now)) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        };
+
+        std::vector<std::thread> threads;
+        for (int i = 0; i < num_threads; i++) {
+            threads.emplace_back(worker, i);
         }
 
-        completed++;
-    };
+        for (auto& t : threads) {
+            t.join();
+        }
 
-    std::vector<std::thread> threads;
-    for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back(worker, i);
+        EXPECT_EQ(failures.load(std::memory_order_relaxed), 0);
+        EXPECT_EQ(tracker_.size(), expected);
+        EXPECT_EQ(tracker_.total_tracked(), expected);
+        EXPECT_EQ(tracker_.queries(), expected);
+        EXPECT_EQ(tracker_.query_hits(), expected);
+        EXPECT_EQ(tracker_.evictions(), 0);
+        EXPECT_DOUBLE_EQ(tracker_.hit_rate(), 1.0);
     }
-
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    EXPECT_EQ(completed, num_threads);
-    // All operations should have succeeded without crashes
-    EXPECT_LE(tracker_.size(), tracker_.config().max_entries);
 }
 
 // ===========================================================================

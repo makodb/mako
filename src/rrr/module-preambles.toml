@@ -5,3 +5,9 @@ name = "rrr.connection_metrics"
 includes = [
     { path = "rusty/sync/atomic.hpp", form = "angle" },
 ]
+
+[[module]]
+name = "rrr.completion_tracker"
+includes = [
+    { path = "rusty/sync/atomic.hpp", form = "angle" },
+]

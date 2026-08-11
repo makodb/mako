@@ -67,7 +67,7 @@ def subprocess_result(
 
 
 class CheckedInCanaryTests(unittest.TestCase):
-    def test_connection_metrics_has_the_only_structured_module_preamble(self) -> None:
+    def test_atomic_modules_have_the_only_structured_preambles(self) -> None:
         with (REPOSITORY / "src/rrr/module-preambles.toml").open("rb") as stream:
             self.assertEqual(
                 tomllib.load(stream),
@@ -82,7 +82,16 @@ class CheckedInCanaryTests(unittest.TestCase):
                                     "form": "angle",
                                 }
                             ],
-                        }
+                        },
+                        {
+                            "name": "rrr.completion_tracker",
+                            "includes": [
+                                {
+                                    "path": "rusty/sync/atomic.hpp",
+                                    "form": "angle",
+                                }
+                            ],
+                        },
                     ],
                 },
             )
@@ -166,6 +175,24 @@ class CheckedInCanaryTests(unittest.TestCase):
                         )
                     ],
                 ),
+                (
+                    "rrr.completion_tracker",
+                    "completion_tracker",
+                    "src/rrr/src/completion_tracker.rs",
+                    [
+                        (
+                            "src/rrr/rpc/completion_tracker.cpp",
+                            (
+                                "completion_tracker.1",
+                                "completion_tracker.2",
+                                "completion_tracker.tracker",
+                                "completion_tracker.status",
+                                "completion_tracker.3",
+                                "completion_tracker.6",
+                            ),
+                        )
+                    ],
+                ),
             ],
         )
 
@@ -211,6 +238,19 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "connection_metrics.1",
                 ),
                 "src/rrr/src/connection_metrics.rs",
+            ),
+            (
+                "rrr.completion_tracker",
+                "src/rrr/rpc/completion_tracker.cpp",
+                (
+                    "completion_tracker.1",
+                    "completion_tracker.2",
+                    "completion_tracker.tracker",
+                    "completion_tracker.status",
+                    "completion_tracker.3",
+                    "completion_tracker.6",
+                ),
+                "src/rrr/src/completion_tracker.rs",
             ),
         ]
         for cpp_module, source_label, block_ids, output_label in cases:
@@ -272,6 +312,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/stat.rs",
                 "src/rrr/src/errors.rs",
                 "src/rrr/src/connection_metrics.rs",
+                "src/rrr/src/completion_tracker.rs",
             },
         )
 
@@ -1022,6 +1063,7 @@ class CrateModeGateTests(unittest.TestCase):
                 production_library=str(production),
                 generated_dir=str(generated),
                 runtime_library=[],
+                runtime_module_root=[],
                 cxx_flag=["-stdlib=libc++"],
                 link_flag=["-lc++abi"],
             )
@@ -1057,6 +1099,7 @@ class CrateModeGateTests(unittest.TestCase):
                 runtime_libraries=[],
                 cxx_flags=["-stdlib=libc++"],
                 link_flags=["-lc++abi"],
+                prebuilt_module_dirs=[],
             )
 
     def test_standalone_generation_consumes_the_structured_preamble(self) -> None:
@@ -1072,6 +1115,7 @@ class CrateModeGateTests(unittest.TestCase):
                 production_library=None,
                 generated_dir=None,
                 runtime_library=[],
+                runtime_module_root=[],
                 cxx_flag=[],
                 link_flag=[],
             )
@@ -1109,6 +1153,7 @@ class CrateModeGateTests(unittest.TestCase):
                 production_library=str(archive),
                 generated_dir=str(root),
                 runtime_library=[],
+                runtime_module_root=[],
                 cxx_flag=[],
                 link_flag=[],
             )
@@ -1137,12 +1182,31 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.stat"),
             mock.Mock(cpp_module="rrr.errors"),
             mock.Mock(cpp_module="rrr.connection_metrics"),
+            mock.Mock(cpp_module="rrr.completion_tracker"),
         ]
 
         def symbols_for_module(
             _nm: Path, _root: Path, _path: Path, module_name: str
         ) -> frozenset[tuple[str, str]]:
             return GATE.ABI_SPECS[module_name].symbols
+
+        completion_raw = list(GATE.ABI_SPECS["rrr.completion_tracker"].symbols)
+        completion_raw.extend(
+            [
+                (
+                    "T",
+                    "rrr::CompletionTracker@rrr.completion_tracker::"
+                    "CompletionTracker()",
+                ),
+                (
+                    "T",
+                    "rrr::CompletionTracker@rrr.completion_tracker::"
+                    "CompletionTracker(rrr::CompletionTrackerConfig@"
+                    "rrr.completion_tracker)",
+                ),
+                ("T", "initializer for module rrr.completion_tracker"),
+            ]
+        )
 
         def compiled_object(
             _clang: Path,
@@ -1152,6 +1216,7 @@ class CrateModeGateTests(unittest.TestCase):
             _work: Path,
             module_name: str,
             _cxx_flags: list[str],
+            _prebuilt_module_dirs: list[Path],
         ) -> Path:
             return Path(f"/{module_name}.o")
 
@@ -1169,6 +1234,8 @@ class CrateModeGateTests(unittest.TestCase):
                 GATE, "run"
             ) as run, mock.patch.object(
                 GATE, "module_symbols", side_effect=symbols_for_module
+            ), mock.patch.object(
+                GATE, "completion_raw_symbols", return_value=completion_raw
             ):
                 GATE.check_generated_output(
                     root=Path("/repository"),
@@ -1181,9 +1248,10 @@ class CrateModeGateTests(unittest.TestCase):
                     runtime_libraries=[Path("/rusty.a")],
                     cxx_flags=["-stdlib=libc++"],
                     link_flags=["-lc++abi"],
+                    prebuilt_module_dirs=[Path("/runtime-modules")],
                 )
 
-        compiled_names = [call.args[-2] for call in compile_module.call_args_list]
+        compiled_names = [call.args[5] for call in compile_module.call_args_list]
         self.assertEqual(
             compiled_names,
             [
@@ -1192,8 +1260,15 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.stat",
                 "rrr.errors",
                 "rrr.connection_metrics",
+                "rrr.completion_tracker",
                 "rrr",
             ],
+        )
+        self.assertTrue(
+            all(
+                call.args[7] == [Path("/runtime-modules")]
+                for call in compile_module.call_args_list
+            )
         )
         importer_compile_commands = [
             call.args[0]
@@ -1205,6 +1280,10 @@ class CrateModeGateTests(unittest.TestCase):
         self.assertIn("-I", importer_compile_commands[0])
         self.assertIn(
             "/repository/third-party/rusty-cpp/include",
+            importer_compile_commands[0],
+        )
+        self.assertIn(
+            "-fprebuilt-module-path=/runtime-modules",
             importer_compile_commands[0],
         )
         link_commands = [
@@ -1222,6 +1301,78 @@ class CrateModeGateTests(unittest.TestCase):
                 self.assertIn("-Wl,--start-group", command)
                 self.assertIn("-Wl,--end-group", command)
 
+    def test_completion_raw_symbol_ratchet_pins_all_33_entries(self) -> None:
+        entries = list(GATE.ABI_SPECS["rrr.completion_tracker"].symbols)
+        entries.extend(
+            [
+                (
+                    "T",
+                    "rrr::CompletionTracker@rrr.completion_tracker::"
+                    "CompletionTracker()",
+                ),
+                (
+                    "T",
+                    "rrr::CompletionTracker@rrr.completion_tracker::"
+                    "CompletionTracker(rrr::CompletionTrackerConfig@"
+                    "rrr.completion_tracker)",
+                ),
+                ("T", "initializer for module rrr.completion_tracker"),
+            ]
+        )
+        self.assertEqual(len(entries), 33)
+        GATE.require_completion_raw_symbols("test provider", entries)
+        with self.assertRaisesRegex(GATE.GateError, "exactly 33 raw"):
+            GATE.require_completion_raw_symbols("test provider", entries[:-1])
+
+    def test_runtime_module_root_must_exist_and_contain_rusty_pcm(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-runtime-pcm-test-") as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(GATE.GateError, "unavailable"):
+                GATE.resolve_prebuilt_module_dirs(root, ["missing"])
+
+            empty = root / "empty"
+            empty.mkdir()
+            with self.assertRaisesRegex(GATE.GateError, "rusty.pcm"):
+                GATE.resolve_prebuilt_module_dirs(root, [str(empty)])
+
+    def test_runtime_module_dirs_are_nested_deduplicated_and_sorted(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-runtime-pcm-test-") as temporary:
+            root = Path(temporary)
+            first = root / "modules" / "zeta"
+            second = root / "modules" / "alpha"
+            first.mkdir(parents=True)
+            second.mkdir(parents=True)
+            (first / "rusty.pcm").touch()
+            (first / "rusty-duplicate-dependency.pcm").touch()
+            (second / "vec_port.pcm").touch()
+
+            self.assertEqual(
+                GATE.resolve_prebuilt_module_dirs(root, ["modules", "modules"]),
+                sorted([first.resolve(), second.resolve()]),
+            )
+
+    def test_compile_module_passes_every_runtime_bmi_directory(self) -> None:
+        with mock.patch.object(GATE, "run") as run:
+            result = GATE.compile_module(
+                Path("/clang++"),
+                Path("/repository"),
+                Path("/include"),
+                Path("/source"),
+                Path("/work"),
+                "rrr.completion_tracker",
+                ["-stdlib=libc++"],
+                [Path("/runtime-z"), Path("/runtime-a")],
+            )
+
+        self.assertEqual(result, Path("/work/rrr.completion_tracker.o"))
+        self.assertEqual(len(run.call_args_list), 2)
+        for call in run.call_args_list:
+            command = call.args[0]
+            self.assertIn("-std=gnu++23", command)
+            self.assertIn("-fprebuilt-module-path=/work", command)
+            self.assertIn("-fprebuilt-module-path=/runtime-z", command)
+            self.assertIn("-fprebuilt-module-path=/runtime-a", command)
+
     def test_gate_abi_ratchet_covers_every_manifest_module(self) -> None:
         root = Path("/repository")
         modules = [
@@ -1230,6 +1381,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.stat"),
             mock.Mock(cpp_module="rrr.errors"),
             mock.Mock(cpp_module="rrr.connection_metrics"),
+            mock.Mock(cpp_module="rrr.completion_tracker"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

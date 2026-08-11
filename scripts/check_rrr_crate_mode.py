@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from dataclasses import dataclass
 import json
 import os
@@ -26,6 +27,7 @@ EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-extraction.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
 CALLBACK_INLINE_SOURCE = "src/rrr/base/callback_wrapper.cpp"
+COMPLETION_INLINE_SOURCE = "src/rrr/rpc/completion_tracker.cpp"
 NM_LINE = re.compile(r"^[0-9A-Fa-f]+\s+([A-Za-z])\s+(.+)$")
 PLACEHOLDER = re.compile(r"\b(?:TODO|UNSUPPORTED|skipped)\b", re.IGNORECASE)
 
@@ -282,6 +284,91 @@ ABI_SPECS = {
                 "rrr::ConnectionMetrics@rrr.connection_metrics::record_connect(unsigned long) const",
                 "rrr::ConnectionMetrics@rrr.connection_metrics::reset() const",
                 "rrr::ConnectionMetrics@rrr.connection_metrics::decrement_in_flight() const",
+            }
+        ),
+    ),
+    "rrr.completion_tracker": AbiSpec(
+        surface=frozenset(
+            {
+                "#include <rusty/sync/atomic.hpp>",
+                "export module rrr.completion_tracker;",
+                "import rusty;",
+                "export enum class CompletionStatus",
+                "export struct CompletionTrackerConfig",
+                "export struct CompletedEntry",
+                "export struct CompletionTracker",
+                "export struct CompletionQueryResult",
+                "using rusty::HashSet;",
+                "using rusty::VecDeque;",
+                "using rusty::sync::atomic::AtomicU64;",
+                "using rusty::sync::atomic::Ordering;",
+                "using rusty::Mutex;",
+                "rusty::Mutex<CompletionTrackerConfig> config_;",
+                "rusty::Mutex<rusty::VecDeque<CompletedEntry>> lru_list_;",
+                "rusty::Mutex<rusty::HashSet<int64_t>> completed_set_;",
+                "rusty::sync::atomic::AtomicU64 total_tracked_;",
+                "rusty::sync::atomic::AtomicU64 queries_;",
+                "rusty::sync::atomic::AtomicU64 query_hits_;",
+                "rusty::sync::atomic::AtomicU64 evictions_;",
+                "CompletionTracker();",
+                "CompletionTracker(CompletionTrackerConfig config);",
+                "bool enabled() const;",
+                "CompletionTrackerConfig config() const;",
+                "void set_config(CompletionTrackerConfig config);",
+                "void mark_completed(int64_t xid, uint64_t current_time_ms);",
+                "bool is_completed(int64_t xid, uint64_t current_time_ms);",
+                "bool remove(int64_t xid);",
+                "void clear();",
+                "size_t size() const;",
+                "uint64_t total_tracked() const;",
+                "uint64_t queries() const;",
+                "uint64_t query_hits() const;",
+                "double hit_rate() const;",
+                "uint64_t evictions() const;",
+                "void reset_stats();",
+                "size_t evict_expired(uint64_t current_time_ms);",
+                "CompletionStatus status;",
+                "int32_t error_code;",
+                "bool has_cached_response;",
+                "export std::string_view completion_status_to_string(CompletionStatus status);",
+                "rusty::wrapping_add(this->timestamp_ms",
+                "static constexpr bool is_send = true;",
+                "static constexpr bool is_sync = true;",
+            }
+        ),
+        symbols=frozenset(
+            ("T", symbol)
+            for symbol in {
+                "rrr::CompletionTrackerConfig@rrr.completion_tracker::new_()",
+                "rrr::CompletionTrackerConfig@rrr.completion_tracker::defaults()",
+                "rrr::CompletionTrackerConfig@rrr.completion_tracker::small()",
+                "rrr::CompletionTrackerConfig@rrr.completion_tracker::large()",
+                "rrr::CompletionTrackerConfig@rrr.completion_tracker::disabled()",
+                "rrr::CompletedEntry@rrr.completion_tracker::new_(long, unsigned long)",
+                "rrr::CompletedEntry@rrr.completion_tracker::is_expired(unsigned long, unsigned long) const",
+                "rrr::CompletionTracker@rrr.completion_tracker::CompletionTracker()",
+                "rrr::CompletionTracker@rrr.completion_tracker::CompletionTracker(rrr::CompletionTrackerConfig@rrr.completion_tracker)",
+                "rrr::CompletionTracker@rrr.completion_tracker::enabled() const",
+                "rrr::CompletionTracker@rrr.completion_tracker::config() const",
+                "rrr::CompletionTracker@rrr.completion_tracker::set_config(rrr::CompletionTrackerConfig@rrr.completion_tracker)",
+                "rrr::CompletionTracker@rrr.completion_tracker::mark_completed(long, unsigned long)",
+                "rrr::CompletionTracker@rrr.completion_tracker::is_completed(long, unsigned long)",
+                "rrr::CompletionTracker@rrr.completion_tracker::remove(long)",
+                "rrr::CompletionTracker@rrr.completion_tracker::clear()",
+                "rrr::CompletionTracker@rrr.completion_tracker::size() const",
+                "rrr::CompletionTracker@rrr.completion_tracker::total_tracked() const",
+                "rrr::CompletionTracker@rrr.completion_tracker::queries() const",
+                "rrr::CompletionTracker@rrr.completion_tracker::query_hits() const",
+                "rrr::CompletionTracker@rrr.completion_tracker::hit_rate() const",
+                "rrr::CompletionTracker@rrr.completion_tracker::evictions() const",
+                "rrr::CompletionTracker@rrr.completion_tracker::reset_stats()",
+                "rrr::CompletionTracker@rrr.completion_tracker::evict_expired(unsigned long)",
+                "rrr::CompletionQueryResult@rrr.completion_tracker::new_()",
+                "rrr::CompletionQueryResult@rrr.completion_tracker::not_found()",
+                "rrr::CompletionQueryResult@rrr.completion_tracker::completed(int, bool)",
+                "rrr::CompletionQueryResult@rrr.completion_tracker::expired()",
+                "rrr::CompletionQueryResult@rrr.completion_tracker::is_completed() const",
+                "rrr::completion_status_to_string@rrr.completion_tracker(rrr::CompletionStatus@rrr.completion_tracker)",
             }
         ),
     ),
@@ -559,6 +646,200 @@ def require_connection_metrics_text_parity(root: Path, generated: str) -> None:
         )
 
 
+def balanced_cpp_definition(text: str, token: str, description: str) -> str:
+    """Extract one declaration or function body beginning at a unique token."""
+
+    start = text.find(token)
+    if start < 0 or text.find(token, start + len(token)) >= 0:
+        raise GateError(
+            f"{description} must contain exactly one {token!r} definition"
+        )
+    brace = text.find("{", start)
+    if brace < 0:
+        raise GateError(f"{description} {token!r} has no body")
+    depth = 0
+    end = -1
+    for index in range(brace, len(text)):
+        character = text[index]
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                end = index + 1
+                break
+    if end < 0:
+        raise GateError(f"{description} {token!r} has unbalanced braces")
+    if end < len(text) and text[end] == ";":
+        end += 1
+    return text[start:end].strip()
+
+
+def require_completion_tracker_text_parity(root: Path, generated: str) -> None:
+    source_path = root / COMPLETION_INLINE_SOURCE
+    try:
+        inline = source_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise GateError(
+            f"cannot read inline completion-tracker oracle {source_path}: {exc}"
+        ) from exc
+
+    block_ids = (
+        "completion_tracker.1",
+        "completion_tracker.2",
+        "completion_tracker.tracker",
+        "completion_tracker.status",
+        "completion_tracker.3",
+        "completion_tracker.6",
+    )
+    inline_payload = "\n\n".join(
+        inline_generated_block(inline, block_id) for block_id in block_ids
+    )
+    generated_payload = re.sub(r"^export ", "", generated, flags=re.MULTILINE)
+    # Crate collection has whole-module type information and therefore emits
+    # Send/Sync marker members for CompletionTracker. Inline block rewriting is
+    # deliberately block-local and cannot prove those markers through the
+    # HashSet/VecDeque aliases. The generated marker surface is ratcheted
+    # independently above; declaration/body parity compares the actual record
+    # fields and functions after removing only this compiler metadata.
+    auto_traits = re.compile(
+        r"\n\s*// Rust derives Send/Sync from the field types; C\+\+ cannot see them\."
+        r"\n\s*static constexpr bool is_send = [^;]+;"
+        r"\n\s*static constexpr bool is_sync = [^;]+;"
+    )
+    inline_payload = auto_traits.sub("", inline_payload)
+    generated_payload = auto_traits.sub("", generated_payload)
+
+    # Whole-crate lowering simplifies these three direct boolean negations,
+    # while the block-local inline rewrite retains the generic Rust `!`
+    # helper. Keep the exception deliberately exact so all surrounding
+    # declaration and method-body text remains a byte-for-byte oracle.
+    inline_negation = "rusty::detail::rust_not(cfg.enabled)"
+    crate_negation = "!cfg.enabled"
+    if (
+        inline_payload.count(inline_negation) != 3
+        or inline_payload.count(crate_negation) != 0
+        or generated_payload.count(crate_negation) != 3
+        or generated_payload.count(inline_negation) != 0
+    ):
+        raise GateError(
+            "completion-tracker enabled-negation lowering no longer has the "
+            "expected exact three-site inline/crate shape"
+        )
+    inline_payload = inline_payload.replace(
+        inline_negation, crate_negation
+    )
+
+    inline_usings = set(
+        re.findall(r"^using rusty::[^;]+;$", inline_payload, re.MULTILINE)
+    )
+    generated_usings = set(
+        re.findall(r"^using rusty::[^;]+;$", generated_payload, re.MULTILINE)
+    )
+    if inline_usings != generated_usings:
+        raise GateError(
+            "crate-generated completion-tracker using declarations differ "
+            "from the inline provider"
+        )
+
+    definitions = (
+        "struct CompletionTrackerConfig {",
+        "struct CompletedEntry {",
+        "struct CompletionTracker {",
+        "enum class CompletionStatus {",
+        "struct CompletionQueryResult {",
+        "inline constexpr CompletionStatus CompletionStatus_NOT_FOUND()",
+        "inline constexpr CompletionStatus CompletionStatus_COMPLETED()",
+        "inline constexpr CompletionStatus CompletionStatus_COMPLETED_WITH_ERROR()",
+        "inline constexpr CompletionStatus CompletionStatus_EXPIRED()",
+        "CompletionTrackerConfig CompletionTrackerConfig::new_()",
+        "CompletionTrackerConfig CompletionTrackerConfig::defaults()",
+        "CompletionTrackerConfig CompletionTrackerConfig::small()",
+        "CompletionTrackerConfig CompletionTrackerConfig::large()",
+        "CompletionTrackerConfig CompletionTrackerConfig::disabled()",
+        "CompletedEntry CompletedEntry::new_(",
+        "bool CompletedEntry::is_expired(",
+        "CompletionTracker::CompletionTracker()",
+        "CompletionTracker::CompletionTracker(CompletionTrackerConfig config)",
+        "bool CompletionTracker::enabled() const",
+        "CompletionTrackerConfig CompletionTracker::config() const",
+        "void CompletionTracker::set_config(",
+        "void CompletionTracker::mark_completed(",
+        "bool CompletionTracker::is_completed(",
+        "bool CompletionTracker::remove(",
+        "void CompletionTracker::clear()",
+        "size_t CompletionTracker::size() const",
+        "uint64_t CompletionTracker::total_tracked() const",
+        "uint64_t CompletionTracker::queries() const",
+        "uint64_t CompletionTracker::query_hits() const",
+        "double CompletionTracker::hit_rate() const",
+        "uint64_t CompletionTracker::evictions() const",
+        "void CompletionTracker::reset_stats()",
+        "size_t CompletionTracker::evict_expired(",
+        "CompletionQueryResult CompletionQueryResult::new_()",
+        "CompletionQueryResult CompletionQueryResult::not_found()",
+        "CompletionQueryResult CompletionQueryResult::completed(",
+        "CompletionQueryResult CompletionQueryResult::expired()",
+        "bool CompletionQueryResult::is_completed() const",
+    )
+    for token in definitions:
+        inline_definition = balanced_cpp_definition(
+            inline_payload, token, "inline completion-tracker provider"
+        )
+        generated_definition = balanced_cpp_definition(
+            generated_payload, token, "crate-generated completion-tracker module"
+        )
+        if generated_definition != inline_definition:
+            raise GateError(
+                "crate-generated completion-tracker definition differs from "
+                f"the inline provider at {token!r}"
+            )
+
+    # Match lowering intentionally differs by compilation unit: the inline
+    # block uses the generic optional-valued expression carrier, while crate
+    # mode sees the complete enum and emits a direct branch lambda. Parse and
+    # compare the complete mapping rather than weakening all-body text parity.
+    status_token = (
+        "std::string_view completion_status_to_string(CompletionStatus status) {"
+    )
+
+    def status_mapping(payload: str, description: str) -> tuple[tuple[str, str], ...]:
+        definition = balanced_cpp_definition(payload, status_token, description)
+        pairs = tuple(
+            re.findall(
+                r"CompletionStatus::([A-Z_]+).*?"
+                r'std::string_view\("([A-Z_]+)"\)',
+                definition,
+                re.DOTALL,
+            )
+        )
+        strings = tuple(re.findall(r'std::string_view\("([A-Z_]+)"\)', definition))
+        expected_pairs = (
+            ("NOT_FOUND", "NOT_FOUND"),
+            ("COMPLETED", "COMPLETED"),
+            ("COMPLETED_WITH_ERROR", "COMPLETED_WITH_ERROR"),
+            ("EXPIRED", "EXPIRED"),
+        )
+        expected_strings = tuple(value for _, value in expected_pairs) + ("UNKNOWN",)
+        if pairs != expected_pairs or strings != expected_strings:
+            raise GateError(
+                f"{description} has an unexpected completion-status string mapping"
+            )
+        return pairs
+
+    inline_mapping = status_mapping(
+        inline_payload, "inline completion-tracker provider"
+    )
+    generated_mapping = status_mapping(
+        generated_payload, "crate-generated completion-tracker module"
+    )
+    if generated_mapping != inline_mapping:
+        raise GateError(
+            "crate-generated completion-status string mapping differs from "
+            "the inline provider"
+        )
+
+
 def callback_wrapper_definition(text: str, description: str) -> str:
     matches = re.findall(
         r"(?:export )?template<typename F>\s+"
@@ -627,32 +908,39 @@ def require_cpp_surfaces(
                 f"generated module {module.cpp_module} drifted to a nested namespace"
             )
         atomic_preamble = "#include <rusty/sync/atomic.hpp>"
-        if module.cpp_module == "rrr.connection_metrics":
+        atomic_modules = {
+            "rrr.connection_metrics",
+            "rrr.completion_tracker",
+        }
+        if module.cpp_module in atomic_modules:
             if text.count(atomic_preamble) != 1:
                 raise GateError(
-                    "generated rrr.connection_metrics must contain exactly one "
+                    f"generated {module.cpp_module} must contain exactly one "
                     "structured atomic preamble include"
                 )
             ordered = (
                 text.find("\nmodule;\n"),
                 text.find(atomic_preamble),
                 text.find("#include <cstdint>"),
-                text.find("export module rrr.connection_metrics;"),
+                text.find(f"export module {module.cpp_module};"),
             )
             if -1 in ordered or list(ordered) != sorted(ordered):
                 raise GateError(
-                    "generated rrr.connection_metrics atomic preamble is not "
+                    f"generated {module.cpp_module} atomic preamble is not "
                     "between the global module fragment and standard includes"
                 )
-            require_connection_metrics_text_parity(root, text)
+            if module.cpp_module == "rrr.connection_metrics":
+                require_connection_metrics_text_parity(root, text)
+            else:
+                require_completion_tracker_text_parity(root, text)
         elif atomic_preamble in text:
             raise GateError(
-                f"connection-metrics preamble leaked into {module.cpp_module}"
+                f"atomic module preamble leaked into {module.cpp_module}"
             )
 
     root_text = read_generated(output / "rrr.cppm", "root module")
     if "#include <rusty/sync/atomic.hpp>" in root_text:
-        raise GateError("connection-metrics preamble leaked into the crate root")
+        raise GateError("atomic module preamble leaked into the crate root")
     root_required = {
         "export module rrr;",
         "namespace rrr {",
@@ -705,6 +993,69 @@ def module_symbols(
         if symbol_owner_module(symbol) == module_name:
             symbols.add((kind, symbol))
     return symbols
+
+
+def completion_raw_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+) -> list[tuple[str, str]]:
+    """Return completion's strong entries without deduplicating aliases."""
+
+    output = run(
+        [str(nm), "--defined-only", "--demangle", str(binary)],
+        root,
+    )
+    initializer = "initializer for module rrr.completion_tracker"
+    entries: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        match = NM_LINE.match(line)
+        if match is None:
+            continue
+        kind, symbol = match.groups()
+        if not kind.isupper() or kind in {"U", "V", "W"}:
+            continue
+        if (
+            symbol_owner_module(symbol) == "rrr.completion_tracker"
+            or symbol == initializer
+        ):
+            entries.append((kind, symbol))
+    return entries
+
+
+def require_completion_raw_symbols(
+    description: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    """Pin initializer and constructor aliases as well as the unique API."""
+
+    expected = Counter(ABI_SPECS["rrr.completion_tracker"].symbols)
+    expected.update(
+        {
+            (
+                "T",
+                "rrr::CompletionTracker@rrr.completion_tracker::"
+                "CompletionTracker()",
+            ): 1,
+            (
+                "T",
+                "rrr::CompletionTracker@rrr.completion_tracker::"
+                "CompletionTracker(rrr::CompletionTrackerConfig@"
+                "rrr.completion_tracker)",
+            ): 1,
+            ("T", "initializer for module rrr.completion_tracker"): 1,
+        }
+    )
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} completion ABI must contain exactly 33 raw strong "
+        "entries (30 unique API symbols, two constructor aliases, and the "
+        f"module initializer); missing={missing!r}, unexpected={unexpected!r}"
+    )
 
 
 def function_parameter_open(symbol: str) -> int:
@@ -851,6 +1202,7 @@ def importer_source() -> str:
 #include <vector>
 
 import rrr.callback_wrapper;
+import rrr.completion_tracker;
 import rrr.connection_metrics;
 import rrr.errors;
 import rrr.internal_protocol;
@@ -1035,6 +1387,66 @@ static_assert(offsetof(rrr::ConnectionMetrics, min_latency_us_field) ==
 static_assert(offsetof(rrr::ConnectionMetrics, max_latency_us_field) ==
               17 * sizeof(MetricsAtomicU64));
 
+static_assert(std::is_same_v<
+              std::underlying_type_t<rrr::CompletionStatus>, std::int32_t>);
+static_assert(sizeof(rrr::CompletionStatus) == 4);
+static_assert(alignof(rrr::CompletionStatus) == 4);
+static_assert(std::is_trivially_copyable_v<rrr::CompletionStatus>);
+
+static_assert(std::is_standard_layout_v<rrr::CompletionTrackerConfig>);
+static_assert(std::is_trivially_copyable_v<rrr::CompletionTrackerConfig>);
+static_assert(rrr::CompletionTrackerConfig::is_send);
+static_assert(rrr::CompletionTrackerConfig::is_sync);
+static_assert(sizeof(rrr::CompletionTrackerConfig) == 24);
+static_assert(alignof(rrr::CompletionTrackerConfig) == 8);
+static_assert(offsetof(rrr::CompletionTrackerConfig, ttl_ms) == 0);
+static_assert(offsetof(rrr::CompletionTrackerConfig, max_entries) == 8);
+static_assert(offsetof(rrr::CompletionTrackerConfig, enabled) == 16);
+
+static_assert(std::is_standard_layout_v<rrr::CompletedEntry>);
+static_assert(std::is_trivially_copyable_v<rrr::CompletedEntry>);
+static_assert(rrr::CompletedEntry::is_send);
+static_assert(rrr::CompletedEntry::is_sync);
+static_assert(sizeof(rrr::CompletedEntry) == 16);
+static_assert(alignof(rrr::CompletedEntry) == 8);
+static_assert(offsetof(rrr::CompletedEntry, xid) == 0);
+static_assert(offsetof(rrr::CompletedEntry, timestamp_ms) == 8);
+
+static_assert(std::is_standard_layout_v<rrr::CompletionQueryResult>);
+static_assert(std::is_trivially_copyable_v<rrr::CompletionQueryResult>);
+static_assert(rrr::CompletionQueryResult::is_send);
+static_assert(rrr::CompletionQueryResult::is_sync);
+static_assert(sizeof(rrr::CompletionQueryResult) == 12);
+static_assert(alignof(rrr::CompletionQueryResult) == 4);
+static_assert(offsetof(rrr::CompletionQueryResult, status) == 0);
+static_assert(offsetof(rrr::CompletionQueryResult, error_code) == 4);
+static_assert(offsetof(rrr::CompletionQueryResult, has_cached_response) == 8);
+
+static_assert(std::is_standard_layout_v<rrr::CompletionTracker>);
+static_assert(rrr::CompletionTracker::is_send);
+static_assert(rrr::CompletionTracker::is_sync);
+static_assert(sizeof(rrr::CompletionTracker) == 256);
+static_assert(alignof(rrr::CompletionTracker) == 8);
+static_assert(offsetof(rrr::CompletionTracker, config_) == 0);
+static_assert(offsetof(rrr::CompletionTracker, lru_list_) == 64);
+static_assert(offsetof(rrr::CompletionTracker, completed_set_) == 136);
+static_assert(offsetof(rrr::CompletionTracker, total_tracked_) == 224);
+static_assert(offsetof(rrr::CompletionTracker, queries_) == 232);
+static_assert(offsetof(rrr::CompletionTracker, query_hits_) == 240);
+static_assert(offsetof(rrr::CompletionTracker, evictions_) == 248);
+static_assert(std::is_same_v<
+              decltype(&rrr::CompletionTracker::mark_completed),
+              void (rrr::CompletionTracker::*)(std::int64_t, std::uint64_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::CompletionTracker::is_completed),
+              bool (rrr::CompletionTracker::*)(std::int64_t, std::uint64_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::CompletionTracker::set_config),
+              void (rrr::CompletionTracker::*)(rrr::CompletionTrackerConfig)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::CompletionTracker::config),
+              rrr::CompletionTrackerConfig (rrr::CompletionTracker::*)() const>);
+
 static bool stat_is(
     const rrr::AvgStat& stat,
     std::int64_t count,
@@ -1153,6 +1565,63 @@ static bool metrics_concurrent_updates_are_atomic() {
             metrics.record_request_dropped();
         }
         if (metrics.in_flight_requests() != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool completion_tracker_concurrent_operations_are_safe() {
+    constexpr std::uint64_t kThreads = 8;
+    constexpr std::uint64_t kOpsPerThread = 500;
+    constexpr std::uint64_t kRounds = 3;
+    constexpr std::uint64_t kUpdates = kThreads * kOpsPerThread;
+
+    for (std::uint64_t round = 0; round < kRounds; ++round) {
+        auto config = rrr::CompletionTrackerConfig::defaults();
+        config.ttl_ms = 0;
+        config.max_entries = kUpdates + 1;
+        rrr::CompletionTracker tracker(config);
+        std::atomic<std::uint64_t> ready{0};
+        std::atomic<bool> start{false};
+        std::atomic<bool> failed{false};
+        std::vector<std::thread> workers;
+        workers.reserve(kThreads);
+
+        for (std::uint64_t thread_index = 0;
+             thread_index < kThreads;
+             ++thread_index) {
+            workers.emplace_back([&, thread_index] {
+                ready.fetch_add(1, std::memory_order_relaxed);
+                while (!start.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+                for (std::uint64_t operation = 0;
+                     operation < kOpsPerThread;
+                     ++operation) {
+                    const auto xid = static_cast<std::int64_t>(
+                        thread_index * kOpsPerThread + operation + 1);
+                    tracker.mark_completed(xid, operation);
+                    if (!tracker.is_completed(xid, operation)) {
+                        failed.store(true, std::memory_order_relaxed);
+                    }
+                }
+            });
+        }
+        while (ready.load(std::memory_order_acquire) != kThreads) {
+            std::this_thread::yield();
+        }
+        start.store(true, std::memory_order_release);
+        for (auto& worker : workers) {
+            worker.join();
+        }
+
+        if (failed.load(std::memory_order_relaxed) ||
+            tracker.size() != kUpdates ||
+            tracker.total_tracked() != kUpdates ||
+            tracker.queries() != kUpdates ||
+            tracker.query_hits() != kUpdates ||
+            tracker.evictions() != 0 || tracker.hit_rate() != 1.0) {
             return false;
         }
     }
@@ -1494,6 +1963,165 @@ int main() {
         *actual_moves != *oracle_moves) {
         return 57;
     }
+
+    const auto completion_defaults =
+        rrr::CompletionTrackerConfig::defaults();
+    const auto completion_small = rrr::CompletionTrackerConfig::small();
+    const auto completion_large = rrr::CompletionTrackerConfig::large();
+    const auto completion_disabled =
+        rrr::CompletionTrackerConfig::disabled();
+    if (completion_defaults.ttl_ms != 60000 ||
+        completion_defaults.max_entries != 100000 ||
+        !completion_defaults.enabled ||
+        completion_small.ttl_ms != 30000 ||
+        completion_small.max_entries != 10000 ||
+        !completion_small.enabled ||
+        completion_large.ttl_ms != 300000 ||
+        completion_large.max_entries != 1000000 ||
+        !completion_large.enabled || completion_disabled.enabled) {
+        return 60;
+    }
+
+    const auto completion_not_found =
+        rrr::CompletionQueryResult::not_found();
+    const auto completion_ok =
+        rrr::CompletionQueryResult::completed(0, true);
+    const auto completion_error =
+        rrr::CompletionQueryResult::completed(-7, false);
+    const auto completion_expired =
+        rrr::CompletionQueryResult::expired();
+    if (completion_not_found.status != rrr::CompletionStatus::NOT_FOUND ||
+        completion_not_found.error_code != 0 ||
+        completion_not_found.has_cached_response ||
+        completion_not_found.is_completed() ||
+        completion_ok.status != rrr::CompletionStatus::COMPLETED ||
+        completion_ok.error_code != 0 ||
+        !completion_ok.has_cached_response || !completion_ok.is_completed() ||
+        completion_error.status !=
+            rrr::CompletionStatus::COMPLETED_WITH_ERROR ||
+        completion_error.error_code != -7 ||
+        completion_error.has_cached_response ||
+        !completion_error.is_completed() ||
+        completion_expired.status != rrr::CompletionStatus::EXPIRED ||
+        completion_expired.is_completed() ||
+        rrr::completion_status_to_string(rrr::CompletionStatus::NOT_FOUND) !=
+            "NOT_FOUND" ||
+        rrr::completion_status_to_string(rrr::CompletionStatus::COMPLETED) !=
+            "COMPLETED" ||
+        rrr::completion_status_to_string(
+            rrr::CompletionStatus::COMPLETED_WITH_ERROR) !=
+            "COMPLETED_WITH_ERROR" ||
+        rrr::completion_status_to_string(rrr::CompletionStatus::EXPIRED) !=
+            "EXPIRED" ||
+        rrr::completion_status_to_string(
+            static_cast<rrr::CompletionStatus>(99)) != "UNKNOWN") {
+        return 61;
+    }
+
+    const auto wrapping_entry = rrr::CompletedEntry::new_(
+        77, std::numeric_limits<std::uint64_t>::max() - 5);
+    if (wrapping_entry.xid != 77 ||
+        wrapping_entry.timestamp_ms !=
+            std::numeric_limits<std::uint64_t>::max() - 5 ||
+        wrapping_entry.is_expired(1000, 0) ||
+        wrapping_entry.is_expired(4, 10) ||
+        !wrapping_entry.is_expired(5, 10)) {
+        return 62;
+    }
+
+    rrr::CompletionTracker disabled_tracker(completion_disabled);
+    disabled_tracker.mark_completed(1, 0);
+    if (disabled_tracker.enabled() || disabled_tracker.size() != 0 ||
+        disabled_tracker.total_tracked() != 0 ||
+        disabled_tracker.is_completed(1, 0) ||
+        disabled_tracker.queries() != 1 ||
+        disabled_tracker.query_hits() != 0) {
+        return 63;
+    }
+
+    auto lifecycle_config = rrr::CompletionTrackerConfig::defaults();
+    lifecycle_config.ttl_ms = 10;
+    lifecycle_config.max_entries = 2;
+    rrr::CompletionTracker lifecycle_tracker(lifecycle_config);
+    lifecycle_tracker.mark_completed(1, 0);
+    lifecycle_tracker.mark_completed(1, 1);
+    lifecycle_tracker.mark_completed(2, 0);
+    if (lifecycle_tracker.size() != 2 ||
+        lifecycle_tracker.total_tracked() != 2 ||
+        lifecycle_tracker.queries() != 0 ||
+        lifecycle_tracker.hit_rate() != 0.0 ||
+        !lifecycle_tracker.is_completed(1, 10) ||
+        lifecycle_tracker.is_completed(1, 11) ||
+        lifecycle_tracker.size() != 1 ||
+        lifecycle_tracker.queries() != 2 ||
+        lifecycle_tracker.query_hits() != 1) {
+        return 64;
+    }
+    lifecycle_tracker.mark_completed(3, 20);
+    lifecycle_tracker.mark_completed(4, 20);
+    if (lifecycle_tracker.size() != 2 ||
+        lifecycle_tracker.total_tracked() != 4 ||
+        lifecycle_tracker.evictions() != 1 ||
+        lifecycle_tracker.is_completed(2, 20) ||
+        lifecycle_tracker.evict_expired(31) != 2 ||
+        lifecycle_tracker.size() != 0 ||
+        lifecycle_tracker.evictions() != 3) {
+        return 65;
+    }
+
+    auto mutation_config = rrr::CompletionTrackerConfig::defaults();
+    mutation_config.ttl_ms = 0;
+    rrr::CompletionTracker mutation_tracker(mutation_config);
+    mutation_tracker.mark_completed(10, 1);
+    mutation_tracker.mark_completed(11, 1);
+    if (!mutation_tracker.remove(10) || mutation_tracker.remove(10) ||
+        mutation_tracker.size() != 1) {
+        return 66;
+    }
+    mutation_tracker.clear();
+    mutation_tracker.set_config(completion_disabled);
+    const auto mutated_config = mutation_tracker.config();
+    mutation_tracker.mark_completed(12, 1);
+    if (mutation_tracker.size() != 0 || mutated_config.enabled ||
+        mutated_config.ttl_ms != completion_disabled.ttl_ms ||
+        mutated_config.max_entries != completion_disabled.max_entries) {
+        return 67;
+    }
+
+    auto overflow_config = rrr::CompletionTrackerConfig::defaults();
+    overflow_config.ttl_ms = 0;
+    overflow_config.max_entries = 1;
+    rrr::CompletionTracker overflow_tracker(overflow_config);
+    overflow_tracker.mark_completed(1, 0);
+    using rusty::sync::atomic::Ordering;
+    overflow_tracker.total_tracked_.store(
+        std::numeric_limits<std::uint64_t>::max(), Ordering::Relaxed);
+    overflow_tracker.queries_.store(
+        std::numeric_limits<std::uint64_t>::max(), Ordering::Relaxed);
+    overflow_tracker.query_hits_.store(
+        std::numeric_limits<std::uint64_t>::max(), Ordering::Relaxed);
+    overflow_tracker.evictions_.store(
+        std::numeric_limits<std::uint64_t>::max(), Ordering::Relaxed);
+    overflow_tracker.mark_completed(2, 0);
+    if (!overflow_tracker.is_completed(2, 0) ||
+        overflow_tracker.size() != 1 ||
+        overflow_tracker.total_tracked() != 0 ||
+        overflow_tracker.queries() != 0 ||
+        overflow_tracker.query_hits() != 0 ||
+        overflow_tracker.evictions() != 0 ||
+        overflow_tracker.hit_rate() != 0.0) {
+        return 68;
+    }
+    overflow_tracker.reset_stats();
+    if (overflow_tracker.total_tracked() != 0 ||
+        overflow_tracker.queries() != 0 ||
+        overflow_tracker.query_hits() != 0 ||
+        overflow_tracker.evictions() != 0) {
+        return 69;
+    }
+    if (!completion_tracker_concurrent_operations_are_safe()) {
+        return 70;
+    }
     return 0;
 }
 """
@@ -1507,19 +2135,24 @@ def compile_module(
     work_dir: Path,
     module_name: str,
     cxx_flags: list[str],
+    prebuilt_module_dirs: list[Path],
 ) -> Path:
     source = source_dir / f"{module_name}.cppm"
     pcm = work_dir / f"{module_name}.pcm"
     object_file = work_dir / f"{module_name}.o"
+    module_path_flags = [
+        f"-fprebuilt-module-path={path}"
+        for path in (work_dir, *prebuilt_module_dirs)
+    ]
     run(
         [
             str(clang),
-            "-std=c++23",
+            "-std=gnu++23",
             *cxx_flags,
             "-Wno-deprecated-declarations",
             "-I",
             str(include),
-            f"-fprebuilt-module-path={work_dir}",
+            *module_path_flags,
             "--precompile",
             str(source),
             "-o",
@@ -1530,9 +2163,9 @@ def compile_module(
     run(
         [
             str(clang),
-            "-std=c++23",
+            "-std=gnu++23",
             *cxx_flags,
-            f"-fprebuilt-module-path={work_dir}",
+            *module_path_flags,
             "-c",
             str(pcm),
             "-o",
@@ -1570,6 +2203,29 @@ def resolve_generated_dir(root: Path, raw: str) -> Path:
     return output
 
 
+def resolve_prebuilt_module_dirs(root: Path, raw_roots: list[str]) -> list[Path]:
+    directories: set[Path] = set()
+    found_rusty = False
+    for raw in raw_roots:
+        module_root = Path(raw)
+        if not module_root.is_absolute():
+            module_root = root / module_root
+        module_root = module_root.resolve()
+        if not module_root.is_dir():
+            raise GateError(
+                f"runtime prebuilt-module root is unavailable: {module_root}"
+            )
+        for pcm in module_root.rglob("*.pcm"):
+            if pcm.is_file():
+                directories.add(pcm.parent.resolve())
+                found_rusty = found_rusty or pcm.name == "rusty.pcm"
+    if raw_roots and not found_rusty:
+        raise GateError(
+            "runtime prebuilt-module roots do not contain rusty.pcm"
+        )
+    return sorted(directories)
+
+
 def check_generated_output(
     *,
     root: Path,
@@ -1582,6 +2238,7 @@ def check_generated_output(
     runtime_libraries: list[Path],
     cxx_flags: list[str],
     link_flags: list[str],
+    prebuilt_module_dirs: list[Path],
 ) -> None:
     require_cpp_surfaces(root, output, modules)
     require_zero_hand_slots(output / "rusty_hand_slots.md")
@@ -1601,6 +2258,7 @@ def check_generated_output(
                 work,
                 module.cpp_module,
                 cxx_flags,
+                prebuilt_module_dirs,
             )
             for module in modules
         ]
@@ -1614,6 +2272,7 @@ def check_generated_output(
             work,
             "rrr",
             cxx_flags,
+            prebuilt_module_dirs,
         )
 
         importer = work / "importer.cpp"
@@ -1622,11 +2281,15 @@ def check_generated_output(
         run(
             [
                 str(clang),
-                "-std=c++23",
+                "-std=gnu++23",
                 *cxx_flags,
                 "-I",
                 str(include),
                 f"-fprebuilt-module-path={work}",
+                *(
+                    f"-fprebuilt-module-path={path}"
+                    for path in prebuilt_module_dirs
+                ),
                 "-c",
                 str(importer),
                 "-o",
@@ -1648,7 +2311,7 @@ def check_generated_output(
             run(
                 [
                     str(clang),
-                    "-std=c++23",
+                    "-std=gnu++23",
                     *cxx_flags,
                     str(importer_object),
                     *grouped_link_inputs(link_inputs),
@@ -1685,6 +2348,16 @@ def check_generated_output(
                     "the independent inline reference ABI"
                 )
 
+            if module.cpp_module == "rrr.completion_tracker":
+                require_completion_raw_symbols(
+                    "independent inline reference library",
+                    completion_raw_symbols(nm, root, reference),
+                )
+                require_completion_raw_symbols(
+                    "crate-generated object",
+                    completion_raw_symbols(nm, root, generated_object),
+                )
+
             if production is not None:
                 production_symbols = module_symbols(
                     nm, root, production, module.cpp_module
@@ -1698,6 +2371,11 @@ def check_generated_output(
                     raise GateError(
                         f"production {module.cpp_module} ABI differs from "
                         "the independent inline reference ABI"
+                    )
+                if module.cpp_module == "rrr.completion_tracker":
+                    require_completion_raw_symbols(
+                        "production library",
+                        completion_raw_symbols(nm, root, production),
                     )
 
 
@@ -1729,6 +2407,9 @@ def check(args: argparse.Namespace) -> None:
     ]
     cxx_flags = list(getattr(args, "cxx_flag", None) or [])
     link_flags = list(getattr(args, "link_flag", None) or [])
+    prebuilt_module_dirs = resolve_prebuilt_module_dirs(
+        root, list(getattr(args, "runtime_module_root", None) or [])
+    )
 
     generated_raw = getattr(args, "generated_dir", None)
     if generated_raw:
@@ -1744,6 +2425,7 @@ def check(args: argparse.Namespace) -> None:
             runtime_libraries=runtime_libraries,
             cxx_flags=cxx_flags,
             link_flags=link_flags,
+            prebuilt_module_dirs=prebuilt_module_dirs,
         )
     else:
         with tempfile.TemporaryDirectory(prefix="rrr-crate-mode-") as temporary:
@@ -1773,6 +2455,7 @@ def check(args: argparse.Namespace) -> None:
                 runtime_libraries=runtime_libraries,
                 cxx_flags=cxx_flags,
                 link_flags=link_flags,
+                prebuilt_module_dirs=prebuilt_module_dirs,
             )
 
     symbol_count = sum(len(spec.symbols) for spec in ABI_SPECS.values())
@@ -1785,7 +2468,8 @@ def check(args: argparse.Namespace) -> None:
         f"objects and the independent inline reference{production_label}, "
         "CallbackWrapper C++ layout/runtime/move parity, AvgStat layout/runtime, "
         "RpcError runtime contracts, ConnectionMetrics layout/concurrent/wrapping "
-        "runtime contracts, and "
+        "runtime contracts, CompletionTracker C++ layout/thread-safe lifecycle/"
+        "wrapping runtime contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )
 
@@ -1819,6 +2503,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=[],
         help=(
             "support archive appended to every link lane; may be repeated"
+        ),
+    )
+    parser.add_argument(
+        "--runtime-module-root",
+        action="append",
+        default=[],
+        help=(
+            "tree containing the configured rusty-cpp .pcm files needed by "
+            "crate modules that import rusty; may be repeated"
         ),
     )
     parser.add_argument(

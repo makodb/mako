@@ -53,3 +53,18 @@ block_ids = [
     "connection_metrics.usings",
     "connection_metrics.1",
 ]
+
+[[module]]
+cpp_module = "rrr.completion_tracker"
+output = "src/rrr/src/completion_tracker.rs"
+
+[[module.input]]
+source = "src/rrr/rpc/completion_tracker.cpp"
+block_ids = [
+    "completion_tracker.1",
+    "completion_tracker.2",
+    "completion_tracker.tracker",
+    "completion_tracker.status",
+    "completion_tracker.3",
+    "completion_tracker.6",
+]

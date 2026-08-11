@@ -10,25 +10,40 @@ been removed; it cannot be used as evidence for either half.
 The actual Cargo package now starts at `src/rrr/Cargo.toml`. Its checked-in
 Rust module inputs are generated from ordered inline-DSL block IDs through
 `scripts/extract_rrr_rust.py`; rustc and rusty-cpp consume those same generated
-bytes. The first five slices cover `base/callback_wrapper.cpp` block
+bytes. The first six slices cover `base/callback_wrapper.cpp` block
 `callback_wrapper.wrapper`, `rpc/internal_protocol.cpp` block
 `internal_protocol.1`, `misc/stat.cpp` block `stat.1`, all seven DSL blocks in
 `rpc/errors.cpp`, and `rpc/connection_metrics.cpp` blocks
-`connection_metrics.usings` and `connection_metrics.1`. They preserve the
+`connection_metrics.usings` and `connection_metrics.1`, plus all six selected
+blocks in `rpc/completion_tracker.cpp`. They preserve the
 production `rrr::detail::CallbackWrapper`, `rrr.internal_protocol`, `rrr.stat`,
-`rrr.errors`, and `rrr.connection_metrics` surfaces, their exact 57-symbol
+`rrr.errors`, `rrr.connection_metrics`, and `rrr.completion_tracker` surfaces,
+their exact 87-symbol
 combined provider-owned strong ABI, the callback, `AvgStat`, and public
-18-field `ConnectionMetrics` layouts and runtime behavior, and every public
+18-field `ConnectionMetrics` layouts and runtime behavior, every public
 RPC-error discriminant, name, category, and retry predicate. The callback
-template has no provider-owned specialization symbols. The metrics child uses
-one module-scoped structured preamble row for its direct atomic runtime include;
-neither slice needs an ownership map. Its counter updates are atomic
+template has no provider-owned specialization symbols. The metrics and
+completion children each use one module-scoped structured preamble row for the
+same direct atomic runtime include; neither needs an ownership map. Metrics
+counter updates are atomic
 read/modify/write operations, its in-flight gauge saturates through a CAS loop,
 and unsigned addition/multiplication deliberately retain the legacy wrapping
 behavior in both Rust and C++.
 
-This is deliberately partial: the manifest owns five of 38 named modules,
-five of 39 module-source units, 12 of 446 DSL blocks, and 390 of 11,482
+Completion tracking replaces the false `Cell`-based thread-safety claim with a
+mutex-protected configuration and containers plus relaxed atomic counters.
+Configuration is snapshotted before container locking, and every operation
+needing both containers takes set then list. The Rust public records/enums and
+the generated/inline/production C++ layouts are pinned separately; the C++
+tracker intentionally changes from 216 to 256 bytes, while no Rust-`Mutex` to
+C++ record-layout equivalence is claimed. Rust `Send + Sync`, three direct C++
+provider lanes, repeated eight-thread exact-counter stress, wrapping overflow,
+and the unchanged 30-symbol completion API (33 raw entries with constructor
+aliases and the module initializer) are all gated. Relaxed individual counters
+do not make `reset_stats` or `hit_rate` linearizable multi-field snapshots.
+
+This is deliberately partial: the manifest owns six of 38 named modules,
+six of 39 module-source units, 18 of 446 DSL blocks, and 654 of 11,482
 noncomment DSL code lines. The 11,482-line denominator is the pre-enrollment
 semantic DSL baseline; extraction copies owned bytes into the crate without
 deleting their inline source blocks. `cargo test --manifest-path
@@ -66,7 +81,7 @@ What remains is still material Goal-0 work:
 - 147 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
 - the 58-line `srpc_fiber.h` C ABI surface;
 - seven tolerated external-C kernels (382 noncomment code lines); and
-- 434 production DSL blocks not yet enrolled in the rustc crate.
+- 428 production DSL blocks not yet enrolled in the rustc crate.
 
 The immediate path is therefore generated module framing plus structured GMF
 preamble metadata, followed by complete manifest enrollment. The C kernels and
