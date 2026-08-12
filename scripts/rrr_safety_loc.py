@@ -36,7 +36,6 @@ FILES = [
     "src/rrr/rpc/heartbeat.cpp", "src/rrr/rpc/idempotency.cpp",
     "src/rrr/rpc/inmemory_channel.cpp",
     "src/rrr/rpc/load_balancer.cpp", "src/rrr/rpc/pollable_proxy.cpp",
-    "src/rrr/rpc/reconnect_policy.cpp",
     "src/rrr/rpc/request_queue.cpp", "src/rrr/rpc/server.cpp",
     "src/rrr/rpc/tcp_channel.cpp", "src/rrr/rpc/utils.cpp",
 ]

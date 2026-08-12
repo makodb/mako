@@ -78,6 +78,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "src/rrr/rpc/completion_tracker.cpp",
             "src/rrr/misc/rand.cpp",
             "src/rrr/rpc/request_options.cpp",
+            "src/rrr/rpc/reconnect_policy.cpp",
         )
         self.assertTrue(all(not (REPOSITORY / path).exists() for path in retired))
 
@@ -88,12 +89,12 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 31 hand-authored module units, "
-            "SCAFFOLD=1804 noncomment lines (842 DSL fences + 962 other)",
+            "source boundary: 30 hand-authored module units, "
+            "SCAFFOLD=1790 noncomment lines (838 DSL fences + 952 other)",
             output,
         )
         self.assertIn(
-            "payload census:   dsl=10615  generated=13479 "
+            "payload census:   dsl=10498  generated=13375 "
             "nonblank/non-// lines",
             output,
         )
@@ -206,6 +207,12 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "src/rrr/src/request_options.rs",
                     "src/rrr/src/request_options.rs",
                 ),
+                (
+                    "rrr.reconnect_policy",
+                    "reconnect_policy",
+                    "src/rrr/src/reconnect_policy.rs",
+                    "src/rrr/src/reconnect_policy.rs",
+                ),
             ],
         )
 
@@ -261,7 +268,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                     bool(line.strip()) and not line.lstrip().startswith("//")
                     for line in source.splitlines()
                 )
-        self.assertEqual(canonical_lines, 950)
+        self.assertEqual(canonical_lines, 1074)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -318,6 +325,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/connection_metrics.rs",
                 "src/rrr/src/completion_tracker.rs",
                 "src/rrr/src/rand.rs",
+                "src/rrr/src/reconnect_policy.rs",
                 "src/rrr/src/request_options.rs",
             },
         )
@@ -941,6 +949,11 @@ class CrateModeGateTests(unittest.TestCase):
             "rrr.request_options",
             ["rrr.rand"],
         )
+        GATE.require_exact_module_imports(
+            "export module rrr.reconnect_policy;\nimport rrr.rand;\n",
+            "rrr.reconnect_policy",
+            ["rrr.rand"],
+        )
         with self.assertRaisesRegex(GATE.GateError, "private imports must be exactly"):
             GATE.require_exact_module_imports(
                 "export module rrr.rand;\n"
@@ -1205,6 +1218,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.completion_tracker"),
             mock.Mock(cpp_module="rrr.rand"),
             mock.Mock(cpp_module="rrr.request_options"),
+            mock.Mock(cpp_module="rrr.reconnect_policy"),
         ]
 
         def symbols_for_module(
@@ -1236,6 +1250,12 @@ class CrateModeGateTests(unittest.TestCase):
         )
         request_options_raw.append(
             ("T", "initializer for module rrr.request_options")
+        )
+        reconnect_policy_raw = list(
+            GATE.ABI_SPECS["rrr.reconnect_policy"].symbols
+        )
+        reconnect_policy_raw.append(
+            ("T", "initializer for module rrr.reconnect_policy")
         )
 
         def compiled_object(
@@ -1272,6 +1292,10 @@ class CrateModeGateTests(unittest.TestCase):
                 GATE,
                 "request_options_raw_symbols",
                 return_value=request_options_raw,
+            ), mock.patch.object(
+                GATE,
+                "reconnect_policy_raw_symbols",
+                return_value=reconnect_policy_raw,
             ):
                 GATE.check_generated_output(
                     root=Path("/repository"),
@@ -1298,6 +1322,7 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.completion_tracker",
                 "rrr.rand",
                 "rrr.request_options",
+                "rrr.reconnect_policy",
                 "rrr",
             ],
         )
@@ -1379,6 +1404,16 @@ class CrateModeGateTests(unittest.TestCase):
                 "test provider", entries[:-1]
             )
 
+    def test_reconnect_policy_raw_symbol_ratchet_pins_all_12_entries(self) -> None:
+        entries = list(GATE.ABI_SPECS["rrr.reconnect_policy"].symbols)
+        entries.append(("T", "initializer for module rrr.reconnect_policy"))
+        self.assertEqual(len(entries), 12)
+        GATE.require_reconnect_policy_raw_symbols("test provider", entries)
+        with self.assertRaisesRegex(GATE.GateError, "exactly 12 raw"):
+            GATE.require_reconnect_policy_raw_symbols(
+                "test provider", entries[:-1]
+            )
+
     def test_runtime_module_root_must_exist_and_contain_rusty_pcm(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-runtime-pcm-test-") as temporary:
             root = Path(temporary)
@@ -1440,6 +1475,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.completion_tracker"),
             mock.Mock(cpp_module="rrr.rand"),
             mock.Mock(cpp_module="rrr.request_options"),
+            mock.Mock(cpp_module="rrr.reconnect_policy"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

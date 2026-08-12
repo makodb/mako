@@ -55,8 +55,8 @@ jobs:
           set -euo pipefail
           emitter_path="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-executable.txt")"
           emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-input.txt")"
-          canonical_input="src/rrr/src/request_options.rs"
-          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.request_options.cppm"
+          canonical_input="src/rrr/src/reconnect_policy.rs"
+          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.reconnect_policy.cppm"
 
           steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${steady_output}"

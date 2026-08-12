@@ -498,6 +498,56 @@ ABI_SPECS = {
             }
         ),
     ),
+    "rrr.reconnect_policy": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.reconnect_policy;",
+                "import rrr.rand;",
+                "export struct ReconnectPolicy",
+                "bool auto_reconnect;",
+                "uint32_t max_retries;",
+                "uint32_t initial_delay_ms;",
+                "uint32_t max_delay_ms;",
+                "double backoff_multiplier;",
+                "bool jitter_enabled;",
+                "static ReconnectPolicy new_();",
+                "static ReconnectPolicy aggressive();",
+                "static ReconnectPolicy conservative();",
+                "static ReconnectPolicy no_retry();",
+                "static constexpr bool is_send = true;",
+                "static constexpr bool is_sync = true;",
+                "export struct ReconnectCalculator",
+                "const ReconnectPolicy& policy;",
+                "rusty::Cell<uint32_t> retries;",
+                "static ReconnectCalculator new_(const ReconnectPolicy& policy);",
+                "bool should_retry() const;",
+                "uint32_t next_delay_ms() const;",
+                "uint32_t peek_delay_ms() const;",
+                "void reset() const;",
+                "uint32_t retry_count() const;",
+                "bool retries_exhausted() const;",
+                "rusty::wrapping_add(count",
+                "static_cast<double>(randgen_rand_raw())",
+                "randgen_rand_max()",
+            }
+        ),
+        symbols=frozenset(
+            ("T", symbol)
+            for symbol in {
+                "rrr::ReconnectPolicy@rrr.reconnect_policy::new_()",
+                "rrr::ReconnectPolicy@rrr.reconnect_policy::aggressive()",
+                "rrr::ReconnectPolicy@rrr.reconnect_policy::conservative()",
+                "rrr::ReconnectPolicy@rrr.reconnect_policy::no_retry()",
+                "rrr::ReconnectCalculator@rrr.reconnect_policy::new_(rrr::ReconnectPolicy@rrr.reconnect_policy const&)",
+                "rrr::ReconnectCalculator@rrr.reconnect_policy::should_retry() const",
+                "rrr::ReconnectCalculator@rrr.reconnect_policy::next_delay_ms() const",
+                "rrr::ReconnectCalculator@rrr.reconnect_policy::peek_delay_ms() const",
+                "rrr::ReconnectCalculator@rrr.reconnect_policy::reset() const",
+                "rrr::ReconnectCalculator@rrr.reconnect_policy::retry_count() const",
+                "rrr::ReconnectCalculator@rrr.reconnect_policy::retries_exhausted() const",
+            }
+        ),
+    ),
 }
 
 
@@ -812,6 +862,21 @@ def require_cpp_surfaces(
                         "generated request-options private flat import leaked "
                         f"an alias/using surface: {forbidden!r}"
                     )
+        elif module.cpp_module == "rrr.reconnect_policy":
+            require_exact_module_imports(
+                text, "rrr.reconnect_policy", ["rrr.rand"]
+            )
+            for forbidden in (
+                "namespace rand =",
+                "using ::rand::",
+                "using ::rrr::rand::",
+                "using ::rrr::randgen_",
+            ):
+                if forbidden in text:
+                    raise GateError(
+                        "generated reconnect-policy private flat import leaked "
+                        f"an alias/using surface: {forbidden!r}"
+                    )
 
     root_text = read_generated(output / "rrr.cppm", "root module")
     if "#include <rusty/sync/atomic.hpp>" in root_text:
@@ -1027,6 +1092,54 @@ def require_request_options_raw_symbols(
     )
 
 
+def reconnect_policy_raw_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+) -> list[tuple[str, str]]:
+    """Return reconnect-policy strong entries, including its initializer."""
+
+    output = run(
+        [str(nm), "--defined-only", "--demangle", str(binary)],
+        root,
+    )
+    initializer = "initializer for module rrr.reconnect_policy"
+    entries: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        match = NM_LINE.match(line)
+        if match is None:
+            continue
+        kind, symbol = match.groups()
+        if not kind.isupper() or kind in {"U", "V", "W"}:
+            continue
+        if (
+            symbol_owner_module(symbol) == "rrr.reconnect_policy"
+            or symbol == initializer
+        ):
+            entries.append((kind, symbol))
+    return entries
+
+
+def require_reconnect_policy_raw_symbols(
+    description: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    """Pin reconnect-policy's 11-function ABI and initializer exactly."""
+
+    expected = Counter(ABI_SPECS["rrr.reconnect_policy"].symbols)
+    expected[("T", "initializer for module rrr.reconnect_policy")] += 1
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} reconnect-policy ABI must contain exactly 12 raw "
+        "strong entries (11 API symbols and the module initializer); "
+        f"missing={missing!r}, unexpected={unexpected!r}"
+    )
+
+
 def function_parameter_open(symbol: str) -> int:
     """Return the outer function-parameter `(`, or the end for a data symbol."""
 
@@ -1177,6 +1290,7 @@ import rrr.connection_metrics;
 import rrr.errors;
 import rrr.internal_protocol;
 import rrr.rand;
+import rrr.reconnect_policy;
 import rrr.request_options;
 import rrr.stat;
 
@@ -1264,6 +1378,53 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
               decltype(&rrr::timeout_type_to_string),
               std::string_view (*)(rrr::TimeoutType)>);
+
+static_assert(std::is_standard_layout_v<rrr::ReconnectPolicy>);
+static_assert(std::is_trivially_copyable_v<rrr::ReconnectPolicy>);
+static_assert(rrr::ReconnectPolicy::is_send);
+static_assert(rrr::ReconnectPolicy::is_sync);
+static_assert(sizeof(rrr::ReconnectPolicy) == 32);
+static_assert(alignof(rrr::ReconnectPolicy) == 8);
+static_assert(offsetof(rrr::ReconnectPolicy, auto_reconnect) == 0);
+static_assert(offsetof(rrr::ReconnectPolicy, max_retries) == 4);
+static_assert(offsetof(rrr::ReconnectPolicy, initial_delay_ms) == 8);
+static_assert(offsetof(rrr::ReconnectPolicy, max_delay_ms) == 12);
+static_assert(offsetof(rrr::ReconnectPolicy, backoff_multiplier) == 16);
+static_assert(offsetof(rrr::ReconnectPolicy, jitter_enabled) == 24);
+static_assert(sizeof(rrr::ReconnectCalculator) == 16);
+static_assert(alignof(rrr::ReconnectCalculator) == 8);
+static_assert(!std::is_copy_constructible_v<rrr::ReconnectCalculator>);
+static_assert(std::is_move_constructible_v<rrr::ReconnectCalculator>);
+static_assert(std::is_same_v<
+              decltype(rrr::ReconnectCalculator::policy),
+              const rrr::ReconnectPolicy&>);
+static_assert(std::is_same_v<
+              decltype(rrr::ReconnectCalculator::retries),
+              rusty::Cell<std::uint32_t>>);
+static_assert(std::is_same_v<
+              decltype(&rrr::ReconnectPolicy::new_),
+              rrr::ReconnectPolicy (*)()>);
+static_assert(std::is_same_v<
+              decltype(&rrr::ReconnectCalculator::new_),
+              rrr::ReconnectCalculator (*)(const rrr::ReconnectPolicy&)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::ReconnectCalculator::should_retry),
+              bool (rrr::ReconnectCalculator::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::ReconnectCalculator::next_delay_ms),
+              std::uint32_t (rrr::ReconnectCalculator::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::ReconnectCalculator::peek_delay_ms),
+              std::uint32_t (rrr::ReconnectCalculator::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::ReconnectCalculator::reset),
+              void (rrr::ReconnectCalculator::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::ReconnectCalculator::retry_count),
+              std::uint32_t (rrr::ReconnectCalculator::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::ReconnectCalculator::retries_exhausted),
+              bool (rrr::ReconnectCalculator::*)() const>);
 
 static_assert(sizeof(rrr::RpcErrorCategory) == sizeof(std::int32_t));
 static_assert(sizeof(rrr::RpcError) == sizeof(std::int32_t));
@@ -2545,6 +2706,106 @@ int main() {
         rand_raw_draws != 1) {
         return 108;
     }
+
+    const auto reconnect_new = rrr::ReconnectPolicy::new_();
+    const auto reconnect_conservative = rrr::ReconnectPolicy::conservative();
+    const auto reconnect_aggressive = rrr::ReconnectPolicy::aggressive();
+    const auto reconnect_none = rrr::ReconnectPolicy::no_retry();
+    if (!reconnect_new.auto_reconnect || reconnect_new.max_retries != 5 ||
+        reconnect_new.initial_delay_ms != 1000 ||
+        reconnect_new.max_delay_ms != 30000 ||
+        reconnect_new.backoff_multiplier != 2.0 ||
+        !reconnect_new.jitter_enabled ||
+        reconnect_conservative.auto_reconnect != reconnect_new.auto_reconnect ||
+        reconnect_conservative.max_retries != reconnect_new.max_retries ||
+        reconnect_conservative.initial_delay_ms !=
+            reconnect_new.initial_delay_ms ||
+        reconnect_conservative.max_delay_ms != reconnect_new.max_delay_ms ||
+        reconnect_conservative.backoff_multiplier !=
+            reconnect_new.backoff_multiplier ||
+        reconnect_conservative.jitter_enabled !=
+            reconnect_new.jitter_enabled ||
+        !reconnect_aggressive.auto_reconnect ||
+        reconnect_aggressive.max_retries != 0 ||
+        reconnect_aggressive.initial_delay_ms != 100 ||
+        reconnect_aggressive.max_delay_ms != 5000 ||
+        reconnect_aggressive.backoff_multiplier != 1.5 ||
+        !reconnect_aggressive.jitter_enabled ||
+        reconnect_none.auto_reconnect || reconnect_none.max_retries != 0 ||
+        reconnect_none.initial_delay_ms != 0 ||
+        reconnect_none.max_delay_ms != 0 ||
+        reconnect_none.backoff_multiplier != 1.0 ||
+        reconnect_none.jitter_enabled) {
+        return 109;
+    }
+
+    auto reconnect_limited = reconnect_new;
+    reconnect_limited.max_retries = 3;
+    reconnect_limited.initial_delay_ms = 100;
+    reconnect_limited.max_delay_ms = 250;
+    reconnect_limited.jitter_enabled = false;
+    auto reconnect_calculator =
+        rrr::ReconnectCalculator::new_(reconnect_limited);
+    if (&reconnect_calculator.policy != &reconnect_limited ||
+        reconnect_calculator.retry_count() != 0 ||
+        reconnect_calculator.peek_delay_ms() != 100 ||
+        !reconnect_calculator.should_retry() ||
+        reconnect_calculator.retries_exhausted()) {
+        return 110;
+    }
+    install_rand_raw(17);
+    if (reconnect_calculator.next_delay_ms() != 100 ||
+        reconnect_calculator.retry_count() != 1 ||
+        reconnect_calculator.peek_delay_ms() != 200 ||
+        reconnect_calculator.next_delay_ms() != 200 ||
+        reconnect_calculator.retry_count() != 2 ||
+        reconnect_calculator.peek_delay_ms() != 250 ||
+        reconnect_calculator.next_delay_ms() != 250 ||
+        reconnect_calculator.retry_count() != 3 ||
+        reconnect_calculator.should_retry() ||
+        !reconnect_calculator.retries_exhausted() || rand_raw_draws != 0) {
+        return 111;
+    }
+    reconnect_calculator.reset();
+    if (reconnect_calculator.retry_count() != 0 ||
+        !reconnect_calculator.should_retry() ||
+        reconnect_calculator.retries_exhausted()) {
+        return 112;
+    }
+
+    auto reconnect_unlimited = reconnect_aggressive;
+    reconnect_unlimited.jitter_enabled = false;
+    auto unlimited_calculator =
+        rrr::ReconnectCalculator::new_(reconnect_unlimited);
+    auto no_retry_calculator = rrr::ReconnectCalculator::new_(reconnect_none);
+    if (!unlimited_calculator.should_retry() ||
+        unlimited_calculator.retries_exhausted() ||
+        no_retry_calculator.should_retry() ||
+        !no_retry_calculator.retries_exhausted()) {
+        return 113;
+    }
+
+    auto reconnect_jitter = reconnect_new;
+    reconnect_jitter.initial_delay_ms = 100;
+    reconnect_jitter.max_delay_ms = 1000;
+    auto jitter_calculator =
+        rrr::ReconnectCalculator::new_(reconnect_jitter);
+    install_rand_raw(0);
+    if (jitter_calculator.next_delay_ms() != 50 || rand_raw_draws != 1 ||
+        jitter_calculator.peek_delay_ms() != 200 || rand_raw_draws != 1) {
+        return 114;
+    }
+    jitter_calculator.reset();
+    install_rand_raw(std::numeric_limits<std::int32_t>::max());
+    if (jitter_calculator.next_delay_ms() != 150 || rand_raw_draws != 1) {
+        return 115;
+    }
+    reconnect_jitter.initial_delay_ms = 0;
+    jitter_calculator.reset();
+    install_rand_raw(123);
+    if (jitter_calculator.next_delay_ms() != 0 || rand_raw_draws != 0) {
+        return 116;
+    }
     return 0;
 }
 """
@@ -2775,6 +3036,11 @@ def check_generated_output(
                     "crate-generated object",
                     request_options_raw_symbols(nm, root, generated_object),
                 )
+            elif module.cpp_module == "rrr.reconnect_policy":
+                require_reconnect_policy_raw_symbols(
+                    "crate-generated object",
+                    reconnect_policy_raw_symbols(nm, root, generated_object),
+                )
 
             if production is not None:
                 production_symbols = module_symbols(
@@ -2804,6 +3070,11 @@ def check_generated_output(
                     require_request_options_raw_symbols(
                         "production library",
                         request_options_raw_symbols(nm, root, production),
+                    )
+                elif module.cpp_module == "rrr.reconnect_policy":
+                    require_reconnect_policy_raw_symbols(
+                        "production library",
+                        reconnect_policy_raw_symbols(nm, root, production),
                     )
 
 
@@ -2887,7 +3158,8 @@ def check(args: argparse.Namespace) -> None:
         "runtime contracts, CompletionTracker C++ layout/thread-safe lifecycle/"
         "wrapping runtime contracts, RandomGenerator byte-adapter/single-evaluation/"
         "precondition/wrapping/empty-weight/C-FFI runtime contracts, "
-        "RequestOptions layout/factory/retry/timeout/jitter runtime contracts, and "
+        "RequestOptions layout/factory/retry/timeout/jitter runtime contracts, "
+        "ReconnectPolicy layout/factory/backoff/retry/jitter runtime contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )
 

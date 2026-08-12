@@ -1020,11 +1020,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Fixed pre-existing AddrInfo::release() raw pointer violation in utils.hpp
         - ~170 LOC (connection_state.hpp) + ~50 LOC integration changes
       - [x] *high* 1.2 Add Reconnection Policy Configuration [Plan: doc/rpc/phase1_reconnect_policy.md] [DONE]
-        - Created `src/rrr/rpc/reconnect_policy.hpp` (~200 LOC)
+        - Canonical source is now `src/rrr/src/reconnect_policy.rs`; rusty-cpp
+          generates the `rrr.reconnect_policy` C++ module
         - ReconnectPolicy struct with all config fields
-        - Policy presets: AGGRESSIVE (fast retries), CONSERVATIVE (slower), NO_RETRY
+        - Policy presets: aggressive (fast/unlimited), conservative (default), no_retry
         - ReconnectCalculator class with exponential backoff and jitter
-        - Thread-safe via rusty::Cell for retry_count_
+        - Interior-mutable retry counter via Cell (Send, not Sync)
       - [x] *medium* 1.3 Implement Automatic Reconnection Logic [deps: 1.1, 1.2] [Plan: doc/rpc/phase1_auto_reconnect.md] [DONE]
         - Added reconnect() method to ClientConnection and Client classes
         - Added set_reconnect_policy() and reconnect_policy() methods

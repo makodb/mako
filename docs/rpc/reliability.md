@@ -67,20 +67,20 @@ if (state == ConnectionState::CONNECTED) {
 Reconnection is configured via `ReconnectPolicy`:
 
 ```cpp
-#include "rpc/reconnect_policy.hpp"
+import rrr.reconnect_policy;
 
 // Preset policies
-auto aggressive = ReconnectPolicy::AGGRESSIVE();  // Fast retries, more attempts
-auto conservative = ReconnectPolicy::CONSERVATIVE();  // Slower, fewer attempts
-auto no_retry = ReconnectPolicy::NO_RETRY();  // No automatic reconnection
+auto aggressive = ReconnectPolicy::aggressive();  // Fast retries, unlimited attempts
+auto conservative = ReconnectPolicy::conservative();  // Default bounded retries
+auto no_retry = ReconnectPolicy::no_retry();  // No automatic reconnection
 
 // Custom policy
-ReconnectPolicy custom;
+auto custom = ReconnectPolicy::new_();
 custom.max_retries = 5;
-custom.base_delay_ms = 100;
+custom.initial_delay_ms = 100;
 custom.max_delay_ms = 10000;
 custom.backoff_multiplier = 2.0;
-custom.jitter_factor = 0.1;
+custom.jitter_enabled = true;
 
 // Apply to client
 client->set_reconnect_policy(custom);
@@ -432,7 +432,7 @@ auto result = pool.reconnect_all(config);
 | File | Description |
 |------|-------------|
 | `connection_state.hpp` | Connection state machine |
-| `reconnect_policy.hpp` | Reconnection policy and backoff |
+| `rrr.reconnect_policy` | Reconnection policy and backoff (canonical Rust) |
 | `circuit_breaker.hpp` | Circuit breaker pattern |
 | `request_queue.hpp` | Request queue for buffering |
 | `rrr.request_options` | Timeout and retry configuration C++ module |

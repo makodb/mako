@@ -81,10 +81,10 @@ git submodule update --init third-party/rusty-cpp
 
 ## New Headers
 
-| Header | Purpose |
-|--------|---------|
+| Header or module | Purpose |
+|------------------|---------|
 | `rpc/connection_state.hpp` | Connection state machine |
-| `rpc/reconnect_policy.hpp` | Reconnection configuration |
+| `rrr.reconnect_policy` | Reconnection configuration module |
 | `rpc/circuit_breaker.hpp` | Circuit breaker pattern |
 | `rpc/request_queue.hpp` | Request buffering |
 | `rrr.request_options` | Per-request options C++ module |
@@ -116,7 +116,7 @@ client->close();
 Enable automatic reconnection for resilience:
 
 ```cpp
-#include "rpc/reconnect_policy.hpp"
+import rrr.reconnect_policy;
 
 auto client = Client::create(poll_thread);
 

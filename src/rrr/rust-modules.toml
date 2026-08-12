@@ -33,3 +33,7 @@ source = "src/rrr/src/rand.rs"
 [[module]]
 cpp_module = "rrr.request_options"
 source = "src/rrr/src/request_options.rs"
+
+[[module]]
+cpp_module = "rrr.reconnect_policy"
+source = "src/rrr/src/reconnect_policy.rs"

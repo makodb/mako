@@ -78,7 +78,8 @@ std::string_view connection_state_to_string(ConnectionState state);
 
 ## Reconnection Policy
 
-**Header:** `src/rrr/rpc/reconnect_policy.hpp`
+**Module:** `rrr.reconnect_policy` (canonical Rust source:
+`src/rrr/src/reconnect_policy.rs`)
 
 ### ReconnectPolicy Struct
 
@@ -86,21 +87,18 @@ Configuration for automatic reconnection behavior.
 
 ```cpp
 struct ReconnectPolicy {
-    // Configuration
-    uint32_t max_retries = 5;           // Max reconnection attempts (0 = infinite)
-    uint32_t base_delay_ms = 100;       // Initial delay before first retry
-    uint32_t max_delay_ms = 30000;      // Maximum delay cap
-    double backoff_multiplier = 2.0;    // Exponential backoff multiplier
-    double jitter_factor = 0.1;         // Random jitter (0.0 - 1.0)
-    bool enabled = true;                // Enable/disable reconnection
+    bool auto_reconnect;
+    uint32_t max_retries;           // 0 = unlimited
+    uint32_t initial_delay_ms;
+    uint32_t max_delay_ms;
+    double backoff_multiplier;
+    bool jitter_enabled;
 
     // Presets
-    static ReconnectPolicy AGGRESSIVE();    // Fast retries, more attempts
-    static ReconnectPolicy CONSERVATIVE();  // Slower, fewer attempts
-    static ReconnectPolicy NO_RETRY();      // Disabled
-
-    // Methods
-    bool can_retry(uint32_t attempt) const;
+    static ReconnectPolicy new_();
+    static ReconnectPolicy aggressive();
+    static ReconnectPolicy conservative();
+    static ReconnectPolicy no_retry();
 };
 ```
 
@@ -109,23 +107,21 @@ struct ReconnectPolicy {
 Calculates backoff delays with jitter.
 
 ```cpp
-class ReconnectCalculator {
-public:
-    ReconnectCalculator(const ReconnectPolicy& policy);
+struct ReconnectCalculator {
+    static ReconnectCalculator new_(const ReconnectPolicy& policy);
 
     // Reset retry counter
-    void reset();
+    void reset() const;
 
     // Calculate next delay (ms) and increment counter
-    uint32_t next_delay();
+    uint32_t next_delay_ms() const;
 
     // Peek at next delay without incrementing
-    uint32_t peek_delay() const;
+    uint32_t peek_delay_ms() const;
 
     // Check if more retries allowed
-    bool can_retry() const;
-
-    // Get current retry count
+    bool should_retry() const;
+    bool retries_exhausted() const;
     uint32_t retry_count() const;
 };
 ```
@@ -600,8 +596,8 @@ public:
     bool valid() const;
 
     // Configuration
-    void set_reconnect_policy(const ReconnectPolicy& policy);
-    const ReconnectPolicy& reconnect_policy() const;
+    void set_reconnect_policy(const ReconnectPolicy& policy) const;
+    ReconnectPolicy reconnect_policy() const;
     void set_buffering_config(const BufferingConfig& config) const;
     void set_keepalive_config(const KeepaliveConfig& config);
 
@@ -779,7 +775,7 @@ auto fu = client->request_with_options(RPC_IDEMPOTENT_METHOD, opts, [](BinaryWri
 
 ```cpp
 // Configure reconnection
-client->set_reconnect_policy(ReconnectPolicy::AGGRESSIVE());
+client->set_reconnect_policy(ReconnectPolicy::aggressive());
 
 // Configure buffering
 BufferingConfig buffering;

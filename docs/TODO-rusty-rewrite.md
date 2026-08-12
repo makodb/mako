@@ -101,11 +101,9 @@ The inmemory-channel DSL sweep is complete: all 4 channel-adjacent
 aggregates (Switchboard, Listener, Factory, Channel) + both Inner
 POD aggregates + the TcpFactory peer are now `already-dsl`.
 
-Remaining `trivial` item:
-
-  - `ReconnectPolicy` — policy-manual (documented decision to keep
-    hand-written so the `Policy p; p.x = ...` customize idiom stays
-    transparent).
+The former remaining `trivial` item, `ReconnectPolicy`, is now canonical Rust
+in `src/rrr/src/reconnect_policy.rs`; its explicit factory preserves the
+documented defaults while callers may still mutate the returned aggregate.
 
 `AnyMessageRegistry` was previously listed here; it has now been
 converted from a static-only class to `namespace any_message_registry`
@@ -144,8 +142,8 @@ cleared every Sink / Source POD wrapper:
 | FdSink + FdSource          |  47 | refactor-then-dsl  | DSL fd-wrapper aggregates; `::read`/`::write` syscall loops live in `fd_*_read`/`fd_*_write` free fns. |
 | SinkBase + SourceBase      |  10 | refactor-then-dsl  | DSL `pub trait`; methods renamed `write`→`write_bytes`/`read`→`read_bytes` (`write` is in rusty-cpp's `escape_cpp_keyword` list). 12 BinaryWriteArchive + BinaryReadArchive call sites + 6 adapter overrides updated. |
 
-The remaining trivial item is ReconnectPolicy (policy-manual; ~20
-callers rely on `Policy p; p.x = ...;` customize idiom).
+The former remaining trivial item, ReconnectPolicy, is now canonical Rust and
+its hand-authored carrier has been deleted.
 AnyMessageRegistry has been converted to a namespace and no longer
 appears in the inventory.
 
@@ -206,7 +204,7 @@ The `trivial` bucket has 6 decls totaling 178 LOC. The 2 newcomers (`BufferSink`
 
 | Decl                              | Why it isn't a free win                                                                                                                                                                                                                                                       |
 |-----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ReconnectPolicy` (20 LOC)        | Source comment documents an explicit decision to keep hand-written — ~20 callers rely on the `Policy p; p.x = ...;` mutate-and-customize idiom, which the DSL's aggregate emit doesn't preserve as transparently.                                                            |
+| ~~`ReconnectPolicy` (20 LOC)~~    | Canonical Rust now owns the aggregate and explicit factories; the former carrier is deleted.                                                                                                                                                                       |
 | `TestMgr` (20 LOC)                | Field is `rusty::Vec<TestCase*>`; method bodies live out-of-class and take raw `int argc, char* argv[]`. Migrating means co-migrating ~50 lines of impl bodies and managing the `OnceCell<TestMgr>` singleton init dance.                                                     |
 | `BufferSink` (21 LOC)             | Methods take `const void* p, size_t n` — DSL grammar doesn't yet accept `const void*`. Migration first needs a `&[u8]` reshape across the SinkBase/SourceBase hierarchy (call out as a Phase 4 precondition: see `Phase 4 — Marshal / Cursor`).                                  |
 | ~~`AnyMessageRegistry`~~ (was 30 LOC) | Converted to `namespace any_message_registry` — was a static-only class with no fields. The bookkeeping moved into the namespace's anon-namespace `SpinMutex<AnyMessageRegistryMap>` helper. No longer in the inventory.                                                       |

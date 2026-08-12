@@ -116,7 +116,6 @@ src/rrr/
     connection_metrics.hpp # Performance metrics
     heartbeat.hpp       # Keep-alive probes
     load_balancer.hpp   # Pool load-balancing strategies
-    reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
     pollable_proxy.h    # Pollable proxy facade + typed Arc adapter helpers
     errors.hpp          # Error code definitions
@@ -124,6 +123,7 @@ src/rrr/
 
   src/                # Canonical Rust module sources
     request_options.rs # Per-request configuration module
+    reconnect_policy.rs # Reconnect policy and backoff calculator module
 
   reactor/            # Event loop and fiber system
     reactor.h           # Core event loop scheduler (482 lines)
@@ -1421,12 +1421,13 @@ NEW --> CONNECTING --> CONNECTED --> DISCONNECTING --> DISCONNECTED
                     +-- (reconnect) -----+
 ```
 
-States tracked via `rusty::Cell<ConnectionState>` for thread-safe interior mutability.
+States are tracked via `rusty::Cell<ConnectionState>` for single-threaded
+interior mutability; `Cell` is not a thread-safety primitive.
 
 ### Automatic Reconnection
 
 ```cpp srpc-compile
-ReconnectPolicy policy;
+auto policy = ReconnectPolicy::new_();
 policy.max_retries = 10;            // 0 for unlimited
 policy.initial_delay_ms = 100;      // Initial delay
 policy.max_delay_ms = 30000;        // Max delay (30s)

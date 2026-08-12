@@ -1852,7 +1852,6 @@ what triggers the `is_send`/`is_sync` emission:
 | `rpc/pollable_proxy.cpp` | 1 | ✅ (added) | yes |
 | `rpc/server.cpp` | 1 | ✅ | yes |
 | `misc/serializable.cpp` | 1 | ✅ | yes |
-| `rpc/reconnect_policy.cpp` | 1 | ✅ | no |
 | `reactor/reactor.cpp` | 1 | ✅ | no |
 | **`reactor/future.cpp`** | **2** | **❌** | **no** |
 
@@ -3339,10 +3338,13 @@ one §7.45 names: Rust itself has no field-default syntax (you write
 change fixes this -- it is a language-expressiveness gap, not a
 missing feature.
 
-That legitimises the whole `#[cpp_ctor]` default-init family
-(reconnect_policy.cpp, tcp_channel.cpp, fiber_channel.cpp, server.cpp)
+That legitimises the remaining `#[cpp_ctor]` default-init family
+(tcp_channel.cpp, fiber_channel.cpp, server.cpp)
 and matches CLAUDE.md, which already documents it as a known limit to
 design around via `fn new`/factory functions.
+
+`rrr.reconnect_policy` has since taken that design-around: canonical Rust owns
+an explicit `ReconnectPolicy::new()` factory, and its former carrier is gone.
 
 So the scoreboard is 8 stale / 1 confirmed-real, and the split falls
 exactly where §7.45 predicts:
