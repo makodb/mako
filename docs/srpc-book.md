@@ -111,7 +111,6 @@ src/rrr/
     client.hpp          # Client, Future, and connection APIs
     server.hpp          # Server, listener, dispatch (684 lines)
     callbacks.hpp       # Connection lifecycle callbacks
-    circuit_breaker.hpp # Fail-fast fault tolerance
     connection_state.hpp# Connection state machine
     connection_metrics.hpp # Performance metrics
     heartbeat.hpp       # Keep-alive probes
@@ -122,6 +121,7 @@ src/rrr/
     utils.hpp/cpp       # RPC utilities
 
   src/                # Canonical Rust module sources
+    circuit_breaker.rs # Circuit-breaker state machine module
     request_options.rs # Per-request configuration module
     reconnect_policy.rs # Reconnect policy and backoff calculator module
 
@@ -1440,10 +1440,10 @@ policy.jitter_enabled = true;       // Randomize delay to avoid herd effects
 Prevents cascade failures using the CLOSED/OPEN/HALF_OPEN pattern:
 
 ```cpp srpc-compile
-CircuitBreakerConfig cb;
-cb.failure_threshold = 5;       // Open after 5 consecutive failures
-cb.success_threshold = 2;       // Close after 2 successes in half-open
-cb.timeout_ms = 5000;           // Try again after 5 seconds
+auto config = CircuitBreakerConfig::defaults();
+config.failure_threshold = 5;       // Open after 5 consecutive failures
+config.success_threshold = 2;       // Close after 2 successes in half-open
+config.timeout_ms = 5000;           // Try again after 5 seconds
 ```
 
 ### Request Buffering

@@ -17,3 +17,9 @@ name = "rrr.rand"
 includes = [
     { path = "misc/srpc_rand.h", form = "quote" },
 ]
+
+[[module]]
+name = "rrr.circuit_breaker"
+includes = [
+    { path = "misc/srpc_timing.h", form = "quote" },
+]

@@ -30,7 +30,7 @@ FILES = [
     "src/rrr/reactor/epoll_wrapper.cc", "src/rrr/reactor/fiber.cpp",
     "src/rrr/reactor/future.cpp", "src/rrr/reactor/reactor.cpp",
     "src/rrr/rpc/callbacks.cpp", "src/rrr/rpc/channel.cpp",
-    "src/rrr/rpc/circuit_breaker.cpp", "src/rrr/rpc/client.cpp",
+    "src/rrr/rpc/client.cpp",
     "src/rrr/rpc/connection_state.cpp",
     "src/rrr/rpc/fiber_channel.cpp", "src/rrr/rpc/frame_codec.cpp",
     "src/rrr/rpc/heartbeat.cpp", "src/rrr/rpc/idempotency.cpp",

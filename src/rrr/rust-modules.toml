@@ -37,3 +37,7 @@ source = "src/rrr/src/request_options.rs"
 [[module]]
 cpp_module = "rrr.reconnect_policy"
 source = "src/rrr/src/reconnect_policy.rs"
+
+[[module]]
+cpp_module = "rrr.circuit_breaker"
+source = "src/rrr/src/circuit_breaker.rs"

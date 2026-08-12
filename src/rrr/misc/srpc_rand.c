@@ -11,12 +11,9 @@
 
 #include <pthread.h>
 #include <stdlib.h>
-#include <stdint.h>
 
 #include "srpc_rand.h"
-
-/* The cycle-counter read lives in srpc_timing.c (also plain C). */
-uint64_t srpc_rdtsc(void);
+#include "srpc_timing.h"
 
 #if defined(__APPLE__) || defined(__clang__)
 

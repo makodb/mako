@@ -79,6 +79,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "src/rrr/misc/rand.cpp",
             "src/rrr/rpc/request_options.cpp",
             "src/rrr/rpc/reconnect_policy.cpp",
+            "src/rrr/rpc/circuit_breaker.cpp",
         )
         self.assertTrue(all(not (REPOSITORY / path).exists() for path in retired))
 
@@ -89,12 +90,12 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 30 hand-authored module units, "
-            "SCAFFOLD=1790 noncomment lines (838 DSL fences + 952 other)",
+            "source boundary: 29 hand-authored module units, "
+            "SCAFFOLD=1769 noncomment lines (828 DSL fences + 941 other)",
             output,
         )
         self.assertIn(
-            "payload census:   dsl=10498  generated=13375 "
+            "payload census:   dsl=10302  generated=13186 "
             "nonblank/non-// lines",
             output,
         )
@@ -102,7 +103,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "12 compatibility headers, SCAFFOLD=147 noncomment lines", output
         )
         self.assertIn(
-            "terminal C:      2 ABI headers/69 lines; 7 kernels/383 lines",
+            "terminal C:      3 ABI headers/84 lines; 7 kernels/388 lines",
             output,
         )
 
@@ -136,6 +137,15 @@ class CheckedInCanaryTests(unittest.TestCase):
                             "includes": [
                                 {
                                     "path": "misc/srpc_rand.h",
+                                    "form": "quote",
+                                }
+                            ],
+                        },
+                        {
+                            "name": "rrr.circuit_breaker",
+                            "includes": [
+                                {
+                                    "path": "misc/srpc_timing.h",
                                     "form": "quote",
                                 }
                             ],
@@ -213,6 +223,12 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "src/rrr/src/reconnect_policy.rs",
                     "src/rrr/src/reconnect_policy.rs",
                 ),
+                (
+                    "rrr.circuit_breaker",
+                    "circuit_breaker",
+                    "src/rrr/src/circuit_breaker.rs",
+                    "src/rrr/src/circuit_breaker.rs",
+                ),
             ],
         )
 
@@ -268,7 +284,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                     bool(line.strip()) and not line.lstrip().startswith("//")
                     for line in source.splitlines()
                 )
-        self.assertEqual(canonical_lines, 1074)
+        self.assertEqual(canonical_lines, 1283)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -327,10 +343,11 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/rand.rs",
                 "src/rrr/src/reconnect_policy.rs",
                 "src/rrr/src/request_options.rs",
+                "src/rrr/src/circuit_breaker.rs",
             },
         )
 
-    def test_rand_unsafe_allowances_are_confined_to_the_c_boundary(self) -> None:
+    def test_unsafe_allowances_are_confined_to_the_two_c_boundaries(self) -> None:
         with (REPOSITORY / "src/rrr/Cargo.toml").open("rb") as stream:
             cargo = tomllib.load(stream)
         self.assertEqual(cargo["lints"]["rust"]["unsafe_code"], "deny")
@@ -344,12 +361,13 @@ class CheckedInCanaryTests(unittest.TestCase):
         )
         rust_root = REPOSITORY / "src/rrr/src"
         rand_path = rust_root / "rand.rs"
+        circuit_path = rust_root / "circuit_breaker.rs"
         for path in sorted(rust_root.rglob("*.rs")):
-            if path == rand_path:
+            if path in {rand_path, circuit_path}:
                 continue
             self.assertIsNone(
                 unsafe_syntax.search(path.read_text(encoding="utf-8")),
-                f"unsafe Rust escaped the audited rand boundary: {path}",
+                f"unsafe Rust escaped the audited C boundaries: {path}",
             )
 
         rust = rand_path.read_text(encoding="utf-8")
@@ -387,6 +405,34 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertIsNone(
             unsafe_syntax.search(remainder),
             "rand.rs gained unsafe syntax outside its three exact C-boundary scopes",
+        )
+
+        circuit = circuit_path.read_text(encoding="utf-8")
+        circuit_sections = (
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                unsafe extern "C" {
+                    fn srpc_clock_monotonic_us() -> u64;
+                }
+                """
+            ).strip(),
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                pub fn current_time_us() -> u64 {
+                    unsafe { srpc_clock_monotonic_us() }
+                }
+                """
+            ).strip(),
+        )
+        remainder = circuit
+        for section in circuit_sections:
+            self.assertEqual(circuit.count(section), 1)
+            remainder = remainder.replace(section, "", 1)
+        self.assertIsNone(
+            unsafe_syntax.search(remainder),
+            "circuit_breaker.rs gained unsafe syntax outside its exact clock boundary",
         )
 
 
@@ -954,6 +1000,11 @@ class CrateModeGateTests(unittest.TestCase):
             "rrr.reconnect_policy",
             ["rrr.rand"],
         )
+        GATE.require_exact_module_imports(
+            "export module rrr.circuit_breaker;\n",
+            "rrr.circuit_breaker",
+            [],
+        )
         with self.assertRaisesRegex(GATE.GateError, "private imports must be exactly"):
             GATE.require_exact_module_imports(
                 "export module rrr.rand;\n"
@@ -1219,6 +1270,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.rand"),
             mock.Mock(cpp_module="rrr.request_options"),
             mock.Mock(cpp_module="rrr.reconnect_policy"),
+            mock.Mock(cpp_module="rrr.circuit_breaker"),
         ]
 
         def symbols_for_module(
@@ -1256,6 +1308,12 @@ class CrateModeGateTests(unittest.TestCase):
         )
         reconnect_policy_raw.append(
             ("T", "initializer for module rrr.reconnect_policy")
+        )
+        circuit_breaker_raw = list(
+            GATE.ABI_SPECS["rrr.circuit_breaker"].symbols
+        )
+        circuit_breaker_raw.append(
+            ("T", "initializer for module rrr.circuit_breaker")
         )
 
         def compiled_object(
@@ -1296,6 +1354,10 @@ class CrateModeGateTests(unittest.TestCase):
                 GATE,
                 "reconnect_policy_raw_symbols",
                 return_value=reconnect_policy_raw,
+            ), mock.patch.object(
+                GATE,
+                "circuit_breaker_raw_symbols",
+                return_value=circuit_breaker_raw,
             ):
                 GATE.check_generated_output(
                     root=Path("/repository"),
@@ -1323,6 +1385,7 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.rand",
                 "rrr.request_options",
                 "rrr.reconnect_policy",
+                "rrr.circuit_breaker",
                 "rrr",
             ],
         )
@@ -1414,6 +1477,16 @@ class CrateModeGateTests(unittest.TestCase):
                 "test provider", entries[:-1]
             )
 
+    def test_circuit_breaker_raw_symbol_ratchet_pins_all_21_entries(self) -> None:
+        entries = list(GATE.ABI_SPECS["rrr.circuit_breaker"].symbols)
+        entries.append(("T", "initializer for module rrr.circuit_breaker"))
+        self.assertEqual(len(entries), 21)
+        GATE.require_circuit_breaker_raw_symbols("test provider", entries)
+        with self.assertRaisesRegex(GATE.GateError, "exactly 21 raw"):
+            GATE.require_circuit_breaker_raw_symbols(
+                "test provider", entries[:-1]
+            )
+
     def test_runtime_module_root_must_exist_and_contain_rusty_pcm(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-runtime-pcm-test-") as temporary:
             root = Path(temporary)
@@ -1476,6 +1549,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.rand"),
             mock.Mock(cpp_module="rrr.request_options"),
             mock.Mock(cpp_module="rrr.reconnect_policy"),
+            mock.Mock(cpp_module="rrr.circuit_breaker"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

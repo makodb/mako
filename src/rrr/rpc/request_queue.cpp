@@ -104,7 +104,7 @@ using QueuedRequestCallback = rusty::Function<void(int32_t)>;
 // `#if RUSTYCPP_RUST` block below is the source of truth; the
 // transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
 // block. Same shape as `heartbeat_time_us` (heartbeat.cpp) and
-// `current_time_us` (circuit_breaker.cpp).
+// `current_time_us` (canonical rrr.circuit_breaker).
 #if RUSTYCPP_RUST
 fn queued_request_time_us() -> u64 {
     rusty::sys::time::clock_monotonic_us()

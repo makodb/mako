@@ -1,7 +1,7 @@
 # `rrr` canonical Rust canary
 
 The Cargo package rooted at `src/rrr/Cargo.toml` is the canonical source for
-nine production modules:
+ten production modules:
 
 - `rrr.callback_wrapper`
 - `rrr.internal_protocol`
@@ -12,6 +12,7 @@ nine production modules:
 - `rrr.rand`
 - `rrr.request_options`
 - `rrr.reconnect_policy`
+- `rrr.circuit_breaker`
 
 Their sources are the matching files below `src/rrr/src`. rustc compiles those
 files directly, and rusty-cpp translates the same bytes into complete C++
@@ -20,13 +21,13 @@ the generated `.cppm` children are the only C++ production providers for these
 modules. The inert `cpp_abi` markers remain part of the canonical Rust where a
 legacy C++ surface needs an adapter.
 
-This is still partial Goal 0. These nine modules account for 27 former inline
-blocks and 984 lines in the fixed historical enrollment baseline; their
-canonical files currently contain 1,074 nonblank, non-`//` Rust lines. The
-remaining 29 named modules and 30 module-source units still contain 419 inline
-DSL blocks and 10,498 nonblank, non-`//` DSL lines. The fixed pre-promotion baseline is
+This is still partial Goal 0. These ten modules account for 32 former inline
+blocks and 1,180 lines in the fixed historical enrollment baseline; their
+canonical files currently contain 1,283 nonblank, non-`//` Rust lines. The
+remaining 28 named modules and 29 module-source units still contain 414 inline
+DSL blocks and 10,302 nonblank, non-`//` DSL lines. The fixed pre-promotion baseline is
 446 blocks and 11,482 lines. A successful Cargo build therefore proves the
-canonical nine-module slice, not all of `src/rrr`.
+canonical ten-module slice, not all of `src/rrr`.
 
 ## Ownership and source census
 
@@ -37,7 +38,7 @@ confined to the crate source directory, and may not traverse symlinks.
 
 `scripts/extract_rrr_rust.py` now validates canonical sources and generates
 only the crate index, `src/lib.rs`, from that manifest. It does not regenerate
-the nine module bodies from C++. Check mode requires the Rust source census to
+the ten module bodies from C++. Check mode requires the Rust source census to
 be exactly the manifest sources plus `lib.rs`, and requires every canonical
 source to retain exact UTF-8/LF bytes; the driver rejects CRLF rather than
 normalizing it. Schema 1 remains only for focused legacy-driver tests; future
@@ -71,7 +72,7 @@ lowering produces `rrr::detail::CallbackWrapper`; it does not invent an
 
 ## Generated production modules
 
-One rusty-cpp crate invocation generates the nine child interfaces and the
+One rusty-cpp crate invocation generates the ten child interfaces and the
 partial root:
 
 ```sh
@@ -81,7 +82,7 @@ rusty-cpp-transpiler --crate src/rrr/Cargo.toml \
   --module-preamble src/rrr/module-preambles.toml
 ```
 
-Production always compiles the nine generated children alongside the 29
+Production always compiles the ten generated children alongside the 28
 remaining inline C++ modules. There is no OFF/ON provider substitution and no
 legacy inline-reference archive. The generated `rrr.cppm` root is compiled by
 the gate after all children as an import-closure proof, but remains outside the
@@ -93,7 +94,9 @@ that cannot be inferred from ordinary Rust imports:
 - `rrr.connection_metrics` and `rrr.completion_tracker` each receive one
   direct `#include <rusty/sync/atomic.hpp>`;
 - `rrr.rand` receives one quoted `#include "misc/srpc_rand.h"` for its
-  tolerated plain-C PRNG kernel boundary.
+  tolerated plain-C PRNG kernel boundary;
+- `rrr.circuit_breaker` receives one quoted `#include "misc/srpc_timing.h"`
+  for the monotonic-clock function in the terminal timing kernel.
 
 The gate requires each include exactly once, in the global module fragment,
 and rejects leakage into any sibling or the partial root. `rrr.rand` privately
@@ -112,14 +115,15 @@ debug rustc and unsigned C++ agree at `u32::MAX`.
 Rand retains its generated C++ ABI façades: `Vec<u8>` is adapted to a
 byte-preserving `std::string`, and `RandWeightVec` is adapted to
 `std::vector<double>` with a const-reference selection parameter. The semantic
-helpers remain module-local. The only unsafe Rust is confined to the exact raw
-draw and teardown calls across the `srpc_rand.h` C boundary.
+helpers remain module-local. Unsafe Rust is confined to the exact raw draw and
+teardown calls across `srpc_rand.h` and the exact monotonic-clock call across
+`srpc_timing.h`.
 
 ## Verification boundary
 
 The Goal-0 source gate performs four distinct checks:
 
-1. `rrr_dsl_check.sh` verifies drift for the 421 blocks that still live in
+1. `rrr_dsl_check.sh` verifies drift for the 414 blocks that still live in
    inline carriers.
 2. The schema-2 ownership check verifies the canonical manifest, source
    census, generated `lib.rs`, and toolchain identity.
@@ -138,14 +142,15 @@ artifact/build-integration comparison, not an independent second source
 implementation. Rust tests provide the source-level behavioral oracle; exact
 surface, layout, symbol, and C++ runtime ratchets protect the translated side.
 
-The current provider-owned strong symbol surface is exactly 122 unique symbols: six
+The current provider-owned strong symbol surface is exactly 142 unique symbols: six
 each from `internal_protocol`, `stat`, and `errors`; 39 from
 `connection_metrics`; 30 from `completion_tracker`; 12 from `rand`; 12 from
-`request_options`; 11 from `reconnect_policy`; and zero from the
+`request_options`; 11 from `reconnect_policy`; 20 from `circuit_breaker`; and zero from the
 importer-instantiated callback template.
 The completion provider has 33 raw entries after constructor aliases and its
 module initializer; rand and request options each have 13 raw entries including
-their initializer. Both direct-generated and production artifacts must match
+their initializer; reconnect policy has 12 and circuit breaker has 21.
+Both direct-generated and production artifacts must match
 those exact censuses.
 
 The runtime ratchets retain the established contracts for:
@@ -164,11 +169,14 @@ The runtime ratchets retain the established contracts for:
   float-to-integer conversion.
 - `ReconnectPolicy` and `ReconnectCalculator` layouts, factories, finite and
   unlimited retry boundaries, cap-before-jitter ordering, exact draw counts,
-  reset/exhaustion behavior, and retry-counter wrapping.
+  reset/exhaustion behavior, and retry-counter wrapping;
+- `CircuitBreakerConfig`/`CircuitBreaker` layouts, factories, state
+  transitions, timeout boundaries, and unsigned wrapping behavior.
 
 The generated output must report zero hand slots. A separate executable links
-the real `srpc_rand.c`/`srpc_timing.c` kernel and checks its draw-range and
-teardown contract rather than substituting another `rrr.rand` provider.
+the real `srpc_rand.c`/`srpc_timing.c` kernels and checks draw range, teardown,
+and a nonzero/nondecreasing monotonic clock rather than substituting generated
+providers.
 
 The build fingerprints the transpiler executable after Cargo's build edge.
 Crate generation depends on that fingerprint and every canonical `.rs` source,

@@ -130,12 +130,13 @@ struct ReconnectCalculator {
 
 ## Circuit Breaker
 
-**Header:** `src/rrr/rpc/circuit_breaker.hpp`
+**Module:** `rrr.circuit_breaker` (canonical Rust source:
+`src/rrr/src/circuit_breaker.rs`)
 
 ### CircuitState Enum
 
 ```cpp
-enum class CircuitState : uint8_t {
+enum class CircuitState : int32_t {
     CLOSED,    // Normal operation, requests allowed
     OPEN,      // Failing fast, requests rejected
     HALF_OPEN  // Testing recovery, limited requests
@@ -146,43 +147,45 @@ enum class CircuitState : uint8_t {
 
 ```cpp
 struct CircuitBreakerConfig {
-    uint32_t failure_threshold = 5;     // Failures to open circuit
-    uint32_t success_threshold = 3;     // Successes to close circuit
-    uint64_t half_open_timeout_ms = 5000; // Time before probing
-    bool enabled = true;
+    uint32_t failure_threshold;
+    uint32_t success_threshold;
+    uint32_t timeout_ms;
+    bool enabled;
 
     // Presets
+    static CircuitBreakerConfig new_();
+    static CircuitBreakerConfig defaults();
     static CircuitBreakerConfig sensitive();  // Opens after 3 failures
     static CircuitBreakerConfig relaxed();    // Opens after 10 failures
     static CircuitBreakerConfig disabled();   // Never opens
 };
 ```
 
-### CircuitBreaker Class
+### CircuitBreaker Struct
 
 ```cpp
-class CircuitBreaker {
-public:
-    CircuitBreaker();
-    CircuitBreaker(const CircuitBreakerConfig& config);
+struct CircuitBreaker {
+    static CircuitBreaker new_(CircuitBreakerConfig config);
 
     // State access
     CircuitState state() const;
     bool is_open() const;
+    bool is_closed() const;
+    bool is_half_open() const;
 
     // Request gating
-    bool allow_request();       // True if request should proceed
+    bool allow_request() const; // True if request should proceed
 
     // Record outcomes
-    void record_success();
-    void record_failure();
+    void record_success() const;
+    void record_failure() const;
 
     // Manual control
-    void reset();               // Force to CLOSED state
+    void reset() const;         // Force to CLOSED state
 
     // Configuration
-    void set_config(const CircuitBreakerConfig& config);
-    const CircuitBreakerConfig& config() const;
+    void set_config(CircuitBreakerConfig config) const;
+    CircuitBreakerConfig config() const;
 };
 ```
 

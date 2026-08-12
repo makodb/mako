@@ -106,7 +106,7 @@ delay = min(base_delay * multiplier^attempt, max_delay) + jitter
 The circuit breaker prevents cascade failures by tracking error rates:
 
 ```cpp
-#include "rpc/circuit_breaker.hpp"
+import rrr.circuit_breaker;
 
 // States: CLOSED (allowing requests), OPEN (failing fast), HALF_OPEN (testing)
 
@@ -116,13 +116,14 @@ auto relaxed = CircuitBreakerConfig::relaxed();      // Opens after 10 failures
 auto disabled = CircuitBreakerConfig::disabled();    // Never opens
 
 // Custom configuration
-CircuitBreakerConfig config;
+auto config = CircuitBreakerConfig::defaults();
 config.failure_threshold = 5;      // Open after 5 consecutive failures
 config.success_threshold = 3;      // Close after 3 consecutive successes
-config.half_open_timeout_ms = 5000; // Try again after 5 seconds
+config.timeout_ms = 5000;          // Try again after 5 seconds
 
-// Usage is automatic within ClientConnection
-// After N failures, requests fail fast with RpcError::CIRCUIT_OPEN
+client.set_circuit_breaker(config);
+// Once enabled, ClientConnection gates request paths and records response
+// outcomes automatically. A rejected request maps to RpcError::CIRCUIT_OPEN.
 ```
 
 ## Request Buffering
@@ -433,7 +434,7 @@ auto result = pool.reconnect_all(config);
 |------|-------------|
 | `connection_state.hpp` | Connection state machine |
 | `rrr.reconnect_policy` | Reconnection policy and backoff (canonical Rust) |
-| `circuit_breaker.hpp` | Circuit breaker pattern |
+| `rrr.circuit_breaker` | Circuit breaker pattern (canonical Rust) |
 | `request_queue.hpp` | Request queue for buffering |
 | `rrr.request_options` | Timeout and retry configuration C++ module |
 | `heartbeat.hpp` | Heartbeat/keep-alive mechanism |

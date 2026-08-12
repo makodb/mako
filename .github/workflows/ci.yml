@@ -46,7 +46,7 @@ jobs:
         run: >-
           cmake --build "${GOAL0_BUILD_DIR}"
           --parallel "${CI_MAKE_JOBS}"
-          --target rrr_goal0_dual_compile test_completion_tracker test_rpc_callbacks test_rpc_errors test_rpc_frame_codec test_rpc_metrics test_rpc_error_integration test_rpc_timeout_retry
+          --target rrr_goal0_dual_compile test_completion_tracker test_rpc_callbacks test_rpc_errors test_rpc_frame_codec test_rpc_metrics test_rpc_error_integration test_rpc_timeout_retry test_rpc_circuit_breaker test_rpc_circuit_breaker_integration
           -- -k 0
 
       - name: Verify emitter and canonical Rust invalidate crate generation
@@ -55,8 +55,8 @@ jobs:
           set -euo pipefail
           emitter_path="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-executable.txt")"
           emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-input.txt")"
-          canonical_input="src/rrr/src/reconnect_policy.rs"
-          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.reconnect_policy.cppm"
+          canonical_input="src/rrr/src/circuit_breaker.rs"
+          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.circuit_breaker.cppm"
 
           steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${steady_output}"
@@ -90,7 +90,7 @@ jobs:
         run: >-
           ctest --test-dir "${GOAL0_BUILD_DIR}"
           --output-on-failure
-          -R '^(test_completion_tracker|test_rpc_callbacks|test_rpc_errors|test_rpc_frame_codec|test_rpc_metrics|test_rpc_error_integration|test_rpc_timeout_retry)$'
+          -R '^(test_completion_tracker|test_rpc_callbacks|test_rpc_errors|test_rpc_frame_codec|test_rpc_metrics|test_rpc_error_integration|test_rpc_timeout_retry|test_rpc_circuit_breaker|test_rpc_circuit_breaker_integration)$'
 
   build-and-test:
     runs-on: ubuntu-24.04

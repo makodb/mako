@@ -548,6 +548,75 @@ ABI_SPECS = {
             }
         ),
     ),
+    "rrr.circuit_breaker": AbiSpec(
+        surface=frozenset(
+            {
+                '#include "misc/srpc_timing.h"',
+                "export module rrr.circuit_breaker;",
+                "export enum class CircuitState",
+                "export struct CircuitBreakerConfig",
+                "uint32_t failure_threshold;",
+                "uint32_t success_threshold;",
+                "uint32_t timeout_ms;",
+                "bool enabled;",
+                "static CircuitBreakerConfig new_();",
+                "static CircuitBreakerConfig defaults();",
+                "static CircuitBreakerConfig sensitive();",
+                "static CircuitBreakerConfig relaxed();",
+                "static CircuitBreakerConfig disabled();",
+                "export struct CircuitBreaker",
+                "rusty::Cell<CircuitBreakerConfig> config_field;",
+                "rusty::Cell<CircuitState> state_field;",
+                "rusty::Cell<uint32_t> failure_count_field;",
+                "rusty::Cell<uint32_t> success_count_field;",
+                "rusty::Cell<uint64_t> last_failure_time;",
+                "rusty::Cell<bool> probe_in_progress;",
+                "static CircuitBreaker new_(CircuitBreakerConfig config);",
+                "void set_config(CircuitBreakerConfig config) const;",
+                "bool allow_request() const;",
+                "void record_success() const;",
+                "void record_failure() const;",
+                "CircuitState state() const;",
+                "bool is_open() const;",
+                "bool is_closed() const;",
+                "bool is_half_open() const;",
+                "void reset() const;",
+                "uint32_t failure_count() const;",
+                "uint32_t success_count() const;",
+                "CircuitBreakerConfig config() const;",
+                "export uint64_t current_time_us();",
+                "export std::string_view circuit_state_to_string(CircuitState state);",
+                "rusty::wrapping_sub(now",
+                "rusty::wrapping_add(this->failure_count_field.get()",
+                "rusty::wrapping_add(this->success_count_field.get()",
+            }
+        ),
+        symbols=frozenset(
+            ("T", symbol)
+            for symbol in {
+                "rrr::current_time_us@rrr.circuit_breaker()",
+                "rrr::circuit_state_to_string@rrr.circuit_breaker(rrr::CircuitState@rrr.circuit_breaker)",
+                "rrr::CircuitBreakerConfig@rrr.circuit_breaker::new_()",
+                "rrr::CircuitBreakerConfig@rrr.circuit_breaker::defaults()",
+                "rrr::CircuitBreakerConfig@rrr.circuit_breaker::sensitive()",
+                "rrr::CircuitBreakerConfig@rrr.circuit_breaker::relaxed()",
+                "rrr::CircuitBreakerConfig@rrr.circuit_breaker::disabled()",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::new_(rrr::CircuitBreakerConfig@rrr.circuit_breaker)",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::set_config(rrr::CircuitBreakerConfig@rrr.circuit_breaker) const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::allow_request() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::record_success() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::record_failure() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::state() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::is_open() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::is_closed() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::is_half_open() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::reset() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::failure_count() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::success_count() const",
+                "rrr::CircuitBreaker@rrr.circuit_breaker::config() const",
+            }
+        ),
+    ),
 }
 
 
@@ -847,6 +916,30 @@ def require_cpp_surfaces(
                 f"rand C-kernel preamble leaked into {module.cpp_module}"
             )
 
+        timing_preamble = '#include "misc/srpc_timing.h"'
+        if module.cpp_module == "rrr.circuit_breaker":
+            require_exact_module_imports(text, "rrr.circuit_breaker", [])
+            if text.count(timing_preamble) != 1:
+                raise GateError(
+                    "generated rrr.circuit_breaker must contain exactly one "
+                    "structured timing-kernel preamble include"
+                )
+            ordered = (
+                text.find("\nmodule;\n"),
+                text.find(timing_preamble),
+                text.find("#include <cstdint>"),
+                text.find("export module rrr.circuit_breaker;"),
+            )
+            if -1 in ordered or list(ordered) != sorted(ordered):
+                raise GateError(
+                    "generated rrr.circuit_breaker timing preamble is not "
+                    "between the global module fragment and standard includes"
+                )
+        elif timing_preamble in text:
+            raise GateError(
+                f"timing C-kernel preamble leaked into {module.cpp_module}"
+            )
+
         if module.cpp_module == "rrr.request_options":
             require_exact_module_imports(
                 text, "rrr.request_options", ["rrr.rand"]
@@ -883,6 +976,8 @@ def require_cpp_surfaces(
         raise GateError("atomic module preamble leaked into the crate root")
     if '#include "misc/srpc_rand.h"' in root_text:
         raise GateError("rand C-kernel preamble leaked into the crate root")
+    if '#include "misc/srpc_timing.h"' in root_text:
+        raise GateError("timing C-kernel preamble leaked into the crate root")
     root_required = {
         "export module rrr;",
         "namespace rrr {",
@@ -1140,6 +1235,54 @@ def require_reconnect_policy_raw_symbols(
     )
 
 
+def circuit_breaker_raw_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+) -> list[tuple[str, str]]:
+    """Return circuit-breaker strong entries, including its initializer."""
+
+    output = run(
+        [str(nm), "--defined-only", "--demangle", str(binary)],
+        root,
+    )
+    initializer = "initializer for module rrr.circuit_breaker"
+    entries: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        match = NM_LINE.match(line)
+        if match is None:
+            continue
+        kind, symbol = match.groups()
+        if not kind.isupper() or kind in {"U", "V", "W"}:
+            continue
+        if (
+            symbol_owner_module(symbol) == "rrr.circuit_breaker"
+            or symbol == initializer
+        ):
+            entries.append((kind, symbol))
+    return entries
+
+
+def require_circuit_breaker_raw_symbols(
+    description: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    """Pin circuit-breaker's 20-function ABI and initializer exactly."""
+
+    expected = Counter(ABI_SPECS["rrr.circuit_breaker"].symbols)
+    expected[("T", "initializer for module rrr.circuit_breaker")] += 1
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} circuit-breaker ABI must contain exactly 21 raw "
+        "strong entries (20 API symbols and the module initializer); "
+        f"missing={missing!r}, unexpected={unexpected!r}"
+    )
+
+
 def function_parameter_open(symbol: str) -> int:
     """Return the outer function-parameter `(`, or the end for a data symbol."""
 
@@ -1265,6 +1408,7 @@ def require_expected_symbols(
 def importer_source() -> str:
     return """\
 #include <rusty/function.hpp>
+#include <rusty/cell.hpp>
 #include <rusty/move.hpp>
 #include <rusty/option.hpp>
 #include <rusty/slice.hpp>
@@ -1285,6 +1429,7 @@ def importer_source() -> str:
 #include <vector>
 
 import rrr.callback_wrapper;
+import rrr.circuit_breaker;
 import rrr.completion_tracker;
 import rrr.connection_metrics;
 import rrr.errors;
@@ -1299,6 +1444,7 @@ static std::uint32_t rand_raw_draws = 0;
 static std::uint32_t rand_destroy_calls = 0;
 static std::uint32_t rand_string_evaluations = 0;
 static std::uint32_t rand_weight_evaluations = 0;
+static std::uint64_t monotonic_now_us = 0;
 
 extern "C" int srpc_rand_raw(void) {
     ++rand_raw_draws;
@@ -1307,6 +1453,10 @@ extern "C" int srpc_rand_raw(void) {
 
 extern "C" void srpc_rand_destroy(void) {
     ++rand_destroy_calls;
+}
+
+extern "C" std::uint64_t srpc_clock_monotonic_us(void) {
+    return monotonic_now_us;
 }
 
 static void install_rand_raw(std::int32_t value) {
@@ -1329,6 +1479,42 @@ static std::vector<double> make_rand_weights() {
 }
 
 static_assert(std::is_same_v<rrr::RandWeightVec, std::vector<double>>);
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<rrr::CircuitState>, std::int32_t>);
+static_assert(sizeof(rrr::CircuitState) == 4);
+static_assert(alignof(rrr::CircuitState) == 4);
+static_assert(std::is_standard_layout_v<rrr::CircuitBreakerConfig>);
+static_assert(std::is_trivially_copyable_v<rrr::CircuitBreakerConfig>);
+static_assert(rrr::CircuitBreakerConfig::is_send);
+static_assert(rrr::CircuitBreakerConfig::is_sync);
+static_assert(sizeof(rrr::CircuitBreakerConfig) == 16);
+static_assert(alignof(rrr::CircuitBreakerConfig) == 4);
+static_assert(offsetof(rrr::CircuitBreakerConfig, failure_threshold) == 0);
+static_assert(offsetof(rrr::CircuitBreakerConfig, success_threshold) == 4);
+static_assert(offsetof(rrr::CircuitBreakerConfig, timeout_ms) == 8);
+static_assert(offsetof(rrr::CircuitBreakerConfig, enabled) == 12);
+static_assert(sizeof(rrr::CircuitBreaker) == 48);
+static_assert(alignof(rrr::CircuitBreaker) == 8);
+static_assert(offsetof(rrr::CircuitBreaker, config_field) == 0);
+static_assert(offsetof(rrr::CircuitBreaker, state_field) == 16);
+static_assert(offsetof(rrr::CircuitBreaker, failure_count_field) == 20);
+static_assert(offsetof(rrr::CircuitBreaker, success_count_field) == 24);
+static_assert(offsetof(rrr::CircuitBreaker, last_failure_time) == 32);
+static_assert(offsetof(rrr::CircuitBreaker, probe_in_progress) == 40);
+static_assert(rrr::CircuitBreaker::is_send);
+static_assert(!rusty::is_sync<rrr::CircuitBreaker>::value);
+static_assert(std::is_same_v<
+              decltype(&rrr::CircuitBreaker::new_),
+              rrr::CircuitBreaker (*)(rrr::CircuitBreakerConfig)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::CircuitBreaker::set_config),
+              void (rrr::CircuitBreaker::*)(rrr::CircuitBreakerConfig) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::CircuitBreaker::allow_request),
+              bool (rrr::CircuitBreaker::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::current_time_us), std::uint64_t (*)()>);
 static_assert(std::is_same_v<
               decltype(&rrr::randgen_zero_pad),
               std::string (*)(std::string, std::int32_t)>);
@@ -2806,6 +2992,74 @@ int main() {
     if (jitter_calculator.next_delay_ms() != 0 || rand_raw_draws != 0) {
         return 116;
     }
+
+    const auto circuit_new = rrr::CircuitBreakerConfig::new_();
+    const auto circuit_defaults = rrr::CircuitBreakerConfig::defaults();
+    const auto circuit_sensitive = rrr::CircuitBreakerConfig::sensitive();
+    const auto circuit_relaxed = rrr::CircuitBreakerConfig::relaxed();
+    const auto circuit_disabled = rrr::CircuitBreakerConfig::disabled();
+    if (circuit_new.failure_threshold != circuit_defaults.failure_threshold ||
+        circuit_new.success_threshold != circuit_defaults.success_threshold ||
+        circuit_new.timeout_ms != circuit_defaults.timeout_ms ||
+        circuit_new.enabled != circuit_defaults.enabled ||
+        circuit_defaults.failure_threshold != 5 ||
+        circuit_defaults.success_threshold != 3 ||
+        circuit_defaults.timeout_ms != 30000 || !circuit_defaults.enabled ||
+        circuit_sensitive.failure_threshold != 3 ||
+        circuit_sensitive.success_threshold != 5 ||
+        circuit_sensitive.timeout_ms != 60000 ||
+        circuit_relaxed.failure_threshold != 10 ||
+        circuit_relaxed.success_threshold != 2 ||
+        circuit_relaxed.timeout_ms != 15000 ||
+        circuit_disabled.failure_threshold != 0 ||
+        circuit_disabled.success_threshold != 0 ||
+        circuit_disabled.timeout_ms != 0 || circuit_disabled.enabled ||
+        rrr::circuit_state_to_string(rrr::CircuitState::CLOSED) != "CLOSED" ||
+        rrr::circuit_state_to_string(rrr::CircuitState::OPEN) != "OPEN" ||
+        rrr::circuit_state_to_string(rrr::CircuitState::HALF_OPEN) !=
+            "HALF_OPEN") {
+        return 117;
+    }
+
+    monotonic_now_us = 1'000'000;
+    auto circuit_config = circuit_defaults;
+    circuit_config.failure_threshold = 2;
+    circuit_config.success_threshold = 2;
+    circuit_config.timeout_ms = 10;
+    auto circuit = rrr::CircuitBreaker::new_(circuit_config);
+    if (!circuit.is_closed() || circuit.is_open() ||
+        !circuit.allow_request() || circuit.failure_count() != 0 ||
+        rrr::current_time_us() != monotonic_now_us) {
+        return 118;
+    }
+    circuit.record_failure();
+    circuit.record_failure();
+    if (!circuit.is_open() || circuit.failure_count() != 0 ||
+        circuit.allow_request() || circuit.last_failure_time.get() != 1'000'000) {
+        return 119;
+    }
+    monotonic_now_us = 1'009'999;
+    if (circuit.allow_request()) {
+        return 120;
+    }
+    monotonic_now_us = 1'010'000;
+    if (!circuit.allow_request() || !circuit.is_half_open() ||
+        circuit.allow_request()) {
+        return 121;
+    }
+    circuit.record_success();
+    if (circuit.success_count() != 1 || !circuit.allow_request()) {
+        return 122;
+    }
+    circuit.record_success();
+    if (!circuit.is_closed() || circuit.success_count() != 0) {
+        return 123;
+    }
+    circuit.failure_count_field.set(std::numeric_limits<std::uint32_t>::max());
+    circuit.record_failure();
+    if (circuit.failure_count() != 0 || !circuit.is_closed()) {
+        return 124;
+    }
     return 0;
 }
 """
@@ -3041,6 +3295,11 @@ def check_generated_output(
                     "crate-generated object",
                     reconnect_policy_raw_symbols(nm, root, generated_object),
                 )
+            elif module.cpp_module == "rrr.circuit_breaker":
+                require_circuit_breaker_raw_symbols(
+                    "crate-generated object",
+                    circuit_breaker_raw_symbols(nm, root, generated_object),
+                )
 
             if production is not None:
                 production_symbols = module_symbols(
@@ -3075,6 +3334,11 @@ def check_generated_output(
                     require_reconnect_policy_raw_symbols(
                         "production library",
                         reconnect_policy_raw_symbols(nm, root, production),
+                    )
+                elif module.cpp_module == "rrr.circuit_breaker":
+                    require_circuit_breaker_raw_symbols(
+                        "production library",
+                        circuit_breaker_raw_symbols(nm, root, production),
                     )
 
 
@@ -3160,6 +3424,7 @@ def check(args: argparse.Namespace) -> None:
         "precondition/wrapping/empty-weight/C-FFI runtime contracts, "
         "RequestOptions layout/factory/retry/timeout/jitter runtime contracts, "
         "ReconnectPolicy layout/factory/backoff/retry/jitter runtime contracts, and "
+        "CircuitBreaker layout/factory/state/timeout/wrapping runtime contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )
 

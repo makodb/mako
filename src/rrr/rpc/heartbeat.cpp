@@ -19,7 +19,7 @@ export namespace rrr {
 // inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
 // of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block. Same shape as
-// `current_time_us` (circuit_breaker.cpp) and `queued_request_time_us`
+// `current_time_us` (canonical rrr.circuit_breaker) and `queued_request_time_us`
 // (request_queue.cpp) — body delegates to the @safe rusty wrapper
 // instead of calling `clock_gettime(CLOCK_MONOTONIC)` directly.
 #if RUSTYCPP_RUST

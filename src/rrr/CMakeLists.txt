@@ -33,7 +33,6 @@ set(RRR_INLINE_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
@@ -50,7 +49,7 @@ set(RRR_INLINE_MODULE_SRC
 )
 list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_INLINE_MODULE_SRC})
 
-# These nine modules are owned by canonical Rust sources. rusty-cpp generates
+# These ten modules are owned by canonical Rust sources. rusty-cpp generates
 # their complete C++ module interfaces; no hand-authored carrier remains.
 set(RRR_GOAL0_CANONICAL_MODULES
     callback_wrapper
@@ -62,15 +61,16 @@ set(RRR_GOAL0_CANONICAL_MODULES
     rand
     request_options
     reconnect_policy
+    circuit_breaker
 )
 set(_RRR_GOAL0_UNIQUE_MODULES ${RRR_GOAL0_CANONICAL_MODULES})
 list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_MODULES)
 list(LENGTH RRR_GOAL0_CANONICAL_MODULES _RRR_GOAL0_MODULE_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_MODULES _RRR_GOAL0_UNIQUE_MODULE_COUNT)
-if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 9 OR
-   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 9)
+if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 10 OR
+   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 10)
     message(FATAL_ERROR
-        "Goal-0 canonical module inventory must contain nine unique names")
+        "Goal-0 canonical module inventory must contain ten unique names")
 endif()
 
 set(RRR_GOAL0_CRATE_CPP_DIR
@@ -95,6 +95,7 @@ set(RRR_GOAL0_RETIRED_CARRIER_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_options.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
 )
 foreach(_RRR_GOAL0_CANONICAL_SOURCE IN LISTS RRR_GOAL0_CANONICAL_RUST_SRC)
     if(NOT EXISTS "${_RRR_GOAL0_CANONICAL_SOURCE}")
@@ -122,16 +123,16 @@ list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC)
 list(LENGTH _RRR_GOAL0_UNIQUE_CANONICAL_RUST_SRC
     _RRR_GOAL0_UNIQUE_CANONICAL_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC _RRR_GOAL0_UNIQUE_CHILD_COUNT)
-if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 9 OR
-   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 9 OR
-   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 9 OR
-   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 9)
+if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 10 OR
+   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 10 OR
+   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 10 OR
+   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 10)
     message(FATAL_ERROR
-        "Goal-0 crate production must own exactly nine unique "
+        "Goal-0 crate production must own exactly ten unique "
         "Rust/generated providers")
 endif()
 
-# Production always combines the remaining inline carriers with the nine
+# Production always combines the remaining inline carriers with the ten
 # generated providers. The partial crate root remains compile-only until all
 # 38 named modules are canonical Rust.
 set(RRR_MODULE_SRC ${RRR_INLINE_MODULE_SRC} ${RRR_GOAL0_CRATE_CHILD_SRC})
@@ -144,10 +145,10 @@ set_source_files_properties(${RRR_GOAL0_CRATE_CHILD_SRC}
 
 list(LENGTH RRR_INLINE_MODULE_SRC _RRR_INLINE_MODULE_COUNT)
 list(LENGTH RRR_MODULE_SRC _RRR_PRODUCTION_MODULE_COUNT)
-if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 29 OR
+if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 28 OR
    NOT _RRR_PRODUCTION_MODULE_COUNT EQUAL 38)
     message(FATAL_ERROR
-        "Goal-0 production must contain 29 inline and nine generated modules")
+        "Goal-0 production must contain 28 inline and ten generated modules")
 endif()
 list(FIND RRR_MODULE_SRC "${RRR_GOAL0_CRATE_ROOT_SRC}" _RRR_GOAL0_ROOT_INDEX)
 if(NOT _RRR_GOAL0_ROOT_INDEX EQUAL -1)
@@ -202,11 +203,11 @@ if(NOT TARGET rusty)
     )
 endif()
 
-# The rand provider keeps only two thin calls into the plain-C seed kernel.
-# The generated-object and production importer lanes supply deterministic
-# definitions for exact draw and destroy counts. This separate executable
-# pulls the real C archive and smoke-tests its range/teardown contract without
-# introducing another rrr.rand provider into either comparison lane.
+# Rand and circuit breaker keep only thin calls into the plain-C seed and
+# monotonic-clock kernels. The generated-object and production importer lanes
+# supply deterministic definitions for exact draw/destroy and clock behavior.
+# This separate executable pulls the real C archive and smoke-tests both seams
+# without introducing another generated provider into either comparison lane.
 add_library(rrr_goal0_rand_c_kernel STATIC EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_rand.c
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_timing.c
@@ -269,7 +270,7 @@ if(NOT TARGET rrr)
     target_sources(rrr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
 
     # Remaining hand-authored RRR C++ module units for borrow checking. The
-    # nine canonical Rust modules are checked by rustc and are not duplicated
+    # ten canonical Rust modules are checked by rustc and are not duplicated
     # here as generated C++ providers.
     set(RRR_BORROW_SRC
         # base/
@@ -292,7 +293,6 @@ if(NOT TARGET rrr)
         # rpc/
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
@@ -444,7 +444,7 @@ file(GENERATE
 
 # Crate mode emits all children and the partial root in one invocation. Both
 # the production target and dual gate consume this one build-tree generation.
-# Only the nine child .cppm files enter RRR_MODULE_SRC. The dual gate compiles
+# Only the ten child .cppm files enter RRR_MODULE_SRC. The dual gate compiles
 # rrr.cppm after its children in temporary storage, but production never does.
 set(RRR_GOAL0_CRATE_GENERATED_OUTPUTS
     ${RRR_GOAL0_CRATE_CHILD_SRC}

@@ -85,7 +85,7 @@ git submodule update --init third-party/rusty-cpp
 |------------------|---------|
 | `rpc/connection_state.hpp` | Connection state machine |
 | `rrr.reconnect_policy` | Reconnection configuration module |
-| `rpc/circuit_breaker.hpp` | Circuit breaker pattern |
+| `rrr.circuit_breaker` | Circuit breaker pattern |
 | `rpc/request_queue.hpp` | Request buffering |
 | `rrr.request_options` | Per-request options C++ module |
 | `rpc/heartbeat.hpp` | Keep-alive management |
@@ -160,14 +160,14 @@ client->connect("127.0.0.1:8080");
 Prevent cascading failures:
 
 ```cpp
-#include "rpc/circuit_breaker.hpp"
+import rrr.circuit_breaker;
 
-CircuitBreakerConfig config;
+auto config = CircuitBreakerConfig::defaults();
 config.failure_threshold = 5;   // Open after 5 failures
 config.success_threshold = 3;   // Close after 3 successes
 config.timeout_ms = 30000;      // Try again after 30s
 
-CircuitBreaker breaker(config);
+auto breaker = CircuitBreaker::new_(config);
 
 // Before each request
 if (!breaker.allow_request()) {

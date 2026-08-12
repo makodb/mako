@@ -3,7 +3,8 @@
  * uses the shared-kernel pattern this mirrors).
  */
 
-#include <stdint.h>
+#include "srpc_timing.h"
+
 #include <time.h>
 #include <sys/time.h>
 
@@ -36,6 +37,16 @@ uint64_t srpc_rdtsc(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ((uint64_t)ts.tv_sec << 32) ^ (uint64_t)ts.tv_nsec;
 #endif
+}
+
+/* Microseconds since an unspecified monotonic origin.  This is the plain-C
+ * kernel seam used by canonical Rust modules that cannot call the C++
+ * rusty::sys::time wrapper while they are also compiled by rustc. */
+uint64_t srpc_clock_monotonic_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * UINT64_C(1000000) +
+           (uint64_t)ts.tv_nsec / UINT64_C(1000);
 }
 
 /* Wall-clock timestamp "YYYY-MM-DD HH:MM:SS.mmm" into a caller buffer of
