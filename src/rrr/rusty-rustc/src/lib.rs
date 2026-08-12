@@ -7,7 +7,55 @@
 //! omits it from generated C++ because the production definitions already
 //! live in the rusty runtime headers.
 
-use std::ops::{Deref, DerefMut};
+use std::ops::{Deref, DerefMut, Index};
+
+/// Rust-only contract for metric views used by the canonical load-balancer module.
+pub trait LoadBalancerMetrics {
+    fn in_flight_requests(&self) -> u64;
+    fn avg_latency_us(&self) -> u64;
+    fn requests_completed(&self) -> u64;
+}
+
+/// Rust-only contract for a client exposing a load-balancer metric view.
+pub trait LoadBalancerClient {
+    type Metrics: LoadBalancerMetrics;
+
+    fn metrics(&self) -> &Self::Metrics;
+}
+
+/// Rust-only contract for pointer-like client handles.
+pub trait LoadBalancerClientHandle: Deref
+where
+    Self::Target: LoadBalancerClient,
+{
+}
+
+impl<T> LoadBalancerClientHandle for T
+where
+    T: Deref,
+    T::Target: LoadBalancerClient,
+{
+}
+
+/// Rust-only contract for indexable client pools.
+#[allow(clippy::len_without_is_empty)]
+pub trait LoadBalancerClientVec: Index<usize>
+where
+    Self::Output: LoadBalancerClientHandle,
+    <Self::Output as Deref>::Target: LoadBalancerClient,
+{
+    fn len(&self) -> usize;
+}
+
+impl<T> LoadBalancerClientVec for Vec<T>
+where
+    T: LoadBalancerClientHandle,
+    <T as Deref>::Target: LoadBalancerClient,
+{
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+}
 
 /// Rust-side model of rusty-cpp's move-only type-erased callable.
 ///

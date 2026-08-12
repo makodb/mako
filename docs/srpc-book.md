@@ -130,6 +130,7 @@ src/rrr/
     errors.rs          # RPC error definitions
     heartbeat.rs       # Keep-alive manager module
     internal_protocol.rs # Internal protocol definitions
+    load_balancer.rs   # Pool load-balancing strategies
     rand.rs            # Random generator module
     request_options.rs # Per-request configuration module
     request_queue.rs   # Pending-request buffering module

@@ -731,6 +731,46 @@ ABI_SPECS = {
             }
         ),
     ),
+    "rrr.load_balancer": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.load_balancer;",
+                "export enum class LoadBalancingStrategy",
+                "RANDOM = 0,",
+                "ROUND_ROBIN = 1,",
+                "LEAST_CONNECTIONS = 2,",
+                "LEAST_LATENCY = 3",
+                "// Rust-only trait import marker: using _ = rusty::LoadBalancerClient;",
+                "// Rust-only trait import marker: using _ = rusty::LoadBalancerMetrics;",
+                "export struct LoadBalancerState",
+                "rusty::Cell<size_t> round_robin_index_field;",
+                "static LoadBalancerState new_();",
+                "size_t next_round_robin_index(size_t pool_size) const;",
+                "void reset() const;",
+                "export struct LoadBalancer",
+                "template<typename ClientVec>",
+                "static size_t select(LoadBalancingStrategy strategy, const ClientVec& clients, const LoadBalancerState& state, size_t rand_value);",
+                "static size_t select_random(size_t pool_size, size_t rand_value);",
+                "static size_t select_round_robin(size_t pool_size, const LoadBalancerState& state);",
+                "export std::string_view load_balancing_strategy_to_string(LoadBalancingStrategy strategy);",
+                "size_t lb_pool_size(const ClientVec& clients);",
+                "size_t lb_select_least_connections(const ClientVec& clients);",
+                "size_t lb_select_least_latency(const ClientVec& clients);",
+                "rusty::wrapping_add(current",
+            }
+        ),
+        symbols=frozenset(
+            ("T", symbol)
+            for symbol in {
+                "rrr::load_balancing_strategy_to_string@rrr.load_balancer(rrr::LoadBalancingStrategy@rrr.load_balancer)",
+                "rrr::LoadBalancerState@rrr.load_balancer::new_()",
+                "rrr::LoadBalancerState@rrr.load_balancer::next_round_robin_index(unsigned long) const",
+                "rrr::LoadBalancerState@rrr.load_balancer::reset() const",
+                "rrr::LoadBalancer@rrr.load_balancer::select_random(unsigned long, unsigned long)",
+                "rrr::LoadBalancer@rrr.load_balancer::select_round_robin(unsigned long, rrr::LoadBalancerState@rrr.load_balancer const&)",
+            }
+        ),
+    ),
     "rrr.basetypes": AbiSpec(
         surface=frozenset(
             {
@@ -1310,6 +1350,25 @@ def require_cpp_surfaces(
             require_exact_module_imports(
                 text, "rrr.request_queue", ["rusty", "rrr.circuit_breaker"]
             )
+        elif module.cpp_module == "rrr.load_balancer":
+            require_exact_module_imports(text, "rrr.load_balancer", [])
+            live_cpp = "\n".join(
+                line
+                for line in text.splitlines()
+                if not line.lstrip().startswith("//")
+            )
+            for forbidden in (
+                "rusty::LoadBalancerClient",
+                "rusty::LoadBalancerMetrics",
+                "rusty::LoadBalancerClientHandle",
+                "rusty::LoadBalancerClientVec",
+                "requires ",
+            ):
+                if forbidden in live_cpp:
+                    raise GateError(
+                        "rustc-only load-balancer facade leaked into generated "
+                        f"C++: {forbidden!r}"
+                    )
 
     root_text = read_generated(output / "rrr.cppm", "root module")
     if "#include <rusty/sync/atomic.hpp>" in root_text:
@@ -1933,6 +1992,7 @@ import rrr.connection_state;
 import rrr.errors;
 import rrr.heartbeat;
 import rrr.internal_protocol;
+import rrr.load_balancer;
 import rrr.rand;
 import rrr.reconnect_policy;
 import rrr.request_options;
@@ -1992,6 +2052,25 @@ static std::vector<double> make_rand_weights() {
     ++rand_weight_evaluations;
     return {1.0, 2.0, 3.0};
 }
+
+struct LoadBalancerProbeMetrics {
+    std::uint64_t pending;
+    std::uint64_t latency;
+    std::uint64_t completed;
+
+    std::uint64_t in_flight_requests() const { return pending; }
+    std::uint64_t avg_latency_us() const { return latency; }
+    std::uint64_t requests_completed() const { return completed; }
+};
+
+struct LoadBalancerProbeClient {
+    LoadBalancerProbeMetrics metrics_value;
+
+    const LoadBalancerProbeMetrics& metrics() const { return metrics_value; }
+};
+
+using LoadBalancerProbeClients =
+    std::vector<std::shared_ptr<LoadBalancerProbeClient>>;
 
 static_assert(std::is_same_v<rrr::RandWeightVec, std::vector<double>>);
 
@@ -2223,6 +2302,30 @@ static_assert(std::is_same_v<
               bool (rrr::HeartbeatManager::*)() const>);
 static_assert(std::is_same_v<
               decltype(&rrr::heartbeat_time_us), std::uint64_t (*)()>);
+static_assert(std::is_same_v<
+              std::underlying_type_t<rrr::LoadBalancingStrategy>,
+              std::int32_t>);
+static_assert(sizeof(rrr::LoadBalancingStrategy) == 4);
+static_assert(alignof(rrr::LoadBalancingStrategy) == 4);
+static_assert(sizeof(rrr::LoadBalancerState) == 8);
+static_assert(alignof(rrr::LoadBalancerState) == 8);
+static_assert(offsetof(rrr::LoadBalancerState, round_robin_index_field) == 0);
+static_assert(std::is_standard_layout_v<rrr::LoadBalancerState>);
+static_assert(rrr::LoadBalancerState::is_send);
+static_assert(!rusty::is_sync<rrr::LoadBalancerState>::value);
+static_assert(sizeof(rrr::LoadBalancer) == 1);
+static_assert(std::is_empty_v<rrr::LoadBalancer>);
+static_assert(rrr::LoadBalancer::is_send && rrr::LoadBalancer::is_sync);
+static_assert(std::is_same_v<
+              decltype(&rrr::LoadBalancer::select_random),
+              std::size_t (*)(std::size_t, std::size_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::LoadBalancer::select_round_robin),
+              std::size_t (*)(std::size_t,
+                              const rrr::LoadBalancerState&)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::load_balancing_strategy_to_string),
+              std::string_view (*)(rrr::LoadBalancingStrategy)>);
 static_assert(std::is_same_v<
               decltype(&rrr::randgen_zero_pad),
               std::string (*)(std::string, std::int32_t)>);
@@ -3950,6 +4053,82 @@ int main() {
         return 141;
     }
 
+    using enum rrr::LoadBalancingStrategy;
+    if (rrr::load_balancing_strategy_to_string(RANDOM) != "RANDOM" ||
+        rrr::load_balancing_strategy_to_string(ROUND_ROBIN) !=
+            "ROUND_ROBIN" ||
+        rrr::load_balancing_strategy_to_string(LEAST_CONNECTIONS) !=
+            "LEAST_CONNECTIONS" ||
+        rrr::load_balancing_strategy_to_string(LEAST_LATENCY) !=
+            "LEAST_LATENCY" ||
+        rrr::load_balancing_strategy_to_string(
+            static_cast<rrr::LoadBalancingStrategy>(255)) != "UNKNOWN") {
+        return 177;
+    }
+
+    auto load_balancer_state = rrr::LoadBalancerState::new_();
+    if (load_balancer_state.next_round_robin_index(0) != 0 ||
+        load_balancer_state.next_round_robin_index(3) != 0 ||
+        load_balancer_state.next_round_robin_index(3) != 1 ||
+        load_balancer_state.next_round_robin_index(3) != 2 ||
+        load_balancer_state.next_round_robin_index(3) != 0) {
+        return 178;
+    }
+    load_balancer_state.reset();
+    if (load_balancer_state.next_round_robin_index(3) != 0) {
+        return 179;
+    }
+    load_balancer_state.round_robin_index_field.set(
+        std::numeric_limits<std::size_t>::max());
+    if (load_balancer_state.next_round_robin_index(3) !=
+            std::numeric_limits<std::size_t>::max() ||
+        load_balancer_state.round_robin_index_field.get() != 0) {
+        return 180;
+    }
+
+    LoadBalancerProbeClients empty_load_balancer_clients;
+    if (rrr::LoadBalancer::select(
+            RANDOM, empty_load_balancer_clients, load_balancer_state, 19) != 0) {
+        return 181;
+    }
+    LoadBalancerProbeClients load_balancer_clients{
+        std::make_shared<LoadBalancerProbeClient>(
+            LoadBalancerProbeClient{LoadBalancerProbeMetrics{5, 0, 0}}),
+        std::make_shared<LoadBalancerProbeClient>(
+            LoadBalancerProbeClient{LoadBalancerProbeMetrics{2, 80, 10}}),
+        std::make_shared<LoadBalancerProbeClient>(
+            LoadBalancerProbeClient{LoadBalancerProbeMetrics{2, 30, 3}}),
+    };
+    if (rrr::lb_pool_size(load_balancer_clients) != 3 ||
+        rrr::LoadBalancer::select(
+            RANDOM, load_balancer_clients, load_balancer_state, 8) != 2 ||
+        rrr::LoadBalancer::select(
+            static_cast<rrr::LoadBalancingStrategy>(255),
+            load_balancer_clients,
+            load_balancer_state,
+            8) != 2 ||
+        rrr::LoadBalancer::select(
+            LEAST_CONNECTIONS,
+            load_balancer_clients,
+            load_balancer_state,
+            0) != 1 ||
+        rrr::LoadBalancer::select(
+            LEAST_LATENCY,
+            load_balancer_clients,
+            load_balancer_state,
+            0) != 2) {
+        return 182;
+    }
+    load_balancer_state.reset();
+    if (rrr::LoadBalancer::select(
+            ROUND_ROBIN, load_balancer_clients, load_balancer_state, 0) != 0 ||
+        rrr::LoadBalancer::select(
+            ROUND_ROBIN, load_balancer_clients, load_balancer_state, 0) != 1 ||
+        rrr::LoadBalancer::select(
+            ROUND_ROBIN, load_balancer_clients, load_balancer_state, 0) != 2) {
+        return 183;
+    }
+
     constexpr std::array<std::int64_t, 37> sparse_boundaries{
         INT64_MIN,
         -36028797018963969LL, -36028797018963968LL,
@@ -4565,7 +4744,11 @@ def check_generated_output(
                     "crate-generated object",
                     basetypes_raw_symbols(nm, root, generated_object),
                 )
-            elif module.cpp_module in {"rrr.connection_state", "rrr.heartbeat"}:
+            elif module.cpp_module in {
+                "rrr.connection_state",
+                "rrr.heartbeat",
+                "rrr.load_balancer",
+            }:
                 require_exact_module_raw_symbols(
                     module.cpp_module,
                     "crate-generated object",
@@ -4626,6 +4809,7 @@ def check_generated_output(
                 elif module.cpp_module in {
                     "rrr.connection_state",
                     "rrr.heartbeat",
+                    "rrr.load_balancer",
                 }:
                     require_exact_module_raw_symbols(
                         module.cpp_module,
@@ -4638,8 +4822,8 @@ def check_generated_output(
 
 def check(args: argparse.Namespace) -> None:
     root = repository_root()
-    # bcc8 validates local runtime-provided dependencies relative to the
-    # manifest path it receives.  Always hand crate mode a root-resolved
+    # Crate mode validates local runtime-provided dependencies relative to the
+    # manifest path it receives. Always hand crate mode a root-resolved
     # absolute manifest so its dependency walk is independent of this gate's
     # working directory.
     crate_manifest = (root / "src/rrr/Cargo.toml").resolve()
@@ -4729,6 +4913,7 @@ def check(args: argparse.Namespace) -> None:
         "Basetypes aliases/layout/sparse-wire/atomic/timing runtime contracts, "
         "ConnectionState layout/empty-callback/transition runtime contracts, and "
         "Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime "
+        "contracts, LoadBalancer layout/strategy/selection/wrapping runtime "
         "contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )

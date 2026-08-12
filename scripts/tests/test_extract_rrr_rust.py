@@ -87,6 +87,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "src/rrr/rpc/heartbeat.cpp",
             "src/rrr/base/basetypes.cpp",
             "src/rrr/rpc/request_queue.cpp",
+            "src/rrr/rpc/load_balancer.cpp",
         )
         self.assertTrue(all(not (REPOSITORY / path).exists() for path in retired))
 
@@ -97,12 +98,12 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 25 hand-authored module units, "
-            "SCAFFOLD=1664 noncomment lines (776 DSL fences + 888 other)",
+            "source boundary: 24 hand-authored module units, "
+            "SCAFFOLD=1643 noncomment lines (766 DSL fences + 877 other)",
             output,
         )
         self.assertIn(
-            "payload census:   dsl=9535  generated=12373 "
+            "payload census:   dsl=9438  generated=12257 "
             "nonblank/non-// lines",
             output,
         )
@@ -273,6 +274,12 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "src/rrr/src/request_queue.rs",
                     "src/rrr/src/request_queue.rs",
                 ),
+                (
+                    "rrr.load_balancer",
+                    "load_balancer",
+                    "src/rrr/src/load_balancer.rs",
+                    "src/rrr/src/load_balancer.rs",
+                ),
             ],
         )
 
@@ -328,7 +335,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                     bool(line.strip()) and not line.lstrip().startswith("//")
                     for line in source.splitlines()
                 )
-        self.assertEqual(canonical_lines, 2133)
+        self.assertEqual(canonical_lines, 2261)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -392,6 +399,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/heartbeat.rs",
                 "src/rrr/src/basetypes.rs",
                 "src/rrr/src/request_queue.rs",
+                "src/rrr/src/load_balancer.rs",
             },
         )
 
@@ -1136,6 +1144,11 @@ class CrateModeGateTests(unittest.TestCase):
             "rrr.heartbeat",
             ["rrr.circuit_breaker"],
         )
+        GATE.require_exact_module_imports(
+            "export module rrr.load_balancer;\n",
+            "rrr.load_balancer",
+            [],
+        )
         with self.assertRaisesRegex(GATE.GateError, "private imports must be exactly"):
             GATE.require_exact_module_imports(
                 "export module rrr.rand;\n"
@@ -1430,6 +1443,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.connection_state"),
             mock.Mock(cpp_module="rrr.heartbeat"),
             mock.Mock(cpp_module="rrr.request_queue"),
+            mock.Mock(cpp_module="rrr.load_balancer"),
         ]
 
         def symbols_for_module(
@@ -1496,7 +1510,11 @@ class CrateModeGateTests(unittest.TestCase):
                 *GATE.ABI_SPECS[name].symbols,
                 ("T", f"initializer for module {name}"),
             ]
-            for name in ("rrr.connection_state", "rrr.heartbeat")
+            for name in (
+                "rrr.connection_state",
+                "rrr.heartbeat",
+                "rrr.load_balancer",
+            )
         }
 
         def compiled_object(
@@ -1585,6 +1603,7 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.connection_state",
                 "rrr.heartbeat",
                 "rrr.request_queue",
+                "rrr.load_balancer",
                 "rrr",
             ],
         )
@@ -1686,10 +1705,11 @@ class CrateModeGateTests(unittest.TestCase):
                 "test provider", entries[:-1]
             )
 
-    def test_connection_and_heartbeat_raw_symbol_ratchets_include_initializer(self) -> None:
+    def test_exact_raw_symbol_ratchets_include_initializer(self) -> None:
         for module_name, expected_count in (
             ("rrr.connection_state", 14),
             ("rrr.heartbeat", 20),
+            ("rrr.load_balancer", 7),
         ):
             with self.subTest(module_name=module_name):
                 entries = list(GATE.ABI_SPECS[module_name].symbols)
@@ -1811,6 +1831,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.connection_state"),
             mock.Mock(cpp_module="rrr.heartbeat"),
             mock.Mock(cpp_module="rrr.request_queue"),
+            mock.Mock(cpp_module="rrr.load_balancer"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

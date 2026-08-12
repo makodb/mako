@@ -96,13 +96,13 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 - `src/rrr/`: Custom RPC framework and networking layer
 - `config/`: YAML configuration files for experiments and cluster topology
 
-The `rrr` Rust package is rooted at `src/rrr/Cargo.toml`. The fourteen modules
+The `rrr` Rust package is rooted at `src/rrr/Cargo.toml`. The fifteen modules
 listed in `src/rrr/rust-modules.toml` are canonical `.rs` sources: rustc
 compiles them directly and rusty-cpp translates those same sources into the
 complete C++ module providers used in every production build. Edit those Rust
 files directly; their former hand-authored `.cpp` carriers have been deleted.
-The other 24 named modules still own 388 inline `RUSTYCPP_RUST` blocks, so a
-successful Cargo build proves only the current fourteen-module coverage, not full
+The other 23 named modules still own 383 inline `RUSTYCPP_RUST` blocks, so a
+successful Cargo build proves only the current fifteen-module coverage, not full
 Goal 0. Never recreate a top-level `crates/srpc` hand port.
 
 ### Key Protocol Implementations
@@ -162,7 +162,7 @@ Both backends implement the same `TransportBackend` interface for transport-agno
 #### Rust first (default for new code)
 
 **New code SHOULD be authored in Rust, not hand-written C++.** In one of the
-fourteen canonical `rrr` modules, edit its `src/rrr/src/*.rs` source directly.
+fifteen canonical `rrr` modules, edit its `src/rrr/src/*.rs` source directly.
 For a module that still uses an inline carrier, the DSL is the
 `#if RUSTYCPP_RUST pub trait/struct ... #endif` source block plus the generated
 `/*RUSTYCPP:GEN-BEGIN ... GEN-END*/` C++ the compiler sees. For a remaining

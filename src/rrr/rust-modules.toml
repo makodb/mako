@@ -57,3 +57,7 @@ source = "src/rrr/src/heartbeat.rs"
 [[module]]
 cpp_module = "rrr.request_queue"
 source = "src/rrr/src/request_queue.rs"
+
+[[module]]
+cpp_module = "rrr.load_balancer"
+source = "src/rrr/src/load_balancer.rs"
