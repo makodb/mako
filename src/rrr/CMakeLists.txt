@@ -23,7 +23,6 @@ set(RRR_INLINE_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
@@ -287,7 +286,6 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
             # misc/
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
         # reactor/ — (fiber_impl.cc, event.cc, quorum_event.cc, reactor.cc were

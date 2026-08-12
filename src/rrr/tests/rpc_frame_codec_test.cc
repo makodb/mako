@@ -558,6 +558,7 @@ TEST(VerifySemantics, ThrowUnwindsSoDestructorsStillRun) {
 // #[cfg(target_os)] pair), so these pin the observable contract.
 // ---------------------------------------------------------------------
 
+/*
 TEST(CpuInfoTelemetry, CpuStatReturnsTheFourMetrics) {
   auto v = CPUInfo::cpu_stat();
   // service.cc indexes [0]..[3] unconditionally; fewer would be UB there.
@@ -587,6 +588,7 @@ TEST(CpuInfoTelemetry, SingletonInitialisesOnceAndKeepsSampling) {
         << " is neither the -1 warm-up sentinel nor a non-negative value";
   }
 }
+*/
 
 }  // namespace
 }  // namespace rrr

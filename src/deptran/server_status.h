@@ -45,7 +45,6 @@ class ServerStatus {
       auto guard = state_.lock().unwrap();
       guard->status = Status::RUN;
     }
-    rrr::CPUInfo::cpu_stat();  // Initialize CPU stats baseline
   }
 
   void set_shutdown() const {
