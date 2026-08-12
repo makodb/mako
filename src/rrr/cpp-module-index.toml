@@ -1,0 +1,8 @@
+version = 1
+
+[modules."rrr::logging"]
+namespace = "rrr"
+
+[modules."rrr::logging".symbols.log_line]
+kind = "function"
+callable_signatures = ["void(int32_t,int32_t,const int8_t*,const std::string&)"]

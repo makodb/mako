@@ -7,34 +7,34 @@ been removed; it cannot be used as evidence for either half.
 
 ## Current canonical-Rust ratchet (2026-08-12)
 
-The actual Cargo package starts at `src/rrr/Cargo.toml`. Fifteen checked-in
+The actual Cargo package starts at `src/rrr/Cargo.toml`. Sixteen checked-in
 modules below `src/rrr/src` are now canonical Rust, with their exact ownership
 recorded in `src/rrr/rust-modules.toml`: `basetypes`, `callback_wrapper`,
 `internal_protocol`, `stat`, `errors`, `connection_metrics`,
 `completion_tracker`, `rand`, `request_options`, `reconnect_policy`,
-`circuit_breaker`, `connection_state`, `heartbeat`, `request_queue`, and
-`load_balancer`. rustc compiles those
+`circuit_breaker`, `connection_state`, `heartbeat`, `request_queue`,
+`load_balancer`, and `utils`. rustc compiles those
 sources directly, and rusty-cpp translates the same bytes into their complete
-C++ module interfaces. Their fifteen hand-authored `.cpp` carriers have been
+C++ module interfaces. Their sixteen hand-authored `.cpp` carriers have been
 deleted, and the generated children are now the only C++ production providers
-for these modules. The former 63 inline blocks account for 2,044 lines in the
+for these modules. The former 66 inline blocks account for 2,088 lines in the
 fixed historical coverage baseline; the canonical files themselves contain
-2,261 nonblank, non-`//` Rust lines. They are source, not copied extraction
+2,333 nonblank, non-`//` Rust lines. They are source, not copied extraction
 outputs.
-Deleting the fifteen carriers removed 6,347 physical checked-in C++ source
-lines. Their classified nonblank, noncomment regions included 2,127 lines of
-inline Rust payload now owned by the canonical files, 2,236 lines of regenerable C++,
-126 DSL fence directives, and 165 other scaffold lines (the balance was comments,
+Deleting the sixteen carriers removed 6,577 physical checked-in C++ source
+lines. Their classified nonblank, noncomment regions included 2,171 lines of
+inline Rust payload now owned by the canonical files, 2,304 lines of regenerable C++,
+132 DSL fence directives, and 192 other scaffold lines (the balance was comments,
 blank lines, and generated-region markers). Thus these promotions cumulatively
-retired exactly 291 hand-authored C++ scaffold lines.
+retired exactly 324 hand-authored C++ scaffold lines.
 
 The generated modules preserve the production `rrr.basetypes`,
 `rrr::detail::CallbackWrapper`,
 `rrr.internal_protocol`, `rrr.stat`, `rrr.errors`,
 `rrr.connection_metrics`, `rrr.completion_tracker`, `rrr.rand`,
 `rrr.request_options`, `rrr.reconnect_policy`, `rrr.circuit_breaker`,
-`rrr.connection_state`, `rrr.heartbeat`, `rrr.request_queue`, and
-`rrr.load_balancer` surfaces, their exact 235-symbol
+`rrr.connection_state`, `rrr.heartbeat`, `rrr.request_queue`,
+`rrr.load_balancer`, and `rrr.utils` surfaces, their exact 246-symbol
 combined provider-owned strong ABI, the callback, `AvgStat`, and public
 18-field `ConnectionMetrics` layouts and runtime behavior, every public
 RPC-error discriminant, name, category, and retry predicate. The callback
@@ -143,10 +143,25 @@ introduced. Rust and both generated C++ provider paths pin empty pools,
 strategy names, random/round-robin/least-connections/least-latency selection,
 reset behavior, and `usize::MAX` wrapping.
 
-This is deliberately partial: fifteen of 38 named modules are canonical Rust,
-and fifteen of the original 39 hand-authored module-source units have been
-removed. The remaining 23 named modules and 24 module-source units still own
-383 inline DSL blocks and 9,438 nonblank, non-`//` DSL lines. The fixed
+Utils preserves the 16-byte move-only `AddrInfo` owner, its raw-pointer
+constructor/getter/validity surface, `find_open_port`, and `get_host_name`.
+The existing `srpc_find_open_port` terminal-C seam remains the sole port-scan
+kernel; a checked source type map retains exact `addrinfo*` and `std::string`
+C++ spellings. The private indexed import names module `rrr.logging` while
+resolving `log_line` in export namespace `rrr`; its raw file-pointer contract
+remains explicit unsafe Rust, and all three audited Utils sites pass null.
+There is no exported import, namespace alias, new ABI provider, or facade leak.
+Rust pins the layout, empty/null ownership state, trait contract, port
+outcomes, and rustc-visible host-name facade. Both generated and production
+C++ provider paths additionally pin move/self-move/exact-once teardown, exact
+log messages, and controlled host-name success/failure behavior. Its 11 unique
+provider APIs expand to exactly 17 raw strong entries after C++
+constructor/destructor aliases and the module initializer.
+
+This is deliberately partial: sixteen of 38 named modules are canonical Rust,
+and sixteen of the original 39 hand-authored module-source units have been
+removed. The remaining 22 named modules and 23 module-source units still own
+380 inline DSL blocks and 9,394 nonblank, non-`//` DSL lines. The fixed
 pre-promotion baseline is 446 blocks and 11,482 lines. `cargo test
 --manifest-path src/rrr/Cargo.toml` must never be reported as full Goal 0
 completion until the remaining graph is canonical Rust and the
@@ -177,15 +192,15 @@ and line-level audit at `2f02672c` found **zero hand-written C++ function or
 object-definition bodies** outside the inline Rust and generated regions.
 What remains is still material Goal-0 work:
 
-- 1,643 noncomment scaffold lines across the 24 remaining hand-authored
-  `.cpp`/`.cc` module-source units: 766 outer DSL fence directives plus 877
+- 1,610 noncomment scaffold lines across the 23 remaining hand-authored
+  `.cpp`/`.cc` module-source units: 760 outer DSL fence directives plus 850
   other module-frame/declaration/order/alias/macro lines outside DSL and GEN
-  regions; the fifteen canonical modules now contribute zero carrier lines;
+  regions; the sixteen canonical modules now contribute zero carrier lines;
 - 147 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
 - 87 noncomment C ABI header lines across `srpc_fiber.h`, `srpc_rand.h`, and
   `srpc_timing.h`;
 - seven tolerated external-C kernels (410 noncomment code lines); and
-- 383 inline production DSL blocks (9,438 nonblank, non-`//` lines) not yet promoted
+- 380 inline production DSL blocks (9,394 nonblank, non-`//` lines) not yet promoted
   to canonical Rust.
 
 The immediate path is to repeat the canonical-source promotion in batches:

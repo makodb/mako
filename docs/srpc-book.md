@@ -118,7 +118,6 @@ src/rrr/
     request_queue.hpp   # Pending request buffering
     pollable_proxy.h    # Pollable proxy facade + typed Arc adapter helpers
     errors.hpp          # Error code definitions
-    utils.hpp/cpp       # RPC utilities
 
   src/                # Canonical Rust module sources
     basetypes.rs       # Primitive aliases, SparseInt, counters, and clocks
@@ -136,6 +135,7 @@ src/rrr/
     request_queue.rs   # Pending-request buffering module
     reconnect_policy.rs # Reconnect policy and backoff calculator module
     stat.rs            # Statistics module
+    utils.rs           # RPC utility ownership, port, and hostname module
 
   reactor/            # Event loop and fiber system
     reactor.h           # Core event loop scheduler (482 lines)

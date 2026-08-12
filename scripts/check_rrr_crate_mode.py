@@ -22,10 +22,12 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "3d8d09eb4b5c5fdf017a846a589275eddda73f0b"
+REQUIRED_RUSTY_CPP_COMMIT = "ebb5161058a982145d253665ce9720f17224722e"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-modules.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
+TYPE_MAP = "src/rrr/rust-type-map.toml"
+CPP_MODULE_INDEX = "src/rrr/cpp-module-index.toml"
 NM_LINE = re.compile(r"^[0-9A-Fa-f]+\s+([A-Za-z])\s+(.+)$")
 PLACEHOLDER = re.compile(r"\b(?:TODO|UNSUPPORTED|skipped)\b", re.IGNORECASE)
 
@@ -771,6 +773,48 @@ ABI_SPECS = {
             }
         ),
     ),
+    "rrr.utils": AbiSpec(
+        surface=frozenset(
+            {
+                "#include <netdb.h>",
+                "export module rrr.utils;",
+                "import rrr.logging;",
+                "export struct AddrInfo",
+                "addrinfo* info_;",
+                "rusty::Cell<bool> owned_;",
+                "AddrInfo(AddrInfo&& other) noexcept",
+                "AddrInfo& operator=(AddrInfo&& other) noexcept",
+                "AddrInfo();",
+                "AddrInfo(addrinfo* info);",
+                "addrinfo* get() const;",
+                "bool valid() const;",
+                "~AddrInfo() noexcept(false);",
+                "export int32_t find_open_port();",
+                "export std::string get_host_name();",
+                "rrr::log_line(3, 0, rusty::ptr::null(), message);",
+                "rrr::log_line(1, 0, rusty::ptr::null(), message);",
+                "rusty::sys::env::hostname();",
+                "utils_ffi::srpc_find_open_port();",
+                "utils_ffi::freeaddrinfo(this->info_);",
+            }
+        ),
+        symbols=frozenset(
+            ("T", symbol)
+            for symbol in {
+                "rrr::AddrInfo@rrr.utils::AddrInfo()",
+                "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*)",
+                "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
+                "rrr::AddrInfo@rrr.utils::AddrInfo(rrr::AddrInfo@rrr.utils&&)",
+                "rrr::AddrInfo@rrr.utils::get() const",
+                "rrr::AddrInfo@rrr.utils::operator=(rrr::AddrInfo@rrr.utils&&)",
+                "rrr::AddrInfo@rrr.utils::rusty_mark_forgotten() const",
+                "rrr::AddrInfo@rrr.utils::valid() const",
+                "rrr::AddrInfo@rrr.utils::~AddrInfo()",
+                "rrr::find_open_port@rrr.utils()",
+                "rrr::get_host_name@rrr.utils()",
+            }
+        ),
+    ),
     "rrr.basetypes": AbiSpec(
         surface=frozenset(
             {
@@ -1340,6 +1384,7 @@ def require_cpp_surfaces(
                         f"an alias/using surface: {forbidden!r}"
                     )
 
+        netdb_preamble = "#include <netdb.h>"
         if module.cpp_module == "rrr.connection_state":
             require_exact_module_imports(text, "rrr.connection_state", [])
         elif module.cpp_module == "rrr.heartbeat":
@@ -1369,6 +1414,39 @@ def require_cpp_surfaces(
                         "rustc-only load-balancer facade leaked into generated "
                         f"C++: {forbidden!r}"
                     )
+        elif module.cpp_module == "rrr.utils":
+            require_exact_module_imports(text, "rrr.utils", ["rrr.logging"])
+            if text.count(netdb_preamble) != 1:
+                raise GateError(
+                    "generated rrr.utils must contain exactly one structured "
+                    "netdb preamble include"
+                )
+            ordered = (
+                text.find("\nmodule;\n"),
+                text.find(netdb_preamble),
+                text.find("#include <cstdint>"),
+                text.find("export module rrr.utils;"),
+            )
+            if -1 in ordered or list(ordered) != sorted(ordered):
+                raise GateError(
+                    "generated rrr.utils netdb preamble is not between the "
+                    "global module fragment and standard includes"
+                )
+            for forbidden in (
+                "export import rrr.logging;",
+                "namespace logging =",
+                "using ::rrr::log_line",
+                "rrr::logging::log_line",
+            ):
+                if forbidden in text:
+                    raise GateError(
+                        "generated utils private indexed import leaked or "
+                        f"misresolved its surface: {forbidden!r}"
+                    )
+        elif netdb_preamble in text:
+            raise GateError(
+                f"utils netdb preamble leaked into {module.cpp_module}"
+            )
 
     root_text = read_generated(output / "rrr.cppm", "root module")
     if "#include <rusty/sync/atomic.hpp>" in root_text:
@@ -1377,6 +1455,8 @@ def require_cpp_surfaces(
         raise GateError("rand C-kernel preamble leaked into the crate root")
     if '#include "misc/srpc_timing.h"' in root_text:
         raise GateError("timing C-kernel preamble leaked into the crate root")
+    if "#include <netdb.h>" in root_text:
+        raise GateError("utils netdb preamble leaked into the crate root")
     root_required = {
         "export module rrr;",
         "namespace rrr {",
@@ -1831,6 +1911,46 @@ def require_request_queue_raw_symbols(
     )
 
 
+def utils_raw_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+) -> list[tuple[str, str]]:
+    """Return Utils strong entries without constructor/destructor deduplication."""
+
+    return exact_module_raw_symbols(nm, root, binary, "rrr.utils")
+
+
+def require_utils_raw_symbols(
+    description: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    """Pin Utils' API, C++ ctor/dtor aliases, and initializer exactly."""
+
+    aliased = (
+        "rrr::AddrInfo@rrr.utils::AddrInfo()",
+        "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*)",
+        "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
+        "rrr::AddrInfo@rrr.utils::AddrInfo(rrr::AddrInfo@rrr.utils&&)",
+        "rrr::AddrInfo@rrr.utils::~AddrInfo()",
+    )
+    expected = Counter(ABI_SPECS["rrr.utils"].symbols)
+    for symbol in aliased:
+        expected[("T", symbol)] += 1
+    expected[("T", "initializer for module rrr.utils")] += 1
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} Utils ABI must contain exactly 17 raw strong "
+        "entries (11 unique provider-owned symbols, five C++ ABI aliases, "
+        f"and the module initializer); missing={missing!r}, "
+        f"unexpected={unexpected!r}"
+    )
+
+
 
 
 def function_parameter_open(symbol: str) -> int:
@@ -1972,9 +2092,11 @@ def importer_source() -> str:
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <netdb.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1982,6 +2104,7 @@ def importer_source() -> str:
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 import rrr.callback_wrapper;
 import rrr.basetypes;
@@ -1998,6 +2121,7 @@ import rrr.reconnect_policy;
 import rrr.request_options;
 import rrr.request_queue;
 import rrr.stat;
+import rrr.utils;
 
 static std::int32_t rand_raw_value = 0;
 static std::uint32_t rand_raw_draws = 0;
@@ -2008,6 +2132,15 @@ static std::uint64_t monotonic_now_us = 0;
 static std::uint64_t realtime_now_us = 0;
 static std::uint64_t gettimeofday_now_us = 0;
 static std::uint64_t slept_us = 0;
+static std::int32_t selected_open_port = 0;
+static std::uint32_t utils_log_calls = 0;
+static std::int32_t utils_log_level = -1;
+static std::int32_t utils_log_line = -1;
+static const std::int8_t* utils_log_file = reinterpret_cast<const std::int8_t*>(1);
+static std::string utils_log_message;
+static std::uint32_t freeaddrinfo_calls = 0;
+static std::int32_t hostname_mode = 0;
+static std::size_t hostname_buffer_length = 0;
 
 extern "C" int srpc_rand_raw(void) {
     ++rand_raw_draws;
@@ -2032,6 +2165,48 @@ extern "C" std::uint64_t srpc_gettimeofday_us(void) {
 
 extern "C" void srpc_sleep_us(std::uint64_t microseconds) {
     slept_us = microseconds;
+}
+
+extern "C" int srpc_find_open_port(void) {
+    return selected_open_port;
+}
+
+extern "C" void freeaddrinfo(addrinfo* info) {
+    ++freeaddrinfo_calls;
+    delete info;
+}
+
+extern "C" int gethostname(char* name, std::size_t length) {
+    hostname_buffer_length = length;
+    if (hostname_mode < 0) {
+        return -1;
+    }
+    const char fixed[] = "goal0-host";
+    if (length != 0) {
+        std::strncpy(name, fixed, length);
+        name[length - 1] = '\0';
+    }
+    return 0;
+}
+
+extern "C" void rrr_goal0_capture_log(
+    std::int32_t level,
+    std::int32_t line,
+    const std::int8_t* file,
+    const std::string& message) {
+    ++utils_log_calls;
+    utils_log_level = level;
+    utils_log_line = line;
+    utils_log_file = file;
+    utils_log_message = message;
+}
+
+static void reset_utils_log() {
+    utils_log_calls = 0;
+    utils_log_level = -1;
+    utils_log_line = -1;
+    utils_log_file = reinterpret_cast<const std::int8_t*>(1);
+    utils_log_message.clear();
 }
 
 static void install_rand_raw(std::int32_t value) {
@@ -2326,6 +2501,32 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
               decltype(&rrr::load_balancing_strategy_to_string),
               std::string_view (*)(rrr::LoadBalancingStrategy)>);
+static_assert(sizeof(rrr::AddrInfo) == 16);
+static_assert(alignof(rrr::AddrInfo) == 8);
+static_assert(offsetof(rrr::AddrInfo, info_) == 0);
+static_assert(offsetof(rrr::AddrInfo, owned_) == 8);
+static_assert(offsetof(rrr::AddrInfo, _rusty_forgotten) == 9);
+static_assert(std::is_standard_layout_v<rrr::AddrInfo>);
+static_assert(!std::is_copy_constructible_v<rrr::AddrInfo>);
+static_assert(!std::is_copy_assignable_v<rrr::AddrInfo>);
+static_assert(std::is_move_constructible_v<rrr::AddrInfo>);
+static_assert(std::is_move_assignable_v<rrr::AddrInfo>);
+// The move constructor itself is noexcept (pinned in the generated surface),
+// but is_nothrow_constructible also accounts for the legacy noexcept(false)
+// destructor, so the aggregate trait is deliberately false.
+static_assert(!std::is_nothrow_move_constructible_v<rrr::AddrInfo>);
+static_assert(std::is_nothrow_move_assignable_v<rrr::AddrInfo>);
+static_assert(!std::is_nothrow_destructible_v<rrr::AddrInfo>);
+static_assert(std::is_same_v<
+              decltype(&rrr::AddrInfo::get),
+              addrinfo* (rrr::AddrInfo::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::AddrInfo::valid),
+              bool (rrr::AddrInfo::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::find_open_port), std::int32_t (*)()>);
+static_assert(std::is_same_v<
+              decltype(&rrr::get_host_name), std::string (*)()>);
 static_assert(std::is_same_v<
               decltype(&rrr::randgen_zero_pad),
               std::string (*)(std::string, std::int32_t)>);
@@ -4129,6 +4330,80 @@ int main() {
         return 183;
     }
 
+    {
+        rrr::AddrInfo empty;
+        if (empty.get() != nullptr || empty.valid() || empty.owned_.get() ||
+            empty._rusty_forgotten) {
+            return 184;
+        }
+    }
+    const auto free_before = freeaddrinfo_calls;
+    {
+        auto* first = new addrinfo{};
+        auto* second = new addrinfo{};
+        rrr::AddrInfo source(first);
+        if (source.get() != first || !source.valid() || !source.owned_.get()) {
+            return 185;
+        }
+        rrr::AddrInfo moved(std::move(source));
+        if (moved.get() != first || !moved.owned_.get() ||
+            source.get() != first || !source._rusty_forgotten) {
+            return 186;
+        }
+        rrr::AddrInfo target(second);
+        target = std::move(moved);
+        if (target.get() != first || !target.owned_.get() ||
+            moved.get() != first || !moved._rusty_forgotten) {
+            return 187;
+        }
+        target = std::move(target);
+        if (target.get() != first || target._rusty_forgotten) {
+            return 188;
+        }
+    }
+    if (freeaddrinfo_calls - free_before != 2) {
+        return 189;
+    }
+
+    selected_open_port = 4321;
+    reset_utils_log();
+    if (rrr::find_open_port() != 4321 || utils_log_calls != 1 ||
+        utils_log_level != 3 || utils_log_line != 0 ||
+        utils_log_file != nullptr ||
+        utils_log_message != "Found open port: 4321") {
+        return 190;
+    }
+    selected_open_port = 0;
+    reset_utils_log();
+    if (rrr::find_open_port() != -1 || utils_log_calls != 1 ||
+        utils_log_level != 1 || utils_log_line != 0 ||
+        utils_log_file != nullptr ||
+        utils_log_message != "Failed to find open port.") {
+        return 191;
+    }
+    selected_open_port = -1;
+    reset_utils_log();
+    if (rrr::find_open_port() != -1 || utils_log_calls != 1 ||
+        utils_log_level != 1 ||
+        utils_log_message != "Failed to find open port.") {
+        return 192;
+    }
+
+    hostname_mode = 1;
+    reset_utils_log();
+    if (rrr::get_host_name() != "goal0-host" ||
+        hostname_buffer_length != 255 || utils_log_calls != 0) {
+        return 193;
+    }
+    hostname_mode = -1;
+    reset_utils_log();
+    if (!rrr::get_host_name().empty() || utils_log_calls != 1 ||
+        utils_log_level != 1 || utils_log_line != 0 ||
+        utils_log_file != nullptr ||
+        utils_log_message != "Failed to get hostname.") {
+        return 194;
+    }
+
     constexpr std::array<std::int64_t, 37> sparse_boundaries{
         INT64_MIN,
         -36028797018963969LL, -36028797018963968LL,
@@ -4552,6 +4827,99 @@ def compile_module(
     return object_file
 
 
+def compile_logging_probe_dependency(
+    clang: Path,
+    root: Path,
+    include: Path,
+    work_dir: Path,
+    cxx_flags: list[str],
+    prebuilt_module_dirs: list[Path],
+) -> list[Path]:
+    """Build an observable ABI-exact rrr.logging test dependency.
+
+    Utils remains the provider under test. This tiny named-module fixture only
+    supplies its still-inline logging dependency, forwarding each call to the
+    importer so both the direct-generated and production Utils lanes can pin
+    level/location/message behavior without replacing either Utils provider.
+    """
+
+    interface = work_dir / "rrr.logging.cppm"
+    interface.write_text(
+        """\
+module;
+#include <cstdint>
+#include <string>
+export module rrr.logging;
+export namespace rrr {
+void log_line(
+    std::int32_t level,
+    std::int32_t line,
+    const std::int8_t* file,
+    const std::string& message);
+}
+""",
+        encoding="utf-8",
+    )
+    interface_object = compile_module(
+        clang,
+        root,
+        include,
+        work_dir,
+        work_dir,
+        "rrr.logging",
+        cxx_flags,
+        prebuilt_module_dirs,
+    )
+
+    implementation = work_dir / "rrr.logging.probe.cpp"
+    implementation_object = work_dir / "rrr.logging.probe.o"
+    implementation.write_text(
+        """\
+module;
+#include <cstdint>
+#include <string>
+module rrr.logging;
+extern "C" void rrr_goal0_capture_log(
+    std::int32_t level,
+    std::int32_t line,
+    const std::int8_t* file,
+    const std::string& message);
+namespace rrr {
+void log_line(
+    std::int32_t level,
+    std::int32_t line,
+    const std::int8_t* file,
+    const std::string& message) {
+    rrr_goal0_capture_log(level, line, file, message);
+}
+}
+""",
+        encoding="utf-8",
+    )
+    module_path_flags = [
+        f"-fprebuilt-module-path={path}"
+        for path in (work_dir, *prebuilt_module_dirs)
+    ]
+    run(
+        [
+            str(clang),
+            "-std=gnu++23",
+            *cxx_flags,
+            "-I",
+            str(include),
+            "-I",
+            str(root / "src/rrr"),
+            *module_path_flags,
+            "-c",
+            str(implementation),
+            "-o",
+            str(implementation_object),
+        ],
+        root,
+    )
+    return [interface_object, implementation_object]
+
+
 def grouped_link_inputs(paths: list[Path]) -> list[str]:
     rendered = [str(path) for path in paths]
     if sys.platform.startswith("linux"):
@@ -4624,6 +4992,14 @@ def check_generated_output(
     # production target and this gate.
     with tempfile.TemporaryDirectory(prefix="rrr-crate-mode-compile-") as temporary:
         work = Path(temporary)
+        dependency_objects = compile_logging_probe_dependency(
+            clang,
+            root,
+            include,
+            work,
+            cxx_flags,
+            prebuilt_module_dirs,
+        )
         generated_objects = [
             compile_module(
                 clang,
@@ -4674,11 +5050,25 @@ def check_generated_output(
         )
 
         link_sets: list[tuple[str, list[Path]]] = [
-            ("generated", [*generated_objects, *runtime_libraries]),
+            (
+                "generated",
+                [*generated_objects, *dependency_objects, *runtime_libraries],
+            ),
         ]
         if production is not None:
             link_sets.append(
-                ("production", [production, *runtime_libraries])
+                (
+                    "production",
+                    # Put the observable logging fixture before librrr.a. If
+                    # the archive is scanned first, canonical Utils creates an
+                    # unresolved log_line edge that can pull the real logging
+                    # provider from the same archive; the unconditional probe
+                    # objects would then duplicate both log_line and its module
+                    # initializer. Dependency-first ordering keeps Utils as the
+                    # provider under test while satisfying that edge with the
+                    # intentionally instrumented fixture.
+                    [*dependency_objects, production, *runtime_libraries],
+                )
             )
         for label, link_inputs in link_sets:
             executable_path = work / f"importer-{label}"
@@ -4744,6 +5134,11 @@ def check_generated_output(
                     "crate-generated object",
                     basetypes_raw_symbols(nm, root, generated_object),
                 )
+            elif module.cpp_module == "rrr.utils":
+                require_utils_raw_symbols(
+                    "crate-generated object",
+                    utils_raw_symbols(nm, root, generated_object),
+                )
             elif module.cpp_module in {
                 "rrr.connection_state",
                 "rrr.heartbeat",
@@ -4805,6 +5200,11 @@ def check_generated_output(
                     require_basetypes_raw_symbols(
                         "production library",
                         basetypes_raw_symbols(nm, root, production),
+                    )
+                elif module.cpp_module == "rrr.utils":
+                    require_utils_raw_symbols(
+                        "production library",
+                        utils_raw_symbols(nm, root, production),
                     )
                 elif module.cpp_module in {
                     "rrr.connection_state",
@@ -4878,6 +5278,10 @@ def check(args: argparse.Namespace) -> None:
                     "rrr",
                     "--module-preamble",
                     str(root / MODULE_PREAMBLE),
+                    "--type-map",
+                    str(root / TYPE_MAP),
+                    "--cpp-module-index",
+                    str(root / CPP_MODULE_INDEX),
                 ],
                 root,
             )
@@ -4914,6 +5318,7 @@ def check(args: argparse.Namespace) -> None:
         "ConnectionState layout/empty-callback/transition runtime contracts, and "
         "Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime "
         "contracts, LoadBalancer layout/strategy/selection/wrapping runtime "
+        "contracts, Utils layout/move/teardown/port/hostname/logging runtime "
         "contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )

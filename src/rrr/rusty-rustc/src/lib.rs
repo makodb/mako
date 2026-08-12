@@ -9,6 +9,33 @@
 
 use std::ops::{Deref, DerefMut, Index};
 
+/// Rust-side model of helpers supplied by the C++ rusty runtime.
+pub mod sys {
+    pub mod env {
+        /// Return a host name for direct-rustc tests without adding an unsafe
+        /// syscall boundary to this compile-time-only facade. Production C++
+        /// resolves this path to `rusty::sys::env::hostname()`.
+        pub fn hostname() -> String {
+            std::env::var("HOSTNAME").unwrap_or_default()
+        }
+    }
+}
+
+/// Rust-only declarations for C++ modules imported by canonical rrr sources.
+/// The exact local `rusty` facade dependency is omitted from generated C++.
+pub mod rrr {
+    pub mod logging {
+        /// Rust-side no-op model of the production logging entry point.
+        ///
+        /// # Safety
+        ///
+        /// `file` must be null or point to a valid NUL-terminated path for the
+        /// duration of the call. The production logger scans any non-null path.
+        #[allow(unsafe_code)]
+        pub unsafe fn log_line(_level: i32, _line: i32, _file: *const i8, _message: &String) {}
+    }
+}
+
 /// Rust-only contract for metric views used by the canonical load-balancer module.
 pub trait LoadBalancerMetrics {
     fn in_flight_requests(&self) -> u64;

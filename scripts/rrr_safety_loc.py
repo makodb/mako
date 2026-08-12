@@ -35,7 +35,7 @@ FILES = [
     "src/rrr/rpc/inmemory_channel.cpp",
     "src/rrr/rpc/pollable_proxy.cpp",
     "src/rrr/rpc/server.cpp",
-    "src/rrr/rpc/tcp_channel.cpp", "src/rrr/rpc/utils.cpp",
+    "src/rrr/rpc/tcp_channel.cpp",
 ]
 
 INLINE_UNSAFE_BLOCK = re.compile(r"^\s*//\s*@unsafe\s*\{")

@@ -11,9 +11,10 @@
 #include <netinet/in.h>
 
 /* Scan 1024..64999 for a locally bindable TCP port. Returns the port,
- * or -1 on socket/resolve failure, or 0 if no port was free. (Was
- * rrr::find_open_port in rpc/utils.cpp; the AddrInfo RAII wrapper is
- * unnecessary here — getaddrinfo/freeaddrinfo pair locally.) */
+ * or -1 on socket/resolve failure, or 0 if no port was free. The scan
+ * formerly lived in rpc/utils.cpp; canonical src/rrr/src/utils.rs now calls
+ * this kernel. AddrInfo RAII is unnecessary here because getaddrinfo and
+ * freeaddrinfo pair locally. */
 int srpc_find_open_port(void) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {

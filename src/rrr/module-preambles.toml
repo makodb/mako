@@ -30,3 +30,9 @@ name = "rrr.circuit_breaker"
 includes = [
     { path = "misc/srpc_timing.h", form = "quote" },
 ]
+
+[[module]]
+name = "rrr.utils"
+includes = [
+    { path = "netdb.h", form = "angle" },
+]

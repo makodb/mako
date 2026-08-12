@@ -88,6 +88,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "src/rrr/base/basetypes.cpp",
             "src/rrr/rpc/request_queue.cpp",
             "src/rrr/rpc/load_balancer.cpp",
+            "src/rrr/rpc/utils.cpp",
         )
         self.assertTrue(all(not (REPOSITORY / path).exists() for path in retired))
 
@@ -98,12 +99,12 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 24 hand-authored module units, "
-            "SCAFFOLD=1643 noncomment lines (766 DSL fences + 877 other)",
+            "source boundary: 23 hand-authored module units, "
+            "SCAFFOLD=1610 noncomment lines (760 DSL fences + 850 other)",
             output,
         )
         self.assertIn(
-            "payload census:   dsl=9438  generated=12257 "
+            "payload census:   dsl=9394  generated=12189 "
             "nonblank/non-// lines",
             output,
         )
@@ -171,7 +172,46 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 }
                             ],
                         },
+                        {
+                            "name": "rrr.utils",
+                            "includes": [
+                                {
+                                    "path": "netdb.h",
+                                    "form": "angle",
+                                }
+                            ],
+                        },
                     ],
+                },
+            )
+
+    def test_utils_sidecars_are_narrow_and_fail_closed_inputs(self) -> None:
+        with (REPOSITORY / "src/rrr/rust-type-map.toml").open("rb") as stream:
+            self.assertEqual(
+                tomllib.load(stream),
+                {
+                    "LegacyAddrInfo": "addrinfo",
+                    "LegacyStdString": "std::string",
+                },
+            )
+        with (REPOSITORY / "src/rrr/cpp-module-index.toml").open("rb") as stream:
+            self.assertEqual(
+                tomllib.load(stream),
+                {
+                    "version": 1,
+                    "modules": {
+                        "rrr::logging": {
+                            "namespace": "rrr",
+                            "symbols": {
+                                "log_line": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "void(int32_t,int32_t,const int8_t*,const std::string&)"
+                                    ],
+                                }
+                            },
+                        }
+                    },
                 },
             )
 
@@ -280,6 +320,12 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "src/rrr/src/load_balancer.rs",
                     "src/rrr/src/load_balancer.rs",
                 ),
+                (
+                    "rrr.utils",
+                    "utils",
+                    "src/rrr/src/utils.rs",
+                    "src/rrr/src/utils.rs",
+                ),
             ],
         )
 
@@ -313,6 +359,42 @@ class CheckedInCanaryTests(unittest.TestCase):
             "${RRR_GOAL0_CRATE_CPP_DIR}/rrr.${_RRR_GOAL0_MODULE}.cppm",
             cmake,
         )
+        for fragment in (
+            'set(RRR_GOAL0_TYPE_MAP\n    ${CMAKE_CURRENT_SOURCE_DIR}/rust-type-map.toml',
+            'set(RRR_GOAL0_CPP_MODULE_INDEX\n    ${CMAKE_CURRENT_SOURCE_DIR}/cpp-module-index.toml',
+            '--type-map "${RRR_GOAL0_TYPE_MAP}"',
+            '--cpp-module-index "${RRR_GOAL0_CPP_MODULE_INDEX}"',
+            '"${RRR_GOAL0_TYPE_MAP}"',
+            '"${RRR_GOAL0_CPP_MODULE_INDEX}"',
+        ):
+            self.assertIn(fragment, cmake)
+
+        workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('canonical_input="src/rrr/src/utils.rs"', workflow)
+        self.assertIn(
+            'utils_generated_path="${GOAL0_BUILD_DIR}/src/rrr/'
+            'goal0-crate-cpp/rrr.utils.cppm"',
+            workflow,
+        )
+        self.assertIn(
+            'facade_utils_before="$(stat -c %Y "${utils_generated_path}")"',
+            workflow,
+        )
+        self.assertIn(
+            'test "$(stat -c %Y "${utils_generated_path}")" -gt '
+            '"${facade_utils_before}"',
+            workflow,
+        )
+        self.assertIn('type_map_input="src/rrr/rust-type-map.toml"', workflow)
+        self.assertIn(
+            'module_index_input="src/rrr/cpp-module-index.toml"', workflow
+        )
+        self.assertIn(
+            'for sidecar_input in "${type_map_input}" "${module_index_input}"',
+            workflow,
+        )
 
     def test_checked_in_modules_are_canonical_rust_sources(self) -> None:
         modules = DRIVER.load_manifest(
@@ -335,7 +417,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                     bool(line.strip()) and not line.lstrip().startswith("//")
                     for line in source.splitlines()
                 )
-        self.assertEqual(canonical_lines, 2261)
+        self.assertEqual(canonical_lines, 2333)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -400,6 +482,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/basetypes.rs",
                 "src/rrr/src/request_queue.rs",
                 "src/rrr/src/load_balancer.rs",
+                "src/rrr/src/utils.rs",
             },
         )
 
@@ -419,8 +502,9 @@ class CheckedInCanaryTests(unittest.TestCase):
         rand_path = rust_root / "rand.rs"
         circuit_path = rust_root / "circuit_breaker.rs"
         basetypes_path = rust_root / "basetypes.rs"
+        utils_path = rust_root / "utils.rs"
         for path in sorted(rust_root.rglob("*.rs")):
-            if path in {rand_path, circuit_path, basetypes_path}:
+            if path in {rand_path, circuit_path, basetypes_path, utils_path}:
                 continue
             self.assertIsNone(
                 unsafe_syntax.search(path.read_text(encoding="utf-8")),
@@ -506,6 +590,19 @@ class CheckedInCanaryTests(unittest.TestCase):
         ):
             self.assertIn(symbol, basetypes)
 
+        utils = utils_path.read_text(encoding="utf-8")
+        self.assertEqual(utils.count("#[allow(unsafe_code)]"), 5)
+        self.assertEqual(utils.count('unsafe extern "C"'), 1)
+        self.assertEqual(utils.count("pub unsafe fn adopt"), 1)
+        self.assertEqual(utils.count("unsafe {"), 5)
+        self.assertEqual(utils.count("/// # Safety"), 1)
+        self.assertIn("    info_: *mut LegacyAddrInfo,", utils)
+        self.assertIn("    owned_: Cell<bool>,", utils)
+        self.assertNotIn("pub info_:", utils)
+        self.assertNotIn("pub owned_:", utils)
+        for symbol in ("freeaddrinfo", "srpc_find_open_port"):
+            self.assertIn(symbol, utils)
+
         facade_manifest = REPOSITORY / "src/rrr/rusty-rustc/Cargo.toml"
         with facade_manifest.open("rb") as stream:
             facade_cargo = tomllib.load(stream)
@@ -514,9 +611,17 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertEqual(facade_cargo["lints"]["rust"]["unsafe_code"], "deny")
         self.assertFalse((facade_manifest.parent / "Cargo.lock").exists())
         facade = (facade_manifest.parent / "src/lib.rs").read_text(encoding="utf-8")
+        logging_boundary = (
+            "#[allow(unsafe_code)]\n"
+            "        pub unsafe fn log_line("
+            "_level: i32, _line: i32, _file: *const i8, _message: &String) {}"
+        )
+        self.assertEqual(facade.count(logging_boundary), 1)
+        self.assertEqual(facade.count("/// # Safety"), 1)
+        facade_remainder = facade.replace(logging_boundary, "", 1)
         self.assertIsNone(
-            unsafe_syntax.search(facade),
-            "rustc-only rusty runtime facade must contain no unsafe Rust",
+            unsafe_syntax.search(facade_remainder),
+            "rustc-only rusty facade gained unsafe Rust outside log_line",
         )
         self.assertIn("inner: Option<Box<F>>", facade)
         self.assertIn("runtime_layout_padding: [u8; 32]", facade)
@@ -1076,6 +1181,46 @@ class DriverBehaviorTests(unittest.TestCase):
 
 
 class CrateModeGateTests(unittest.TestCase):
+    def test_utils_preamble_is_rejected_from_sibling_children(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-gate-preamble-") as temporary:
+            output = Path(temporary)
+            (output / "CMakeLists.txt").write_text("# generated\n", encoding="utf-8")
+            (output / "rrr.utils.cppm").write_text(
+                "// generated\nmodule;\n"
+                "#include <netdb.h>\n"
+                "#include <cstdint>\n"
+                "export module rrr.utils;\n"
+                "import rrr.logging;\n",
+                encoding="utf-8",
+            )
+            (output / "rrr.example.cppm").write_text(
+                "// generated\nmodule;\n"
+                "#include <netdb.h>\n"
+                "export module rrr.example;\n",
+                encoding="utf-8",
+            )
+            (output / "rrr.cppm").write_text(
+                "export module rrr;\n"
+                "namespace rrr {\n"
+                "export import rrr.utils;\n"
+                "export import rrr.example;\n",
+                encoding="utf-8",
+            )
+            modules = [
+                mock.Mock(cpp_module="rrr.utils"),
+                mock.Mock(cpp_module="rrr.example"),
+            ]
+            specs = {
+                "rrr.utils": GATE.AbiSpec(frozenset(), frozenset()),
+                "rrr.example": GATE.AbiSpec(frozenset(), frozenset()),
+            }
+            with mock.patch.dict(GATE.ABI_SPECS, specs, clear=True):
+                with self.assertRaisesRegex(
+                    GATE.GateError,
+                    "utils netdb preamble leaked into rrr.example",
+                ):
+                    GATE.require_cpp_surfaces(Path("/repository"), output, modules)
+
     def test_placeholder_ratchet_checks_named_module_purview(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-gate-placeholder-") as temporary:
             generated = Path(temporary) / "rrr.example.cppm"
@@ -1402,8 +1547,15 @@ class CrateModeGateTests(unittest.TestCase):
 
             command = run.call_args.args[0]
             self.assertEqual(
-                command[-2:],
-                ["--module-preamble", str(root / GATE.MODULE_PREAMBLE)],
+                command[-6:],
+                [
+                    "--module-preamble",
+                    str(root / GATE.MODULE_PREAMBLE),
+                    "--type-map",
+                    str(root / GATE.TYPE_MAP),
+                    "--cpp-module-index",
+                    str(root / GATE.CPP_MODULE_INDEX),
+                ],
             )
             self.assertEqual(
                 command[2], str((root / "src/rrr/Cargo.toml").resolve())
@@ -1444,6 +1596,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.heartbeat"),
             mock.Mock(cpp_module="rrr.request_queue"),
             mock.Mock(cpp_module="rrr.load_balancer"),
+            mock.Mock(cpp_module="rrr.utils"),
         ]
 
         def symbols_for_module(
@@ -1516,6 +1669,16 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.load_balancer",
             )
         }
+        utils_raw = list(GATE.ABI_SPECS["rrr.utils"].symbols)
+        for symbol in (
+            "rrr::AddrInfo@rrr.utils::AddrInfo()",
+            "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*)",
+            "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
+            "rrr::AddrInfo@rrr.utils::AddrInfo(rrr::AddrInfo@rrr.utils&&)",
+            "rrr::AddrInfo@rrr.utils::~AddrInfo()",
+        ):
+            utils_raw.append(("T", symbol))
+        utils_raw.append(("T", "initializer for module rrr.utils"))
 
         def compiled_object(
             _clang: Path,
@@ -1569,6 +1732,10 @@ class CrateModeGateTests(unittest.TestCase):
                 return_value=request_queue_raw,
             ), mock.patch.object(
                 GATE,
+                "utils_raw_symbols",
+                return_value=utils_raw,
+            ), mock.patch.object(
+                GATE,
                 "exact_module_raw_symbols",
                 side_effect=lambda _nm, _root, _binary, name: exact_raw[name],
             ):
@@ -1589,6 +1756,7 @@ class CrateModeGateTests(unittest.TestCase):
         self.assertEqual(
             compiled_names,
             [
+                "rrr.logging",
                 "rrr.basetypes",
                 "rrr.callback_wrapper",
                 "rrr.internal_protocol",
@@ -1604,6 +1772,7 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.heartbeat",
                 "rrr.request_queue",
                 "rrr.load_balancer",
+                "rrr.utils",
                 "rrr",
             ],
         )
@@ -1643,6 +1812,30 @@ class CrateModeGateTests(unittest.TestCase):
             if GATE.sys.platform.startswith("linux"):
                 self.assertIn("-Wl,--start-group", command)
                 self.assertIn("-Wl,--end-group", command)
+
+        production_link = next(
+            command
+            for command in link_commands
+            if any(argument == "/production.a" for argument in command)
+        )
+        logging_interface = next(
+            argument
+            for argument in production_link
+            if argument.endswith("/rrr.logging.o")
+        )
+        logging_implementation = next(
+            argument
+            for argument in production_link
+            if argument.endswith("/rrr.logging.probe.o")
+        )
+        self.assertLess(
+            production_link.index(logging_interface),
+            production_link.index("/production.a"),
+        )
+        self.assertLess(
+            production_link.index(logging_implementation),
+            production_link.index("/production.a"),
+        )
 
     def test_completion_raw_symbol_ratchet_pins_all_33_entries(self) -> None:
         entries = list(GATE.ABI_SPECS["rrr.completion_tracker"].symbols)
@@ -1722,6 +1915,22 @@ class CrateModeGateTests(unittest.TestCase):
                     GATE.require_exact_module_raw_symbols(
                         module_name, "test provider", entries[:-1]
                     )
+
+    def test_utils_raw_symbol_ratchet_pins_all_17_entries(self) -> None:
+        entries = list(GATE.ABI_SPECS["rrr.utils"].symbols)
+        for symbol in (
+            "rrr::AddrInfo@rrr.utils::AddrInfo()",
+            "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*)",
+            "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
+            "rrr::AddrInfo@rrr.utils::AddrInfo(rrr::AddrInfo@rrr.utils&&)",
+            "rrr::AddrInfo@rrr.utils::~AddrInfo()",
+        ):
+            entries.append(("T", symbol))
+        entries.append(("T", "initializer for module rrr.utils"))
+        self.assertEqual(len(entries), 17)
+        GATE.require_utils_raw_symbols("test provider", entries)
+        with self.assertRaisesRegex(GATE.GateError, "exactly 17 raw"):
+            GATE.require_utils_raw_symbols("test provider", entries[:-1])
 
     def test_basetypes_raw_symbol_ratchet_pins_all_29_entries(self) -> None:
         entries = list(GATE.ABI_SPECS["rrr.basetypes"].symbols)
@@ -1832,6 +2041,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.heartbeat"),
             mock.Mock(cpp_module="rrr.request_queue"),
             mock.Mock(cpp_module="rrr.load_balancer"),
+            mock.Mock(cpp_module="rrr.utils"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

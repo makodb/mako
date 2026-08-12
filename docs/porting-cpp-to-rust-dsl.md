@@ -3567,7 +3567,7 @@ outputs. Here that separated 9 changed files into 6 backlog and 3 real,
 and only one of the 3 was the bug.
 
 **A second finding fell out of the backlog half, and my first reading of
-it was wrong.** Regenerating `rpc/utils.cpp` emits
+it was wrong.** Regenerating the former `rpc/utils.cpp` carrier at that time emitted
 `rusty::detail::mark_forgotten_if_supported`, and the build says:
 
     utils.cpp:102:90: error: no member named 'mark_forgotten_if_supported'
@@ -3580,12 +3580,14 @@ narrower, and is a rule already on the books:
 
  - the helper is **header-only** -- it is absent from the transpiled
    `rusty` module, so `import rusty;` does not bring it in; and
- - `utils.cpp` is a module TU whose global module fragment includes
+ - that carrier was a module TU whose global module fragment included
    `cell.hpp`, `result.hpp`, `sys/env.hpp` -- but not `slice.hpp`.
 
 That is the module-partition reachability rule: **a GMF must include what
-its own GEN names.** The fix is a one-line `#include <rusty/slice.hpp>`,
-after which `librrr.a` builds and the whole backlog applies cleanly.
+its own GEN names.** The historical fix was a one-line
+`#include <rusty/slice.hpp>`. Today canonical
+`src/rrr/src/utils.rs` owns the module, and its remaining GMF dependency is
+declared through structured preamble metadata.
 
 Check whether a missing symbol is *absent* or merely *unreachable* before
 concluding anything about the toolchain. One `grep` in `include/`

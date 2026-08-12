@@ -55,11 +55,14 @@ jobs:
           set -euo pipefail
           emitter_path="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-executable.txt")"
           emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-input.txt")"
-          canonical_input="src/rrr/src/load_balancer.rs"
-          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.load_balancer.cppm"
+          canonical_input="src/rrr/src/utils.rs"
+          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.utils.cppm"
           runtime_facade_input="src/rrr/rusty-rustc/src/lib.rs"
           request_queue_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.request_queue.cppm"
           load_balancer_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.load_balancer.cppm"
+          utils_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.utils.cppm"
+          type_map_input="src/rrr/rust-type-map.toml"
+          module_index_input="src/rrr/cpp-module-index.toml"
 
           steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${steady_output}"
@@ -91,6 +94,7 @@ jobs:
 
           facade_generated_before="$(stat -c %Y "${request_queue_generated_path}")"
           facade_load_balancer_before="$(stat -c %Y "${load_balancer_generated_path}")"
+          facade_utils_before="$(stat -c %Y "${utils_generated_path}")"
           sleep 1
           touch "${runtime_facade_input}"
           facade_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
@@ -101,7 +105,21 @@ jobs:
           test "$(stat -c %Y "${request_queue_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
           test "$(stat -c %Y "${load_balancer_generated_path}")" -gt "${facade_load_balancer_before}"
           test "$(stat -c %Y "${load_balancer_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
+          test "$(stat -c %Y "${utils_generated_path}")" -gt "${facade_utils_before}"
+          test "$(stat -c %Y "${utils_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
           test ! -e "${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rusty"
+
+          for sidecar_input in "${type_map_input}" "${module_index_input}"; do
+            sidecar_before="$(stat -c %Y "${utils_generated_path}")"
+            sleep 1
+            touch "${sidecar_input}"
+            sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
+            printf '%s\n' "${sidecar_output}"
+
+            grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${sidecar_output}"
+            test "$(stat -c %Y "${utils_generated_path}")" -gt "${sidecar_before}"
+            test "$(stat -c %Y "${utils_generated_path}")" -ge "$(stat -c %Y "${sidecar_input}")"
+          done
 
       - name: Run focused production consumers
         run: >-

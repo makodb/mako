@@ -1,5 +1,9 @@
 # RPC Safety Conversion Plan
 
+> Historical conversion record. Current ownership and Goal-0 status live in
+> `src/rrr/RUST_CANARY.md`; `rpc/utils.cpp` has since been replaced by
+> canonical `src/rrr/src/utils.rs` plus the terminal `srpc_net.c` kernel.
+
 This document tracks the plan to convert unsafe code in `src/rrr/rpc/` to safe code.
 
 ## Current State

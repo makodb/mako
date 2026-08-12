@@ -40,11 +40,10 @@ set(RRR_INLINE_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
 )
 list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_INLINE_MODULE_SRC})
 
-# These fifteen modules are owned by canonical Rust sources. rusty-cpp generates
+# These sixteen modules are owned by canonical Rust sources. rusty-cpp generates
 # their complete C++ module interfaces; no hand-authored carrier remains.
 set(RRR_GOAL0_CANONICAL_MODULES
     basetypes
@@ -62,15 +61,16 @@ set(RRR_GOAL0_CANONICAL_MODULES
     heartbeat
     request_queue
     load_balancer
+    utils
 )
 set(_RRR_GOAL0_UNIQUE_MODULES ${RRR_GOAL0_CANONICAL_MODULES})
 list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_MODULES)
 list(LENGTH RRR_GOAL0_CANONICAL_MODULES _RRR_GOAL0_MODULE_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_MODULES _RRR_GOAL0_UNIQUE_MODULE_COUNT)
-if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 15 OR
-   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 15)
+if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 16 OR
+   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 16)
     message(FATAL_ERROR
-        "Goal-0 canonical module inventory must contain fifteen unique names")
+        "Goal-0 canonical module inventory must contain sixteen unique names")
 endif()
 
 set(RRR_GOAL0_CRATE_CPP_DIR
@@ -101,6 +101,7 @@ set(RRR_GOAL0_RETIRED_CARRIER_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_queue.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
 )
 foreach(_RRR_GOAL0_CANONICAL_SOURCE IN LISTS RRR_GOAL0_CANONICAL_RUST_SRC)
     if(NOT EXISTS "${_RRR_GOAL0_CANONICAL_SOURCE}")
@@ -128,16 +129,16 @@ list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC)
 list(LENGTH _RRR_GOAL0_UNIQUE_CANONICAL_RUST_SRC
     _RRR_GOAL0_UNIQUE_CANONICAL_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC _RRR_GOAL0_UNIQUE_CHILD_COUNT)
-if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 15 OR
-   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 15 OR
-   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 15 OR
-   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 15)
+if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 16 OR
+   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 16 OR
+   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 16 OR
+   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 16)
     message(FATAL_ERROR
-        "Goal-0 crate production must own exactly fifteen unique "
+        "Goal-0 crate production must own exactly sixteen unique "
         "Rust/generated providers")
 endif()
 
-# Production always combines the remaining inline carriers with the fifteen
+# Production always combines the remaining inline carriers with the sixteen
 # generated providers. The partial crate root remains compile-only until all
 # 38 named modules are canonical Rust.
 set(RRR_MODULE_SRC ${RRR_INLINE_MODULE_SRC} ${RRR_GOAL0_CRATE_CHILD_SRC})
@@ -150,10 +151,10 @@ set_source_files_properties(${RRR_GOAL0_CRATE_CHILD_SRC}
 
 list(LENGTH RRR_INLINE_MODULE_SRC _RRR_INLINE_MODULE_COUNT)
 list(LENGTH RRR_MODULE_SRC _RRR_PRODUCTION_MODULE_COUNT)
-if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 23 OR
+if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 22 OR
    NOT _RRR_PRODUCTION_MODULE_COUNT EQUAL 38)
     message(FATAL_ERROR
-        "Goal-0 production must contain 23 inline and fifteen generated modules")
+        "Goal-0 production must contain 22 inline and sixteen generated modules")
 endif()
 list(FIND RRR_MODULE_SRC "${RRR_GOAL0_CRATE_ROOT_SRC}" _RRR_GOAL0_ROOT_INDEX)
 if(NOT _RRR_GOAL0_ROOT_INDEX EQUAL -1)
@@ -275,7 +276,7 @@ if(NOT TARGET rrr)
     target_sources(rrr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
 
     # Remaining hand-authored RRR C++ module units for borrow checking. The
-    # fifteen canonical Rust modules are checked by rustc and are not duplicated
+    # sixteen canonical Rust modules are checked by rustc and are not duplicated
     # here as generated C++ providers.
     set(RRR_BORROW_SRC
         # base/
@@ -305,7 +306,6 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
         # Notes on parse-recovery:
         # - rpc/server.cpp and rpc/fiber_channel.cpp trip a libclang-22 crash
         #   on the first parse attempt (clang++ CLI compiles them fine — it's
@@ -454,7 +454,7 @@ file(GENERATE
 
 # Crate mode emits all children and the partial root in one invocation. Both
 # the production target and dual gate consume this one build-tree generation.
-# Only the fifteen child .cppm files enter RRR_MODULE_SRC. The dual gate compiles
+# Only the sixteen child .cppm files enter RRR_MODULE_SRC. The dual gate compiles
 # rrr.cppm after its children in temporary storage, but production never does.
 set(RRR_GOAL0_CRATE_GENERATED_OUTPUTS
     ${RRR_GOAL0_CRATE_CHILD_SRC}
@@ -464,6 +464,12 @@ set(RRR_GOAL0_CRATE_GENERATED_OUTPUTS
 )
 set(RRR_GOAL0_MODULE_PREAMBLE
     ${CMAKE_CURRENT_SOURCE_DIR}/module-preambles.toml
+)
+set(RRR_GOAL0_TYPE_MAP
+    ${CMAKE_CURRENT_SOURCE_DIR}/rust-type-map.toml
+)
+set(RRR_GOAL0_CPP_MODULE_INDEX
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp-module-index.toml
 )
 # Keep the crate manifest absolute at the process boundary. The crate
 # dependency validator deliberately resolves the exact local `rusty` facade;
@@ -482,6 +488,8 @@ add_custom_command(
         --output-dir "${RRR_GOAL0_CRATE_CPP_DIR}"
         --cxx-namespace rrr
         --module-preamble "${RRR_GOAL0_MODULE_PREAMBLE}"
+        --type-map "${RRR_GOAL0_TYPE_MAP}"
+        --cpp-module-index "${RRR_GOAL0_CPP_MODULE_INDEX}"
     DEPENDS
         rrr_goal0_source_gate
         rrr_goal0_transpiler_fingerprint
@@ -492,6 +500,8 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/rusty-rustc/src/lib.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/rust-modules.toml"
         "${RRR_GOAL0_MODULE_PREAMBLE}"
+        "${RRR_GOAL0_TYPE_MAP}"
+        "${RRR_GOAL0_CPP_MODULE_INDEX}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/lib.rs"
         ${RRR_GOAL0_CANONICAL_RUST_SRC}
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
