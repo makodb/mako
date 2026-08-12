@@ -7,31 +7,32 @@ been removed; it cannot be used as evidence for either half.
 
 ## Current canonical-Rust ratchet (2026-08-12)
 
-The actual Cargo package starts at `src/rrr/Cargo.toml`. Twelve checked-in
+The actual Cargo package starts at `src/rrr/Cargo.toml`. Thirteen checked-in
 modules below `src/rrr/src` are now canonical Rust, with their exact ownership
-recorded in `src/rrr/rust-modules.toml`: `callback_wrapper`,
+recorded in `src/rrr/rust-modules.toml`: `basetypes`, `callback_wrapper`,
 `internal_protocol`, `stat`, `errors`, `connection_metrics`,
 `completion_tracker`, `rand`, `request_options`, `reconnect_policy`,
 `circuit_breaker`, `connection_state`, and `heartbeat`. rustc compiles those
 sources directly, and rusty-cpp translates the same bytes into their complete
-C++ module interfaces. Their twelve hand-authored `.cpp` carriers have been
+C++ module interfaces. Their thirteen hand-authored `.cpp` carriers have been
 deleted, and the generated children are now the only C++ production providers
-for these modules. The former 40 inline blocks account for 1,451 lines in the
+for these modules. The former 50 inline blocks account for 1,727 lines in the
 fixed historical coverage baseline; the canonical files themselves contain
-1,562 nonblank, non-`//` Rust lines. They are source, not copied extraction
+1,897 nonblank, non-`//` Rust lines. They are source, not copied extraction
 outputs.
-Deleting the twelve carriers removed 4,451 physical checked-in C++ source
-lines. Their classified nonblank, noncomment regions included 1,534 lines of
-inline Rust payload now owned by the canonical files, 1,570 lines of regenerable C++,
-80 DSL fence directives, and 126 other scaffold lines (the balance was comments,
+Deleting the thirteen carriers removed 5,325 physical checked-in C++ source
+lines. Their classified nonblank, noncomment regions included 1,810 lines of
+inline Rust payload now owned by the canonical files, 1,895 lines of regenerable C++,
+100 DSL fence directives, and 138 other scaffold lines (the balance was comments,
 blank lines, and generated-region markers). Thus these promotions cumulatively
-retired exactly 206 hand-authored C++ scaffold lines.
+retired exactly 238 hand-authored C++ scaffold lines.
 
-The generated modules preserve the production `rrr::detail::CallbackWrapper`,
+The generated modules preserve the production `rrr.basetypes`,
+`rrr::detail::CallbackWrapper`,
 `rrr.internal_protocol`, `rrr.stat`, `rrr.errors`,
 `rrr.connection_metrics`, `rrr.completion_tracker`, `rrr.rand`,
 `rrr.request_options`, `rrr.reconnect_policy`, `rrr.circuit_breaker`,
-`rrr.connection_state`, and `rrr.heartbeat` surfaces, their exact 174-symbol
+`rrr.connection_state`, and `rrr.heartbeat` surfaces, their exact 202-symbol
 combined provider-owned strong ABI, the callback, `AvgStat`, and public
 18-field `ConnectionMetrics` layouts and runtime behavior, every public
 RPC-error discriminant, name, category, and retry predicate. The callback
@@ -109,10 +110,21 @@ Both callback kinds are tested empty, installed, and dispatched; heartbeat
 also pins moved-from emptiness. Its timing and missed-count arithmetic is
 explicitly wrapping.
 
-This is deliberately partial: twelve of 38 named modules are canonical Rust,
-and twelve of the original 39 hand-authored module-source units have been
-removed. The remaining 26 named modules and 27 module-source units still own
-406 inline DSL blocks and 10,031 nonblank, non-`//` DSL lines. The fixed
+Basetypes preserves its exported primitive and `AtomicI64`/`Ordering` aliases,
+the SparseInt wire format, `v32`/`v64`, atomic `Counter`, `Time`, and `Timer`,
+and all 28 provider-owned strong API/data symbols. The four public raw-pointer
+codecs are explicit unsafe Rust functions with exact storage contracts. Tests
+pin the full sparse-integer boundary set, a legacy-derived wire-byte digest over
+a deterministic 100,000-value corpus, and the length-eight encoding that writes
+nine bytes but reports eight,
+including the archive-visible truncation result when a caller persists only
+the reported count. Monotonic/realtime clocks, gettimeofday, and sleep use the
+existing terminal `srpc_timing.c` seam; no C++ ABI or hand provider is added.
+
+This is deliberately partial: thirteen of 38 named modules are canonical Rust,
+and thirteen of the original 39 hand-authored module-source units have been
+removed. The remaining 25 named modules and 26 module-source units still own
+396 inline DSL blocks and 9,755 nonblank, non-`//` DSL lines. The fixed
 pre-promotion baseline is 446 blocks and 11,482 lines. `cargo test
 --manifest-path src/rrr/Cargo.toml` must never be reported as full Goal 0
 completion until the remaining graph is canonical Rust and the
@@ -143,15 +155,15 @@ and line-level audit at `2f02672c` found **zero hand-written C++ function or
 object-definition bodies** outside the inline Rust and generated regions.
 What remains is still material Goal-0 work:
 
-- 1,729 noncomment scaffold lines across the 27 remaining hand-authored
-  `.cpp`/`.cc` module-source units: 812 outer DSL fence directives plus 917
+- 1,696 noncomment scaffold lines across the 26 remaining hand-authored
+  `.cpp`/`.cc` module-source units: 792 outer DSL fence directives plus 904
   other module-frame/declaration/order/alias/macro lines outside DSL and GEN
-  regions; the twelve canonical modules now contribute zero carrier lines;
+  regions; the thirteen canonical modules now contribute zero carrier lines;
 - 147 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
-- 84 noncomment C ABI header lines across `srpc_fiber.h`, `srpc_rand.h`, and
+- 87 noncomment C ABI header lines across `srpc_fiber.h`, `srpc_rand.h`, and
   `srpc_timing.h`;
-- seven tolerated external-C kernels (388 noncomment code lines); and
-- 406 inline production DSL blocks (10,031 nonblank, non-`//` lines) not yet promoted
+- seven tolerated external-C kernels (410 noncomment code lines); and
+- 396 inline production DSL blocks (9,755 nonblank, non-`//` lines) not yet promoted
   to canonical Rust.
 
 The immediate path is to repeat the canonical-source promotion in batches:

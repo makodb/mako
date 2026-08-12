@@ -1753,6 +1753,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_marshal ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_marshal COMMAND test_marshal)
 
+    # Canonical basetypes clock and Timer smoke tests.
+    add_executable(test_timer src/rrr/tests/test_timer.cc)
+    target_include_directories(test_timer PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_timer PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_timer ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_timer COMMAND test_timer)
+
     # Marshal Microbenchmark (no gtest — standalone main; prints ns/op).
     # Measures the Vec<uint8_t>+read_pos Marshal — same harness used
     # during the chunk-list → Vec rewrite (see
@@ -2618,7 +2625,7 @@ if(BUILD_TESTS)
     # Add a convenience target to run all tests
     add_custom_target(run_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS test_marshal test_rpc test_future test_masstree test_reactor test_rpc_extended test_reactor_extended 
+        DEPENDS test_timer test_marshal test_rpc test_future test_masstree test_reactor test_rpc_extended test_reactor_extended
                 test_silo_varint test_silo_rcu_thread test_silo_allocator_tuple 
                 test_sto_transaction test_sto_transaction_real
                 rpcbench simpleTransaction simplePaxos shard1ReplicationSimple  # test_alock removed
@@ -2892,6 +2899,7 @@ if(BUILD_TESTS)
 
     message(STATUS "Test targets configured:")
     message(STATUS "  RRR Framework Tests:")
+    message(STATUS "    - test_timer: Canonical basetypes clock and Timer smoke tests")
     message(STATUS "    - test_marshal: Marshal/Unmarshal tests")
     message(STATUS "    - test_rpc: RPC client/server tests")
     message(STATUS "    - test_rpc_extended: Extended RPC tests (timeouts, reconnection, load)")

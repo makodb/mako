@@ -49,6 +49,31 @@ uint64_t srpc_clock_monotonic_us(void) {
            (uint64_t)ts.tv_nsec / UINT64_C(1000);
 }
 
+uint64_t srpc_clock_realtime_coarse_us(void) {
+    struct timespec ts;
+#if defined(CLOCK_REALTIME_COARSE)
+    clock_gettime(CLOCK_REALTIME_COARSE, &ts);
+#else
+    clock_gettime(CLOCK_REALTIME, &ts);
+#endif
+    return (uint64_t)ts.tv_sec * UINT64_C(1000000) +
+           (uint64_t)ts.tv_nsec / UINT64_C(1000);
+}
+
+uint64_t srpc_gettimeofday_us(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * UINT64_C(1000000) +
+           (uint64_t)tv.tv_usec;
+}
+
+void srpc_sleep_us(uint64_t microseconds) {
+    struct timespec ts;
+    ts.tv_sec = (time_t)(microseconds / UINT64_C(1000000));
+    ts.tv_nsec = (long)((microseconds % UINT64_C(1000000)) * UINT64_C(1000));
+    nanosleep(&ts, NULL);
+}
+
 /* Wall-clock timestamp "YYYY-MM-DD HH:MM:SS.mmm" into a caller buffer of
  * at least 24 bytes (23 chars + NUL). Plain C: time/localtime_r/
  * gettimeofday syscalls + raw byte writing (Goal-0 C demotion; was

@@ -731,6 +731,92 @@ ABI_SPECS = {
             }
         ),
     ),
+    "rrr.basetypes": AbiSpec(
+        surface=frozenset(
+            {
+                '#include "misc/srpc_timing.h"',
+                "#include <rusty/sync/atomic.hpp>",
+                "export module rrr.basetypes;",
+                "export using i8 = int8_t;",
+                "export using i16 = int16_t;",
+                "export using i32 = int32_t;",
+                "export using i64 = int64_t;",
+                "export using rusty::sync::atomic::AtomicI64;",
+                "export using rusty::sync::atomic::Ordering;",
+                "export constexpr uint64_t RRR_USEC_PER_SEC",
+                "export struct SparseInt",
+                "static size_t buf_size(uint8_t byte0);",
+                "static size_t dump32(int32_t val, uint8_t* buf);",
+                "static size_t dump64(int64_t val, uint8_t* buf);",
+                "static int32_t load32(const uint8_t* buf);",
+                "static int64_t load64(const uint8_t* buf);",
+                "static size_t val_size(int64_t val);",
+                "export struct v32",
+                "int32_t val_field;",
+                "static v32 new_(int32_t v);",
+                "export struct v64",
+                "int64_t val_field;",
+                "static v64 new_(int64_t v);",
+                "export struct Counter",
+                "rusty::sync::atomic::AtomicI64 next_field;",
+                "static Counter new_(int64_t start);",
+                "int64_t peek_next() const;",
+                "int64_t next(int64_t step) const;",
+                "void reset(int64_t start) const;",
+                "export struct Time",
+                "static uint64_t now(bool accurate);",
+                "static void sleep(uint64_t t);",
+                "export struct Timer",
+                "uint64_t begin_us;",
+                "uint64_t end_us;",
+                "static Timer new_();",
+                "void start();",
+                "void stop();",
+                "void reset();",
+                "double elapsed() const;",
+                "export void abort_if_false(bool cond);",
+                "std::abort();",
+                "export uint64_t time_now_us(bool accurate);",
+                "srpc_clock_monotonic_us();",
+                "srpc_clock_realtime_coarse_us();",
+                "srpc_gettimeofday_us();",
+                "srpc_sleep_us(uint64_t microseconds);",
+                "rusty::wrapping_sub(end,",
+            }
+        ),
+        symbols=frozenset(
+            {
+                ("R", "rrr::RRR_USEC_PER_SEC@rrr.basetypes"),
+                ("T", "rrr::abort_if_false@rrr.basetypes(bool)"),
+                ("T", "rrr::time_now_us@rrr.basetypes(bool)"),
+                ("T", "rrr::SparseInt@rrr.basetypes::buf_size(unsigned char)"),
+                ("T", "rrr::SparseInt@rrr.basetypes::dump32(int, unsigned char*)"),
+                ("T", "rrr::SparseInt@rrr.basetypes::dump64(long, unsigned char*)"),
+                ("T", "rrr::SparseInt@rrr.basetypes::load32(unsigned char const*)"),
+                ("T", "rrr::SparseInt@rrr.basetypes::load64(unsigned char const*)"),
+                ("T", "rrr::SparseInt@rrr.basetypes::val_size(long)"),
+                ("T", "rrr::v32@rrr.basetypes::new_(int)"),
+                ("T", "rrr::v32@rrr.basetypes::set(int)"),
+                ("T", "rrr::v32@rrr.basetypes::get() const"),
+                ("T", "rrr::v32@rrr.basetypes::val_size() const"),
+                ("T", "rrr::v64@rrr.basetypes::new_(long)"),
+                ("T", "rrr::v64@rrr.basetypes::set(long)"),
+                ("T", "rrr::v64@rrr.basetypes::get() const"),
+                ("T", "rrr::v64@rrr.basetypes::val_size() const"),
+                ("T", "rrr::Counter@rrr.basetypes::new_(long)"),
+                ("T", "rrr::Counter@rrr.basetypes::peek_next() const"),
+                ("T", "rrr::Counter@rrr.basetypes::next(long) const"),
+                ("T", "rrr::Counter@rrr.basetypes::reset(long) const"),
+                ("T", "rrr::Time@rrr.basetypes::now(bool)"),
+                ("T", "rrr::Time@rrr.basetypes::sleep(unsigned long)"),
+                ("T", "rrr::Timer@rrr.basetypes::new_()"),
+                ("T", "rrr::Timer@rrr.basetypes::start()"),
+                ("T", "rrr::Timer@rrr.basetypes::stop()"),
+                ("T", "rrr::Timer@rrr.basetypes::reset()"),
+                ("T", "rrr::Timer@rrr.basetypes::elapsed() const"),
+            }
+        ),
+    ),
 }
 
 
@@ -1006,6 +1092,7 @@ def require_cpp_surfaces(
             )
         atomic_preamble = "#include <rusty/sync/atomic.hpp>"
         atomic_modules = {
+            "rrr.basetypes",
             "rrr.connection_metrics",
             "rrr.completion_tracker",
         }
@@ -1061,22 +1148,23 @@ def require_cpp_surfaces(
             )
 
         timing_preamble = '#include "misc/srpc_timing.h"'
-        if module.cpp_module == "rrr.circuit_breaker":
-            require_exact_module_imports(text, "rrr.circuit_breaker", [])
+        timing_modules = {"rrr.basetypes", "rrr.circuit_breaker"}
+        if module.cpp_module in timing_modules:
+            require_exact_module_imports(text, module.cpp_module, [])
             if text.count(timing_preamble) != 1:
                 raise GateError(
-                    "generated rrr.circuit_breaker must contain exactly one "
+                    f"generated {module.cpp_module} must contain exactly one "
                     "structured timing-kernel preamble include"
                 )
             ordered = (
                 text.find("\nmodule;\n"),
                 text.find(timing_preamble),
                 text.find("#include <cstdint>"),
-                text.find("export module rrr.circuit_breaker;"),
+                text.find(f"export module {module.cpp_module};"),
             )
             if -1 in ordered or list(ordered) != sorted(ordered):
                 raise GateError(
-                    "generated rrr.circuit_breaker timing preamble is not "
+                    f"generated {module.cpp_module} timing preamble is not "
                     "between the global module fragment and standard includes"
                 )
         elif timing_preamble in text:
@@ -1481,6 +1569,51 @@ def require_exact_module_raw_symbols(
     )
 
 
+def basetypes_raw_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+) -> list[tuple[str, str]]:
+    """Return basetypes strong entries, including its initializer."""
+
+    output = run(
+        [str(nm), "--defined-only", "--demangle", str(binary)],
+        root,
+    )
+    initializer = "initializer for module rrr.basetypes"
+    entries: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        match = NM_LINE.match(line)
+        if match is None:
+            continue
+        kind, symbol = match.groups()
+        if not kind.isupper() or kind in {"U", "V", "W"}:
+            continue
+        if symbol_owner_module(symbol) == "rrr.basetypes" or symbol == initializer:
+            entries.append((kind, symbol))
+    return entries
+
+
+def require_basetypes_raw_symbols(
+    description: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    """Pin basetypes' 28-entry API/data ABI and initializer exactly."""
+
+    expected = Counter(ABI_SPECS["rrr.basetypes"].symbols)
+    expected[("T", "initializer for module rrr.basetypes")] += 1
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} basetypes ABI must contain exactly 29 raw strong "
+        "entries (28 API/data symbols and the module initializer); "
+        f"missing={missing!r}, unexpected={unexpected!r}"
+    )
+
+
 def function_parameter_open(symbol: str) -> int:
     """Return the outer function-parameter `(`, or the end for a data symbol."""
 
@@ -1615,6 +1748,8 @@ def importer_source() -> str:
 #include <rusty/traits.hpp>
 
 #include <atomic>
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -1628,6 +1763,7 @@ def importer_source() -> str:
 #include <vector>
 
 import rrr.callback_wrapper;
+import rrr.basetypes;
 import rrr.circuit_breaker;
 import rrr.completion_tracker;
 import rrr.connection_metrics;
@@ -1646,6 +1782,9 @@ static std::uint32_t rand_destroy_calls = 0;
 static std::uint32_t rand_string_evaluations = 0;
 static std::uint32_t rand_weight_evaluations = 0;
 static std::uint64_t monotonic_now_us = 0;
+static std::uint64_t realtime_now_us = 0;
+static std::uint64_t gettimeofday_now_us = 0;
+static std::uint64_t slept_us = 0;
 
 extern "C" int srpc_rand_raw(void) {
     ++rand_raw_draws;
@@ -1658,6 +1797,18 @@ extern "C" void srpc_rand_destroy(void) {
 
 extern "C" std::uint64_t srpc_clock_monotonic_us(void) {
     return monotonic_now_us;
+}
+
+extern "C" std::uint64_t srpc_clock_realtime_coarse_us(void) {
+    return realtime_now_us;
+}
+
+extern "C" std::uint64_t srpc_gettimeofday_us(void) {
+    return gettimeofday_now_us;
+}
+
+extern "C" void srpc_sleep_us(std::uint64_t microseconds) {
+    slept_us = microseconds;
 }
 
 static void install_rand_raw(std::int32_t value) {
@@ -1680,6 +1831,61 @@ static std::vector<double> make_rand_weights() {
 }
 
 static_assert(std::is_same_v<rrr::RandWeightVec, std::vector<double>>);
+
+static_assert(std::is_same_v<rrr::i8, std::int8_t>);
+static_assert(std::is_same_v<rrr::i16, std::int16_t>);
+static_assert(std::is_same_v<rrr::i32, std::int32_t>);
+static_assert(std::is_same_v<rrr::i64, std::int64_t>);
+static_assert(sizeof(rrr::SparseInt) == 1);
+static_assert(alignof(rrr::SparseInt) == 1);
+static_assert(sizeof(rrr::v32) == 4);
+static_assert(alignof(rrr::v32) == 4);
+static_assert(sizeof(rrr::v64) == 8);
+static_assert(alignof(rrr::v64) == 8);
+static_assert(sizeof(rrr::Counter) == 8);
+static_assert(alignof(rrr::Counter) == 8);
+static_assert(sizeof(rrr::Time) == 1);
+static_assert(alignof(rrr::Time) == 1);
+static_assert(sizeof(rrr::Timer) == 16);
+static_assert(alignof(rrr::Timer) == 8);
+static_assert(offsetof(rrr::v32, val_field) == 0);
+static_assert(offsetof(rrr::v64, val_field) == 0);
+static_assert(offsetof(rrr::Counter, next_field) == 0);
+static_assert(offsetof(rrr::Timer, begin_us) == 0);
+static_assert(offsetof(rrr::Timer, end_us) == 8);
+static_assert(rrr::SparseInt::is_send && rrr::SparseInt::is_sync);
+static_assert(rrr::v32::is_send && rrr::v32::is_sync);
+static_assert(rrr::v64::is_send && rrr::v64::is_sync);
+static_assert(rrr::Counter::is_send && rrr::Counter::is_sync);
+static_assert(rrr::Time::is_send && rrr::Time::is_sync);
+static_assert(rrr::Timer::is_send && rrr::Timer::is_sync);
+static_assert(sizeof(rrr::AtomicI64) == 8);
+static_assert(alignof(rrr::AtomicI64) == 8);
+static_assert(std::is_copy_constructible_v<rrr::Counter>);
+static_assert(std::is_copy_assignable_v<rrr::Counter>);
+static_assert(std::is_move_constructible_v<rrr::Counter>);
+static_assert(std::is_move_assignable_v<rrr::Counter>);
+static_assert(std::is_same_v<
+              decltype(&rrr::SparseInt::buf_size),
+              std::size_t (*)(std::uint8_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::SparseInt::dump32),
+              std::size_t (*)(std::int32_t, std::uint8_t*)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::SparseInt::dump64),
+              std::size_t (*)(std::int64_t, std::uint8_t*)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::SparseInt::load32),
+              std::int32_t (*)(const std::uint8_t*)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::SparseInt::load64),
+              std::int64_t (*)(const std::uint8_t*)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::Counter::next),
+              std::int64_t (rrr::Counter::*)(std::int64_t) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::Timer::elapsed),
+              double (rrr::Timer::*)() const>);
 
 static_assert(std::is_same_v<
               std::underlying_type_t<rrr::CircuitState>, std::int32_t>);
@@ -2308,6 +2514,32 @@ static bool completion_tracker_concurrent_operations_are_safe() {
         }
     }
     return true;
+}
+
+template <typename I>
+static bool basetypes_round_trip(I value) {
+    std::array<std::uint8_t, 12> encoded{};
+    const auto sentinel = static_cast<std::uint8_t>(value) ^ 0xff;
+    encoded.fill(sentinel);
+    std::size_t size = 0;
+    I decoded{};
+    if constexpr (sizeof(I) == 4) {
+        size = rrr::SparseInt::dump32(value, encoded.data());
+        decoded = rrr::SparseInt::load32(encoded.data());
+    } else {
+        size = rrr::SparseInt::dump64(value, encoded.data());
+        decoded = rrr::SparseInt::load64(encoded.data());
+    }
+    if (size != rrr::SparseInt::val_size(static_cast<std::int64_t>(value)) ||
+        rrr::SparseInt::buf_size(encoded[0]) != size || decoded != value) {
+        return false;
+    }
+    if constexpr (sizeof(I) == 8) {
+        if (size == 8) {
+            return encoded[8] != sentinel && encoded[9] == sentinel;
+        }
+    }
+    return encoded[size] == sentinel;
 }
 
 int main() {
@@ -3476,6 +3708,156 @@ int main() {
         wrapping_heartbeat.is_timed_out()) {
         return 141;
     }
+
+    constexpr std::array<std::int64_t, 37> sparse_boundaries{
+        INT64_MIN,
+        -36028797018963969LL, -36028797018963968LL,
+        -36028797018963967LL, -281474976710657LL,
+        -281474976710656LL, -281474976710655LL,
+        -2199023255553LL, -2199023255552LL, -2199023255551LL,
+        -17179869185LL, -17179869184LL, -17179869183LL,
+        -134217729LL, -134217728LL, -134217727LL,
+        -1048577LL, -1048576LL, -1048575LL,
+        -8193LL, -8192LL, -8191LL, -65LL, -64LL, -63LL,
+        -1LL, 0LL, 1LL, 62LL, 63LL, 64LL, 8191LL, 8192LL,
+        1048575LL, 134217727LL, 36028797018963967LL, INT64_MAX,
+    };
+    for (const auto value : sparse_boundaries) {
+        if (!basetypes_round_trip(value)) {
+            return 142;
+        }
+        if (value >= INT32_MIN && value <= INT32_MAX &&
+            !basetypes_round_trip(static_cast<std::int32_t>(value))) {
+            return 143;
+        }
+    }
+    std::uint64_t sparse_state = UINT64_C(0x9e3779b97f4a7c15);
+    std::uint64_t sparse_wire_digest = UINT64_C(0xcbf29ce484222325);
+    const auto hash_sparse_byte = [](std::uint64_t hash, std::uint8_t byte) {
+        return (hash ^ byte) * UINT64_C(0x100000001b3);
+    };
+    for (std::size_t i = 0; i < 100000; ++i) {
+        sparse_state ^= sparse_state >> 12;
+        sparse_state ^= sparse_state << 25;
+        sparse_state ^= sparse_state >> 27;
+        const auto value = static_cast<std::int64_t>(
+            sparse_state * UINT64_C(0x2545f4914f6cdd1d));
+        if (!basetypes_round_trip(value) ||
+            !basetypes_round_trip(static_cast<std::int32_t>(value))) {
+            return 144;
+        }
+        std::array<std::uint8_t, 9> encoded64{};
+        const auto reported64 =
+            rrr::SparseInt::dump64(value, encoded64.data());
+        sparse_wire_digest = hash_sparse_byte(sparse_wire_digest, 64);
+        sparse_wire_digest = hash_sparse_byte(
+            sparse_wire_digest, static_cast<std::uint8_t>(reported64));
+        const auto written64 = reported64 == 8 ? 9 : reported64;
+        for (std::size_t byte = 0; byte < written64; ++byte) {
+            sparse_wire_digest =
+                hash_sparse_byte(sparse_wire_digest, encoded64[byte]);
+        }
+        std::array<std::uint8_t, 5> encoded32{};
+        const auto reported32 = rrr::SparseInt::dump32(
+            static_cast<std::int32_t>(value), encoded32.data());
+        sparse_wire_digest = hash_sparse_byte(sparse_wire_digest, 32);
+        sparse_wire_digest = hash_sparse_byte(
+            sparse_wire_digest, static_cast<std::uint8_t>(reported32));
+        for (std::size_t byte = 0; byte < reported32; ++byte) {
+            sparse_wire_digest =
+                hash_sparse_byte(sparse_wire_digest, encoded32[byte]);
+        }
+    }
+    if (sparse_wire_digest != UINT64_C(0x6d2ddf1efe2ab0b6)) {
+        return 156;
+    }
+    for (const auto [value, truncated] : std::array{
+             std::pair{INT64_C(36028797018963967),
+                       INT64_C(36028797018963712)},
+             std::pair{INT64_C(-36028797018963967),
+                       INT64_C(-36028797018963968)},
+         }) {
+        std::array<std::uint8_t, 9> encoded{};
+        const auto reported = rrr::SparseInt::dump64(value, encoded.data());
+        std::array<std::uint8_t, 9> persisted{};
+        std::copy_n(encoded.begin(), reported, persisted.begin());
+        if (reported != 8 || encoded[0] != 0xfe ||
+            rrr::SparseInt::load64(persisted.data()) != truncated) {
+            return 145;
+        }
+    }
+
+    auto base_v32 = rrr::v32::new_(-8192);
+    base_v32.set(8192);
+    auto base_v64 = rrr::v64::new_(36028797018963968LL);
+    if (base_v32.get() != 8192 || base_v32.val_size() != 3 ||
+        base_v64.get() != 36028797018963968LL || base_v64.val_size() != 9) {
+        return 146;
+    }
+    auto base_counter = rrr::Counter::new_(7);
+    if (base_counter.peek_next() != 7 || base_counter.next(5) != 7 ||
+        base_counter.peek_next() != 12) {
+        return 147;
+    }
+    base_counter.reset(std::numeric_limits<std::int64_t>::max());
+    if (base_counter.next(1) != std::numeric_limits<std::int64_t>::max() ||
+        base_counter.peek_next() != std::numeric_limits<std::int64_t>::min()) {
+        return 148;
+    }
+    auto concurrent_counter = rrr::Counter::new_(0);
+    {
+        std::vector<std::thread> workers;
+        for (std::size_t worker = 0; worker < 8; ++worker) {
+            workers.emplace_back([&concurrent_counter]() {
+                for (std::size_t i = 0; i < 10000; ++i) {
+                    concurrent_counter.next(1);
+                }
+            });
+        }
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    }
+    if (concurrent_counter.peek_next() != 80000) {
+        return 155;
+    }
+    rrr::AtomicI64 exported_atomic = rrr::AtomicI64::new_(11);
+    if (exported_atomic.load(rrr::Ordering::Relaxed) != 11 ||
+        rrr::RRR_USEC_PER_SEC != 1000000) {
+        return 149;
+    }
+
+    monotonic_now_us = 10;
+    realtime_now_us = 20;
+    gettimeofday_now_us = 1000000;
+    slept_us = 0;
+    rrr::abort_if_false(true);
+    if (rrr::time_now_us(true) != 10 || rrr::Time::now(false) != 20) {
+        return 150;
+    }
+    rrr::Time::sleep(37);
+    auto base_timer = rrr::Timer::new_();
+    base_timer.start();
+    gettimeofday_now_us = 3250000;
+    if (slept_us != 37 || base_timer.elapsed() != 2.25) {
+        return 151;
+    }
+    base_timer.stop();
+    gettimeofday_now_us = 9000000;
+    if (base_timer.elapsed() != 2.25) {
+        return 152;
+    }
+    base_timer.begin_us = 10;
+    base_timer.end_us = 5;
+    if (base_timer.elapsed() !=
+        static_cast<double>(std::numeric_limits<std::uint64_t>::max() - 4) /
+            1000000.0) {
+        return 153;
+    }
+    base_timer.reset();
+    if (base_timer.begin_us != 0 || base_timer.end_us != 0) {
+        return 154;
+    }
     return 0;
 }
 """
@@ -3716,6 +4098,11 @@ def check_generated_output(
                     "crate-generated object",
                     circuit_breaker_raw_symbols(nm, root, generated_object),
                 )
+            elif module.cpp_module == "rrr.basetypes":
+                require_basetypes_raw_symbols(
+                    "crate-generated object",
+                    basetypes_raw_symbols(nm, root, generated_object),
+                )
             elif module.cpp_module in {"rrr.connection_state", "rrr.heartbeat"}:
                 require_exact_module_raw_symbols(
                     module.cpp_module,
@@ -3763,6 +4150,11 @@ def check_generated_output(
                     require_circuit_breaker_raw_symbols(
                         "production library",
                         circuit_breaker_raw_symbols(nm, root, production),
+                    )
+                elif module.cpp_module == "rrr.basetypes":
+                    require_basetypes_raw_symbols(
+                        "production library",
+                        basetypes_raw_symbols(nm, root, production),
                     )
                 elif module.cpp_module in {
                     "rrr.connection_state",
@@ -3865,6 +4257,7 @@ def check(args: argparse.Namespace) -> None:
         "RequestOptions layout/factory/retry/timeout/jitter runtime contracts, "
         "ReconnectPolicy layout/factory/backoff/retry/jitter runtime contracts, and "
         "CircuitBreaker layout/factory/state/timeout/wrapping runtime contracts, "
+        "Basetypes aliases/layout/sparse-wire/atomic/timing runtime contracts, "
         "ConnectionState layout/empty-callback/transition runtime contracts, and "
         "Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime "
         "contracts, and "

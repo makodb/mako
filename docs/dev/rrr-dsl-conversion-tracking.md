@@ -1,9 +1,15 @@
 # rrr → Inline-Rust DSL: Conversion Progress Tracker
 
-*Living tracker for driving the remaining hand-written C++ in `src/rrr/` toward the
-inline-Rust DSL. Methodology (measure hand-written LOC, then classify by reason) is
-documented in [`docs/porting-cpp-to-rust-dsl.md`](../porting-cpp-to-rust-dsl.md) §7.5.
-Update the progress log as conversions land.*
+> Historical inline-carrier tracker, superseded by
+> [`goal0_completion_plan.md`](goal0_completion_plan.md). Its dated baselines and
+> per-file floors describe the earlier conversion campaign, not current source
+> ownership. In particular, `base/basetypes.cpp` is deleted: canonical
+> `src/rrr/src/basetypes.rs` owns SparseInt, including its four explicit unsafe
+> raw-pointer codecs, and the platform timing calls use the terminal plain-C
+> `srpc_timing.c` seam.
+
+Methodology (measure hand-written LOC, then classify by reason) is documented in
+[`docs/porting-cpp-to-rust-dsl.md`](../porting-cpp-to-rust-dsl.md) §7.5.
 
 ## Baseline (measured 2026-07-15)
 

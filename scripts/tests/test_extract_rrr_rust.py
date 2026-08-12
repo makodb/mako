@@ -85,6 +85,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "src/rrr/rpc/circuit_breaker.cpp",
             "src/rrr/rpc/connection_state.cpp",
             "src/rrr/rpc/heartbeat.cpp",
+            "src/rrr/base/basetypes.cpp",
         )
         self.assertTrue(all(not (REPOSITORY / path).exists() for path in retired))
 
@@ -95,12 +96,12 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 27 hand-authored module units, "
-            "SCAFFOLD=1729 noncomment lines (812 DSL fences + 917 other)",
+            "source boundary: 26 hand-authored module units, "
+            "SCAFFOLD=1696 noncomment lines (792 DSL fences + 904 other)",
             output,
         )
         self.assertIn(
-            "payload census:   dsl=10031  generated=12923 "
+            "payload census:   dsl=9755  generated=12598 "
             "nonblank/non-// lines",
             output,
         )
@@ -108,7 +109,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "12 compatibility headers, SCAFFOLD=147 noncomment lines", output
         )
         self.assertIn(
-            "terminal C:      3 ABI headers/84 lines; 7 kernels/388 lines",
+            "terminal C:      3 ABI headers/87 lines; 7 kernels/410 lines",
             output,
         )
 
@@ -119,6 +120,19 @@ class CheckedInCanaryTests(unittest.TestCase):
                 {
                     "version": 1,
                     "module": [
+                        {
+                            "name": "rrr.basetypes",
+                            "includes": [
+                                {
+                                    "path": "misc/srpc_timing.h",
+                                    "form": "quote",
+                                },
+                                {
+                                    "path": "rusty/sync/atomic.hpp",
+                                    "form": "angle",
+                                },
+                            ],
+                        },
                         {
                             "name": "rrr.connection_metrics",
                             "includes": [
@@ -174,6 +188,12 @@ class CheckedInCanaryTests(unittest.TestCase):
                 for module in modules
             ],
             [
+                (
+                    "rrr.basetypes",
+                    "basetypes",
+                    "src/rrr/src/basetypes.rs",
+                    "src/rrr/src/basetypes.rs",
+                ),
                 (
                     "rrr.callback_wrapper",
                     "callback_wrapper",
@@ -301,7 +321,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                     bool(line.strip()) and not line.lstrip().startswith("//")
                     for line in source.splitlines()
                 )
-        self.assertEqual(canonical_lines, 1562)
+        self.assertEqual(canonical_lines, 1897)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -363,10 +383,11 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/circuit_breaker.rs",
                 "src/rrr/src/connection_state.rs",
                 "src/rrr/src/heartbeat.rs",
+                "src/rrr/src/basetypes.rs",
             },
         )
 
-    def test_unsafe_allowances_are_confined_to_the_two_c_boundaries(self) -> None:
+    def test_unsafe_allowances_are_confined_to_the_audited_c_boundaries(self) -> None:
         with (REPOSITORY / "src/rrr/Cargo.toml").open("rb") as stream:
             cargo = tomllib.load(stream)
         self.assertEqual(cargo["lints"]["rust"]["unsafe_code"], "deny")
@@ -381,8 +402,9 @@ class CheckedInCanaryTests(unittest.TestCase):
         rust_root = REPOSITORY / "src/rrr/src"
         rand_path = rust_root / "rand.rs"
         circuit_path = rust_root / "circuit_breaker.rs"
+        basetypes_path = rust_root / "basetypes.rs"
         for path in sorted(rust_root.rglob("*.rs")):
-            if path in {rand_path, circuit_path}:
+            if path in {rand_path, circuit_path, basetypes_path}:
                 continue
             self.assertIsNone(
                 unsafe_syntax.search(path.read_text(encoding="utf-8")),
@@ -453,6 +475,20 @@ class CheckedInCanaryTests(unittest.TestCase):
             unsafe_syntax.search(remainder),
             "circuit_breaker.rs gained unsafe syntax outside its exact clock boundary",
         )
+
+        basetypes = basetypes_path.read_text(encoding="utf-8")
+        self.assertEqual(basetypes.count("#[allow(unsafe_code)]"), 10)
+        self.assertEqual(basetypes.count('unsafe extern "C"'), 1)
+        self.assertEqual(basetypes.count("pub unsafe fn"), 4)
+        self.assertEqual(basetypes.count("unsafe {"), 9)
+        self.assertEqual(basetypes.count("/// # Safety"), 4)
+        for symbol in (
+            "srpc_clock_monotonic_us",
+            "srpc_clock_realtime_coarse_us",
+            "srpc_gettimeofday_us",
+            "srpc_sleep_us",
+        ):
+            self.assertIn(symbol, basetypes)
 
         facade_manifest = REPOSITORY / "src/rrr/rusty-rustc/Cargo.toml"
         with facade_manifest.open("rb") as stream:
@@ -1071,6 +1107,11 @@ class CrateModeGateTests(unittest.TestCase):
             [],
         )
         GATE.require_exact_module_imports(
+            "export module rrr.basetypes;\n",
+            "rrr.basetypes",
+            [],
+        )
+        GATE.require_exact_module_imports(
             "export module rrr.connection_state;\n",
             "rrr.connection_state",
             [],
@@ -1360,6 +1401,7 @@ class CrateModeGateTests(unittest.TestCase):
 
     def test_generated_gate_compiles_children_before_partial_root(self) -> None:
         modules = [
+            mock.Mock(cpp_module="rrr.basetypes"),
             mock.Mock(cpp_module="rrr.callback_wrapper"),
             mock.Mock(cpp_module="rrr.internal_protocol"),
             mock.Mock(cpp_module="rrr.stat"),
@@ -1416,6 +1458,8 @@ class CrateModeGateTests(unittest.TestCase):
         circuit_breaker_raw.append(
             ("T", "initializer for module rrr.circuit_breaker")
         )
+        basetypes_raw = list(GATE.ABI_SPECS["rrr.basetypes"].symbols)
+        basetypes_raw.append(("T", "initializer for module rrr.basetypes"))
         exact_raw = {
             name: [
                 *GATE.ABI_SPECS[name].symbols,
@@ -1468,6 +1512,10 @@ class CrateModeGateTests(unittest.TestCase):
                 return_value=circuit_breaker_raw,
             ), mock.patch.object(
                 GATE,
+                "basetypes_raw_symbols",
+                return_value=basetypes_raw,
+            ), mock.patch.object(
+                GATE,
                 "exact_module_raw_symbols",
                 side_effect=lambda _nm, _root, _binary, name: exact_raw[name],
             ):
@@ -1488,6 +1536,7 @@ class CrateModeGateTests(unittest.TestCase):
         self.assertEqual(
             compiled_names,
             [
+                "rrr.basetypes",
                 "rrr.callback_wrapper",
                 "rrr.internal_protocol",
                 "rrr.stat",
@@ -1618,6 +1667,24 @@ class CrateModeGateTests(unittest.TestCase):
                         module_name, "test provider", entries[:-1]
                     )
 
+    def test_basetypes_raw_symbol_ratchet_pins_all_29_entries(self) -> None:
+        entries = list(GATE.ABI_SPECS["rrr.basetypes"].symbols)
+        entries.append(("T", "initializer for module rrr.basetypes"))
+        self.assertEqual(len(entries), 29)
+        GATE.require_basetypes_raw_symbols("test provider", entries)
+        with self.assertRaisesRegex(GATE.GateError, "exactly 29 raw"):
+            GATE.require_basetypes_raw_symbols("test provider", entries[:-1])
+
+    def test_basetypes_cpp_oracle_pins_abort_and_atomic_concurrency(self) -> None:
+        source = GATE.importer_source()
+        self.assertIn("std::abort();", GATE.ABI_SPECS["rrr.basetypes"].surface)
+        self.assertIn("auto concurrent_counter = rrr::Counter::new_(0);", source)
+        self.assertIn("for (std::size_t worker = 0; worker < 8; ++worker)", source)
+        self.assertIn("concurrent_counter.peek_next() != 80000", source)
+        self.assertIn(
+            "sparse_wire_digest != UINT64_C(0x6d2ddf1efe2ab0b6)", source
+        )
+
     def test_runtime_module_root_must_exist_and_contain_rusty_pcm(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-runtime-pcm-test-") as temporary:
             root = Path(temporary)
@@ -1671,6 +1738,7 @@ class CrateModeGateTests(unittest.TestCase):
     def test_gate_abi_ratchet_covers_every_manifest_module(self) -> None:
         root = Path("/repository")
         modules = [
+            mock.Mock(cpp_module="rrr.basetypes"),
             mock.Mock(cpp_module="rrr.callback_wrapper"),
             mock.Mock(cpp_module="rrr.internal_protocol"),
             mock.Mock(cpp_module="rrr.stat"),

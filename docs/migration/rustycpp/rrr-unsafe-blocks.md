@@ -4,6 +4,12 @@ This document lists all `@unsafe` annotated blocks and functions in the `src/rrr
 
 **Generated**: 2026-01-03
 
+> Historical migration inventory. `base/basetypes.cpp` has since been retired:
+> canonical `src/rrr/src/basetypes.rs` owns SparseInt, and its four public
+> raw-pointer codecs are explicit unsafe Rust functions with storage contracts.
+> The line references below describe the former carrier and are not current
+> ownership guidance.
+
 ## Summary Statistics
 
 | Category | Count | Total LOC |

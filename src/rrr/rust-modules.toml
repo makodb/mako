@@ -3,6 +3,10 @@
 schema_version = 2
 
 [[module]]
+cpp_module = "rrr.basetypes"
+source = "src/rrr/src/basetypes.rs"
+
+[[module]]
 cpp_module = "rrr.callback_wrapper"
 source = "src/rrr/src/callback_wrapper.rs"
 

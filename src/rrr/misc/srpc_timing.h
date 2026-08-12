@@ -11,6 +11,9 @@ extern "C" {
 uint64_t srpc_rdtsc_raw(void);
 uint64_t srpc_rdtsc(void);
 uint64_t srpc_clock_monotonic_us(void);
+uint64_t srpc_clock_realtime_coarse_us(void);
+uint64_t srpc_gettimeofday_us(void);
+void srpc_sleep_us(uint64_t microseconds);
 void srpc_time_now_str(char* now);
 void srpc_cpu_pause(void);
 

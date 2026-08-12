@@ -3083,10 +3083,11 @@ deserves the same treatment upstream: either lower `cfg` to `#if`, or
 refuse to transpile it. Silently ignoring it is the one unacceptable
 option.
 
-Practical consequence now: the existing "`#ifdef` platform split" floors
-(`basetypes.cpp:653/655`, `threading.cpp:229`) must stay hand-written or
-be split into per-platform files (the `fiber_context_*.S` arrangement).
-Do NOT write `#[cfg]` expecting it to work.
+Practical consequence for inline carriers: a remaining `#ifdef` platform split
+such as `threading.cpp:229` must stay outside the Rust block or be split into
+per-platform files (the `fiber_context_*.S` arrangement). The former basetypes
+split is no longer a C++ floor: canonical `basetypes.rs` calls the audited
+plain-C `srpc_timing.c` seam. Do NOT write `#[cfg]` expecting it to work.
 
 **Two floors expired.**
 

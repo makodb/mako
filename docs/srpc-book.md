@@ -121,9 +121,19 @@ src/rrr/
     utils.hpp/cpp       # RPC utilities
 
   src/                # Canonical Rust module sources
+    basetypes.rs       # Primitive aliases, SparseInt, counters, and clocks
+    callback_wrapper.rs # Callback ownership adapter module
     circuit_breaker.rs # Circuit-breaker state machine module
+    completion_tracker.rs # Request completion tracking module
+    connection_metrics.rs # Connection metrics module
+    connection_state.rs # Connection state machine module
+    errors.rs          # RPC error definitions
+    heartbeat.rs       # Keep-alive manager module
+    internal_protocol.rs # Internal protocol definitions
+    rand.rs            # Random generator module
     request_options.rs # Per-request configuration module
     reconnect_policy.rs # Reconnect policy and backoff calculator module
+    stat.rs            # Statistics module
 
   reactor/            # Event loop and fiber system
     reactor.h           # Core event loop scheduler (482 lines)
@@ -137,7 +147,6 @@ src/rrr/
 
   base/               # Core utilities
     threading.hpp       # SpinLock, SpinMutex
-    basetypes.hpp       # Type aliases, NoCopy, SparseInt
     logging.hpp         # Log framework (FATAL/ERROR/WARN/INFO/DEBUG)
     misc.hpp            # General utilities
 
@@ -950,7 +959,7 @@ rrr::Deserialize_::deserialize(d, m);
 | `i32` | `int32_t` | 4 bytes |
 | `i64` | `int64_t` | 8 bytes |
 | `v32` | variable-length 32-bit | 1-5 bytes |
-| `v64` | variable-length 64-bit | 1-10 bytes |
+| `v64` | variable-length 64-bit | 1-9 bytes |
 | `double` | `double` | 8 bytes |
 | `string` | `std::string` | length-prefixed |
 | containers | `vector`, `map`, `set`, `pair` | element-wise |

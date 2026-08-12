@@ -1,6 +1,13 @@
 version = 1
 
 [[module]]
+name = "rrr.basetypes"
+includes = [
+    { path = "misc/srpc_timing.h", form = "quote" },
+    { path = "rusty/sync/atomic.hpp", form = "angle" },
+]
+
+[[module]]
 name = "rrr.connection_metrics"
 includes = [
     { path = "rusty/sync/atomic.hpp", form = "angle" },

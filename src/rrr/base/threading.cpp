@@ -11,7 +11,6 @@ module;
 export module rrr.threading;
 
 import std;
-import rrr.basetypes;  // for NoCopy
 import rrr.debugging;  // for verify
 
 // @safe
