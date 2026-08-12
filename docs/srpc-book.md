@@ -132,6 +132,7 @@ src/rrr/
     internal_protocol.rs # Internal protocol definitions
     rand.rs            # Random generator module
     request_options.rs # Per-request configuration module
+    request_queue.rs   # Pending-request buffering module
     reconnect_policy.rs # Reconnect policy and backoff calculator module
     stat.rs            # Statistics module
 

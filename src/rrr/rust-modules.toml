@@ -53,3 +53,7 @@ source = "src/rrr/src/connection_state.rs"
 [[module]]
 cpp_module = "rrr.heartbeat"
 source = "src/rrr/src/heartbeat.rs"
+
+[[module]]
+cpp_module = "rrr.request_queue"
+source = "src/rrr/src/request_queue.rs"

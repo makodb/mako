@@ -2151,9 +2151,10 @@ work from the plan.
 
 Found while probing `idem_lookup`, whose `(*guard).push_front(entry)`
 lowers correctly — the contrast between that and the earlier failure is
-what exposed the idiom as the variable. Note the working form had been
-sitting in the tree all along: `request_queue.cpp:461` uses
-`for req in &mut (*guard)`, the same bind-then-deref shape.
+what exposed the idiom as the variable. The former request-queue carrier also
+used the same bind-then-deref shape in `for req in &mut (*guard)`. Its canonical
+replacement, `src/rrr/src/request_queue.rs`, now drains the queue explicitly
+with `while let Some(request) = guard.pop_front()`.
 
 **Correction — the scope is narrower than first stated.** The rule above
 was originally written as "never chain a method through `borrow_mut()`".

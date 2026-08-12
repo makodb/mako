@@ -1,7 +1,7 @@
 # `rrr` canonical Rust canary
 
 The Cargo package rooted at `src/rrr/Cargo.toml` is the canonical source for
-thirteen production modules:
+fourteen production modules:
 
 - `rrr.basetypes`
 - `rrr.callback_wrapper`
@@ -16,6 +16,7 @@ thirteen production modules:
 - `rrr.circuit_breaker`
 - `rrr.connection_state`
 - `rrr.heartbeat`
+- `rrr.request_queue`
 
 Their sources are the matching files below `src/rrr/src`. rustc compiles those
 files directly, and rusty-cpp translates the same bytes into complete C++
@@ -24,13 +25,13 @@ the generated `.cppm` children are the only C++ production providers for these
 modules. The inert `cpp_abi` markers remain part of the canonical Rust where a
 legacy C++ surface needs an adapter.
 
-This is still partial Goal 0. These thirteen modules account for 50 former inline
-blocks and 1,727 lines in the fixed historical enrollment baseline; their
-canonical files currently contain 1,897 nonblank, non-`//` Rust lines. The
-remaining 25 named modules and 26 module-source units still contain 396 inline
-DSL blocks and 9,755 nonblank, non-`//` DSL lines. The fixed pre-promotion baseline is
-446 blocks and 11,482 lines. A successful Cargo build therefore proves the
-canonical thirteen-module slice, not all of `src/rrr`.
+This is still partial Goal 0. These fourteen modules account for 58 former inline
+blocks and 1,947 lines in the fixed historical enrollment baseline; their
+canonical files currently contain 2,133 nonblank, non-`//` Rust lines. The
+remaining 24 named modules and 25 module-source units still contain 388 inline
+DSL blocks and 9,535 nonblank, non-`//` DSL lines. The fixed pre-promotion
+baseline is 446 blocks and 11,482 lines. A successful Cargo build therefore proves the
+canonical fourteen-module slice, not all of `src/rrr`.
 
 ## Ownership and source census
 
@@ -41,7 +42,7 @@ confined to the crate source directory, and may not traverse symlinks.
 
 `scripts/extract_rrr_rust.py` now validates canonical sources and generates
 only the crate index, `src/lib.rs`, from that manifest. It does not regenerate
-the thirteen module bodies from C++. Check mode requires the Rust source census to
+the fourteen module bodies from C++. Check mode requires the Rust source census to
 be exactly the manifest sources plus `lib.rs`, and requires every canonical
 source to retain exact UTF-8/LF bytes; the driver rejects CRLF rather than
 normalizing it. Schema 1 remains only for focused legacy-driver tests; future
@@ -60,13 +61,13 @@ cargo clippy --locked --workspace --manifest-path src/rrr/Cargo.toml \
 ```
 
 The approved transpiler/runtime stack is the clean rusty-cpp commit
-`bcc8fae4acaf905865ed001a8d042f266aa481e8`. Both the ownership driver
+`3d8d09eb4b5c5fdf017a846a589275eddda73f0b`. Both the ownership driver
 and the crate-mode gate require the repository gitlink, submodule HEAD, and
 the transpiler's one-line build information to identify that exact clean
 source:
 
 ```json
-{"git_hash":"bcc8fae4acaf905865ed001a8d042f266aa481e8","git_dirty":false}
+{"git_hash":"3d8d09eb4b5c5fdf017a846a589275eddda73f0b","git_dirty":false}
 ```
 
 The conventional direct-module layout is intentional. For example,
@@ -77,7 +78,7 @@ lowering produces `rrr::detail::CallbackWrapper`; it does not invent an
 
 ## Generated production modules
 
-One rusty-cpp crate invocation generates the thirteen child interfaces and the
+One rusty-cpp crate invocation generates the fourteen child interfaces and the
 partial root:
 
 ```sh
@@ -88,7 +89,7 @@ rusty-cpp-transpiler --crate "${mako_root}/src/rrr/Cargo.toml" \
   --module-preamble "${mako_root}/src/rrr/module-preambles.toml"
 ```
 
-Production always compiles the thirteen generated children alongside the 25
+Production always compiles the fourteen generated children alongside the 24
 remaining inline C++ modules. There is no OFF/ON provider substitution and no
 legacy inline-reference archive. The generated `rrr.cppm` root is compiled by
 the gate after all children as an import-closure proof, but remains outside the
@@ -136,6 +137,15 @@ and `Timer` layouts, and its exact archive-visible length-eight quirk. The four
 raw-pointer SparseInt codecs are explicit unsafe Rust APIs with caller storage
 contracts. Timing alone crosses the terminal `srpc_timing.h` C boundary.
 
+Request queue retains its public overflow enum, records, configuration,
+callback helper, and queue method surface while moving the queue storage and
+callback isolation into canonical Rust. It privately imports
+`rrr.circuit_breaker` for the established monotonic clock and uses the local
+rustc-only `rusty::Function<dyn FnMut(i32)>` facade without emitting another
+C++ provider. Strict `>` expiry, wrapping elapsed time, callback ordering,
+exception isolation, and the legacy lock-held versus post-unlock callback
+boundaries are pinned in both Rust and C++.
+
 Rand retains its generated C++ ABI façades: `Vec<u8>` is adapted to a
 byte-preserving `std::string`, and `RandWeightVec` is adapted to
 `std::vector<double>` with a const-reference selection parameter. The semantic
@@ -147,7 +157,7 @@ audited timing calls across `srpc_timing.h`.
 
 The Goal-0 source gate performs four distinct checks:
 
-1. `rrr_dsl_check.sh` verifies drift for the 396 blocks that still live in
+1. `rrr_dsl_check.sh` verifies drift for the 388 blocks that still live in
    inline carriers.
 2. The schema-2 ownership check verifies the canonical manifest, source
    census, generated `lib.rs`, and toolchain identity.
@@ -167,17 +177,19 @@ artifact/build-integration comparison, not an independent second source
 implementation. Rust tests provide the source-level behavioral oracle; exact
 surface, layout, symbol, and C++ runtime ratchets protect the translated side.
 
-The current provider-owned strong symbol surface is exactly 202 unique symbols:
+The current provider-owned strong symbol surface is exactly 229 unique symbols:
 28 from `basetypes`; six each from `internal_protocol`, `stat`, and `errors`; 39 from
 `connection_metrics`; 30 from `completion_tracker`; 12 from `rand`; 12 from
 `request_options`; 11 from `reconnect_policy`; 20 from `circuit_breaker`; 13
-from `connection_state`; 19 from `heartbeat`; and zero from the
-importer-instantiated callback template.
+from `connection_state`; 19 from `heartbeat`; 27 from `request_queue`; and zero
+from the importer-instantiated callback template.
 The basetypes provider has 29 raw entries including its module initializer.
 The completion provider has 33 raw entries after constructor aliases and its
 module initializer; rand and request options each have 13 raw entries including
 their initializer; reconnect policy has 12, circuit breaker has 21, connection
 state has 14, and heartbeat has 20.
+Request queue has 30 raw entries after constructor aliases and its module
+initializer.
 Both direct-generated and production artifacts must match
 those exact censuses.
 
@@ -208,6 +220,10 @@ The runtime ratchets retain the established contracts for:
 - `HeartbeatConfig`/`HeartbeatManager` layouts, true empty and moved-from
   callback states, mutable callback dispatch, monotonic timing, timeout/reset
   behavior, and `u64`/`u32` wrapping boundaries.
+- `QueuedRequest`/`RequestQueueConfig`/`RequestQueue` layouts and constructors,
+  FIFO and live configuration behavior, all overflow modes, strict-`>` expiry
+  with wrapping time, lock-held versus post-unlock callback boundaries, and
+  panic/exception isolation that continues subsequent callbacks.
 
 The generated output must report zero hand slots. A separate executable links
 the real `srpc_rand.c`/`srpc_timing.c` kernels and checks draw range, teardown,

@@ -22,7 +22,7 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "bcc8fae4acaf905865ed001a8d042f266aa481e8"
+REQUIRED_RUSTY_CPP_COMMIT = "3d8d09eb4b5c5fdf017a846a589275eddda73f0b"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-modules.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
@@ -817,6 +817,103 @@ ABI_SPECS = {
             }
         ),
     ),
+    "rrr.request_queue": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.request_queue;",
+                "import rusty;",
+                "import rrr.circuit_breaker;",
+                "export enum class OverflowStrategy",
+                "export constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST();",
+                "export constexpr OverflowStrategy OverflowStrategy_DROP_NEWEST();",
+                "export constexpr OverflowStrategy OverflowStrategy_FAIL_FAST();",
+                "export using QueuedRequestCallback = rusty::Function<void(int32_t)>;",
+                "export constexpr int32_t kRequestQueueRejectedError = static_cast<int32_t>(35);",
+                "export constexpr int32_t kRequestQueueRejectedError = static_cast<int32_t>(11);",
+                "export constexpr int32_t kRequestQueueExpiredError = static_cast<int32_t>(60);",
+                "export constexpr int32_t kRequestQueueExpiredError = static_cast<int32_t>(110);",
+                "export std::string_view overflow_strategy_to_string(OverflowStrategy strategy);",
+                "export uint64_t queued_request_time_us();",
+                "export void rq_invoke_callback_safely(QueuedRequestCallback callback, int32_t error);",
+                "export struct QueuedRequest",
+                "int64_t xid;",
+                "int32_t rpc_id;",
+                "uint64_t timestamp_us;",
+                "uint32_t retry_count;",
+                "QueuedRequestCallback callback;",
+                "uint32_t ttl_ms;",
+                "static QueuedRequest new_();",
+                "bool is_expired() const;",
+                "uint32_t age_ms() const;",
+                "export struct RequestQueueConfig",
+                "size_t max_size;",
+                "uint32_t default_ttl_ms;",
+                "OverflowStrategy overflow_strategy;",
+                "bool enabled;",
+                "static RequestQueueConfig new_();",
+                "static RequestQueueConfig defaults();",
+                "static RequestQueueConfig small();",
+                "static RequestQueueConfig large();",
+                "static RequestQueueConfig disabled();",
+                "export struct RequestQueue",
+                "rusty::Cell<RequestQueueConfig> config_;",
+                "rusty::Mutex<rusty::VecDeque<QueuedRequest>> queue_;",
+                "RequestQueue();",
+                "RequestQueue(RequestQueueConfig config);",
+                "bool enqueue(QueuedRequest request) const;",
+                "rusty::Option<QueuedRequest> dequeue();",
+                "size_t expire_stale() const;",
+                "size_t size() const;",
+                "bool empty() const;",
+                "bool full();",
+                "size_t remaining_capacity();",
+                "void clear_all(int32_t error_code) const;",
+                "RequestQueueConfig config() const;",
+                "bool enabled() const;",
+                "size_t max_size() const;",
+                "void update_config(RequestQueueConfig config) const;",
+                "return current_time_us();",
+                "rusty::wrapping_sub(::rrr::queued_request_time_us()",
+                "catch_unwind(AssertUnwindSafe(",
+            }
+        ),
+        symbols=frozenset(
+            {
+                ("R", "rrr::kRequestQueueRejectedError@rrr.request_queue"),
+                ("R", "rrr::kRequestQueueExpiredError@rrr.request_queue"),
+                *(
+                    ("T", symbol)
+                    for symbol in {
+                        "rrr::overflow_strategy_to_string@rrr.request_queue(rrr::OverflowStrategy@rrr.request_queue)",
+                        "rrr::queued_request_time_us@rrr.request_queue()",
+                        "rrr::rq_invoke_callback_safely@rrr.request_queue(rusty::Function<void (int)>, int)",
+                        "rrr::QueuedRequest@rrr.request_queue::new_()",
+                        "rrr::QueuedRequest@rrr.request_queue::is_expired() const",
+                        "rrr::QueuedRequest@rrr.request_queue::age_ms() const",
+                        "rrr::RequestQueueConfig@rrr.request_queue::new_()",
+                        "rrr::RequestQueueConfig@rrr.request_queue::defaults()",
+                        "rrr::RequestQueueConfig@rrr.request_queue::small()",
+                        "rrr::RequestQueueConfig@rrr.request_queue::large()",
+                        "rrr::RequestQueueConfig@rrr.request_queue::disabled()",
+                        "rrr::RequestQueue@rrr.request_queue::RequestQueue()",
+                        "rrr::RequestQueue@rrr.request_queue::RequestQueue(rrr::RequestQueueConfig@rrr.request_queue)",
+                        "rrr::RequestQueue@rrr.request_queue::enqueue(rrr::QueuedRequest@rrr.request_queue) const",
+                        "rrr::RequestQueue@rrr.request_queue::dequeue()",
+                        "rrr::RequestQueue@rrr.request_queue::expire_stale() const",
+                        "rrr::RequestQueue@rrr.request_queue::size() const",
+                        "rrr::RequestQueue@rrr.request_queue::empty() const",
+                        "rrr::RequestQueue@rrr.request_queue::full()",
+                        "rrr::RequestQueue@rrr.request_queue::remaining_capacity()",
+                        "rrr::RequestQueue@rrr.request_queue::clear_all(int) const",
+                        "rrr::RequestQueue@rrr.request_queue::config() const",
+                        "rrr::RequestQueue@rrr.request_queue::enabled() const",
+                        "rrr::RequestQueue@rrr.request_queue::max_size() const",
+                        "rrr::RequestQueue@rrr.request_queue::update_config(rrr::RequestQueueConfig@rrr.request_queue) const",
+                    }
+                ),
+            }
+        ),
+    ),
 }
 
 
@@ -1208,6 +1305,10 @@ def require_cpp_surfaces(
         elif module.cpp_module == "rrr.heartbeat":
             require_exact_module_imports(
                 text, "rrr.heartbeat", ["rrr.circuit_breaker"]
+            )
+        elif module.cpp_module == "rrr.request_queue":
+            require_exact_module_imports(
+                text, "rrr.request_queue", ["rusty", "rrr.circuit_breaker"]
             )
 
     root_text = read_generated(output / "rrr.cppm", "root module")
@@ -1614,6 +1715,65 @@ def require_basetypes_raw_symbols(
     )
 
 
+def request_queue_raw_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+) -> list[tuple[str, str]]:
+    """Return request-queue strong entries without constructor deduplication."""
+
+    output = run(
+        [str(nm), "--defined-only", "--demangle", str(binary)],
+        root,
+    )
+    initializer = "initializer for module rrr.request_queue"
+    entries: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        match = NM_LINE.match(line)
+        if match is None:
+            continue
+        kind, symbol = match.groups()
+        if not kind.isupper() or kind in {"U", "V", "W"}:
+            continue
+        if symbol_owner_module(symbol) == "rrr.request_queue" or symbol == initializer:
+            entries.append((kind, symbol))
+    return entries
+
+
+def require_request_queue_raw_symbols(
+    description: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    """Pin request-queue's API, constructor aliases, and initializer exactly."""
+
+    default_constructor = (
+        "T",
+        "rrr::RequestQueue@rrr.request_queue::RequestQueue()",
+    )
+    config_constructor = (
+        "T",
+        "rrr::RequestQueue@rrr.request_queue::RequestQueue("
+        "rrr::RequestQueueConfig@rrr.request_queue)",
+    )
+    expected = Counter(ABI_SPECS["rrr.request_queue"].symbols)
+    expected[default_constructor] += 1
+    expected[config_constructor] += 1
+    expected[("T", "initializer for module rrr.request_queue")] += 1
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} request-queue ABI must contain exactly 30 raw strong "
+        "entries (27 unique provider-owned symbols, two constructor aliases, "
+        f"and the module initializer); missing={missing!r}, "
+        f"unexpected={unexpected!r}"
+    )
+
+
+
+
 def function_parameter_open(symbol: str) -> int:
     """Return the outer function-parameter `(`, or the end for a data symbol."""
 
@@ -1750,11 +1910,13 @@ def importer_source() -> str:
 #include <atomic>
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -1774,6 +1936,7 @@ import rrr.internal_protocol;
 import rrr.rand;
 import rrr.reconnect_policy;
 import rrr.request_options;
+import rrr.request_queue;
 import rrr.stat;
 
 static std::int32_t rand_raw_value = 0;
@@ -1922,6 +2085,75 @@ static_assert(std::is_same_v<
               bool (rrr::CircuitBreaker::*)() const>);
 static_assert(std::is_same_v<
               decltype(&rrr::current_time_us), std::uint64_t (*)()>);
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<rrr::OverflowStrategy>, std::int32_t>);
+static_assert(sizeof(rrr::OverflowStrategy) == 4);
+static_assert(alignof(rrr::OverflowStrategy) == 4);
+static_assert(std::is_same_v<
+              rrr::QueuedRequestCallback,
+              rusty::Function<void(std::int32_t)>>);
+static_assert(std::is_same_v<
+              decltype(&rrr::rq_invoke_callback_safely),
+              void (*)(rrr::QueuedRequestCallback, std::int32_t)>);
+static_assert(sizeof(rrr::QueuedRequestCallback) == 48);
+static_assert(alignof(rrr::QueuedRequestCallback) == 16);
+static_assert(sizeof(rrr::QueuedRequest) == 96);
+static_assert(alignof(rrr::QueuedRequest) == 16);
+static_assert(offsetof(rrr::QueuedRequest, xid) == 0);
+static_assert(offsetof(rrr::QueuedRequest, rpc_id) == 8);
+static_assert(offsetof(rrr::QueuedRequest, timestamp_us) == 16);
+static_assert(offsetof(rrr::QueuedRequest, retry_count) == 24);
+static_assert(offsetof(rrr::QueuedRequest, callback) == 32);
+static_assert(offsetof(rrr::QueuedRequest, ttl_ms) == 80);
+static_assert(!rusty::is_send<rrr::QueuedRequest>::value);
+static_assert(!rusty::is_sync<rrr::QueuedRequest>::value);
+static_assert(std::is_standard_layout_v<rrr::RequestQueueConfig>);
+static_assert(std::is_trivially_copyable_v<rrr::RequestQueueConfig>);
+static_assert(rrr::RequestQueueConfig::is_send);
+static_assert(rrr::RequestQueueConfig::is_sync);
+static_assert(sizeof(rrr::RequestQueueConfig) == 24);
+static_assert(alignof(rrr::RequestQueueConfig) == 8);
+static_assert(offsetof(rrr::RequestQueueConfig, max_size) == 0);
+static_assert(offsetof(rrr::RequestQueueConfig, default_ttl_ms) == 8);
+static_assert(offsetof(rrr::RequestQueueConfig, overflow_strategy) == 12);
+static_assert(offsetof(rrr::RequestQueueConfig, enabled) == 16);
+static_assert(sizeof(rrr::RequestQueue) == 96);
+static_assert(alignof(rrr::RequestQueue) == 8);
+static_assert(offsetof(rrr::RequestQueue, config_) == 0);
+static_assert(offsetof(rrr::RequestQueue, queue_) == 24);
+static_assert(!rusty::is_send<rrr::RequestQueue>::value);
+static_assert(!rusty::is_sync<rrr::RequestQueue>::value);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestQueue::enqueue),
+              bool (rrr::RequestQueue::*)(rrr::QueuedRequest) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestQueue::dequeue),
+              rusty::Option<rrr::QueuedRequest> (rrr::RequestQueue::*)()>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestQueue::expire_stale),
+              std::size_t (rrr::RequestQueue::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestQueue::full),
+              bool (rrr::RequestQueue::*)()>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestQueue::remaining_capacity),
+              std::size_t (rrr::RequestQueue::*)()>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestQueue::clear_all),
+              void (rrr::RequestQueue::*)(std::int32_t) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RequestQueue::update_config),
+              void (rrr::RequestQueue::*)(rrr::RequestQueueConfig) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::randgen_zero_pad),
+              std::string (*)(std::string, std::int32_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RandomGenerator::int2str_n),
+              std::string (*)(std::int32_t, std::int32_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::RandomGenerator::weighted_select),
+              std::uint32_t (*)(const std::vector<double>&)>);
 
 static_assert(std::is_same_v<
               std::underlying_type_t<rrr::ConnectionState>, std::int32_t>);
@@ -2540,6 +2772,15 @@ static bool basetypes_round_trip(I value) {
         }
     }
     return encoded[size] == sentinel;
+}
+
+static rrr::QueuedRequest make_queued_request(
+    std::int64_t xid,
+    rrr::QueuedRequestCallback callback = {}) {
+    auto request = rrr::QueuedRequest::new_();
+    request.xid = xid;
+    request.callback = std::move(callback);
+    return request;
 }
 
 int main() {
@@ -3858,6 +4099,222 @@ int main() {
     if (base_timer.begin_us != 0 || base_timer.end_us != 0) {
         return 154;
     }
+    if (rrr::kRequestQueueRejectedError != EAGAIN ||
+        rrr::kRequestQueueExpiredError != ETIMEDOUT ||
+        rrr::overflow_strategy_to_string(rrr::OverflowStrategy::DROP_OLDEST) !=
+            "DROP_OLDEST" ||
+        rrr::overflow_strategy_to_string(rrr::OverflowStrategy::DROP_NEWEST) !=
+            "DROP_NEWEST" ||
+        rrr::overflow_strategy_to_string(rrr::OverflowStrategy::FAIL_FAST) !=
+            "FAIL_FAST" ||
+        rrr::overflow_strategy_to_string(
+            static_cast<rrr::OverflowStrategy>(99)) != "UNKNOWN") {
+        return 157;
+    }
+
+    const auto queue_defaults = rrr::RequestQueueConfig::defaults();
+    if (queue_defaults.max_size != 1000 ||
+        queue_defaults.default_ttl_ms != 30000 ||
+        queue_defaults.overflow_strategy != rrr::OverflowStrategy::DROP_OLDEST ||
+        !queue_defaults.enabled || rrr::RequestQueueConfig::small().max_size != 10 ||
+        rrr::RequestQueueConfig::large().max_size != 10000 ||
+        rrr::RequestQueueConfig::disabled().enabled) {
+        return 158;
+    }
+
+    bool direct_callback_called = false;
+    rrr::rq_invoke_callback_safely(
+        rrr::QueuedRequestCallback([&](std::int32_t error) {
+            direct_callback_called = error == 314;
+        }),
+        314);
+    if (!direct_callback_called) {
+        return 156;
+    }
+
+    monotonic_now_us = 1'000'000;
+    auto timed_request = rrr::QueuedRequest::new_();
+    if (rrr::queued_request_time_us() != monotonic_now_us ||
+        timed_request.timestamp_us != monotonic_now_us ||
+        timed_request.xid != 0 || timed_request.rpc_id != 0 ||
+        timed_request.retry_count != 0 || timed_request.callback ||
+        timed_request.ttl_ms != 30000) {
+        return 159;
+    }
+    timed_request.ttl_ms = 10;
+    monotonic_now_us = 1'010'000;
+    if (timed_request.is_expired() || timed_request.age_ms() != 10) {
+        return 160;
+    }
+    monotonic_now_us = 1'011'000;
+    if (!timed_request.is_expired() || timed_request.age_ms() != 11) {
+        return 161;
+    }
+    timed_request.timestamp_us = std::numeric_limits<std::uint64_t>::max() - 499;
+    timed_request.ttl_ms = 0;
+    monotonic_now_us = 500;
+    if (!timed_request.is_expired() || timed_request.age_ms() != 1) {
+        return 162;
+    }
+
+    auto fifo_config = queue_defaults;
+    fifo_config.max_size = 2;
+    fifo_config.default_ttl_ms = 77;
+    rrr::RequestQueue fifo(fifo_config);
+    if (!fifo.empty() || fifo.remaining_capacity() != 2) {
+        return 163;
+    }
+    auto first = make_queued_request(1);
+    first.ttl_ms = 0;
+    if (!fifo.enqueue(std::move(first)) ||
+        !fifo.enqueue(make_queued_request(2)) || !fifo.full() ||
+        fifo.remaining_capacity() != 0) {
+        return 164;
+    }
+    auto first_out = fifo.dequeue();
+    auto second_out = fifo.dequeue();
+    if (first_out.is_none() || second_out.is_none()) {
+        return 165;
+    }
+    auto first_value = first_out.unwrap();
+    auto second_value = second_out.unwrap();
+    if (first_value.xid != 1 || first_value.ttl_ms != 77 ||
+        second_value.xid != 2 || fifo.dequeue().is_some()) {
+        return 165;
+    }
+    fifo.update_config(rrr::RequestQueueConfig::small());
+    if (fifo.config().max_size != 10 || !fifo.enabled() || fifo.max_size() != 10) {
+        return 166;
+    }
+
+    for (auto strategy : {rrr::OverflowStrategy::DROP_NEWEST,
+                          rrr::OverflowStrategy::FAIL_FAST}) {
+        auto config = queue_defaults;
+        config.max_size = 1;
+        config.overflow_strategy = strategy;
+        rrr::RequestQueue queue(config);
+        if (!queue.enqueue(make_queued_request(3))) {
+            return 167;
+        }
+        bool called = false;
+        auto rejected = make_queued_request(
+            4,
+            rrr::QueuedRequestCallback([&](std::int32_t error) {
+                if (error != rrr::kRequestQueueRejectedError ||
+                    queue.queue_.try_lock().is_some()) {
+                    throw std::logic_error("rejection callback lock contract");
+                }
+                called = true;
+                throw std::runtime_error("expected rejection callback exception");
+            }));
+        if (queue.enqueue(std::move(rejected)) || !called || queue.size() != 1) {
+            return 168;
+        }
+    }
+
+    auto oldest_config = queue_defaults;
+    oldest_config.max_size = 1;
+    rrr::RequestQueue oldest_queue(oldest_config);
+    bool oldest_called = false;
+    auto oldest = make_queued_request(
+        5,
+        rrr::QueuedRequestCallback([&](std::int32_t error) {
+            if (error != rrr::kRequestQueueRejectedError ||
+                oldest_queue.queue_.try_lock().is_some()) {
+                throw std::logic_error("oldest callback lock contract");
+            }
+            oldest_called = true;
+            throw std::runtime_error("expected oldest callback exception");
+        }));
+    if (!oldest_queue.enqueue(std::move(oldest)) ||
+        !oldest_queue.enqueue(make_queued_request(6)) || !oldest_called) {
+        return 169;
+    }
+    auto retained = oldest_queue.dequeue();
+    if (retained.is_none() || retained.unwrap().xid != 6) {
+        return 170;
+    }
+
+    rrr::RequestQueue disabled_queue(rrr::RequestQueueConfig::disabled());
+    bool disabled_called = false;
+    auto disabled_request = make_queued_request(
+        7,
+        rrr::QueuedRequestCallback([&](std::int32_t error) {
+            if (error != rrr::kRequestQueueRejectedError ||
+                disabled_queue.queue_.try_lock().is_none()) {
+                throw std::logic_error("disabled callback lock contract");
+            }
+            disabled_called = true;
+            throw std::runtime_error("expected disabled callback exception");
+        }));
+    if (disabled_queue.enqueue(std::move(disabled_request)) ||
+        !disabled_called || !disabled_queue.empty()) {
+        return 171;
+    }
+
+    monotonic_now_us = 2'000'000;
+    rrr::RequestQueue expiring;
+    std::vector<std::int64_t> expired_order;
+    for (std::int64_t xid : {8, 9}) {
+        auto request = make_queued_request(
+            xid,
+            rrr::QueuedRequestCallback([&, xid](std::int32_t error) {
+                if (error != rrr::kRequestQueueExpiredError ||
+                    expiring.queue_.try_lock().is_none()) {
+                    throw std::logic_error("expiration callback lock contract");
+                }
+                expired_order.push_back(xid);
+                if (xid == 8) {
+                    throw std::runtime_error("expected expiration callback exception");
+                }
+            }));
+        request.timestamp_us = monotonic_now_us - 2'000;
+        request.ttl_ms = 1;
+        if (!expiring.enqueue(std::move(request))) {
+            return 172;
+        }
+    }
+    auto live = make_queued_request(10);
+    live.timestamp_us = monotonic_now_us - 1'000;
+    live.ttl_ms = 1;
+    if (!expiring.enqueue(std::move(live)) || expiring.expire_stale() != 2 ||
+        expired_order != std::vector<std::int64_t>({8, 9}) ||
+        expiring.size() != 1) {
+        return 173;
+    }
+
+    rrr::RequestQueue clearing;
+    std::vector<std::int64_t> cleared_order;
+    for (std::int64_t xid : {11, 12}) {
+        auto request = make_queued_request(
+            xid,
+            rrr::QueuedRequestCallback([&, xid](std::int32_t error) {
+                if (error != -77 || clearing.queue_.try_lock().is_none()) {
+                    throw std::logic_error("clear callback lock contract");
+                }
+                cleared_order.push_back(xid);
+                if (xid == 11) {
+                    throw std::runtime_error("expected clear callback exception");
+                }
+            }));
+        if (!clearing.enqueue(std::move(request))) {
+            return 174;
+        }
+    }
+    clearing.clear_all(-77);
+    if (cleared_order != std::vector<std::int64_t>({11, 12}) ||
+        !clearing.empty()) {
+        return 175;
+    }
+
+    auto invalid_config = queue_defaults;
+    invalid_config.max_size = 0;
+    invalid_config.overflow_strategy = static_cast<rrr::OverflowStrategy>(99);
+    rrr::RequestQueue invalid_queue(invalid_config);
+    if (!invalid_queue.enqueue(make_queued_request(13)) ||
+        invalid_queue.size() != 1) {
+        return 176;
+    }
     return 0;
 }
 """
@@ -4098,6 +4555,11 @@ def check_generated_output(
                     "crate-generated object",
                     circuit_breaker_raw_symbols(nm, root, generated_object),
                 )
+            elif module.cpp_module == "rrr.request_queue":
+                require_request_queue_raw_symbols(
+                    "crate-generated object",
+                    request_queue_raw_symbols(nm, root, generated_object),
+                )
             elif module.cpp_module == "rrr.basetypes":
                 require_basetypes_raw_symbols(
                     "crate-generated object",
@@ -4150,6 +4612,11 @@ def check_generated_output(
                     require_circuit_breaker_raw_symbols(
                         "production library",
                         circuit_breaker_raw_symbols(nm, root, production),
+                    )
+                elif module.cpp_module == "rrr.request_queue":
+                    require_request_queue_raw_symbols(
+                        "production library",
+                        request_queue_raw_symbols(nm, root, production),
                     )
                 elif module.cpp_module == "rrr.basetypes":
                     require_basetypes_raw_symbols(
@@ -4257,6 +4724,8 @@ def check(args: argparse.Namespace) -> None:
         "RequestOptions layout/factory/retry/timeout/jitter runtime contracts, "
         "ReconnectPolicy layout/factory/backoff/retry/jitter runtime contracts, and "
         "CircuitBreaker layout/factory/state/timeout/wrapping runtime contracts, "
+        "RequestQueue layout/FIFO/config/overflow/expiry/callback-isolation/"
+        "wrapping runtime contracts, "
         "Basetypes aliases/layout/sparse-wire/atomic/timing runtime contracts, "
         "ConnectionState layout/empty-callback/transition runtime contracts, and "
         "Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime "

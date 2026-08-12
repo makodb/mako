@@ -1268,8 +1268,9 @@ bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc
 void server_invoke_shutdown_hook_safely(ShutdownHook& hook);
 
 // NOTE: hooks run WHILE the mutex is held. That is the pre-existing
-// behaviour and is preserved deliberately — request_queue.cpp collects
-// callbacks under the lock and invokes them outside it, but changing the
+// behaviour and is preserved deliberately — the canonical request_queue
+// module collects expiry/clear callbacks under the lock and invokes them
+// outside it, but changing the
 // order here would alter shutdown semantics, not just style.
 #if RUSTYCPP_RUST
 fn server_run_shutdown_hooks(hooks: &rusty::Mutex<Vec<ShutdownHook>>) {

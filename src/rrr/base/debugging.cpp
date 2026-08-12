@@ -77,7 +77,8 @@ void print_stack_trace(FILE* fp = stderr) __attribute__((noinline));
 //  - `panic!` lowers to `rusty::panic::do_panic`, which is compile-time
 //    switched. This tree does not define `RUSTY_PANIC_ABORT` anywhere,
 //    so a panic THROWS `std::runtime_error` and unwinds. rrr has live
-//    `catch (...)` sites (rpc/callbacks.cpp, rpc/request_queue.cpp) and
+//    `catch (...)` sites (`rpc/callbacks.cpp`, canonical
+//    `src/rrr/src/request_queue.rs` / `rrr.request_queue`) and
 //    a `catch_unwind` in rpc/server.cpp, any of which can now swallow a
 //    failed precondition that previously killed the process. That is
 //    why the stack trace is emitted HERE, before the throw: even when

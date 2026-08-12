@@ -86,6 +86,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "src/rrr/rpc/connection_state.cpp",
             "src/rrr/rpc/heartbeat.cpp",
             "src/rrr/base/basetypes.cpp",
+            "src/rrr/rpc/request_queue.cpp",
         )
         self.assertTrue(all(not (REPOSITORY / path).exists() for path in retired))
 
@@ -96,12 +97,12 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 26 hand-authored module units, "
-            "SCAFFOLD=1696 noncomment lines (792 DSL fences + 904 other)",
+            "source boundary: 25 hand-authored module units, "
+            "SCAFFOLD=1664 noncomment lines (776 DSL fences + 888 other)",
             output,
         )
         self.assertIn(
-            "payload census:   dsl=9755  generated=12598 "
+            "payload census:   dsl=9535  generated=12373 "
             "nonblank/non-// lines",
             output,
         )
@@ -266,6 +267,12 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "src/rrr/src/heartbeat.rs",
                     "src/rrr/src/heartbeat.rs",
                 ),
+                (
+                    "rrr.request_queue",
+                    "request_queue",
+                    "src/rrr/src/request_queue.rs",
+                    "src/rrr/src/request_queue.rs",
+                ),
             ],
         )
 
@@ -321,7 +328,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                     bool(line.strip()) and not line.lstrip().startswith("//")
                     for line in source.splitlines()
                 )
-        self.assertEqual(canonical_lines, 1897)
+        self.assertEqual(canonical_lines, 2133)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -384,6 +391,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/connection_state.rs",
                 "src/rrr/src/heartbeat.rs",
                 "src/rrr/src/basetypes.rs",
+                "src/rrr/src/request_queue.rs",
             },
         )
 
@@ -1112,6 +1120,13 @@ class CrateModeGateTests(unittest.TestCase):
             [],
         )
         GATE.require_exact_module_imports(
+            "export module rrr.request_queue;\n"
+            "import rusty;\n"
+            "import rrr.circuit_breaker;\n",
+            "rrr.request_queue",
+            ["rusty", "rrr.circuit_breaker"],
+        )
+        GATE.require_exact_module_imports(
             "export module rrr.connection_state;\n",
             "rrr.connection_state",
             [],
@@ -1414,6 +1429,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.circuit_breaker"),
             mock.Mock(cpp_module="rrr.connection_state"),
             mock.Mock(cpp_module="rrr.heartbeat"),
+            mock.Mock(cpp_module="rrr.request_queue"),
         ]
 
         def symbols_for_module(
@@ -1460,6 +1476,21 @@ class CrateModeGateTests(unittest.TestCase):
         )
         basetypes_raw = list(GATE.ABI_SPECS["rrr.basetypes"].symbols)
         basetypes_raw.append(("T", "initializer for module rrr.basetypes"))
+        request_queue_raw = list(GATE.ABI_SPECS["rrr.request_queue"].symbols)
+        request_queue_raw.extend(
+            [
+                (
+                    "T",
+                    "rrr::RequestQueue@rrr.request_queue::RequestQueue()",
+                ),
+                (
+                    "T",
+                    "rrr::RequestQueue@rrr.request_queue::RequestQueue("
+                    "rrr::RequestQueueConfig@rrr.request_queue)",
+                ),
+                ("T", "initializer for module rrr.request_queue"),
+            ]
+        )
         exact_raw = {
             name: [
                 *GATE.ABI_SPECS[name].symbols,
@@ -1516,6 +1547,10 @@ class CrateModeGateTests(unittest.TestCase):
                 return_value=basetypes_raw,
             ), mock.patch.object(
                 GATE,
+                "request_queue_raw_symbols",
+                return_value=request_queue_raw,
+            ), mock.patch.object(
+                GATE,
                 "exact_module_raw_symbols",
                 side_effect=lambda _nm, _root, _binary, name: exact_raw[name],
             ):
@@ -1549,6 +1584,7 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.circuit_breaker",
                 "rrr.connection_state",
                 "rrr.heartbeat",
+                "rrr.request_queue",
                 "rrr",
             ],
         )
@@ -1675,6 +1711,29 @@ class CrateModeGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GATE.GateError, "exactly 29 raw"):
             GATE.require_basetypes_raw_symbols("test provider", entries[:-1])
 
+    def test_request_queue_raw_symbol_ratchet_pins_all_30_entries(self) -> None:
+        entries = list(GATE.ABI_SPECS["rrr.request_queue"].symbols)
+        entries.extend(
+            [
+                (
+                    "T",
+                    "rrr::RequestQueue@rrr.request_queue::RequestQueue()",
+                ),
+                (
+                    "T",
+                    "rrr::RequestQueue@rrr.request_queue::RequestQueue("
+                    "rrr::RequestQueueConfig@rrr.request_queue)",
+                ),
+                ("T", "initializer for module rrr.request_queue"),
+            ]
+        )
+        self.assertEqual(len(entries), 30)
+        GATE.require_request_queue_raw_symbols("test provider", entries)
+        with self.assertRaisesRegex(GATE.GateError, "exactly 30 raw"):
+            GATE.require_request_queue_raw_symbols(
+                "test provider", entries[:-1]
+            )
+
     def test_basetypes_cpp_oracle_pins_abort_and_atomic_concurrency(self) -> None:
         source = GATE.importer_source()
         self.assertIn("std::abort();", GATE.ABI_SPECS["rrr.basetypes"].surface)
@@ -1751,6 +1810,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.circuit_breaker"),
             mock.Mock(cpp_module="rrr.connection_state"),
             mock.Mock(cpp_module="rrr.heartbeat"),
+            mock.Mock(cpp_module="rrr.request_queue"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules
