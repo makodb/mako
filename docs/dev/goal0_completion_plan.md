@@ -1,26 +1,35 @@
 # Goal 0 completion plan
 
 Goal 0 has two required halves: **no hand-written C++ in `src/rrr`**, and
-the actual Rust DSL authored there must compile both with rustc and through
-rusty-cpp. The old parallel hand-port was not the DSL and has
+the actual Rust source authored there must compile both with rustc and through
+rusty-cpp. The old parallel hand-port was not that source and has
 been removed; it cannot be used as evidence for either half.
 
-## Current dual-compilation ratchet (2026-08-11)
+## Current canonical-Rust ratchet (2026-08-11)
 
-The actual Cargo package now starts at `src/rrr/Cargo.toml`. Its checked-in
-Rust module inputs are generated from ordered inline-DSL block IDs through
-`scripts/extract_rrr_rust.py`; rustc and rusty-cpp consume those same generated
-bytes. The first eight slices cover `base/callback_wrapper.cpp` block
-`callback_wrapper.wrapper`, `rpc/internal_protocol.cpp` block
-`internal_protocol.1`, `misc/stat.cpp` block `stat.1`, all seven DSL blocks in
-`rpc/errors.cpp`, and `rpc/connection_metrics.cpp` blocks
-`connection_metrics.usings` and `connection_metrics.1`, plus all six selected
-blocks in `rpc/completion_tracker.cpp`, plus all four blocks in
-`misc/rand.cpp`, plus all three blocks in `rpc/request_options.cpp`. They
-preserve the
-production `rrr::detail::CallbackWrapper`, `rrr.internal_protocol`, `rrr.stat`,
-`rrr.errors`, `rrr.connection_metrics`, `rrr.completion_tracker`, `rrr.rand`,
-and `rrr.request_options` surfaces, their exact 111-symbol
+The actual Cargo package starts at `src/rrr/Cargo.toml`. Eight checked-in
+modules below `src/rrr/src` are now canonical Rust, with their exact ownership
+recorded in `src/rrr/rust-modules.toml`: `callback_wrapper`,
+`internal_protocol`, `stat`, `errors`, `connection_metrics`,
+`completion_tracker`, `rand`, and `request_options`. rustc compiles those
+sources directly, and rusty-cpp translates the same bytes into their complete
+C++ module interfaces. Their eight hand-authored `.cpp` carriers have been
+deleted, and the generated children are now the only C++ production providers
+for these modules. The former 25 inline blocks account for 867 lines in the
+fixed historical coverage baseline; the canonical files themselves contain
+950 nonblank, non-`//` Rust lines. They are source, not copied extraction
+outputs.
+Deleting the eight carriers removed 2,782 physical checked-in C++ source
+lines. Their classified nonblank, noncomment regions included 950 lines of
+Rust payload now owned by the canonical files, 1,014 lines of regenerable C++,
+50 DSL fence directives, and 81 other scaffold lines (the balance was comments,
+blank lines, and generated-region markers). Thus this batch retired exactly
+131 hand-authored C++ scaffold lines.
+
+The generated modules preserve the production `rrr::detail::CallbackWrapper`,
+`rrr.internal_protocol`, `rrr.stat`, `rrr.errors`,
+`rrr.connection_metrics`, `rrr.completion_tracker`, `rrr.rand`, and
+`rrr.request_options` surfaces, their exact 111-symbol
 combined provider-owned strong ABI, the callback, `AvgStat`, and public
 18-field `ConnectionMetrics` layouts and runtime behavior, every public
 RPC-error discriminant, name, category, and retry predicate. The callback
@@ -37,10 +46,10 @@ Completion tracking replaces the false `Cell`-based thread-safety claim with a
 mutex-protected configuration and containers plus relaxed atomic counters.
 Configuration is snapshotted before container locking, and every operation
 needing both containers takes set then list. The Rust public records/enums and
-the generated/inline/production C++ layouts are pinned separately; the C++
+the direct-generated/production C++ layouts are pinned separately; the C++
 tracker intentionally changes from 216 to 256 bytes, while no Rust-`Mutex` to
-C++ record-layout equivalence is claimed. Rust `Send + Sync`, three direct C++
-provider lanes, repeated eight-thread exact-counter stress, wrapping overflow,
+C++ record-layout equivalence is claimed. Rust `Send + Sync`, both C++ build
+paths, repeated eight-thread exact-counter stress, wrapping overflow,
 and the unchanged 30-symbol completion API (33 raw entries with constructor
 aliases and the module initializer) are all gated. Relaxed individual counters
 do not make `reset_stats` or `hit_rate` linearizable multi-field snapshots.
@@ -60,20 +69,20 @@ ranges; diagnostic text and stack formatting need not be byte-identical.
 Request options preserves the live 32-bit `TimeoutType` enum and 32-byte
 `RequestOptions` POD while replacing its dependency on the adapted
 `RandomGenerator` owner with one private, source-owned flat import of
-`randgen_rand_raw` and `randgen_rand_max`. Both provider modes retain
-`import rrr.rand;`, but emit no C++ alias or `using`; the import stays private
-and the existing 12-symbol request-options API is unchanged. Rust and the
-three C++ lanes pin every factory, retry/timeout boundary, exponential cap,
+`randgen_rand_raw` and `randgen_rand_max`. The generated provider retains
+`import rrr.rand;`, but emits no C++ alias or `using`; the import stays private
+and the existing 12-symbol request-options API is unchanged. Rust and both C++
+build paths pin every factory, retry/timeout boundary, exponential cap,
 jitter endpoint/draw count, NaN/nonpositive no-draw path, negative clamp, and
 saturating float-to-integer conversion.
 
-This is deliberately partial: the manifest owns eight of 38 named modules,
-eight of 39 module-source units, 25 of 446 DSL blocks, and 867 of 11,482
-noncomment DSL code lines. The 11,482-line denominator is the pre-enrollment
-semantic DSL baseline; extraction copies owned bytes into the crate without
-deleting their inline source blocks. `cargo test --manifest-path
-src/rrr/Cargo.toml` must never be reported as full Goal 0 completion until the
-extraction manifest covers the entire intended DSL graph and the
+This is deliberately partial: eight of 38 named modules are canonical Rust,
+and eight of the original 39 hand-authored module-source units have been
+removed. The remaining 30 named modules and 31 module-source units still own
+421 inline DSL blocks and 10,615 nonblank, non-`//` DSL lines. The fixed
+pre-promotion baseline is 446 blocks and 11,482 lines. `cargo test
+--manifest-path src/rrr/Cargo.toml` must never be reported as full Goal 0
+completion until the remaining graph is canonical Rust and the
 hand-written-C++ half below also reaches zero.
 
 ## Terminal states
@@ -82,8 +91,9 @@ Per construct, exactly one of:
 
 | state | verdict |
 |---|---|
-| inline Rust DSL | **preferred** |
-| generated C++ from the DSL | fine (it is output, not source) |
+| canonical Rust source | **preferred** |
+| inline Rust DSL in a remaining carrier | **transitional** |
+| generated C++ from Rust | fine (it is output, not source) |
 | external **C** | **tolerated** |
 | assembly (`.S`) | fine — already not C++ |
 | hand-written **C++** | **not acceptable** — this is what we are removing |
@@ -100,17 +110,22 @@ and line-level audit at `2f02672c` found **zero hand-written C++ function or
 object-definition bodies** outside the inline Rust and generated regions.
 What remains is still material Goal-0 work:
 
-- 1,940 noncomment lines of module declarations, global-module fragments,
-  includes, imports, namespace framing, aliases, forward declarations, and two
-  semantic preprocessor constants across the 39 `.cpp`/`.cc` module sources;
+- 1,804 noncomment scaffold lines across the 31 remaining hand-authored
+  `.cpp`/`.cc` module-source units: 842 outer DSL fence directives plus 962
+  other module-frame/declaration/order/alias/macro lines outside DSL and GEN
+  regions; the eight canonical modules now contribute zero carrier lines;
 - 147 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
 - 69 noncomment C ABI header lines across `srpc_fiber.h` and `srpc_rand.h`;
 - seven tolerated external-C kernels (383 noncomment code lines); and
-- 421 production DSL blocks not yet enrolled in the rustc crate.
+- 421 inline production DSL blocks (10,615 nonblank, non-`//` lines) not yet promoted
+  to canonical Rust.
 
-The immediate path is therefore generated module framing plus structured GMF
-preamble metadata, followed by complete manifest enrollment. The C kernels and
-assembly remain explicit terminal-state exceptions; C++ scaffolding does not.
+The immediate path is to repeat the canonical-source promotion in batches:
+move each module's Rust into `src/rrr/src`, describe any required global-module
+fragment through structured preamble metadata, make the generated child its
+sole provider, and delete the old carrier. Compatibility headers follow once
+their direct consumers import modules instead. The C kernels and assembly
+remain explicit terminal-state exceptions; C++ scaffolding does not.
 
 ## Historical measurement (superseded)
 

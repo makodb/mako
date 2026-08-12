@@ -17,8 +17,8 @@ permissions:
 #  cancel-in-progress: false
 
 jobs:
-  rrr-goal0-provider-matrix:
-    name: Goal-0 RRR providers (${{ matrix.crate_cpp_modules }})
+  rrr-goal0-dual-compile:
+    name: Goal-0 RRR canonical Rust dual compile
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/makodb/mako-ci-ubuntu24:latest
@@ -26,41 +26,37 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        crate_cpp_modules: [OFF, ON]
     env:
       CMAKE_GENERATOR: "Ninja"
       CI_MAKE_JOBS: "4"
-      GOAL0_BUILD_DIR: build-goal0-${{ matrix.crate_cpp_modules }}
+      GOAL0_BUILD_DIR: build-goal0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Configure provider mode
+      - name: Configure canonical Rust providers
         run: >-
           cmake -S . -B "${GOAL0_BUILD_DIR}" -G "${CMAKE_GENERATOR}"
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-          -DRRR_USE_CRATE_CPP_MODULES=${{ matrix.crate_cpp_modules }}
 
-      - name: Build production, independent oracle, and dual gate
+      - name: Build production, generated-object lane, and dual gate
         run: >-
           cmake --build "${GOAL0_BUILD_DIR}"
           --parallel "${CI_MAKE_JOBS}"
           --target rrr_goal0_dual_compile test_completion_tracker test_rpc_callbacks test_rpc_errors test_rpc_frame_codec test_rpc_metrics test_rpc_error_integration test_rpc_timeout_retry
           -- -k 0
 
-      - name: Verify emitter rebuild invalidates crate generation
+      - name: Verify emitter and canonical Rust invalidate crate generation
         shell: bash
         run: |
           set -euo pipefail
           emitter_path="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-executable.txt")"
           emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-input.txt")"
-          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.internal_protocol.cppm"
+          canonical_input="src/rrr/src/request_options.rs"
+          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.request_options.cppm"
 
           steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${steady_output}"
@@ -79,6 +75,16 @@ jobs:
           grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${changed_output}"
           test "$(stat -c %Y "${emitter_path}")" -gt "${emitter_before}"
           test "$(stat -c %Y "${generated_path}")" -gt "${generated_before}"
+
+          canonical_generated_before="$(stat -c %Y "${generated_path}")"
+          sleep 1
+          touch "${canonical_input}"
+          canonical_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
+          printf '%s\n' "${canonical_output}"
+
+          grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${canonical_output}"
+          test "$(stat -c %Y "${generated_path}")" -gt "${canonical_generated_before}"
+          test "$(stat -c %Y "${generated_path}")" -ge "$(stat -c %Y "${canonical_input}")"
 
       - name: Run focused production consumers
         run: >-

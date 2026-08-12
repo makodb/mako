@@ -96,12 +96,14 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 - `src/rrr/`: Custom RPC framework and networking layer
 - `config/`: YAML configuration files for experiments and cluster topology
 
-The `rrr` Rust package is rooted at `src/rrr/Cargo.toml`. Its `.rs` module
-inputs are generated mechanically from the inline `RUSTYCPP_RUST` blocks named
-by `src/rrr/rust-extraction.toml`; they are not a parallel implementation.
-Never recreate a top-level `crates/srpc` hand port. A successful Cargo build
-proves only the manifest-selected extraction coverage, not that all of
-`src/rrr` has been converted or accepted by rustc.
+The `rrr` Rust package is rooted at `src/rrr/Cargo.toml`. The eight modules
+listed in `src/rrr/rust-modules.toml` are canonical `.rs` sources: rustc
+compiles them directly and rusty-cpp translates those same sources into the
+complete C++ module providers used in every production build. Edit those Rust
+files directly; their former hand-authored `.cpp` carriers have been deleted.
+The other 30 named modules still own 421 inline `RUSTYCPP_RUST` blocks, so a
+successful Cargo build proves only the current eight-module coverage, not full
+Goal 0. Never recreate a top-level `crates/srpc` hand port.
 
 ### Key Protocol Implementations
 The system implements multiple distributed transaction protocols:
@@ -157,18 +159,21 @@ Both backends implement the same `TransportBackend` interface for transport-agno
 
 ### RustyCpp Safety Requirements (MANDATORY)
 
-#### Inline-Rust DSL first (default for new code)
+#### Rust first (default for new code)
 
-**New code SHOULD be authored in the inline-Rust DSL, not hand-written
-C++.** The DSL is the `#if RUSTYCPP_RUST pub trait/struct ... #endif`
-source block plus the generated `/*RUSTYCPP:GEN-BEGIN ... GEN-END*/`
-C++ the compiler sees, regenerated with `scripts/regen_storage_dsl.sh`
-(never bare `inline-rust --rewrite`). Add each DSL file to that script's
-FILES list so the `--check` drift guard covers it. See
-[docs/storage-interface.md](docs/storage-interface.md) for the mechanics,
-lowering rules, and gotchas; `src/cluster/kv_store.h` (a trait) and
-`src/cluster/sharding_policy.h` (copyable value types) are worked
-examples.
+**New code SHOULD be authored in Rust, not hand-written C++.** In one of the
+eight canonical `rrr` modules, edit its `src/rrr/src/*.rs` source directly.
+For a module that still uses an inline carrier, the DSL is the
+`#if RUSTYCPP_RUST pub trait/struct ... #endif` source block plus the generated
+`/*RUSTYCPP:GEN-BEGIN ... GEN-END*/` C++ the compiler sees. For a remaining
+`src/rrr` carrier, regenerate with the pinned transpiler:
+`third-party/rusty-cpp/target/release/rusty-cpp-transpiler inline-rust
+--rewrite --files <carrier>`, then run `scripts/rrr_dsl_check.sh`. Storage
+headers use the separate `scripts/regen_storage_dsl.sh` workflow, whose ODR
+post-pass and file census are specific to those headers; do not add `src/rrr`
+module carriers to it. See [docs/storage-interface.md](docs/storage-interface.md)
+for the storage mechanics and [docs/srpc-book.md](docs/srpc-book.md) for the
+`rrr` module workflow.
 
 **Plain C++ is for bridging, not for new logic.** Reach for hand-written
 C++ only when:
@@ -217,12 +222,12 @@ Exceptions that stay std:
  - Pre-existing code not in your change's blast radius. File a
    follow-up if it's blocking something.
 
-**IMPORTANT**: For Goal 0 extraction, the `third-party/rusty-cpp`
+**IMPORTANT**: For Goal 0 canonical-Rust production, the `third-party/rusty-cpp`
 gitlink is pinned to commit
 `f6d9a0f62510c6335e172cebe3164d2570840284` on the pushed
 `goal0-flat-sibling-import` branch. That branch descends from the
 pre-pivot `2b261ccc0915ea99cbab02631ccc5bea19ac82c7` pin only through
-reviewed Goal 0 extractor, codegen, preamble, build-attestation, and runtime
+reviewed Goal 0 source-inventory, codegen, preamble, build-attestation, and runtime
 commits. Do not move this
 gitlink to `verify-stack`: that branch contains
 support for the discarded parallel `crates/srpc` pivot. Base any further

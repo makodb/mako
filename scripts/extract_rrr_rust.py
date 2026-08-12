@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Deterministically materialize the rustc view of production rrr DSL modules.
+"""Validate the canonical Rust view of production rrr modules.
 
-The actual Rust extraction is owned exclusively by rusty-cpp's pinned
-``inline-rust --emit-rust`` command. This driver owns the repository manifest,
-module/source validation, provenance envelopes, generated ``lib.rs``, source
-census, check behavior, and per-file atomic writes. It has no extraction
-fallback.
+Schema 2 modules are canonical ``.rs`` sources compiled directly by rustc and
+translated by rusty-cpp crate mode. The driver owns their manifest, path and
+source census, generated ``lib.rs``, toolchain attestation, and check behavior.
+Schema 1 remains supported for focused legacy-driver tests; the production
+ownership manifest is schema 2 and has no extraction fallback.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import tempfile
 import tomllib
 
 
-DEFAULT_MANIFEST = "src/rrr/rust-extraction.toml"
+DEFAULT_MANIFEST = "src/rrr/rust-modules.toml"
 DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
@@ -106,6 +106,7 @@ class ModuleEntry:
     output_label: str
     output: Path
     inputs: tuple[SourceGroup, ...]
+    canonical_source_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ class GeneratedFile:
     output_label: str
     output: Path
     content: bytes
+    writable: bool = True
 
 
 def sha256(data: bytes) -> str:
@@ -297,18 +299,33 @@ def parse_block_ids(
 
 
 def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
+    reject_symlink_components(root, manifest_path, "Rust ownership manifest")
+    resolved_root = root.resolve()
+    try:
+        physical_manifest = manifest_path.resolve(strict=True)
+        physical_manifest.relative_to(resolved_root)
+    except (OSError, ValueError) as exc:
+        raise ExtractionError(
+            "Rust ownership manifest is not a physical repository file: "
+            f"{manifest_path}"
+        ) from exc
+    if not manifest_path.is_file():
+        raise ExtractionError(
+            f"Rust ownership manifest is not a file: {manifest_path}"
+        )
     try:
         raw = manifest_path.read_bytes()
         data = tomllib.loads(raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ExtractionError(
-            f"cannot read extraction manifest {manifest_path}: {exc}"
+            f"cannot read Rust ownership manifest {manifest_path}: {exc}"
         ) from exc
 
     if set(data) != {"schema_version", "module"}:
         raise ExtractionError("manifest keys must be exactly schema_version and module")
-    if data["schema_version"] != 1:
-        raise ExtractionError("manifest schema_version must be 1")
+    schema_version = data["schema_version"]
+    if schema_version not in {1, 2}:
+        raise ExtractionError("manifest schema_version must be 1 or 2")
     modules = data["module"]
     if not isinstance(modules, list) or not modules:
         raise ExtractionError("manifest module must be a non-empty array of tables")
@@ -316,7 +333,7 @@ def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
     validate_generated_path(
         root,
         root.resolve() / GENERATED_LIB.as_posix(),
-        "generated Rust lib.rs",
+        "manifest-generated Rust lib.rs",
     )
 
     seen_cpp_modules: set[str] = set()
@@ -325,14 +342,15 @@ def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
     block_owners: dict[str, tuple[int, int]] = {}
     loaded: list[ModuleEntry] = []
     for module_index, module in enumerate(modules):
-        if not isinstance(module, dict) or set(module) != {
-            "cpp_module",
-            "output",
-            "input",
-        }:
+        expected_keys = (
+            {"cpp_module", "output", "input"}
+            if schema_version == 1
+            else {"cpp_module", "source"}
+        )
+        if not isinstance(module, dict) or set(module) != expected_keys:
             raise ExtractionError(
-                f"module {module_index} keys must be exactly cpp_module, output, "
-                "and input"
+                f"module {module_index} keys must be exactly "
+                + ", ".join(sorted(expected_keys))
             )
         cpp_module = module["cpp_module"]
         if not isinstance(cpp_module, str):
@@ -353,8 +371,9 @@ def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
         if cpp_module in seen_cpp_modules:
             raise ExtractionError(f"duplicate cpp_module ownership: {cpp_module}")
 
+        source_key = "output" if schema_version == 1 else "source"
         output_label, output = normalized_repo_path(
-            root, module["output"], f"module {module_index} output"
+            root, module[source_key], f"module {module_index} {source_key}"
         )
         expected_output = (GENERATED_ROOT / f"{rust_module}.rs").as_posix()
         if output_label != expected_output:
@@ -362,13 +381,43 @@ def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
                 f"module {module_index} output does not match cpp_module "
                 f"{cpp_module!r}: expected {expected_output}, got {output_label}"
             )
+        if output_label == GENERATED_LIB.as_posix():
+            raise ExtractionError(
+                f"module {module_index} cannot own {output_label}; "
+                "lib.rs is reserved for the manifest-generated module index"
+            )
         if output_label in seen_outputs:
             raise ExtractionError(f"duplicate output ownership: {output_label}")
         validate_generated_path(
             root,
             output,
-            f"module {module_index} output {output_label}",
+            f"module {module_index} {source_key} {output_label}",
         )
+
+        if schema_version == 2:
+            if not output.is_file() or output.suffix != ".rs":
+                raise ExtractionError(
+                    f"module {module_index} canonical source is not an existing "
+                    f"Rust file: {output_label}"
+                )
+            reject_symlink_components(
+                root,
+                output,
+                f"module {module_index} canonical source {output_label}",
+            )
+            loaded.append(
+                ModuleEntry(
+                    cpp_module=cpp_module,
+                    rust_module=rust_module,
+                    output_label=output_label,
+                    output=output,
+                    inputs=(),
+                    canonical_source_label=output_label,
+                )
+            )
+            seen_cpp_modules.add(cpp_module)
+            seen_outputs.add(output_label)
+            continue
 
         raw_inputs = module["input"]
         if not isinstance(raw_inputs, list) or not raw_inputs:
@@ -570,6 +619,30 @@ def normalize_payload(raw: bytes, output_label: str) -> bytes:
     return text.encode("utf-8")
 
 
+def validate_canonical_source(raw: bytes, source_label: str) -> bytes:
+    """Validate canonical Rust without ever normalizing or regenerating it."""
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ExtractionError(
+            f"canonical Rust source {source_label} is not UTF-8"
+        ) from exc
+    if "\x00" in text:
+        raise ExtractionError(f"canonical Rust source {source_label} contains NUL")
+    if "\r" in text:
+        raise ExtractionError(
+            f"canonical Rust source {source_label} must use LF line endings"
+        )
+    if not text.strip():
+        raise ExtractionError(f"canonical Rust source {source_label} is empty")
+    if not text.endswith("\n"):
+        raise ExtractionError(
+            f"canonical Rust source {source_label} must end with a newline"
+        )
+    return raw
+
+
 def render_module(module: ModuleEntry, payloads: list[bytes]) -> bytes:
     if len(payloads) != len(module.inputs):
         raise AssertionError("source-group payload count does not match manifest")
@@ -642,6 +715,18 @@ def generate_all(
     with tempfile.TemporaryDirectory(prefix="rrr-inline-rust-") as temporary:
         scratch = Path(temporary)
         for module_index, module in enumerate(modules):
+            if module.canonical_source_label is not None:
+                generated.append(
+                    GeneratedFile(
+                        output_label=module.output_label,
+                        output=module.output,
+                        content=validate_canonical_source(
+                            module.output.read_bytes(), module.output_label
+                        ),
+                        writable=False,
+                    )
+                )
+                continue
             payloads: list[bytes] = []
             for input_index, source_group in enumerate(module.inputs):
                 validate_production_source_path(
@@ -717,7 +802,7 @@ def rust_source_census(root: Path) -> set[str]:
             child = current / name
             if child.is_symlink():
                 raise ExtractionError(
-                    "generated Rust source census rejects symlinks: "
+                    "manifest-owned Rust source census rejects symlinks: "
                     f"{child.relative_to(root.resolve()).as_posix()}"
                 )
         for name in files:
@@ -746,7 +831,7 @@ def validate_census(
             f"  {path}" for path in sorted(orphans)
         ))
     if missing and not allow_missing:
-        details.append("missing generated Rust source(s):\n" + "\n".join(
+        details.append("missing manifest-owned Rust source(s):\n" + "\n".join(
             f"  {path}" for path in sorted(missing)
         ))
     raise ExtractionError("\n".join(details))
@@ -772,6 +857,14 @@ def apply_mode(root: Path, generated: list[GeneratedFile], mode: str) -> None:
             if actual != item.content:
                 drift.append(item.output_label)
             continue
+        if not item.writable:
+            if actual != item.content:
+                raise ExtractionError(
+                    "canonical Rust source changed during ownership validation; "
+                    f"refusing to overwrite it: {item.output_label}"
+                )
+            print(f"validated {item.output_label}")
+            continue
         if actual == item.content:
             print(f"unchanged {item.output_label}")
             continue
@@ -795,15 +888,21 @@ def apply_mode(root: Path, generated: list[GeneratedFile], mode: str) -> None:
         print(f"wrote {item.output_label}")
     if drift:
         joined = "\n".join(f"  {path}" for path in drift)
-        raise ExtractionError(f"generated Rust output is stale:\n{joined}")
+        raise ExtractionError(f"manifest-owned Rust output is stale:\n{joined}")
     if mode == "check":
-        print(f"checked {len(generated) - 1} extracted Rust module(s) and lib.rs")
+        print(
+            f"checked {len(generated) - 1} manifest-owned Rust module(s) and lib.rs"
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--write", action="store_true", help="regenerate manifest outputs")
+    mode.add_argument(
+        "--write",
+        action="store_true",
+        help="regenerate derived manifest outputs (never canonical module sources)",
+    )
     mode.add_argument("--check", action="store_true", help="fail if outputs drift")
     parser.add_argument("--manifest", default=DEFAULT_MANIFEST)
     parser.add_argument(

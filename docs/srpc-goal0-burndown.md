@@ -1,6 +1,12 @@
 # Goal 0 burndown — hand-written C++ remaining in `src/rrr`
 
-Working tracker for the srpc campaign: eliminate hand-written C++ from
+> **Historical snapshot (superseded).** This 2026-08-05 routed inventory is
+> retained for disposition history; its per-file rows and provider-mode notes
+> predate the canonical-Rust carrier removals. The current exact boundary and
+> next-batch plan live in `docs/dev/goal0_completion_plan.md` and are enforced
+> by `scripts/rrr_handwritten_census.py`.
+
+Historical tracker for the srpc campaign: eliminate hand-written C++ from
 `src/rrr` in favour of the inline-Rust DSL (plain C is tolerated).
 Generated 2026-08-05 by a routed inventory over every file in `src/rrr`
 (tests excluded), then verified against transpiler pin `da6e9bf4`.

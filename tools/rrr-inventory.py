@@ -62,13 +62,11 @@ BOUNDARY_NAMES = {
 
 BOUNDARY_FILES = {
     "src/rrr/rpc/utils.cpp",
-    "src/rrr/misc/rand.cpp",
 }
 
 # Names that the plan flags as template-heavy (cannot DSL).
 TEMPLATE_NAMES = {
     "SerializableEnvelope",
-    "CallbackWrapper",
     "Enumerator",
     "MergedEnumerator",
     "PollableTypedArcAdapter",

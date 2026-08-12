@@ -90,7 +90,7 @@ Decision rule per commit:
 1. `base/strop.hpp` + `.cpp` — pure string ops, no rrr deps.
 2. `misc/cpuinfo.hpp` — header-only.
 3. `rpc/errors.hpp` — leaf in rpc/.
-4. `rpc/request_options.cpp` — low-level module with a private `rrr.rand` dependency.
+4. `src/request_options.rs` — canonical Rust module with a private `rrr.rand` dependency.
 5. `base/basetypes.hpp` + `.cpp` — depends on logging; starts climbing.
 6. (Continue up the dependency graph; re-plan after step 5.)
 

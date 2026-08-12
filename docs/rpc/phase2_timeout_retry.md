@@ -271,7 +271,7 @@ Integration tests:
 
 | File | Change |
 |------|--------|
-| `src/rrr/rpc/request_options.cpp` | C++ module source for TimeoutType and RequestOptions |
+| `src/rrr/src/request_options.rs` | Canonical Rust source for TimeoutType and RequestOptions; rusty-cpp generates the production C++ module |
 | `src/rrr/rpc/client.hpp` | Add Future members, request_with_options (~50 LOC) |
 | `src/rrr/rpc/client.cpp` | Implement retry logic (~50 LOC) |
 | `test/rpc_timeout_retry_test.cc` | New test file (~200 LOC) |

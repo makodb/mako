@@ -68,22 +68,41 @@ def subprocess_result(
 
 
 class CheckedInCanaryTests(unittest.TestCase):
-    def test_request_options_carrier_has_only_its_direct_module_imports(self) -> None:
-        source = (REPOSITORY / "src/rrr/rpc/request_options.cpp").read_text(
-            encoding="utf-8"
+    def test_retired_inline_carriers_stay_absent(self) -> None:
+        retired = (
+            "src/rrr/base/callback_wrapper.cpp",
+            "src/rrr/rpc/internal_protocol.cpp",
+            "src/rrr/misc/stat.cpp",
+            "src/rrr/rpc/errors.cpp",
+            "src/rrr/rpc/connection_metrics.cpp",
+            "src/rrr/rpc/completion_tracker.cpp",
+            "src/rrr/misc/rand.cpp",
+            "src/rrr/rpc/request_options.cpp",
         )
-        self.assertEqual(
-            re.findall(r"^import ([^;]+);$", source, flags=re.MULTILINE),
-            ["std", "rrr.rand"],
-        )
+        self.assertTrue(all(not (REPOSITORY / path).exists() for path in retired))
 
-    def test_rand_carrier_has_only_its_direct_module_imports(self) -> None:
-        source = (REPOSITORY / "src/rrr/misc/rand.cpp").read_text(
-            encoding="utf-8"
+    def test_source_boundary_census_tracks_the_remaining_scaffolding(self) -> None:
+        output = subprocess.check_output(
+            [sys.executable, "scripts/rrr_handwritten_census.py"],
+            cwd=REPOSITORY,
+            text=True,
         )
-        self.assertEqual(
-            re.findall(r"^import ([^;]+);$", source, flags=re.MULTILINE),
-            ["std", "rusty"],
+        self.assertIn(
+            "source boundary: 31 hand-authored module units, "
+            "SCAFFOLD=1804 noncomment lines (842 DSL fences + 962 other)",
+            output,
+        )
+        self.assertIn(
+            "payload census:   dsl=10615  generated=13479 "
+            "nonblank/non-// lines",
+            output,
+        )
+        self.assertIn(
+            "12 compatibility headers, SCAFFOLD=147 noncomment lines", output
+        )
+        self.assertIn(
+            "terminal C:      2 ABI headers/69 lines; 7 kernels/383 lines",
+            output,
         )
 
     def test_modules_have_only_the_expected_structured_preambles(self) -> None:
@@ -124,9 +143,9 @@ class CheckedInCanaryTests(unittest.TestCase):
                 },
             )
 
-    def test_manifest_names_the_real_module_source_and_output(self) -> None:
+    def test_manifest_names_the_canonical_rust_sources(self) -> None:
         modules = DRIVER.load_manifest(
-            REPOSITORY, REPOSITORY / "src/rrr/rust-extraction.toml"
+            REPOSITORY, REPOSITORY / "src/rrr/rust-modules.toml"
         )
         self.assertEqual(
             [
@@ -134,10 +153,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                     module.cpp_module,
                     module.rust_module,
                     module.output_label,
-                    [
-                        (source.source_label, source.block_ids)
-                        for source in module.inputs
-                    ],
+                    module.canonical_source_label,
                 )
                 for module in modules
             ],
@@ -146,238 +162,146 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "rrr.callback_wrapper",
                     "callback_wrapper",
                     "src/rrr/src/callback_wrapper.rs",
-                    [
-                        (
-                            "src/rrr/base/callback_wrapper.cpp",
-                            ("callback_wrapper.wrapper",),
-                        )
-                    ],
+                    "src/rrr/src/callback_wrapper.rs",
                 ),
                 (
                     "rrr.internal_protocol",
                     "internal_protocol",
                     "src/rrr/src/internal_protocol.rs",
-                    [
-                        (
-                            "src/rrr/rpc/internal_protocol.cpp",
-                            ("internal_protocol.1",),
-                        )
-                    ],
+                    "src/rrr/src/internal_protocol.rs",
                 ),
                 (
                     "rrr.stat",
                     "stat",
                     "src/rrr/src/stat.rs",
-                    [("src/rrr/misc/stat.cpp", ("stat.1",))],
+                    "src/rrr/src/stat.rs",
                 ),
                 (
                     "rrr.errors",
                     "errors",
                     "src/rrr/src/errors.rs",
-                    [
-                        (
-                            "src/rrr/rpc/errors.cpp",
-                            (
-                                "errors.error_category",
-                                "errors.2",
-                                "errors.rpc_error",
-                                "errors.4",
-                                "errors.get_error_category",
-                                "errors.category_predicates",
-                                "errors.is_retryable_error",
-                            ),
-                        )
-                    ],
+                    "src/rrr/src/errors.rs",
                 ),
                 (
                     "rrr.connection_metrics",
                     "connection_metrics",
                     "src/rrr/src/connection_metrics.rs",
-                    [
-                        (
-                            "src/rrr/rpc/connection_metrics.cpp",
-                            (
-                                "connection_metrics.usings",
-                                "connection_metrics.1",
-                            ),
-                        )
-                    ],
+                    "src/rrr/src/connection_metrics.rs",
                 ),
                 (
                     "rrr.completion_tracker",
                     "completion_tracker",
                     "src/rrr/src/completion_tracker.rs",
-                    [
-                        (
-                            "src/rrr/rpc/completion_tracker.cpp",
-                            (
-                                "completion_tracker.1",
-                                "completion_tracker.2",
-                                "completion_tracker.tracker",
-                                "completion_tracker.status",
-                                "completion_tracker.3",
-                                "completion_tracker.6",
-                            ),
-                        )
-                    ],
+                    "src/rrr/src/completion_tracker.rs",
                 ),
                 (
                     "rrr.rand",
                     "rand",
                     "src/rrr/src/rand.rs",
-                    [
-                        (
-                            "src/rrr/misc/rand.cpp",
-                            (
-                                "rand.rand_max",
-                                "rand.zero_pad",
-                                "rand.generator",
-                                "rand.4",
-                            ),
-                        )
-                    ],
+                    "src/rrr/src/rand.rs",
                 ),
                 (
                     "rrr.request_options",
                     "request_options",
                     "src/rrr/src/request_options.rs",
-                    [
-                        (
-                            "src/rrr/rpc/request_options.cpp",
-                            (
-                                "request_options.timeout_type",
-                                "request_options.0",
-                                "request_options.3",
-                            ),
-                        )
-                    ],
+                    "src/rrr/src/request_options.rs",
                 ),
             ],
         )
 
-    def test_checked_in_payload_is_exactly_the_authored_inline_rust(self) -> None:
-        cases = [
-            (
-                "rrr.callback_wrapper",
-                "src/rrr/base/callback_wrapper.cpp",
-                ("callback_wrapper.wrapper",),
-                "src/rrr/src/callback_wrapper.rs",
-            ),
-            (
-                "rrr.internal_protocol",
-                "src/rrr/rpc/internal_protocol.cpp",
-                ("internal_protocol.1",),
-                "src/rrr/src/internal_protocol.rs",
-            ),
-            (
-                "rrr.stat",
-                "src/rrr/misc/stat.cpp",
-                ("stat.1",),
-                "src/rrr/src/stat.rs",
-            ),
-            (
-                "rrr.errors",
-                "src/rrr/rpc/errors.cpp",
-                (
-                    "errors.error_category",
-                    "errors.2",
-                    "errors.rpc_error",
-                    "errors.4",
-                    "errors.get_error_category",
-                    "errors.category_predicates",
-                    "errors.is_retryable_error",
-                ),
-                "src/rrr/src/errors.rs",
-            ),
-            (
-                "rrr.connection_metrics",
-                "src/rrr/rpc/connection_metrics.cpp",
-                (
-                    "connection_metrics.usings",
-                    "connection_metrics.1",
-                ),
-                "src/rrr/src/connection_metrics.rs",
-            ),
-            (
-                "rrr.completion_tracker",
-                "src/rrr/rpc/completion_tracker.cpp",
-                (
-                    "completion_tracker.1",
-                    "completion_tracker.2",
-                    "completion_tracker.tracker",
-                    "completion_tracker.status",
-                    "completion_tracker.3",
-                    "completion_tracker.6",
-                ),
-                "src/rrr/src/completion_tracker.rs",
-            ),
-            (
-                "rrr.rand",
-                "src/rrr/misc/rand.cpp",
-                (
-                    "rand.rand_max",
-                    "rand.zero_pad",
-                    "rand.generator",
-                    "rand.4",
-                ),
-                "src/rrr/src/rand.rs",
-            ),
-            (
-                "rrr.request_options",
-                "src/rrr/rpc/request_options.cpp",
-                (
-                    "request_options.timeout_type",
-                    "request_options.0",
-                    "request_options.3",
-                ),
-                "src/rrr/src/request_options.rs",
-            ),
-        ]
-        for cpp_module, source_label, block_ids, output_label in cases:
-            with self.subTest(cpp_module=cpp_module):
-                source_path = REPOSITORY / source_label
-                output_path = REPOSITORY / output_label
-                source_bytes = source_path.read_bytes()
-                source = source_bytes.decode("utf-8")
-                header, payload = split_generated(output_path.read_bytes())
-                expected = "\n\n".join(
-                    source_block(source, block_id).rstrip("\n")
-                    for block_id in block_ids
-                ).encode("utf-8") + b"\n"
+    def test_cmake_provider_inventory_matches_the_canonical_manifest(self) -> None:
+        modules = DRIVER.load_manifest(
+            REPOSITORY, REPOSITORY / "src/rrr/rust-modules.toml"
+        )
+        cmake = (REPOSITORY / "src/rrr/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(
+            r"set\(RRR_GOAL0_CANONICAL_MODULES\n(?P<body>.*?)\n\)",
+            cmake,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        assert match is not None
+        cmake_modules = tuple(
+            line.strip()
+            for line in match.group("body").splitlines()
+            if line.strip()
+        )
+        manifest_modules = tuple(module.rust_module for module in modules)
+        self.assertEqual(cmake_modules, manifest_modules)
+        self.assertEqual(len(cmake_modules), len(set(cmake_modules)))
+        self.assertIn(
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/${_RRR_GOAL0_MODULE}.rs",
+            cmake,
+        )
+        self.assertIn(
+            "${RRR_GOAL0_CRATE_CPP_DIR}/rrr.${_RRR_GOAL0_MODULE}.cppm",
+            cmake,
+        )
 
-                self.assertEqual(payload, expected)
-                self.assertIn(
-                    f"// provenance-cpp-module: {cpp_module}", header
+    def test_checked_in_modules_are_canonical_rust_sources(self) -> None:
+        modules = DRIVER.load_manifest(
+            REPOSITORY, REPOSITORY / "src/rrr/rust-modules.toml"
+        )
+        canonical_lines = 0
+        for module in modules:
+            with self.subTest(cpp_module=module.cpp_module):
+                source = module.output.read_text(encoding="utf-8")
+                self.assertTrue(
+                    source.startswith(
+                        f"// Canonical Rust source for the {module.cpp_module} module.\n"
+                        "// Compiled directly by rustc and translated by "
+                        "rusty-cpp crate mode.\n"
+                    )
                 )
-                self.assertIn(
-                    f"// provenance-input[0]-source: {source_label}", header
+                self.assertNotIn("@generated", source)
+                self.assertNotIn("provenance-input", source)
+                canonical_lines += sum(
+                    bool(line.strip()) and not line.lstrip().startswith("//")
+                    for line in source.splitlines()
                 )
-                self.assertIn(
-                    "// provenance-input[0]-block-ids: "
-                    + ", ".join(block_ids),
-                    header,
+        self.assertEqual(canonical_lines, 950)
+
+    def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
+        payload = b"pub fn canonical() {}\n\n"
+        self.assertIs(
+            DRIVER.validate_canonical_source(payload, "src/rrr/src/example.rs"),
+            payload,
+        )
+        with self.assertRaisesRegex(DRIVER.ExtractionError, "LF line endings"):
+            DRIVER.validate_canonical_source(
+                b"pub fn canonical() {}\r\n", "src/rrr/src/example.rs"
+            )
+
+    def test_write_never_replaces_a_canonical_source_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-canonical-write-") as temporary:
+            root = Path(temporary)
+            source = root / "src/rrr/src/example.rs"
+            source.parent.mkdir(parents=True)
+            original = b"pub fn canonical() -> i32 { 1 }\n"
+            changed = b"pub fn canonical() -> i32 { 2 }\n"
+            source.write_bytes(original)
+            generated = [
+                DRIVER.GeneratedFile(
+                    output_label="src/rrr/src/example.rs",
+                    output=source,
+                    content=original,
+                    writable=False,
                 )
-                self.assertIn(
-                    "// provenance-input[0]-source-sha256: "
-                    f"{hashlib.sha256(source_bytes).hexdigest()}",
-                    header,
-                )
-                self.assertIn(
-                    "// provenance-input[0]-rust-sha256: "
-                    f"{hashlib.sha256(payload).hexdigest()}",
-                    header,
-                )
-                self.assertIn(
-                    "// provenance-rust-sha256: "
-                    f"{hashlib.sha256(payload).hexdigest()}",
-                    header,
-                )
+            ]
+            source.write_bytes(changed)
+            with self.assertRaisesRegex(
+                DRIVER.ExtractionError, "refusing to overwrite"
+            ):
+                DRIVER.apply_mode(root, generated, "write")
+            self.assertEqual(source.read_bytes(), changed)
 
     def test_lib_is_manifest_generated_and_census_has_no_orphans(self) -> None:
-        manifest = REPOSITORY / "src/rrr/rust-extraction.toml"
+        manifest = REPOSITORY / "src/rrr/rust-modules.toml"
         modules = DRIVER.load_manifest(REPOSITORY, manifest)
         expected_lib = DRIVER.render_lib(
-            "src/rrr/rust-extraction.toml", manifest, modules
+            "src/rrr/rust-modules.toml", manifest, modules
         )
         self.assertEqual(
             (REPOSITORY / "src/rrr/src/lib.rs").read_bytes(),
@@ -420,8 +344,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 f"unsafe Rust escaped the audited rand boundary: {path}",
             )
 
-        _, payload = split_generated(rand_path.read_bytes())
-        rust = payload.decode("utf-8")
+        rust = rand_path.read_text(encoding="utf-8")
         allowed_sections = (
             textwrap.dedent(
                 """\
@@ -691,6 +614,17 @@ class DriverBehaviorTests(unittest.TestCase):
             DRIVER.apply_mode(self.root, generated, "write")
         self.assertEqual(victim.read_text(encoding="utf-8"), "do not overwrite\n")
 
+    def test_manifest_file_and_parent_symlinks_are_rejected_before_read(self) -> None:
+        file_link = self.root / "manifest-link.toml"
+        file_link.symlink_to(self.manifest)
+        parent_link = self.root / "manifest-parent-link"
+        parent_link.symlink_to(self.manifest.parent, target_is_directory=True)
+
+        for manifest in (file_link, parent_link / self.manifest.name):
+            with self.subTest(manifest=manifest):
+                with self.assertRaisesRegex(DRIVER.ExtractionError, "symlink"):
+                    DRIVER.load_manifest(self.root, manifest)
+
     def test_output_parent_symlink_is_rejected_at_load_and_before_census(self) -> None:
         generated = self.generate()
         victim = self.root / "src/rrr/generated-victim"
@@ -737,6 +671,21 @@ class DriverBehaviorTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(DRIVER.ExtractionError, diagnostic):
                     DRIVER.load_manifest(self.root, self.manifest)
+
+    def test_manifest_reserves_generated_lib_from_module_ownership(self) -> None:
+        self.write_manifest(
+            """\
+            schema_version = 1
+            [[module]]
+            cpp_module = "rrr.lib"
+            output = "src/rrr/src/lib.rs"
+            [[module.input]]
+            source = "src/rrr/rpc/example.cpp"
+            block_ids = ["example.1"]
+            """
+        )
+        with self.assertRaisesRegex(DRIVER.ExtractionError, "lib.rs is reserved"):
+            DRIVER.load_manifest(self.root, self.manifest)
 
     def test_manifest_rejects_module_source_and_output_mismatches(self) -> None:
         cases = [
@@ -1068,276 +1017,6 @@ class CrateModeGateTests(unittest.TestCase):
             {("T", "rrr::f@rrr.errors(rrr::RpcError@rrr.errors)")},
         )
 
-    def test_connection_metrics_text_parity_rejects_method_body_drift(self) -> None:
-        using_lines = textwrap.dedent(
-            """\
-            using rusty::sync::atomic::AtomicU64;
-
-            using rusty::sync::atomic::Ordering;
-            """
-        ).strip()
-        declaration = textwrap.dedent(
-            """\
-            struct ConnectionMetrics;
-
-            struct ConnectionMetrics {
-                static ConnectionMetrics new_();
-            };
-            """
-        ).strip()
-        bodies = textwrap.dedent(
-            """\
-            ConnectionMetrics ConnectionMetrics::new_() {
-                return ConnectionMetrics{};
-            }
-            """
-        ).strip()
-        inline = (
-            "/*RUSTYCPP:GEN-BEGIN id=connection_metrics.usings "
-            "version=1 rust_sha256=x*/\n"
-            f"{using_lines}\n"
-            "/*RUSTYCPP:GEN-END id=connection_metrics.usings*/\n"
-            "/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 "
-            "version=1 rust_sha256=y*/\n"
-            f"{declaration}\n\n{bodies}\n"
-            "/*RUSTYCPP:GEN-END id=connection_metrics.1*/\n"
-        )
-        generated = (
-            "export struct ConnectionMetrics;\n\n"
-            f"{using_lines}\n\n"
-            "export struct ConnectionMetrics {\n"
-            "    static ConnectionMetrics new_();\n"
-            "};\n\n"
-            f"{bodies}\n\n"
-            "} // namespace rrr\n"
-        )
-
-        with tempfile.TemporaryDirectory(prefix="rrr-parity-test-") as temporary:
-            root = Path(temporary)
-            source = root / "src/rrr/rpc/connection_metrics.cpp"
-            source.parent.mkdir(parents=True)
-            source.write_text(inline, encoding="utf-8")
-            GATE.require_connection_metrics_text_parity(root, generated)
-            with self.assertRaisesRegex(GATE.GateError, "method bodies differ"):
-                GATE.require_connection_metrics_text_parity(
-                    root, generated.replace("ConnectionMetrics{}", "ConnectionMetrics{1}")
-                )
-
-    def test_rand_text_parity_normalizes_only_inline_local_helpers(self) -> None:
-        inline = (REPOSITORY / "src/rrr/misc/rand.cpp").read_text(
-            encoding="utf-8"
-        )
-        block_ids = (
-            "rand.rand_max",
-            "rand.zero_pad",
-            "rand.generator",
-            "rand.4",
-        )
-        inline_payload = "\n\n".join(
-            GATE.inline_generated_block(inline, block_id)
-            for block_id in block_ids
-        )
-        generated = re.sub(
-            r"\brusty_cpp_abi_detail_m_[0-9a-f]{64}\b",
-            "rusty_cpp_abi_detail",
-            inline_payload,
-        )
-        generated = re.sub(
-            r"\brusty_cpp_abi_sem_m_[0-9a-f]{64}_",
-            "rusty_cpp_abi_sem_",
-            generated,
-        )
-
-        qualification_rows = (
-            (
-                "rusty::Vec<uint8_t> "
-                "rusty_cpp_abi_sem_RandomGenerator_int2str_n("
-                "int32_t i, int32_t length) {",
-                "rusty_cpp_abi_sem_randgen_zero_pad(",
-                "::rrr::rusty_cpp_abi_sem_randgen_zero_pad(",
-            ),
-            (
-                "int32_t randgen_rand_raw() {",
-                "srpc_rand_raw(",
-                "::srpc_rand_raw(",
-            ),
-            (
-                "void randgen_destroy() {",
-                "srpc_rand_destroy(",
-                "::srpc_rand_destroy(",
-            ),
-            (
-                "int32_t RandomGenerator::rand(int32_t min, int32_t max) {",
-                "randgen_rand_raw(",
-                "::rrr::randgen_rand_raw(",
-            ),
-            (
-                "double RandomGenerator::rand_double(double min, double max) {",
-                "randgen_rand_raw(",
-                "::rrr::randgen_rand_raw(",
-            ),
-            (
-                "double RandomGenerator::rand_double(double min, double max) {",
-                "randgen_rand_max(",
-                "::rrr::randgen_rand_max(",
-            ),
-            (
-                "int32_t RandomGenerator::nu_rand("
-                "int32_t a, int32_t x, int32_t y) {",
-                "randgen_nu_constant_now(",
-                "::rrr::randgen_nu_constant_now(",
-            ),
-            (
-                "void RandomGenerator::destroy() {",
-                "randgen_destroy(",
-                "::rrr::randgen_destroy(",
-            ),
-        )
-        for owner, unqualified, qualified in qualification_rows:
-            definition = GATE.balanced_cpp_definition(
-                generated, owner, "synthetic crate rand module"
-            )
-            qualified_definition = definition.replace(unqualified, qualified)
-            self.assertNotEqual(definition, qualified_definition)
-            generated = generated.replace(definition, qualified_definition, 1)
-
-        with tempfile.TemporaryDirectory(prefix="rrr-rand-parity-test-") as temporary:
-            root = Path(temporary)
-            source = root / "src/rrr/misc/rand.cpp"
-            source.parent.mkdir(parents=True)
-            source.write_text(inline, encoding="utf-8")
-            GATE.require_rand_text_parity(root, generated)
-
-            with self.assertRaisesRegex(
-                GATE.GateError, "qualification contract"
-            ):
-                GATE.require_rand_text_parity(
-                    root,
-                    generated.replace(
-                        "return ::rrr::rusty_cpp_abi_sem_randgen_zero_pad(",
-                        "return rusty_cpp_abi_sem_randgen_zero_pad(",
-                    ),
-                )
-            with self.assertRaisesRegex(
-                GATE.GateError, "qualification contract"
-            ):
-                GATE.require_rand_text_parity(
-                    root,
-                    generated.replace(
-                        "const auto r = ::rrr::randgen_rand_raw();",
-                        "const auto r = ::rrr::randgen_rand_raw() + "
-                        "::rrr::randgen_rand_raw();",
-                        1,
-                    ),
-                )
-
-            with self.assertRaisesRegex(GATE.GateError, "definition differs"):
-                GATE.require_rand_text_parity(
-                    root,
-                    generated.replace("return std::move(ret);", "return {};"),
-                )
-            with self.assertRaisesRegex(GATE.GateError, "exact public"):
-                GATE.require_rand_text_parity(
-                    root,
-                    generated.replace(
-                        "using RandWeightVec = std::vector<double>;",
-                        "using RandWeightVec = std::vector<float>;",
-                    ),
-                )
-
-    def test_rand_text_parity_rejects_helper_identity_drift(self) -> None:
-        inline = (REPOSITORY / "src/rrr/misc/rand.cpp").read_text(
-            encoding="utf-8"
-        )
-        identity_match = re.search(
-            r"\brusty_cpp_abi_detail_(m_[0-9a-f]{64})\b", inline
-        )
-        self.assertIsNotNone(identity_match)
-        assert identity_match is not None
-        identity = identity_match.group(1)
-        other_identity = "m_" + ("f" * 64)
-        self.assertNotEqual(identity, other_identity)
-        drifted = inline.replace(identity, other_identity, 1)
-
-        block_ids = (
-            "rand.rand_max",
-            "rand.zero_pad",
-            "rand.generator",
-            "rand.4",
-        )
-        generated = "\n\n".join(
-            GATE.inline_generated_block(inline, block_id)
-            for block_id in block_ids
-        )
-        generated = re.sub(
-            r"\brusty_cpp_abi_detail_m_[0-9a-f]{64}\b",
-            "rusty_cpp_abi_detail",
-            generated,
-        )
-        generated = re.sub(
-            r"\brusty_cpp_abi_sem_m_[0-9a-f]{64}_",
-            "rusty_cpp_abi_sem_",
-            generated,
-        )
-
-        with tempfile.TemporaryDirectory(prefix="rrr-rand-parity-test-") as temporary:
-            root = Path(temporary)
-            source = root / "src/rrr/misc/rand.cpp"
-            source.parent.mkdir(parents=True)
-            source.write_text(drifted, encoding="utf-8")
-            with self.assertRaisesRegex(
-                GATE.GateError, "share exactly one module identity"
-            ):
-                GATE.require_rand_text_parity(root, generated)
-
-    def test_request_options_text_parity_is_exact_and_flat_import_is_private(
-        self,
-    ) -> None:
-        inline = (REPOSITORY / "src/rrr/rpc/request_options.cpp").read_text(
-            encoding="utf-8"
-        )
-        generated = "\n\n".join(
-            GATE.inline_generated_block(inline, block_id)
-            for block_id in (
-                "request_options.timeout_type",
-                "request_options.0",
-                "request_options.3",
-            )
-        )
-
-        with tempfile.TemporaryDirectory(
-            prefix="rrr-request-options-parity-test-"
-        ) as temporary:
-            root = Path(temporary)
-            source = root / "src/rrr/rpc/request_options.cpp"
-            source.parent.mkdir(parents=True)
-            source.write_text(inline, encoding="utf-8")
-            GATE.require_request_options_text_parity(root, generated)
-
-            with self.assertRaisesRegex(GATE.GateError, "record differs"):
-                GATE.require_request_options_text_parity(
-                    root,
-                    generated.replace("uint16_t base_delay_ms;", "uint32_t base_delay_ms;"),
-                )
-            with self.assertRaisesRegex(GATE.GateError, "definition differs"):
-                GATE.require_request_options_text_parity(
-                    root,
-                    generated.replace("delay *= 2.0;", "delay *= 3.0;"),
-                )
-            with self.assertRaisesRegex(GATE.GateError, "exact TimeoutType mapping"):
-                GATE.require_request_options_text_parity(
-                    root,
-                    generated.replace(
-                        'std::string_view("CONNECT_TIMEOUT")',
-                        'std::string_view("REQUEST_TIMEOUT")',
-                        1,
-                    ),
-                )
-            with self.assertRaisesRegex(GATE.GateError, "flat import leaked"):
-                GATE.require_request_options_text_parity(
-                    root, generated + "\nusing ::rrr::randgen_rand_raw;\n"
-                )
-
     def test_symbol_census_uses_the_definition_owner_not_parameter_types(self) -> None:
         owned = (
             "rrr::ConnectionMetrics@rrr.connection_metrics::reset() const"
@@ -1381,7 +1060,6 @@ class CrateModeGateTests(unittest.TestCase):
             transpiler=str(transpiler),
             clang="clang++",
             nm="nm",
-            reference_library="librrr.a",
         )
         with mock.patch.object(
             GATE, "repository_root", return_value=root
@@ -1435,15 +1113,12 @@ class CrateModeGateTests(unittest.TestCase):
             root = Path(temporary)
             generated = root / "generated"
             generated.mkdir()
-            reference = root / "inline.a"
             production = root / "production.a"
-            reference.touch()
             production.touch()
             args = GATE.argparse.Namespace(
                 transpiler="transpiler",
                 clang="clang++",
                 nm="nm",
-                reference_library=str(reference),
                 production_library=str(production),
                 generated_dir=str(generated),
                 runtime_library=[],
@@ -1478,7 +1153,6 @@ class CrateModeGateTests(unittest.TestCase):
                 modules=modules,
                 clang=Path("/clang++"),
                 nm=Path("/nm"),
-                reference=reference,
                 production=production,
                 runtime_libraries=[],
                 cxx_flags=["-stdlib=libc++"],
@@ -1489,13 +1163,10 @@ class CrateModeGateTests(unittest.TestCase):
     def test_standalone_generation_consumes_the_structured_preamble(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-gate-generate-test-") as temporary:
             root = Path(temporary)
-            reference = root / "inline.a"
-            reference.touch()
             args = GATE.argparse.Namespace(
                 transpiler="transpiler",
                 clang="clang++",
                 nm="nm",
-                reference_library=str(reference),
                 production_library=None,
                 generated_dir=None,
                 runtime_library=[],
@@ -1523,41 +1194,6 @@ class CrateModeGateTests(unittest.TestCase):
 
             command = run.call_args.args[0]
             self.assertEqual(command[-2:], ["--module-preamble", GATE.MODULE_PREAMBLE])
-
-    def test_production_archive_cannot_be_its_own_reference(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="rrr-gate-oracle-test-") as temporary:
-            root = Path(temporary)
-            archive = root / "librrr.a"
-            archive.touch()
-            args = GATE.argparse.Namespace(
-                transpiler="transpiler",
-                clang="clang++",
-                nm="nm",
-                reference_library=str(archive),
-                production_library=str(archive),
-                generated_dir=str(root),
-                runtime_library=[],
-                runtime_module_root=[],
-                cxx_flag=[],
-                link_flag=[],
-            )
-            with mock.patch.object(
-                GATE, "repository_root", return_value=root
-            ), mock.patch.object(
-                GATE,
-                "executable",
-                side_effect=[Path("/transpiler"), Path("/clang++"), Path("/nm")],
-            ), mock.patch.object(
-                GATE, "verify_pinned_toolchain"
-            ), mock.patch.object(
-                GATE, "require_extraction_check"
-            ), mock.patch.object(
-                GATE, "load_owned_modules", return_value=[]
-            ):
-                with self.assertRaisesRegex(
-                    GATE.GateError, "must be different artifacts"
-                ):
-                    GATE.check(args)
 
     def test_generated_gate_compiles_children_before_partial_root(self) -> None:
         modules = [
@@ -1643,7 +1279,6 @@ class CrateModeGateTests(unittest.TestCase):
                     modules=modules,
                     clang=Path("/clang++"),
                     nm=Path("/nm"),
-                    reference=Path("/inline.a"),
                     production=Path("/production.a"),
                     runtime_libraries=[Path("/rusty.a")],
                     cxx_flags=["-stdlib=libc++"],
@@ -1694,7 +1329,7 @@ class CrateModeGateTests(unittest.TestCase):
             if "-o" in call.args[0]
             and any("importer-" in argument for argument in call.args[0])
         ]
-        self.assertEqual(len(link_commands), 3)
+        self.assertEqual(len(link_commands), 2)
         for command in link_commands:
             self.assertIn("-stdlib=libc++", command)
             self.assertIn("/rusty.a", command)

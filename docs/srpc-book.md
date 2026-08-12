@@ -118,10 +118,12 @@ src/rrr/
     load_balancer.hpp   # Pool load-balancing strategies
     reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
-    request_options.cpp # Per-request configuration module
     pollable_proxy.h    # Pollable proxy facade + typed Arc adapter helpers
     errors.hpp          # Error code definitions
     utils.hpp/cpp       # RPC utilities
+
+  src/                # Canonical Rust module sources
+    request_options.rs # Per-request configuration module
 
   reactor/            # Event loop and fiber system
     reactor.h           # Core event loop scheduler (482 lines)

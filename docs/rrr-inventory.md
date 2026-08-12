@@ -6,71 +6,32 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 284  
-**Span across all decls (LOC):** 3957
+**Decl count (top-level class/struct/enum/union):** 267
+**Span across all decls (LOC):** 3200
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 5 | 29 | 0.7% |
-| trivial-blocked | 2 | 31 | 0.8% |
-| refactor-then-dsl | 6 | 314 | 7.9% |
-| needs-transpiler | 10 | 817 | 20.6% |
+| trivial | 0 | 0 | 0.0% |
+| trivial-blocked | 0 | 0 | 0.0% |
+| refactor-then-dsl | 0 | 0 | 0.0% |
+| needs-transpiler | 0 | 0 | 0.0% |
 | boundary | 0 | 0 | 0.0% |
-| already-dsl | 261 | 2766 | 69.9% |
+| already-dsl | 267 | 3200 | 100.0% |
 
 ## Top 20 largest manual decls by LOC
 
 | File | Lines | Name | Bucket |
 |---|---:|---|---|
-| `reactor/reactor.cpp` | 265 | `Reactor` | needs-transpiler |
-| `misc/serializable_envelope.cpp` | 201 | `SerializableEnvelope` | needs-transpiler |
-| `reactor/reactor.cpp` | 151 | `QuorumEvent` | refactor-then-dsl |
-| `reactor/reactor.cpp` | 91 | `Fiber` | needs-transpiler |
-| `reactor/reactor.cpp` | 71 | `WaitAll` | refactor-then-dsl |
-| `misc/serializable.cpp` | 57 | `TypeList` | needs-transpiler |
-| `reactor/reactor.cpp` | 48 | `BoxEvent` | needs-transpiler |
-| `reactor/reactor.cpp` | 48 | `fiber_task_t` | needs-transpiler |
-| `reactor/reactor.cpp` | 46 | `WaitAny` | refactor-then-dsl |
-| `rpc/client.cpp` | 35 | `TypedFutureAwaiter` | needs-transpiler |
-| `rpc/client.cpp` | 35 | `TypedFutureResultAwaiter` | needs-transpiler |
-| `reactor/reactor.cpp` | 31 | `QuorumEventWrapper` | refactor-then-dsl |
-| `base/callback_wrapper.cpp` | 29 | `CallbackWrapper` | needs-transpiler |
-| `reactor/reactor.cpp` | 27 | `FiberContext` | trivial-blocked |
-| `base/logging.cpp` | 18 | `Log` | trivial |
-| `reactor/reactor.cpp` | 8 | `EventStatus` | refactor-then-dsl |
-| `misc/serializable.cpp` | 8 | `Serializable` | needs-transpiler |
-| `reactor/reactor.cpp` | 7 | `QuorumPolicy` | refactor-then-dsl |
-| `rpc/tcp_channel.cpp` | 5 | `AcceptStep` | trivial |
-| `base/debugging.cpp` | 4 | `BtCapture` | trivial |
 
 ## Per-file LOC (manual decls only, top 15)
 
 | File | Manual decl LOC |
 |---|---:|
-| `reactor/reactor.cpp` | 793 |
-| `misc/serializable_envelope.cpp` | 201 |
-| `rpc/client.cpp` | 70 |
-| `misc/serializable.cpp` | 70 |
-| `base/callback_wrapper.cpp` | 29 |
-| `base/logging.cpp` | 18 |
-| `rpc/tcp_channel.cpp` | 6 |
-| `base/debugging.cpp` | 4 |
 
 ## Blocker histogram (manual decls, all buckets)
 
-| Blocker | Decls | LOC |
-|---|---:|---:|
-| template | 7 | 413 |
-| custom dtor | 3 | 404 |
-| virtual / inheritance | 5 | 283 |
-| user ctor | 1 | 31 |
-| POD-shaped | 5 | 29 |
-| default arg in member fn | 1 | 27 |
-| preprocessor branches in body (#if/#ifdef) | 1 | 27 |
-| void* in param | 1 | 27 |
-| template method | 1 | 4 |
 
 ## Caveats
 

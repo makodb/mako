@@ -6,29 +6,47 @@ line is either inline-Rust DSL, C++ generated from that DSL, or an
 external C kernel reached through `extern "C"`. This counts what is
 left.
 
-Caveat on "NO": class templates are a structural floor — see the
-`class_tmpl` advisory below. Absent a class-template construct in the
-DSL, the reachable target is the headline number MINUS that floor.
-
 Tests are reported separately and are NOT part of the target — the C++
 gtest suite is the oracle the converted code is verified against, so it
 stays C++ on purpose.
+
+The headline source-boundary census separates removable C++ scaffolding from
+the explicitly tolerated C ABI/kernel boundary. The legacy body classifier is
+retained below it because it remains useful when choosing the next carriers.
 
 Usage:  python3 scripts/rrr_handwritten_census.py [--files]
 """
 import os
 import re
+import subprocess
 import sys
 
 ROOT = "src/rrr"
 EXTS = (".cpp", ".hpp", ".h", ".cc")
 
-# Module scaffolding is EXEMPT from the zero-hand-written target (user
-# decision, 2026-07-30): the C++23 module preamble/epilogue has no Rust
-# equivalent to be generated from, so counting it made fully-converted
-# files look unfinished. `internal_protocol.cpp` is the worked example —
-# every line of real logic is DSL, yet it reported 14 hand-written lines
-# that were all `module;` / `import std;` / the namespace close.
+COMPATIBILITY_HEADERS = (
+    "src/rrr/std_compat.hpp",
+    "src/rrr/rrr.hpp",
+    "src/rrr/base/all.hpp",
+    "src/rrr/misc/serializable.hpp",
+    "src/rrr/misc/any_message.hpp",
+    "src/rrr/misc/serializable_envelope.hpp",
+    "src/rrr/rpc/completion_tracker.hpp",
+    "src/rrr/rpc/frame_codec.hpp",
+    "src/rrr/rpc/idempotency.hpp",
+    "src/rrr/rpc/request_queue.hpp",
+    "src/rrr/rpc/inmemory_channel.hpp",
+    "src/rrr/rpc/fiber_channel.hpp",
+)
+C_ABI_HEADERS = (
+    "src/rrr/reactor/srpc_fiber.h",
+    "src/rrr/misc/srpc_rand.h",
+)
+
+# The legacy body-burndown classifier separated a narrow set of fixed module
+# frame spellings from other hand-authored C++.  Keep that split for historical
+# file ranking, but do not mistake it for the source-boundary total above:
+# module framing remains removable Goal-0 scaffolding.
 #
 # Deliberately narrow: only the fixed preamble/epilogue forms, so that a
 # stray `#include` of a real C++ header still counts as hand-written.
@@ -70,11 +88,10 @@ def is_scaffold(t):
 def classify(path):
     """Return (dsl, generated, handwritten, scaffold, class_tmpl) line counts.
 
-    `class_tmpl` is an ADVISORY sub-count of `handwritten`: lines sitting
-    inside a `template<...> class/struct` body. The inline-Rust DSL has no
-    class-template construct — `pub struct` lowers to a concrete C++ class —
-    so these are a structural FLOOR, not backlog. Function templates are
-    NOT counted: `fn foo<T>` lowers to `template<...>` fine.
+    `class_tmpl` is a historical advisory sub-count of `handwritten`: lines
+    sitting inside a `template<...> class/struct` body. Later probes showed
+    that generic Rust structs plus impl blocks can lower these shapes, so this
+    is no longer treated as a structural floor.
 
     This exists because the raw hand-written count is blind to it, and that
     blindness cost real time: `serializable_envelope.cpp` was surveyed as a
@@ -149,6 +166,115 @@ def classify(path):
     return dsl, gen, hand, scaffold, class_tmpl
 
 
+def noncomment_code_lines(path):
+    """Count nonblank lines after removing C/C++ comments."""
+
+    with open(path, errors="replace") as source:
+        text = source.read()
+    lines = []
+    current = []
+    index = 0
+    in_block_comment = False
+    while index < len(text):
+        if in_block_comment:
+            if text.startswith("*/", index):
+                in_block_comment = False
+                index += 2
+            else:
+                index += 1
+        elif text.startswith("/*", index):
+            in_block_comment = True
+            index += 2
+        elif text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = len(text) if newline < 0 else newline
+        else:
+            character = text[index]
+            current.append(character)
+            index += 1
+            if character == "\n":
+                lines.append("".join(current))
+                current = []
+    if current:
+        lines.append("".join(current))
+    return sum(bool(line.strip()) for line in lines)
+
+
+GEN_BEGIN_RE = re.compile(r"^/\*RUSTYCPP:GEN-(?:DISPATCH-)?BEGIN\b")
+GEN_END_RE = re.compile(r"^/\*RUSTYCPP:GEN-(?:DISPATCH-)?END\b")
+CPP_IF_RE = re.compile(r"^#\s*(?:if|ifdef|ifndef)\b")
+CPP_ENDIF_RE = re.compile(r"^#\s*endif\b")
+
+
+def tracked_module_sources():
+    """Return tracked, non-test C++ module-source units."""
+
+    tracked = subprocess.check_output(
+        ["git", "ls-files", "-z", "--", ROOT], text=False
+    ).decode("utf-8").split("\0")
+    return sorted(
+        path
+        for path in tracked
+        if path
+        and path.endswith((".cpp", ".cc", ".cxx"))
+        and "/tests/" not in path
+        and os.path.isfile(path)
+    )
+
+
+def source_scaffold_census(path):
+    """Return exact payload and scaffold counts for one carrier.
+
+    The delimiters are deliberately anchored.  Generated marker comments are
+    excluded, while the outer ``#if RUSTYCPP_RUST``/matching ``#endif`` pair
+    remains authored C++ scaffolding.  Nested preprocessor directives inside a
+    Rust payload remain part of that payload rather than closing it early. DSL
+    and GEN use the project's fixed nonblank/non-``//`` coverage metric; the
+    scaffold count excludes every comment-only spelling.
+    """
+
+    dsl = generated = fences = other = 0
+    in_generated = False
+    dsl_depth = 0
+    with open(path, errors="replace") as source:
+        for line in source:
+            stripped = line.strip()
+            if GEN_BEGIN_RE.match(line):
+                in_generated = True
+                continue
+            if GEN_END_RE.match(line):
+                in_generated = False
+                continue
+            if in_generated:
+                if stripped and not stripped.startswith("//"):
+                    generated += 1
+                continue
+
+            if dsl_depth:
+                if CPP_IF_RE.match(stripped):
+                    dsl_depth += 1
+                elif CPP_ENDIF_RE.match(stripped):
+                    dsl_depth -= 1
+                    if dsl_depth == 0:
+                        fences += 1
+                        continue
+                if stripped and not stripped.startswith("//"):
+                    dsl += 1
+                continue
+
+            if stripped == "#if RUSTYCPP_RUST":
+                dsl_depth = 1
+                fences += 1
+                continue
+            if not stripped or stripped.startswith(("//", "/*", "*", "*/")):
+                continue
+            other += 1
+
+    if in_generated or dsl_depth:
+        raise ValueError(f"unterminated generated/DSL region in {path}")
+    return dsl, generated, fences, other
+
+
 def main():
     show_files = "--files" in sys.argv
     totals = {"prod": [0, 0, 0, 0, 0], "test": [0, 0, 0, 0, 0]}
@@ -166,8 +292,52 @@ def main():
                 rows.append((hand, dsl, ctmpl, path))
 
     p = totals["prod"]
-    print(f"production   dsl={p[0]}  generated={p[1]}  HAND-WRITTEN={p[2]}"
-          f"  (+{p[3]} module scaffolding, exempt)")
+    module_paths = tracked_module_sources()
+    module_totals = [0, 0, 0, 0, 0]
+    exact_dsl = exact_generated = scaffold_fences = scaffold_other = 0
+    for path in module_paths:
+        for index, value in enumerate(classify(path)):
+            module_totals[index] += value
+        dsl, generated, fences, other = source_scaffold_census(path)
+        exact_dsl += dsl
+        exact_generated += generated
+        scaffold_fences += fences
+        scaffold_other += other
+    compatibility_lines = sum(
+        noncomment_code_lines(path) for path in COMPATIBILITY_HEADERS
+    )
+    c_abi_lines = sum(noncomment_code_lines(path) for path in C_ABI_HEADERS)
+    c_kernels = sorted(
+        os.path.join(dirpath, name)
+        for dirpath, _, names in os.walk(ROOT)
+        if "/tests" not in dirpath
+        for name in names
+        if name.endswith(".c")
+    )
+    c_kernel_lines = sum(noncomment_code_lines(path) for path in c_kernels)
+
+    print(
+        f"source boundary: {len(module_paths)} hand-authored module units, "
+        f"SCAFFOLD={scaffold_fences + scaffold_other} noncomment lines "
+        f"({scaffold_fences} DSL fences + {scaffold_other} other)"
+    )
+    print(
+        f"                 {len(COMPATIBILITY_HEADERS)} compatibility headers, "
+        f"SCAFFOLD={compatibility_lines} noncomment lines"
+    )
+    print(
+        f"terminal C:      {len(C_ABI_HEADERS)} ABI headers/{c_abi_lines} lines; "
+        f"{len(c_kernels)} kernels/{c_kernel_lines} lines"
+    )
+    print()
+    print(
+        f"payload census:   dsl={exact_dsl}  generated={exact_generated} "
+        "nonblank/non-// lines"
+    )
+    print(
+        f"legacy body classifier: HAND-WRITTEN={p[2]}  "
+        f"(+{p[3]} fixed-frame subset)"
+    )
     print(f"             of the hand-written, ~{p[4]} sit inside class templates"
           f" (advisory, regex-estimated)")
     print(f"             NOTE: class templates are NOT a floor — probed 2026-08-01,"

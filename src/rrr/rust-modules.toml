@@ -1,0 +1,35 @@
+# Canonical Rust ownership for modules compiled directly by rustc and
+# translated into complete C++ module providers by rusty-cpp crate mode.
+schema_version = 2
+
+[[module]]
+cpp_module = "rrr.callback_wrapper"
+source = "src/rrr/src/callback_wrapper.rs"
+
+[[module]]
+cpp_module = "rrr.internal_protocol"
+source = "src/rrr/src/internal_protocol.rs"
+
+[[module]]
+cpp_module = "rrr.stat"
+source = "src/rrr/src/stat.rs"
+
+[[module]]
+cpp_module = "rrr.errors"
+source = "src/rrr/src/errors.rs"
+
+[[module]]
+cpp_module = "rrr.connection_metrics"
+source = "src/rrr/src/connection_metrics.rs"
+
+[[module]]
+cpp_module = "rrr.completion_tracker"
+source = "src/rrr/src/completion_tracker.rs"
+
+[[module]]
+cpp_module = "rrr.rand"
+source = "src/rrr/src/rand.rs"
+
+[[module]]
+cpp_module = "rrr.request_options"
+source = "src/rrr/src/request_options.rs"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check rusty-cpp crate output against independent and production rrr ABIs."""
+"""Check rusty-cpp crate output against exact generated and production ABIs."""
 
 from __future__ import annotations
 
@@ -24,19 +24,15 @@ DEFAULT_TRANSPILER = (
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
 REQUIRED_RUSTY_CPP_COMMIT = "f6d9a0f62510c6335e172cebe3164d2570840284"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
-EXTRACTION_MANIFEST = "src/rrr/rust-extraction.toml"
+EXTRACTION_MANIFEST = "src/rrr/rust-modules.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
-CALLBACK_INLINE_SOURCE = "src/rrr/base/callback_wrapper.cpp"
-COMPLETION_INLINE_SOURCE = "src/rrr/rpc/completion_tracker.cpp"
-RAND_INLINE_SOURCE = "src/rrr/misc/rand.cpp"
-REQUEST_OPTIONS_INLINE_SOURCE = "src/rrr/rpc/request_options.cpp"
 NM_LINE = re.compile(r"^[0-9A-Fa-f]+\s+([A-Za-z])\s+(.+)$")
 PLACEHOLDER = re.compile(r"\b(?:TODO|UNSUPPORTED|skipped)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class AbiSpec:
-    """Checked C++ surface and exact symbols for one extracted module."""
+    """Checked C++ surface and exact symbols for one canonical Rust module."""
 
     surface: frozenset[str]
     symbols: frozenset[tuple[str, str]]
@@ -697,651 +693,6 @@ def read_generated(path: Path, description: str) -> str:
     return text
 
 
-def inline_generated_block(source: str, block_id: str) -> str:
-    begin = f"/*RUSTYCPP:GEN-BEGIN id={block_id} "
-    end = f"/*RUSTYCPP:GEN-END id={block_id}*/"
-    try:
-        payload_start = source.index("\n", source.index(begin)) + 1
-        payload_end = source.index(end, payload_start)
-    except ValueError as exc:
-        raise GateError(
-            f"cannot locate inline generated block {block_id}"
-        ) from exc
-    return source[payload_start:payload_end].strip()
-
-
-def require_connection_metrics_text_parity(root: Path, generated: str) -> None:
-    source_path = root / "src/rrr/rpc/connection_metrics.cpp"
-    try:
-        inline = source_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GateError(
-            f"cannot read inline connection-metrics oracle {source_path}: {exc}"
-        ) from exc
-
-    inline_usings = inline_generated_block(
-        inline, "connection_metrics.usings"
-    )
-    using_start = generated.find(
-        "using rusty::sync::atomic::AtomicU64;"
-    )
-    definition_start = generated.find("export struct ConnectionMetrics {")
-    if using_start < 0 or definition_start < 0:
-        raise GateError(
-            "cannot locate generated connection-metrics using/declaration surface"
-        )
-    generated_usings = generated[using_start:definition_start].strip()
-    if generated_usings != inline_usings:
-        raise GateError(
-            "crate-generated connection-metrics using declarations differ "
-            "from the inline provider"
-        )
-
-    inline_payload = inline_generated_block(inline, "connection_metrics.1")
-    body_token = "ConnectionMetrics ConnectionMetrics::new_()"
-    try:
-        inline_body_start = inline_payload.index(body_token)
-        generated_body_start = generated.index(body_token, definition_start)
-        generated_body_end = generated.rindex("\n} // namespace rrr")
-    except ValueError as exc:
-        raise GateError(
-            "cannot locate the full connection-metrics declaration/body surface"
-        ) from exc
-
-    inline_declarations = inline_payload[:inline_body_start].strip()
-    inline_bodies = inline_payload[inline_body_start:].strip()
-    generated_forward = "struct ConnectionMetrics;"
-    generated_definition = generated[
-        definition_start:generated_body_start
-    ].strip().replace(
-        "export struct ConnectionMetrics {",
-        "struct ConnectionMetrics {",
-        1,
-    )
-    generated_declarations = (
-        generated_forward + "\n\n" + generated_definition
-    )
-    generated_bodies = generated[
-        generated_body_start:generated_body_end
-    ].strip()
-    if generated_declarations != inline_declarations:
-        raise GateError(
-            "crate-generated connection-metrics declarations differ from "
-            "the inline provider"
-        )
-    if generated_bodies != inline_bodies:
-        raise GateError(
-            "crate-generated connection-metrics method bodies differ from "
-            "the inline provider"
-        )
-
-
-def balanced_cpp_definition(text: str, token: str, description: str) -> str:
-    """Extract one declaration or function body beginning at a unique token."""
-
-    start = text.find(token)
-    if start < 0 or text.find(token, start + len(token)) >= 0:
-        raise GateError(
-            f"{description} must contain exactly one {token!r} definition"
-        )
-    brace = text.find("{", start)
-    if brace < 0:
-        raise GateError(f"{description} {token!r} has no body")
-    depth = 0
-    end = -1
-    for index in range(brace, len(text)):
-        character = text[index]
-        if character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                end = index + 1
-                break
-    if end < 0:
-        raise GateError(f"{description} {token!r} has unbalanced braces")
-    if end < len(text) and text[end] == ";":
-        end += 1
-    return text[start:end].strip()
-
-
-def require_completion_tracker_text_parity(root: Path, generated: str) -> None:
-    source_path = root / COMPLETION_INLINE_SOURCE
-    try:
-        inline = source_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GateError(
-            f"cannot read inline completion-tracker oracle {source_path}: {exc}"
-        ) from exc
-
-    block_ids = (
-        "completion_tracker.1",
-        "completion_tracker.2",
-        "completion_tracker.tracker",
-        "completion_tracker.status",
-        "completion_tracker.3",
-        "completion_tracker.6",
-    )
-    inline_payload = "\n\n".join(
-        inline_generated_block(inline, block_id) for block_id in block_ids
-    )
-    generated_payload = re.sub(r"^export ", "", generated, flags=re.MULTILINE)
-    # Crate collection has whole-module type information and therefore emits
-    # Send/Sync marker members for CompletionTracker. Inline block rewriting is
-    # deliberately block-local and cannot prove those markers through the
-    # HashSet/VecDeque aliases. The generated marker surface is ratcheted
-    # independently above; declaration/body parity compares the actual record
-    # fields and functions after removing only this compiler metadata.
-    auto_traits = re.compile(
-        r"\n\s*// Rust derives Send/Sync from the field types; C\+\+ cannot see them\."
-        r"\n\s*static constexpr bool is_send = [^;]+;"
-        r"\n\s*static constexpr bool is_sync = [^;]+;"
-    )
-    inline_payload = auto_traits.sub("", inline_payload)
-    generated_payload = auto_traits.sub("", generated_payload)
-
-    # Whole-crate lowering simplifies these three direct boolean negations,
-    # while the block-local inline rewrite retains the generic Rust `!`
-    # helper. Keep the exception deliberately exact so all surrounding
-    # declaration and method-body text remains a byte-for-byte oracle.
-    inline_negation = "rusty::detail::rust_not(cfg.enabled)"
-    crate_negation = "!cfg.enabled"
-    if (
-        inline_payload.count(inline_negation) != 3
-        or inline_payload.count(crate_negation) != 0
-        or generated_payload.count(crate_negation) != 3
-        or generated_payload.count(inline_negation) != 0
-    ):
-        raise GateError(
-            "completion-tracker enabled-negation lowering no longer has the "
-            "expected exact three-site inline/crate shape"
-        )
-    inline_payload = inline_payload.replace(
-        inline_negation, crate_negation
-    )
-
-    inline_usings = set(
-        re.findall(r"^using rusty::[^;]+;$", inline_payload, re.MULTILINE)
-    )
-    generated_usings = set(
-        re.findall(r"^using rusty::[^;]+;$", generated_payload, re.MULTILINE)
-    )
-    if inline_usings != generated_usings:
-        raise GateError(
-            "crate-generated completion-tracker using declarations differ "
-            "from the inline provider"
-        )
-
-    definitions = (
-        "struct CompletionTrackerConfig {",
-        "struct CompletedEntry {",
-        "struct CompletionTracker {",
-        "enum class CompletionStatus {",
-        "struct CompletionQueryResult {",
-        "inline constexpr CompletionStatus CompletionStatus_NOT_FOUND()",
-        "inline constexpr CompletionStatus CompletionStatus_COMPLETED()",
-        "inline constexpr CompletionStatus CompletionStatus_COMPLETED_WITH_ERROR()",
-        "inline constexpr CompletionStatus CompletionStatus_EXPIRED()",
-        "CompletionTrackerConfig CompletionTrackerConfig::new_()",
-        "CompletionTrackerConfig CompletionTrackerConfig::defaults()",
-        "CompletionTrackerConfig CompletionTrackerConfig::small()",
-        "CompletionTrackerConfig CompletionTrackerConfig::large()",
-        "CompletionTrackerConfig CompletionTrackerConfig::disabled()",
-        "CompletedEntry CompletedEntry::new_(",
-        "bool CompletedEntry::is_expired(",
-        "CompletionTracker::CompletionTracker()",
-        "CompletionTracker::CompletionTracker(CompletionTrackerConfig config)",
-        "bool CompletionTracker::enabled() const",
-        "CompletionTrackerConfig CompletionTracker::config() const",
-        "void CompletionTracker::set_config(",
-        "void CompletionTracker::mark_completed(",
-        "bool CompletionTracker::is_completed(",
-        "bool CompletionTracker::remove(",
-        "void CompletionTracker::clear()",
-        "size_t CompletionTracker::size() const",
-        "uint64_t CompletionTracker::total_tracked() const",
-        "uint64_t CompletionTracker::queries() const",
-        "uint64_t CompletionTracker::query_hits() const",
-        "double CompletionTracker::hit_rate() const",
-        "uint64_t CompletionTracker::evictions() const",
-        "void CompletionTracker::reset_stats()",
-        "size_t CompletionTracker::evict_expired(",
-        "CompletionQueryResult CompletionQueryResult::new_()",
-        "CompletionQueryResult CompletionQueryResult::not_found()",
-        "CompletionQueryResult CompletionQueryResult::completed(",
-        "CompletionQueryResult CompletionQueryResult::expired()",
-        "bool CompletionQueryResult::is_completed() const",
-    )
-    for token in definitions:
-        inline_definition = balanced_cpp_definition(
-            inline_payload, token, "inline completion-tracker provider"
-        )
-        generated_definition = balanced_cpp_definition(
-            generated_payload, token, "crate-generated completion-tracker module"
-        )
-        if generated_definition != inline_definition:
-            raise GateError(
-                "crate-generated completion-tracker definition differs from "
-                f"the inline provider at {token!r}"
-            )
-
-    # Match lowering intentionally differs by compilation unit: the inline
-    # block uses the generic optional-valued expression carrier, while crate
-    # mode sees the complete enum and emits a direct branch lambda. Parse and
-    # compare the complete mapping rather than weakening all-body text parity.
-    status_token = (
-        "std::string_view completion_status_to_string(CompletionStatus status) {"
-    )
-
-    def status_mapping(payload: str, description: str) -> tuple[tuple[str, str], ...]:
-        definition = balanced_cpp_definition(payload, status_token, description)
-        pairs = tuple(
-            re.findall(
-                r"CompletionStatus::([A-Z_]+).*?"
-                r'std::string_view\("([A-Z_]+)"\)',
-                definition,
-                re.DOTALL,
-            )
-        )
-        strings = tuple(re.findall(r'std::string_view\("([A-Z_]+)"\)', definition))
-        expected_pairs = (
-            ("NOT_FOUND", "NOT_FOUND"),
-            ("COMPLETED", "COMPLETED"),
-            ("COMPLETED_WITH_ERROR", "COMPLETED_WITH_ERROR"),
-            ("EXPIRED", "EXPIRED"),
-        )
-        expected_strings = tuple(value for _, value in expected_pairs) + ("UNKNOWN",)
-        if pairs != expected_pairs or strings != expected_strings:
-            raise GateError(
-                f"{description} has an unexpected completion-status string mapping"
-            )
-        return pairs
-
-    inline_mapping = status_mapping(
-        inline_payload, "inline completion-tracker provider"
-    )
-    generated_mapping = status_mapping(
-        generated_payload, "crate-generated completion-tracker module"
-    )
-    if generated_mapping != inline_mapping:
-        raise GateError(
-            "crate-generated completion-status string mapping differs from "
-            "the inline provider"
-        )
-
-
-def canonicalize_rand_inline_local_helpers(inline_payload: str) -> str:
-    """Normalize only the carrier-unique names of rand's local ABI helpers."""
-
-    detail_identity_pattern = re.compile(
-        r"\brusty_cpp_abi_detail_(m_[0-9a-f]{64})\b"
-    )
-    semantic_identity_pattern = re.compile(
-        r"\brusty_cpp_abi_sem_(m_[0-9a-f]{64})_"
-    )
-    detail_identities = set(detail_identity_pattern.findall(inline_payload))
-    semantic_identities = set(semantic_identity_pattern.findall(inline_payload))
-    identities = detail_identities | semantic_identities
-    if (
-        len(identities) != 1
-        or detail_identities != identities
-        or semantic_identities != identities
-    ):
-        raise GateError(
-            "inline rand ABI helpers must share exactly one module identity; "
-            f"detail={sorted(detail_identities)!r}, "
-            f"semantic={sorted(semantic_identities)!r}"
-        )
-
-    identity = next(iter(identities))
-    expected_detail = f"rusty_cpp_abi_detail_{identity}"
-    expected_semantic_prefix = f"rusty_cpp_abi_sem_{identity}_"
-    detail_tokens = set(
-        re.findall(r"\brusty_cpp_abi_detail[A-Za-z0-9_]*", inline_payload)
-    )
-    semantic_tokens = set(
-        re.findall(r"\brusty_cpp_abi_sem_[A-Za-z0-9_]+", inline_payload)
-    )
-    unexpected_detail = sorted(
-        token for token in detail_tokens if token != expected_detail
-    )
-    unexpected_semantic = sorted(
-        token
-        for token in semantic_tokens
-        if not token.startswith(expected_semantic_prefix)
-    )
-    if unexpected_detail or unexpected_semantic:
-        raise GateError(
-            "inline rand ABI helper spelling is outside the single accepted "
-            "module identity; "
-            f"detail={unexpected_detail!r}, semantic={unexpected_semantic!r}"
-        )
-
-    return inline_payload.replace(
-        expected_detail, "rusty_cpp_abi_detail"
-    ).replace(expected_semantic_prefix, "rusty_cpp_abi_sem_")
-
-
-def canonicalize_rand_crate_call_qualifiers(
-    inline_payload: str, generated_payload: str
-) -> str:
-    """Normalize only the exact call qualifiers emitted in crate mode."""
-
-    rows = (
-        (
-            "rusty_cpp_abi_sem_randgen_zero_pad",
-            "::rrr::",
-            1,
-            (
-                "rusty::Vec<uint8_t> "
-                "rusty_cpp_abi_sem_RandomGenerator_int2str_n("
-                "int32_t i, int32_t length) {",
-            ),
-        ),
-        ("srpc_rand_raw", "::", 1, ("int32_t randgen_rand_raw() {",)),
-        ("srpc_rand_destroy", "::", 1, ("void randgen_destroy() {",)),
-        (
-            "randgen_rand_raw",
-            "::rrr::",
-            2,
-            (
-                "int32_t RandomGenerator::rand(int32_t min, int32_t max) {",
-                "double RandomGenerator::rand_double(double min, double max) {",
-            ),
-        ),
-        (
-            "randgen_rand_max",
-            "::rrr::",
-            1,
-            ("double RandomGenerator::rand_double(double min, double max) {",),
-        ),
-        (
-            "randgen_nu_constant_now",
-            "::rrr::",
-            2,
-            ("int32_t RandomGenerator::nu_rand(int32_t a, int32_t x, int32_t y) {",),
-        ),
-        (
-            "randgen_destroy",
-            "::rrr::",
-            1,
-            ("void RandomGenerator::destroy() {",),
-        ),
-    )
-
-    for name, qualifier, expected_count, owners in rows:
-        qualified_call = f"{qualifier}{name}("
-        unqualified_call = f"{name}("
-        if inline_payload.count(qualified_call) != 0:
-            raise GateError(
-                f"inline rand call qualification contract drifted for {name!r}"
-            )
-        if generated_payload.count(qualified_call) != expected_count:
-            raise GateError(
-                "crate-generated rand call qualification contract drifted for "
-                f"{name!r}: expected {expected_count} {qualified_call!r} "
-                f"occurrence(s), got {generated_payload.count(qualified_call)}"
-            )
-
-        inline_definitions = [
-            balanced_cpp_definition(inline_payload, owner, "inline rand provider")
-            for owner in owners
-        ]
-        generated_definitions = [
-            balanced_cpp_definition(
-                generated_payload, owner, "crate-generated rand module"
-            )
-            for owner in owners
-        ]
-        unqualified_pattern = re.compile(
-            rf"(?<![\w:]){re.escape(name)}\("
-        )
-        inline_count = sum(
-            len(unqualified_pattern.findall(definition))
-            for definition in inline_definitions
-        )
-        generated_unqualified_count = sum(
-            len(unqualified_pattern.findall(definition))
-            for definition in generated_definitions
-        )
-        if inline_count != expected_count or generated_unqualified_count != 0:
-            raise GateError(
-                "rand call qualification contract has an unexpected lexical "
-                f"shape for {name!r}: inline-unqualified={inline_count}, "
-                f"crate-unqualified={generated_unqualified_count}"
-            )
-        if name == "rusty_cpp_abi_sem_randgen_zero_pad" and (
-            inline_definitions[0].count(f"return {unqualified_call}") != 1
-            or generated_definitions[0].count(f"return {qualified_call}") != 1
-        ):
-            raise GateError(
-                "rand int2str_n zero-pad return-call qualification contract drifted"
-            )
-
-        for definition in generated_definitions:
-            normalized = definition.replace(qualified_call, unqualified_call)
-            if normalized == definition:
-                continue
-            if generated_payload.count(definition) != 1:
-                raise GateError(
-                    f"crate-generated rand owner for {name!r} is not unique"
-                )
-            generated_payload = generated_payload.replace(
-                definition, normalized, 1
-            )
-
-    return generated_payload
-
-
-def require_rand_text_parity(root: Path, generated: str) -> None:
-    """Keep rand's inline and crate providers on one exact lowering."""
-
-    source_path = root / RAND_INLINE_SOURCE
-    try:
-        inline = source_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GateError(f"cannot read inline rand oracle {source_path}: {exc}") from exc
-
-    block_ids = (
-        "rand.rand_max",
-        "rand.zero_pad",
-        "rand.generator",
-        "rand.4",
-    )
-    inline_payload = "\n\n".join(
-        inline_generated_block(inline, block_id) for block_id in block_ids
-    )
-    inline_payload = canonicalize_rand_inline_local_helpers(inline_payload)
-    generated_payload = re.sub(r"^export ", "", generated, flags=re.MULTILINE)
-    generated_payload = canonicalize_rand_crate_call_qualifiers(
-        inline_payload, generated_payload
-    )
-
-    # Inline helpers have inline linkage while named-module helpers have
-    # internal linkage. Start each token after that one intentional linkage
-    # distinction and compare the complete declarations/bodies byte-for-byte.
-    definitions = (
-        "struct RandomGenerator {",
-        "rusty::Vec<uint8_t> bytes_from_std_string(const std::string& input) {",
-        "std::string std_string_from_bytes(rusty::Vec<uint8_t> input) {",
-        "std::span<const double> f64_span_from_std_vector("
-        "const std::vector<double>& input) {",
-        "double randgen_rand_max() {",
-        "rusty::Vec<uint8_t> rusty_cpp_abi_sem_randgen_zero_pad("
-        "rusty::Vec<uint8_t> s, int32_t length) {",
-        "std::string randgen_zero_pad(std::string s, int32_t length) {",
-        "rusty::Vec<uint8_t> rusty_cpp_abi_sem_RandomGenerator_int2str_n("
-        "int32_t i, int32_t length) {",
-        "uint32_t rusty_cpp_abi_sem_RandomGenerator_weighted_select("
-        "std::span<const double> weight_vector) {",
-        "int32_t randgen_rand_raw() {",
-        "int32_t randgen_nu_constant_now() {",
-        "void randgen_destroy() {",
-        "int32_t RandomGenerator::rand(int32_t min, int32_t max) {",
-        "double RandomGenerator::rand_double(double min, double max) {",
-        "std::string RandomGenerator::int2str_n(int32_t i, int32_t length) {",
-        "bool RandomGenerator::percentage_true(int32_t p) {",
-        "int32_t RandomGenerator::nu_rand(int32_t a, int32_t x, int32_t y) {",
-        "uint32_t RandomGenerator::weighted_select(",
-        "void RandomGenerator::destroy() {",
-    )
-    for token in definitions:
-        inline_definition = balanced_cpp_definition(
-            inline_payload, token, "inline rand provider"
-        )
-        generated_definition = balanced_cpp_definition(
-            generated_payload, token, "crate-generated rand module"
-        )
-        if generated_definition != inline_definition:
-            raise GateError(
-                "crate-generated rand definition differs from the inline "
-                f"provider at {token!r}"
-            )
-
-    alias = "using RandWeightVec = std::vector<double>;"
-    if inline_payload.count(alias) != 1 or generated_payload.count(alias) != 1:
-        raise GateError(
-            "rand inline/crate providers must each contain the exact public "
-            "std::vector<double> alias once"
-        )
-
-
-def require_request_options_text_parity(root: Path, generated: str) -> None:
-    """Compare request-options declarations/bodies across both providers."""
-
-    source_path = root / REQUEST_OPTIONS_INLINE_SOURCE
-    try:
-        inline = source_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GateError(
-            f"cannot read inline request-options oracle {source_path}: {exc}"
-        ) from exc
-
-    inline_enum = inline_generated_block(inline, "request_options.timeout_type")
-    inline_options = inline_generated_block(inline, "request_options.0")
-    inline_to_string = inline_generated_block(inline, "request_options.3")
-    generated_plain = re.sub(r"^export ", "", generated, flags=re.MULTILINE)
-
-    inline_enum_definition = balanced_cpp_definition(
-        inline_enum,
-        "enum class TimeoutType {",
-        "inline request-options TimeoutType",
-    )
-    generated_enum_definition = balanced_cpp_definition(
-        generated_plain,
-        "enum class TimeoutType {",
-        "crate-generated request-options TimeoutType",
-    )
-    if generated_enum_definition != inline_enum_definition:
-        raise GateError(
-            "crate-generated TimeoutType definition differs from the inline provider"
-        )
-    for name in (
-        "NONE",
-        "CONNECT_TIMEOUT",
-        "REQUEST_TIMEOUT",
-        "RESPONSE_TIMEOUT",
-        "TOTAL_TIMEOUT",
-    ):
-        token = f"inline constexpr TimeoutType TimeoutType_{name}()"
-        if balanced_cpp_definition(
-            generated_plain,
-            token,
-            "crate-generated request-options enum accessors",
-        ) != balanced_cpp_definition(
-            inline_enum,
-            token,
-            "inline request-options enum accessors",
-        ):
-            raise GateError(
-                "crate-generated TimeoutType accessor differs from the inline "
-                f"provider at {name}"
-            )
-
-    inline_struct = balanced_cpp_definition(
-        inline_options,
-        "struct RequestOptions {",
-        "inline request-options record",
-    )
-    generated_struct = balanced_cpp_definition(
-        generated_plain,
-        "struct RequestOptions {",
-        "crate-generated request-options record",
-    )
-    if generated_struct != inline_struct:
-        raise GateError(
-            "crate-generated RequestOptions record differs from the inline provider"
-        )
-
-    method_tokens = (
-        "RequestOptions RequestOptions::new_()",
-        "RequestOptions RequestOptions::defaults()",
-        "RequestOptions RequestOptions::with_retry(",
-        "RequestOptions RequestOptions::idempotent_retry(",
-        "RequestOptions RequestOptions::no_timeout()",
-        "RequestOptions RequestOptions::fast()",
-        "RequestOptions RequestOptions::patient()",
-        "bool RequestOptions::can_retry(",
-        "uint64_t RequestOptions::calculate_delay_ms(",
-        "bool RequestOptions::is_total_timeout_exceeded(",
-        "uint64_t RequestOptions::remaining_time_ms(",
-    )
-    for token in method_tokens:
-        inline_definition = balanced_cpp_definition(
-            inline_options, token, "inline request-options methods"
-        )
-        generated_definition = balanced_cpp_definition(
-            generated_plain, token, "crate-generated request-options methods"
-        )
-        if generated_definition != inline_definition:
-            raise GateError(
-                "crate-generated request-options definition differs from the "
-                f"inline provider at {token!r}"
-            )
-
-    expected_mappings = [
-        ("NONE", "NONE"),
-        ("CONNECT_TIMEOUT", "CONNECT_TIMEOUT"),
-        ("REQUEST_TIMEOUT", "REQUEST_TIMEOUT"),
-        ("RESPONSE_TIMEOUT", "RESPONSE_TIMEOUT"),
-        ("TOTAL_TIMEOUT", "TOTAL_TIMEOUT"),
-    ]
-    mapping_pattern = re.compile(
-        r"TimeoutType::([A-Z_]+).*?std::string_view\(\"([A-Z_]+)\"\)",
-        re.DOTALL,
-    )
-    string_pattern = re.compile(r"std::string_view\(\"([A-Z_]+)\"\)")
-    generated_to_string = balanced_cpp_definition(
-        generated_plain,
-        "std::string_view timeout_type_to_string(TimeoutType ty) {",
-        "crate-generated request-options timeout formatter",
-    )
-    for description, definition in (
-        ("inline request-options timeout formatter", inline_to_string),
-        ("crate-generated request-options timeout formatter", generated_to_string),
-    ):
-        if mapping_pattern.findall(definition) != expected_mappings or (
-            string_pattern.findall(definition)
-            != [name for _, name in expected_mappings] + ["UNKNOWN"]
-        ):
-            raise GateError(
-                f"{description} does not contain the exact TimeoutType mapping"
-            )
-
-    forbidden_import_surfaces = (
-        "namespace rand =",
-        "using ::rand::",
-        "using ::rrr::rand::",
-        "using ::rrr::randgen_",
-    )
-    for surface in forbidden_import_surfaces:
-        if surface in inline_options or surface in generated:
-            raise GateError(
-                "request-options private flat import leaked a C++ alias/using "
-                f"surface: {surface!r}"
-            )
-
-
 def require_exact_module_imports(
     text: str, module_name: str, expected: list[str]
 ) -> None:
@@ -1358,44 +709,6 @@ def require_exact_module_imports(
         raise GateError(
             f"generated {module_name} module private imports must be exactly "
             f"{expected!r}; got {actual!r}, exported={exported!r}"
-        )
-
-
-def callback_wrapper_definition(text: str, description: str) -> str:
-    matches = re.findall(
-        r"(?:export )?template<typename F>\s+"
-        r"struct CallbackWrapper\s*\{.*?^\s*\};",
-        text,
-        re.MULTILINE | re.DOTALL,
-    )
-    if len(matches) != 1:
-        raise GateError(
-            f"{description} must contain exactly one CallbackWrapper definition; "
-            f"found {len(matches)}"
-        )
-    return re.sub(r"\s+", " ", matches[0].replace("export ", "")).strip()
-
-
-def require_callback_source_gen_parity(root: Path, output: Path) -> None:
-    inline_path = root / CALLBACK_INLINE_SOURCE
-    try:
-        inline_text = inline_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GateError(f"cannot read callback inline carrier {inline_path}: {exc}") from exc
-    generated_text = read_generated(
-        output / "rrr.callback_wrapper.cppm",
-        "child module rrr.callback_wrapper",
-    )
-    inline_definition = callback_wrapper_definition(
-        inline_text, "inline callback GEN region"
-    )
-    generated_definition = callback_wrapper_definition(
-        generated_text, "crate-generated callback module"
-    )
-    if inline_definition != generated_definition:
-        raise GateError(
-            "crate-generated CallbackWrapper definition differs from the "
-            "inline carrier GEN definition"
         )
 
 
@@ -1450,10 +763,6 @@ def require_cpp_surfaces(
                     f"generated {module.cpp_module} atomic preamble is not "
                     "between the global module fragment and standard includes"
                 )
-            if module.cpp_module == "rrr.connection_metrics":
-                require_connection_metrics_text_parity(root, text)
-            else:
-                require_completion_tracker_text_parity(root, text)
         elif atomic_preamble in text:
             raise GateError(
                 f"atomic module preamble leaked into {module.cpp_module}"
@@ -1483,7 +792,6 @@ def require_cpp_surfaces(
                     "generated rrr.rand hard-aborts a Rust assertion instead "
                     "of preserving panic/unwind failure semantics"
                 )
-            require_rand_text_parity(root, text)
         elif rand_preamble in text:
             raise GateError(
                 f"rand C-kernel preamble leaked into {module.cpp_module}"
@@ -1493,7 +801,17 @@ def require_cpp_surfaces(
             require_exact_module_imports(
                 text, "rrr.request_options", ["rrr.rand"]
             )
-            require_request_options_text_parity(root, text)
+            for forbidden in (
+                "namespace rand =",
+                "using ::rand::",
+                "using ::rrr::rand::",
+                "using ::rrr::randgen_",
+            ):
+                if forbidden in text:
+                    raise GateError(
+                        "generated request-options private flat import leaked "
+                        f"an alias/using surface: {forbidden!r}"
+                    )
 
     root_text = read_generated(output / "rrr.cppm", "root module")
     if "#include <rusty/sync/atomic.hpp>" in root_text:
@@ -1513,7 +831,6 @@ def require_cpp_surfaces(
             "generated root module is missing required surface:\n  "
             + "\n  ".join(root_missing)
         )
-    require_callback_source_gen_parity(root, output)
 
 
 def require_zero_hand_slots(path: Path) -> None:
@@ -3343,7 +2660,6 @@ def check_generated_output(
     modules: list[extraction.ModuleEntry],
     clang: Path,
     nm: Path,
-    reference: Path,
     production: Path | None,
     runtime_libraries: list[Path],
     cxx_flags: list[str],
@@ -3410,7 +2726,6 @@ def check_generated_output(
 
         link_sets: list[tuple[str, list[Path]]] = [
             ("generated", [*generated_objects, *runtime_libraries]),
-            ("inline-reference", [reference, *runtime_libraries]),
         ]
         if production is not None:
             link_sets.append(
@@ -3436,51 +2751,26 @@ def check_generated_output(
         for module, generated_object in zip(
             modules, generated_objects, strict=True
         ):
-            reference_symbols = module_symbols(
-                nm, root, reference, module.cpp_module
-            )
             generated_symbols = module_symbols(
                 nm, root, generated_object, module.cpp_module
-            )
-            require_expected_symbols(
-                module.cpp_module,
-                "independent inline reference library",
-                reference_symbols,
             )
             require_expected_symbols(
                 module.cpp_module,
                 "crate-generated object",
                 generated_symbols,
             )
-            if generated_symbols != reference_symbols:
-                raise GateError(
-                    f"crate-generated {module.cpp_module} ABI differs from "
-                    "the independent inline reference ABI"
-                )
 
             if module.cpp_module == "rrr.completion_tracker":
-                require_completion_raw_symbols(
-                    "independent inline reference library",
-                    completion_raw_symbols(nm, root, reference),
-                )
                 require_completion_raw_symbols(
                     "crate-generated object",
                     completion_raw_symbols(nm, root, generated_object),
                 )
             elif module.cpp_module == "rrr.rand":
                 require_rand_raw_symbols(
-                    "independent inline reference library",
-                    rand_raw_symbols(nm, root, reference),
-                )
-                require_rand_raw_symbols(
                     "crate-generated object",
                     rand_raw_symbols(nm, root, generated_object),
                 )
             elif module.cpp_module == "rrr.request_options":
-                require_request_options_raw_symbols(
-                    "independent inline reference library",
-                    request_options_raw_symbols(nm, root, reference),
-                )
                 require_request_options_raw_symbols(
                     "crate-generated object",
                     request_options_raw_symbols(nm, root, generated_object),
@@ -3495,10 +2785,10 @@ def check_generated_output(
                     "production library",
                     production_symbols,
                 )
-                if production_symbols != reference_symbols:
+                if production_symbols != generated_symbols:
                     raise GateError(
                         f"production {module.cpp_module} ABI differs from "
-                        "the independent inline reference ABI"
+                        "the independently compiled generated-object ABI"
                     )
                 if module.cpp_module == "rrr.completion_tracker":
                     require_completion_raw_symbols(
@@ -3525,20 +2815,12 @@ def check(args: argparse.Namespace) -> None:
     modules = load_owned_modules(root)
     clang = executable(root, args.clang, "Clang C++ compiler")
     nm = executable(root, args.nm, "nm")
-    reference = resolve_file(
-        root, args.reference_library, "independent inline reference library"
-    )
     production_raw = getattr(args, "production_library", None)
     production = (
         resolve_file(root, production_raw, "production library")
         if production_raw
         else None
     )
-    if production is not None and production == reference:
-        raise GateError(
-            "production library and independent inline reference library "
-            "must be different artifacts"
-        )
     runtime_libraries = [
         resolve_file(root, raw, "runtime library")
         for raw in (getattr(args, "runtime_library", None) or [])
@@ -3558,7 +2840,6 @@ def check(args: argparse.Namespace) -> None:
             modules=modules,
             clang=clang,
             nm=nm,
-            reference=reference,
             production=production,
             runtime_libraries=runtime_libraries,
             cxx_flags=cxx_flags,
@@ -3588,7 +2869,6 @@ def check(args: argparse.Namespace) -> None:
                 modules=modules,
                 clang=clang,
                 nm=nm,
-                reference=reference,
                 production=production,
                 runtime_libraries=runtime_libraries,
                 cxx_flags=cxx_flags,
@@ -3597,13 +2877,11 @@ def check(args: argparse.Namespace) -> None:
             )
 
     symbol_count = sum(len(spec.symbols) for spec in ABI_SPECS.values())
-    production_label = (
-        " and production libraries" if production is not None else ""
-    )
+    production_label = " and production library" if production is not None else ""
     print(
         f"checked whole rrr crate ({len(modules) + 1} modules compiled, "
         "partial root compile-only, 0 hand slots), combined importer against generated "
-        f"objects and the independent inline reference{production_label}, "
+        f"objects{production_label}, "
         "CallbackWrapper C++ layout/runtime/move parity, AvgStat layout/runtime, "
         "RpcError runtime contracts, ConnectionMetrics layout/concurrent/wrapping "
         "runtime contracts, CompletionTracker C++ layout/thread-safe lifecycle/"
@@ -3617,18 +2895,8 @@ def check(args: argparse.Namespace) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--reference-library",
-        "--reference-object",
-        dest="reference_library",
-        required=True,
-        help=(
-            "independently compiled inline-carrier archive "
-            "(legacy --reference-object is accepted)"
-        ),
-    )
-    parser.add_argument(
         "--production-library",
-        help="production librrr archive to link/run and compare against the oracle",
+        help="production librrr archive to link/run and compare with direct generated objects",
     )
     parser.add_argument(
         "--generated-dir",
