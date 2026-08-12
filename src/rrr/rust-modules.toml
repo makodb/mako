@@ -41,3 +41,11 @@ source = "src/rrr/src/reconnect_policy.rs"
 [[module]]
 cpp_module = "rrr.circuit_breaker"
 source = "src/rrr/src/circuit_breaker.rs"
+
+[[module]]
+cpp_module = "rrr.connection_state"
+source = "src/rrr/src/connection_state.rs"
+
+[[module]]
+cpp_module = "rrr.heartbeat"
+source = "src/rrr/src/heartbeat.rs"

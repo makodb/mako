@@ -2571,8 +2571,8 @@ export namespace rrr {
 // public API. Defined outside any future inline-Rust DSL block so the
 // DSL source can refer to them by an opaque type name (the DSL grammar
 // does not accept C++ function-type template arguments like
-// `<void(bool) const>`). Same pattern as `HeartbeatTimeoutCallback`
-// (rrr/heartbeat.cpp) and `StateChangeCallback` (rrr/connection_state.cpp).
+// `<void(bool) const>`). Same pattern as `HeartbeatTimeoutCallback` (canonical
+// rrr.heartbeat) and `StateChangeCallback` (canonical rrr.connection_state).
 //
 // Naming convention: `…CallbackFn` for the bare (move-only) Function<…>
 // shape that Client's `add_on_*` / `reconnect` / `set_on_server_restart`

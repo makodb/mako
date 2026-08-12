@@ -34,10 +34,8 @@ set(RRR_INLINE_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
@@ -49,7 +47,7 @@ set(RRR_INLINE_MODULE_SRC
 )
 list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_INLINE_MODULE_SRC})
 
-# These ten modules are owned by canonical Rust sources. rusty-cpp generates
+# These twelve modules are owned by canonical Rust sources. rusty-cpp generates
 # their complete C++ module interfaces; no hand-authored carrier remains.
 set(RRR_GOAL0_CANONICAL_MODULES
     callback_wrapper
@@ -62,15 +60,17 @@ set(RRR_GOAL0_CANONICAL_MODULES
     request_options
     reconnect_policy
     circuit_breaker
+    connection_state
+    heartbeat
 )
 set(_RRR_GOAL0_UNIQUE_MODULES ${RRR_GOAL0_CANONICAL_MODULES})
 list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_MODULES)
 list(LENGTH RRR_GOAL0_CANONICAL_MODULES _RRR_GOAL0_MODULE_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_MODULES _RRR_GOAL0_UNIQUE_MODULE_COUNT)
-if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 10 OR
-   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 10)
+if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 12 OR
+   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 12)
     message(FATAL_ERROR
-        "Goal-0 canonical module inventory must contain ten unique names")
+        "Goal-0 canonical module inventory must contain twelve unique names")
 endif()
 
 set(RRR_GOAL0_CRATE_CPP_DIR
@@ -96,6 +96,8 @@ set(RRR_GOAL0_RETIRED_CARRIER_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_options.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
 )
 foreach(_RRR_GOAL0_CANONICAL_SOURCE IN LISTS RRR_GOAL0_CANONICAL_RUST_SRC)
     if(NOT EXISTS "${_RRR_GOAL0_CANONICAL_SOURCE}")
@@ -123,16 +125,16 @@ list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC)
 list(LENGTH _RRR_GOAL0_UNIQUE_CANONICAL_RUST_SRC
     _RRR_GOAL0_UNIQUE_CANONICAL_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC _RRR_GOAL0_UNIQUE_CHILD_COUNT)
-if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 10 OR
-   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 10 OR
-   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 10 OR
-   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 10)
+if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 12 OR
+   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 12 OR
+   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 12 OR
+   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 12)
     message(FATAL_ERROR
-        "Goal-0 crate production must own exactly ten unique "
+        "Goal-0 crate production must own exactly twelve unique "
         "Rust/generated providers")
 endif()
 
-# Production always combines the remaining inline carriers with the ten
+# Production always combines the remaining inline carriers with the twelve
 # generated providers. The partial crate root remains compile-only until all
 # 38 named modules are canonical Rust.
 set(RRR_MODULE_SRC ${RRR_INLINE_MODULE_SRC} ${RRR_GOAL0_CRATE_CHILD_SRC})
@@ -145,10 +147,10 @@ set_source_files_properties(${RRR_GOAL0_CRATE_CHILD_SRC}
 
 list(LENGTH RRR_INLINE_MODULE_SRC _RRR_INLINE_MODULE_COUNT)
 list(LENGTH RRR_MODULE_SRC _RRR_PRODUCTION_MODULE_COUNT)
-if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 28 OR
+if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 26 OR
    NOT _RRR_PRODUCTION_MODULE_COUNT EQUAL 38)
     message(FATAL_ERROR
-        "Goal-0 production must contain 28 inline and ten generated modules")
+        "Goal-0 production must contain 26 inline and twelve generated modules")
 endif()
 list(FIND RRR_MODULE_SRC "${RRR_GOAL0_CRATE_ROOT_SRC}" _RRR_GOAL0_ROOT_INDEX)
 if(NOT _RRR_GOAL0_ROOT_INDEX EQUAL -1)
@@ -270,7 +272,7 @@ if(NOT TARGET rrr)
     target_sources(rrr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
 
     # Remaining hand-authored RRR C++ module units for borrow checking. The
-    # ten canonical Rust modules are checked by rustc and are not duplicated
+    # twelve canonical Rust modules are checked by rustc and are not duplicated
     # here as generated C++ providers.
     set(RRR_BORROW_SRC
         # base/
@@ -294,10 +296,8 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
@@ -395,8 +395,18 @@ add_custom_target(rrr_goal0_source_gate
         "${RRR_CARGO_EXECUTABLE}"
         test
         --locked
+        --workspace
         --all-targets
         --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+    COMMAND
+        "${RRR_CARGO_EXECUTABLE}"
+        clippy
+        --locked
+        --workspace
+        --all-targets
+        --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+        --
+        -D warnings
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Checking remaining inline Rust and canonical rustc crate sources"
     USES_TERMINAL
@@ -444,7 +454,7 @@ file(GENERATE
 
 # Crate mode emits all children and the partial root in one invocation. Both
 # the production target and dual gate consume this one build-tree generation.
-# Only the ten child .cppm files enter RRR_MODULE_SRC. The dual gate compiles
+# Only the twelve child .cppm files enter RRR_MODULE_SRC. The dual gate compiles
 # rrr.cppm after its children in temporary storage, but production never does.
 set(RRR_GOAL0_CRATE_GENERATED_OUTPUTS
     ${RRR_GOAL0_CRATE_CHILD_SRC}
@@ -455,12 +465,20 @@ set(RRR_GOAL0_CRATE_GENERATED_OUTPUTS
 set(RRR_GOAL0_MODULE_PREAMBLE
     ${CMAKE_CURRENT_SOURCE_DIR}/module-preambles.toml
 )
+# Keep the crate manifest absolute at the process boundary.  The bcc8 crate
+# dependency validator deliberately resolves the exact local `rusty` facade;
+# an absolute entry manifest makes that walk independent of WORKING_DIRECTORY.
+get_filename_component(
+    RRR_GOAL0_CRATE_MANIFEST
+    "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+    ABSOLUTE
+)
 add_custom_command(
     OUTPUT ${RRR_GOAL0_CRATE_GENERATED_OUTPUTS}
     COMMAND ${CMAKE_COMMAND} -E make_directory "${RRR_GOAL0_CRATE_CPP_DIR}"
     COMMAND
         "${RUSTYCPP_TRANSPILER}"
-        --crate "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+        --crate "${RRR_GOAL0_CRATE_MANIFEST}"
         --output-dir "${RRR_GOAL0_CRATE_CPP_DIR}"
         --cxx-namespace rrr
         --module-preamble "${RRR_GOAL0_MODULE_PREAMBLE}"
@@ -468,8 +486,10 @@ add_custom_command(
         rrr_goal0_source_gate
         rrr_goal0_transpiler_fingerprint
         "${RRR_GOAL0_TRANSPILER_FINGERPRINT}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+        "${RRR_GOAL0_CRATE_MANIFEST}"
         "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.lock"
+        "${CMAKE_CURRENT_SOURCE_DIR}/rusty-rustc/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/rusty-rustc/src/lib.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/rust-modules.toml"
         "${RRR_GOAL0_MODULE_PREAMBLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/lib.rs"

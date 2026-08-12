@@ -96,13 +96,13 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 - `src/rrr/`: Custom RPC framework and networking layer
 - `config/`: YAML configuration files for experiments and cluster topology
 
-The `rrr` Rust package is rooted at `src/rrr/Cargo.toml`. The ten modules
+The `rrr` Rust package is rooted at `src/rrr/Cargo.toml`. The twelve modules
 listed in `src/rrr/rust-modules.toml` are canonical `.rs` sources: rustc
 compiles them directly and rusty-cpp translates those same sources into the
 complete C++ module providers used in every production build. Edit those Rust
 files directly; their former hand-authored `.cpp` carriers have been deleted.
-The other 28 named modules still own 414 inline `RUSTYCPP_RUST` blocks, so a
-successful Cargo build proves only the current ten-module coverage, not full
+The other 26 named modules still own 406 inline `RUSTYCPP_RUST` blocks, so a
+successful Cargo build proves only the current twelve-module coverage, not full
 Goal 0. Never recreate a top-level `crates/srpc` hand port.
 
 ### Key Protocol Implementations
@@ -162,7 +162,7 @@ Both backends implement the same `TransportBackend` interface for transport-agno
 #### Rust first (default for new code)
 
 **New code SHOULD be authored in Rust, not hand-written C++.** In one of the
-ten canonical `rrr` modules, edit its `src/rrr/src/*.rs` source directly.
+twelve canonical `rrr` modules, edit its `src/rrr/src/*.rs` source directly.
 For a module that still uses an inline carrier, the DSL is the
 `#if RUSTYCPP_RUST pub trait/struct ... #endif` source block plus the generated
 `/*RUSTYCPP:GEN-BEGIN ... GEN-END*/` C++ the compiler sees. For a remaining
@@ -224,9 +224,9 @@ Exceptions that stay std:
 
 **IMPORTANT**: For Goal 0 canonical-Rust production, the `third-party/rusty-cpp`
 gitlink is pinned to commit
-`f6d9a0f62510c6335e172cebe3164d2570840284` on the pushed
-`goal0-flat-sibling-import` branch. That branch descends from the
-pre-pivot `2b261ccc0915ea99cbab02631ccc5bea19ac82c7` pin only through
+`bcc8fae4acaf905865ed001a8d042f266aa481e8` on the pushed
+`goal0-rustc-runtime-facade` branch. That branch descends from the
+previous approved `f6d9a0f62510c6335e172cebe3164d2570840284` pin only through
 reviewed Goal 0 source-inventory, codegen, preamble, build-attestation, and runtime
 commits. Do not move this
 gitlink to `verify-stack`: that branch contains

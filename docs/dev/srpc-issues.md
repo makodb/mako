@@ -9,7 +9,7 @@ Date: 2026-04-10
 - `src/rrr/rpc/request_queue.cpp`
 - `src/rrr/src/reconnect_policy.rs` (`rrr.reconnect_policy`)
 - `src/rrr/src/circuit_breaker.rs` (`rrr.circuit_breaker`)
-- `src/rrr/rpc/heartbeat.cpp`
+- `src/rrr/src/heartbeat.rs` (`rrr.heartbeat`)
 - `src/rrr/rpc/callbacks.cpp`
 - `src/rrr/src/connection_metrics.rs` (`rrr.connection_metrics`)
 - `src/rrr/rpc/load_balancer.cpp`

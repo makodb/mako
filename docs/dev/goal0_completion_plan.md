@@ -7,31 +7,31 @@ been removed; it cannot be used as evidence for either half.
 
 ## Current canonical-Rust ratchet (2026-08-12)
 
-The actual Cargo package starts at `src/rrr/Cargo.toml`. Ten checked-in
+The actual Cargo package starts at `src/rrr/Cargo.toml`. Twelve checked-in
 modules below `src/rrr/src` are now canonical Rust, with their exact ownership
 recorded in `src/rrr/rust-modules.toml`: `callback_wrapper`,
 `internal_protocol`, `stat`, `errors`, `connection_metrics`,
-`completion_tracker`, `rand`, `request_options`, `reconnect_policy`, and
-`circuit_breaker`. rustc compiles those
+`completion_tracker`, `rand`, `request_options`, `reconnect_policy`,
+`circuit_breaker`, `connection_state`, and `heartbeat`. rustc compiles those
 sources directly, and rusty-cpp translates the same bytes into their complete
-C++ module interfaces. Their ten hand-authored `.cpp` carriers have been
+C++ module interfaces. Their twelve hand-authored `.cpp` carriers have been
 deleted, and the generated children are now the only C++ production providers
-for these modules. The former 32 inline blocks account for 1,180 lines in the
+for these modules. The former 40 inline blocks account for 1,451 lines in the
 fixed historical coverage baseline; the canonical files themselves contain
-1,283 nonblank, non-`//` Rust lines. They are source, not copied extraction
+1,562 nonblank, non-`//` Rust lines. They are source, not copied extraction
 outputs.
-Deleting the ten carriers removed 3,649 physical checked-in C++ source
-lines. Their classified nonblank, noncomment regions included 1,263 lines of
-inline Rust payload now owned by the canonical files, 1,307 lines of regenerable C++,
-64 DSL fence directives, and 102 other scaffold lines (the balance was comments,
+Deleting the twelve carriers removed 4,451 physical checked-in C++ source
+lines. Their classified nonblank, noncomment regions included 1,534 lines of
+inline Rust payload now owned by the canonical files, 1,570 lines of regenerable C++,
+80 DSL fence directives, and 126 other scaffold lines (the balance was comments,
 blank lines, and generated-region markers). Thus these promotions cumulatively
-retired exactly 166 hand-authored C++ scaffold lines.
+retired exactly 206 hand-authored C++ scaffold lines.
 
 The generated modules preserve the production `rrr::detail::CallbackWrapper`,
 `rrr.internal_protocol`, `rrr.stat`, `rrr.errors`,
-`rrr.connection_metrics`, `rrr.completion_tracker`, `rrr.rand`, and
-`rrr.request_options`, `rrr.reconnect_policy`, and `rrr.circuit_breaker`
-surfaces, their exact 142-symbol
+`rrr.connection_metrics`, `rrr.completion_tracker`, `rrr.rand`,
+`rrr.request_options`, `rrr.reconnect_policy`, `rrr.circuit_breaker`,
+`rrr.connection_state`, and `rrr.heartbeat` surfaces, their exact 174-symbol
 combined provider-owned strong ABI, the callback, `AvgStat`, and public
 18-field `ConnectionMetrics` layouts and runtime behavior, every public
 RPC-error discriminant, name, category, and retry predicate. The callback
@@ -96,10 +96,23 @@ counter overflow equal in debug Rust and unsigned C++. Cell-backed mutation
 remains Send but not Sync; unsynchronized writer tests are not thread-safety
 evidence.
 
-This is deliberately partial: ten of 38 named modules are canonical Rust,
-and ten of the original 39 hand-authored module-source units have been
-removed. The remaining 28 named modules and 29 module-source units still own
-414 inline DSL blocks and 10,302 nonblank, non-`//` DSL lines. The fixed
+Connection state preserves its 4-byte enum, 48-byte const-callable Function
+alias, 64-byte state machine, exact transition table, and all 13 public strong
+symbols. Heartbeat preserves its 16-byte configuration, 48-byte mutable
+Function alias, 112-byte manager, and all 19 public strong symbols. The exact
+local rustc-only `rusty` package supplies a safe `Option<Box<dyn Fn/FnMut>>`
+model with a real empty state and matching 48/16 public layout; rusty-cpp
+validates that package identity and omits it from generated C++ and CMake.
+Heartbeat privately imports the canonical circuit-breaker clock wrapper and
+therefore reuses its audited `CLOCK_MONOTONIC` seam without adding unsafe Rust.
+Both callback kinds are tested empty, installed, and dispatched; heartbeat
+also pins moved-from emptiness. Its timing and missed-count arithmetic is
+explicitly wrapping.
+
+This is deliberately partial: twelve of 38 named modules are canonical Rust,
+and twelve of the original 39 hand-authored module-source units have been
+removed. The remaining 26 named modules and 27 module-source units still own
+406 inline DSL blocks and 10,031 nonblank, non-`//` DSL lines. The fixed
 pre-promotion baseline is 446 blocks and 11,482 lines. `cargo test
 --manifest-path src/rrr/Cargo.toml` must never be reported as full Goal 0
 completion until the remaining graph is canonical Rust and the
@@ -130,15 +143,15 @@ and line-level audit at `2f02672c` found **zero hand-written C++ function or
 object-definition bodies** outside the inline Rust and generated regions.
 What remains is still material Goal-0 work:
 
-- 1,769 noncomment scaffold lines across the 29 remaining hand-authored
-  `.cpp`/`.cc` module-source units: 828 outer DSL fence directives plus 941
+- 1,729 noncomment scaffold lines across the 27 remaining hand-authored
+  `.cpp`/`.cc` module-source units: 812 outer DSL fence directives plus 917
   other module-frame/declaration/order/alias/macro lines outside DSL and GEN
-  regions; the ten canonical modules now contribute zero carrier lines;
+  regions; the twelve canonical modules now contribute zero carrier lines;
 - 147 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
 - 84 noncomment C ABI header lines across `srpc_fiber.h`, `srpc_rand.h`, and
   `srpc_timing.h`;
 - seven tolerated external-C kernels (388 noncomment code lines); and
-- 414 inline production DSL blocks (10,302 nonblank, non-`//` lines) not yet promoted
+- 406 inline production DSL blocks (10,031 nonblank, non-`//` lines) not yet promoted
   to canonical Rust.
 
 The immediate path is to repeat the canonical-source promotion in batches:
@@ -153,13 +166,14 @@ silently changing public C++ types. `pollable_proxy` needs a rustc-visible
 shared-target bound, but the current lowering emits that helper interface and
 changes `PollableProxy`; `channel` still exposes exact `std::string` and
 callback-wrapper types that plain Rust cannot spell without a source-level
-mapping; `heartbeat` still calls the rustc-invisible
-`rusty::sys::time::clock_monotonic_us` (the structured timing seam is its
-likely route); and `load_balancer` relies on C++
+mapping; and `load_balancer` relies on C++
 structural duck typing for unconstrained container templates.
-`connection_state` and `heartbeat` also need an exact empty-callback
-representation. These are recorded translator/source-shape
-prerequisites, not permission to preserve their carriers permanently.
+The same audit found connection state's empty-callback gap and heartbeat's
+rustc-invisible monotonic-clock call. Those prerequisites are now closed by
+the exact rustc-only runtime facade and private canonical clock import. The
+remaining pollable/channel/load-balancer findings are recorded translator/
+source-shape prerequisites, not permission to preserve their carriers
+permanently.
 
 ## Historical measurement (superseded)
 

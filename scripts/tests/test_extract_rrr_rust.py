@@ -68,6 +68,9 @@ def subprocess_result(
 
 
 class CheckedInCanaryTests(unittest.TestCase):
+    def test_discarded_parallel_crate_stays_absent(self) -> None:
+        self.assertFalse((REPOSITORY / "crates/srpc").exists())
+
     def test_retired_inline_carriers_stay_absent(self) -> None:
         retired = (
             "src/rrr/base/callback_wrapper.cpp",
@@ -80,6 +83,8 @@ class CheckedInCanaryTests(unittest.TestCase):
             "src/rrr/rpc/request_options.cpp",
             "src/rrr/rpc/reconnect_policy.cpp",
             "src/rrr/rpc/circuit_breaker.cpp",
+            "src/rrr/rpc/connection_state.cpp",
+            "src/rrr/rpc/heartbeat.cpp",
         )
         self.assertTrue(all(not (REPOSITORY / path).exists() for path in retired))
 
@@ -90,12 +95,12 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 29 hand-authored module units, "
-            "SCAFFOLD=1769 noncomment lines (828 DSL fences + 941 other)",
+            "source boundary: 27 hand-authored module units, "
+            "SCAFFOLD=1729 noncomment lines (812 DSL fences + 917 other)",
             output,
         )
         self.assertIn(
-            "payload census:   dsl=10302  generated=13186 "
+            "payload census:   dsl=10031  generated=12923 "
             "nonblank/non-// lines",
             output,
         )
@@ -229,6 +234,18 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "src/rrr/src/circuit_breaker.rs",
                     "src/rrr/src/circuit_breaker.rs",
                 ),
+                (
+                    "rrr.connection_state",
+                    "connection_state",
+                    "src/rrr/src/connection_state.rs",
+                    "src/rrr/src/connection_state.rs",
+                ),
+                (
+                    "rrr.heartbeat",
+                    "heartbeat",
+                    "src/rrr/src/heartbeat.rs",
+                    "src/rrr/src/heartbeat.rs",
+                ),
             ],
         )
 
@@ -284,7 +301,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                     bool(line.strip()) and not line.lstrip().startswith("//")
                     for line in source.splitlines()
                 )
-        self.assertEqual(canonical_lines, 1283)
+        self.assertEqual(canonical_lines, 1562)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -344,6 +361,8 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/reconnect_policy.rs",
                 "src/rrr/src/request_options.rs",
                 "src/rrr/src/circuit_breaker.rs",
+                "src/rrr/src/connection_state.rs",
+                "src/rrr/src/heartbeat.rs",
             },
         )
 
@@ -434,6 +453,27 @@ class CheckedInCanaryTests(unittest.TestCase):
             unsafe_syntax.search(remainder),
             "circuit_breaker.rs gained unsafe syntax outside its exact clock boundary",
         )
+
+        facade_manifest = REPOSITORY / "src/rrr/rusty-rustc/Cargo.toml"
+        with facade_manifest.open("rb") as stream:
+            facade_cargo = tomllib.load(stream)
+        self.assertEqual(facade_cargo["package"]["name"], "rusty")
+        self.assertEqual(facade_cargo["lib"]["path"], "src/lib.rs")
+        self.assertEqual(facade_cargo["lints"]["rust"]["unsafe_code"], "deny")
+        self.assertFalse((facade_manifest.parent / "Cargo.lock").exists())
+        facade = (facade_manifest.parent / "src/lib.rs").read_text(encoding="utf-8")
+        self.assertIsNone(
+            unsafe_syntax.search(facade),
+            "rustc-only rusty runtime facade must contain no unsafe Rust",
+        )
+        self.assertIn("inner: Option<Box<F>>", facade)
+        self.assertIn("runtime_layout_padding: [u8; 32]", facade)
+        self.assertIn("impl<F: ?Sized> Deref for Function<F>", facade)
+        self.assertIn("impl<F: ?Sized> DerefMut for Function<F>", facade)
+        self.assertIn("impl<A: 'static> Function<dyn FnMut(A)>", facade)
+
+        self.assertEqual(cargo["workspace"]["members"], ["rusty-rustc"])
+        self.assertEqual(cargo["dependencies"]["rusty"], {"path": "rusty-rustc"})
 
 
 class DriverBehaviorTests(unittest.TestCase):
@@ -984,6 +1024,31 @@ class DriverBehaviorTests(unittest.TestCase):
 
 
 class CrateModeGateTests(unittest.TestCase):
+    def test_placeholder_ratchet_checks_named_module_purview(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-gate-placeholder-") as temporary:
+            generated = Path(temporary) / "rrr.example.cppm"
+            generated.write_text(
+                "module;\n"
+                "// Compiler runtime diagnostic: unsupported conversion.\n"
+                "export module rrr.example;\n"
+                "export int value();\n",
+                encoding="utf-8",
+            )
+            self.assertIn(
+                "export module rrr.example;",
+                GATE.read_generated(generated, "test module"),
+            )
+
+            generated.write_text(
+                "module;\n"
+                "// Compiler runtime diagnostic: unsupported conversion.\n"
+                "export module rrr.example;\n"
+                "// TODO: lower this declaration.\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(GATE.GateError, "placeholder marker 'TODO'"):
+                GATE.read_generated(generated, "test module")
+
     def test_generated_children_have_only_their_direct_module_imports(self) -> None:
         GATE.require_exact_module_imports(
             "export module rrr.rand;\nimport rusty;\n",
@@ -1004,6 +1069,16 @@ class CrateModeGateTests(unittest.TestCase):
             "export module rrr.circuit_breaker;\n",
             "rrr.circuit_breaker",
             [],
+        )
+        GATE.require_exact_module_imports(
+            "export module rrr.connection_state;\n",
+            "rrr.connection_state",
+            [],
+        )
+        GATE.require_exact_module_imports(
+            "export module rrr.heartbeat;\nimport rrr.circuit_breaker;\n",
+            "rrr.heartbeat",
+            ["rrr.circuit_breaker"],
         )
         with self.assertRaisesRegex(GATE.GateError, "private imports must be exactly"):
             GATE.require_exact_module_imports(
@@ -1226,7 +1301,7 @@ class CrateModeGateTests(unittest.TestCase):
 
     def test_standalone_generation_consumes_the_structured_preamble(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-gate-generate-test-") as temporary:
-            root = Path(temporary)
+            root = Path(temporary) / ".." / Path(temporary).name
             args = GATE.argparse.Namespace(
                 transpiler="transpiler",
                 clang="clang++",
@@ -1257,7 +1332,31 @@ class CrateModeGateTests(unittest.TestCase):
                 GATE.check(args)
 
             command = run.call_args.args[0]
-            self.assertEqual(command[-2:], ["--module-preamble", GATE.MODULE_PREAMBLE])
+            self.assertEqual(
+                command[-2:],
+                ["--module-preamble", str(root / GATE.MODULE_PREAMBLE)],
+            )
+            self.assertEqual(
+                command[2], str((root / "src/rrr/Cargo.toml").resolve())
+            )
+            self.assertTrue(Path(command[2]).is_absolute())
+
+    def test_cmake_crate_invocation_uses_an_absolute_manifest_variable(self) -> None:
+        cmake = (REPOSITORY / "src/rrr/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'get_filename_component(\n'
+            '    RRR_GOAL0_CRATE_MANIFEST\n'
+            '    "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"\n'
+            '    ABSOLUTE\n'
+            ')',
+            cmake,
+        )
+        self.assertIn('--crate "${RRR_GOAL0_CRATE_MANIFEST}"', cmake)
+        self.assertNotIn(
+            '--crate "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"', cmake
+        )
 
     def test_generated_gate_compiles_children_before_partial_root(self) -> None:
         modules = [
@@ -1271,6 +1370,8 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.request_options"),
             mock.Mock(cpp_module="rrr.reconnect_policy"),
             mock.Mock(cpp_module="rrr.circuit_breaker"),
+            mock.Mock(cpp_module="rrr.connection_state"),
+            mock.Mock(cpp_module="rrr.heartbeat"),
         ]
 
         def symbols_for_module(
@@ -1315,6 +1416,13 @@ class CrateModeGateTests(unittest.TestCase):
         circuit_breaker_raw.append(
             ("T", "initializer for module rrr.circuit_breaker")
         )
+        exact_raw = {
+            name: [
+                *GATE.ABI_SPECS[name].symbols,
+                ("T", f"initializer for module {name}"),
+            ]
+            for name in ("rrr.connection_state", "rrr.heartbeat")
+        }
 
         def compiled_object(
             _clang: Path,
@@ -1358,6 +1466,10 @@ class CrateModeGateTests(unittest.TestCase):
                 GATE,
                 "circuit_breaker_raw_symbols",
                 return_value=circuit_breaker_raw,
+            ), mock.patch.object(
+                GATE,
+                "exact_module_raw_symbols",
+                side_effect=lambda _nm, _root, _binary, name: exact_raw[name],
             ):
                 GATE.check_generated_output(
                     root=Path("/repository"),
@@ -1386,6 +1498,8 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.request_options",
                 "rrr.reconnect_policy",
                 "rrr.circuit_breaker",
+                "rrr.connection_state",
+                "rrr.heartbeat",
                 "rrr",
             ],
         )
@@ -1487,6 +1601,23 @@ class CrateModeGateTests(unittest.TestCase):
                 "test provider", entries[:-1]
             )
 
+    def test_connection_and_heartbeat_raw_symbol_ratchets_include_initializer(self) -> None:
+        for module_name, expected_count in (
+            ("rrr.connection_state", 14),
+            ("rrr.heartbeat", 20),
+        ):
+            with self.subTest(module_name=module_name):
+                entries = list(GATE.ABI_SPECS[module_name].symbols)
+                entries.append(("T", f"initializer for module {module_name}"))
+                self.assertEqual(len(entries), expected_count)
+                GATE.require_exact_module_raw_symbols(
+                    module_name, "test provider", entries
+                )
+                with self.assertRaisesRegex(GATE.GateError, "raw strong entries"):
+                    GATE.require_exact_module_raw_symbols(
+                        module_name, "test provider", entries[:-1]
+                    )
+
     def test_runtime_module_root_must_exist_and_contain_rusty_pcm(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-runtime-pcm-test-") as temporary:
             root = Path(temporary)
@@ -1550,6 +1681,8 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.request_options"),
             mock.Mock(cpp_module="rrr.reconnect_policy"),
             mock.Mock(cpp_module="rrr.circuit_breaker"),
+            mock.Mock(cpp_module="rrr.connection_state"),
+            mock.Mock(cpp_module="rrr.heartbeat"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

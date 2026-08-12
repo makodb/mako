@@ -22,7 +22,7 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "f6d9a0f62510c6335e172cebe3164d2570840284"
+REQUIRED_RUSTY_CPP_COMMIT = "bcc8fae4acaf905865ed001a8d042f266aa481e8"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-modules.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
@@ -617,6 +617,120 @@ ABI_SPECS = {
             }
         ),
     ),
+    "rrr.connection_state": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.connection_state;",
+                "export enum class ConnectionState",
+                "export struct ConnectionStateMachine",
+                "export using StateChangeCallback = rusty::Function<void(ConnectionState, ConnectionState) const>;",
+                "rusty::Cell<ConnectionState> state_field;",
+                "StateChangeCallback on_state_change;",
+                "static ConnectionStateMachine new_();",
+                "ConnectionState state() const;",
+                "bool can_transition_to(ConnectionState new_state) const;",
+                "bool transition_to(ConnectionState new_state) const;",
+                "void force_state(ConnectionState new_state) const;",
+                "void set_on_state_change(StateChangeCallback callback);",
+                "bool is_connected() const;",
+                "bool is_failed() const;",
+                "bool is_terminal() const;",
+                "bool can_connect() const;",
+                "bool is_usable() const;",
+                "static bool is_valid_transition(ConnectionState from, ConnectionState to);",
+                "export std::string_view connection_state_to_string(ConnectionState state);",
+                ".on_state_change = rusty::default_like<StateChangeCallback>()",
+                "rusty::is_empty(this->on_state_change)",
+            }
+        ),
+        symbols=frozenset(
+            ("T", symbol)
+            for symbol in {
+                "rrr::connection_state_to_string@rrr.connection_state(rrr::ConnectionState@rrr.connection_state)",
+                "rrr::ConnectionStateMachine@rrr.connection_state::new_()",
+                "rrr::ConnectionStateMachine@rrr.connection_state::state() const",
+                "rrr::ConnectionStateMachine@rrr.connection_state::can_transition_to(rrr::ConnectionState@rrr.connection_state) const",
+                "rrr::ConnectionStateMachine@rrr.connection_state::transition_to(rrr::ConnectionState@rrr.connection_state) const",
+                "rrr::ConnectionStateMachine@rrr.connection_state::force_state(rrr::ConnectionState@rrr.connection_state) const",
+                "rrr::ConnectionStateMachine@rrr.connection_state::set_on_state_change(rusty::Function<void (rrr::ConnectionState@rrr.connection_state, rrr::ConnectionState@rrr.connection_state) const>)",
+                "rrr::ConnectionStateMachine@rrr.connection_state::is_connected() const",
+                "rrr::ConnectionStateMachine@rrr.connection_state::is_failed() const",
+                "rrr::ConnectionStateMachine@rrr.connection_state::is_terminal() const",
+                "rrr::ConnectionStateMachine@rrr.connection_state::can_connect() const",
+                "rrr::ConnectionStateMachine@rrr.connection_state::is_usable() const",
+                "rrr::ConnectionStateMachine@rrr.connection_state::is_valid_transition(rrr::ConnectionState@rrr.connection_state, rrr::ConnectionState@rrr.connection_state)",
+            }
+        ),
+    ),
+    "rrr.heartbeat": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.heartbeat;",
+                "export using HeartbeatTimeoutCallback = rusty::Function<void()>;",
+                "export uint64_t heartbeat_time_us();",
+                "export struct HeartbeatConfig",
+                "bool enabled;",
+                "uint32_t interval_ms;",
+                "uint32_t timeout_ms;",
+                "uint32_t max_missed;",
+                "static HeartbeatConfig new_();",
+                "static HeartbeatConfig defaults();",
+                "static HeartbeatConfig aggressive();",
+                "static HeartbeatConfig relaxed();",
+                "static HeartbeatConfig disabled();",
+                "export struct HeartbeatManager",
+                "rusty::Cell<HeartbeatConfig> config_field;",
+                "rusty::Cell<uint64_t> last_send_time;",
+                "rusty::Cell<uint64_t> last_recv_time;",
+                "rusty::Cell<uint32_t> missed_count_field;",
+                "rusty::Cell<bool> pending_pong;",
+                "rusty::Cell<bool> timed_out;",
+                "rusty::RefCell<HeartbeatTimeoutCallback> on_timeout;",
+                "static HeartbeatManager new_(const HeartbeatConfig& config);",
+                "void set_config(const HeartbeatConfig& config) const;",
+                "void set_on_timeout(HeartbeatTimeoutCallback callback) const;",
+                "bool should_send_heartbeat() const;",
+                "void on_heartbeat_sent() const;",
+                "void on_pong_received() const;",
+                "bool check_timeout() const;",
+                "uint32_t time_until_next_heartbeat_ms() const;",
+                "bool is_timed_out() const;",
+                "uint32_t missed_count() const;",
+                "bool is_pending_pong() const;",
+                "void reset() const;",
+                "HeartbeatConfig config() const;",
+                "return current_time_us();",
+                ".on_timeout = rusty::RefCell<HeartbeatTimeoutCallback>::new_(rusty::default_like<HeartbeatTimeoutCallback>())",
+                "rusty::is_empty(((*callback)))",
+                "rusty::wrapping_sub(now",
+                "rusty::wrapping_add(this->missed_count_field.get()",
+            }
+        ),
+        symbols=frozenset(
+            ("T", symbol)
+            for symbol in {
+                "rrr::heartbeat_time_us@rrr.heartbeat()",
+                "rrr::HeartbeatConfig@rrr.heartbeat::new_()",
+                "rrr::HeartbeatConfig@rrr.heartbeat::defaults()",
+                "rrr::HeartbeatConfig@rrr.heartbeat::aggressive()",
+                "rrr::HeartbeatConfig@rrr.heartbeat::relaxed()",
+                "rrr::HeartbeatConfig@rrr.heartbeat::disabled()",
+                "rrr::HeartbeatManager@rrr.heartbeat::new_(rrr::HeartbeatConfig@rrr.heartbeat const&)",
+                "rrr::HeartbeatManager@rrr.heartbeat::set_config(rrr::HeartbeatConfig@rrr.heartbeat const&) const",
+                "rrr::HeartbeatManager@rrr.heartbeat::set_on_timeout(rusty::Function<void ()>) const",
+                "rrr::HeartbeatManager@rrr.heartbeat::should_send_heartbeat() const",
+                "rrr::HeartbeatManager@rrr.heartbeat::on_heartbeat_sent() const",
+                "rrr::HeartbeatManager@rrr.heartbeat::on_pong_received() const",
+                "rrr::HeartbeatManager@rrr.heartbeat::check_timeout() const",
+                "rrr::HeartbeatManager@rrr.heartbeat::time_until_next_heartbeat_ms() const",
+                "rrr::HeartbeatManager@rrr.heartbeat::is_timed_out() const",
+                "rrr::HeartbeatManager@rrr.heartbeat::missed_count() const",
+                "rrr::HeartbeatManager@rrr.heartbeat::is_pending_pong() const",
+                "rrr::HeartbeatManager@rrr.heartbeat::reset() const",
+                "rrr::HeartbeatManager@rrr.heartbeat::config() const",
+            }
+        ),
+    ),
 }
 
 
@@ -803,7 +917,19 @@ def read_generated(path: Path, description: str) -> str:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise GateError(f"missing generated {description} {path}: {exc}") from exc
-    placeholder = PLACEHOLDER.search(text)
+    # A generated module's global module fragment may contain compiler-owned
+    # runtime support.  Some of those helpers use "unsupported" in legitimate
+    # diagnostics (for example, an unreachable conversion branch), so it is
+    # not sound to classify that fixed support text as an unimplemented user
+    # lowering.  Generated Rust declarations and definitions live in the
+    # named-module purview; keep the strict placeholder ratchet there.  Files
+    # without a named-module declaration (the crate root CMake file included)
+    # are still checked in full.
+    module_declaration = re.search(r"^export module [^;\n]+;[ \t]*$", text, re.MULTILINE)
+    placeholder_region = (
+        text[module_declaration.start() :] if module_declaration is not None else text
+    )
+    placeholder = PLACEHOLDER.search(placeholder_region)
     if placeholder is not None:
         raise GateError(
             f"generated {description} contains placeholder marker "
@@ -836,12 +962,29 @@ def require_cpp_surfaces(
 ) -> None:
     expected_files = {f"{module.cpp_module}.cppm" for module in modules}
     expected_files.add("rrr.cppm")
-    actual_files = {path.name for path in output.glob("*.cppm") if path.is_file()}
+    actual_files = {
+        path.relative_to(output).as_posix()
+        for path in output.rglob("*.cppm")
+        if path.is_file()
+    }
     if actual_files != expected_files:
         raise GateError(
             "generated C++ module census mismatch: expected "
             f"{sorted(expected_files)!r}, got {sorted(actual_files)!r}"
         )
+
+    runtime_facade_output = output / "rusty"
+    if runtime_facade_output.exists():
+        raise GateError(
+            "rustc-only rusty runtime facade leaked into generated C++ output"
+        )
+    generated_cmake = read_generated(output / "CMakeLists.txt", "crate CMake file")
+    for forbidden in ("rusty/rusty.cppm", "add_subdirectory(rusty"):
+        if forbidden in generated_cmake:
+            raise GateError(
+                "rustc-only rusty runtime facade leaked into generated CMake: "
+                f"{forbidden!r}"
+            )
 
     for module in modules:
         path = output / f"{module.cpp_module}.cppm"
@@ -856,6 +999,7 @@ def require_cpp_surfaces(
                 f"generated module {module.cpp_module} is missing required surface:\n  "
                 + "\n  ".join(missing)
             )
+
         if "namespace rrr::" in text:
             raise GateError(
                 f"generated module {module.cpp_module} drifted to a nested namespace"
@@ -970,6 +1114,13 @@ def require_cpp_surfaces(
                         "generated reconnect-policy private flat import leaked "
                         f"an alias/using surface: {forbidden!r}"
                     )
+
+        if module.cpp_module == "rrr.connection_state":
+            require_exact_module_imports(text, "rrr.connection_state", [])
+        elif module.cpp_module == "rrr.heartbeat":
+            require_exact_module_imports(
+                text, "rrr.heartbeat", ["rrr.circuit_breaker"]
+            )
 
     root_text = read_generated(output / "rrr.cppm", "root module")
     if "#include <rusty/sync/atomic.hpp>" in root_text:
@@ -1283,6 +1434,53 @@ def require_circuit_breaker_raw_symbols(
     )
 
 
+def exact_module_raw_symbols(
+    nm: Path,
+    root: Path,
+    binary: Path,
+    module_name: str,
+) -> list[tuple[str, str]]:
+    """Return one module's strong API entries and its sole initializer."""
+
+    output = run(
+        [str(nm), "--defined-only", "--demangle", str(binary)],
+        root,
+    )
+    initializer = f"initializer for module {module_name}"
+    entries: list[tuple[str, str]] = []
+    for line in output.splitlines():
+        match = NM_LINE.match(line)
+        if match is None:
+            continue
+        kind, symbol = match.groups()
+        if not kind.isupper() or kind in {"U", "V", "W"}:
+            continue
+        if symbol_owner_module(symbol) == module_name or symbol == initializer:
+            entries.append((kind, symbol))
+    return entries
+
+
+def require_exact_module_raw_symbols(
+    module_name: str,
+    description: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    """Pin a module's complete strong API and sole initializer exactly."""
+
+    expected = Counter(ABI_SPECS[module_name].symbols)
+    expected[("T", f"initializer for module {module_name}")] += 1
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} {module_name} ABI must contain exactly "
+        f"{sum(expected.values())} raw strong entries (API symbols and the "
+        f"module initializer); missing={missing!r}, unexpected={unexpected!r}"
+    )
+
+
 def function_parameter_open(symbol: str) -> int:
     """Return the outer function-parameter `(`, or the end for a data symbol."""
 
@@ -1411,6 +1609,7 @@ def importer_source() -> str:
 #include <rusty/cell.hpp>
 #include <rusty/move.hpp>
 #include <rusty/option.hpp>
+#include <rusty/refcell.hpp>
 #include <rusty/slice.hpp>
 #include <rusty/sync/atomic.hpp>
 #include <rusty/traits.hpp>
@@ -1432,7 +1631,9 @@ import rrr.callback_wrapper;
 import rrr.circuit_breaker;
 import rrr.completion_tracker;
 import rrr.connection_metrics;
+import rrr.connection_state;
 import rrr.errors;
+import rrr.heartbeat;
 import rrr.internal_protocol;
 import rrr.rand;
 import rrr.reconnect_policy;
@@ -1515,6 +1716,75 @@ static_assert(std::is_same_v<
               bool (rrr::CircuitBreaker::*)() const>);
 static_assert(std::is_same_v<
               decltype(&rrr::current_time_us), std::uint64_t (*)()>);
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<rrr::ConnectionState>, std::int32_t>);
+static_assert(sizeof(rrr::ConnectionState) == 4);
+static_assert(alignof(rrr::ConnectionState) == 4);
+static_assert(std::is_same_v<
+              rrr::StateChangeCallback,
+              rusty::Function<void(rrr::ConnectionState,
+                                   rrr::ConnectionState) const>>);
+static_assert(sizeof(rrr::StateChangeCallback) == 48);
+static_assert(alignof(rrr::StateChangeCallback) == 16);
+static_assert(sizeof(rrr::ConnectionStateMachine) == 64);
+static_assert(alignof(rrr::ConnectionStateMachine) == 16);
+static_assert(offsetof(rrr::ConnectionStateMachine, state_field) == 0);
+static_assert(offsetof(rrr::ConnectionStateMachine, on_state_change) == 16);
+static_assert(!std::is_copy_constructible_v<rrr::ConnectionStateMachine>);
+static_assert(std::is_move_constructible_v<rrr::ConnectionStateMachine>);
+static_assert(!rusty::is_send<rrr::StateChangeCallback>::value);
+static_assert(!rusty::is_sync<rrr::StateChangeCallback>::value);
+static_assert(!rusty::is_send<rrr::ConnectionStateMachine>::value);
+static_assert(!rusty::is_sync<rrr::ConnectionStateMachine>::value);
+static_assert(std::is_same_v<
+              decltype(&rrr::ConnectionStateMachine::set_on_state_change),
+              void (rrr::ConnectionStateMachine::*)(rrr::StateChangeCallback)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::ConnectionStateMachine::transition_to),
+              bool (rrr::ConnectionStateMachine::*)(rrr::ConnectionState) const>);
+
+static_assert(std::is_same_v<
+              rrr::HeartbeatTimeoutCallback,
+              rusty::Function<void()>>);
+static_assert(sizeof(rrr::HeartbeatTimeoutCallback) == 48);
+static_assert(alignof(rrr::HeartbeatTimeoutCallback) == 16);
+static_assert(std::is_standard_layout_v<rrr::HeartbeatConfig>);
+static_assert(std::is_trivially_copyable_v<rrr::HeartbeatConfig>);
+static_assert(rrr::HeartbeatConfig::is_send);
+static_assert(rrr::HeartbeatConfig::is_sync);
+static_assert(sizeof(rrr::HeartbeatConfig) == 16);
+static_assert(alignof(rrr::HeartbeatConfig) == 4);
+static_assert(offsetof(rrr::HeartbeatConfig, enabled) == 0);
+static_assert(offsetof(rrr::HeartbeatConfig, interval_ms) == 4);
+static_assert(offsetof(rrr::HeartbeatConfig, timeout_ms) == 8);
+static_assert(offsetof(rrr::HeartbeatConfig, max_missed) == 12);
+static_assert(sizeof(rrr::HeartbeatManager) == 112);
+static_assert(alignof(rrr::HeartbeatManager) == 16);
+static_assert(offsetof(rrr::HeartbeatManager, config_field) == 0);
+static_assert(offsetof(rrr::HeartbeatManager, last_send_time) == 16);
+static_assert(offsetof(rrr::HeartbeatManager, last_recv_time) == 24);
+static_assert(offsetof(rrr::HeartbeatManager, missed_count_field) == 32);
+static_assert(offsetof(rrr::HeartbeatManager, pending_pong) == 36);
+static_assert(offsetof(rrr::HeartbeatManager, timed_out) == 37);
+static_assert(offsetof(rrr::HeartbeatManager, on_timeout) == 48);
+static_assert(!std::is_copy_constructible_v<rrr::HeartbeatManager>);
+static_assert(std::is_move_constructible_v<rrr::HeartbeatManager>);
+static_assert(!rusty::is_send<rrr::HeartbeatTimeoutCallback>::value);
+static_assert(!rusty::is_sync<rrr::HeartbeatTimeoutCallback>::value);
+static_assert(!rusty::is_send<rrr::HeartbeatManager>::value);
+static_assert(!rusty::is_sync<rrr::HeartbeatManager>::value);
+static_assert(std::is_same_v<
+              decltype(&rrr::HeartbeatManager::new_),
+              rrr::HeartbeatManager (*)(const rrr::HeartbeatConfig&)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::HeartbeatManager::set_on_timeout),
+              void (rrr::HeartbeatManager::*)(rrr::HeartbeatTimeoutCallback) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::HeartbeatManager::check_timeout),
+              bool (rrr::HeartbeatManager::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::heartbeat_time_us), std::uint64_t (*)()>);
 static_assert(std::is_same_v<
               decltype(&rrr::randgen_zero_pad),
               std::string (*)(std::string, std::int32_t)>);
@@ -1679,6 +1949,14 @@ struct CallbackMoveObservedCallable {
         CallbackMoveObservedCallable&&) = delete;
 
     void operator()() const {}
+};
+
+struct MutableHeartbeatCallable {
+    int* calls;
+
+    void operator()() {
+        ++*calls;
+    }
 };
 
 using CallbackFunction = rusty::Function<void(int) const>;
@@ -3060,6 +3338,144 @@ int main() {
     if (circuit.failure_count() != 0 || !circuit.is_closed()) {
         return 124;
     }
+
+    rrr::StateChangeCallback empty_state_callback{};
+    if (empty_state_callback || !empty_state_callback.is_empty()) {
+        return 125;
+    }
+    auto state_machine = rrr::ConnectionStateMachine::new_();
+    if (!state_machine.on_state_change.is_empty() ||
+        state_machine.state() != rrr::ConnectionState::NEW ||
+        state_machine.transition_to(rrr::ConnectionState::CONNECTED) ||
+        !state_machine.transition_to(rrr::ConnectionState::CONNECTING)) {
+        return 126;
+    }
+    int state_callback_calls = 0;
+    rrr::ConnectionState observed_from = rrr::ConnectionState::NEW;
+    rrr::ConnectionState observed_to = rrr::ConnectionState::NEW;
+    state_machine.set_on_state_change(
+        [&](rrr::ConnectionState from, rrr::ConnectionState to) {
+            ++state_callback_calls;
+            observed_from = from;
+            observed_to = to;
+        });
+    if (state_machine.on_state_change.is_empty() ||
+        !state_machine.transition_to(rrr::ConnectionState::CONNECTED) ||
+        state_callback_calls != 1 ||
+        observed_from != rrr::ConnectionState::CONNECTING ||
+        observed_to != rrr::ConnectionState::CONNECTED) {
+        return 127;
+    }
+    state_machine.force_state(rrr::ConnectionState::FAILED);
+    if (state_callback_calls != 2 ||
+        observed_from != rrr::ConnectionState::CONNECTED ||
+        observed_to != rrr::ConnectionState::FAILED ||
+        !state_machine.is_failed() || !state_machine.is_terminal()) {
+        return 128;
+    }
+
+    rrr::HeartbeatTimeoutCallback empty_heartbeat_callback{};
+    if (empty_heartbeat_callback || !empty_heartbeat_callback.is_empty()) {
+        return 129;
+    }
+    int moved_callback_calls = 0;
+    rrr::HeartbeatTimeoutCallback moved_from =
+        MutableHeartbeatCallable{&moved_callback_calls};
+    auto moved_to = std::move(moved_from);
+    if (moved_from || !moved_from.is_empty() || !moved_to ||
+        moved_to.is_empty()) {
+        return 130;
+    }
+    moved_to();
+    if (moved_callback_calls != 1) {
+        return 131;
+    }
+
+    const auto heartbeat_defaults = rrr::HeartbeatConfig::defaults();
+    const auto heartbeat_aggressive = rrr::HeartbeatConfig::aggressive();
+    const auto heartbeat_relaxed = rrr::HeartbeatConfig::relaxed();
+    const auto heartbeat_disabled = rrr::HeartbeatConfig::disabled();
+    if (!heartbeat_defaults.enabled || heartbeat_defaults.interval_ms != 10000 ||
+        heartbeat_defaults.timeout_ms != 5000 ||
+        heartbeat_defaults.max_missed != 3 ||
+        heartbeat_aggressive.interval_ms != 5000 ||
+        heartbeat_aggressive.timeout_ms != 2000 ||
+        heartbeat_aggressive.max_missed != 2 ||
+        heartbeat_relaxed.interval_ms != 30000 ||
+        heartbeat_relaxed.timeout_ms != 15000 ||
+        heartbeat_relaxed.max_missed != 5 || heartbeat_disabled.enabled) {
+        return 132;
+    }
+
+    auto empty_timeout_config = heartbeat_defaults;
+    empty_timeout_config.interval_ms = 1;
+    empty_timeout_config.timeout_ms = 0;
+    empty_timeout_config.max_missed = 1;
+    auto empty_timeout = rrr::HeartbeatManager::new_(empty_timeout_config);
+    if (!(*empty_timeout.on_timeout.borrow()).is_empty()) {
+        return 133;
+    }
+    monotonic_now_us = std::numeric_limits<std::uint64_t>::max() - 5;
+    empty_timeout.on_heartbeat_sent();
+    monotonic_now_us = 4;
+    if (!empty_timeout.check_timeout() || !empty_timeout.is_timed_out() ||
+        empty_timeout.missed_count() != 1 ||
+        empty_timeout.is_pending_pong()) {
+        return 134;
+    }
+
+    auto heartbeat_config = heartbeat_defaults;
+    heartbeat_config.interval_ms = 1;
+    heartbeat_config.timeout_ms = 2;
+    heartbeat_config.max_missed = 2;
+    auto heartbeat = rrr::HeartbeatManager::new_(heartbeat_config);
+    int heartbeat_callback_calls = 0;
+    heartbeat.set_on_timeout(
+        MutableHeartbeatCallable{&heartbeat_callback_calls});
+    monotonic_now_us = 1'000'000;
+    if (rrr::heartbeat_time_us() != monotonic_now_us ||
+        !heartbeat.should_send_heartbeat()) {
+        return 135;
+    }
+    heartbeat.on_heartbeat_sent();
+    monotonic_now_us = 1'001'999;
+    if (heartbeat.check_timeout()) {
+        return 136;
+    }
+    monotonic_now_us = 1'002'000;
+    if (heartbeat.check_timeout() || heartbeat.missed_count() != 1 ||
+        heartbeat.is_timed_out()) {
+        return 137;
+    }
+    monotonic_now_us = 1'003'000;
+    if (!heartbeat.should_send_heartbeat()) {
+        return 138;
+    }
+    heartbeat.on_heartbeat_sent();
+    monotonic_now_us = 1'005'000;
+    if (!heartbeat.check_timeout() || !heartbeat.is_timed_out() ||
+        heartbeat_callback_calls != 1 || heartbeat.check_timeout() ||
+        heartbeat_callback_calls != 1) {
+        return 139;
+    }
+    heartbeat.reset();
+    if (heartbeat.missed_count() != 0 || heartbeat.is_timed_out() ||
+        heartbeat.is_pending_pong()) {
+        return 140;
+    }
+
+    auto wrapping_heartbeat = rrr::HeartbeatManager::new_(heartbeat_config);
+    wrapping_heartbeat.missed_count_field.set(
+        std::numeric_limits<std::uint32_t>::max());
+    monotonic_now_us = std::numeric_limits<std::uint64_t>::max() - 5;
+    wrapping_heartbeat.on_heartbeat_sent();
+    // The wrapped delta is exactly 2,000 us: 1,994 - (UINT64_MAX - 5).
+    monotonic_now_us = 1'994;
+    if (wrapping_heartbeat.check_timeout() ||
+        wrapping_heartbeat.missed_count() != 0 ||
+        wrapping_heartbeat.is_timed_out()) {
+        return 141;
+    }
     return 0;
 }
 """
@@ -3300,6 +3716,14 @@ def check_generated_output(
                     "crate-generated object",
                     circuit_breaker_raw_symbols(nm, root, generated_object),
                 )
+            elif module.cpp_module in {"rrr.connection_state", "rrr.heartbeat"}:
+                require_exact_module_raw_symbols(
+                    module.cpp_module,
+                    "crate-generated object",
+                    exact_module_raw_symbols(
+                        nm, root, generated_object, module.cpp_module
+                    ),
+                )
 
             if production is not None:
                 production_symbols = module_symbols(
@@ -3340,10 +3764,26 @@ def check_generated_output(
                         "production library",
                         circuit_breaker_raw_symbols(nm, root, production),
                     )
+                elif module.cpp_module in {
+                    "rrr.connection_state",
+                    "rrr.heartbeat",
+                }:
+                    require_exact_module_raw_symbols(
+                        module.cpp_module,
+                        "production library",
+                        exact_module_raw_symbols(
+                            nm, root, production, module.cpp_module
+                        ),
+                    )
 
 
 def check(args: argparse.Namespace) -> None:
     root = repository_root()
+    # bcc8 validates local runtime-provided dependencies relative to the
+    # manifest path it receives.  Always hand crate mode a root-resolved
+    # absolute manifest so its dependency walk is independent of this gate's
+    # working directory.
+    crate_manifest = (root / "src/rrr/Cargo.toml").resolve()
     transpiler = executable(root, args.transpiler, "rusty-cpp transpiler")
     verify_pinned_toolchain(root, transpiler)
     require_extraction_check(root, transpiler)
@@ -3388,13 +3828,13 @@ def check(args: argparse.Namespace) -> None:
                 [
                     str(transpiler),
                     "--crate",
-                    "src/rrr/Cargo.toml",
+                    str(crate_manifest),
                     "--output-dir",
                     str(output),
                     "--cxx-namespace",
                     "rrr",
                     "--module-preamble",
-                    MODULE_PREAMBLE,
+                    str(root / MODULE_PREAMBLE),
                 ],
                 root,
             )
@@ -3424,7 +3864,10 @@ def check(args: argparse.Namespace) -> None:
         "precondition/wrapping/empty-weight/C-FFI runtime contracts, "
         "RequestOptions layout/factory/retry/timeout/jitter runtime contracts, "
         "ReconnectPolicy layout/factory/backoff/retry/jitter runtime contracts, and "
-        "CircuitBreaker layout/factory/state/timeout/wrapping runtime contracts, and "
+        "CircuitBreaker layout/factory/state/timeout/wrapping runtime contracts, "
+        "ConnectionState layout/empty-callback/transition runtime contracts, and "
+        "Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime "
+        "contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )
 
