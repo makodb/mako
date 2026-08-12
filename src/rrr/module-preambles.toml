@@ -36,3 +36,10 @@ name = "rrr.utils"
 includes = [
     { path = "netdb.h", form = "angle" },
 ]
+
+[[module]]
+name = "rrr.frame_codec"
+includes = [
+    { path = "vector", form = "angle" },
+    { path = "rusty/io.hpp", form = "angle" },
+]

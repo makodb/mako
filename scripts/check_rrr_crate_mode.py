@@ -773,6 +773,106 @@ ABI_SPECS = {
             }
         ),
     ),
+    "rrr.frame_codec": AbiSpec(
+        surface=frozenset(
+            {
+                "#include <vector>",
+                "#include <rusty/io.hpp>",
+                "export module rrr.frame_codec;",
+                "import rrr.internal_protocol;",
+                "export enum class FrameDecodeStatus",
+                "NeedMoreBytes = 0,",
+                "Complete = 1,",
+                "Malformed = 2",
+                "using FrameBytes = std::vector<uint8_t>;",
+                "export using FrameCursor = rusty::io::Cursor<FrameBytes>;",
+                "export constexpr size_t kFrameHeaderSize",
+                "export constexpr int32_t kMaxFramePayloadSize",
+                "export struct FrameHeader",
+                "int32_t payload_size;",
+                "bool extended_header_flag;",
+                "int32_t total_frame_size() const;",
+                "export struct FrameView",
+                "FrameHeader header;",
+                "const uint8_t* payload;",
+                "size_t payload_size;",
+                "export struct FrameStreamReader",
+                "FrameCursor cursor_;",
+                "rusty::Cell<bool> noncopy_;",
+                "static FrameStreamReader new_();",
+                "void append(const uint8_t* data, size_t size);",
+                "FrameDecodeStatus next_frame(FrameView& out_view) const;",
+                "void consume_frame();",
+                "void reset();",
+                "size_t buffered_bytes() const;",
+                "bool empty() const;",
+                "export std::string_view frame_decode_status_to_string(FrameDecodeStatus status);",
+                "export bool frame_codec_write_header(std::span<uint8_t> out_buf, int32_t payload_size, bool extended_header_flag);",
+                "export FrameDecodeStatus frame_codec_peek_header(std::span<const uint8_t> buf, FrameHeader& out_header);",
+                "export FrameCursor make_frame_cursor();",
+                "export bool frame_codec_encode_into(FrameBytes& out, const uint8_t* payload, int32_t payload_size, bool extended_header_flag);",
+                "export void fsr_append(FrameStreamReader& reader, const uint8_t* data, size_t size);",
+                "export void fsr_consume_frame(FrameStreamReader& reader);",
+                "rusty::wrapping_add(this->payload_size",
+                "static constexpr bool is_send = true;",
+                "static constexpr bool is_sync = true;",
+            }
+        ),
+        symbols=frozenset(
+            {
+                ("R", "rrr::kFrameHeaderSize@rrr.frame_codec"),
+                ("R", "rrr::kMaxFramePayloadSize@rrr.frame_codec"),
+                (
+                    "T",
+                    "rrr::FrameHeader@rrr.frame_codec::total_frame_size() const",
+                ),
+                (
+                    "T",
+                    "rrr::FrameStreamReader@rrr.frame_codec::append(unsigned char const*, unsigned long)",
+                ),
+                (
+                    "T",
+                    "rrr::FrameStreamReader@rrr.frame_codec::buffered_bytes() const",
+                ),
+                (
+                    "T",
+                    "rrr::FrameStreamReader@rrr.frame_codec::consume_frame()",
+                ),
+                ("T", "rrr::FrameStreamReader@rrr.frame_codec::empty() const"),
+                ("T", "rrr::FrameStreamReader@rrr.frame_codec::new_()"),
+                (
+                    "T",
+                    "rrr::FrameStreamReader@rrr.frame_codec::next_frame(rrr::FrameView@rrr.frame_codec&) const",
+                ),
+                ("T", "rrr::FrameStreamReader@rrr.frame_codec::reset()"),
+                (
+                    "T",
+                    "rrr::frame_codec_encode_into@rrr.frame_codec(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned char const*, int, bool)",
+                ),
+                (
+                    "T",
+                    "rrr::frame_codec_peek_header@rrr.frame_codec(std::__1::span<unsigned char const, 18446744073709551615ul>, rrr::FrameHeader@rrr.frame_codec&)",
+                ),
+                (
+                    "T",
+                    "rrr::frame_codec_write_header@rrr.frame_codec(std::__1::span<unsigned char, 18446744073709551615ul>, int, bool)",
+                ),
+                (
+                    "T",
+                    "rrr::frame_decode_status_to_string@rrr.frame_codec(rrr::FrameDecodeStatus@rrr.frame_codec)",
+                ),
+                (
+                    "T",
+                    "rrr::fsr_append@rrr.frame_codec(rrr::FrameStreamReader@rrr.frame_codec&, unsigned char const*, unsigned long)",
+                ),
+                (
+                    "T",
+                    "rrr::fsr_consume_frame@rrr.frame_codec(rrr::FrameStreamReader@rrr.frame_codec&)",
+                ),
+                ("T", "rrr::make_frame_cursor@rrr.frame_codec()"),
+            }
+        ),
+    ),
     "rrr.utils": AbiSpec(
         surface=frozenset(
             {
@@ -1443,9 +1543,40 @@ def require_cpp_surfaces(
                         "generated utils private indexed import leaked or "
                         f"misresolved its surface: {forbidden!r}"
                     )
+        elif module.cpp_module == "rrr.frame_codec":
+            require_exact_module_imports(
+                text, "rrr.frame_codec", ["rrr.internal_protocol"]
+            )
+            frame_preambles = ("#include <vector>", "#include <rusty/io.hpp>")
+            for preamble in frame_preambles:
+                if text.count(preamble) != 1:
+                    raise GateError(
+                        "generated rrr.frame_codec must contain exactly one "
+                        f"structured preamble include {preamble!r}"
+                    )
+            ordered = (
+                text.find("\nmodule;\n"),
+                text.find(frame_preambles[0]),
+                text.find(frame_preambles[1]),
+                text.find("#include <cstdint>"),
+                text.find("export module rrr.frame_codec;"),
+            )
+            if -1 in ordered or list(ordered) != sorted(ordered):
+                raise GateError(
+                    "generated rrr.frame_codec structured preambles are not "
+                    "ordered between the global fragment and standard includes"
+                )
+            if "rusty::StdVector" in text:
+                raise GateError(
+                    "rustc-only StdVector facade leaked into generated FrameCodec"
+                )
         elif netdb_preamble in text:
             raise GateError(
                 f"utils netdb preamble leaked into {module.cpp_module}"
+            )
+        elif "#include <rusty/io.hpp>" in text:
+            raise GateError(
+                f"FrameCodec io preamble leaked into {module.cpp_module}"
             )
 
     root_text = read_generated(output / "rrr.cppm", "root module")
@@ -1457,6 +1588,8 @@ def require_cpp_surfaces(
         raise GateError("timing C-kernel preamble leaked into the crate root")
     if "#include <netdb.h>" in root_text:
         raise GateError("utils netdb preamble leaked into the crate root")
+    if "#include <rusty/io.hpp>" in root_text:
+        raise GateError("FrameCodec io preamble leaked into the crate root")
     root_required = {
         "export module rrr;",
         "namespace rrr {",
@@ -2079,6 +2212,7 @@ def importer_source() -> str:
     return """\
 #include <rusty/function.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/io.hpp>
 #include <rusty/move.hpp>
 #include <rusty/option.hpp>
 #include <rusty/refcell.hpp>
@@ -2089,6 +2223,7 @@ def importer_source() -> str:
 #include <atomic>
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -2097,10 +2232,12 @@ def importer_source() -> str:
 #include <limits>
 #include <memory>
 #include <netdb.h>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -2113,6 +2250,7 @@ import rrr.completion_tracker;
 import rrr.connection_metrics;
 import rrr.connection_state;
 import rrr.errors;
+import rrr.frame_codec;
 import rrr.heartbeat;
 import rrr.internal_protocol;
 import rrr.load_balancer;
@@ -2248,6 +2386,68 @@ using LoadBalancerProbeClients =
     std::vector<std::shared_ptr<LoadBalancerProbeClient>>;
 
 static_assert(std::is_same_v<rrr::RandWeightVec, std::vector<double>>);
+
+static_assert(std::is_same_v<
+              rrr::FrameCursor,
+              rusty::io::Cursor<std::vector<std::uint8_t>>>);
+static_assert(std::is_same_v<
+              std::underlying_type_t<rrr::FrameDecodeStatus>,
+              std::int32_t>);
+static_assert(sizeof(rrr::FrameDecodeStatus) == 4);
+static_assert(alignof(rrr::FrameDecodeStatus) == 4);
+static_assert(rrr::kFrameHeaderSize == 4);
+static_assert(rrr::kMaxFramePayloadSize == INT32_MAX);
+static_assert(std::is_standard_layout_v<rrr::FrameHeader>);
+static_assert(std::is_trivially_copyable_v<rrr::FrameHeader>);
+static_assert(rrr::FrameHeader::is_send && rrr::FrameHeader::is_sync);
+static_assert(sizeof(rrr::FrameHeader) == 8);
+static_assert(alignof(rrr::FrameHeader) == 4);
+static_assert(offsetof(rrr::FrameHeader, payload_size) == 0);
+static_assert(offsetof(rrr::FrameHeader, extended_header_flag) == 4);
+static_assert(sizeof(rrr::FrameView) == 24);
+static_assert(alignof(rrr::FrameView) == 8);
+static_assert(offsetof(rrr::FrameView, header) == 0);
+static_assert(offsetof(rrr::FrameView, payload) == 8);
+static_assert(offsetof(rrr::FrameView, payload_size) == 16);
+static_assert(sizeof(rrr::FrameCursor) == 32);
+static_assert(alignof(rrr::FrameCursor) == 8);
+static_assert(sizeof(rrr::FrameStreamReader) == 40);
+static_assert(alignof(rrr::FrameStreamReader) == 8);
+static_assert(offsetof(rrr::FrameStreamReader, cursor_) == 0);
+static_assert(offsetof(rrr::FrameStreamReader, noncopy_) == 32);
+static_assert(!std::is_default_constructible_v<rrr::FrameStreamReader>);
+static_assert(!std::is_copy_constructible_v<rrr::FrameStreamReader>);
+static_assert(!std::is_copy_assignable_v<rrr::FrameStreamReader>);
+static_assert(std::is_move_constructible_v<rrr::FrameStreamReader>);
+static_assert(std::is_move_assignable_v<rrr::FrameStreamReader>);
+static_assert(std::is_same_v<
+              decltype(&rrr::frame_decode_status_to_string),
+              std::string_view (*)(rrr::FrameDecodeStatus)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::frame_codec_write_header),
+              bool (*)(std::span<std::uint8_t>, std::int32_t, bool)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::frame_codec_peek_header),
+              rrr::FrameDecodeStatus (*)(
+                  std::span<const std::uint8_t>, rrr::FrameHeader&)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::frame_codec_encode_into),
+              bool (*)(std::vector<std::uint8_t>&, const std::uint8_t*,
+                       std::int32_t, bool)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::FrameHeader::total_frame_size),
+              std::int32_t (rrr::FrameHeader::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::FrameStreamReader::append),
+              void (rrr::FrameStreamReader::*)(
+                  const std::uint8_t*, std::size_t)>);
+static_assert(std::is_same_v<
+              decltype(&rrr::FrameStreamReader::next_frame),
+              rrr::FrameDecodeStatus (rrr::FrameStreamReader::*)(
+                  rrr::FrameView&) const>);
+static_assert(std::is_same_v<
+              decltype(&rrr::FrameStreamReader::buffered_bytes),
+              std::size_t (rrr::FrameStreamReader::*)() const>);
 
 static_assert(std::is_same_v<rrr::i8, std::int8_t>);
 static_assert(std::is_same_v<rrr::i16, std::int16_t>);
@@ -4404,6 +4604,198 @@ int main() {
         return 194;
     }
 
+
+    if (rrr::frame_decode_status_to_string(
+            rrr::FrameDecodeStatus::NeedMoreBytes) != "NeedMoreBytes" ||
+        rrr::frame_decode_status_to_string(
+            rrr::FrameDecodeStatus::Complete) != "Complete" ||
+        rrr::frame_decode_status_to_string(
+            rrr::FrameDecodeStatus::Malformed) != "Malformed") {
+        return 195;
+    }
+    bool invalid_frame_status_threw = false;
+    try {
+        (void)rrr::frame_decode_status_to_string(
+            static_cast<rrr::FrameDecodeStatus>(99));
+    } catch (const std::exception&) {
+        invalid_frame_status_threw = true;
+    }
+    if (!invalid_frame_status_threw) {
+        return 196;
+    }
+
+    const auto frame_native_bytes = [](std::int32_t value) {
+        return std::bit_cast<std::array<std::uint8_t, 4>>(value);
+    };
+    std::array<std::uint8_t, 5> frame_header_bytes{
+        0xa1, 0xa2, 0xa3, 0xa4, 0xa5};
+    const auto original_frame_header_bytes = frame_header_bytes;
+    if (rrr::frame_codec_write_header(
+            std::span<std::uint8_t>(frame_header_bytes.data(), 3), 1, false) ||
+        frame_header_bytes != original_frame_header_bytes ||
+        rrr::frame_codec_write_header(frame_header_bytes, -1, true) ||
+        frame_header_bytes != original_frame_header_bytes) {
+        return 197;
+    }
+    if (!rrr::frame_codec_write_header(frame_header_bytes, 0, true) ||
+        std::memcmp(frame_header_bytes.data(),
+                    frame_native_bytes(INT32_MIN).data(), 4) != 0 ||
+        frame_header_bytes[4] != 0xa5 ||
+        !rrr::frame_codec_write_header(
+            frame_header_bytes, INT32_MAX, true) ||
+        std::memcmp(frame_header_bytes.data(),
+                    frame_native_bytes(-1).data(), 4) != 0) {
+        return 198;
+    }
+
+    rrr::FrameHeader decoded_frame_header{17, true};
+    if (rrr::frame_codec_peek_header(
+            std::span<const std::uint8_t>(frame_header_bytes.data(), 3),
+            decoded_frame_header) != rrr::FrameDecodeStatus::NeedMoreBytes ||
+        decoded_frame_header.payload_size != 17 ||
+        !decoded_frame_header.extended_header_flag) {
+        return 199;
+    }
+    for (const auto [encoded, payload, extended] :
+         std::array{
+             std::tuple{0, 0, false},
+             std::tuple{INT32_MAX, INT32_MAX, false},
+             std::tuple{INT32_MIN, 0, true},
+             std::tuple{-1, INT32_MAX, true},
+         }) {
+        const auto bytes = frame_native_bytes(encoded);
+        decoded_frame_header = rrr::FrameHeader{-7, !extended};
+        if (rrr::frame_codec_peek_header(bytes, decoded_frame_header) !=
+                rrr::FrameDecodeStatus::Complete ||
+            decoded_frame_header.payload_size != payload ||
+            decoded_frame_header.extended_header_flag != extended) {
+            return 200;
+        }
+    }
+    if (rrr::FrameHeader{INT32_MAX, false}.total_frame_size() !=
+        INT32_MIN + 3) {
+        return 201;
+    }
+
+    std::vector<std::uint8_t> encoded_frame{9, 8};
+    const auto untouched_frame = encoded_frame;
+    if (rrr::frame_codec_encode_into(
+            encoded_frame, nullptr, -1, false) ||
+        encoded_frame != untouched_frame ||
+        rrr::frame_codec_encode_into(
+            encoded_frame, nullptr, 1, false) ||
+        encoded_frame != untouched_frame ||
+        !rrr::frame_codec_encode_into(
+            encoded_frame, nullptr, 0, false) ||
+        encoded_frame.size() != 6) {
+        return 202;
+    }
+    constexpr std::array<std::uint8_t, 3> first_frame_payload{'a', 'b', 'c'};
+    std::vector<std::uint8_t> first_frame;
+    if (!rrr::frame_codec_encode_into(
+            first_frame,
+            first_frame_payload.data(),
+            static_cast<std::int32_t>(first_frame_payload.size()),
+            false)) {
+        return 203;
+    }
+
+    auto frame_reader = rrr::FrameStreamReader::new_();
+    frame_reader.cursor_.set_position(99);
+    rrr::FrameView frame_view{
+        rrr::FrameHeader{91, true},
+        reinterpret_cast<const std::uint8_t*>(1),
+        77,
+    };
+    if (frame_reader.next_frame(frame_view) !=
+            rrr::FrameDecodeStatus::NeedMoreBytes ||
+        frame_reader.buffered_bytes() != 0) {
+        return 204;
+    }
+    frame_reader.consume_frame();
+    if (frame_reader.cursor_.position() != 99) {
+        return 205;
+    }
+    frame_reader.reset();
+    for (std::size_t index = 0; index < first_frame.size(); ++index) {
+        frame_reader.append(&first_frame[index], 1);
+        const auto status = frame_reader.next_frame(frame_view);
+        if ((index + 1 < first_frame.size() &&
+             status != rrr::FrameDecodeStatus::NeedMoreBytes) ||
+            (index + 1 == first_frame.size() &&
+             status != rrr::FrameDecodeStatus::Complete)) {
+            return 206;
+        }
+    }
+    if (frame_view.payload_size != first_frame_payload.size() ||
+        std::memcmp(frame_view.payload,
+                    first_frame_payload.data(),
+                    first_frame_payload.size()) != 0) {
+        return 207;
+    }
+    frame_reader.consume_frame();
+
+    constexpr std::array<std::uint8_t, 2> second_frame_payload{0x55, 0xaa};
+    std::vector<std::uint8_t> second_frame;
+    if (!rrr::frame_codec_encode_into(
+            second_frame,
+            second_frame_payload.data(),
+            static_cast<std::int32_t>(second_frame_payload.size()),
+            true)) {
+        return 208;
+    }
+    std::vector<std::uint8_t> coalesced_frames = first_frame;
+    coalesced_frames.insert(
+        coalesced_frames.end(), second_frame.begin(), second_frame.end());
+    frame_reader.append(coalesced_frames.data(), coalesced_frames.size());
+    if (frame_reader.next_frame(frame_view) !=
+        rrr::FrameDecodeStatus::Complete) {
+        return 209;
+    }
+    frame_reader.consume_frame();
+    if (frame_reader.buffered_bytes() != second_frame.size() ||
+        frame_reader.next_frame(frame_view) !=
+            rrr::FrameDecodeStatus::Complete ||
+        !frame_view.header.extended_header_flag ||
+        std::memcmp(frame_view.payload,
+                    second_frame_payload.data(),
+                    second_frame_payload.size()) != 0) {
+        return 210;
+    }
+    frame_reader.consume_frame();
+
+    constexpr std::size_t compact_total = 64 * 1024;
+    std::vector<std::uint8_t> compact_payload(compact_total - 4);
+    for (std::size_t index = 0; index < compact_payload.size(); ++index) {
+        compact_payload[index] = static_cast<std::uint8_t>((index * 17) & 0xff);
+    }
+    std::vector<std::uint8_t> compact_frame;
+    if (!rrr::frame_codec_encode_into(
+            compact_frame,
+            compact_payload.data(),
+            static_cast<std::int32_t>(compact_payload.size()),
+            false)) {
+        return 211;
+    }
+    compact_frame.insert(
+        compact_frame.end(), second_frame.begin(), second_frame.end());
+    frame_reader.append(compact_frame.data(), compact_frame.size());
+    if (frame_reader.next_frame(frame_view) !=
+        rrr::FrameDecodeStatus::Complete) {
+        return 212;
+    }
+    frame_reader.consume_frame();
+    if (frame_reader.cursor_.position() != 0 ||
+        frame_reader.cursor_.get_ref().size() != second_frame.size() ||
+        frame_reader.next_frame(frame_view) !=
+            rrr::FrameDecodeStatus::Complete ||
+        std::memcmp(frame_view.payload,
+                    second_frame_payload.data(),
+                    second_frame_payload.size()) != 0) {
+        return 213;
+    }
+
+
     constexpr std::array<std::int64_t, 37> sparse_boundaries{
         INT64_MIN,
         -36028797018963969LL, -36028797018963968LL,
@@ -5143,6 +5535,7 @@ def check_generated_output(
                 "rrr.connection_state",
                 "rrr.heartbeat",
                 "rrr.load_balancer",
+                "rrr.frame_codec",
             }:
                 require_exact_module_raw_symbols(
                     module.cpp_module,
@@ -5210,6 +5603,7 @@ def check_generated_output(
                     "rrr.connection_state",
                     "rrr.heartbeat",
                     "rrr.load_balancer",
+                    "rrr.frame_codec",
                 }:
                     require_exact_module_raw_symbols(
                         module.cpp_module,
@@ -5319,6 +5713,7 @@ def check(args: argparse.Namespace) -> None:
         "Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime "
         "contracts, LoadBalancer layout/strategy/selection/wrapping runtime "
         "contracts, Utils layout/move/teardown/port/hostname/logging runtime "
+        "contracts, FrameCodec layout/wire/fragmentation/compaction/wrapping runtime "
         "contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )

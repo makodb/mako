@@ -89,6 +89,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "src/rrr/rpc/request_queue.cpp",
             "src/rrr/rpc/load_balancer.cpp",
             "src/rrr/rpc/utils.cpp",
+            "src/rrr/rpc/frame_codec.cpp",
         )
         self.assertTrue(all(not (REPOSITORY / path).exists() for path in retired))
 
@@ -99,12 +100,12 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 23 hand-authored module units, "
-            "SCAFFOLD=1610 noncomment lines (760 DSL fences + 850 other)",
+            "source boundary: 22 hand-authored module units, "
+            "SCAFFOLD=1560 noncomment lines (734 DSL fences + 826 other)",
             output,
         )
         self.assertIn(
-            "payload census:   dsl=9394  generated=12189 "
+            "payload census:   dsl=9199  generated=11995 "
             "nonblank/non-// lines",
             output,
         )
@@ -181,6 +182,19 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 }
                             ],
                         },
+                        {
+                            "name": "rrr.frame_codec",
+                            "includes": [
+                                {
+                                    "path": "vector",
+                                    "form": "angle",
+                                },
+                                {
+                                    "path": "rusty/io.hpp",
+                                    "form": "angle",
+                                },
+                            ],
+                        },
                     ],
                 },
             )
@@ -192,6 +206,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 {
                     "LegacyAddrInfo": "addrinfo",
                     "LegacyStdString": "std::string",
+                    "rusty": {"StdVector": "std::vector"},
                 },
             )
         with (REPOSITORY / "src/rrr/cpp-module-index.toml").open("rb") as stream:
@@ -326,6 +341,12 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "src/rrr/src/utils.rs",
                     "src/rrr/src/utils.rs",
                 ),
+                (
+                    "rrr.frame_codec",
+                    "frame_codec",
+                    "src/rrr/src/frame_codec.rs",
+                    "src/rrr/src/frame_codec.rs",
+                ),
             ],
         )
 
@@ -372,7 +393,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn('canonical_input="src/rrr/src/utils.rs"', workflow)
+        self.assertIn('canonical_input="src/rrr/src/frame_codec.rs"', workflow)
         self.assertIn(
             'utils_generated_path="${GOAL0_BUILD_DIR}/src/rrr/'
             'goal0-crate-cpp/rrr.utils.cppm"',
@@ -387,6 +408,17 @@ class CheckedInCanaryTests(unittest.TestCase):
             '"${facade_utils_before}"',
             workflow,
         )
+        self.assertIn(
+            'frame_codec_generated_path="${GOAL0_BUILD_DIR}/src/rrr/'
+            'goal0-crate-cpp/rrr.frame_codec.cppm"',
+            workflow,
+        )
+        self.assertIn(
+            'facade_frame_codec_before="$(stat -c %Y '
+            '"${frame_codec_generated_path}")"',
+            workflow,
+        )
+        self.assertIn("test_rpc_tcp_channel", workflow)
         self.assertIn('type_map_input="src/rrr/rust-type-map.toml"', workflow)
         self.assertIn(
             'module_index_input="src/rrr/cpp-module-index.toml"', workflow
@@ -417,7 +449,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                     bool(line.strip()) and not line.lstrip().startswith("//")
                     for line in source.splitlines()
                 )
-        self.assertEqual(canonical_lines, 2333)
+        self.assertEqual(canonical_lines, 2574)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -483,6 +515,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/request_queue.rs",
                 "src/rrr/src/load_balancer.rs",
                 "src/rrr/src/utils.rs",
+                "src/rrr/src/frame_codec.rs",
             },
         )
 
@@ -503,8 +536,15 @@ class CheckedInCanaryTests(unittest.TestCase):
         circuit_path = rust_root / "circuit_breaker.rs"
         basetypes_path = rust_root / "basetypes.rs"
         utils_path = rust_root / "utils.rs"
+        frame_codec_path = rust_root / "frame_codec.rs"
         for path in sorted(rust_root.rglob("*.rs")):
-            if path in {rand_path, circuit_path, basetypes_path, utils_path}:
+            if path in {
+                rand_path,
+                circuit_path,
+                basetypes_path,
+                utils_path,
+                frame_codec_path,
+            }:
                 continue
             self.assertIsNone(
                 unsafe_syntax.search(path.read_text(encoding="utf-8")),
@@ -603,6 +643,20 @@ class CheckedInCanaryTests(unittest.TestCase):
         for symbol in ("freeaddrinfo", "srpc_find_open_port"):
             self.assertIn(symbol, utils)
 
+        frame_codec = frame_codec_path.read_text(encoding="utf-8")
+        self.assertEqual(frame_codec.count("#[allow(unsafe_code"), 5)
+        self.assertEqual(frame_codec.count("unsafe extern"), 0)
+        self.assertEqual(frame_codec.count("pub unsafe fn"), 3)
+        self.assertEqual(frame_codec.count("unsafe {"), 4)
+        self.assertEqual(frame_codec.count("/// # Safety"), 3)
+        self.assertNotIn("not_unsafe_ptr_arg_deref", frame_codec)
+        for symbol in (
+            "core::ptr::copy_nonoverlapping",
+            "core::ptr::copy(",
+            "rem.as_ptr().add(kFrameHeaderSize)",
+        ):
+            self.assertIn(symbol, frame_codec)
+
         facade_manifest = REPOSITORY / "src/rrr/rusty-rustc/Cargo.toml"
         with facade_manifest.open("rb") as stream:
             facade_cargo = tomllib.load(stream)
@@ -628,6 +682,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertIn("impl<F: ?Sized> Deref for Function<F>", facade)
         self.assertIn("impl<F: ?Sized> DerefMut for Function<F>", facade)
         self.assertIn("impl<A: 'static> Function<dyn FnMut(A)>", facade)
+        self.assertIn("pub type StdVector<T> = Vec<T>;", facade)
 
         self.assertEqual(cargo["workspace"]["members"], ["rusty-rustc"])
         self.assertEqual(cargo["dependencies"]["rusty"], {"path": "rusty-rustc"})
@@ -1181,6 +1236,51 @@ class DriverBehaviorTests(unittest.TestCase):
 
 
 class CrateModeGateTests(unittest.TestCase):
+    def test_frame_codec_io_preamble_is_rejected_from_siblings(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rrr-gate-preamble-") as temporary:
+            output = Path(temporary)
+            (output / "CMakeLists.txt").write_text(
+                "# generated\n", encoding="utf-8"
+            )
+            (output / "rrr.frame_codec.cppm").write_text(
+                "// generated\nmodule;\n"
+                "#include <vector>\n"
+                "#include <rusty/io.hpp>\n"
+                "#include <cstdint>\n"
+                "export module rrr.frame_codec;\n"
+                "import rrr.internal_protocol;\n",
+                encoding="utf-8",
+            )
+            (output / "rrr.example.cppm").write_text(
+                "module;\n"
+                "#include <rusty/io.hpp>\n"
+                "export module rrr.example;\n",
+                encoding="utf-8",
+            )
+            (output / "rrr.cppm").write_text(
+                "export module rrr;\n"
+                "namespace rrr {\n"
+                "export import rrr.frame_codec;\n"
+                "export import rrr.example;\n",
+                encoding="utf-8",
+            )
+            modules = [
+                mock.Mock(cpp_module="rrr.frame_codec"),
+                mock.Mock(cpp_module="rrr.example"),
+            ]
+            specs = {
+                "rrr.frame_codec": GATE.AbiSpec(frozenset(), frozenset()),
+                "rrr.example": GATE.AbiSpec(frozenset(), frozenset()),
+            }
+            with mock.patch.dict(GATE.ABI_SPECS, specs, clear=True):
+                with self.assertRaisesRegex(
+                    GATE.GateError,
+                    "FrameCodec io preamble leaked into rrr.example",
+                ):
+                    GATE.require_cpp_surfaces(
+                        Path("/repository"), output, modules
+                    )
+
     def test_utils_preamble_is_rejected_from_sibling_children(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-gate-preamble-") as temporary:
             output = Path(temporary)
@@ -1293,6 +1393,12 @@ class CrateModeGateTests(unittest.TestCase):
             "export module rrr.load_balancer;\n",
             "rrr.load_balancer",
             [],
+        )
+        GATE.require_exact_module_imports(
+            "export module rrr.frame_codec;\n"
+            "import rrr.internal_protocol;\n",
+            "rrr.frame_codec",
+            ["rrr.internal_protocol"],
         )
         with self.assertRaisesRegex(GATE.GateError, "private imports must be exactly"):
             GATE.require_exact_module_imports(
@@ -1597,6 +1703,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.request_queue"),
             mock.Mock(cpp_module="rrr.load_balancer"),
             mock.Mock(cpp_module="rrr.utils"),
+            mock.Mock(cpp_module="rrr.frame_codec"),
         ]
 
         def symbols_for_module(
@@ -1667,6 +1774,7 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.connection_state",
                 "rrr.heartbeat",
                 "rrr.load_balancer",
+                "rrr.frame_codec",
             )
         }
         utils_raw = list(GATE.ABI_SPECS["rrr.utils"].symbols)
@@ -1773,6 +1881,7 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.request_queue",
                 "rrr.load_balancer",
                 "rrr.utils",
+                "rrr.frame_codec",
                 "rrr",
             ],
         )
@@ -1903,6 +2012,7 @@ class CrateModeGateTests(unittest.TestCase):
             ("rrr.connection_state", 14),
             ("rrr.heartbeat", 20),
             ("rrr.load_balancer", 7),
+            ("rrr.frame_codec", 18),
         ):
             with self.subTest(module_name=module_name):
                 entries = list(GATE.ABI_SPECS[module_name].symbols)
@@ -2042,6 +2152,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.request_queue"),
             mock.Mock(cpp_module="rrr.load_balancer"),
             mock.Mock(cpp_module="rrr.utils"),
+            mock.Mock(cpp_module="rrr.frame_codec"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

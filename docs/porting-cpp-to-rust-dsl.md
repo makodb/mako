@@ -1881,12 +1881,12 @@ and nothing linked the two, so the comment kept reading as settled.
 rot. One that names a *tool limitation* does — because the tool is under
 active development, often by us.
 
-`frame_codec.cpp:519` is the model of the first kind: a DSL `&mut Vec<u8>`
-lowers to `rusty::Vec`, every caller passes `std::vector`, and
-`tcp_channel` drains with iterator-pair `erase` which rustc's Vec lacks —
-so the rewrite is a data-structure migration on a hot path, weighed
-against the branch's performance-parity goal. That deferral is as valid
-as the day it was written, and should be left alone.
+`frame_codec.cpp:519` was once treated as the model of the first kind, but that
+conclusion has since been superseded. Canonical `frame_codec.rs` uses the
+rustc-only `rusty::StdVector<T>` facade plus a checked source type-map entry
+that emits exact `std::vector<T>`. The callers and hot-buffer representation
+therefore stayed unchanged. Raw payload copying is exposed honestly through
+documented `unsafe fn` contracts and narrow internal unsafe blocks.
 
 **Correction.** An earlier revision of this paragraph claimed "re-checked:
 `rusty::Vec` still has neither `erase` nor `drain`". That is **false** —
@@ -2296,8 +2296,10 @@ The two real fixes are both bigger than the conversion:
  - restructure the namespace blocks so the kernel is declared before the
    DSL block in a non-exported `namespace rrr`.
 
-For `fsr_consume_frame` (15 lines) neither was worth it; the conversion
-was reverted.
+For the old inline-carrier layout, the conversion was initially reverted. The
+later canonical-source promotion removed that declaration-order boundary:
+`fsr_consume_frame` and its compaction logic now live in the same Rust module,
+and rusty-cpp emits one complete provider with no hand-authored carrier.
 
 **Check before inlining a kernel into a DSL method:** does the body call
 anything defined in the impl namespace? If so, the call is about to cross

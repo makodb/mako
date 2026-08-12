@@ -9,6 +9,9 @@
 
 use std::ops::{Deref, DerefMut, Index};
 
+/// Rust-only spelling for exact `std::vector<T>` ABI mappings.
+pub type StdVector<T> = Vec<T>;
+
 /// Rust-side model of helpers supplied by the C++ rusty runtime.
 pub mod sys {
     pub mod env {

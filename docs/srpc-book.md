@@ -114,6 +114,7 @@ src/rrr/
     connection_state.hpp# Connection state machine
     connection_metrics.hpp # Performance metrics
     heartbeat.hpp       # Keep-alive probes
+    frame_codec.hpp     # Frame-codec import compatibility shim
     load_balancer.hpp   # Pool load-balancing strategies
     request_queue.hpp   # Pending request buffering
     pollable_proxy.h    # Pollable proxy facade + typed Arc adapter helpers
@@ -127,6 +128,7 @@ src/rrr/
     connection_metrics.rs # Connection metrics module
     connection_state.rs # Connection state machine module
     errors.rs          # RPC error definitions
+    frame_codec.rs     # Wire framing and stream reader module
     heartbeat.rs       # Keep-alive manager module
     internal_protocol.rs # Internal protocol definitions
     load_balancer.rs   # Pool load-balancing strategies

@@ -46,7 +46,7 @@ jobs:
         run: >-
           cmake --build "${GOAL0_BUILD_DIR}"
           --parallel "${CI_MAKE_JOBS}"
-          --target rrr_goal0_dual_compile test_timer test_marshal test_completion_tracker test_load_balancer test_rpc_callbacks test_rpc_errors test_rpc_frame_codec test_rpc_metrics test_rpc_error_integration test_rpc_timeout_retry test_rpc_circuit_breaker test_rpc_circuit_breaker_integration test_rpc_connection_state test_rpc_heartbeat test_rpc_combined_reliability test_rpc_state_integration test_rpc_request_queue test_rpc_request_buffering
+          --target rrr_goal0_dual_compile test_timer test_marshal test_completion_tracker test_load_balancer test_rpc_callbacks test_rpc_errors test_rpc_frame_codec test_rpc_tcp_channel test_rpc_metrics test_rpc_error_integration test_rpc_timeout_retry test_rpc_circuit_breaker test_rpc_circuit_breaker_integration test_rpc_connection_state test_rpc_heartbeat test_rpc_combined_reliability test_rpc_state_integration test_rpc_request_queue test_rpc_request_buffering
           -- -k 0
 
       - name: Verify emitter and canonical Rust invalidate crate generation
@@ -55,12 +55,13 @@ jobs:
           set -euo pipefail
           emitter_path="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-executable.txt")"
           emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-input.txt")"
-          canonical_input="src/rrr/src/utils.rs"
-          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.utils.cppm"
+          canonical_input="src/rrr/src/frame_codec.rs"
+          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.frame_codec.cppm"
           runtime_facade_input="src/rrr/rusty-rustc/src/lib.rs"
           request_queue_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.request_queue.cppm"
           load_balancer_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.load_balancer.cppm"
           utils_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.utils.cppm"
+          frame_codec_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.frame_codec.cppm"
           type_map_input="src/rrr/rust-type-map.toml"
           module_index_input="src/rrr/cpp-module-index.toml"
 
@@ -95,6 +96,7 @@ jobs:
           facade_generated_before="$(stat -c %Y "${request_queue_generated_path}")"
           facade_load_balancer_before="$(stat -c %Y "${load_balancer_generated_path}")"
           facade_utils_before="$(stat -c %Y "${utils_generated_path}")"
+          facade_frame_codec_before="$(stat -c %Y "${frame_codec_generated_path}")"
           sleep 1
           touch "${runtime_facade_input}"
           facade_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
@@ -107,10 +109,13 @@ jobs:
           test "$(stat -c %Y "${load_balancer_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
           test "$(stat -c %Y "${utils_generated_path}")" -gt "${facade_utils_before}"
           test "$(stat -c %Y "${utils_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
+          test "$(stat -c %Y "${frame_codec_generated_path}")" -gt "${facade_frame_codec_before}"
+          test "$(stat -c %Y "${frame_codec_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
           test ! -e "${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rusty"
 
           for sidecar_input in "${type_map_input}" "${module_index_input}"; do
             sidecar_before="$(stat -c %Y "${utils_generated_path}")"
+            sidecar_frame_before="$(stat -c %Y "${frame_codec_generated_path}")"
             sleep 1
             touch "${sidecar_input}"
             sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
@@ -119,13 +124,15 @@ jobs:
             grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${sidecar_output}"
             test "$(stat -c %Y "${utils_generated_path}")" -gt "${sidecar_before}"
             test "$(stat -c %Y "${utils_generated_path}")" -ge "$(stat -c %Y "${sidecar_input}")"
+            test "$(stat -c %Y "${frame_codec_generated_path}")" -gt "${sidecar_frame_before}"
+            test "$(stat -c %Y "${frame_codec_generated_path}")" -ge "$(stat -c %Y "${sidecar_input}")"
           done
 
       - name: Run focused production consumers
         run: >-
           ctest --test-dir "${GOAL0_BUILD_DIR}"
           --output-on-failure
-          -R '^(test_timer|test_marshal|test_completion_tracker|test_load_balancer|test_rpc_callbacks|test_rpc_errors|test_rpc_frame_codec|test_rpc_metrics|test_rpc_error_integration|test_rpc_timeout_retry|test_rpc_circuit_breaker|test_rpc_circuit_breaker_integration|test_rpc_connection_state|test_rpc_heartbeat|test_rpc_combined_reliability|test_rpc_state_integration|test_rpc_request_queue|test_rpc_request_buffering)$'
+          -R '^(test_timer|test_marshal|test_completion_tracker|test_load_balancer|test_rpc_callbacks|test_rpc_errors|test_rpc_frame_codec|test_rpc_tcp_channel|test_rpc_metrics|test_rpc_error_integration|test_rpc_timeout_retry|test_rpc_circuit_breaker|test_rpc_circuit_breaker_integration|test_rpc_connection_state|test_rpc_heartbeat|test_rpc_combined_reliability|test_rpc_state_integration|test_rpc_request_queue|test_rpc_request_buffering)$'
 
   build-and-test:
     runs-on: ubuntu-24.04

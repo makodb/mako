@@ -1,2 +1,5 @@
 LegacyAddrInfo = "addrinfo"
 LegacyStdString = "std::string"
+
+[rusty]
+StdVector = "std::vector"
