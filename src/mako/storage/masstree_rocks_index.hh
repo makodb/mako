@@ -669,3 +669,140 @@ impl OrderedIndex for masstree_rocks_index {
     }
 }
 #endif
+/*RUSTYCPP:GEN-BEGIN id=masstree_rocks_index.1 version=1 rust_sha256=ad75b7d2f3f47fa4ecf3cb9892a7d67e098ae259e948d84bdfdc3a724f062161*/
+struct masstree_rocks_index;
+
+struct masstree_rocks_index : public OrderedIndex {
+    std::string name;
+    int32_t table_id;
+    concurrent_btree* tree;
+    mrx_store* store;
+    masstree_rocks_index(std::string name_init, int32_t table_id_init, concurrent_btree* tree_init, mrx_store* store_init) : OrderedIndex(), name(std::move(name_init)), table_id(std::move(table_id_init)), tree(std::move(tree_init)), store(std::move(store_init)) {}
+    masstree_rocks_index(masstree_rocks_index&& other) noexcept : OrderedIndex(), name(std::move(other.name)), table_id(std::move(other.table_id)), tree(std::move(other.tree)), store(std::move(other.store)) {}
+
+
+    void flush();
+    uint64_t resident_bytes() const;
+    bool get(lcdf::Str key, std::string& value, size_t max_bytes_read);
+    bool put(lcdf::Str key, const std::string& value);
+    bool insert(lcdf::Str key, const std::string& value);
+    bool remove(lcdf::Str key);
+    void scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    void rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    size_t size() const;
+    oi_stats_map clear();
+    int32_t get_table_id();
+    bool get_is_remote();
+};
+
+
+inline void masstree_rocks_index::flush() {
+    // @unsafe
+    {
+        mrx_flush_barrier(this->store);
+    }
+}
+
+inline uint64_t masstree_rocks_index::resident_bytes() const {
+    // @unsafe
+    {
+        return mrx_resident_bytes(this->store);
+    }
+}
+
+inline bool masstree_rocks_index::get(lcdf::Str key, std::string& value, size_t max_bytes_read) {
+    const auto _guard = mrx_rcu_region();
+    const auto hit = mrx_cache_probe(this->tree, std::move(key), value, std::move(max_bytes_read));
+    if (rusty::detail::deref_if_pointer_like(hit) == rusty::detail::deref_if_pointer_like(MRX_LIVE)) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(hit) == rusty::detail::deref_if_pointer_like(MRX_TOMB)) {
+        return false;
+    }
+    const auto _klock = mrx_key_lock(this->store, std::move(key));
+    const auto again = mrx_cache_probe(this->tree, std::move(key), value, std::move(max_bytes_read));
+    if (rusty::detail::deref_if_pointer_like(again) == rusty::detail::deref_if_pointer_like(MRX_LIVE)) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(again) == rusty::detail::deref_if_pointer_like(MRX_TOMB)) {
+        return false;
+    }
+    // @unsafe
+    {
+        return mrx_fill_from_db(this->store, std::move(key), value, std::move(max_bytes_read));
+    }
+}
+
+inline bool masstree_rocks_index::put(lcdf::Str key, const std::string& value) {
+    const auto _guard = mrx_rcu_region();
+    const auto _klock = mrx_key_lock(this->store, std::move(key));
+    const auto existed = mrx_exists(this->store, std::move(key));
+    // @unsafe
+    {
+        mrx_publish(this->store, std::move(key), value, false);
+    }
+    return !existed;
+}
+
+inline bool masstree_rocks_index::insert(lcdf::Str key, const std::string& value) {
+    const auto _guard = mrx_rcu_region();
+    const auto _klock = mrx_key_lock(this->store, std::move(key));
+    if (mrx_exists(this->store, std::move(key))) {
+        return false;
+    }
+    // @unsafe
+    {
+        mrx_publish(this->store, std::move(key), value, false);
+    }
+    return true;
+}
+
+inline bool masstree_rocks_index::remove(lcdf::Str key) {
+    const auto _guard = mrx_rcu_region();
+    const auto _klock = mrx_key_lock(this->store, std::move(key));
+    if (!mrx_exists(this->store, std::move(key))) {
+        return false;
+    }
+    // @unsafe
+    {
+        mrx_publish(this->store, std::move(key), "", true);
+    }
+    return true;
+}
+
+inline void masstree_rocks_index::scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+    // @unsafe
+    {
+        mrx_scan(this->store, start_key, end_key, callback);
+    }
+}
+
+inline void masstree_rocks_index::rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+    // @unsafe
+    {
+        mrx_rscan(this->store, start_key, end_key, callback);
+    }
+}
+
+inline size_t masstree_rocks_index::size() const {
+    // @unsafe
+    {
+        return mrx_size(this->tree);
+    }
+}
+
+inline oi_stats_map masstree_rocks_index::clear() {
+    // @unsafe
+    {
+        return mrx_clear(this->store);
+    }
+}
+
+inline int32_t masstree_rocks_index::get_table_id() {
+    return this->table_id;
+}
+
+inline bool masstree_rocks_index::get_is_remote() {
+    return false;
+}
+/*RUSTYCPP:GEN-END id=masstree_rocks_index.1*/

@@ -22,6 +22,10 @@ FILES=(
   src/mako/storage/abstract_ordered_index.h
   src/mako/storage/mbta_sharded_ordered_index.hh
   src/mako/storage/masstree_ordered_index.hh
+  # Masstree-as-write-back-cache over RocksDB (docs/masstree-rocks-cache.md);
+  # DSL owns the OrderedIndex shape + per-op policy, mrx_* kernels own the
+  # RCU/tree/rocksdb/threading surgery.
+  src/mako/storage/masstree_rocks_index.hh
   src/mako/storage/mbta_wrapper.hh
   # Cluster metadata port authored in the DSL (namespaced trait —
   # generates cleanly under the a4bcff5f transpiler).
