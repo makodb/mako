@@ -34,6 +34,25 @@ pub trait KvStore {
     fn remove(&mut self, key: &std::string);
 }
 #endif
+/*RUSTYCPP:GEN-BEGIN id=kv_store.1 version=1 rust_sha256=fcaaf367b94719c3db074bc9cef6ef83ad25c9a1fc53c9d2bcce23e6cad1f2d0*/
+class KvStore {
+public:
+    virtual ~KvStore() noexcept(false) {}
+    virtual rusty::Option<std::string> get(const std::string& key) = 0;
+    virtual void put(const std::string& key, const std::string& value) = 0;
+    virtual void remove(const std::string& key) = 0;
+    KvStore(const KvStore&) = delete;
+    KvStore& operator=(const KvStore&) = delete;
+    KvStore(KvStore&&) = delete;
+    KvStore& operator=(KvStore&&) = delete;
+protected:
+    KvStore() = default;
+};
+
+template <class U> class KvStoreAdapter;
+template <class U> class KvStoreAdapterRef;
+template <class U> class KvStoreAdapterRefMut;
+/*RUSTYCPP:GEN-END id=kv_store.1*/
 export {
 /*RUSTYCPP:GEN-BEGIN id=kv_store.1 version=1 rust_sha256=fcaaf367b94719c3db074bc9cef6ef83ad25c9a1fc53c9d2bcce23e6cad1f2d0*/
 class KvStore {

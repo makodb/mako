@@ -52,12 +52,38 @@ tractable; see trap 2.
 | `remove` | new entry with `tombstone=1`, same path — a tombstone is a write, not an erase |
 | `get` | tree hit → `referenced=1`; tombstone ⇒ not-found; miss → RocksDB → read-through fill |
 | `scan`/`rscan` | chunked two-way merge, Masstree wins on key collision, tombstones suppress |
-| `flush()` | barrier: block until every dirty entry enqueued before the call is durable |
+| `flush()` | barrier: block until every dirty entry enqueued before the call is durable. Returns **false** if it gave up because a RocksDB write failed or the store is shutting down — i.e. some acked writes are not durable |
 | flusher | pops dirty items, batches into a RocksDB `WriteBatch`, marks entries durable |
 | sweeper | CLOCK eviction once resident bytes exceed capacity |
 
 `flush()` is an inherent method, not a trait method — `OrderedIndex` is
 shared with backends that have no durability tier.
+
+## Why there are per-key locks
+
+`OrderedIndex` does not have a "just write it" surface: `put` returns
+*newly inserted*, `insert` is put-if-absent, and `remove` returns
+*existed*. Every one of those is a read-modify-write, and in a two-tier
+store the read half cannot be answered from Masstree alone — a cache
+miss has to ask RocksDB. Check and publish therefore have to be atomic
+per key, or two concurrent `insert`s both see "absent" and both win.
+
+So writes take a striped `rusty::Mutex` (1024 stripes, FNV-1a over the
+key). The read-through fill takes it too, which is what closes the
+last window in trap 3: without it, a fill that read RocksDB *before* a
+concurrent write could install its stale value *after* that write was
+flushed and evicted. These block rather than spin because the critical
+section can contain a RocksDB read.
+
+The fill also installs a **negative** entry (a clean tombstone) when
+RocksDB has no row, so "absent" becomes a cached fact and a later
+`insert` on the same key does not re-read disk to learn it.
+
+Lock order is stripe → queue, and nothing takes them in the other
+order. The flusher takes only the queue lock, and marks entries durable
+outside it, relying on the version compare plus RCU: if a publish
+displaced the entry mid-flush, the version no longer matches, and the
+memory it is reading is still alive because the free was RCU-deferred.
 
 ## The traps
 

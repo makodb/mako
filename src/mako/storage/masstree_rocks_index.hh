@@ -77,10 +77,14 @@ struct mrx_entry {
   std::atomic<uint8_t> referenced;  // CLOCK second-chance bit
 };
 
-// Probe outcomes, shared by the kernels and the DSL bodies.
-#define MRX_MISS 0
-#define MRX_LIVE 1
-#define MRX_TOMB 2
+// Probe outcome. Deliberately two bools rather than an int code: the
+// DSL would otherwise compare against named constants, and the
+// transpiler lowers `==` through a rusty::detail helper that the pinned
+// runtime (bcd32358) does not carry.
+struct mrx_probe_result {
+  bool found;
+  bool tombstone;
+};
 
 // @safe - inline payload address
 inline uint8_t *mrx_entry_bytes(mrx_entry *e) {
@@ -134,6 +138,12 @@ struct mrx_queue_state {
   // barrier's condvar predicate can read it without a torn view.
   uint64_t flushed_upto{0};
   bool stopping{false};
+  // A RocksDB write failed. The affected entries were left non-durable
+  // (so eviction still refuses them and nothing is silently lost), but
+  // the watermark can no longer advance past them — without this flag
+  // flush() would block forever waiting on a batch that will never
+  // land.
+  bool write_failed{false};
 };
 
 // A stripe carries no data — it exists purely to serialize
@@ -195,18 +205,24 @@ inline mrx_entry *mrx_lookup(concurrent_btree *t, lcdf::Str key) {
   return reinterpret_cast<mrx_entry *>(v);
 }
 
-// Probe the cache only. Sets the CLOCK bit on a hit. Returns
-// MRX_MISS / MRX_LIVE (value filled) / MRX_TOMB.
+// Probe the cache only. Sets the CLOCK bit on a hit. `value` is filled
+// only for a live hit.
 // @unsafe - copies out of an RCU-protected buffer (caller holds region)
-inline int mrx_cache_probe(concurrent_btree *t, lcdf::Str key,
-                           std::string &value, size_t max_bytes_read) {
+inline mrx_probe_result mrx_cache_probe(concurrent_btree *t, lcdf::Str key,
+                                        std::string &value,
+                                        size_t max_bytes_read) {
+  mrx_probe_result r{false, false};
   mrx_entry *e = mrx_lookup(t, key);
-  if (e == nullptr) return MRX_MISS;
+  if (e == nullptr) return r;
   e->referenced.store(1, std::memory_order_relaxed);
-  if (e->tombstone) return MRX_TOMB;
+  r.found = true;
+  if (e->tombstone) {
+    r.tombstone = true;
+    return r;
+  }
   const size_t n = std::min<size_t>(e->value_len, max_bytes_read);
   value.assign(reinterpret_cast<const char *>(mrx_entry_bytes(e)), n);
-  return MRX_LIVE;
+  return r;
 }
 
 // Publish a new entry instance, displacing any current one, and
@@ -361,7 +377,13 @@ inline size_t mrx_flush_batch(mrx_store *s, size_t budget) {
   if (err != nullptr) {
     rocksdb_free(err);
     // Leave the items dirty-but-dropped: the entries stay non-durable,
-    // so eviction still refuses them and no data is silently lost.
+    // so eviction still refuses them and no data is silently lost. Wake
+    // any waiting flush() so it reports failure instead of hanging.
+    {
+      auto g = s->queue.lock().unwrap();
+      (*g).write_failed = true;
+    }
+    s->drained_cv.notify_all();
     return taken.len();
   }
 
@@ -408,19 +430,23 @@ inline void mrx_flusher_loop(mrx_store *s) {
 
 // Block until everything enqueued before this call is durable. The
 // target is the last qseq handed out at entry, so writes racing in
-// after the call are deliberately not waited on.
+// after the call are deliberately not waited on. Returns false if the
+// wait gave up because a RocksDB write failed or the store is shutting
+// down — in both cases some acked writes are NOT durable.
 // @unsafe - condvar wait against the flusher's watermark
-inline void mrx_flush_barrier(mrx_store *s) {
+inline bool mrx_flush_barrier(mrx_store *s) {
   auto g = s->queue.lock().unwrap();
   const uint64_t target = (*g).next_qseq - 1;
-  if (target == 0 || (*g).flushed_upto >= target) return;
+  if (target == 0 || (*g).flushed_upto >= target) return true;
   s->queue_cv.notify_one();
   g = s->drained_cv
           .wait_while(std::move(g),
                       [target](const mrx_queue_state &q) {
-                        return q.flushed_upto < target && !q.stopping;
+                        return q.flushed_upto < target && !q.stopping &&
+                               !q.write_failed;
                       })
           .unwrap();
+  return (*g).flushed_upto >= target;
 }
 
 // ---------------------------------------------------------------------------
@@ -577,7 +603,9 @@ pub struct masstree_rocks_index {
 
 impl masstree_rocks_index {
     // Block until every write acked before this call is in RocksDB.
-    fn flush(&mut self) {
+    // False means some of them are not: a RocksDB write failed, or the
+    // store is shutting down.
+    fn flush(&mut self) -> bool {
         unsafe { mrx_flush_barrier(self.store) }
     }
 
@@ -591,22 +619,16 @@ impl OrderedIndex for masstree_rocks_index {
     fn get(&mut self, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
         let _guard = unsafe { mrx_rcu_region() };
         let hit = unsafe { mrx_cache_probe(self.tree, key, value, max_bytes_read) };
-        if hit == MRX_LIVE {
-            return true;
-        }
-        if hit == MRX_TOMB {
-            return false;
+        if hit.found {
+            return !hit.tombstone;
         }
         // Miss. Fill under the stripe so a racing publish/flush/evict
         // cannot leave a stale value cached (trap 3), re-probing first
         // because the winner of that race may have filled it already.
         let _klock = unsafe { mrx_key_lock(self.store, key) };
         let again = unsafe { mrx_cache_probe(self.tree, key, value, max_bytes_read) };
-        if again == MRX_LIVE {
-            return true;
-        }
-        if again == MRX_TOMB {
-            return false;
+        if again.found {
+            return !again.tombstone;
         }
         unsafe { mrx_fill_from_db(self.store, key, value, max_bytes_read) }
     }
@@ -669,7 +691,7 @@ impl OrderedIndex for masstree_rocks_index {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=masstree_rocks_index.1 version=1 rust_sha256=ad75b7d2f3f47fa4ecf3cb9892a7d67e098ae259e948d84bdfdc3a724f062161*/
+/*RUSTYCPP:GEN-BEGIN id=masstree_rocks_index.1 version=1 rust_sha256=85ee17fd8ddc07cdfc03ff51aa56eccefe84faa737d585b4e92a6443d6a4e39b*/
 struct masstree_rocks_index;
 
 struct masstree_rocks_index : public OrderedIndex {
@@ -681,7 +703,7 @@ struct masstree_rocks_index : public OrderedIndex {
     masstree_rocks_index(masstree_rocks_index&& other) noexcept : OrderedIndex(), name(std::move(other.name)), table_id(std::move(other.table_id)), tree(std::move(other.tree)), store(std::move(other.store)) {}
 
 
-    void flush();
+    bool flush();
     uint64_t resident_bytes() const;
     bool get(lcdf::Str key, std::string& value, size_t max_bytes_read);
     bool put(lcdf::Str key, const std::string& value);
@@ -696,10 +718,10 @@ struct masstree_rocks_index : public OrderedIndex {
 };
 
 
-inline void masstree_rocks_index::flush() {
+inline bool masstree_rocks_index::flush() {
     // @unsafe
     {
-        mrx_flush_barrier(this->store);
+        return mrx_flush_barrier(this->store);
     }
 }
 
@@ -713,19 +735,13 @@ inline uint64_t masstree_rocks_index::resident_bytes() const {
 inline bool masstree_rocks_index::get(lcdf::Str key, std::string& value, size_t max_bytes_read) {
     const auto _guard = mrx_rcu_region();
     const auto hit = mrx_cache_probe(this->tree, std::move(key), value, std::move(max_bytes_read));
-    if (rusty::detail::deref_if_pointer_like(hit) == rusty::detail::deref_if_pointer_like(MRX_LIVE)) {
-        return true;
-    }
-    if (rusty::detail::deref_if_pointer_like(hit) == rusty::detail::deref_if_pointer_like(MRX_TOMB)) {
-        return false;
+    if (hit.found) {
+        return !hit.tombstone;
     }
     const auto _klock = mrx_key_lock(this->store, std::move(key));
     const auto again = mrx_cache_probe(this->tree, std::move(key), value, std::move(max_bytes_read));
-    if (rusty::detail::deref_if_pointer_like(again) == rusty::detail::deref_if_pointer_like(MRX_LIVE)) {
-        return true;
-    }
-    if (rusty::detail::deref_if_pointer_like(again) == rusty::detail::deref_if_pointer_like(MRX_TOMB)) {
-        return false;
+    if (again.found) {
+        return !again.tombstone;
     }
     // @unsafe
     {
