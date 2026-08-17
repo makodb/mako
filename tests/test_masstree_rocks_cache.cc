@@ -428,6 +428,33 @@ TEST_F(MasstreeRocksCacheTest, RscanReturnsDescendingRange) {
   }
 }
 
+// The barrier must not launder obligations through superseded tickets:
+// a key overwritten continuously has every drained ticket superseded by
+// the time the flusher reads it, and a drain that skip-confirms those
+// tickets would let flush() return true while the key has NEVER been
+// written to RocksDB (review finding). The honest drain writes the
+// currently published bytes at each entry's last in-window ticket, so
+// after any successful flush the key must have a row.
+TEST_F(MasstreeRocksCacheTest, FlushCoversHotKeyUnderConcurrentOverwrites) {
+  std::atomic<bool> stop{false};
+  std::thread writer([&]() {
+    int i = 0;
+    while (!stop.load()) {
+      idx_->put(S("hot"), "v" + std::to_string(i++));
+    }
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  for (int r = 0; r < 5; r++) {
+    ASSERT_TRUE(idx_->flush());
+    std::string raw;
+    EXPECT_TRUE(RawDbGet("hot", raw))
+        << "flush() returned true but the continuously overwritten key "
+           "has no row in RocksDB (round " << r << ")";
+  }
+  stop.store(true);
+  writer.join();
+}
+
 // ---------------------------------------------------------------------------
 // Requirement: Truncation
 // ---------------------------------------------------------------------------

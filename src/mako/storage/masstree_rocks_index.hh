@@ -26,25 +26,34 @@
  * per-thread batching — no global mutex on the write path. A writer
  * CAS-publishes, drops a 16-byte ticket into its own batch (tiny
  * per-writer spinlock, uncontended on the fast path), and returns; full
- * batches are appended to the log with one fetch_add per batch. The
- * flusher drains the log, writes the CURRENTLY PUBLISHED bytes of each
- * ticketed entry into one RocksDB WriteBatch, and confirms a POSITION
- * PREFIX — a failed rocksdb_write simply leaves `confirmed` where it
- * was and the same slots are retried next cycle, so the watermark can
- * never leapfrog unwritten work.
+ * batches are appended to the log with one fetch_add per batch.
+ *
+ * The flusher DRAINS tickets into an in-memory DIRTY MAP (entry ->
+ * oldest undischarged version) at memory speed, recycling ring slots
+ * immediately, so producers essentially never see backpressure. A
+ * WRITEBACK pass then writes each dirty entry's CURRENTLY PUBLISHED
+ * bytes into one RocksDB WriteBatch and erases it on success. The map
+ * is both the coalescer (a hot key occupies one map slot no matter how
+ * many times it is overwritten — each writeback pass writes it once)
+ * and the honesty mechanism: an entry stays in the map until a real
+ * write discharges it, and the watermark's min includes the map, so a
+ * failed rocksdb_write pins W below the affected versions and the same
+ * entries retry next cycle. No obligation can be skipped or lost.
  *
  * DURABILITY is one scalar: persisted_version (W). A published value is
- * durable iff val->version <= W. W is recomputed each flusher cycle as
- * min(version counter, per-writer announce/batch/staged floors,
- * unconfirmed log tickets) - 1. The per-writer `announce` closes the
- * publish gap (a version is drawn by fetch_add BEFORE its CAS
- * publishes, so a preempted writer must still bound W); it is set
- * seq_cst before the draw and cleared only after the ticket is safely
- * in the batch. Eviction tests version <= W — there is no per-value
- * durable flag. Records that never need a write (seed tombstones,
- * open-time key loads, fill results, eviction markers) carry inherited
- * or zero versions already at-or-below W, so they are durable by
- * provenance with no special case.
+ * durable iff val->version <= W, in the per-key-latest sense: RocksDB
+ * holds bytes for that key AT LEAST as new as any version <= W it ever
+ * published. W is recomputed as min(version counter, per-writer
+ * announce/batch/staged floors, undrained log tickets, dirty-map
+ * minimums) - 1. The per-writer `announce` closes the publish gap (a
+ * version is drawn by fetch_add BEFORE its CAS publishes, so a
+ * preempted writer must still bound W); it is set seq_cst before the
+ * draw and cleared only after the ticket is safely in the batch.
+ * Eviction tests version <= W — there is no per-value durable flag.
+ * Records that never need a write (seed tombstones, open-time key
+ * loads, fill results, eviction markers) carry inherited or zero
+ * versions already at-or-below W, so they are durable by provenance
+ * with no special case.
  *
  * STRAGGLERS: an acked write may sit in its writer's partial batch. The
  * flusher STEALS partial batches every cycle (~100us), so an idle or
@@ -88,6 +97,7 @@
 #include <atomic>
 #include <new>
 #include <string>
+#include <unordered_map>
 
 #include <rusty/condvar.hpp>
 #include <rusty/mutex.hpp>
@@ -239,7 +249,8 @@ struct mrx_log_slot {
 // slots pinned 16 writers to RocksDB's ~270k/s ingest).
 static const size_t MRX_LOG_CAP = 1 << 20;   // power of two, ~24MB
 static const size_t MRX_BATCH = 64;          // per-writer batch size
-static const size_t MRX_DRAIN_BOUND = 16384; // slots per flusher cycle
+static const size_t MRX_DRAIN_BOUND = 65536;    // slots per cycle (memory-speed)
+static const size_t MRX_WRITEBACK_CHUNK = 4096; // dirty entries per cycle
 static const uint64_t MRX_W_LAZY_CYCLES = 16;
 
 struct mrx_log {
@@ -346,6 +357,23 @@ struct mrx_store {
 
   uint64_t flusher_cycles{0};  // flusher thread only
 
+  // Stolen tickets that did not fit in the ring yet (flusher-only).
+  // At most one batch; included in the watermark min via stash_min.
+  mrx_log_item flusher_stash[MRX_BATCH];
+  size_t stash_n{0};
+  uint64_t stash_min{UINT64_MAX};
+
+  // THE DIRTY MAP (flusher-only): entry -> oldest undischarged ticket
+  // version. Drain folds tickets in here at memory speed; writeback
+  // discharges entries by writing their CURRENT bytes and erasing.
+  // This map is the coalescer (a hot key occupies one slot regardless
+  // of ticket count) AND the honesty mechanism (W's min includes it,
+  // so the barrier cannot pass an undischarged obligation).
+  std::unordered_map<mrx_entry *, uint64_t> dirty;
+  // Writeback scratch: entries written in the current batch, erased
+  // from `dirty` only after rocksdb_write succeeds.
+  rusty::Vec<mrx_entry *> wrote_scratch;
+
   // CLOCK hand for the sweeper — a KEY, not an iterator, so it survives
   // concurrent tree mutation. Sweeper thread only; no lock needed.
   std::string sweep_cursor;
@@ -447,17 +475,27 @@ inline mrx_writer *mrx_writer_for(mrx_store *s) {
     uint64_t gen;
     mrx_writer *w;
   };
-  static thread_local cache_t c{nullptr, 0, nullptr};
+  // A small SET of cached slots, not a single entry: with one entry, a
+  // thread alternating between two stores (any multi-table workload)
+  // would miss on every switch, burn a fresh registry slot each time,
+  // and abort() within ~256 operations. Eight entries covers realistic
+  // table counts; beyond that, slots burn slowly (review finding).
+  static thread_local cache_t c[8] = {};
+  static thread_local unsigned victim = 0;
   // Match on pointer AND generation: a new store can reuse a freed
   // store's address, and handing back the stale slot would park tickets
   // where the new store's flusher never looks.
-  if (c.store == s && c.gen == s->gen) return c.w;
+  for (unsigned i = 0; i < 8; i++) {
+    if (c[i].store == s && c[i].gen == s->gen) return c[i].w;
+  }
   const uint32_t i = s->n_writers.fetch_add(1, std::memory_order_seq_cst);
   if (i >= MRX_MAX_WRITERS) ::abort();  // registry exhausted
-  c.store = s;
-  c.gen = s->gen;
-  c.w = &s->writers[i];
-  return c.w;
+  mrx_writer *w = &s->writers[i];
+  c[victim].store = s;
+  c[victim].gen = s->gen;
+  c[victim].w = w;
+  victim = (victim + 1) & 7;
+  return w;
 }
 
 // Append k tickets to the log. Backpressure: a slot still owned by the
@@ -485,6 +523,39 @@ inline void mrx_log_append(mrx_store *s, const mrx_log_item *items,
     sl.version = items[i].version;
     sl.seq.store(pos + i + 1, std::memory_order_release);
   }
+}
+
+// Flusher-only: reserve log space WITHOUT ever waiting. Producers may
+// fetch_add the tail concurrently, so reserve by CAS with a headroom
+// check against `confirmed` (which only the flusher itself advances, so
+// it is stable here). The headroom condition t + k <= confirmed + CAP
+// guarantees every reserved slot is already recycled, so the publish
+// loop never spins. Returns false when the ring lacks room — the
+// caller keeps the tickets and retries next cycle. This is what makes
+// the flusher immune to the ring backpressure it is itself responsible
+// for relieving (review finding: the blocking append could deadlock
+// the flusher against its own confirm loop).
+// @unsafe - CAS reservation racing producer fetch_adds
+inline bool mrx_log_try_append(mrx_store *s, const mrx_log_item *items,
+                               size_t k) {
+  const uint64_t mask = MRX_LOG_CAP - 1;
+  uint64_t t = s->log.tail.load(std::memory_order_relaxed);
+  for (int tries = 0; tries < 64; tries++) {
+    const uint64_t conf = s->log.confirmed.load(std::memory_order_relaxed);
+    if (t + k > conf + MRX_LOG_CAP) return false;  // no room
+    if (s->log.tail.compare_exchange_weak(t, t + k,
+                                          std::memory_order_seq_cst,
+                                          std::memory_order_relaxed)) {
+      for (size_t i = 0; i < k; i++) {
+        mrx_log_slot &sl = s->log.slots[(t + i) & mask];
+        sl.e = items[i].e;
+        sl.version = items[i].version;
+        sl.seq.store(t + i + 1, std::memory_order_release);
+      }
+      return true;
+    }
+  }
+  return false;  // heavy producer contention; retry next cycle
 }
 
 // Hand a fresh ticket to the flusher: into the local batch, and into
@@ -685,96 +756,124 @@ inline bool mrx_evict_value(mrx_store *s, mrx_entry *e) {
 // cycles/s cost microseconds.
 // ---------------------------------------------------------------------------
 
-// @unsafe - the full flusher cycle; returns slots confirmed
+// @unsafe - the full flusher cycle; returns slots drained + entries written
 inline size_t mrx_flusher_cycle(mrx_store *s) {
   const uint64_t mask = MRX_LOG_CAP - 1;
 
-  // --- 1. drain the published prefix into one WriteBatch -------------
+  // --- 1. drain tickets into the dirty map ----------------------------
+  // NO RocksDB work here: a ticket is folded into `dirty` (keeping the
+  // OLDEST undischarged version per entry) and its slot is confirmed
+  // and recycled immediately, so the ring drains at memory speed and
+  // producers essentially never see backpressure. Entries are immortal
+  // and e->val is not read, so no RCU region is needed.
   const uint64_t base = s->log.confirmed.load(std::memory_order_relaxed);
   uint64_t t0 = s->log.tail.load(std::memory_order_acquire);
-  // Bound one cycle's drain: a full-ring drain inside a single RCU
-  // region would pin this core's ticker lock for milliseconds, stalling
-  // epoch reclamation process-wide. The loop in mrx_flusher_loop calls
-  // straight back in while cycles remain productive.
   if (t0 - base > MRX_DRAIN_BOUND) t0 = base + MRX_DRAIN_BOUND;
   uint64_t end = base;
-  rocksdb_writebatch_t *batch = nullptr;
-  {
-    const auto region = mrx_rcu_region();
-    while (end < t0) {
-      mrx_log_slot &sl = s->log.slots[end & mask];
-      if (sl.seq.load(std::memory_order_acquire) != end + 1) break;  // hole
-      mrx_entry *e = sl.e;
-      mrx_val *cur = e->val.load(std::memory_order_acquire);
-      // Stale ticket (a newer version was published): SKIP. Safe
-      // because the newer version carries its own still-pending ticket,
-      // which keeps W below it until it is confirmed in turn.
-      if (cur->version == sl.version && cur->resident) {
-        if (batch == nullptr) batch = rocksdb_writebatch_create();
-        if (cur->tombstone) {
-          rocksdb_writebatch_delete(batch, mrx_entry_key(e), e->key_len);
-        } else {
-          rocksdb_writebatch_put(
-              batch, mrx_entry_key(e), e->key_len,
-              reinterpret_cast<const char *>(mrx_val_bytes(cur)), cur->len);
-        }
-      }
-      end++;
+  while (end < t0) {
+    mrx_log_slot &sl = s->log.slots[end & mask];
+    if (sl.seq.load(std::memory_order_acquire) != end + 1) break;  // hole
+    auto it = s->dirty.find(sl.e);
+    if (it == s->dirty.end()) {
+      s->dirty.emplace(sl.e, sl.version);
+    } else if (sl.version < it->second) {
+      it->second = sl.version;
     }
+    sl.seq.store(end + MRX_LOG_CAP, std::memory_order_release);
+    end++;
   }
+  s->log.confirmed.store(end, std::memory_order_release);
+  size_t progressed = static_cast<size_t>(end - base);
 
-  bool ok = true;
-  if (batch != nullptr) {
+  // --- 1b. write back a chunk of the dirty map ------------------------
+  // Each selected entry is written ONCE with its CURRENTLY PUBLISHED
+  // bytes — at least as new as every undischarged ticket version it
+  // covers, which is what makes erasing it honest. (Review finding: the
+  // earlier skip-if-superseded drain confirmed obligations without
+  // writing anything, so flush() could return true for a hot key that
+  // had NEVER reached RocksDB.) A value re-written after our read is
+  // re-dirtied by its own ticket on a later drain.
+  if (!s->dirty.empty()) {
+    rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+    s->wrote_scratch.clear();
+    {
+      const auto region = mrx_rcu_region();
+      for (auto it = s->dirty.begin();
+           it != s->dirty.end() && s->wrote_scratch.len() < MRX_WRITEBACK_CHUNK;
+           ++it) {
+        mrx_entry *e = it->first;
+        mrx_val *cur = e->val.load(std::memory_order_acquire);
+        // A non-resident marker is only reachable at version <= W, i.e.
+        // its bytes are already in RocksDB; the obligation is met.
+        if (cur->resident) {
+          if (cur->tombstone) {
+            rocksdb_writebatch_delete(batch, mrx_entry_key(e), e->key_len);
+          } else {
+            rocksdb_writebatch_put(
+                batch, mrx_entry_key(e), e->key_len,
+                reinterpret_cast<const char *>(mrx_val_bytes(cur)), cur->len);
+          }
+        }
+        s->wrote_scratch.push(e);
+      }
+    }
     char *err = nullptr;
     rocksdb_write(s->db, s->wopts, batch, &err);
     rocksdb_writebatch_destroy(batch);
     if (err != nullptr) {
       rocksdb_free(err);
-      ok = false;
+      // Obligations stay in the map, W stays pinned below them, and the
+      // same entries are retried next cycle: transient IO failure
+      // self-heals with no data loss.
+      s->io_failing.store(true, std::memory_order_release);
+    } else {
+      for (size_t i = 0; i < s->wrote_scratch.len(); i++) {
+        s->dirty.erase(s->wrote_scratch[i]);
+      }
+      progressed += s->wrote_scratch.len();
+      s->io_failing.store(false, std::memory_order_release);
     }
-  }
-
-  size_t confirmed_n = 0;
-  if (ok) {
-    // Confirm the position prefix and recycle the slots. On failure we
-    // confirm NOTHING and the same slots are retried next cycle — the
-    // watermark below cannot leapfrog work that never landed.
-    for (uint64_t q = base; q < end; q++) {
-      s->log.slots[q & mask].seq.store(q + MRX_LOG_CAP,
-                                       std::memory_order_release);
-    }
-    s->log.confirmed.store(end, std::memory_order_release);
-    confirmed_n = static_cast<size_t>(end - base);
-    if (batch != nullptr) s->io_failing.store(false, std::memory_order_release);
-  } else {
-    s->io_failing.store(true, std::memory_order_release);
   }
 
   // --- 2. steal partial writer batches --------------------------------
   // Bounds the straggler window: an acked write in an idle thread's
-  // batch reaches the log within one cycle. Skipped when the ring is
-  // nearly full — the flusher must never block on the backpressure it
-  // is itself responsible for relieving.
-  const uint32_t nw0 = s->n_writers.load(std::memory_order_acquire);
-  for (uint32_t i = 0; i < nw0; i++) {
-    const uint64_t used = s->log.tail.load(std::memory_order_relaxed) -
-                          s->log.confirmed.load(std::memory_order_relaxed);
-    if (used + MRX_BATCH * 2 > MRX_LOG_CAP) break;
+  // batch reaches the log within one cycle. All appends here use the
+  // non-blocking try-append; tickets that do not fit stay in the
+  // flusher's stash (covered by stash_min in the watermark) and retry
+  // next cycle, so the flusher can never wedge on ring backpressure.
+  if (s->stash_n != 0) {
+    if (mrx_log_try_append(s, s->flusher_stash, s->stash_n)) {
+      s->stash_n = 0;
+      s->stash_min = UINT64_MAX;
+    }
+  }
+  // Clamp: a racing over-limit registration bumps n_writers past the
+  // array before its own thread aborts; never index beyond the array.
+  uint32_t nw0 = s->n_writers.load(std::memory_order_acquire);
+  if (nw0 > MRX_MAX_WRITERS) nw0 = MRX_MAX_WRITERS;
+  for (uint32_t i = 0; s->stash_n == 0 && i < nw0; i++) {
     mrx_writer *w = &s->writers[i];
     mrx_log_item buf[MRX_BATCH];
     size_t k = 0;
+    uint64_t mn = UINT64_MAX;
     w->lock.lock();
     if (w->n != 0) {
       k = w->n;
       memcpy(buf, w->batch, k * sizeof(mrx_log_item));
       w->n = 0;
-      // No staged_min hand-off needed: the append below happens before
-      // this same thread computes the watermark, and nobody else
-      // computes it.
+      mn = w->batch_min.load(std::memory_order_relaxed);
       w->batch_min.store(UINT64_MAX, std::memory_order_release);
     }
     w->lock.unlock();
-    if (k != 0) mrx_log_append(s, buf, k);
+    if (k != 0 && !mrx_log_try_append(s, buf, k)) {
+      // Ring full: park in the stash. Coverage moves batch_min ->
+      // stash_min before anything else runs on this thread, and the
+      // watermark below is computed by this same thread, so no version
+      // escapes.
+      memcpy(s->flusher_stash, buf, k * sizeof(mrx_log_item));
+      s->stash_n = k;
+      s->stash_min = mn;
+    }
   }
 
   // --- 3. recompute the watermark -------------------------------------
@@ -792,20 +891,25 @@ inline size_t mrx_flusher_cycle(mrx_store *s) {
   // every MRX_W_LAZY_CYCLES cycles instead of every cycle. Skipping
   // never unsounds W - it only lags it.
   s->flusher_cycles++;
-  const uint64_t window =
-      s->log.tail.load(std::memory_order_relaxed) -
-      s->log.confirmed.load(std::memory_order_relaxed);
+  // The dominant cost is iterating the dirty map, so gate on ITS size
+  // (the unconfirmed log window is tiny now that drain confirms at
+  // memory speed).
   const bool w_due =
-      window <= MRX_DRAIN_BOUND ||
+      s->dirty.size() <= MRX_WRITEBACK_CHUNK ||
       s->flush_waiters.load(std::memory_order_acquire) != 0 ||
       (s->flusher_cycles % MRX_W_LAZY_CYCLES) == 0;
   if (!w_due) {
     s->drained_cv.notify_all();
-    return confirmed_n;
+    return progressed;
   }
   const uint64_t C = s->version_ctr.load(std::memory_order_seq_cst);
-  const uint32_t nw = s->n_writers.load(std::memory_order_seq_cst);
+  uint32_t nw = s->n_writers.load(std::memory_order_seq_cst);
+  if (nw > MRX_MAX_WRITERS) nw = MRX_MAX_WRITERS;
   uint64_t m = C;
+  if (s->stash_n != 0 && s->stash_min < m) m = s->stash_min;
+  for (const auto &kv : s->dirty) {
+    if (kv.second < m) m = kv.second;
+  }
   for (uint32_t i = 0; i < nw; i++) {
     mrx_writer *w = &s->writers[i];
     const uint64_t a = w->announce.load(std::memory_order_acquire);
@@ -833,7 +937,7 @@ inline size_t mrx_flusher_cycle(mrx_store *s) {
     s->persisted_version.store(w_new, std::memory_order_release);
   }
   s->drained_cv.notify_all();
-  return confirmed_n;
+  return progressed;
 }
 
 // @unsafe - thread body
