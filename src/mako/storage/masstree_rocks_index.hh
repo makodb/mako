@@ -325,6 +325,13 @@ struct mrx_store {
   // caps write throughput on pure coherence traffic.
   alignas(64) std::atomic<uint64_t> version_ctr{1};
   alignas(64) std::atomic<uint64_t> resident_bytes{0};
+  // The un-evictable part of resident_bytes: entry records (never
+  // freed) plus one mrx_val header per key. Eviction can only reclaim
+  // value PAYLOADS, so capacity must be compared against
+  // resident_bytes - floor_bytes; comparing against the total made
+  // any capacity below the floor permanently "over", degrading the
+  // sweeper into a perpetual evict-everything churn (review finding).
+  alignas(64) std::atomic<uint64_t> floor_bytes{0};
 
   // The durability watermark W: every PUBLISHED value with
   // version <= W has its bytes (or its tombstone) in RocksDB. Advanced
@@ -337,6 +344,13 @@ struct mrx_store {
   // log prefix regardless, so a TRANSIENT failure self-heals.
   std::atomic<bool> io_failing{false};
   std::atomic<bool> stopping{false};
+  // mrx_clear <-> sweeper handshake: clear sets `clearing`, then waits
+  // for `sweep_active` to drop, so no eviction CAS or byte accounting
+  // can race the wipe (review finding: resident_bytes.store(0) racing a
+  // sweeper fetch_sub underflowed the counter to ~2^64, making
+  // over-capacity permanently true).
+  std::atomic<bool> clearing{false};
+  std::atomic<bool> sweep_active{false};
 
   // Byte ceiling for the VALUE tier. 0 = unbounded, which is the
   // default and preserves the pre-eviction behavior exactly. Keys and
@@ -385,7 +399,10 @@ struct mrx_store {
 // @safe - true when the value tier is over its ceiling
 inline bool mrx_over_capacity(const mrx_store *s) {
   if (s->capacity == 0) return false;
-  return s->resident_bytes.load(std::memory_order_relaxed) > s->capacity;
+  const uint64_t total = s->resident_bytes.load(std::memory_order_relaxed);
+  const uint64_t floor = s->floor_bytes.load(std::memory_order_relaxed);
+  const uint64_t evictable = (total > floor) ? (total - floor) : 0;
+  return evictable > s->capacity;
 }
 
 // RAII region as a move-only value the DSL can hold in a guard local.
@@ -434,6 +451,8 @@ inline mrx_entry *mrx_entry_for(mrx_store *s, lcdf::Str key) {
     s->resident_bytes.fetch_add(
         mrx_entry_footprint(ne) + mrx_val_footprint(v0),
         std::memory_order_relaxed);
+    s->floor_bytes.fetch_add(mrx_entry_footprint(ne) + sizeof(mrx_val),
+                             std::memory_order_relaxed);
     return ne;
   }
   mrx_val_drop(v0);
@@ -953,7 +972,10 @@ inline void mrx_flusher_loop(mrx_store *s) {
   mrx_flusher_cycle(s);
 }
 
-// Block until everything acked before this call is durable. The target
+// Block until everything acked before this call is durable. DURABLE
+// MEANS sync=0 RocksDB: in the WAL via the OS page cache — survives a
+// process crash, NOT power loss (no fsync anywhere on this path; that
+// is the documented level of the whole design). The target
 // is the version counter at entry, so writes racing in after the call
 // are deliberately not waited on. Returns false if the wait gave up
 // because a RocksDB write is failing or the store is shutting down — in
@@ -997,9 +1019,18 @@ inline bool mrx_flush_barrier(mrx_store *s) {
 // pure optimization and needs no semantic change.
 // ---------------------------------------------------------------------------
 
+// Materialized under the collector's RCU region so nothing here is
+// RCU-protected afterwards: emission — which performs RocksDB point
+// reads for non-resident values and runs the caller's arbitrary
+// callback — happens with NO region held. Holding one region across a
+// whole chunk's emits pinned this core's ticker lock for the duration
+// of up to 512 RocksDB reads + callbacks, stalling epoch reclamation
+// process-wide (review finding).
 struct mrx_chunk_item {
   std::string key;
-  mrx_val *val;  // RCU-protected; the caller holds the region
+  std::string value;  // materialized copy when resident
+  bool resident;
+  bool tombstone;
 };
 
 // Bridges mbtree's templated functor protocol to a bounded buffer.
@@ -1010,10 +1041,15 @@ struct mrx_chunk_collector {
   bool operator()(const lcdf::Str &k, concurrent_btree::value_type v) {
     if (out_.len() >= budget_) return false;  // stop the walk
     mrx_entry *e = reinterpret_cast<mrx_entry *>(v);
+    mrx_val *val = e->val.load(std::memory_order_acquire);
+    e->referenced.store(1, std::memory_order_relaxed);
     mrx_chunk_item item;
     item.key.assign(k.data(), k.length());
-    item.val = e->val.load(std::memory_order_acquire);
-    e->referenced.store(1, std::memory_order_relaxed);
+    item.resident = (val->resident != 0);
+    item.tombstone = (val->tombstone != 0);
+    if (item.resident && !item.tombstone) {
+      mrx_val_copy_out(val, item.value, std::string::npos);
+    }
     out_.push(std::move(item));
     return true;
   }
@@ -1032,18 +1068,23 @@ inline int mrx_bytes_cmp(const char *a, size_t alen, const char *b,
   return 0;
 }
 
-// Emit one collected item, filling from RocksDB if the value is not
-// resident. Returns false if the callback asked to stop.
+// Emit one collected item, filling from RocksDB if the value was not
+// resident. Called with NO RCU region held; the fill takes its own
+// short region internally via this wrapper.
 // @unsafe - may perform a rocksdb read
 inline bool mrx_emit_item(mrx_store *s, const mrx_chunk_item &item,
                           oi_scan_callback &cb) {
-  if (item.val->tombstone) return true;  // deleted: skip, do not emit
-  std::string value;
-  if (item.val->resident) {
-    mrx_val_copy_out(item.val, value, std::string::npos);
-  } else if (!mrx_fill(s, lcdf::Str(item.key), value, std::string::npos)) {
-    return true;  // vanished under us; skip
+  if (item.tombstone) return true;  // deleted: skip, do not emit
+  if (item.resident) {
+    return cb.invoke(item.key.data(), item.key.size(), item.value);
   }
+  std::string value;
+  bool found = false;
+  {
+    const auto region = mrx_rcu_region();
+    found = mrx_fill(s, lcdf::Str(item.key), value, std::string::npos);
+  }
+  if (!found) return true;  // vanished under us; skip
   return cb.invoke(item.key.data(), item.key.size(), value);
 }
 
@@ -1065,12 +1106,12 @@ inline void mrx_scan(mrx_store *s, const std::string &start_key,
       } else {
         s->tree->search_range(lower, nullptr, c);
       }
-      if (chunk.len() == 0) return;
-      for (size_t i = 0; i < chunk.len(); i++) {
-        if (!mrx_emit_item(s, chunk[i], cb)) return;
-      }
-      cursor = chunk[chunk.len() - 1].key;
     }
+    if (chunk.len() == 0) return;
+    for (size_t i = 0; i < chunk.len(); i++) {
+      if (!mrx_emit_item(s, chunk[i], cb)) return;
+    }
+    cursor = chunk[chunk.len() - 1].key;
     if (chunk.len() < MRX_SCAN_CHUNK) return;
     // Resume strictly after the last key: appending a 0 byte yields its
     // immediate successor in byte order.
@@ -1096,24 +1137,24 @@ inline void mrx_rscan(mrx_store *s, const std::string &start_key,
       } else {
         s->tree->rsearch_range(upper, nullptr, c);
       }
-      if (chunk.len() == 0) return;
-      size_t emitted = 0;
-      for (size_t i = 0; i < chunk.len(); i++) {
-        // The upper bound is inclusive, so the first item of a resumed
-        // chunk repeats the previous chunk's last key.
-        if (have_prev && i == 0 &&
-            mrx_bytes_cmp(chunk[i].key.data(), chunk[i].key.size(),
-                          prev.data(), prev.size()) == 0) {
-          continue;
-        }
-        if (!mrx_emit_item(s, chunk[i], cb)) return;
-        emitted++;
-      }
-      if (emitted == 0) return;
-      cursor = chunk[chunk.len() - 1].key;
-      prev = cursor;
-      have_prev = true;
     }
+    if (chunk.len() == 0) return;
+    size_t emitted = 0;
+    for (size_t i = 0; i < chunk.len(); i++) {
+      // The upper bound is inclusive, so the first item of a resumed
+      // chunk repeats the previous chunk's last key.
+      if (have_prev && i == 0 &&
+          mrx_bytes_cmp(chunk[i].key.data(), chunk[i].key.size(),
+                        prev.data(), prev.size()) == 0) {
+        continue;
+      }
+      if (!mrx_emit_item(s, chunk[i], cb)) return;
+      emitted++;
+    }
+    if (emitted == 0) return;
+    cursor = chunk[chunk.len() - 1].key;
+    prev = cursor;
+    have_prev = true;
     if (chunk.len() < MRX_SCAN_CHUNK) return;
   }
 }
@@ -1199,10 +1240,16 @@ inline uint64_t mrx_sweep_chunk(mrx_store *s, size_t budget) {
 // watermark) can make more values evictable.
 inline void mrx_sweeper_loop(mrx_store *s) {
   while (!s->stopping.load(std::memory_order_acquire)) {
-    if (mrx_over_capacity(s)) {
-      if (mrx_sweep_chunk(s, MRX_SWEEP_CHUNK) == 0) {
-        ::usleep(MRX_SWEEP_POLL_US);
+    if (!s->clearing.load(std::memory_order_acquire) && mrx_over_capacity(s)) {
+      s->sweep_active.store(true, std::memory_order_release);
+      // Re-check under the flag: a clear that set `clearing` after our
+      // first check now sees sweep_active and waits for us.
+      uint64_t freed = 0;
+      if (!s->clearing.load(std::memory_order_acquire)) {
+        freed = mrx_sweep_chunk(s, MRX_SWEEP_CHUNK);
       }
+      s->sweep_active.store(false, std::memory_order_release);
+      if (freed == 0) ::usleep(MRX_SWEEP_POLL_US);
     } else {
       ::usleep(MRX_SWEEP_POLL_US);
     }
@@ -1235,6 +1282,8 @@ inline void mrx_load_keys(mrx_store *s) {
       s->resident_bytes.fetch_add(
           mrx_entry_footprint(e) + mrx_val_footprint(v),
           std::memory_order_relaxed);
+      s->floor_bytes.fetch_add(mrx_entry_footprint(e) + sizeof(mrx_val),
+                               std::memory_order_relaxed);
     } else {
       mrx_val_drop(v);
       rcu::s_instance.dealloc(e, mrx_entry_footprint(e));
@@ -1284,10 +1333,22 @@ inline mrx_store *mrx_store_open(concurrent_btree *tree,
   return s;
 }
 
+// CONTRACT: close must be externally synchronized — no other thread
+// may be inside any operation on this store (including flush()) when
+// close begins, or it will touch freed memory. The barrier is retried
+// a bounded number of times so a TRANSIENT IO failure does not
+// silently discard acked writes; on persistent failure close proceeds
+// and the un-discharged tail is lost, which the caller learns only by
+// having seen flush() return false (review finding: the result was
+// ignored entirely).
 // @unsafe - drains, stops the threads, closes RocksDB
 inline void mrx_store_close(mrx_store *s) {
   if (s == nullptr) return;
-  mrx_flush_barrier(s);
+  for (int attempt = 0; attempt < 50; attempt++) {
+    if (mrx_flush_barrier(s)) break;
+    if (s->stopping.load(std::memory_order_acquire)) break;
+    ::usleep(MRX_FLUSH_POLL_US * 10);
+  }
   s->stopping.store(true, std::memory_order_release);
   if (s->sweeper.is_some()) {
     s->sweeper.take().unwrap().join();
@@ -1320,7 +1381,23 @@ inline size_t mrx_size(const concurrent_btree *t) {
 // leaked deliberately, as in oi_mt_clear — a teardown affordance.
 // @unsafe - rocksdb iterator + batch delete + tree clear
 inline oi_stats_map mrx_clear(mrx_store *s) {
-  mrx_flush_barrier(s);
+  // The barrier must SUCCEED before the wipe: on a failed barrier the
+  // flusher still holds undischarged obligations, and its guaranteed
+  // retry would write them into the freshly wiped DB — a RocksDB row
+  // with no tree key, resurrected on the next open (review finding).
+  // A successful barrier proves the flusher is quiescent: dirty map,
+  // stash, floors, and log all empty, and (under the documented
+  // no-concurrent-writers contract) nothing new can appear.
+  while (!mrx_flush_barrier(s)) {
+    if (s->stopping.load(std::memory_order_acquire)) return oi_stats_map();
+    ::usleep(MRX_FLUSH_POLL_US);
+  }
+
+  // Exclude the sweeper for the duration of the wipe.
+  s->clearing.store(true, std::memory_order_release);
+  while (s->sweep_active.load(std::memory_order_acquire)) {
+    ::usleep(50);
+  }
 
   rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
   rocksdb_iterator_t *it = rocksdb_create_iterator(s->db, s->ropts);
@@ -1335,10 +1412,20 @@ inline oi_stats_map mrx_clear(mrx_store *s) {
   char *err = nullptr;
   rocksdb_write(s->db, s->wopts, batch, &err);
   rocksdb_writebatch_destroy(batch);
-  if (err != nullptr) rocksdb_free(err);
+  if (err != nullptr) {
+    // The wipe itself failed: clearing only the tree would leave
+    // RocksDB's rows to be resurrected by the next open. Abort the
+    // truncate with both tiers intact (review finding: the error was
+    // silently swallowed and the tiers desynchronized).
+    rocksdb_free(err);
+    s->clearing.store(false, std::memory_order_release);
+    return oi_stats_map();
+  }
 
   s->tree->clear();
   s->resident_bytes.store(0, std::memory_order_relaxed);
+  s->floor_bytes.store(0, std::memory_order_relaxed);
+  s->clearing.store(false, std::memory_order_release);
   return oi_stats_map();
 }
 

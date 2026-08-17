@@ -89,13 +89,20 @@ class MasstreeRocksCacheTest : public ::testing::Test {
   }
 
   // Poll until the value tier fits, or give up. Eviction is
-  // asynchronous, so there is nothing to synchronize on.
-  bool WaitForResidentBytesAtMost(uint64_t limit, int timeout_ms = 10000) {
+  // asynchronous, so there is nothing to synchronize on. The bound is
+  // capacity PLUS the un-evictable floor (entries + value headers,
+  // which eviction cannot reclaim by design): the sweeper's goal is
+  // evictable payload <= capacity, not total <= capacity.
+  bool WaitForEvictablePayloadAtMost(uint64_t limit, int timeout_ms = 10000) {
     for (int waited = 0; waited < timeout_ms; waited += 10) {
-      if (idx_->resident_bytes() <= limit) return true;
+      const uint64_t total = idx_->resident_bytes();
+      const uint64_t floor = store_->floor_bytes.load(std::memory_order_relaxed);
+      if (total - std::min(total, floor) <= limit) return true;
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    return idx_->resident_bytes() <= limit;
+    const uint64_t total = idx_->resident_bytes();
+    const uint64_t floor = store_->floor_bytes.load(std::memory_order_relaxed);
+    return total - std::min(total, floor) <= limit;
   }
 
   void Close() {
@@ -577,7 +584,7 @@ TEST_F(MasstreeRocksCacheTest, EvictionBringsValueBytesUnderCapacity) {
   }
   ASSERT_TRUE(idx_->flush());
 
-  EXPECT_TRUE(WaitForResidentBytesAtMost(kCapacity))
+  EXPECT_TRUE(WaitForEvictablePayloadAtMost(kCapacity))
       << "resident bytes stayed at " << idx_->resident_bytes()
       << " against a capacity of " << kCapacity;
 
@@ -605,7 +612,7 @@ TEST_F(MasstreeRocksCacheTest, EvictedValuesReadBackUnchanged) {
     ASSERT_TRUE(Put("k" + std::to_string(i), value_for(i)));
   }
   ASSERT_TRUE(idx_->flush());
-  ASSERT_TRUE(WaitForResidentBytesAtMost(kCapacity))
+  ASSERT_TRUE(WaitForEvictablePayloadAtMost(kCapacity))
       << "nothing was reclaimed, so the read-back below proves nothing";
 
   // Every key must still be readable and correct, whether its value is
@@ -698,7 +705,7 @@ TEST_F(MasstreeRocksCacheTest, HotKeySurvivesReclamation) {
       idx_->get(S("hot"), got, std::string::npos);
     }
   });
-  WaitForResidentBytesAtMost(kCapacity, 5000);
+  WaitForEvictablePayloadAtMost(kCapacity, 5000);
   // One last read so the assertion is not racing a sweep that just
   // cleared the bit.
   std::string got;

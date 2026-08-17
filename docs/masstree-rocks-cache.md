@@ -69,17 +69,22 @@ struct mrx_val {                 // IMMUTABLE once published; RCU-freed
 struct mrx_entry {               // STABLE for the key's lifetime
   std::atomic<mrx_val*> val;     // never null
   std::atomic<uint8_t> referenced;   // CLOCK second-chance bit
+  uint32_t key_len;              // key bytes inline after the struct
 };
 ```
+
+There is deliberately **no per-value durable flag**: durability is the
+single comparison `version <= W` against the store-wide watermark (see
+Flusher below). The key lives inline in the entry — paid once per key —
+so dirty tickets are 16-byte PODs.
 
 The entry is allocated once per key and never moves, so `val` is a
 stable CAS target. Every state change — write, delete, evict, fill —
 is a single compare-and-swap of that one pointer, and the displaced
 `mrx_val` is RCU-freed.
 
-`mrx_val` is immutable after publication *except* for a `durable` flag
-(the only atomic in it), because durability is a property of a specific
-version. Value and version never change under a reader.
+`mrx_val` is fully immutable after publication. Value and version
+never change under a reader.
 
 An **evicted** value is not a null pointer; it is a real `mrx_val` with
 `resident = 0` that still **carries the version**. That is what makes
@@ -94,9 +99,9 @@ the fill race safe — see trap 3.
 | `insert` | same, but the CAS is abandoned if the loaded state is live ⇒ returns false |
 | `remove` | CAS `val` to a tombstone version; returns whether it was live beforehand |
 | `scan`/`rscan` | iterate Masstree; emit resident values, fill evicted ones, skip tombstones |
-| `flush()` | barrier: block until everything enqueued before the call is durable. **False** ⇒ a RocksDB write failed or the store is stopping, so some acked writes are not durable |
-| flusher | drains the dirty queue into RocksDB `WriteBatch`es, marks versions durable |
-| sweeper | CLOCK eviction: swaps durable resident values for evicted markers, when a capacity is configured |
+| `flush()` | barrier: block until every write acked before the call is durable (W ≥ version counter at entry). **False** ⇒ a RocksDB write is failing or the store is stopping. "Durable" = sync=0 RocksDB: survives process crash, not power loss |
+| flusher | drains tickets into the dirty map at memory speed, writes back each dirty entry's current bytes, advances W |
+| sweeper | CLOCK eviction: swaps covered (version ≤ W) resident values for evicted markers, when a capacity is configured |
 
 `flush()` is an inherent method, not a trait method — `OrderedIndex` is
 shared with backends that have no durability tier.
@@ -116,13 +121,16 @@ conditional remove. Tombstones are therefore retained. They double as
 the negative cache. Consequence: `size()` counts tombstones, so it
 overcounts live keys, and reclamation is a later compaction concern.
 
-**2. The flusher must not clear durability it did not earn.** Flusher
-reads key K at version 7 and writes it to RocksDB. Meanwhile a writer
-publishes version 8. Marking "K is durable" would make version 8
-evictable while RocksDB still holds version 7 — silent loss. Guard: the
-flusher marks the `mrx_val` *it read*, and only if that exact pointer
-is still published. Version 8 is a different allocation with its own
-queue item.
+**2. The watermark must not cover obligations it did not discharge.**
+An entry stays in the flusher's dirty map — pinning W below its oldest
+undischarged version — until a write of its *current* bytes actually
+succeeds. Writing current bytes (not a stale snapshot) is what makes
+discharging a superseded obligation honest: RocksDB ends up with bytes
+at least as new as everything the map entry covered. The first
+implementation skipped superseded tickets instead, and a hot key could
+stay un-persisted forever while `flush()` reported success — found by
+adversarial review, pinned by the
+`FlushCoversHotKeyUnderConcurrentOverwrites` regression test.
 
 **3. A fill must lose to any newer write — including one that has
 already been evicted again.** The fill reads the evicted marker, reads
@@ -133,22 +141,48 @@ with a stale value. This is ABA, and it is why the evicted marker is a
 versioned allocation rather than a null: the fill's CAS names the exact
 marker pointer it read, so any intervening write fails it.
 
-**4. Eviction may only touch durable values.** Evicting a non-durable
-value discards the only copy. The sweeper skips anything whose `val` is
-not marked durable, which means a cache saturated with dirty values
-cannot evict and must push back on writers or wait on the flusher
-rather than silently drop.
+**4. Eviction may only touch covered values.** Evicting a value above
+the watermark discards the only copy. The sweeper skips anything with
+`version > W`, which means a cache saturated with un-persisted values
+cannot evict and must wait on the flusher rather than silently drop.
+Capacity is compared against *evictable payload* (`resident_bytes`
+minus the un-evictable floor of entries + value headers): comparing
+against the total would make any capacity below the floor permanently
+"over" and degrade the sweeper into perpetual churn.
 
-## Flusher
+## Flusher: log → dirty map → writeback → watermark
 
-One thread. FIFO order over the dirty queue is what makes
-`flushed_upto` an exact watermark for the `flush()` barrier; partitioned
-flushers (as `rocksdb_persistence.cc` uses) would each need their own.
+The write path is lock-free: CAS-publish, then drop a 16-byte
+`{entry*, version}` ticket into a per-thread batch (tiny per-writer
+spinlock, uncontended); full batches append to a single MPSC ring with
+one `fetch_add` per batch. The flusher (one thread, polling ~100µs):
 
-Queue items carry `(key, version, qseq)`. `qseq` is assigned under the
-queue lock so FIFO order and sequence order agree — publication order
-alone does not, since two threads can publish and enqueue in opposite
-orders.
+1. **Drain**: fold tickets into the *dirty map* (`entry → oldest
+   undischarged version`) at memory speed, recycling ring slots
+   immediately — producers essentially never see backpressure, and
+   ring drain does not depend on RocksDB health.
+2. **Writeback**: write each dirty entry's **currently published**
+   bytes into one `WriteBatch`; erase from the map only on success. A
+   failed write keeps the obligations, pins W, and retries — transient
+   IO failure self-heals with no data loss.
+3. **Watermark**: `W = min(version counter, per-writer
+   announce/batch/staged floors, stash, undrained tickets, dirty-map
+   minimums) − 1`. The per-writer `announce` (set before the version
+   draw, cleared after the ticket is batched) closes the publish gap.
+   Recomputation is lazy under a large dirty map; a `flush()` waiter
+   forces it every cycle. Laziness lags W, never unsounds it.
+
+The dirty map is simultaneously the **coalescer** (a hot key occupies
+one map slot no matter how many tickets, written once per pass) and the
+**honesty mechanism** (an undischarged entry pins W). Partial writer
+batches are *stolen* by the flusher each cycle, so an idle thread
+cannot pin W; all flusher-side ring appends are non-blocking (failed
+appends park in a watermark-covered stash), so the flusher cannot
+deadlock on the backpressure it relieves.
+
+Measured (16 threads, 8M writes, 200K keys, 128B values): write ack
+1.84M/s (7.0x raw RocksDB), end-to-end durable 4.91x, reads 9.9x hot /
+6.1x uniform.
 
 ## Scans
 
