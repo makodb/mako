@@ -7,40 +7,39 @@
  * #if RUSTYCPP_RUST block is the source of truth; regenerate with
  * scripts/regen_storage_dsl.sh.
  *
- * RocksDB is the system of record; Masstree is a volatile accelerator.
- * A write acks as soon as it is in Masstree — a single flusher thread
- * moves it into RocksDB afterwards — so a crash loses the un-flushed
- * tail. That window is the point of the design, not a defect; callers
- * that need durability call flush().
+ * Two properties define this file.
+ *
+ * A WRITE ACKS BEFORE IT IS DURABLE. put/insert/remove land in Masstree
+ * and return; a single flusher thread moves them into RocksDB
+ * afterwards, so a crash loses the un-flushed tail. Callers that need
+ * durability call flush().
+ *
+ * MASSTREE HOLDS EVERY KEY; ONLY VALUES ARE EVICTABLE. This is the
+ * load-bearing invariant: the tree is a complete index of the keyspace,
+ * so a TREE MISS IS AUTHORITATIVE ABSENCE. Everything else follows —
+ * existence is answerable in memory (so the write ops are lock-free CAS
+ * loops rather than two-tier read-modify-writes under per-key locks),
+ * eviction swaps a pointer instead of removing a key, and range scans
+ * walk one tier instead of merging two.
+ *
+ * The invariant must hold before the first operation, which is why
+ * mrx_store_open scans the whole database to install its keys. Opening
+ * a large existing RocksDB is O(keyspace); opening an empty one is
+ * free.
  *
  * OrderedIndex ONLY — there is no transaction runtime here, the same
  * type fact as masstree_ordered_index: this class implements neither
  * TxnOrderedIndex nor ShardParticipant.
  *
- * Entry lifetime: value and version are IMMUTABLE for the life of an
- * entry. An overwrite allocates a fresh entry and displaces the old
- * one (RCU-deferred free); only the `durable` and `referenced` bytes
- * are ever mutated, and both are atomic. That immutability is what
- * makes the flusher race tractable — the flusher marks durability on
- * the exact instance it read, so a newer write is never mistaken for
- * flushed (trap 2).
- *
- * Per-key striped locks serialize the read-modify-write ops (put /
- * insert / remove / read-through fill). They are needed because this
- * is a two-tier store: "does this key exist?" cannot be answered from
- * Masstree alone, so the check and the publish must not interleave.
- * The critical section can perform a RocksDB read, which is why these
- * are blocking rusty::Mutex stripes and not spinlocks.
- *
  * C++ stays where C++ must: the kernels below do the raw-pointer
- * surgery (RCU arena, tree calls, entry atomics), the rocksdb C API,
- * and the flusher thread. The DSL owns the class shape, the interface
- * attachment, the guard scoping, and the per-op policy.
+ * surgery (RCU arena, tree calls, the CAS loops, entry atomics), the
+ * rocksdb C API, and the flusher thread. The DSL owns the class shape,
+ * the interface attachment, the RCU guard scoping, and the per-op
+ * policy.
  *
- * Thread contract: same per-thread bring-up as the rest of the engine
- * (masstree threadinfo + RCU registration — scoped_db_thread_ctx or an
- * mbta-style thread_init covers it). The flusher thread registers
- * itself on entry.
+ * Thread contract: masstree builds a simple_threadinfo per call and
+ * rcu::mysync() registers the calling thread lazily, so entering an RCU
+ * region is the whole per-thread contract.
  *
  * INCLUDE ORDER: before any header pulling sto/MassTrans.hh
  * (`#define RCU 1` vs imstring.h's template parameter).
@@ -66,55 +65,80 @@
 #include <rusty/vecdeque.hpp>
 
 // ---------------------------------------------------------------------------
-// Cache entry. One RCU allocation; value bytes inline after the header.
+// Value record. IMMUTABLE once published, except `durable` — durability
+// is a property of one specific version, so it is the only mutable
+// field and it is atomic. Value bytes follow the header inline.
+//
+// An EVICTED value is not a null pointer: it is a real record with
+// resident = 0 that still carries its version. That is what makes the
+// fill CAS safe against ABA (trap 3).
 // ---------------------------------------------------------------------------
 
+struct mrx_val {
+  uint64_t version;
+  uint32_t len;
+  uint8_t tombstone;             // the key is deleted
+  uint8_t resident;              // 0 = bytes live only in RocksDB
+  std::atomic<uint8_t> durable;  // 1 = this version is in RocksDB
+};
+
+// One per key, allocated once and never moved: a stable CAS target.
+// `val` is never null.
 struct mrx_entry {
-  uint64_t version;                 // immutable after publish
-  uint32_t value_len;               // immutable
-  uint8_t tombstone;                // immutable
-  std::atomic<uint8_t> durable;     // 0 = dirty, 1 = present in RocksDB
+  std::atomic<mrx_val *> val;
   std::atomic<uint8_t> referenced;  // CLOCK second-chance bit
 };
 
-// Probe outcome. Deliberately two bools rather than an int code: the
-// DSL would otherwise compare against named constants, and the
-// transpiler lowers `==` through a rusty::detail helper that the pinned
-// runtime (bcd32358) does not carry.
-struct mrx_probe_result {
-  bool found;
-  bool tombstone;
-};
-
 // @safe - inline payload address
-inline uint8_t *mrx_entry_bytes(mrx_entry *e) {
-  return reinterpret_cast<uint8_t *>(e) + sizeof(mrx_entry);
+inline uint8_t *mrx_val_bytes(mrx_val *v) {
+  return reinterpret_cast<uint8_t *>(v) + sizeof(mrx_val);
 }
 
-// @safe - allocation footprint, needed by both dealloc and accounting
-inline size_t mrx_entry_footprint(const mrx_entry *e) {
-  return sizeof(mrx_entry) + e->value_len;
+// @safe - allocation footprint, for both dealloc and byte accounting
+inline size_t mrx_val_footprint(const mrx_val *v) {
+  return sizeof(mrx_val) + v->len;
 }
 
-// @unsafe - RCU arena allocation + placement-new of the atomics
-inline mrx_entry *mrx_entry_new(uint64_t version, bool tombstone,
-                                const std::string &value, bool durable) {
-  const size_t payload = tombstone ? 0 : value.size();
-  void *p = rcu::s_instance.alloc(sizeof(mrx_entry) + payload);
+// @unsafe - RCU arena allocation + placement-new of the atomic
+inline mrx_val *mrx_val_new(uint64_t version, bool tombstone, bool resident,
+                            const std::string &value, bool durable) {
+  const size_t payload = (resident && !tombstone) ? value.size() : 0;
+  void *p = rcu::s_instance.alloc(sizeof(mrx_val) + payload);
+  mrx_val *v = new (p) mrx_val();
+  v->version = version;
+  v->len = static_cast<uint32_t>(payload);
+  v->tombstone = tombstone ? 1 : 0;
+  v->resident = resident ? 1 : 0;
+  v->durable.store(durable ? 1 : 0, std::memory_order_relaxed);
+  if (payload != 0) memcpy(mrx_val_bytes(v), value.data(), payload);
+  return v;
+}
+
+// @unsafe - deferred free (readers may still hold v); the atomic is
+// trivially destructible, so skipping the dtor is sound.
+inline void mrx_val_free_rcu(mrx_val *v) {
+  rcu::s_instance.dealloc_rcu(v, mrx_val_footprint(v));
+}
+
+// @unsafe - immediate free of a record that was never published
+inline void mrx_val_drop(mrx_val *v) {
+  rcu::s_instance.dealloc(v, mrx_val_footprint(v));
+}
+
+// @unsafe - RCU arena allocation of a stable entry
+inline mrx_entry *mrx_entry_alloc(mrx_val *initial) {
+  void *p = rcu::s_instance.alloc(sizeof(mrx_entry));
   mrx_entry *e = new (p) mrx_entry();
-  e->version = version;
-  e->value_len = static_cast<uint32_t>(payload);
-  e->tombstone = tombstone ? 1 : 0;
-  e->durable.store(durable ? 1 : 0, std::memory_order_relaxed);
+  e->val.store(initial, std::memory_order_relaxed);
   e->referenced.store(1, std::memory_order_relaxed);
-  if (payload != 0) memcpy(mrx_entry_bytes(e), value.data(), payload);
   return e;
 }
 
-// @unsafe - deferred free (readers may still hold e); atomics are
-// trivially destructible, so skipping the dtor is sound.
-inline void mrx_entry_free_rcu(mrx_entry *e) {
-  rcu::s_instance.dealloc_rcu(e, mrx_entry_footprint(e));
+// @safe - copy a resident value out
+inline void mrx_val_copy_out(mrx_val *v, std::string &value,
+                             size_t max_bytes_read) {
+  const size_t n = std::min<size_t>(v->len, max_bytes_read);
+  value.assign(reinterpret_cast<const char *>(mrx_val_bytes(v)), n);
 }
 
 inline varkey mrx_key(lcdf::Str s) {
@@ -122,12 +146,31 @@ inline varkey mrx_key(lcdf::Str s) {
 }
 
 // ---------------------------------------------------------------------------
-// Store: RocksDB handle, dirty queue, striped key locks, flusher thread.
+// Results handed back to the DSL. Two bools rather than an int code:
+// the DSL would otherwise compare against named constants, and the
+// transpiler lowers `==` through a rusty::detail helper the pinned
+// runtime (bcd32358) does not carry.
+// ---------------------------------------------------------------------------
+
+// done = the cache answered outright; found = the answer.
+struct mrx_probe_result {
+  bool done;
+  bool found;
+};
+
+// wrote = the write was applied; existed = the key was live beforehand.
+struct mrx_write_result {
+  bool wrote;
+  bool existed;
+};
+
+// ---------------------------------------------------------------------------
+// Store: RocksDB handle, dirty queue, flusher thread.
 // ---------------------------------------------------------------------------
 
 struct mrx_dirty_item {
   std::string key;
-  uint64_t version;  // the entry instance this item refers to
+  uint64_t version;  // the value instance this item refers to
   uint64_t qseq;     // FIFO position, assigned under the queue lock
 };
 
@@ -138,21 +181,13 @@ struct mrx_queue_state {
   // barrier's condvar predicate can read it without a torn view.
   uint64_t flushed_upto{0};
   bool stopping{false};
-  // A RocksDB write failed. The affected entries were left non-durable
+  // A RocksDB write failed. The affected values were left non-durable
   // (so eviction still refuses them and nothing is silently lost), but
   // the watermark can no longer advance past them — without this flag
   // flush() would block forever waiting on a batch that will never
   // land.
   bool write_failed{false};
 };
-
-// A stripe carries no data — it exists purely to serialize
-// read-modify-write on the keys that hash to it.
-struct mrx_stripe {
-  uint8_t pad{0};
-};
-
-static const size_t MRX_STRIPES = 1024;
 
 struct mrx_store {
   concurrent_btree *tree{nullptr};
@@ -169,33 +204,29 @@ struct mrx_store {
   rusty::Condvar queue_cv;    // flusher waits for work
   rusty::Condvar drained_cv;  // flush() waits for the watermark
 
-  rusty::Vec<rusty::Mutex<mrx_stripe>> stripes;
-
   rusty::Option<rusty::thread::JoinHandle<void>> flusher;
 };
-
-// @safe - stripe selection; FNV-1a over the key bytes
-inline size_t mrx_stripe_index(lcdf::Str key) {
-  uint64_t h = 1469598103934665603ULL;
-  for (int i = 0; i < key.length(); i++) {
-    h ^= static_cast<uint8_t>(key.data()[i]);
-    h *= 1099511628211ULL;
-  }
-  return static_cast<size_t>(h % MRX_STRIPES);
-}
-
-// @unsafe - blocking per-key lock; the guard is a move-only DSL local
-inline rusty::MutexGuard<mrx_stripe> mrx_key_lock(mrx_store *s,
-                                                  lcdf::Str key) {
-  return s->stripes[mrx_stripe_index(key)].lock().unwrap();
-}
 
 // RAII region as a move-only value the DSL can hold in a guard local.
 // @unsafe - pins the calling thread's RCU epoch
 inline scoped_rcu_region mrx_rcu_region() { return scoped_rcu_region(); }
 
+// @safe - resident footprint of the cache tier
+inline uint64_t mrx_resident_bytes(const mrx_store *s) {
+  return s->resident_bytes.load(std::memory_order_relaxed);
+}
+
+// @safe - byte accounting across a published swap
+inline void mrx_account_swap(mrx_store *s, const mrx_val *old_v,
+                             const mrx_val *new_v) {
+  s->resident_bytes.fetch_add(mrx_val_footprint(new_v),
+                              std::memory_order_relaxed);
+  s->resident_bytes.fetch_sub(mrx_val_footprint(old_v),
+                              std::memory_order_relaxed);
+}
+
 // ---------------------------------------------------------------------------
-// Cache-side kernels.
+// Tree access.
 // ---------------------------------------------------------------------------
 
 // @unsafe - reads an RCU-protected entry (caller holds region)
@@ -205,80 +236,33 @@ inline mrx_entry *mrx_lookup(concurrent_btree *t, lcdf::Str key) {
   return reinterpret_cast<mrx_entry *>(v);
 }
 
-// Probe the cache only. Sets the CLOCK bit on a hit. `value` is filled
-// only for a live hit.
-// @unsafe - copies out of an RCU-protected buffer (caller holds region)
-inline mrx_probe_result mrx_cache_probe(concurrent_btree *t, lcdf::Str key,
-                                        std::string &value,
-                                        size_t max_bytes_read) {
-  mrx_probe_result r{false, false};
-  mrx_entry *e = mrx_lookup(t, key);
-  if (e == nullptr) return r;
-  e->referenced.store(1, std::memory_order_relaxed);
-  r.found = true;
-  if (e->tombstone) {
-    r.tombstone = true;
-    return r;
-  }
-  const size_t n = std::min<size_t>(e->value_len, max_bytes_read);
-  value.assign(reinterpret_cast<const char *>(mrx_entry_bytes(e)), n);
-  return r;
-}
+// Get the entry for a key, creating it if this is the first time the
+// key has been written. A fresh entry starts as a DURABLE TOMBSTONE:
+// the key does not exist yet and there is nothing in RocksDB to write.
+// @unsafe - put-if-absent on the tree; loser allocations freed immediately
+inline mrx_entry *mrx_entry_for(mrx_store *s, lcdf::Str key) {
+  mrx_entry *e = mrx_lookup(s->tree, key);
+  if (e != nullptr) return e;
 
-// Publish a new entry instance, displacing any current one, and
-// enqueue it for the flusher. Caller MUST hold the key's stripe.
-// @unsafe - tree insert + RCU-deferred free of the displaced entry
-inline void mrx_publish(mrx_store *s, lcdf::Str key,
-                        const std::string &value, bool tombstone) {
-  const uint64_t ver = s->version_ctr.fetch_add(1, std::memory_order_relaxed);
-  mrx_entry *e = mrx_entry_new(ver, tombstone, value, /*durable=*/false);
-
-  concurrent_btree::value_type old = nullptr;
-  s->tree->insert(mrx_key(key), reinterpret_cast<concurrent_btree::value_type>(e),
-                  &old);
-  s->resident_bytes.fetch_add(mrx_entry_footprint(e), std::memory_order_relaxed);
-  if (old != nullptr) {
-    mrx_entry *oe = reinterpret_cast<mrx_entry *>(old);
-    s->resident_bytes.fetch_sub(mrx_entry_footprint(oe),
+  mrx_val *v0 = mrx_val_new(0, /*tombstone=*/true, /*resident=*/true,
+                            std::string(), /*durable=*/true);
+  mrx_entry *ne = mrx_entry_alloc(v0);
+  if (s->tree->insert_if_absent(
+          mrx_key(key), reinterpret_cast<concurrent_btree::value_type>(ne))) {
+    s->resident_bytes.fetch_add(sizeof(mrx_entry) + mrx_val_footprint(v0),
                                 std::memory_order_relaxed);
-    mrx_entry_free_rcu(oe);
+    return ne;
   }
-
-  {
-    auto g = s->queue.lock().unwrap();
-    mrx_dirty_item item;
-    item.key.assign(key.data(), key.length());
-    item.version = ver;
-    item.qseq = (*g).next_qseq++;
-    (*g).items.push_back(std::move(item));
-  }
-  s->queue_cv.notify_one();
-}
-
-// Install a CLEAN entry only if the slot is still empty. Used by the
-// read-through fill; losing to a concurrent publish is the correct
-// outcome (trap 3), so the loser buffer is freed immediately — it was
-// never published.
-// @unsafe - put-if-absent on the tree
-inline bool mrx_fill_clean(mrx_store *s, lcdf::Str key,
-                           const std::string &value, bool tombstone) {
-  const uint64_t ver = s->version_ctr.fetch_add(1, std::memory_order_relaxed);
-  mrx_entry *e = mrx_entry_new(ver, tombstone, value, /*durable=*/true);
-  if (s->tree->insert_if_absent(mrx_key(key),
-                                reinterpret_cast<concurrent_btree::value_type>(e))) {
-    s->resident_bytes.fetch_add(mrx_entry_footprint(e),
-                                std::memory_order_relaxed);
-    return true;
-  }
-  rcu::s_instance.dealloc(e, mrx_entry_footprint(e));
-  return false;
+  mrx_val_drop(v0);
+  rcu::s_instance.dealloc(ne, sizeof(mrx_entry));
+  return mrx_lookup(s->tree, key);
 }
 
 // ---------------------------------------------------------------------------
 // RocksDB-side kernels.
 // ---------------------------------------------------------------------------
 
-// @unsafe - rocksdb C API; err is leaked to the caller-free contract
+// @unsafe - rocksdb C API
 inline bool mrx_db_get(mrx_store *s, lcdf::Str key, std::string &value,
                        size_t max_bytes_read) {
   size_t vlen = 0;
@@ -295,53 +279,174 @@ inline bool mrx_db_get(mrx_store *s, lcdf::Str key, std::string &value,
   return true;
 }
 
-// @unsafe - rocksdb C API
-inline bool mrx_db_exists(mrx_store *s, lcdf::Str key) {
-  std::string sink;
-  return mrx_db_get(s, key, sink, std::string::npos);
-}
-
 // ---------------------------------------------------------------------------
-// Two-tier existence + fill, both under the caller's stripe lock.
+// Dirty queue.
 // ---------------------------------------------------------------------------
 
-// "Does this key exist anywhere?" — cache first (a tombstone is an
-// authoritative NO), else the system of record.
-// @unsafe - touches both tiers
-inline bool mrx_exists(mrx_store *s, lcdf::Str key) {
-  mrx_entry *e = mrx_lookup(s->tree, key);
-  if (e != nullptr) return e->tombstone == 0;
-  return mrx_db_exists(s, key);
-}
-
-// Read-through fill. Caller holds the stripe and has already re-probed
-// the cache. Installs a negative entry on a RocksDB miss so that a
-// later insert() can decide put-if-absent without another disk read.
-// @unsafe - touches both tiers
-inline bool mrx_fill_from_db(mrx_store *s, lcdf::Str key, std::string &value,
-                             size_t max_bytes_read) {
-  std::string full;
-  if (!mrx_db_get(s, key, full, std::string::npos)) {
-    mrx_fill_clean(s, key, std::string(), /*tombstone=*/true);
-    return false;
+// @unsafe - queue lock; qseq is assigned HERE so FIFO order and
+// sequence order agree (publication order alone does not — two threads
+// can publish and enqueue in opposite orders).
+inline void mrx_enqueue(mrx_store *s, lcdf::Str key, uint64_t version) {
+  {
+    auto g = s->queue.lock().unwrap();
+    mrx_dirty_item item;
+    item.key.assign(key.data(), key.length());
+    item.version = version;
+    item.qseq = (*g).next_qseq++;
+    (*g).items.push_back(std::move(item));
   }
-  mrx_fill_clean(s, key, full, /*tombstone=*/false);
-  value.assign(full.data(), std::min<size_t>(full.size(), max_bytes_read));
-  return true;
+  s->queue_cv.notify_one();
+}
+
+// ---------------------------------------------------------------------------
+// The write path. ONE CAS loop serves put / insert / remove, because
+// all three are the same read-modify-write with different guards:
+//
+//   require_absent  — insert: abandon if the key is already live
+//   require_present — remove: abandon if the key is already absent
+//
+// No locks: the entry is stable, so `val` is a stable CAS target, and a
+// lost race simply re-reads the new state and retries.
+// ---------------------------------------------------------------------------
+
+// @unsafe - CAS loop over an RCU-protected value chain
+inline mrx_write_result mrx_write(mrx_store *s, lcdf::Str key,
+                                  const std::string &value, bool tombstone,
+                                  bool require_absent, bool require_present) {
+  mrx_write_result r{false, false};
+  mrx_entry *e = mrx_entry_for(s, key);
+  if (e == nullptr) return r;
+
+  for (;;) {
+    mrx_val *cur = e->val.load(std::memory_order_acquire);
+    // A key whose value is merely EVICTED still exists — only a
+    // tombstone means absent.
+    const bool live = (cur->tombstone == 0);
+    r.existed = live;
+    if (require_absent && live) return r;
+    if (require_present && !live) return r;
+
+    const uint64_t ver =
+        s->version_ctr.fetch_add(1, std::memory_order_relaxed);
+    mrx_val *nv = mrx_val_new(ver, tombstone, /*resident=*/true, value,
+                              /*durable=*/false);
+    if (e->val.compare_exchange_weak(cur, nv, std::memory_order_acq_rel,
+                                     std::memory_order_acquire)) {
+      e->referenced.store(1, std::memory_order_relaxed);
+      mrx_account_swap(s, cur, nv);
+      mrx_val_free_rcu(cur);
+      mrx_enqueue(s, key, ver);
+      r.wrote = true;
+      return r;
+    }
+    // Lost the race. Drop the unpublished record and retry against
+    // whatever is current now.
+    mrx_val_drop(nv);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The read path.
+// ---------------------------------------------------------------------------
+
+// Answer from memory alone. `done == false` means only that the value
+// is not resident — the KEY's existence is never in question here,
+// because a tree miss is authoritative absence.
+// @unsafe - reads an RCU-protected value (caller holds region)
+inline mrx_probe_result mrx_cache_probe(mrx_store *s, lcdf::Str key,
+                                        std::string &value,
+                                        size_t max_bytes_read) {
+  mrx_probe_result r{true, false};
+  mrx_entry *e = mrx_lookup(s->tree, key);
+  if (e == nullptr) return r;  // absent, authoritatively
+  e->referenced.store(1, std::memory_order_relaxed);
+
+  mrx_val *cur = e->val.load(std::memory_order_acquire);
+  if (cur->tombstone) return r;  // deleted
+  if (!cur->resident) {
+    r.done = false;  // needs a fill
+    return r;
+  }
+  mrx_val_copy_out(cur, value, max_bytes_read);
+  r.found = true;
+  return r;
+}
+
+// Fetch an evicted value from the system of record and install it.
+//
+// TRAP 3: the CAS names the exact record we read. A writer that
+// published a new value — even one already flushed and evicted again —
+// replaced that record with a different allocation, so the CAS fails
+// and we retry against the new state instead of installing something
+// stale. This is why an evicted value is a versioned record and not a
+// null pointer.
+// @unsafe - rocksdb read + CAS install
+inline bool mrx_fill(mrx_store *s, lcdf::Str key, std::string &value,
+                     size_t max_bytes_read) {
+  mrx_entry *e = mrx_lookup(s->tree, key);
+  if (e == nullptr) return false;
+
+  for (;;) {
+    mrx_val *cur = e->val.load(std::memory_order_acquire);
+    if (cur->tombstone) return false;
+    if (cur->resident) {
+      mrx_val_copy_out(cur, value, max_bytes_read);
+      return true;
+    }
+
+    std::string full;
+    if (!mrx_db_get(s, key, full, std::string::npos)) {
+      // The tree says this key exists but RocksDB has no row. Report
+      // absent rather than inventing data.
+      return false;
+    }
+    mrx_val *nv = mrx_val_new(cur->version, /*tombstone=*/false,
+                              /*resident=*/true, full, /*durable=*/true);
+    if (e->val.compare_exchange_strong(cur, nv, std::memory_order_acq_rel,
+                                       std::memory_order_acquire)) {
+      mrx_account_swap(s, cur, nv);
+      mrx_val_free_rcu(cur);
+      value.assign(full.data(), std::min<size_t>(full.size(), max_bytes_read));
+      return true;
+    }
+    mrx_val_drop(nv);
+  }
+}
+
+// Swap a durable resident value for an evicted marker carrying the same
+// version. TRAP 4: a non-durable value is the only copy, so it is never
+// evictable.
+// @unsafe - CAS on an RCU-protected value chain
+inline bool mrx_evict_value(mrx_store *s, mrx_entry *e) {
+  mrx_val *cur = e->val.load(std::memory_order_acquire);
+  if (cur->tombstone || !cur->resident) return false;
+  if (cur->durable.load(std::memory_order_acquire) == 0) return false;
+
+  mrx_val *marker = mrx_val_new(cur->version, /*tombstone=*/false,
+                                /*resident=*/false, std::string(),
+                                /*durable=*/true);
+  if (e->val.compare_exchange_strong(cur, marker, std::memory_order_acq_rel,
+                                     std::memory_order_acquire)) {
+    mrx_account_swap(s, cur, marker);
+    mrx_val_free_rcu(cur);
+    return true;
+  }
+  mrx_val_drop(marker);
+  return false;
 }
 
 // ---------------------------------------------------------------------------
 // Flusher. ONE thread: FIFO order over the queue is what makes
-// `flushed_upto` an exact watermark for the flush() barrier. Splitting
-// this into partitioned flushers (as rocksdb_persistence.cc does) means
-// giving each partition its own watermark.
+// `flushed_upto` an exact watermark for the flush() barrier.
 // ---------------------------------------------------------------------------
 
-// Drain up to `budget` items into one write batch, commit it, then mark
-// the surviving entries durable. The version compare is trap 2: an
-// entry displaced by a newer write is a DIFFERENT instance, so this
-// never clears dirtiness that a later write earned.
-// @unsafe - rocksdb C API + entry atomics
+// Drain up to `budget` items into one write batch, commit, then mark
+// the surviving versions durable.
+//
+// TRAP 2: the version compare. A value displaced by a newer write is a
+// different allocation with a different version and its own queue item,
+// so this never marks durability that a later write earned.
+// @unsafe - rocksdb C API + value atomics
 inline size_t mrx_flush_batch(mrx_store *s, size_t budget) {
   rusty::Vec<mrx_dirty_item> taken;
   {
@@ -357,16 +462,16 @@ inline size_t mrx_flush_batch(mrx_store *s, size_t budget) {
     const auto region = mrx_rcu_region();
     for (size_t i = 0; i < taken.len(); i++) {
       mrx_entry *e = mrx_lookup(s->tree, lcdf::Str(taken[i].key));
-      // Superseded (or already evicted): the newer instance carries its
-      // own queue item, so dropping this one loses nothing.
-      if (e == nullptr || e->version != taken[i].version) continue;
-      if (e->tombstone) {
+      if (e == nullptr) continue;
+      mrx_val *cur = e->val.load(std::memory_order_acquire);
+      if (cur->version != taken[i].version) continue;  // superseded
+      if (cur->tombstone) {
         rocksdb_writebatch_delete(batch, taken[i].key.data(),
                                   taken[i].key.size());
       } else {
         rocksdb_writebatch_put(
             batch, taken[i].key.data(), taken[i].key.size(),
-            reinterpret_cast<const char *>(mrx_entry_bytes(e)), e->value_len);
+            reinterpret_cast<const char *>(mrx_val_bytes(cur)), cur->len);
       }
     }
   }
@@ -376,9 +481,9 @@ inline size_t mrx_flush_batch(mrx_store *s, size_t budget) {
   rocksdb_writebatch_destroy(batch);
   if (err != nullptr) {
     rocksdb_free(err);
-    // Leave the items dirty-but-dropped: the entries stay non-durable,
-    // so eviction still refuses them and no data is silently lost. Wake
-    // any waiting flush() so it reports failure instead of hanging.
+    // Values stay non-durable, so eviction still refuses them and no
+    // data is silently lost. Wake any waiting flush() so it reports
+    // failure instead of hanging on a watermark that cannot advance.
     {
       auto g = s->queue.lock().unwrap();
       (*g).write_failed = true;
@@ -392,8 +497,11 @@ inline size_t mrx_flush_batch(mrx_store *s, size_t budget) {
     const auto region = mrx_rcu_region();
     for (size_t i = 0; i < taken.len(); i++) {
       mrx_entry *e = mrx_lookup(s->tree, lcdf::Str(taken[i].key));
-      if (e != nullptr && e->version == taken[i].version) {
-        e->durable.store(1, std::memory_order_release);
+      if (e != nullptr) {
+        mrx_val *cur = e->val.load(std::memory_order_acquire);
+        if (cur->version == taken[i].version) {
+          cur->durable.store(1, std::memory_order_release);
+        }
       }
       if (taken[i].qseq > high) high = taken[i].qseq;
     }
@@ -408,9 +516,7 @@ inline size_t mrx_flush_batch(mrx_store *s, size_t budget) {
   return taken.len();
 }
 
-// @unsafe - thread body. No explicit bring-up: masstree builds a
-// simple_threadinfo per call and rcu::mysync() registers the thread
-// lazily on first use, so entering an RCU region is the whole contract.
+// @unsafe - thread body
 inline void mrx_flusher_loop(mrx_store *s) {
   for (;;) {
     {
@@ -450,10 +556,173 @@ inline bool mrx_flush_barrier(mrx_store *s) {
 }
 
 // ---------------------------------------------------------------------------
+// Ranges. The key set is wholly in Masstree, so this walks ONE tier:
+// emit resident values, skip tombstones, fill evicted ones from
+// RocksDB.
+//
+// The walk is CHUNKED rather than emitting from inside the masstree
+// range callback, because filling an evicted value performs a RocksDB
+// read and that has no business running inside a tree traversal.
+//
+// Cost note: a cold range does N point lookups where a merged iterator
+// would do one range read. Batching runs of adjacent evicted keys is a
+// pure optimization and needs no semantic change.
+// ---------------------------------------------------------------------------
+
+struct mrx_chunk_item {
+  std::string key;
+  mrx_val *val;  // RCU-protected; the caller holds the region
+};
+
+// Bridges mbtree's templated functor protocol to a bounded buffer.
+// @unsafe - reads RCU-protected entries (caller holds region)
+struct mrx_chunk_collector {
+  mrx_chunk_collector(rusty::Vec<mrx_chunk_item> &out, size_t budget)
+      : out_(out), budget_(budget) {}
+  bool operator()(const lcdf::Str &k, concurrent_btree::value_type v) {
+    if (out_.len() >= budget_) return false;  // stop the walk
+    mrx_entry *e = reinterpret_cast<mrx_entry *>(v);
+    mrx_chunk_item item;
+    item.key.assign(k.data(), k.length());
+    item.val = e->val.load(std::memory_order_acquire);
+    e->referenced.store(1, std::memory_order_relaxed);
+    out_.push(std::move(item));
+    return true;
+  }
+  rusty::Vec<mrx_chunk_item> &out_;
+  size_t budget_;
+};
+
+// @safe - lexicographic byte compare, shorter-is-less on a shared prefix
+inline int mrx_bytes_cmp(const char *a, size_t alen, const char *b,
+                         size_t blen) {
+  const size_t n = std::min(alen, blen);
+  const int c = (n == 0) ? 0 : memcmp(a, b, n);
+  if (c != 0) return c;
+  if (alen < blen) return -1;
+  if (alen > blen) return 1;
+  return 0;
+}
+
+// Emit one collected item, filling from RocksDB if the value is not
+// resident. Returns false if the callback asked to stop.
+// @unsafe - may perform a rocksdb read
+inline bool mrx_emit_item(mrx_store *s, const mrx_chunk_item &item,
+                          oi_scan_callback &cb) {
+  if (item.val->tombstone) return true;  // deleted: skip, do not emit
+  std::string value;
+  if (item.val->resident) {
+    mrx_val_copy_out(item.val, value, std::string::npos);
+  } else if (!mrx_fill(s, lcdf::Str(item.key), value, std::string::npos)) {
+    return true;  // vanished under us; skip
+  }
+  return cb.invoke(item.key.data(), item.key.size(), value);
+}
+
+static const size_t MRX_SCAN_CHUNK = 512;
+
+// @unsafe - [start, *end) ascending
+inline void mrx_scan(mrx_store *s, const std::string &start_key,
+                     const std::string *end_key, oi_scan_callback &cb) {
+  std::string cursor = start_key;
+  for (;;) {
+    rusty::Vec<mrx_chunk_item> chunk;
+    {
+      const auto region = mrx_rcu_region();
+      mrx_chunk_collector c(chunk, MRX_SCAN_CHUNK);
+      varkey lower = mrx_key(lcdf::Str(cursor));
+      if (end_key != nullptr) {
+        varkey upper = mrx_key(lcdf::Str(*end_key));
+        s->tree->search_range(lower, &upper, c);
+      } else {
+        s->tree->search_range(lower, nullptr, c);
+      }
+      if (chunk.len() == 0) return;
+      for (size_t i = 0; i < chunk.len(); i++) {
+        if (!mrx_emit_item(s, chunk[i], cb)) return;
+      }
+      cursor = chunk[chunk.len() - 1].key;
+    }
+    if (chunk.len() < MRX_SCAN_CHUNK) return;
+    // Resume strictly after the last key: appending a 0 byte yields its
+    // immediate successor in byte order.
+    cursor.push_back('\0');
+  }
+}
+
+// @unsafe - descending from start down to *end exclusive
+inline void mrx_rscan(mrx_store *s, const std::string &start_key,
+                      const std::string *end_key, oi_scan_callback &cb) {
+  std::string cursor = start_key;
+  bool have_prev = false;
+  std::string prev;
+  for (;;) {
+    rusty::Vec<mrx_chunk_item> chunk;
+    {
+      const auto region = mrx_rcu_region();
+      mrx_chunk_collector c(chunk, MRX_SCAN_CHUNK);
+      varkey upper = mrx_key(lcdf::Str(cursor));
+      if (end_key != nullptr) {
+        varkey lower = mrx_key(lcdf::Str(*end_key));
+        s->tree->rsearch_range(upper, &lower, c);
+      } else {
+        s->tree->rsearch_range(upper, nullptr, c);
+      }
+      if (chunk.len() == 0) return;
+      size_t emitted = 0;
+      for (size_t i = 0; i < chunk.len(); i++) {
+        // The upper bound is inclusive, so the first item of a resumed
+        // chunk repeats the previous chunk's last key.
+        if (have_prev && i == 0 &&
+            mrx_bytes_cmp(chunk[i].key.data(), chunk[i].key.size(),
+                          prev.data(), prev.size()) == 0) {
+          continue;
+        }
+        if (!mrx_emit_item(s, chunk[i], cb)) return;
+        emitted++;
+      }
+      if (emitted == 0) return;
+      cursor = chunk[chunk.len() - 1].key;
+      prev = cursor;
+      have_prev = true;
+    }
+    if (chunk.len() < MRX_SCAN_CHUNK) return;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle.
 // ---------------------------------------------------------------------------
 
-// @unsafe - opens RocksDB and starts the flusher; returns null on failure
+// Establish the invariant: every key in RocksDB gets a resident entry
+// with its value evicted. O(keyspace) on a non-empty database, free on
+// an empty one. Nothing may run against the store until this completes.
+// @unsafe - rocksdb iterator + tree inserts
+inline void mrx_load_keys(mrx_store *s) {
+  const auto region = mrx_rcu_region();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(s->db, s->ropts);
+  rocksdb_iter_seek_to_first(it);
+  while (rocksdb_iter_valid(it)) {
+    size_t klen = 0;
+    const char *k = rocksdb_iter_key(it, &klen);
+    mrx_val *v = mrx_val_new(0, /*tombstone=*/false, /*resident=*/false,
+                             std::string(), /*durable=*/true);
+    mrx_entry *e = mrx_entry_alloc(v);
+    if (s->tree->insert_if_absent(
+            mrx_key(lcdf::Str(k, static_cast<int>(klen))),
+            reinterpret_cast<concurrent_btree::value_type>(e))) {
+      s->resident_bytes.fetch_add(sizeof(mrx_entry) + mrx_val_footprint(v),
+                                  std::memory_order_relaxed);
+    } else {
+      mrx_val_drop(v);
+      rcu::s_instance.dealloc(e, sizeof(mrx_entry));
+    }
+    rocksdb_iter_next(it);
+  }
+  rocksdb_iter_destroy(it);
+}
+
+// @unsafe - opens RocksDB, loads the key set, starts the flusher
 inline mrx_store *mrx_store_open(concurrent_btree *tree,
                                  const std::string &db_path) {
   mrx_store *s = new mrx_store();
@@ -474,9 +743,7 @@ inline mrx_store *mrx_store_open(concurrent_btree *tree,
     return nullptr;
   }
 
-  for (size_t i = 0; i < MRX_STRIPES; i++) {
-    s->stripes.push(rusty::Mutex<mrx_stripe>(mrx_stripe()));
-  }
+  mrx_load_keys(s);
 
   s->flusher = rusty::Option<rusty::thread::JoinHandle<void>>(
       rusty::thread::spawn([s]() { mrx_flusher_loop(s); }));
@@ -503,91 +770,32 @@ inline void mrx_store_close(mrx_store *s) {
   delete s;
 }
 
-// @unsafe - estimate; the tree's own count
+// @unsafe - estimate; counts tombstones too, so it OVERCOUNTS live keys
 inline size_t mrx_size(const concurrent_btree *t) { return t->size(); }
 
-// @safe - resident footprint of the cache tier
-inline uint64_t mrx_resident_bytes(const mrx_store *s) {
-  return s->resident_bytes.load(std::memory_order_relaxed);
-}
-
-// ---------------------------------------------------------------------------
-// Ranges.
-//
-// S1 IMPLEMENTATION: drain, then iterate RocksDB alone. That is
-// *correct* — after the barrier every acked write is in RocksDB and
-// every tombstone has become a RocksDB delete, so the durable tier is
-// the whole truth — but it pays a full flush per scan and reads from
-// disk what memory already holds. S2 replaces both bodies with the
-// chunked two-way merge described in docs/masstree-rocks-cache.md.
-// The signatures and boundary semantics are fixed here so that swap is
-// body-only.
-//
-// OPEN (S2): rscan's exact bound inclusivity is matched to masstree's
-// rsearch_range at merge time; S1 implements descending (end, start].
-// ---------------------------------------------------------------------------
-
-// @safe - lexicographic byte compare, shorter-is-less on a shared prefix
-inline int mrx_bytes_cmp(const char *a, size_t alen, const char *b,
-                         size_t blen) {
-  const size_t n = std::min(alen, blen);
-  const int c = (n == 0) ? 0 : memcmp(a, b, n);
-  if (c != 0) return c;
-  if (alen < blen) return -1;
-  if (alen > blen) return 1;
-  return 0;
-}
-
-// @unsafe - rocksdb iterator; [start, *end) ascending
-inline void mrx_scan(mrx_store *s, const std::string &start_key,
-                     const std::string *end_key, oi_scan_callback &cb) {
+// TRUNCATE of both tiers, not a cache drop: dropping only the tree
+// would break the key-resident invariant while RocksDB still held rows.
+// NOT THREAD SAFE (mbtree::clear contract); entry/value allocations are
+// leaked deliberately, as in oi_mt_clear — a teardown affordance.
+// @unsafe - rocksdb iterator + batch delete + tree clear
+inline oi_stats_map mrx_clear(mrx_store *s) {
   mrx_flush_barrier(s);
+
+  rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
   rocksdb_iterator_t *it = rocksdb_create_iterator(s->db, s->ropts);
-  rocksdb_iter_seek(it, start_key.data(), start_key.size());
-  std::string val;
+  rocksdb_iter_seek_to_first(it);
   while (rocksdb_iter_valid(it)) {
     size_t klen = 0;
     const char *k = rocksdb_iter_key(it, &klen);
-    if (end_key != nullptr &&
-        mrx_bytes_cmp(k, klen, end_key->data(), end_key->size()) >= 0) {
-      break;
-    }
-    size_t vlen = 0;
-    const char *v = rocksdb_iter_value(it, &vlen);
-    val.assign(v, vlen);
-    if (!cb.invoke(k, klen, val)) break;
+    rocksdb_writebatch_delete(batch, k, klen);
     rocksdb_iter_next(it);
   }
   rocksdb_iter_destroy(it);
-}
+  char *err = nullptr;
+  rocksdb_write(s->db, s->wopts, batch, &err);
+  rocksdb_writebatch_destroy(batch);
+  if (err != nullptr) rocksdb_free(err);
 
-// @unsafe - rocksdb iterator; descending from start down to *end exclusive
-inline void mrx_rscan(mrx_store *s, const std::string &start_key,
-                      const std::string *end_key, oi_scan_callback &cb) {
-  mrx_flush_barrier(s);
-  rocksdb_iterator_t *it = rocksdb_create_iterator(s->db, s->ropts);
-  rocksdb_iter_seek_for_prev(it, start_key.data(), start_key.size());
-  std::string val;
-  while (rocksdb_iter_valid(it)) {
-    size_t klen = 0;
-    const char *k = rocksdb_iter_key(it, &klen);
-    if (end_key != nullptr &&
-        mrx_bytes_cmp(k, klen, end_key->data(), end_key->size()) <= 0) {
-      break;
-    }
-    size_t vlen = 0;
-    const char *v = rocksdb_iter_value(it, &vlen);
-    val.assign(v, vlen);
-    if (!cb.invoke(k, klen, val)) break;
-    rocksdb_iter_prev(it);
-  }
-  rocksdb_iter_destroy(it);
-}
-
-// NOT THREAD SAFE (mbtree::clear contract); drops cached state only —
-// RocksDB is untouched, so this is a cache-drop, not a truncate.
-inline oi_stats_map mrx_clear(mrx_store *s) {
-  mrx_flush_barrier(s);
   s->tree->clear();
   s->resident_bytes.store(0, std::memory_order_relaxed);
   return oi_stats_map();
@@ -616,54 +824,38 @@ impl masstree_rocks_index {
 
 #[cpp_inherit]
 impl OrderedIndex for masstree_rocks_index {
+    // A tree miss is authoritative absence, so a miss here never
+    // consults RocksDB. Only a NON-RESIDENT VALUE does.
     fn get(&mut self, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
         let _guard = unsafe { mrx_rcu_region() };
-        let hit = unsafe { mrx_cache_probe(self.tree, key, value, max_bytes_read) };
-        if hit.found {
-            return !hit.tombstone;
+        let p = unsafe { mrx_cache_probe(self.store, key, value, max_bytes_read) };
+        if p.done {
+            return p.found;
         }
-        // Miss. Fill under the stripe so a racing publish/flush/evict
-        // cannot leave a stale value cached (trap 3), re-probing first
-        // because the winner of that race may have filled it already.
-        let _klock = unsafe { mrx_key_lock(self.store, key) };
-        let again = unsafe { mrx_cache_probe(self.tree, key, value, max_bytes_read) };
-        if again.found {
-            return !again.tombstone;
-        }
-        unsafe { mrx_fill_from_db(self.store, key, value, max_bytes_read) }
+        unsafe { mrx_fill(self.store, key, value, max_bytes_read) }
     }
 
-    // Returns "newly inserted", which in a two-tier store means asking
-    // RocksDB on a cache miss — the contract is not answerable from
-    // memory alone.
+    // Returns "newly inserted" — answerable in memory now that every
+    // key is resident.
     fn put(&mut self, key: lcdf::Str, value: &std::string) -> bool {
         let _guard = unsafe { mrx_rcu_region() };
-        let _klock = unsafe { mrx_key_lock(self.store, key) };
-        let existed = unsafe { mrx_exists(self.store, key) };
-        unsafe { mrx_publish(self.store, key, value, false) };
-        !existed
+        let w = unsafe { mrx_write(self.store, key, value, false, false, false) };
+        !w.existed
     }
 
     fn insert(&mut self, key: lcdf::Str, value: &std::string) -> bool {
         let _guard = unsafe { mrx_rcu_region() };
-        let _klock = unsafe { mrx_key_lock(self.store, key) };
-        if unsafe { mrx_exists(self.store, key) } {
-            return false;
-        }
-        unsafe { mrx_publish(self.store, key, value, false) };
-        true
+        let w = unsafe { mrx_write(self.store, key, value, false, true, false) };
+        w.wrote
     }
 
-    // A delete is a WRITE of a tombstone, never an erase: erasing would
-    // let the next get() fall through to the stale RocksDB row (trap 1).
+    // A delete publishes a tombstone version. The key stays in the
+    // tree: removing it would break the key-resident invariant, and
+    // reclaiming it races with a concurrent insert (trap 1).
     fn remove(&mut self, key: lcdf::Str) -> bool {
         let _guard = unsafe { mrx_rcu_region() };
-        let _klock = unsafe { mrx_key_lock(self.store, key) };
-        if !unsafe { mrx_exists(self.store, key) } {
-            return false;
-        }
-        unsafe { mrx_publish(self.store, key, "", true) };
-        true
+        let w = unsafe { mrx_write(self.store, key, "", true, false, true) };
+        w.wrote
     }
 
     fn scan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
@@ -691,7 +883,7 @@ impl OrderedIndex for masstree_rocks_index {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=masstree_rocks_index.1 version=1 rust_sha256=85ee17fd8ddc07cdfc03ff51aa56eccefe84faa737d585b4e92a6443d6a4e39b*/
+/*RUSTYCPP:GEN-BEGIN id=masstree_rocks_index.1 version=1 rust_sha256=1944aabb36725586e1843c335da2ed7c613b80ffa9b9647be7d83c43bfe8d8f8*/
 struct masstree_rocks_index;
 
 struct masstree_rocks_index : public OrderedIndex {
@@ -734,56 +926,32 @@ inline uint64_t masstree_rocks_index::resident_bytes() const {
 
 inline bool masstree_rocks_index::get(lcdf::Str key, std::string& value, size_t max_bytes_read) {
     const auto _guard = mrx_rcu_region();
-    const auto hit = mrx_cache_probe(this->tree, std::move(key), value, std::move(max_bytes_read));
-    if (hit.found) {
-        return !hit.tombstone;
-    }
-    const auto _klock = mrx_key_lock(this->store, std::move(key));
-    const auto again = mrx_cache_probe(this->tree, std::move(key), value, std::move(max_bytes_read));
-    if (again.found) {
-        return !again.tombstone;
+    const auto p = mrx_cache_probe(this->store, std::move(key), value, std::move(max_bytes_read));
+    if (p.done) {
+        return p.found;
     }
     // @unsafe
     {
-        return mrx_fill_from_db(this->store, std::move(key), value, std::move(max_bytes_read));
+        return mrx_fill(this->store, std::move(key), value, std::move(max_bytes_read));
     }
 }
 
 inline bool masstree_rocks_index::put(lcdf::Str key, const std::string& value) {
     const auto _guard = mrx_rcu_region();
-    const auto _klock = mrx_key_lock(this->store, std::move(key));
-    const auto existed = mrx_exists(this->store, std::move(key));
-    // @unsafe
-    {
-        mrx_publish(this->store, std::move(key), value, false);
-    }
-    return !existed;
+    const auto w = mrx_write(this->store, std::move(key), value, false, false, false);
+    return !w.existed;
 }
 
 inline bool masstree_rocks_index::insert(lcdf::Str key, const std::string& value) {
     const auto _guard = mrx_rcu_region();
-    const auto _klock = mrx_key_lock(this->store, std::move(key));
-    if (mrx_exists(this->store, std::move(key))) {
-        return false;
-    }
-    // @unsafe
-    {
-        mrx_publish(this->store, std::move(key), value, false);
-    }
-    return true;
+    const auto w = mrx_write(this->store, std::move(key), value, false, true, false);
+    return std::move(w.wrote);
 }
 
 inline bool masstree_rocks_index::remove(lcdf::Str key) {
     const auto _guard = mrx_rcu_region();
-    const auto _klock = mrx_key_lock(this->store, std::move(key));
-    if (!mrx_exists(this->store, std::move(key))) {
-        return false;
-    }
-    // @unsafe
-    {
-        mrx_publish(this->store, std::move(key), "", true);
-    }
-    return true;
+    const auto w = mrx_write(this->store, std::move(key), "", true, false, true);
+    return std::move(w.wrote);
 }
 
 inline void masstree_rocks_index::scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {

@@ -4,144 +4,171 @@
 `src/mako/storage/abstract_ordered_index.h`) whose system of record is
 RocksDB and whose accelerator is an in-memory Masstree. It is
 deliberately **isolated**: no Sto, no transaction runtime, no
-replication, no sharding. Point ops, ranges, and a flush barrier —
-nothing else.
+replication, no sharding.
 
-The defining property: **a write acks before it is durable.** `put`,
-`insert`, and `remove` apply to Masstree and return; a background
-flusher moves the change into RocksDB afterwards. Crash inside that
-window loses the un-flushed tail. That is the accepted trade, not a
-bug — callers that need durability call `flush()`.
+Two properties define it.
+
+**A write acks before it is durable.** `put`, `insert`, and `remove`
+apply to Masstree and return; a background flusher moves the change
+into RocksDB afterwards. Crash inside that window loses the un-flushed
+tail. That is the accepted trade — callers that need durability call
+`flush()`.
+
+**Masstree holds every key; only values are evictable.** This is the
+load-bearing invariant. The tree is a complete index of the keyspace,
+so a tree miss is *authoritative absence*. Values come and go under
+memory pressure; keys do not.
 
 Substrate: `masstree_ordered_index.hh` is the pattern this file
 follows — C++ `@unsafe` kernels for btree/RCU surgery, the Rust DSL for
-the class shape and logic. It is *not* composed, because a cache entry
-needs in-place mutable metadata (CLOCK bit, durability flag) that the
-plain index's `std::string`-valued API can only express as a full tree
-rewrite.
+the class shape and logic.
 
-## Entry
+## What the key-resident invariant buys
 
-One RCU allocation per entry; value bytes inline.
+Every simplification here follows from it:
+
+- **Existence is answerable in memory.** `OrderedIndex` has no
+  fire-and-forget write: `put` returns *newly inserted*, `insert` is
+  put-if-absent, `remove` returns *existed*. Each is a
+  read-modify-write, and consulting RocksDB for the read half is what
+  previously forced per-key locks. Now they are lock-free CAS loops on
+  one entry.
+- **Eviction never mutates the tree.** It swaps a pointer inside a
+  stable entry instead of removing a key, so the eviction path avoids
+  masstree's hardest concurrent operation entirely.
+- **Range scans do not merge two tiers.** The key set is wholly in
+  Masstree, so a scan iterates Masstree and fills values for the
+  evicted ones. No two-way merge, no cross-tier dedup, no tombstone
+  suppression against a RocksDB iterator.
+
+## What it costs
+
+- **`open()` on a non-empty RocksDB is O(keyspace).** The invariant
+  must hold before the first operation, so open scans the whole
+  database and installs every key with its value evicted. An empty
+  database costs nothing. There is no lazy variant that does not
+  reintroduce the two-tier existence check.
+- **The memory floor is the key set.** "Bounded cache" means bounded
+  *values*; keys plus entry and masstree node overhead are resident
+  regardless.
+- **Deleted keys keep a tombstone entry.** See below.
+
+## Layout
+
+Two allocations, with different lifetimes.
 
 ```
-struct mrx_entry {
-  uint64_t version;                 // immutable after publish
-  uint32_t value_len;               // immutable
-  uint8_t  tombstone;               // immutable
-  std::atomic<uint8_t> durable;     // 0 = dirty, 1 = in RocksDB
-  std::atomic<uint8_t> referenced;  // CLOCK second-chance bit
-  // value bytes follow
+struct mrx_val {                 // IMMUTABLE once published; RCU-freed
+  uint64_t version;
+  uint32_t len;
+  uint8_t  tombstone;            // key is deleted
+  uint8_t  resident;             // 0 = value lives only in RocksDB
+  // value bytes follow when resident && !tombstone
+};
+
+struct mrx_entry {               // STABLE for the key's lifetime
+  std::atomic<mrx_val*> val;     // never null
+  std::atomic<uint8_t> referenced;   // CLOCK second-chance bit
 };
 ```
 
-**Value and version are immutable for the life of an entry.** An
-overwrite does not mutate in place — it allocates a *new* entry,
-`insert`s it (displacing the old, which is RCU-deferred), and enqueues
-a fresh dirty item. Only `durable` and `referenced` are ever mutated,
-and both are atomic. This immutability is what makes the flusher race
-tractable; see trap 2.
+The entry is allocated once per key and never moves, so `val` is a
+stable CAS target. Every state change — write, delete, evict, fill —
+is a single compare-and-swap of that one pointer, and the displaced
+`mrx_val` is RCU-freed.
 
-`version` comes from a single monotonic counter over the whole index.
+`mrx_val` is immutable after publication *except* for a `durable` flag
+(the only atomic in it), because durability is a property of a specific
+version. Value and version never change under a reader.
+
+An **evicted** value is not a null pointer; it is a real `mrx_val` with
+`resident = 0` that still **carries the version**. That is what makes
+the fill race safe — see trap 3.
 
 ## Operations
 
 | Op | Behavior |
 |---|---|
-| `put` / `insert` | new entry (`durable=0`), tree insert, enqueue `(key, version)`, **return** |
-| `remove` | new entry with `tombstone=1`, same path — a tombstone is a write, not an erase |
-| `get` | tree hit → `referenced=1`; tombstone ⇒ not-found; miss → RocksDB → read-through fill |
-| `scan`/`rscan` | chunked two-way merge, Masstree wins on key collision, tombstones suppress |
-| `flush()` | barrier: block until every dirty entry enqueued before the call is durable. Returns **false** if it gave up because a RocksDB write failed or the store is shutting down — i.e. some acked writes are not durable |
-| flusher | pops dirty items, batches into a RocksDB `WriteBatch`, marks entries durable |
-| sweeper | CLOCK eviction once resident bytes exceed capacity |
+| `get` | tree miss ⇒ absent, authoritatively. Hit ⇒ load `val`: tombstone ⇒ absent; resident ⇒ copy bytes; evicted ⇒ fill from RocksDB |
+| `put` | get-or-create entry, then CAS `val` to a new live version. Returns "newly inserted" = previous state was absent-or-tombstone |
+| `insert` | same, but the CAS is abandoned if the loaded state is live ⇒ returns false |
+| `remove` | CAS `val` to a tombstone version; returns whether it was live beforehand |
+| `scan`/`rscan` | iterate Masstree; emit resident values, fill evicted ones, skip tombstones |
+| `flush()` | barrier: block until everything enqueued before the call is durable. **False** ⇒ a RocksDB write failed or the store is stopping, so some acked writes are not durable |
+| flusher | drains the dirty queue into RocksDB `WriteBatch`es, marks versions durable |
+| sweeper | CLOCK eviction: swaps durable resident values for evicted markers |
 
 `flush()` is an inherent method, not a trait method — `OrderedIndex` is
 shared with backends that have no durability tier.
 
-## Why there are per-key locks
-
-`OrderedIndex` does not have a "just write it" surface: `put` returns
-*newly inserted*, `insert` is put-if-absent, and `remove` returns
-*existed*. Every one of those is a read-modify-write, and in a two-tier
-store the read half cannot be answered from Masstree alone — a cache
-miss has to ask RocksDB. Check and publish therefore have to be atomic
-per key, or two concurrent `insert`s both see "absent" and both win.
-
-So writes take a striped `rusty::Mutex` (1024 stripes, FNV-1a over the
-key). The read-through fill takes it too, which is what closes the
-last window in trap 3: without it, a fill that read RocksDB *before* a
-concurrent write could install its stale value *after* that write was
-flushed and evicted. These block rather than spin because the critical
-section can contain a RocksDB read.
-
-The fill also installs a **negative** entry (a clean tombstone) when
-RocksDB has no row, so "absent" becomes a cached fact and a later
-`insert` on the same key does not re-read disk to learn it.
-
-Lock order is stripe → queue, and nothing takes them in the other
-order. The flusher takes only the queue lock, and marks entries durable
-outside it, relying on the version compare plus RCU: if a publish
-displaced the entry mid-flush, the version no longer matches, and the
-memory it is reading is still alive because the free was RCU-deferred.
-
 ## The traps
 
-These are the four places this design can be silently wrong. Each
-gets a dedicated test.
+**1. Delete must leave a tombstone, and the tombstone must stay.**
+Removing the key from the tree would break the invariant: a later tree
+miss would report absence while RocksDB still held the row, and worse,
+absence would become unprovable in memory. So a delete publishes a
+tombstone version.
 
-**1. Delete must leave a tombstone.** Erasing the key from Masstree
-instead of writing a tombstone means the next `get` misses the cache,
-falls through to RocksDB, and returns the value the caller just
-deleted. A tombstone may only be erased from memory *after* it is
-durable — at which point RocksDB no longer has the key either, so the
-fall-through correctly returns not-found.
+Reclaiming a tombstone *after* it is durable is the one operation that
+would need a lock — a concurrent `insert` on the same key can revive it
+between the durability check and the tree removal, and masstree has no
+conditional remove. Tombstones are therefore retained. They double as
+the negative cache. Consequence: `size()` counts tombstones, so it
+overcounts live keys, and reclamation is a later compaction concern.
 
-**2. The flusher must not clear dirtiness it did not earn.** Flusher
+**2. The flusher must not clear durability it did not earn.** Flusher
 reads key K at version 7 and writes it to RocksDB. Meanwhile a writer
-publishes version 8. If the flusher then marks "K is clean", version 8
-is eviction-eligible while RocksDB still holds version 7 — silent data
-loss. Guard: the flusher marks `durable` on *the entry instance it
-read*, and only if that instance is still the published one. Version 8
-is a different instance with its own queue item, so it stays dirty
-until its own flush.
+publishes version 8. Marking "K is durable" would make version 8
+evictable while RocksDB still holds version 7 — silent loss. Guard: the
+flusher marks the `mrx_val` *it read*, and only if that exact pointer
+is still published. Version 8 is a different allocation with its own
+queue item.
 
-**3. Read-through fill must lose to a concurrent write.** A `get` miss
-reads RocksDB, and before it can install the result a writer publishes
-a newer value. Installing the RocksDB value with `insert` would clobber
-the newer write. The fill uses `insert_if_absent` and drops its buffer
-on failure, so a write always beats a fill.
+**3. A fill must lose to any newer write — including one that has
+already been evicted again.** The fill reads the evicted marker, reads
+RocksDB, and installs. In between, a writer can publish a new value,
+the flusher can persist it, and the sweeper can evict it — returning
+the slot to "evicted" and making a naive compare-against-null succeed
+with a stale value. This is ABA, and it is why the evicted marker is a
+versioned allocation rather than a null: the fill's CAS names the exact
+marker pointer it read, so any intervening write fails it.
 
-**4. Eviction may only touch durable entries.** A dirty entry evicted
-before its flush is gone. The sweeper skips `durable == 0`
-unconditionally, which means a saturated cache full of dirty entries
-cannot evict — it must push back on writers (or block on the flusher)
+**4. Eviction may only touch durable values.** Evicting a non-durable
+value discards the only copy. The sweeper skips anything whose `val` is
+not marked durable, which means a cache saturated with dirty values
+cannot evict and must push back on writers or wait on the flusher
 rather than silently drop.
 
-## Merged scan
+## Flusher
 
-Masstree's `search_range` is push-based (functor); RocksDB's iterator
-is pull-based. They cannot be merged directly. The scan pulls the
-Masstree side in **bounded chunks** (the paced-scan pattern already used
-elsewhere in this tree), advances the RocksDB iterator to the chunk's
-upper bound, merges the two sorted runs, emits, and repeats from the
-last key. Chunking also keeps a long scan from pinning one RCU region
-for its entire duration.
+One thread. FIFO order over the dirty queue is what makes
+`flushed_upto` an exact watermark for the `flush()` barrier; partitioned
+flushers (as `rocksdb_persistence.cc` uses) would each need their own.
 
-Merge rule per key: Masstree entry wins outright — if it is a
-tombstone, the key is suppressed and the RocksDB row is skipped;
-otherwise the cached value is emitted and the RocksDB row skipped.
-Keys only in RocksDB are emitted as-is. `rscan` is the mirror, using
-`rsearch_range` and a reverse iterator.
+Queue items carry `(key, version, qseq)`. `qseq` is assigned under the
+queue lock so FIFO order and sequence order agree — publication order
+alone does not, since two threads can publish and enqueue in opposite
+orders.
 
-Scans deliberately do **not** populate the cache; a large range would
-otherwise evict the working set.
+## Scans
+
+Iterate Masstree over the range. Resident values are emitted directly;
+tombstones are skipped; evicted values are fetched from RocksDB.
+
+A cold range therefore costs N point lookups where a merged iterator
+would have cost one range read. That is a deliberate trade of speed for
+the deletion of an entire class of correctness bug. Batching runs of
+adjacent evicted keys into one RocksDB range read is a pure
+optimization, available later, and needs no change to the semantics.
+
+`clear()` is a **truncate of both tiers**, not a cache drop — dropping
+only the tree would break the invariant while RocksDB still held rows.
 
 ## Stages
 
 | Stage | Content |
 |---|---|
-| S1 | entry + kernels + DSL struct; point ops, dirty queue, flusher, `flush()`, read-through. Traps 1–3. |
-| S2 | merged `scan`/`rscan`, both directions, tombstone-aware. |
-| S3 | byte accounting + CLOCK eviction, durable-only. Trap 4. |
-| S4 | CMake target, gtest wiring, concurrency/stress test. |
+| S1 | entry/val layout, CAS write path, flusher, `flush()`, read-fill, open-time key load. Traps 1–3 |
+| S2 | `scan`/`rscan` over the tree with value fill |
+| S3 | byte accounting + CLOCK eviction, durable-only. Trap 4 |
+| S4 | CMake target, gtest wiring, concurrency/stress test |
