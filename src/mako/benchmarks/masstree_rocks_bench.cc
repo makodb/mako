@@ -28,6 +28,7 @@
 #include <rocksdb/c.h>
 
 #include "mako/storage/masstree_rocks_index.hh"
+#include "mako/storage/masstree_ordered_index.hh"
 
 #include <algorithm>
 #include <atomic>
@@ -49,6 +50,10 @@ int g_keyspace = 200000;
 // evicted and every read is a memory hit - which flatters the cache and
 // never exercises the fill path. Pass a capacity to measure misses.
 uint64_t g_capacity = 0;
+// Skip per-op latency capture. Two clock_gettime calls around a ~300ns
+// lookup is itself measurable overhead, so this mode times the whole
+// phase instead and reports throughput only.
+bool g_no_latency = false;
 // Hot-set size for the locality read phase: a small slice of the
 // keyspace, which is the case the cache is supposed to win.
 int g_hot_keys = 2000;
@@ -62,7 +67,13 @@ struct Result {
   double ops_per_sec() const { return seconds > 0 ? ops / seconds : 0; }
 };
 
-// @safe - deterministic key so both backends see identical work
+// Keys and values are materialized ONCE, before timing. Building them
+// per-op (snprintf + a std::string allocation) cost roughly as much as
+// the lookup itself and was silently halving every ops/sec number.
+std::vector<std::string> g_keys;
+std::vector<std::string> g_vals;
+
+// @safe - deterministic key so all backends see identical work
 std::string MakeKey(int i) {
   char buf[32];
   snprintf(buf, sizeof(buf), "key%09d", i);
@@ -91,6 +102,10 @@ struct Rng {
 Result Summarize(std::vector<std::vector<uint64_t>> &lat, double seconds) {
   Result r;
   r.seconds = seconds;
+  if (g_no_latency) {
+    r.ops = static_cast<uint64_t>(g_threads) * g_ops_per_thread;
+    return r;
+  }
   std::vector<uint64_t> all;
   for (auto &v : lat) {
     r.ops += v.size();
@@ -190,8 +205,8 @@ Result RunWrites(PutFn put) {
       Rng rng(t + 1);
       for (int i = 0; i < g_ops_per_thread; i++) {
         const int k = rng.Next() % g_keyspace;
-        const std::string key = MakeKey(k);
-        const std::string val = MakeValue(k);
+        const std::string &key = g_keys[k];
+        const std::string &val = g_vals[k];
         const auto t0 = Clock::now();
         put(key, val);
         lat[t].push_back(
@@ -219,7 +234,11 @@ Result RunReads(GetFn get, int key_range) {
       uint64_t local_hits = 0;
       for (int i = 0; i < g_ops_per_thread; i++) {
         const int k = rng.Next() % key_range;
-        const std::string key = MakeKey(k);
+        const std::string &key = g_keys[k];
+        if (g_no_latency) {
+          if (get(key, out)) local_hits++;
+          continue;
+        }
         const auto t0 = Clock::now();
         if (get(key, out)) local_hits++;
         lat[t].push_back(
@@ -238,12 +257,17 @@ Result RunReads(GetFn get, int key_range) {
   return r;
 }
 
-void PrintRow(const char *label, const Result &mrx, const Result &raw) {
-  const double speedup =
+void PrintRow(const char *label, const Result &mt, const Result &mrx,
+              const Result &raw) {
+  // vs-masstree shows how much of raw Masstree's speed the cache layer
+  // gives away; vs-rocks shows what the cache buys over the baseline.
+  const double of_mt =
+      mt.ops_per_sec() > 0 ? mrx.ops_per_sec() / mt.ops_per_sec() : 0;
+  const double vs_raw =
       raw.ops_per_sec() > 0 ? mrx.ops_per_sec() / raw.ops_per_sec() : 0;
-  printf("%-22s %12.0f %12.0f %8.2fx %10.1f %10.1f %10.1f %10.1f\n", label,
-         mrx.ops_per_sec(), raw.ops_per_sec(), speedup, mrx.p50_us, raw.p50_us,
-         mrx.p99_us, raw.p99_us);
+  printf("%-18s %11.0f %11.0f %11.0f %9.2f %9.2fx %8.2f %8.2f %8.2f\n", label,
+         mt.ops_per_sec(), mrx.ops_per_sec(), raw.ops_per_sec(), of_mt, vs_raw,
+         mt.p50_us, mrx.p50_us, raw.p50_us);
 }
 
 }  // namespace
@@ -254,6 +278,14 @@ int main(int argc, char **argv) {
   if (argc > 2) g_ops_per_thread = atoi(argv[2]);
   if (argc > 3) g_value_bytes = atoi(argv[3]);
   if (argc > 4) g_capacity = strtoull(argv[4], nullptr, 10);
+  if (argc > 5) g_no_latency = (atoi(argv[5]) != 0);
+
+  g_keys.reserve(g_keyspace);
+  g_vals.reserve(g_keyspace);
+  for (int i = 0; i < g_keyspace; i++) {
+    g_keys.push_back(MakeKey(i));
+    g_vals.push_back(MakeValue(i));
+  }
 
   char tmpl[] = "/tmp/mrx_bench_XXXXXX";
   char *dir = mkdtemp(tmpl);
@@ -287,6 +319,12 @@ int main(int argc, char **argv) {
   }
   masstree_rocks_index idx("bench", 1, &tree, store);
 
+  // Control arm: plain Masstree behind the same OrderedIndex trait -
+  // no durability, no cache layer. This is the ceiling, and the gap
+  // between it and the cache is what our layer costs.
+  concurrent_btree mt_tree;
+  masstree_ordered_index mt("bench_mt", 2, &mt_tree);
+
   RawRocks raw;
   if (!raw.Open(raw_path)) return 1;
 
@@ -300,6 +338,10 @@ int main(int argc, char **argv) {
   idx.flush();
   const double mrx_durable_secs =
       std::chrono::duration<double>(Clock::now() - mrx_w0).count();
+
+  Result mt_write = RunWrites([&](const std::string &k, const std::string &v) {
+    mt.put(lcdf::Str(k.data(), static_cast<int>(k.size())), v);
+  });
 
   const auto raw_w0 = Clock::now();
   Result raw_write = RunWrites(
@@ -317,6 +359,12 @@ int main(int argc, char **argv) {
                        std::string::npos);
       },
       g_hot_keys);
+  Result mt_hot = RunReads(
+      [&](const std::string &k, std::string &out) {
+        return mt.get(lcdf::Str(k.data(), static_cast<int>(k.size())), out,
+                      std::string::npos);
+      },
+      g_hot_keys);
   Result raw_hot = RunReads(
       [&](const std::string &k, std::string &out) { return raw.Get(k, out); },
       g_hot_keys);
@@ -327,19 +375,28 @@ int main(int argc, char **argv) {
                        std::string::npos);
       },
       g_keyspace);
+  Result mt_uni = RunReads(
+      [&](const std::string &k, std::string &out) {
+        return mt.get(lcdf::Str(k.data(), static_cast<int>(k.size())), out,
+                      std::string::npos);
+      },
+      g_keyspace);
   Result raw_uni = RunReads(
       [&](const std::string &k, std::string &out) { return raw.Get(k, out); },
       g_keyspace);
 
   // --- report ------------------------------------------------------
-  printf("%-22s %12s %12s %9s %10s %10s %10s %10s\n", "phase", "cache ops/s",
-         "rocks ops/s", "speedup", "cache p50", "rocks p50", "cache p99",
-         "rocks p99");
-  printf("%-22s %12s %12s %9s %10s %10s %10s %10s\n", "", "", "", "", "(us)",
-         "(us)", "(us)", "(us)");
-  PrintRow("write (ack)", mrx_write, raw_write);
-  PrintRow("read (hot set)", mrx_hot, raw_hot);
-  PrintRow("read (uniform)", mrx_uni, raw_uni);
+  printf("%-18s %11s %11s %11s %9s %10s %8s %8s %8s\n", "phase",
+         "masstree/s", "cache/s", "rocks/s", "cache/mt", "cache/rocks",
+         "mt p50", "cache p50", "rocks p50");
+  printf("%-18s %11s %11s %11s %9s %10s %8s %8s %8s\n", "", "(ceiling)", "",
+         "(baseline)", "", "", "(us)", "(us)", "(us)");
+  PrintRow("write (ack)", mt_write, mrx_write, raw_write);
+  PrintRow("read (hot set)", mt_hot, mrx_hot, raw_hot);
+  PrintRow("read (uniform)", mt_uni, mrx_uni, raw_uni);
+  printf("\ncache/mt < 1.0 = what the cache layer costs on top of raw\n");
+  printf("Masstree (RCU region per op, CLOCK reference-bit store, val\n");
+  printf("indirection). Raw Masstree has no durability at all.\n");
 
   printf("\nwrite wall-clock, ack vs durable:\n");
   printf("  cache   ack %7.3fs   ack+flush %7.3fs   (deferred %.1f%%)\n",
