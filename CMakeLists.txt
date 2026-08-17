@@ -1524,6 +1524,9 @@ add_apps(continuousTransactions examples/continuousTransactions.cc)
 add_apps(simplePaxos examples/simplePaxos.cc)
 add_apps(test_rocksdb_persistence examples/test_rocksdb_persistence.cc)
 add_apps(rocksdb_replay_app src/mako/benchmarks/rocksdb_replay_app.cc)
+# Does the Masstree write-back cache beat plain RocksDB? Reports write
+# ack vs ack+flush separately, since the cache's trick is deferral.
+add_apps(masstree_rocks_bench src/mako/benchmarks/masstree_rocks_bench.cc)
 add_apps(test_callback_demo examples/test_callback_demo.cc)
 add_apps(test_ordered_callbacks examples/test_ordered_callbacks.cc)
 add_apps(test_partitioned_queues examples/test_partitioned_queues.cc)
