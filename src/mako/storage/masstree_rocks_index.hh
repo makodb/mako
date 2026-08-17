@@ -81,6 +81,7 @@
 
 #include <rocksdb/c.h>
 
+#include <sched.h>
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
@@ -232,8 +233,14 @@ struct mrx_log_slot {
   uint64_t version;
 };
 
-static const size_t MRX_LOG_CAP = 1 << 16;  // power of two
-static const size_t MRX_BATCH = 64;         // per-writer batch size
+// Ring DEPTH is the coalescing multiplier: a ticket that sits behind a
+// deep backlog is usually superseded by drain time and costs nothing at
+// RocksDB. A shallow ring degenerates to write-through (measured: 65K
+// slots pinned 16 writers to RocksDB's ~270k/s ingest).
+static const size_t MRX_LOG_CAP = 1 << 20;   // power of two, ~24MB
+static const size_t MRX_BATCH = 64;          // per-writer batch size
+static const size_t MRX_DRAIN_BOUND = 16384; // slots per flusher cycle
+static const uint64_t MRX_W_LAZY_CYCLES = 16;
 
 struct mrx_log {
   alignas(64) std::atomic<uint64_t> tail{0};       // reservation
@@ -331,8 +338,13 @@ struct mrx_store {
 
   // flush() waiters. The flusher notifies every cycle (~100us), so a
   // classically "lost" wakeup costs one poll interval, never a hang.
+  // The counter makes the flusher recompute the watermark EVERY cycle
+  // while someone waits (it is lazy otherwise - see the cycle).
+  std::atomic<uint32_t> flush_waiters{0};
   rusty::Mutex<uint8_t> flush_mtx{0};
   rusty::Condvar drained_cv;
+
+  uint64_t flusher_cycles{0};  // flusher thread only
 
   // CLOCK hand for the sweeper — a KEY, not an iterator, so it survives
   // concurrent tree mutation. Sweeper thread only; no lock needed.
@@ -459,8 +471,15 @@ inline void mrx_log_append(mrx_store *s, const mrx_log_item *items,
   const uint64_t pos = s->log.tail.fetch_add(k, std::memory_order_seq_cst);
   for (size_t i = 0; i < k; i++) {
     mrx_log_slot &sl = s->log.slots[(pos + i) & mask];
+    int spins = 0;
     while (sl.seq.load(std::memory_order_acquire) != pos + i) {
-      ::usleep(1);
+      // usleep's real floor is tens of us; yield first so brief
+      // backpressure stays cheap.
+      if (++spins < 1024) {
+        ::sched_yield();
+      } else {
+        ::usleep(100);
+      }
     }
     sl.e = items[i].e;
     sl.version = items[i].version;
@@ -677,7 +696,7 @@ inline size_t mrx_flusher_cycle(mrx_store *s) {
   // region would pin this core's ticker lock for milliseconds, stalling
   // epoch reclamation process-wide. The loop in mrx_flusher_loop calls
   // straight back in while cycles remain productive.
-  if (t0 - base > 4096) t0 = base + 4096;
+  if (t0 - base > MRX_DRAIN_BOUND) t0 = base + MRX_DRAIN_BOUND;
   uint64_t end = base;
   rocksdb_writebatch_t *batch = nullptr;
   {
@@ -765,6 +784,25 @@ inline size_t mrx_flusher_cycle(mrx_store *s) {
   // (release), so if we read the floor as cleared (acquire), the
   // tickets are visible to the scan that follows; if we read it set, it
   // bounds W directly. Either way no version escapes.
+  //
+  // LAZY under backlog: the scan is O(unconfirmed window), which under
+  // deep backpressure is the whole ring. Freshness only matters to
+  // flush() waiters (who force it via flush_waiters) and the sweeper
+  // (which tolerates a few ms of lag), so a large window is scanned
+  // every MRX_W_LAZY_CYCLES cycles instead of every cycle. Skipping
+  // never unsounds W - it only lags it.
+  s->flusher_cycles++;
+  const uint64_t window =
+      s->log.tail.load(std::memory_order_relaxed) -
+      s->log.confirmed.load(std::memory_order_relaxed);
+  const bool w_due =
+      window <= MRX_DRAIN_BOUND ||
+      s->flush_waiters.load(std::memory_order_acquire) != 0 ||
+      (s->flusher_cycles % MRX_W_LAZY_CYCLES) == 0;
+  if (!w_due) {
+    s->drained_cv.notify_all();
+    return confirmed_n;
+  }
   const uint64_t C = s->version_ctr.load(std::memory_order_seq_cst);
   const uint32_t nw = s->n_writers.load(std::memory_order_seq_cst);
   uint64_t m = C;
@@ -826,6 +864,7 @@ inline bool mrx_flush_barrier(mrx_store *s) {
   if (s->persisted_version.load(std::memory_order_acquire) >= target) {
     return true;
   }
+  s->flush_waiters.fetch_add(1, std::memory_order_acq_rel);
   auto g = s->flush_mtx.lock().unwrap();
   g = s->drained_cv
           .wait_while(std::move(g),
@@ -836,6 +875,7 @@ inline bool mrx_flush_barrier(mrx_store *s) {
                                !s->io_failing.load(std::memory_order_acquire);
                       })
           .unwrap();
+  s->flush_waiters.fetch_sub(1, std::memory_order_acq_rel);
   return s->persisted_version.load(std::memory_order_acquire) >= target;
 }
 
