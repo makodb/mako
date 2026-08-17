@@ -2678,6 +2678,32 @@ if(BUILD_TESTS)
     )
     add_test(NAME SiloAllocatorTupleTests COMMAND test_silo_allocator_tuple)
 
+    # Test: masstree-rocks-cache capability
+    # (openspec/specs/masstree-rocks-cache/spec.md). Masstree as a
+    # write-back cache over RocksDB; needs the mako storage objects for
+    # concurrent_btree + RCU, and rocksdb for the system of record.
+    add_executable(test_masstree_rocks_cache tests/test_masstree_rocks_cache.cc)
+    target_link_libraries(test_masstree_rocks_cache
+        mako
+        rrr
+        erpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(test_masstree_rocks_cache PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+        ${GTEST_INCLUDE_DIRS}
+    )
+    add_test(NAME MasstreeRocksCacheTests COMMAND test_masstree_rocks_cache)
+
     # Test: SiloRuntime per-site isolation (moved out of src/masstree/tests
     # because its subject matter is the SiloRuntime, not Masstree).
     add_executable(test_silo_runtime tests/test_silo_runtime.cc)

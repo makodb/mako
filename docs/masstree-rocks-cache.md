@@ -96,7 +96,7 @@ the fill race safe — see trap 3.
 | `scan`/`rscan` | iterate Masstree; emit resident values, fill evicted ones, skip tombstones |
 | `flush()` | barrier: block until everything enqueued before the call is durable. **False** ⇒ a RocksDB write failed or the store is stopping, so some acked writes are not durable |
 | flusher | drains the dirty queue into RocksDB `WriteBatch`es, marks versions durable |
-| sweeper | CLOCK eviction: swaps durable resident values for evicted markers |
+| sweeper | CLOCK eviction: swaps durable resident values for evicted markers, when a capacity is configured |
 
 `flush()` is an inherent method, not a trait method — `OrderedIndex` is
 shared with backends that have no durability tier.
@@ -164,6 +164,46 @@ optimization, available later, and needs no change to the semantics.
 `clear()` is a **truncate of both tiers**, not a cache drop — dropping
 only the tree would break the invariant while RocksDB still held rows.
 
+## Eviction
+
+The store takes a byte `capacity` for the value tier. **Zero, the
+default, disables eviction entirely** — no sweeper thread is even
+started — so a caller that does not opt in behaves exactly as it did
+before eviction existed.
+
+A sweeper thread runs a CLOCK hand over the keyspace in 256-key chunks.
+A value whose reference bit is set survives the pass and loses the bit;
+anything else that is durable is evicted, meaning its record is swapped
+for a versioned evicted marker. The cursor is a **key**, not an
+iterator, so it stays valid across chunks while the tree mutates, and
+it wraps to the start when it runs off the end.
+
+The sweeper wakes on pressure — writes and read-through fills both grow
+the resident tier, and both nudge it. A pass that reclaims nothing does
+**not** re-sweep: the only thing that can make a value evictable is the
+flusher marking it durable, so the sweeper waits for the flusher's
+progress epoch to advance. That is what keeps a cache saturated with
+non-durable values from spinning.
+
+`capacity` is enforced **approximately**, in two distinct ways.
+
+`resident_bytes` is maintained with relaxed atomics across concurrent
+swaps, so it is an accounting estimate; making it exact would mean
+serializing publishes.
+
+More importantly, `resident_bytes` counts **entry records as well as
+value bytes**, and entries are never reclaimed. So the counter has an
+un-evictable floor of roughly `key_count × (sizeof(mrx_entry) +
+sizeof(mrx_val))`. A capacity below that floor can never be satisfied:
+the sweeper will evict every value, find nothing further to reclaim,
+and then park waiting on flusher progress rather than spinning. That is
+correct behavior, but it means capacity should be set well above the
+keyspace floor to mean anything.
+
+Shutdown stops the sweeper **before** the flusher, since the sweeper
+waits on flusher progress and would otherwise block on an epoch that
+can never advance.
+
 ## Stages
 
 | Stage | Content |
@@ -172,3 +212,7 @@ only the tree would break the invariant while RocksDB still held rows.
 | S2 | `scan`/`rscan` over the tree with value fill |
 | S3 | byte accounting + CLOCK eviction, durable-only. Trap 4 |
 | S4 | CMake target, gtest wiring, concurrency/stress test |
+
+S1–S4 are built. See `openspec/specs/masstree-rocks-cache/spec.md` for
+the behavior contract and `tests/test_masstree_rocks_cache.cc` for the
+coverage.

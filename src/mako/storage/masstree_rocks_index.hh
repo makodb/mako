@@ -189,6 +189,19 @@ struct mrx_queue_state {
   bool write_failed{false};
 };
 
+// Sweeper state. The cursor is a KEY, not an iterator, so it stays
+// valid across chunks even as the tree changes underneath — that is
+// what makes it usable as a clock hand.
+struct mrx_sweep_state {
+  std::string cursor;
+  // Bumped by the flusher after every committed batch. A sweep that
+  // reclaimed nothing waits for this to move rather than spinning:
+  // the only thing that can make values evictable is the flusher
+  // marking them durable.
+  uint64_t flush_epoch{0};
+  bool stopping{false};
+};
+
 struct mrx_store {
   concurrent_btree *tree{nullptr};
 
@@ -200,12 +213,32 @@ struct mrx_store {
   std::atomic<uint64_t> version_ctr{1};
   std::atomic<uint64_t> resident_bytes{0};
 
+  // Byte ceiling for the VALUE tier. 0 = unbounded, which is the
+  // default and preserves the pre-eviction behavior exactly. Keys and
+  // entries are never reclaimed, so this does not bound total memory.
+  uint64_t capacity{0};
+
   rusty::Mutex<mrx_queue_state> queue{mrx_queue_state()};
   rusty::Condvar queue_cv;    // flusher waits for work
   rusty::Condvar drained_cv;  // flush() waits for the watermark
 
+  rusty::Mutex<mrx_sweep_state> sweep{mrx_sweep_state()};
+  rusty::Condvar sweep_cv;  // sweeper waits for pressure or flush progress
+
   rusty::Option<rusty::thread::JoinHandle<void>> flusher;
+  rusty::Option<rusty::thread::JoinHandle<void>> sweeper;
 };
+
+// @safe - true when the value tier is over its ceiling
+inline bool mrx_over_capacity(const mrx_store *s) {
+  if (s->capacity == 0) return false;
+  return s->resident_bytes.load(std::memory_order_relaxed) > s->capacity;
+}
+
+// @unsafe - nudge the sweeper when a write pushes the tier over
+inline void mrx_maybe_wake_sweeper(mrx_store *s) {
+  if (mrx_over_capacity(s)) s->sweep_cv.notify_one();
+}
 
 // RAII region as a move-only value the DSL can hold in a guard local.
 // @unsafe - pins the calling thread's RCU epoch
@@ -336,6 +369,7 @@ inline mrx_write_result mrx_write(mrx_store *s, lcdf::Str key,
       mrx_account_swap(s, cur, nv);
       mrx_val_free_rcu(cur);
       mrx_enqueue(s, key, ver);
+      mrx_maybe_wake_sweeper(s);
       r.wrote = true;
       return r;
     }
@@ -406,6 +440,9 @@ inline bool mrx_fill(mrx_store *s, lcdf::Str key, std::string &value,
                                        std::memory_order_acquire)) {
       mrx_account_swap(s, cur, nv);
       mrx_val_free_rcu(cur);
+      // A fill GROWS the resident tier just as a write does, so a
+      // read-only workload can push it over the ceiling too.
+      mrx_maybe_wake_sweeper(s);
       value.assign(full.data(), std::min<size_t>(full.size(), max_bytes_read));
       return true;
     }
@@ -513,6 +550,14 @@ inline size_t mrx_flush_batch(mrx_store *s, size_t budget) {
     if (high > (*g).flushed_upto) (*g).flushed_upto = high;
   }
   s->drained_cv.notify_all();
+
+  // Values just became durable, so values just became evictable. Wake a
+  // sweeper that stalled for exactly this.
+  {
+    auto g = s->sweep.lock().unwrap();
+    (*g).flush_epoch++;
+  }
+  s->sweep_cv.notify_all();
   return taken.len();
 }
 
@@ -691,6 +736,126 @@ inline void mrx_rscan(mrx_store *s, const std::string &start_key,
 }
 
 // ---------------------------------------------------------------------------
+// Sweeper: CLOCK reclamation of value bytes.
+//
+// A rotating cursor walks the keyspace in bounded chunks. A value whose
+// reference bit is set gets a second chance — the bit is cleared and
+// the value survives this pass — which is what keeps a continuously
+// read key resident. Anything else that is durable is evicted.
+//
+// The cursor is a key rather than an iterator, so it survives
+// concurrent tree mutation; running off the end wraps it to the start,
+// making it a clock hand rather than a one-shot scan.
+// ---------------------------------------------------------------------------
+
+struct mrx_sweep_item {
+  std::string key;
+  mrx_entry *entry;
+};
+
+// @unsafe - reads RCU-protected entries (caller holds region)
+struct mrx_sweep_collector {
+  mrx_sweep_collector(rusty::Vec<mrx_sweep_item> &out, size_t budget)
+      : out_(out), budget_(budget) {}
+  bool operator()(const lcdf::Str &k, concurrent_btree::value_type v) {
+    if (out_.len() >= budget_) return false;
+    mrx_sweep_item item;
+    item.key.assign(k.data(), k.length());
+    item.entry = reinterpret_cast<mrx_entry *>(v);
+    out_.push(std::move(item));
+    return true;
+  }
+  rusty::Vec<mrx_sweep_item> &out_;
+  size_t budget_;
+};
+
+static const size_t MRX_SWEEP_CHUNK = 256;
+
+// One bounded CLOCK pass. Returns bytes reclaimed.
+// @unsafe - tree walk + eviction CAS
+inline uint64_t mrx_sweep_chunk(mrx_store *s, size_t budget) {
+  std::string cursor;
+  {
+    auto g = s->sweep.lock().unwrap();
+    cursor = (*g).cursor;
+  }
+
+  const uint64_t before = s->resident_bytes.load(std::memory_order_relaxed);
+  bool wrapped = false;
+  std::string last;
+  {
+    const auto region = mrx_rcu_region();
+    rusty::Vec<mrx_sweep_item> chunk;
+    mrx_sweep_collector c(chunk, budget);
+    varkey lower = mrx_key(lcdf::Str(cursor));
+    s->tree->search_range(lower, nullptr, c);
+
+    if (chunk.len() == 0) {
+      wrapped = true;  // cursor ran past the last key
+    } else {
+      for (size_t i = 0; i < chunk.len(); i++) {
+        mrx_entry *e = chunk[i].entry;
+        // Second chance: a recently touched value survives, but pays
+        // for it by losing the bit.
+        if (e->referenced.exchange(0, std::memory_order_acq_rel) != 0) {
+          continue;
+        }
+        mrx_evict_value(s, e);
+        if (!mrx_over_capacity(s)) break;
+      }
+      last = chunk[chunk.len() - 1].key;
+      if (chunk.len() < budget) wrapped = true;
+    }
+  }
+
+  {
+    auto g = s->sweep.lock().unwrap();
+    if (wrapped) {
+      (*g).cursor.clear();
+    } else {
+      (*g).cursor = last;
+      (*g).cursor.push_back('\0');  // strictly after the last key
+    }
+  }
+
+  const uint64_t after = s->resident_bytes.load(std::memory_order_relaxed);
+  return (before > after) ? (before - after) : 0;
+}
+
+// @unsafe - thread body
+inline void mrx_sweeper_loop(mrx_store *s) {
+  for (;;) {
+    {
+      auto g = s->sweep.lock().unwrap();
+      g = s->sweep_cv
+              .wait_while(std::move(g),
+                          [s](const mrx_sweep_state &q) {
+                            return !q.stopping && !mrx_over_capacity(s);
+                          })
+              .unwrap();
+      if ((*g).stopping) break;
+    }
+
+    const uint64_t freed = mrx_sweep_chunk(s, MRX_SWEEP_CHUNK);
+    if (freed != 0) continue;
+
+    // Nothing was evictable. Re-sweeping immediately would spin: the
+    // only thing that can create an evictable value is the flusher
+    // marking one durable, so wait for it to make progress.
+    if (!mrx_over_capacity(s)) continue;
+    auto g = s->sweep.lock().unwrap();
+    const uint64_t seen = (*g).flush_epoch;
+    g = s->sweep_cv
+            .wait_while(std::move(g),
+                        [seen](const mrx_sweep_state &q) {
+                          return q.flush_epoch == seen && !q.stopping;
+                        })
+            .unwrap();
+    if ((*g).stopping) break;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle.
 // ---------------------------------------------------------------------------
 
@@ -722,11 +887,16 @@ inline void mrx_load_keys(mrx_store *s) {
   rocksdb_iter_destroy(it);
 }
 
-// @unsafe - opens RocksDB, loads the key set, starts the flusher
+// Open a store. `capacity` bounds the VALUE tier in bytes; 0 (the
+// default) disables eviction entirely, which is the pre-eviction
+// behavior.
+// @unsafe - opens RocksDB, loads the key set, starts the threads
 inline mrx_store *mrx_store_open(concurrent_btree *tree,
-                                 const std::string &db_path) {
+                                 const std::string &db_path,
+                                 uint64_t capacity = 0) {
   mrx_store *s = new mrx_store();
   s->tree = tree;
+  s->capacity = capacity;
 
   s->opts = rocksdb_options_create();
   rocksdb_options_set_create_if_missing(s->opts, 1);
@@ -747,13 +917,30 @@ inline mrx_store *mrx_store_open(concurrent_btree *tree,
 
   s->flusher = rusty::Option<rusty::thread::JoinHandle<void>>(
       rusty::thread::spawn([s]() { mrx_flusher_loop(s); }));
+  if (capacity != 0) {
+    s->sweeper = rusty::Option<rusty::thread::JoinHandle<void>>(
+        rusty::thread::spawn([s]() { mrx_sweeper_loop(s); }));
+  }
   return s;
 }
 
-// @unsafe - drains, stops the flusher, closes RocksDB
+// @unsafe - drains, stops the threads, closes RocksDB
 inline void mrx_store_close(mrx_store *s) {
   if (s == nullptr) return;
   mrx_flush_barrier(s);
+
+  // Stop the sweeper first: it observes flusher progress, so shutting
+  // the flusher first could leave it waiting on an epoch that will
+  // never advance.
+  {
+    auto g = s->sweep.lock().unwrap();
+    (*g).stopping = true;
+  }
+  s->sweep_cv.notify_all();
+  if (s->sweeper.is_some()) {
+    s->sweeper.take().unwrap().join();
+  }
+
   {
     auto g = s->queue.lock().unwrap();
     (*g).stopping = true;
