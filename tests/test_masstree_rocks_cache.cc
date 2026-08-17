@@ -618,23 +618,26 @@ TEST_F(MasstreeRocksCacheTest, PressureNeverLosesAnAcknowledgedWrite) {
 }
 
 // Direct unit test of the eviction guard. Driving this through the
-// store would be racy - the flusher marks values durable on its own
+// store would be racy - the watermark advances on the flusher's own
 // schedule - so the entries here are built by hand and never published,
-// which makes each guard deterministic.
+// and the watermark is pinned manually (the flusher only ever RAISES
+// it, so a high manual store is sticky), which makes each guard
+// deterministic.
 TEST_F(MasstreeRocksCacheTest, EvictValueRefusesIneligibleValues) {
   const auto region = mrx_rcu_region();
+  store_->persisted_version.store(1ull << 60, std::memory_order_release);
 
-  // Non-durable: memory holds the only copy of this write.
-  mrx_val *dirty = mrx_val_new(1, /*tombstone=*/false, /*resident=*/true,
-                               "payload", /*durable=*/false);
-  mrx_entry *e_dirty = mrx_entry_alloc(dirty);
+  // Version above the watermark: memory holds the only copy.
+  mrx_val *dirty =
+      mrx_val_new(1ull << 61, /*tombstone=*/false, /*resident=*/true, "pay");
+  mrx_entry *e_dirty = mrx_entry_alloc(dirty, S("kd"));
   EXPECT_FALSE(mrx_evict_value(store_, e_dirty))
-      << "evicting a non-durable value would discard the only copy";
+      << "evicting above the watermark would discard the only copy";
 
-  // Durable and resident: the one evictable case.
-  mrx_val *clean = mrx_val_new(2, /*tombstone=*/false, /*resident=*/true,
-                               "payload", /*durable=*/true);
-  mrx_entry *e_clean = mrx_entry_alloc(clean);
+  // Covered by the watermark and resident: the one evictable case.
+  mrx_val *clean = mrx_val_new(5, /*tombstone=*/false, /*resident=*/true,
+                               "payload");
+  mrx_entry *e_clean = mrx_entry_alloc(clean, S("kc"));
   EXPECT_TRUE(mrx_evict_value(store_, e_clean));
 
   // Already evicted: nothing left to reclaim.
@@ -642,9 +645,8 @@ TEST_F(MasstreeRocksCacheTest, EvictValueRefusesIneligibleValues) {
       << "a non-resident value has nothing to evict";
 
   // Tombstone: carries no bytes.
-  mrx_val *tomb = mrx_val_new(3, /*tombstone=*/true, /*resident=*/true, "",
-                              /*durable=*/true);
-  mrx_entry *e_tomb = mrx_entry_alloc(tomb);
+  mrx_val *tomb = mrx_val_new(3, /*tombstone=*/true, /*resident=*/true, "");
+  mrx_entry *e_tomb = mrx_entry_alloc(tomb, S("kt"));
   EXPECT_FALSE(mrx_evict_value(store_, e_tomb));
 }
 
