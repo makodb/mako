@@ -21,6 +21,17 @@ pub struct WriteOutcome {
     pub existed: bool,
 }
 
+/// One chunk of a range walk. See [`Store::chunk`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chunk {
+    /// Live key/value pairs, in walk order. May be empty even when the
+    /// range continues, if every key in this chunk was deleted.
+    pub pairs: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Cursor for the next call, or `None` at end-of-range. Pass it with
+    /// `skip_first = true`.
+    pub next_from: Option<Vec<u8>>,
+}
+
 /// Which write is being performed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WriteMode {
@@ -357,46 +368,75 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
     ) -> Result<(), crate::BlobError> {
         let mut cursor = from.to_vec();
-        let mut first = true;
+        let mut skip_first = false;
         loop {
-            let mut chunk: Vec<(Vec<u8>, EntryWord)> = Vec::new();
-            let n = if ascending {
-                self.index.scan_chunk(&cursor, self.cfg.scan_chunk, &mut chunk)
-            } else {
-                self.index.rscan_chunk(&cursor, self.cfg.scan_chunk, &mut chunk)
-            };
-            if n == 0 {
-                return Ok(());
-            }
-            // Chunks are half-open at the seam: the first key of a
-            // follow-on chunk is the last key of the previous one, since
-            // the index is seeked inclusively.
-            let skip = if first { 0 } else { 1 };
-            first = false;
-            let last = chunk[n - 1].0.clone();
-            for (k, word) in chunk.into_iter().skip(skip) {
-                let e = self.entry((word - 1) as u32);
-                let cur = e.load_touched();
-                let bytes = match &cur.state {
-                    ValState::Tombstone => continue,
-                    ValState::Resident(b) => b.clone(),
-                    ValState::Evicted => match self.fill(&e, &cur)? {
-                        Some(b) => b,
-                        None => continue,
-                    },
-                };
-                if !f(&k, &bytes) {
+            let c = self.chunk(&cursor, ascending, skip_first)?;
+            for (k, v) in &c.pairs {
+                if !f(k, v) {
                     return Ok(());
                 }
             }
-            if n < self.cfg.scan_chunk {
-                return Ok(());
+            match c.next_from {
+                None => return Ok(()),
+                Some(next) => {
+                    cursor = next;
+                    skip_first = true;
+                }
             }
-            if last == cursor && skip == 1 {
-                return Ok(()); // no forward progress; end of range
-            }
-            cursor = last;
         }
+    }
+
+    /// One chunk of a range walk, values resolved.
+    ///
+    /// The primitive both [`Store::scan`] and any external iterator are
+    /// built from. It exists as its own call because an iterator cannot
+    /// be written on top of a callback-driven scan without either
+    /// buffering the whole range or running a thread.
+    ///
+    /// `next_from` is `None` at end-of-range, and otherwise the cursor to
+    /// pass to the next call **with `skip_first` set** — the index seeks
+    /// inclusively, so a follow-on chunk would otherwise repeat its first
+    /// key. It is the last *raw index key* seen, tombstones included, so
+    /// a chunk that happens to be entirely deleted keys still advances.
+    /// Deriving the cursor from `pairs` instead would loop forever on
+    /// exactly that case.
+    pub fn chunk(
+        &self,
+        from: &[u8],
+        ascending: bool,
+        skip_first: bool,
+    ) -> Result<Chunk, crate::BlobError> {
+        let mut raw: Vec<(Vec<u8>, EntryWord)> = Vec::new();
+        let n = if ascending {
+            self.index.scan_chunk(from, self.cfg.scan_chunk, &mut raw)
+        } else {
+            self.index.rscan_chunk(from, self.cfg.scan_chunk, &mut raw)
+        };
+        if n == 0 {
+            return Ok(Chunk { pairs: Vec::new(), next_from: None });
+        }
+        let last = raw[n - 1].0.clone();
+        let mut pairs = Vec::with_capacity(n);
+        for (k, word) in raw.into_iter().skip(usize::from(skip_first)) {
+            let e = self.entry((word - 1) as u32);
+            let cur = e.load_touched();
+            let bytes = match &cur.state {
+                ValState::Tombstone => continue,
+                ValState::Resident(b) => b.clone(),
+                ValState::Evicted => match self.fill(&e, &cur)? {
+                    Some(b) => b,
+                    None => continue,
+                },
+            };
+            pairs.push((k, bytes));
+        }
+        // A short chunk is end-of-range; so is a chunk that did not
+        // advance, which is what a single trailing key looks like.
+        let exhausted = n < self.cfg.scan_chunk || (skip_first && last == from);
+        Ok(Chunk {
+            pairs,
+            next_from: if exhausted { None } else { Some(last) },
+        })
     }
 
     // ---------------------------------------------------------------

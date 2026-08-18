@@ -20,6 +20,7 @@
 
 #include "mako/storage/mtree_abi.h"
 
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -197,7 +198,59 @@ TEST_F(MtreeAbiTest, ScanStopsCleanlyWhenTheArenaIsTooSmall) {
             MTX_OK);
   EXPECT_GT(n, 0u) << "a too-small arena must still make progress";
   EXPECT_LT(n, 20u) << "it should have stopped early, not overrun";
-  EXPECT_LE(used, sizeof(arena));
+  // The arena-full signal: `used` exceeds the capacity and states what one
+  // more key would have needed. Reporting bytes-consumed here instead makes
+  // this outcome indistinguishable from end-of-range.
+  EXPECT_GT(used, sizeof(arena))
+      << "an arena-limited stop must be distinguishable from end-of-range";
+}
+
+TEST_F(MtreeAbiTest, ArenaSignalLetsACallerRecoverEveryKey) {
+  // The contract as a caller actually uses it. Long keys against a small
+  // arena is the case that silently truncated the Rust adapter's scan --
+  // 980 of 1000 keys lost -- because a partly-filled arena reads exactly
+  // like end-of-range without this signal.
+  const std::string prefix(400, 'x');
+  const int kCount = 200;
+  for (int i = 0; i < kCount; i++) {
+    char suffix[16];
+    snprintf(suffix, sizeof(suffix), "%04d", i);
+    ASSERT_EQ(Put((prefix + suffix).c_str(), static_cast<uint64_t>(i + 1)),
+              MTX_OK);
+  }
+
+  std::set<std::string> seen;
+  std::string from;
+  std::vector<char> arena(256);  // deliberately far too small
+  std::vector<mtx_kv> kvs(16);
+  bool first = true;
+  for (int guard = 0; guard < 10000; guard++) {
+    size_t n = 0, used = 0;
+    const int st = mtx_scan_chunk(t_, from.data(), from.size(), kvs.data(),
+                                  kvs.size(), arena.data(), arena.size(), &n,
+                                  &used);
+    if (st == MTX_ERR_NO_SPACE) {
+      ASSERT_GT(used, arena.size());
+      arena.resize(used);
+      continue;
+    }
+    ASSERT_EQ(st, MTX_OK);
+    if (used > arena.size()) {  // arena-limited: grow and re-walk
+      arena.resize(used);
+      continue;
+    }
+    if (n == 0) break;
+    for (size_t i = first ? 0 : 1; i < n; i++) {
+      seen.insert(std::string(arena.data() + kvs[i].key_off, kvs[i].key_len));
+    }
+    const std::string last(arena.data() + kvs[n - 1].key_off,
+                           kvs[n - 1].key_len);
+    first = false;
+    if (n < kvs.size() || last == from) break;
+    from = last;
+  }
+  EXPECT_EQ(seen.size(), static_cast<size_t>(kCount))
+      << "a caller honouring the arena signal must still see every key";
 }
 
 TEST_F(MtreeAbiTest, RscanDescends) {

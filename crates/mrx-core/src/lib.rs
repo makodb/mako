@@ -54,7 +54,7 @@ pub mod value;
 
 pub use durability::{Floors, Ticket, TicketLog, VersionCounter, Watermark, WriterSlot};
 pub use runtime::Runtime;
-pub use store::{Store, WriteOutcome};
+pub use store::{Chunk, Store, WriteOutcome};
 pub use value::{Entry, Val, ValState};
 
 /// Version numbers start at 1, never 0.

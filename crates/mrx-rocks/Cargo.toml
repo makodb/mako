@@ -1,0 +1,12 @@
+[package]
+name = "mrx-rocks"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Blobs over RocksDB, through its stable C API"
+license = "MIT"
+publish = false
+
+[dependencies]
+mrx-core = { path = "../mrx-core" }
+# See crates/Cargo.toml: profiles live at the workspace root.

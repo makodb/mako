@@ -28,7 +28,7 @@
 use core::ffi::c_char;
 
 /// Bumped on any incompatible change to the C ABI.
-pub const MTX_ABI_VERSION: u32 = 1;
+pub const MTX_ABI_VERSION: u32 = 2;
 
 /// Success.
 pub const MTX_OK: i32 = 0;
@@ -108,8 +108,19 @@ extern "C" {
         out: *mut u64,
     ) -> i32;
 
-    /// Ascending range walk into caller storage. A short result means a
-    /// chunk boundary, not necessarily end-of-range.
+    /// Ascending range walk into caller storage.
+    ///
+    /// A short result means a chunk boundary, not necessarily
+    /// end-of-range, and `arena_used` says which:
+    ///
+    /// * `<= arena_cap` — bytes consumed; the walk ended because the
+    ///   range ended or `cap` was reached.
+    /// * `>  arena_cap` — the walk stopped for want of arena space, and
+    ///   this is what one more key would have needed. Grow and re-call
+    ///   with the same `from`.
+    ///
+    /// Ignoring that distinction truncates every scan whose keys happen
+    /// to be long — 980 of 1000 in the test that found it.
     pub fn mtx_scan_chunk(
         t: *mut MtxTree,
         from: *const c_char,
@@ -169,6 +180,15 @@ mod tests {
     // pure-Rust layout assertions; the real round-trip lives in the
     // gtest suite (tests/test_mtree_abi.cc) and later in the
     // differential harness.
+
+    #[test]
+    fn abi_version_is_two() {
+        // Bumped from 1 when `arena_used` gained its overflow meaning.
+        // The runtime check in assert_abi_matches is what actually
+        // enforces agreement; this pins the constant against an
+        // accidental edit.
+        assert_eq!(MTX_ABI_VERSION, 2);
+    }
 
     #[test]
     fn kv_layout_is_what_the_c_header_declares() {

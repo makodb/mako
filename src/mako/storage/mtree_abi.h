@@ -82,7 +82,7 @@ extern "C" {
 /* Bumped on any incompatible change. The caller should compare this against
  * the value it was compiled with, and check mtx_kv_size() too: a struct
  * layout drift is the failure mode a version number alone will not catch. */
-#define MTX_ABI_VERSION 1u
+#define MTX_ABI_VERSION 2u
 
 /* Status codes. */
 #define MTX_OK 0
@@ -148,13 +148,31 @@ int mtx_get_or_insert(mtx_tree *t, const char *key, size_t klen, uint64_t word,
 /* --- range operations --------------------------------------------------- */
 
 /* Visit up to `cap` keys at or after `from`, ascending, copying each key into
- * `arena`. On return *n_out holds how many entries were written to `out` and
- * *arena_used how many arena bytes were consumed.
+ * `arena`. On return *n_out holds how many entries were written to `out`.
  *
  * Stops early -- without error -- when either `cap` or the arena is
  * exhausted, so a caller resumes by re-calling with `from` set just past the
  * last key returned. A short result therefore means "chunk boundary", not
- * "end of range"; the two are distinguished by *n_out < cap.
+ * "end of range".
+ *
+ * *arena_used DISCRIMINATES THE TWO REASONS FOR STOPPING, and a caller that
+ * ignores it truncates every scan whose keys happen to be long:
+ *
+ *   *arena_used <= arena_cap : bytes consumed. The walk ended because the
+ *                              range ended or `cap` was reached.
+ *   *arena_used >  arena_cap : the walk stopped for want of arena space, and
+ *                              this is the size one more key would have
+ *                              needed. Grow to at least this and re-call
+ *                              with the SAME `from`; the result so far is
+ *                              still valid and may be kept or discarded.
+ *
+ * Without this the two are indistinguishable: a 400-byte key against a
+ * 4 KiB arena returns ten entries out of a requested sixty-four, which
+ * reads exactly like end-of-range. (Found by the Rust adapter's chunk
+ * test, which lost 980 of 1000 keys.)
+ *
+ * MTX_ERR_NO_SPACE is returned only when NOTHING fit, i.e. no progress at
+ * all is possible; then *arena_used is likewise the size needed.
  *
  * Buffer-filling rather than callback-driven on purpose: see the header
  * comment about the ticker spinlock. */

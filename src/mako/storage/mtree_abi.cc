@@ -55,11 +55,21 @@ struct chunk_collector {
   size_t arena_cap;
   size_t n = 0;
   size_t used = 0;
+  // Non-zero only when the walk stopped for want of arena space; then it
+  // is strictly greater than arena_cap. See mtx_scan_chunk.
+  size_t needed = 0;
 
   bool operator()(const lcdf::Str &k, concurrent_btree::value_type v) {
     if (n >= cap) return false;
     const size_t klen = static_cast<size_t>(k.length());
-    if (used + klen > arena_cap) return false;  // arena full: stop cleanly
+    if (used + klen > arena_cap) {
+      // The arena filled before the entry buffer did. Record what one
+      // more key would have needed, because otherwise this stop is
+      // indistinguishable from end-of-range and the caller silently
+      // truncates every scan whose keys happen to be long.
+      needed = used + klen;
+      return false;
+    }
     memcpy(arena + used, k.data(), klen);
     out[n].key_off = static_cast<uint32_t>(used);
     out[n].key_len = static_cast<uint32_t>(klen);
@@ -193,11 +203,13 @@ int mtx_scan_chunk(mtx_tree *t, const char *from, size_t fromlen, mtx_kv *out,
                              from == nullptr ? 0 : fromlen);
     as_tree(t)->search_range(lower, nullptr, c);
     *n_out = c.n;
-    *arena_used = c.used;
+    // The arena-full signal: report what one more key would have needed,
+    // which is by construction greater than arena_cap. See the header.
+    *arena_used = c.needed != 0 ? c.needed : c.used;
     // Nothing fit at all, yet the range is non-empty: the caller's arena
     // is too small for even one key, and silently returning 0 would look
     // like end-of-range and truncate the scan.
-    if (c.n == 0 && arena_cap == 0) return MTX_ERR_NO_SPACE;
+    if (c.n == 0 && (arena_cap == 0 || c.needed != 0)) return MTX_ERR_NO_SPACE;
     return MTX_OK;
   } catch (...) {
     return MTX_ERR_INTERNAL;
@@ -222,8 +234,8 @@ int mtx_rscan_chunk(mtx_tree *t, const char *from, size_t fromlen, mtx_kv *out,
                              from == nullptr ? 0 : fromlen);
     as_tree(t)->rsearch_range(upper, nullptr, c);
     *n_out = c.n;
-    *arena_used = c.used;
-    if (c.n == 0 && arena_cap == 0) return MTX_ERR_NO_SPACE;
+    *arena_used = c.needed != 0 ? c.needed : c.used;
+    if (c.n == 0 && (arena_cap == 0 || c.needed != 0)) return MTX_ERR_NO_SPACE;
     return MTX_OK;
   } catch (...) {
     return MTX_ERR_INTERNAL;

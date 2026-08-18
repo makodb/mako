@@ -1,0 +1,13 @@
+[package]
+name = "mrx-masstree"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "KeyIndex over masstree, through the mtx_* C ABI"
+license = "MIT"
+publish = false
+
+[dependencies]
+mrx-core = { path = "../mrx-core" }
+mtree-sys = { path = "../mtree-sys" }
+# See crates/Cargo.toml: profiles live at the workspace root.

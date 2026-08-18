@@ -29,14 +29,7 @@ publish = false
 #
 # CMakeLists.txt links rust_lib into every add_apps() binary, so any crate
 # added here inherits this constraint.
-[profile.release]
-lto = false
-panic = "abort"
-codegen-units = 1
-opt-level = 3
-
-[profile.dev]
-lto = false
+# See crates/Cargo.toml: profiles live at the workspace root.
 
 # panic = "abort" is release-only on purpose: `cargo test` needs unwinding
 # to report failures. The shipped staticlib is the release profile, where a

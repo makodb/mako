@@ -14,15 +14,4 @@ publish = false
 # a native library this crate does not build.)
 
 [dependencies]
-
-# See crates/mrx-core/Cargo.toml for why LTO is mandatory-off: mixing an
-# LTO staticlib with the existing non-LTO rust-lib archive fails to link
-# with duplicate std symbols. Reproduced, not theorised.
-[profile.release]
-lto = false
-panic = "abort"
-codegen-units = 1
-opt-level = 3
-
-[profile.dev]
-lto = false
+# See crates/Cargo.toml: profiles live at the workspace root.
