@@ -256,7 +256,8 @@ add_subdirectory(third-party/yaml-cpp)
 
 # rusty-cpp main HEAD retired the hand-written hashmap/btreemap/btreeset/rc/vec
 # headers in favor of transpiled C++20 modules (vec_port.vec, btree_port.btree.*,
-# rc_port, hashbrown_port, plus the umbrella rusty.cppm). Pull in those targets
+# rc_port, std_port/std_port_hashbrown, plus the umbrella rusty.cppm). Pull in
+# those targets
 # via add_subdirectory so rrr can `import rusty;`. EXCLUDE_FROM_ALL keeps
 # rusty-cpp's test/bench targets out of the default build — they only build
 # if explicitly requested via `cmake --build build --target <name>.out`.
@@ -273,8 +274,13 @@ add_subdirectory(third-party/rusty-cpp EXCLUDE_FROM_ALL)
 # rusty-cpp's CMakeLists.txt locally sets CMAKE_CXX_EXTENSIONS=OFF.
 # Override on each port target so rrr (gnu++23) can `import` them
 # without the "GNU extensions was disabled" PCM-config mismatch.
+# `std_port` and `std_port_hashbrown` replaced the deleted `hashbrown_port`
+# target (rusty-cpp #177): rusty.cppm now `import std_port;` for
+# rusty::HashMap / rusty::HashSet, and std_port itself imports the separate
+# `hashbrown` module. BOTH have to carry CXX_EXTENSIONS ON — the BMI-config
+# check applies to every module in the import closure, not just the umbrella.
 foreach(_rusty_port_target IN ITEMS
-    vec_port btree_port rc_port hashbrown_port rusty_async rusty
+    vec_port btree_port rc_port std_port std_port_hashbrown rusty_async rusty
     binary_heap_port binary_heap_tests_port linked_list_tests_port
     eq_diff_len_tests_port vec_deque_port cell_port string_port
     arc_port linked_list_port borrow_port ascii_port)
@@ -998,7 +1004,9 @@ target_include_directories(cluster PUBLIC
     ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
 )
 target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
-target_link_libraries(cluster PUBLIC rrr pthread btree_port vec_port rc_port hashbrown_port)
+# std_port supersedes the deleted hashbrown_port target; it PUBLIC-links
+# std_port_hashbrown, so naming std_port pulls in both archives/BMIs.
+target_link_libraries(cluster PUBLIC rrr pthread btree_port vec_port rc_port std_port)
 
 # Build txlog in layers:
 #   - txlog_core: deptran/rrr/memdb core (no src/bench/* compilation unit)

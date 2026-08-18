@@ -11,6 +11,7 @@
  * supporting multiple Masstree instances.
  */
 
+#include <stdint.h>
 #include <stdlib.h>
 
 #include <gtest/gtest.h>
@@ -82,13 +83,22 @@ TEST_F(MasstreeInternalsTest, MultipleThreadInfoCreation) {
     }
 
     // Verify all are in the list
-    rusty::HashSet<threadinfo*> found_set;
+    // NOTE (rusty-cpp pin fa7dd9d9): these identity sets hold the ADDRESS of each
+    // threadinfo, not the pointer itself. std_port's hashbrown lowers its
+    // `Equivalent` extension trait to
+    //   deref_if_pointer_like(self_) == rusty::borrow(key)
+    // (transpiled/std_port/hashbrown/hashbrown.cppm), which for a raw-pointer key
+    // dereferences BOTH sides and then demands `operator==` on the pointee — so
+    // `rusty::HashSet<threadinfo*>` no longer compiles. The retired hashbrown_port
+    // accepted pointer keys. uintptr_t keeps exactly the pointer-identity
+    // semantics these assertions want; revert if upstream stops dereferencing.
+    rusty::HashSet<uintptr_t> found_set;
     for (threadinfo* t = ctx_->get_allthreads(); t; t = t->next()) {
-        found_set.insert(t);
+        found_set.insert(reinterpret_cast<uintptr_t>(t));
     }
 
     for (auto* ti : infos) {
-        EXPECT_TRUE(found_set.contains(ti))
+        EXPECT_TRUE(found_set.contains(reinterpret_cast<uintptr_t>(ti)))
             << "threadinfo with index " << ti->index() << " not found in list";
     }
 }
@@ -253,14 +263,23 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
     EXPECT_EQ(created.load(), NUM_THREADS);
 
     // Verify all threadinfos are in the context's list
-    rusty::HashSet<threadinfo*> found_set;
+    // NOTE (rusty-cpp pin fa7dd9d9): these identity sets hold the ADDRESS of each
+    // threadinfo, not the pointer itself. std_port's hashbrown lowers its
+    // `Equivalent` extension trait to
+    //   deref_if_pointer_like(self_) == rusty::borrow(key)
+    // (transpiled/std_port/hashbrown/hashbrown.cppm), which for a raw-pointer key
+    // dereferences BOTH sides and then demands `operator==` on the pointee — so
+    // `rusty::HashSet<threadinfo*>` no longer compiles. The retired hashbrown_port
+    // accepted pointer keys. uintptr_t keeps exactly the pointer-identity
+    // semantics these assertions want; revert if upstream stops dereferencing.
+    rusty::HashSet<uintptr_t> found_set;
     for (threadinfo* t = ctx_->get_allthreads(); t; t = t->next()) {
-        found_set.insert(t);
+        found_set.insert(reinterpret_cast<uintptr_t>(t));
     }
 
     for (int i = 0; i < NUM_THREADS; ++i) {
         EXPECT_NE(thread_infos[i], nullptr);
-        EXPECT_TRUE(found_set.contains(thread_infos[i]))
+        EXPECT_TRUE(found_set.contains(reinterpret_cast<uintptr_t>(thread_infos[i])))
             << "Thread " << i << "'s threadinfo not found in context's list";
     }
 }

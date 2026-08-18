@@ -447,15 +447,23 @@ TEST(MarshalArchiveRoundTrip, RustyBTreeSetPrimitives) {
 }
 
 TEST(MarshalArchiveRoundTrip, RustyHashSetPrimitives) {
-  // clang-22's Itanium name mangler crashes (SIGSEGV in
-  // CXXNameMangler::mangleSourceName) on the hashbrown table-iterator type
-  // produced by the `rusty::iter()` lambda in slice.hpp — so the ENCODER
-  // `operator<<(const rusty::HashSet<T>&)` (serializable.cpp) cannot be
-  // instantiated on clang-22 at all. The wire format is just a v64 count +
-  // elements, identical to std::set, so we encode a wire-compatible std::set
-  // and exercise the rusty::HashSet DECODER (operator>>, which only inserts
-  // and never enumerates the table — crash-free).
-  std::set<int32_t> s{1, 2, 3};
+  // This test used to encode a wire-compatible std::set and only decode
+  // into a rusty::HashSet, because the old hashbrown_port enumeration
+  // routed through the anonymous `rusty::iter()` dispatcher in slice.hpp
+  // and SIGSEGV'd clang-22's Itanium mangler. That is over: rusty::HashSet
+  // is now std_port's, whose iter() returns the NAMED struct
+  // std_port::collections::hash::set::Iter<T>.
+  //
+  // Instantiating the ENCODER here is the point of the test. The
+  // Serialize impl for rusty::HashSet in serializable.cpp is a template,
+  // so a stale body (it used to read a `map` field that std_port's HashSet
+  // does not have) compiles fine until something instantiates it. This
+  // call is that something — if the body regresses, this TU fails to
+  // compile.
+  auto s = rusty::HashSet<int32_t>::new_();
+  s.insert(1);
+  s.insert(2);
+  s.insert(3);
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
@@ -464,11 +472,23 @@ TEST(MarshalArchiveRoundTrip, RustyHashSetPrimitives) {
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
 
+  // Wire shape is a v64 count + elements — byte-length identical to the
+  // std::set encoding of the same three values. (Element ORDER is std's
+  // RandomState order and varies per run, so only the length is fixed.)
+  std::set<int32_t> reference{1, 2, 3};
+  BufferSink reference_sink;
+  BinaryWriteArchive reference_writer(make_sink_proxy(&reference_sink));
+  rrr::Serialize_::serialize(reference, reference_writer);
+  EXPECT_EQ(sink.bytes.len(), reference_sink.bytes.len());
+
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   rusty::HashSet<int32_t> decoded;
   rrr::Deserialize_::deserialize(decoded, reader);
-  ASSERT_EQ(decoded.len(), s.size());
+  ASSERT_EQ(decoded.len(), s.len());
+  EXPECT_TRUE(decoded.contains(1));
+  EXPECT_TRUE(decoded.contains(2));
+  EXPECT_TRUE(decoded.contains(3));
   EXPECT_TRUE(source.eof());
 }
 
@@ -511,12 +531,13 @@ TEST(MarshalArchiveRoundTrip, RustyBTreeMapPrimitives) {
 }
 
 TEST(MarshalArchiveRoundTrip, RustyHashMapPrimitives) {
-  // Same clang-22 mangler crash as RustyHashSetPrimitives: the hashbrown
-  // table-iterator type cannot be mangled, so `operator<<(rusty::HashMap)`
-  // can't be instantiated on clang-22. The wire format (v64 count + key/value
-  // pairs) matches std::map, so encode a wire-compatible std::map and exercise
-  // the rusty::HashMap DECODER (operator>>, insert-only, crash-free).
-  std::map<int32_t, std::string> m{{1, "a"}, {2, "b"}, {3, "c"}};
+  // Encoder + decoder, both through rusty::HashMap — see the note on
+  // RustyHashSetPrimitives for why this stopped being decode-only. The
+  // Serialize impl is a template; this call is what instantiates it.
+  auto m = rusty::HashMap<int32_t, std::string>::new_();
+  m.insert(1, std::string("a"));
+  m.insert(2, std::string("b"));
+  m.insert(3, std::string("c"));
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
@@ -525,11 +546,22 @@ TEST(MarshalArchiveRoundTrip, RustyHashMapPrimitives) {
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
 
+  // v64 count + key/value pairs — byte-length identical to the std::map
+  // encoding of the same three entries; pair ORDER varies (RandomState).
+  std::map<int32_t, std::string> reference{{1, "a"}, {2, "b"}, {3, "c"}};
+  BufferSink reference_sink;
+  BinaryWriteArchive reference_writer(make_sink_proxy(&reference_sink));
+  rrr::Serialize_::serialize(reference, reference_writer);
+  EXPECT_EQ(sink.bytes.len(), reference_sink.bytes.len());
+
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   rusty::HashMap<int32_t, std::string> decoded;
   rrr::Deserialize_::deserialize(decoded, reader);
-  ASSERT_EQ(decoded.len(), m.size());
+  ASSERT_EQ(decoded.len(), m.len());
+  EXPECT_TRUE(decoded.contains_key(1));
+  EXPECT_TRUE(decoded.contains_key(2));
+  EXPECT_TRUE(decoded.contains_key(3));
   EXPECT_TRUE(source.eof());
 }
 

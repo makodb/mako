@@ -171,17 +171,25 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     for (auto& t : threads1) { auto _ = t.join(); }
     for (auto& t : threads2) { auto _ = t.join(); }
 
+    // NOTE (rusty-cpp pin fa7dd9d9): keyed on the ADDRESS, not the pointer.
+    // std_port's hashbrown lowers `Equivalent` to
+    //   deref_if_pointer_like(self_) == rusty::borrow(key)
+    // which dereferences a raw-pointer key and then demands `operator==` on
+    // the pointee, so `rusty::HashSet<threadinfo*>` no longer compiles (the
+    // retired hashbrown_port accepted it). uintptr_t preserves the
+    // pointer-identity semantics these assertions rely on.
+
     // Verify ctx1's thread list only contains ctx1 threads
-    rusty::HashSet<threadinfo*> ctx1_set;
+    rusty::HashSet<uintptr_t> ctx1_set;
     for (threadinfo* ti = ctx1_->get_allthreads(); ti; ti = ti->next()) {
-        ctx1_set.insert(ti);
+        ctx1_set.insert(reinterpret_cast<uintptr_t>(ti));
         EXPECT_EQ(ti->context(), ctx1_);
     }
 
     // Verify ctx2's thread list only contains ctx2 threads
-    rusty::HashSet<threadinfo*> ctx2_set;
+    rusty::HashSet<uintptr_t> ctx2_set;
     for (threadinfo* ti = ctx2_->get_allthreads(); ti; ti = ti->next()) {
-        ctx2_set.insert(ti);
+        ctx2_set.insert(reinterpret_cast<uintptr_t>(ti));
         EXPECT_EQ(ti->context(), ctx2_);
     }
 
@@ -189,15 +197,15 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     {
         auto g1 = ctx1_threads.lock().unwrap();
         for (auto* ti : *g1) {
-            EXPECT_TRUE(ctx1_set.contains(ti));
-            EXPECT_FALSE(ctx2_set.contains(ti));
+            EXPECT_TRUE(ctx1_set.contains(reinterpret_cast<uintptr_t>(ti)));
+            EXPECT_FALSE(ctx2_set.contains(reinterpret_cast<uintptr_t>(ti)));
         }
     }
     {
         auto g2 = ctx2_threads.lock().unwrap();
         for (auto* ti : *g2) {
-            EXPECT_TRUE(ctx2_set.contains(ti));
-            EXPECT_FALSE(ctx1_set.contains(ti));
+            EXPECT_TRUE(ctx2_set.contains(reinterpret_cast<uintptr_t>(ti)));
+            EXPECT_FALSE(ctx1_set.contains(reinterpret_cast<uintptr_t>(ti)));
         }
     }
 }

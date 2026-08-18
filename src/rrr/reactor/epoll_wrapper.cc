@@ -269,7 +269,7 @@ void epoll_wait_impl(int32_t poll_fd, F on_ready) {
             ready_events |= PollReady::ERROR;
         }
         if (rusty::detail::deref_if_pointer_like(ready_events) != static_cast<int32_t>(0)) {
-            on_ready(evlist.at(idx).data.fd, std::move(ready_events));
+            on_ready([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.fd); }) { return (__r.fd); } else if constexpr (requires { (__r.fd_field); }) { return (__r.fd_field); } else if constexpr (requires { ((*__r).fd); }) { return ((*__r).fd); } else { return ((*__r).fd_field); } }(evlist.at(idx).data), std::move(ready_events));
         }
         i += 1;
     }

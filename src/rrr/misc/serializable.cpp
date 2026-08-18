@@ -987,33 +987,40 @@ impl<K, V> Serialize for rusty::BTreeMap<K, V> {
     }
 }
 
-// The two hashbrown write bodies, same explicit-iterator shape as the
-// B-tree pair above. HashSet has no const begin()/end() of its own, so
-// it walks the underlying HashMap field: `self.map.iter()` lowers to
-// `rusty::iter(self_.map)`, whose next() yields
-// Option<tuple<const T&, const monostate&>> — hence the `kv.0`.
+// The two hash-table write bodies, same explicit-iterator shape as the
+// B-tree pair above.
 //
-// WARNING (unchanged by this conversion): ANY hashbrown enumeration
-// (iter()/begin()/drain()) routes through the `rusty::iter(table)`
-// dispatcher in slice.hpp, whose return-type name crashes clang-22's
-// Itanium mangler (SIGSEGV in mangleSourceName). These two templates
-// MUST therefore stay UNINSTANTIATED — no production code serializes a
-// rusty::HashSet/HashMap today, and the DECODER side (insert-only) is
-// crash-free and is what the RustyHashSetPrimitives /
-// RustyHashMapPrimitives tests exercise. If that ever changes, the
-// encoder needs a mangler-safe enumeration path (or a fixed toolchain).
+// HISTORY — this block silently changed meaning when the rusty-cpp pin
+// moved to fa7dd9d9. Under the old `hashbrown_port`, `rusty::HashSet<T>`
+// was a thin wrapper over a `HashMap<T, ()>` reachable through a public
+// `map` field, so the body read `self.map.iter()` and destructured a
+// `(T, monostate)` pair with `kv.0`. `std_port`'s HashSet (the transpiled
+// Rust std slice, which is what `rusty::HashSet` aliases now) has NO
+// `map` field: it holds `base`, a hashbrown `HashSet`, and its own
+// `iter()` yields `Option<const T&>` directly. Because these bodies are
+// templates, the stale `self.map` would NOT have been diagnosed until
+// something instantiated them — a green build proves nothing here. The
+// body below is the std_port shape: iterate the set itself, serialize the
+// element.
+//
+// The old "MUST stay UNINSTANTIATED" warning is also retired. It existed
+// because hashbrown_port enumeration routed through the `rusty::iter()`
+// dispatcher lambda in slice.hpp, whose return-type name SIGSEGV'd
+// clang-22's Itanium mangler. std_port's `iter()` returns a NAMED struct
+// (`std_port::collections::hash::set::Iter<T>`), so there is no anonymous
+// type to mangle. MarshalArchiveRoundTrip.RustyHashSet/HashMapPrimitives
+// now encode through these templates, which is what keeps them honest.
 impl<T> Serialize for rusty::HashSet<T> {
     fn serialize(&self, ar: &mut BinaryWriteArchive) {
         let v_len: rrr::v64 = rrr::v64::new(self.len() as i64);
         Serialize_::serialize(v_len, ar);
-        let mut it = self.map.iter();
+        let mut it = self.iter();
         loop {
             let e = it.next();
             if e.is_none() {
                 break;
             }
-            let kv = e.unwrap();
-            Serialize_::serialize(kv.0, ar);
+            Serialize_::serialize(e.unwrap(), ar);
         }
     }
 }
@@ -1046,7 +1053,7 @@ impl<T1, T2> Serialize for std::pair<T1, T2> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=5d3ef56b43300c71459919ff087e1c50aa5c0260c4d85e694559672482aeff6f*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=0900b3a24a5d3394a2bc2128afb94cf5443b42352f28f5f41ccb54347bef0672*/
 class Serialize;
 
 // Extension trait free-function forward declarations
@@ -1524,14 +1531,13 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
         Serialize_::serialize(v_len, ar);
-        auto it = rusty::iter(self_.map);
+        auto it = rusty::iter(self_);
         while (true) {
             auto e = it.next();
             if (e.is_none()) {
                 break;
             }
-            const auto kv = e.unwrap();
-            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+            Serialize_::serialize(e.unwrap(), ar);
         }
     }
 
@@ -1964,18 +1970,378 @@ public:
     }
 };
 
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<std::list<T>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<rusty::Vec<T>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<std::vector<T>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<std::set<T>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<std::unordered_set<T>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<std::map<K, V>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<std::unordered_map<K, V>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<rusty::BTreeSet<T>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<rusty::BTreeMap<K, V>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<rusty::HashSet<T>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<rusty::HashMap<K, V>>`
-// TODO(interface_traits): skipped generic impl `SerializeAdapter<std::pair<T1, T2>>`
+template <typename T>
+class SerializeAdapter<std::list<T>> final : public Serialize {
+    std::list<T> value_;
+public:
+    SerializeAdapter(std::list<T> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRef<std::list<T>> final : public Serialize {
+    const std::list<T>& value_;
+public:
+    explicit SerializeAdapterRef(const std::list<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRefMut<std::list<T>> final : public Serialize {
+    std::list<T>& value_;
+public:
+    explicit SerializeAdapterRefMut(std::list<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapter<rusty::Vec<T>> final : public Serialize {
+    rusty::Vec<T> value_;
+public:
+    SerializeAdapter(rusty::Vec<T> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRef<rusty::Vec<T>> final : public Serialize {
+    const rusty::Vec<T>& value_;
+public:
+    explicit SerializeAdapterRef(const rusty::Vec<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRefMut<rusty::Vec<T>> final : public Serialize {
+    rusty::Vec<T>& value_;
+public:
+    explicit SerializeAdapterRefMut(rusty::Vec<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapter<std::vector<T>> final : public Serialize {
+    std::vector<T> value_;
+public:
+    SerializeAdapter(std::vector<T> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRef<std::vector<T>> final : public Serialize {
+    const std::vector<T>& value_;
+public:
+    explicit SerializeAdapterRef(const std::vector<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRefMut<std::vector<T>> final : public Serialize {
+    std::vector<T>& value_;
+public:
+    explicit SerializeAdapterRefMut(std::vector<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapter<std::set<T>> final : public Serialize {
+    std::set<T> value_;
+public:
+    SerializeAdapter(std::set<T> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRef<std::set<T>> final : public Serialize {
+    const std::set<T>& value_;
+public:
+    explicit SerializeAdapterRef(const std::set<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRefMut<std::set<T>> final : public Serialize {
+    std::set<T>& value_;
+public:
+    explicit SerializeAdapterRefMut(std::set<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapter<std::unordered_set<T>> final : public Serialize {
+    std::unordered_set<T> value_;
+public:
+    SerializeAdapter(std::unordered_set<T> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRef<std::unordered_set<T>> final : public Serialize {
+    const std::unordered_set<T>& value_;
+public:
+    explicit SerializeAdapterRef(const std::unordered_set<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRefMut<std::unordered_set<T>> final : public Serialize {
+    std::unordered_set<T>& value_;
+public:
+    explicit SerializeAdapterRefMut(std::unordered_set<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapter<std::map<K, V>> final : public Serialize {
+    std::map<K, V> value_;
+public:
+    SerializeAdapter(std::map<K, V> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapterRef<std::map<K, V>> final : public Serialize {
+    const std::map<K, V>& value_;
+public:
+    explicit SerializeAdapterRef(const std::map<K, V>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapterRefMut<std::map<K, V>> final : public Serialize {
+    std::map<K, V>& value_;
+public:
+    explicit SerializeAdapterRefMut(std::map<K, V>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapter<std::unordered_map<K, V>> final : public Serialize {
+    std::unordered_map<K, V> value_;
+public:
+    SerializeAdapter(std::unordered_map<K, V> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapterRef<std::unordered_map<K, V>> final : public Serialize {
+    const std::unordered_map<K, V>& value_;
+public:
+    explicit SerializeAdapterRef(const std::unordered_map<K, V>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapterRefMut<std::unordered_map<K, V>> final : public Serialize {
+    std::unordered_map<K, V>& value_;
+public:
+    explicit SerializeAdapterRefMut(std::unordered_map<K, V>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapter<rusty::BTreeSet<T>> final : public Serialize {
+    rusty::BTreeSet<T> value_;
+public:
+    SerializeAdapter(rusty::BTreeSet<T> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRef<rusty::BTreeSet<T>> final : public Serialize {
+    const rusty::BTreeSet<T>& value_;
+public:
+    explicit SerializeAdapterRef(const rusty::BTreeSet<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRefMut<rusty::BTreeSet<T>> final : public Serialize {
+    rusty::BTreeSet<T>& value_;
+public:
+    explicit SerializeAdapterRefMut(rusty::BTreeSet<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapter<rusty::BTreeMap<K, V>> final : public Serialize {
+    rusty::BTreeMap<K, V> value_;
+public:
+    SerializeAdapter(rusty::BTreeMap<K, V> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapterRef<rusty::BTreeMap<K, V>> final : public Serialize {
+    const rusty::BTreeMap<K, V>& value_;
+public:
+    explicit SerializeAdapterRef(const rusty::BTreeMap<K, V>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapterRefMut<rusty::BTreeMap<K, V>> final : public Serialize {
+    rusty::BTreeMap<K, V>& value_;
+public:
+    explicit SerializeAdapterRefMut(rusty::BTreeMap<K, V>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapter<rusty::HashSet<T>> final : public Serialize {
+    rusty::HashSet<T> value_;
+public:
+    SerializeAdapter(rusty::HashSet<T> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRef<rusty::HashSet<T>> final : public Serialize {
+    const rusty::HashSet<T>& value_;
+public:
+    explicit SerializeAdapterRef(const rusty::HashSet<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T>
+class SerializeAdapterRefMut<rusty::HashSet<T>> final : public Serialize {
+    rusty::HashSet<T>& value_;
+public:
+    explicit SerializeAdapterRefMut(rusty::HashSet<T>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapter<rusty::HashMap<K, V>> final : public Serialize {
+    rusty::HashMap<K, V> value_;
+public:
+    SerializeAdapter(rusty::HashMap<K, V> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapterRef<rusty::HashMap<K, V>> final : public Serialize {
+    const rusty::HashMap<K, V>& value_;
+public:
+    explicit SerializeAdapterRef(const rusty::HashMap<K, V>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class SerializeAdapterRefMut<rusty::HashMap<K, V>> final : public Serialize {
+    rusty::HashMap<K, V>& value_;
+public:
+    explicit SerializeAdapterRefMut(rusty::HashMap<K, V>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T1, typename T2>
+class SerializeAdapter<std::pair<T1, T2>> final : public Serialize {
+    std::pair<T1, T2> value_;
+public:
+    SerializeAdapter(std::pair<T1, T2> v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T1, typename T2>
+class SerializeAdapterRef<std::pair<T1, T2>> final : public Serialize {
+    const std::pair<T1, T2>& value_;
+public:
+    explicit SerializeAdapterRef(const std::pair<T1, T2>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <typename T1, typename T2>
+class SerializeAdapterRefMut<std::pair<T1, T2>> final : public Serialize {
+    std::pair<T1, T2>& value_;
+public:
+    explicit SerializeAdapterRefMut(std::pair<T1, T2>& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
 
 // UFCS trait migration: free functions for `impl Serialize for ...`
 namespace Serialize_ {
@@ -2273,14 +2639,13 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         rrr::v64 v_len = rrr::v64::new_(static_cast<int64_t>(rusty::len(self_)));
         Serialize_::serialize(v_len, ar);
-        auto it = rusty::iter(self_.map);
+        auto it = rusty::iter(self_);
         while (true) {
             auto e = it.next();
             if (e.is_none()) {
                 break;
             }
-            const auto kv = e.unwrap();
-            Serialize_::serialize(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), ar);
+            Serialize_::serialize(e.unwrap(), ar);
         }
     }
 
@@ -3746,18 +4111,378 @@ public:
     }
 };
 
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::pair<T1, T2>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::Vec<T>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::vector<T>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::list<T>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::BTreeSet<T>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::set<T>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::HashSet<T>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::unordered_set<T>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::BTreeMap<K, V>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::map<K, V>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<rusty::HashMap<K, V>>`
-// TODO(interface_traits): skipped generic impl `DeserializeAdapter<std::unordered_map<K, V>>`
+template <typename T1, typename T2>
+class DeserializeAdapter<std::pair<T1, T2>> final : public Deserialize {
+    std::pair<T1, T2> value_;
+public:
+    DeserializeAdapter(std::pair<T1, T2> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T1, typename T2>
+class DeserializeAdapterRef<std::pair<T1, T2>> final : public Deserialize {
+    const std::pair<T1, T2>& value_;
+public:
+    explicit DeserializeAdapterRef(const std::pair<T1, T2>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename T1, typename T2>
+class DeserializeAdapterRefMut<std::pair<T1, T2>> final : public Deserialize {
+    std::pair<T1, T2>& value_;
+public:
+    explicit DeserializeAdapterRefMut(std::pair<T1, T2>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapter<rusty::Vec<T>> final : public Deserialize {
+    rusty::Vec<T> value_;
+public:
+    DeserializeAdapter(rusty::Vec<T> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRef<rusty::Vec<T>> final : public Deserialize {
+    const rusty::Vec<T>& value_;
+public:
+    explicit DeserializeAdapterRef(const rusty::Vec<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRefMut<rusty::Vec<T>> final : public Deserialize {
+    rusty::Vec<T>& value_;
+public:
+    explicit DeserializeAdapterRefMut(rusty::Vec<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapter<std::vector<T>> final : public Deserialize {
+    std::vector<T> value_;
+public:
+    DeserializeAdapter(std::vector<T> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRef<std::vector<T>> final : public Deserialize {
+    const std::vector<T>& value_;
+public:
+    explicit DeserializeAdapterRef(const std::vector<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRefMut<std::vector<T>> final : public Deserialize {
+    std::vector<T>& value_;
+public:
+    explicit DeserializeAdapterRefMut(std::vector<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapter<std::list<T>> final : public Deserialize {
+    std::list<T> value_;
+public:
+    DeserializeAdapter(std::list<T> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRef<std::list<T>> final : public Deserialize {
+    const std::list<T>& value_;
+public:
+    explicit DeserializeAdapterRef(const std::list<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRefMut<std::list<T>> final : public Deserialize {
+    std::list<T>& value_;
+public:
+    explicit DeserializeAdapterRefMut(std::list<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapter<rusty::BTreeSet<T>> final : public Deserialize {
+    rusty::BTreeSet<T> value_;
+public:
+    DeserializeAdapter(rusty::BTreeSet<T> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRef<rusty::BTreeSet<T>> final : public Deserialize {
+    const rusty::BTreeSet<T>& value_;
+public:
+    explicit DeserializeAdapterRef(const rusty::BTreeSet<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRefMut<rusty::BTreeSet<T>> final : public Deserialize {
+    rusty::BTreeSet<T>& value_;
+public:
+    explicit DeserializeAdapterRefMut(rusty::BTreeSet<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapter<std::set<T>> final : public Deserialize {
+    std::set<T> value_;
+public:
+    DeserializeAdapter(std::set<T> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRef<std::set<T>> final : public Deserialize {
+    const std::set<T>& value_;
+public:
+    explicit DeserializeAdapterRef(const std::set<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRefMut<std::set<T>> final : public Deserialize {
+    std::set<T>& value_;
+public:
+    explicit DeserializeAdapterRefMut(std::set<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapter<rusty::HashSet<T>> final : public Deserialize {
+    rusty::HashSet<T> value_;
+public:
+    DeserializeAdapter(rusty::HashSet<T> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRef<rusty::HashSet<T>> final : public Deserialize {
+    const rusty::HashSet<T>& value_;
+public:
+    explicit DeserializeAdapterRef(const rusty::HashSet<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRefMut<rusty::HashSet<T>> final : public Deserialize {
+    rusty::HashSet<T>& value_;
+public:
+    explicit DeserializeAdapterRefMut(rusty::HashSet<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapter<std::unordered_set<T>> final : public Deserialize {
+    std::unordered_set<T> value_;
+public:
+    DeserializeAdapter(std::unordered_set<T> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRef<std::unordered_set<T>> final : public Deserialize {
+    const std::unordered_set<T>& value_;
+public:
+    explicit DeserializeAdapterRef(const std::unordered_set<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename T>
+class DeserializeAdapterRefMut<std::unordered_set<T>> final : public Deserialize {
+    std::unordered_set<T>& value_;
+public:
+    explicit DeserializeAdapterRefMut(std::unordered_set<T>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapter<rusty::BTreeMap<K, V>> final : public Deserialize {
+    rusty::BTreeMap<K, V> value_;
+public:
+    DeserializeAdapter(rusty::BTreeMap<K, V> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapterRef<rusty::BTreeMap<K, V>> final : public Deserialize {
+    const rusty::BTreeMap<K, V>& value_;
+public:
+    explicit DeserializeAdapterRef(const rusty::BTreeMap<K, V>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapterRefMut<rusty::BTreeMap<K, V>> final : public Deserialize {
+    rusty::BTreeMap<K, V>& value_;
+public:
+    explicit DeserializeAdapterRefMut(rusty::BTreeMap<K, V>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapter<std::map<K, V>> final : public Deserialize {
+    std::map<K, V> value_;
+public:
+    DeserializeAdapter(std::map<K, V> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapterRef<std::map<K, V>> final : public Deserialize {
+    const std::map<K, V>& value_;
+public:
+    explicit DeserializeAdapterRef(const std::map<K, V>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapterRefMut<std::map<K, V>> final : public Deserialize {
+    std::map<K, V>& value_;
+public:
+    explicit DeserializeAdapterRefMut(std::map<K, V>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapter<rusty::HashMap<K, V>> final : public Deserialize {
+    rusty::HashMap<K, V> value_;
+public:
+    DeserializeAdapter(rusty::HashMap<K, V> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapterRef<rusty::HashMap<K, V>> final : public Deserialize {
+    const rusty::HashMap<K, V>& value_;
+public:
+    explicit DeserializeAdapterRef(const rusty::HashMap<K, V>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapterRefMut<rusty::HashMap<K, V>> final : public Deserialize {
+    rusty::HashMap<K, V>& value_;
+public:
+    explicit DeserializeAdapterRefMut(rusty::HashMap<K, V>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapter<std::unordered_map<K, V>> final : public Deserialize {
+    std::unordered_map<K, V> value_;
+public:
+    DeserializeAdapter(std::unordered_map<K, V> v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapterRef<std::unordered_map<K, V>> final : public Deserialize {
+    const std::unordered_map<K, V>& value_;
+public:
+    explicit DeserializeAdapterRef(const std::unordered_map<K, V>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <typename K, typename V>
+class DeserializeAdapterRefMut<std::unordered_map<K, V>> final : public Deserialize {
+    std::unordered_map<K, V>& value_;
+public:
+    explicit DeserializeAdapterRefMut(std::unordered_map<K, V>& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
 
 // UFCS trait migration: free functions for `impl Deserialize for ...`
 namespace Deserialize_ {

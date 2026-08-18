@@ -1840,7 +1840,7 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     , channel_mode_(rusty::Cell<bool>::new_(false))
     , factory_(rusty::Mutex<rusty::Option<ChannelFactoryProxy>>::new_(rusty::Option<ChannelFactoryProxy>(rusty::None)))
     , xid_counter_(Counter::new_(static_cast<int64_t>(0)))
-    , pending_fu_(rusty::Mutex<rusty::HashMap<int64_t, rusty::Arc<Future>>>::new_(rusty::HashMap<int64_t, rusty::Arc<Future>>()))
+    , pending_fu_(rusty::Mutex<rusty::HashMap<int64_t, rusty::Arc<Future>>>::new_(rusty::HashMap<int64_t, rusty::Arc<Future>>::new_()))
     , pending_cb_slots_(rusty::Mutex<rusty::Vec<rusty::Option<AsyncReplyCallback>>>::new_(make_prefilled_cb_slots()))
     , state_machine_(ConnectionStateMachine::new_())
     , reconnect_policy_(rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy::new_()))
@@ -1853,7 +1853,7 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     , keepalive_config_(rusty::Cell<KeepaliveConfig>::new_(KeepaliveConfig{}))
     , heartbeat_manager_(HeartbeatManager::new_(HeartbeatConfig::disabled()))
     , circuit_breaker_(CircuitBreaker::new_(CircuitBreakerConfig::disabled()))
-    , callback_manager_(rusty::Arc<CallbackManager>::new_(CallbackManager::new_()))
+    , callback_manager_(rusty::Arc<CallbackManager>::make(CallbackManager::new_()))
     , last_activity_time_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
     , metrics_(ConnectionMetrics::new_())
     , weak_self_(WeakClientConnection{})
@@ -1901,7 +1901,7 @@ if (conn_opt.is_none()) {
     return;
 }
 const auto conn = conn_opt.unwrap();
-const bool conn_aborted = (rusty::detail::deref_if_pointer_like(conn)).reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+const bool conn_aborted = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnect_abort_); }) { return (__r.reconnect_abort_); } else if constexpr (requires { (__r.reconnect_abort__field); }) { return (__r.reconnect_abort__field); } else if constexpr (requires { ((*__r).reconnect_abort_); }) { return ((*__r).reconnect_abort_); } else { return ((*__r).reconnect_abort__field); } }((rusty::detail::deref_if_pointer_like(conn)).reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
 if (rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(conn)).reconnect_policy_.get().auto_reconnect) || rusty::detail::deref_if_pointer_like(conn_aborted)) {
     return;
 }
@@ -2300,7 +2300,7 @@ if (conn_opt.is_none()) {
     return;
 }
 const auto conn = conn_opt.unwrap();
-const bool conn_aborted = (rusty::detail::deref_if_pointer_like(conn)).reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+const bool conn_aborted = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnect_abort_); }) { return (__r.reconnect_abort_); } else if constexpr (requires { (__r.reconnect_abort__field); }) { return (__r.reconnect_abort__field); } else if constexpr (requires { ((*__r).reconnect_abort_); }) { return ((*__r).reconnect_abort_); } else { return ((*__r).reconnect_abort__field); } }((rusty::detail::deref_if_pointer_like(conn)).reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
 if (rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(conn)).reconnect_policy_.get().auto_reconnect) || rusty::detail::deref_if_pointer_like(conn_aborted)) {
     return;
 }
@@ -3119,11 +3119,11 @@ Client::~Client() noexcept(false) {
 }
 
 Client Client::new_(rusty::Arc<PollThread> poll_thread_worker) {
-    return Client(rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>>::new_(rusty::Option<rusty::Arc<ClientConnection>>{rusty::None}), std::move(poll_thread_worker), rusty::Cell<bool>::new_(false), rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)), rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<KeepaliveConfig>::new_(KeepaliveConfig{}), rusty::Cell<HeartbeatConfig>::new_(HeartbeatConfig::disabled()), rusty::Cell<CircuitBreakerConfig>::new_(CircuitBreakerConfig::disabled()), rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy::conservative()), rusty::Arc<CallbackManager>::new_(CallbackManager::new_()), rusty::Mutex<rusty::Option<ChannelFactoryProxy>>::new_(rusty::Option<ChannelFactoryProxy>(rusty::None)), ConnectionMetrics::new_());
+    return Client(rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>>::new_(rusty::Option<rusty::Arc<ClientConnection>>{rusty::None}), std::move(poll_thread_worker), rusty::Cell<bool>::new_(false), rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)), rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<KeepaliveConfig>::new_(KeepaliveConfig{}), rusty::Cell<HeartbeatConfig>::new_(HeartbeatConfig::disabled()), rusty::Cell<CircuitBreakerConfig>::new_(CircuitBreakerConfig::disabled()), rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy::conservative()), rusty::Arc<CallbackManager>::make(CallbackManager::new_()), rusty::Mutex<rusty::Option<ChannelFactoryProxy>>::new_(rusty::Option<ChannelFactoryProxy>(rusty::None)), ConnectionMetrics::new_());
 }
 
 rusty::Arc<Client> Client::create(rusty::Arc<PollThread> poll_thread_worker) {
-    return rusty::Arc<Client>::new_(Client::new_(std::move(poll_thread_worker)));
+    return rusty::Arc<Client>::make(Client::new_(std::move(poll_thread_worker)));
 }
 
 void Client::set_client_mode(bool v) const {
@@ -3205,7 +3205,7 @@ int32_t Client::connect(const int8_t* addr, bool client) const {
     mut_conn.set_circuit_breaker_config(this->pending_circuit_breaker_config_field.get());
     mut_conn.set_reconnect_policy(rusty::detail::deref_if_pointer_like(this->pending_reconnect_policy_field.get()));
     if (!this->has_pending_channel_factory()) {
-        const rusty::Arc<TcpFactory> tcp_factory = rusty::Arc<TcpFactory>::new_(TcpFactory::new_(rusty::clone(this->poll_thread_worker_field)));
+        const rusty::Arc<TcpFactory> tcp_factory = rusty::Arc<TcpFactory>::make(TcpFactory::new_(rusty::clone(this->poll_thread_worker_field)));
         this->set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
     }
     {
@@ -3231,7 +3231,7 @@ void Client::close() const {
         conn_ref->mark_closing();
         if (was_connected) {
             rusty::Arc<ClientConnection> conn_arc = rusty::clone(conn_ref);
-            const rusty::Arc<OneTimeJob> close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([=, conn_arc = std::move(conn_arc)]() {
+            const rusty::Arc<OneTimeJob> close_job = rusty::Arc<OneTimeJob>::make(OneTimeJob::new_([=, conn_arc = std::move(conn_arc)]() {
 conn_arc->close();
 }));
             this->poll_thread_worker_field->add(std::move(close_job));
@@ -4084,7 +4084,7 @@ fn clientconn_reconnect(self_: &ClientConnection, on_complete: OnReconnectComple
 int32_t clientconn_reconnect(const ClientConnection& self_, OnReconnectCompleteCallbackFn on_complete) {
     // @unsafe
     {
-        self_.reconnect_.reconnect_abort_.store(false, rusty::sync::atomic::Ordering::Release);
+        [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnect_abort_); }) { return (__r.reconnect_abort_); } else if constexpr (requires { (__r.reconnect_abort__field); }) { return (__r.reconnect_abort__field); } else if constexpr (requires { ((*__r).reconnect_abort_); }) { return ((*__r).reconnect_abort_); } else { return ((*__r).reconnect_abort__field); } }(self_.reconnect_).store(false, rusty::sync::atomic::Ordering::Release);
     }
     const auto complete_callback = [&](int32_t result) -> int32_t {
 if (on_complete) {
@@ -4092,17 +4092,17 @@ if (on_complete) {
 }
 return std::move(result);
 };
-    const bool aborted = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+    const bool aborted = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnect_abort_); }) { return (__r.reconnect_abort_); } else if constexpr (requires { (__r.reconnect_abort__field); }) { return (__r.reconnect_abort__field); } else if constexpr (requires { ((*__r).reconnect_abort_); }) { return ((*__r).reconnect_abort_); } else { return ((*__r).reconnect_abort__field); } }(self_.reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
     if (aborted) {
         return complete_callback(ECANCELED);
     }
     const auto wait_for_inflight_reconnect = [&]() -> int32_t {
 while (true) {
-    const bool busy = self_.reconnect_.reconnecting_.load(rusty::sync::atomic::Ordering::Acquire);
+    const bool busy = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnecting_); }) { return (__r.reconnecting_); } else if constexpr (requires { (__r.reconnecting__field); }) { return (__r.reconnecting__field); } else if constexpr (requires { ((*__r).reconnecting_); }) { return ((*__r).reconnecting_); } else { return ((*__r).reconnecting__field); } }(self_.reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
     if (!busy) {
         break;
     }
-    const bool cancel = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+    const bool cancel = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnect_abort_); }) { return (__r.reconnect_abort_); } else if constexpr (requires { (__r.reconnect_abort__field); }) { return (__r.reconnect_abort__field); } else if constexpr (requires { ((*__r).reconnect_abort_); }) { return ((*__r).reconnect_abort_); } else { return ((*__r).reconnect_abort__field); } }(self_.reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
     if (cancel) {
         return ECANCELED;
     }
@@ -4116,7 +4116,7 @@ if (self_.state_machine_.is_connected()) {
 }
 return INT_MIN;
 };
-    const bool reconnecting = self_.reconnect_.reconnecting_.load(rusty::sync::atomic::Ordering::Acquire);
+    const bool reconnecting = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnecting_); }) { return (__r.reconnecting_); } else if constexpr (requires { (__r.reconnecting__field); }) { return (__r.reconnecting__field); } else if constexpr (requires { ((*__r).reconnecting_); }) { return ((*__r).reconnecting_); } else { return ((*__r).reconnecting__field); } }(self_.reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
     if (reconnecting) {
         const int32_t waited = wait_for_inflight_reconnect();
         if (rusty::detail::deref_if_pointer_like(waited) != rusty::detail::deref_if_pointer_like(INT_MIN)) {
@@ -4133,7 +4133,7 @@ return INT_MIN;
     }
     while (true) {
         bool expected = false;
-        const bool won = self_.reconnect_.reconnecting_.compare_exchange(std::move(expected), true, rusty::sync::atomic::Ordering::AcqRel, rusty::sync::atomic::Ordering::Acquire).is_ok();
+        const bool won = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnecting_); }) { return (__r.reconnecting_); } else if constexpr (requires { (__r.reconnecting__field); }) { return (__r.reconnecting__field); } else if constexpr (requires { ((*__r).reconnecting_); }) { return ((*__r).reconnecting_); } else { return ((*__r).reconnecting__field); } }(self_.reconnect_).compare_exchange(std::move(expected), true, rusty::sync::atomic::Ordering::AcqRel, rusty::sync::atomic::Ordering::Acquire).is_ok();
         if (won) {
             break;
         }
@@ -4146,7 +4146,7 @@ return INT_MIN;
     const auto complete_reconnect = [&](bool success, int32_t result) -> int32_t {
 // @unsafe
 {
-    self_.reconnect_.reconnecting_.store(false, rusty::sync::atomic::Ordering::Release);
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnecting_); }) { return (__r.reconnecting_); } else if constexpr (requires { (__r.reconnecting__field); }) { return (__r.reconnecting__field); } else if constexpr (requires { ((*__r).reconnecting_); }) { return ((*__r).reconnecting_); } else { return ((*__r).reconnecting__field); } }(self_.reconnect_).store(false, rusty::sync::atomic::Ordering::Release);
 }
 self_.invoke_reconnected_callback(std::move(success));
 if (success) {
@@ -4163,13 +4163,13 @@ if (rusty::detail::deref_if_pointer_like(result) == rusty::detail::deref_if_poin
 return complete_callback(std::move(result));
 };
     const auto reconnect_once = [&]() -> int32_t {
-const bool cancel = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+const bool cancel = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnect_abort_); }) { return (__r.reconnect_abort_); } else if constexpr (requires { (__r.reconnect_abort__field); }) { return (__r.reconnect_abort__field); } else if constexpr (requires { ((*__r).reconnect_abort_); }) { return ((*__r).reconnect_abort_); } else { return ((*__r).reconnect_abort__field); } }(self_.reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
 if (cancel) {
     return ECANCELED;
 }
 return self_.connect(rusty::detail::ptr_cast<const int8_t*>(self_.reconnect_address_.get().c_str()));
 };
-    const bool abort_now = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+    const bool abort_now = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnect_abort_); }) { return (__r.reconnect_abort_); } else if constexpr (requires { (__r.reconnect_abort__field); }) { return (__r.reconnect_abort__field); } else if constexpr (requires { ((*__r).reconnect_abort_); }) { return ((*__r).reconnect_abort_); } else { return ((*__r).reconnect_abort__field); } }(self_.reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
     if (abort_now) {
         return complete_reconnect(false, ECANCELED);
     }
@@ -4186,7 +4186,7 @@ return self_.connect(rusty::detail::ptr_cast<const int8_t*>(self_.reconnect_addr
     ReconnectPolicy policy = self_.reconnect_policy_.get();
     auto calc = ReconnectCalculator::new_(std::move(policy));
     while (calc.should_retry()) {
-        const bool cancel = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+        const bool cancel = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnect_abort_); }) { return (__r.reconnect_abort_); } else if constexpr (requires { (__r.reconnect_abort__field); }) { return (__r.reconnect_abort__field); } else if constexpr (requires { ((*__r).reconnect_abort_); }) { return ((*__r).reconnect_abort_); } else { return ((*__r).reconnect_abort__field); } }(self_.reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
         if (cancel) {
             return complete_reconnect(false, ECANCELED);
         }
@@ -4194,7 +4194,7 @@ return self_.connect(rusty::detail::ptr_cast<const int8_t*>(self_.reconnect_addr
         if (rusty::detail::deref_if_pointer_like(delay_ms) > static_cast<uint32_t>(0)) {
             Time::sleep(((static_cast<uint64_t>(delay_ms))) * static_cast<uint64_t>(1000));
         }
-        const bool cancel2 = self_.reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
+        const bool cancel2 = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.reconnect_abort_); }) { return (__r.reconnect_abort_); } else if constexpr (requires { (__r.reconnect_abort__field); }) { return (__r.reconnect_abort__field); } else if constexpr (requires { ((*__r).reconnect_abort_); }) { return ((*__r).reconnect_abort_); } else { return ((*__r).reconnect_abort__field); } }(self_.reconnect_).load(rusty::sync::atomic::Ordering::Acquire);
         if (cancel2) {
             return complete_reconnect(false, ECANCELED);
         }
@@ -5247,7 +5247,7 @@ void clientconn_bind_channel_via_poll_thread(const ClientConnection& conn, Chann
     auto job_fn = [=, weak_self = std::move(weak_self)]() {
 clientconn_recv_job_entry(std::move(weak_self));
 };
-    const rusty::Arc<OneTimeJob> recv_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(std::move(job_fn)));
+    const rusty::Arc<OneTimeJob> recv_job = rusty::Arc<OneTimeJob>::make(OneTimeJob::new_(std::move(job_fn)));
     const rusty::Arc<PollThread>& pt = conn.poll_thread_worker_;
     pt->add(std::move(recv_job));
 }

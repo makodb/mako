@@ -104,8 +104,26 @@ class CheckedInCanaryTests(unittest.TestCase):
             "SCAFFOLD=1507 noncomment lines (716 DSL fences + 791 other)",
             output,
         )
+        # Re-measured 2026-08-18 when the rusty-cpp pin moved
+        # ebb51610 -> fa7dd9d9 and the src/rrr DSL blocks were regenerated.
+        # dsl 8943 -> 8942: the rusty::HashSet Serialize body lost its
+        # `let kv = e.unwrap();` line (std_port's set iterator yields the
+        # element, not a (T, monostate) pair).
+        # generated 11744 -> 12414: fa7dd9d9 emits more C++ per block
+        # (nested field access goes through a probe lambda at every level,
+        # enums carry an explicit underlying type, and so on).
+        # NOT regenerated, deliberately: the six files carrying
+        # `#[cpp_inherit]` impls (base/misc.cpp, reactor/reactor.cpp,
+        # rpc/{inmemory_channel,pollable_proxy,server,tcp_channel}.cpp)
+        # plus serializable.cpp's one `serializable.shared_ptr_holder`
+        # block, whose GEN region is kept at its pre-fa7dd9d9 content.
+        # fa7dd9d9 stopped emitting a base-class list for those and emits
+        # Adapter/AdapterRef/AdapterRefMut wrappers instead, which breaks
+        # every hand-written `Arc<Event> -> Arc<EventPollable>` /
+        # `Box<Shim> -> Box<Base>` upcast in the reactor and channel code.
+        # Adopting that model is its own migration.
         self.assertIn(
-            "payload census:   dsl=8943  generated=11744 "
+            "payload census:   dsl=8942  generated=12414 "
             "nonblank/non-// lines",
             output,
         )
@@ -216,6 +234,9 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "version": 1,
                     "modules": {
                         "rrr::logging": {
+                            # Required since the rusty-cpp pin moved to
+                            # fa7dd9d9; previously derived from the key.
+                            "cpp_module": "rrr.logging",
                             "namespace": "rrr",
                             "symbols": {
                                 "log_line": {

@@ -22,7 +22,7 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "ebb5161058a982145d253665ce9720f17224722e"
+REQUIRED_RUSTY_CPP_COMMIT = "fa7dd9d9612c0bcec695c3e391ace96b56498e74"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-modules.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
@@ -51,7 +51,7 @@ ABI_SPECS = {
                 "struct CallbackWrapper",
                 "rusty::Option<rusty::Arc<F>> inner;",
                 "static CallbackWrapper<F> from_callable(F callable) {",
-                "rusty::Arc<F>::new_(std::move(callable))",
+                "rusty::Arc<F>::make(std::move(callable))",
                 "bool has_value() const {",
                 "const F& callable() const {",
                 "CallbackWrapper<F> clone() const {",
@@ -292,7 +292,7 @@ ABI_SPECS = {
             {
                 "#include <rusty/sync/atomic.hpp>",
                 "export module rrr.completion_tracker;",
-                "import rusty;",
+                "import std_port;",
                 "export enum class CompletionStatus",
                 "export struct CompletionTrackerConfig",
                 "export struct CompletedEntry",
@@ -377,7 +377,7 @@ ABI_SPECS = {
             {
                 '#include "misc/srpc_rand.h"',
                 "export module rrr.rand;",
-                "import rusty;",
+                "import vec_port.vec;",
                 "namespace rusty_cpp_abi_detail {",
                 "bytes_from_std_string(const std::string& input)",
                 "std_string_from_bytes(rusty::Vec<uint8_t> input)",
@@ -1005,7 +1005,7 @@ ABI_SPECS = {
         surface=frozenset(
             {
                 "export module rrr.request_queue;",
-                "import rusty;",
+                "import vec_port.vec;",
                 "import rrr.circuit_breaker;",
                 "export enum class OverflowStrategy",
                 "export constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST();",
@@ -1401,7 +1401,7 @@ def require_cpp_surfaces(
 
         rand_preamble = '#include "misc/srpc_rand.h"'
         if module.cpp_module == "rrr.rand":
-            require_exact_module_imports(text, "rrr.rand", ["rusty"])
+            require_exact_module_imports(text, "rrr.rand", ["vec_port.vec"])
             if text.count(rand_preamble) != 1:
                 raise GateError(
                     "generated rrr.rand must contain exactly one structured "
@@ -1493,7 +1493,9 @@ def require_cpp_surfaces(
             )
         elif module.cpp_module == "rrr.request_queue":
             require_exact_module_imports(
-                text, "rrr.request_queue", ["rusty", "rrr.circuit_breaker"]
+                text,
+                "rrr.request_queue",
+                ["vec_port.vec", "rrr.circuit_breaker"],
             )
         elif module.cpp_module == "rrr.load_balancer":
             require_exact_module_imports(text, "rrr.load_balancer", [])

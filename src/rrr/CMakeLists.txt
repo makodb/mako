@@ -179,9 +179,10 @@ set(RRR_CXXFLAGS ${BENCH_CXXFLAGS})
 # because rusty-cpp ships rusty.cppm only as a header on the include
 # path, leaving consumers responsible for compiling it as a named
 # C++20 module unit. We re-export the transpiled port libraries
-# (vec_port, btree_port, rc_port, hashbrown_port, rusty_async) so that
+# (vec_port, btree_port, rc_port, std_port, rusty_async) so that
 # `import rusty;` in rrr sources resolves rusty::Vec / Rc / BTreeMap
-# / HashMap / etc. via the umbrella's `using` aliases.
+# / HashMap / etc. via the umbrella's `using` aliases. (HashMap/HashSet
+# moved from the deleted hashbrown_port to std_port — rusty-cpp #177.)
 if(NOT TARGET rusty)
     add_library(rusty STATIC)
     target_sources(rusty PUBLIC
@@ -203,7 +204,7 @@ if(NOT TARGET rusty)
         -O3 -DNDEBUG -march=native -std=gnu++23
     )
     target_link_libraries(rusty PUBLIC
-        vec_port btree_port rc_port hashbrown_port rusty_async
+        vec_port btree_port rc_port std_port rusty_async
         binary_heap_port vec_deque_port cell_port string_port arc_port
         linked_list_port
     )
@@ -523,7 +524,12 @@ set(RRR_GOAL0_RUNTIME_TARGETS
     vec_port
     btree_port
     rc_port
-    hashbrown_port
+    # hashbrown_port was deleted upstream (rusty-cpp #177). std_port and
+    # std_port_hashbrown are two SEPARATE C++20 modules / archives, so both
+    # have to be named here: the gate links raw archives and does not walk
+    # std_port's PUBLIC dependency on std_port_hashbrown.
+    std_port
+    std_port_hashbrown
     binary_heap_port
     vec_deque_port
     cell_port

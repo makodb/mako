@@ -63,7 +63,7 @@ fn channel_error_to_string(e: ChannelError) -> &'static str {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=channel.channel_error version=1 rust_sha256=fbe83cdf22d13d028f2e8fed567ed912ce9f2c169fb527ef06c6bf722a355eb0*/
-enum class ChannelError;
+enum class ChannelError : int32_t;
 constexpr ChannelError ChannelError_None();
 constexpr ChannelError ChannelError_WouldBlock();
 constexpr ChannelError ChannelError_ConnectionRefused();
@@ -76,7 +76,7 @@ constexpr ChannelError ChannelError_TooManyOpenFiles();
 constexpr ChannelError ChannelError_Internal();
 std::string_view channel_error_to_string(ChannelError e);
 
-enum class ChannelError {
+enum class ChannelError : int32_t {
     None = 0,
     WouldBlock = 1,
     ConnectionRefused = 2,

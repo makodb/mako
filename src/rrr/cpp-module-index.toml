@@ -1,6 +1,12 @@
 version = 1
 
 [modules."rrr::logging"]
+# `cpp_module` became a REQUIRED field in rusty-cpp fa7dd9d9: the named C++
+# module to `import` is now stated explicitly instead of being derived from
+# the `rrr::logging` binding-path key. "rrr.logging" is exactly what the
+# derivation produced before, so the generated `import rrr.logging;` in
+# rrr.utils.cppm is unchanged.
+cpp_module = "rrr.logging"
 namespace = "rrr"
 
 [modules."rrr::logging".symbols.log_line]

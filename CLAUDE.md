@@ -223,17 +223,45 @@ Exceptions that stay std:
 
 **IMPORTANT**: For Goal 0 canonical-Rust production, the `third-party/rusty-cpp`
 gitlink is pinned to commit
-`ebb5161058a982145d253665ce9720f17224722e` on the pushed
-`goal0-rustc-runtime-facade` branch. That branch descends from the
-previous approved `f6d9a0f62510c6335e172cebe3164d2570840284` pin only through
-reviewed Goal 0 source-inventory, codegen, preamble, build-attestation, and runtime
-commits. Do not move this
-gitlink to `verify-stack`: that branch contains
-support for the discarded parallel `crates/srpc` pivot. Base any further
-Goal 0 transpiler work on the current approved pin (or a separately
-reviewed upstream base), run the transpiler suite, push the commit to a
-reachable branch, and bump the gitlink in the same Mako commit. Never pin
-uncommitted local patches.
+`fa7dd9d9612c0bcec695c3e391ace96b56498e74`, the tip of rusty-cpp's
+`main` branch. The Goal 0 work that used to live on the private
+`goal0-rustc-runtime-facade` branch has been merged into `main`, so the
+pin now tracks upstream directly rather than a side branch.
+
+Lineage, so the move is auditable:
+
+ - The previous pin `ebb5161058a982145d253665ce9720f17224722e` is a
+   **strict ancestor** of `fa7dd9d9` (0 behind / 334 ahead). Nothing that
+   was reviewed under the old pin was dropped.
+ - `goal0-rustc-runtime-facade` is **retired**. Its live tip
+   (`dc06d859c832979c723b39c474f43fa01c7e06df`) is four commits *behind*
+   `ebb51610` and does not contain it, so it can no longer describe any
+   pin this repository uses. Do not re-point the gitlink at it.
+ - The old warning about `verify-stack` (the discarded parallel
+   `crates/srpc` pivot) is **not** a hazard on this lineage:
+   `verify-stack` is not an ancestor of `fa7dd9d9` — it diverged 13
+   commits ago and is 346 behind. Merging it in remains undesirable, but
+   the current pin does not contain it.
+
+Two consequences of `fa7dd9d9` that callers must know:
+
+ - `hashbrown_port` was **deleted** as a CMake target (upstream #177).
+   `rusty::HashMap` / `rusty::HashSet` now come from `std_port` (the
+   transpiled Rust `std` `collections::hash` slice) sitting on its own
+   recursively transpiled `hashbrown`. Link `std_port` (which PUBLIC-links
+   `std_port_hashbrown`) instead. Iteration order is now std's
+   randomly-seeded `RandomState` order — do not depend on it.
+ - `HashSet` no longer wraps a `HashMap<T, ()>`: its field is `base`, a
+   hashbrown `HashSet`, and `set.iter()` yields `Option<const T&>` rather
+   than a `(T, monostate)` pair.
+
+Base any further Goal 0 transpiler work on the current approved pin (or a
+separately reviewed upstream base), run the transpiler suite, push the
+commit to a reachable branch, and bump the gitlink in the same Mako
+commit. The pin attestation is triple-enforced — the gitlink, the
+submodule HEAD, and the transpiler's own `--build-info` `git_hash` must
+all agree, and the transpiler must be built from a clean tree so
+`git_dirty=false`. Never pin uncommitted local patches.
 
 #### Required Safety Annotations
 Every function and significant code block must have safety annotations:
