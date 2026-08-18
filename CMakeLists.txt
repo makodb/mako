@@ -964,6 +964,12 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/shardClient.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/abstract_db.cc"
+  # The mtx_* C ABI over masstree. Deliberately part of the mako target
+  # rather than a separate library: a separate target compiled without
+  # the same CONFIG_H gets a different CHECK_INVARIANTS, which changes
+  # ticker::tick_us (40ms vs 1ms) and the percore/percore_lazy layouts.
+  # That is silent ODR corruption, not a compile error.
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mtree_abi.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
@@ -2750,6 +2756,30 @@ if(BUILD_TESTS)
         ${GTEST_INCLUDE_DIRS}
     )
     add_test(NAME MasstreeRocksCrashTests COMMAND test_masstree_rocks_crash)
+
+    # The mtx_* C ABI. WordsRoundTripBitIdentical is the tripwire for a
+    # masstree vendor bump that starts interpreting the stored word.
+    add_executable(test_mtree_abi tests/test_mtree_abi.cc)
+    target_link_libraries(test_mtree_abi
+        mako
+        rrr
+        erpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(test_mtree_abi PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+        ${GTEST_INCLUDE_DIRS}
+    )
+    add_test(NAME MtreeAbiTests COMMAND test_mtree_abi)
 
     # Test: SiloRuntime per-site isolation (moved out of src/masstree/tests
     # because its subject matter is the SiloRuntime, not Masstree).

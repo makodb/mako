@@ -1,0 +1,28 @@
+[package]
+name = "mtree-sys"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Raw FFI declarations for the mtx_* C ABI over masstree"
+license = "MIT"
+publish = false
+# No build.rs and no `links` key. This crate only DECLARES the symbols:
+# the C++ side is compiled into the mako target by CMake, and the final
+# link is driven by CMake too, so a build script that tried to compile or
+# locate masstree here would be a second, divergent source of truth.
+# (`links` would also require a build script, and would claim ownership of
+# a native library this crate does not build.)
+
+[dependencies]
+
+# See crates/mrx-core/Cargo.toml for why LTO is mandatory-off: mixing an
+# LTO staticlib with the existing non-LTO rust-lib archive fails to link
+# with duplicate std symbols. Reproduced, not theorised.
+[profile.release]
+lto = false
+panic = "abort"
+codegen-units = 1
+opt-level = 3
+
+[profile.dev]
+lto = false
