@@ -50,11 +50,13 @@ pub mod durability;
 pub mod fakes;
 pub mod runtime;
 pub mod store;
+pub mod table;
 pub mod value;
 
 pub use durability::{Floors, Ticket, TicketLog, VersionCounter, Watermark, WriterSlot};
 pub use runtime::Runtime;
 pub use store::{Chunk, Store, WriteOutcome};
+pub use table::EntryTable;
 pub use value::{Entry, Val, ValState};
 
 /// Version numbers start at 1, never 0.

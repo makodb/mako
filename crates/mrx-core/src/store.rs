@@ -5,10 +5,11 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::durability::{Floors, Ticket, TicketLog, VersionCounter, Watermark, WriterSlot,
                         NO_FLOOR};
+use crate::table::EntryTable;
 use crate::value::{Entry, Val, ValState};
 use crate::{Blobs, BlobOp, Config, EntryWord, KeyIndex, Version};
 
@@ -61,9 +62,11 @@ pub struct Store<K: KeyIndex, B: Blobs> {
     /// Entries, addressed by the word stored in the index (`idx + 1`, so
     /// that word 0 stays reserved for "absent").
     ///
-    /// Entries are immortal: this only ever grows. `Arc<Entry>` means the
-    /// entries themselves never move even when the table reallocates.
-    entries: RwLock<Vec<Arc<Entry>>>,
+    /// Entries are immortal: this only ever grows. See [`EntryTable`] for
+    /// why it is not a `RwLock<Vec<Arc<Entry>>>` — that shape cost three
+    /// quarters of the cache's 16-thread throughput, on the read path as
+    /// much as the write path.
+    entries: EntryTable,
 
     counter: VersionCounter,
     watermark: Watermark,
@@ -103,7 +106,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             cfg,
             index,
             blobs,
-            entries: RwLock::new(Vec::new()),
+            entries: EntryTable::new(),
             counter: VersionCounter::new(),
             watermark: Watermark::new(),
             dirty: Mutex::new(HashMap::new()),
@@ -135,12 +138,10 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         if let Some(w) = self.index.get(key) {
             return (w - 1) as u32;
         }
-        let e = Arc::new(Entry::new(key, seed));
-        let idx = {
-            let mut t = self.entries.write().expect("entries lock poisoned");
-            t.push(e);
-            (t.len() - 1) as u32
-        };
+        // The entry is fully initialised by `push` before its index is
+        // published into the directory below, so no reader can reach a
+        // half-built slot.
+        let idx = self.entries.push(Entry::new(key, seed));
         let word: EntryWord = idx as u64 + 1;
         let won = self.index.get_or_insert(key, word);
         if won != word {
@@ -160,9 +161,9 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         idx
     }
 
-    fn entry(&self, idx: u32) -> Arc<Entry> {
-        let t = self.entries.read().expect("entries lock poisoned");
-        Arc::clone(&t[idx as usize])
+    #[inline]
+    fn entry(&self, idx: u32) -> &Entry {
+        self.entries.get(idx)
     }
 
     /// This thread's writer slot.
@@ -205,7 +206,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         match &cur.state {
             ValState::Tombstone => Ok(None),
             ValState::Resident(b) => Ok(Some(b.clone())),
-            ValState::Evicted => self.fill(&e, &cur),
+            ValState::Evicted => self.fill(e, &cur),
         }
     }
 
@@ -217,7 +218,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// re-evicted — replaced that record and the install fails.
     fn fill(
         &self,
-        e: &Arc<Entry>,
+        e: &Entry,
         seen: &Arc<Val>,
     ) -> Result<Option<Vec<u8>>, crate::BlobError> {
         let Some(bytes) = self.blobs.get(e.key())? else {
@@ -423,7 +424,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             let bytes = match &cur.state {
                 ValState::Tombstone => continue,
                 ValState::Resident(b) => b.clone(),
-                ValState::Evicted => match self.fill(&e, &cur)? {
+                ValState::Evicted => match self.fill(e, &cur)? {
                     Some(b) => b,
                     None => continue,
                 },
@@ -747,7 +748,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
 
     /// One bounded CLOCK pass. Returns entries evicted.
     pub fn sweep_chunk(&self, cursor: &mut u32) -> usize {
-        let n = { self.entries.read().expect("entries lock poisoned").len() as u32 };
+        let n = self.entries.len();
         if n == 0 {
             return 0;
         }

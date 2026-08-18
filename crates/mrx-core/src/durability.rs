@@ -134,6 +134,20 @@ impl WriterSlot {
     /// batch still reaches the log. Without it, one thread that writes
     /// once and then goes quiet pins the watermark for the whole process.
     pub fn steal(&self) -> Option<Vec<Ticket>> {
+        // Check without locking first. The flusher stealing from every
+        // slot on every cycle means this runs constantly against the
+        // producers' own lock, and the overwhelming majority of slots are
+        // empty — either never used by any thread, or already drained
+        // this cycle. A relaxed load costs nothing; taking the lock to
+        // discover the batch is empty costs the producer.
+        //
+        // Sound because `batch_min` is lowered while the batch lock is
+        // held and BEFORE the ticket is visible anywhere else: a slot
+        // reporting NO_FLOOR has nothing this steal could have taken, and
+        // a ticket arriving immediately afterwards is taken next cycle.
+        if self.batch_min.load(Ordering::Acquire) == NO_FLOOR {
+            return None;
+        }
         let mut b = self.batch.lock().expect("batch mutex poisoned");
         if b.is_empty() {
             return None;
@@ -222,7 +236,47 @@ pub struct TicketLog {
 #[derive(Debug)]
 struct LogInner {
     q: VecDeque<Ticket>,
+    /// Monotonic non-decreasing deque of minimum candidates, so
+    /// [`TicketLog::min_version`] is O(1) instead of a walk of `q`.
+    ///
+    /// The walk mattered: `min_version` runs once per flusher cycle while
+    /// holding the same lock producers append under, and `q` holds up to
+    /// `log_slots` (a million by default) tickets whenever writers are
+    /// ahead of writeback — which is exactly the state the cache exists
+    /// to be in. It was the write path's remaining scaling bottleneck
+    /// after the entry table.
+    ///
+    /// The invariant: `mins` holds a non-decreasing subsequence of `q`'s
+    /// versions whose front is the minimum over all of `q`. Pushing pops
+    /// every strictly larger candidate (they can never be the minimum
+    /// again, because this one outlives them); popping removes the front
+    /// only when the value leaving `q` is the one `mins` is holding.
+    /// Equal values are kept, so duplicates survive as many pops as
+    /// there are copies. Amortised O(1) per ticket.
+    mins: VecDeque<Version>,
     stopping: bool,
+}
+
+impl LogInner {
+    fn push(&mut self, t: Ticket) {
+        while self.mins.back().is_some_and(|b| *b > t.version) {
+            self.mins.pop_back();
+        }
+        self.mins.push_back(t.version);
+        self.q.push_back(t);
+    }
+
+    fn pop(&mut self) -> Option<Ticket> {
+        let t = self.q.pop_front()?;
+        if self.mins.front() == Some(&t.version) {
+            self.mins.pop_front();
+        }
+        Some(t)
+    }
+
+    fn min(&self) -> u64 {
+        self.mins.front().copied().unwrap_or(NO_FLOOR)
+    }
 }
 
 impl TicketLog {
@@ -231,6 +285,7 @@ impl TicketLog {
         Self {
             inner: Mutex::new(LogInner {
                 q: VecDeque::new(),
+                mins: VecDeque::new(),
                 stopping: false,
             }),
             space: Condvar::new(),
@@ -245,7 +300,7 @@ impl TicketLog {
             while g.q.len() >= self.cap && !g.stopping {
                 g = self.space.wait(g).expect("log condvar poisoned");
             }
-            g.q.push_back(*t);
+            g.push(*t);
         }
     }
 
@@ -258,7 +313,9 @@ impl TicketLog {
         if g.q.len() + tickets.len() > self.cap {
             return false;
         }
-        g.q.extend(tickets.iter().copied());
+        for t in tickets {
+            g.push(*t);
+        }
         true
     }
 
@@ -266,7 +323,9 @@ impl TicketLog {
     pub fn drain(&self, budget: usize, out: &mut Vec<Ticket>) -> usize {
         let mut g = self.inner.lock().expect("log mutex poisoned");
         let n = budget.min(g.q.len());
-        out.extend(g.q.drain(..n));
+        for _ in 0..n {
+            out.push(g.pop().expect("q holds at least n tickets"));
+        }
         if n > 0 {
             self.space.notify_all();
         }
@@ -275,8 +334,7 @@ impl TicketLog {
 
     /// The lowest version still sitting in the log.
     pub fn min_version(&self) -> u64 {
-        let g = self.inner.lock().expect("log mutex poisoned");
-        g.q.iter().map(|t| t.version).min().unwrap_or(NO_FLOOR)
+        self.inner.lock().expect("log mutex poisoned").min()
     }
 
     /// Number of un-drained tickets.
@@ -447,6 +505,23 @@ mod tests {
     }
 
     #[test]
+    fn the_steal_fast_path_never_skips_a_nonempty_batch() {
+        // The unlocked pre-check is only safe if "batch_min is NO_FLOOR"
+        // really does imply "nothing to take". If those ever drift apart,
+        // an acked write sits in a batch the flusher stops visiting and
+        // the watermark is pinned for the life of the process.
+        let s = WriterSlot::new();
+        assert!(s.steal().is_none(), "a fresh slot has nothing");
+        s.arm(5);
+        s.submit(Ticket { entry: 1, version: 5 }, 64);
+        assert!(
+            s.steal().is_some(),
+            "the fast path skipped a batch holding an acked write"
+        );
+        assert!(s.steal().is_none(), "and it is empty afterwards");
+    }
+
+    #[test]
     fn log_try_append_refuses_rather_than_blocking() {
         let log = TicketLog::new(2);
         assert!(log.try_append(&[Ticket { entry: 0, version: 1 }]));
@@ -455,6 +530,39 @@ mod tests {
             !log.try_append(&[Ticket { entry: 0, version: 3 }]),
             "the flusher's own append must never block on backpressure"
         );
+    }
+
+    #[test]
+    fn incremental_minimum_matches_a_brute_force_walk() {
+        // The monotonic deque is the kind of optimisation that is right
+        // for a thousand operations and wrong for one specific
+        // interleaving, so it is checked against the definition rather
+        // than against itself.
+        let log = TicketLog::new(4096);
+        let mut shadow: std::collections::VecDeque<u64> =
+            std::collections::VecDeque::new();
+        // Deterministic pseudo-random with plenty of duplicates and
+        // descending runs, which is where a naive version breaks.
+        let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+        for step in 0..20_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            if step % 3 == 2 && !shadow.is_empty() {
+                let n = (x as usize % shadow.len()) + 1;
+                let mut out = Vec::new();
+                log.drain(n, &mut out);
+                for _ in 0..n {
+                    shadow.pop_front();
+                }
+            } else {
+                let v = (x % 50) + 1;
+                assert!(log.try_append(&[Ticket { entry: 0, version: v }]));
+                shadow.push_back(v);
+            }
+            let want = shadow.iter().copied().min().unwrap_or(NO_FLOOR);
+            assert_eq!(log.min_version(), want, "diverged at step {step}");
+        }
     }
 
     #[test]

@@ -28,6 +28,11 @@
 #include <rocksdb/c.h>
 
 #include "mako/storage/masstree_rocks_index.hh"
+
+// The Rust port of the same cache, through its C ABI. Both arms run in
+// ONE process against the same keys and values, because two separate runs
+// compare machine state as much as they compare implementations.
+#include "mrxdb.h"
 #include "mako/storage/masstree_ordered_index.hh"
 
 #include <algorithm>
@@ -258,17 +263,63 @@ Result RunReads(GetFn get, int key_range) {
 }
 
 void PrintRow(const char *label, const Result &mt, const Result &mrx,
-              const Result &raw) {
+              const Result &rust, const Result &raw) {
   // vs-masstree shows how much of raw Masstree's speed the cache layer
-  // gives away; vs-rocks shows what the cache buys over the baseline.
+  // gives away; vs-rocks shows what the cache buys over the baseline;
+  // rust/cpp is the port's cost against the implementation it replaces.
   const double of_mt =
       mt.ops_per_sec() > 0 ? mrx.ops_per_sec() / mt.ops_per_sec() : 0;
   const double vs_raw =
       raw.ops_per_sec() > 0 ? mrx.ops_per_sec() / raw.ops_per_sec() : 0;
-  printf("%-18s %11.0f %11.0f %11.0f %9.2f %9.2fx %8.2f %8.2f %8.2f\n", label,
-         mt.ops_per_sec(), mrx.ops_per_sec(), raw.ops_per_sec(), of_mt, vs_raw,
-         mt.p50_us, mrx.p50_us, raw.p50_us);
+  const double rust_of_cpp =
+      mrx.ops_per_sec() > 0 ? rust.ops_per_sec() / mrx.ops_per_sec() : 0;
+  printf("%-18s %11.0f %11.0f %11.0f %11.0f %8.2f %9.2fx %9.2f\n", label,
+         mt.ops_per_sec(), mrx.ops_per_sec(), rust.ops_per_sec(),
+         raw.ops_per_sec(), of_mt, vs_raw, rust_of_cpp);
 }
+
+// --- the Rust cache, wrapped so the arms read alike ---------------------
+
+class RustCache {
+ public:
+  bool Open(const std::string &path, uint64_t capacity) {
+    mrxdb_options_t *o = mrxdb_options_create();
+    mrxdb_options_set_capacity_bytes(o, capacity);
+    char *err = nullptr;
+    db_ = mrxdb_open(o, path.c_str(), &err);
+    mrxdb_options_destroy(o);
+    if (err != nullptr) {
+      fprintf(stderr, "mrxdb_open: %s\n", err);
+      mrxdb_free(err);
+    }
+    return db_ != nullptr;
+  }
+
+  void Put(const std::string &k, const std::string &v) {
+    mrxdb_put(db_, k.data(), k.size(), v.data(), v.size(), nullptr);
+  }
+
+  bool Get(const std::string &k, std::string &out) {
+    size_t len = 0;
+    char *p = mrxdb_get(db_, k.data(), k.size(), &len, nullptr);
+    if (p == nullptr) return false;
+    out.assign(p, len);
+    mrxdb_free(p);
+    return true;
+  }
+
+  void Flush() { mrxdb_flush(db_, nullptr); }
+
+  void Close() {
+    if (db_ != nullptr) {
+      mrxdb_close(db_, nullptr);
+      db_ = nullptr;
+    }
+  }
+
+ private:
+  mrxdb_t *db_ = nullptr;
+};
 
 }  // namespace
 
@@ -328,6 +379,11 @@ int main(int argc, char **argv) {
   RawRocks raw;
   if (!raw.Open(raw_path)) return 1;
 
+  // The Rust port of the cache, over its own RocksDB directory so the two
+  // caches never share a durable store.
+  RustCache rust;
+  if (!rust.Open(base + "/rust", g_capacity)) return 1;
+
   // --- write phase -------------------------------------------------
   const auto mrx_w0 = Clock::now();
   Result mrx_write = RunWrites([&](const std::string &k, const std::string &v) {
@@ -342,6 +398,15 @@ int main(int argc, char **argv) {
   Result mt_write = RunWrites([&](const std::string &k, const std::string &v) {
     mt.put(lcdf::Str(k.data(), static_cast<int>(k.size())), v);
   });
+
+  const auto rust_w0 = Clock::now();
+  Result rust_write = RunWrites(
+      [&](const std::string &k, const std::string &v) { rust.Put(k, v); });
+  const double rust_ack_secs =
+      std::chrono::duration<double>(Clock::now() - rust_w0).count();
+  rust.Flush();
+  const double rust_durable_secs =
+      std::chrono::duration<double>(Clock::now() - rust_w0).count();
 
   const auto raw_w0 = Clock::now();
   Result raw_write = RunWrites(
@@ -365,6 +430,9 @@ int main(int argc, char **argv) {
                       std::string::npos);
       },
       g_hot_keys);
+  Result rust_hot = RunReads(
+      [&](const std::string &k, std::string &out) { return rust.Get(k, out); },
+      g_hot_keys);
   Result raw_hot = RunReads(
       [&](const std::string &k, std::string &out) { return raw.Get(k, out); },
       g_hot_keys);
@@ -381,19 +449,22 @@ int main(int argc, char **argv) {
                       std::string::npos);
       },
       g_keyspace);
+  Result rust_uni = RunReads(
+      [&](const std::string &k, std::string &out) { return rust.Get(k, out); },
+      g_keyspace);
   Result raw_uni = RunReads(
       [&](const std::string &k, std::string &out) { return raw.Get(k, out); },
       g_keyspace);
 
   // --- report ------------------------------------------------------
-  printf("%-18s %11s %11s %11s %9s %10s %8s %8s %8s\n", "phase",
-         "masstree/s", "cache/s", "rocks/s", "cache/mt", "cache/rocks",
-         "mt p50", "cache p50", "rocks p50");
-  printf("%-18s %11s %11s %11s %9s %10s %8s %8s %8s\n", "", "(ceiling)", "",
-         "(baseline)", "", "", "(us)", "(us)", "(us)");
-  PrintRow("write (ack)", mt_write, mrx_write, raw_write);
-  PrintRow("read (hot set)", mt_hot, mrx_hot, raw_hot);
-  PrintRow("read (uniform)", mt_uni, mrx_uni, raw_uni);
+  printf("%-18s %11s %11s %11s %11s %8s %10s %9s\n", "phase", "masstree/s",
+         "cache C++/s", "cache rs/s", "rocks/s", "cpp/mt", "cpp/rocks",
+         "rust/cpp");
+  printf("%-18s %11s %11s %11s %11s %8s %10s %9s\n", "", "(ceiling)", "",
+         "", "(baseline)", "", "", "");
+  PrintRow("write (ack)", mt_write, mrx_write, rust_write, raw_write);
+  PrintRow("read (hot set)", mt_hot, mrx_hot, rust_hot, raw_hot);
+  PrintRow("read (uniform)", mt_uni, mrx_uni, rust_uni, raw_uni);
   printf("\ncache/mt < 1.0 = what the cache layer costs on top of raw\n");
   printf("Masstree (RCU region per op, CLOCK reference-bit store, val\n");
   printf("indirection). Raw Masstree has no durability at all.\n");
@@ -404,6 +475,11 @@ int main(int argc, char **argv) {
          mrx_durable_secs > 0
              ? 100.0 * (mrx_durable_secs - mrx_ack_secs) / mrx_durable_secs
              : 0.0);
+  printf("  cache rs ack %7.3fs   ack+flush %7.3fs   (deferred %.1f%%)\n",
+         rust_ack_secs, rust_durable_secs,
+         rust_durable_secs > 0
+             ? 100.0 * (rust_durable_secs - rust_ack_secs) / rust_durable_secs
+             : 0.0);
   printf("  rocks   ack %7.3fs   ack+flush %7.3fs\n", raw_ack_secs,
          raw_durable_secs);
   printf("  end-to-end durable speedup: %.2fx\n",
@@ -412,6 +488,7 @@ int main(int argc, char **argv) {
          static_cast<unsigned long long>(idx.resident_bytes()));
 
   mrx_store_close(store);
+  rust.Close();
   raw.Close();
   std::string cmd = "rm -rf " + base;
   (void)system(cmd.c_str());

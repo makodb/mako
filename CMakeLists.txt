@@ -1480,6 +1480,60 @@ endif()
 # txlog_lib is now built directly as a CMake target, no need for custom target
 
 
+# ---------------------------------------------------------------
+# The Rust cache, and the differential harness that compares it to
+# the C++ one.
+# ---------------------------------------------------------------
+#
+# cargo builds crates/mrx-ffi into a staticlib; CMake drives the
+# final link, exactly as it does for every other archive here. The
+# crate is NOT built by cargo's own test runner in this path -- that
+# runs separately via `cargo test` in crates/ -- so this target only
+# produces the archive.
+#
+# ALWAYS out of date on purpose: cargo is the incremental build
+# system for its own sources, and teaching CMake to track them would
+# be a second, divergent dependency graph. cargo no-ops in a few
+# milliseconds when nothing changed.
+find_program(CARGO_EXECUTABLE cargo)
+if (CARGO_EXECUTABLE)
+    set(MRX_FFI_PROFILE "release")
+    set(MRX_FFI_LIB
+        "${CMAKE_SOURCE_DIR}/crates/target/${MRX_FFI_PROFILE}/libmrxffi.a")
+    # add_custom_target, NOT add_custom_command(OUTPUT ...): a
+    # command with an OUTPUT is skipped once the file exists and its
+    # declared DEPENDS are unchanged, and CMake cannot see the Rust
+    # sources. That is not a slow build, it is a WRONG one -- a
+    # deliberate divergence probe injected into the Rust cache was
+    # silently not rebuilt, and the differential test passed against
+    # the stale archive. A custom target always runs, and cargo
+    # no-ops in milliseconds when nothing changed.
+    add_custom_target(mrx_ffi_build
+        BYPRODUCTS ${MRX_FFI_LIB}
+        COMMAND ${CMAKE_COMMAND} -E env
+                "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                ${CARGO_EXECUTABLE} build --release -p mrx-ffi
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+        COMMENT "Building the Rust cache (crates/mrx-ffi -> libmrxffi.a)"
+        VERBATIM
+    )
+    # libmako.a must exist first: mrx-masstree links the mtx_* symbols
+    # out of it, and its build script looks for the archive to decide
+    # whether masstree is available at all.
+    add_dependencies(mrx_ffi_build mako)
+
+    add_library(mrxffi STATIC IMPORTED GLOBAL)
+    set_target_properties(mrxffi PROPERTIES
+        IMPORTED_LOCATION ${MRX_FFI_LIB}
+        INTERFACE_INCLUDE_DIRECTORIES
+            ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
+    add_dependencies(mrxffi mrx_ffi_build)
+else()
+    message(STATUS
+        "cargo not found: the Rust cache, its differential tests, and the "
+        "Rust arm of masstree_rocks_bench are skipped")
+endif()
+
 function(add_apps exec_name exec_path)
   set(options)
   set(oneValueArgs)
@@ -1553,6 +1607,14 @@ add_apps(rocksdb_replay_app src/mako/benchmarks/rocksdb_replay_app.cc)
 # Does the Masstree write-back cache beat plain RocksDB? Reports write
 # ack vs ack+flush separately, since the cache's trick is deferral.
 add_apps(masstree_rocks_bench src/mako/benchmarks/masstree_rocks_bench.cc)
+# The Rust arm runs in the SAME process as the C++ one, so the comparison
+# is between implementations rather than between two machine states.
+if (TARGET mrxffi)
+  target_link_libraries(masstree_rocks_bench mrxffi)
+  target_include_directories(masstree_rocks_bench PRIVATE
+      ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
+  add_dependencies(masstree_rocks_bench mrx_ffi_build)
+endif()
 add_apps(test_callback_demo examples/test_callback_demo.cc)
 add_apps(test_ordered_callbacks examples/test_ordered_callbacks.cc)
 add_apps(test_partitioned_queues examples/test_partitioned_queues.cc)
@@ -2781,55 +2843,7 @@ if(BUILD_TESTS)
     )
     add_test(NAME MtreeAbiTests COMMAND test_mtree_abi)
 
-    # ---------------------------------------------------------------
-    # The Rust cache, and the differential harness that compares it to
-    # the C++ one.
-    # ---------------------------------------------------------------
-    #
-    # cargo builds crates/mrx-ffi into a staticlib; CMake drives the
-    # final link, exactly as it does for every other archive here. The
-    # crate is NOT built by cargo's own test runner in this path -- that
-    # runs separately via `cargo test` in crates/ -- so this target only
-    # produces the archive.
-    #
-    # ALWAYS out of date on purpose: cargo is the incremental build
-    # system for its own sources, and teaching CMake to track them would
-    # be a second, divergent dependency graph. cargo no-ops in a few
-    # milliseconds when nothing changed.
-    find_program(CARGO_EXECUTABLE cargo)
-    if (CARGO_EXECUTABLE)
-        set(MRX_FFI_PROFILE "release")
-        set(MRX_FFI_LIB
-            "${CMAKE_SOURCE_DIR}/crates/target/${MRX_FFI_PROFILE}/libmrxffi.a")
-        # add_custom_target, NOT add_custom_command(OUTPUT ...): a
-        # command with an OUTPUT is skipped once the file exists and its
-        # declared DEPENDS are unchanged, and CMake cannot see the Rust
-        # sources. That is not a slow build, it is a WRONG one -- a
-        # deliberate divergence probe injected into the Rust cache was
-        # silently not rebuilt, and the differential test passed against
-        # the stale archive. A custom target always runs, and cargo
-        # no-ops in milliseconds when nothing changed.
-        add_custom_target(mrx_ffi_build
-            BYPRODUCTS ${MRX_FFI_LIB}
-            COMMAND ${CMAKE_COMMAND} -E env
-                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
-                    ${CARGO_EXECUTABLE} build --release -p mrx-ffi
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
-            COMMENT "Building the Rust cache (crates/mrx-ffi -> libmrxffi.a)"
-            VERBATIM
-        )
-        # libmako.a must exist first: mrx-masstree links the mtx_* symbols
-        # out of it, and its build script looks for the archive to decide
-        # whether masstree is available at all.
-        add_dependencies(mrx_ffi_build mako)
-
-        add_library(mrxffi STATIC IMPORTED GLOBAL)
-        set_target_properties(mrxffi PROPERTIES
-            IMPORTED_LOCATION ${MRX_FFI_LIB}
-            INTERFACE_INCLUDE_DIRECTORIES
-                ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
-        add_dependencies(mrxffi mrx_ffi_build)
-
+    if (TARGET mrxffi)
         # Differential: drive the C++ cache and the Rust cache with the
         # same operation stream and require identical observable
         # behaviour. Two independent implementations of one specification
@@ -2858,10 +2872,6 @@ if(BUILD_TESTS)
             ${GTEST_INCLUDE_DIRS}
         )
         add_test(NAME MrxDifferentialTests COMMAND test_mrx_differential)
-    else()
-        message(STATUS
-            "cargo not found: the Rust cache and its differential tests "
-            "are skipped")
     endif()
 
     # Test: SiloRuntime per-site isolation (moved out of src/masstree/tests
