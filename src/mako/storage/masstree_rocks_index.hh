@@ -634,7 +634,12 @@ inline mrx_write_result mrx_write(mrx_store *s, lcdf::Str key,
                                   const std::string &value, bool tombstone,
                                   bool require_absent, bool require_present) {
   mrx_write_result r{false, false};
-  mrx_entry *e = mrx_entry_for(s, key);
+  // Entries are immortal, so the pointer outlives the region safely.
+  mrx_entry *e;
+  {
+    const auto region = mrx_rcu_region();
+    e = mrx_entry_for(s, key);
+  }
   if (e == nullptr) return r;
 
   mrx_writer *w = mrx_writer_for(s);
@@ -645,33 +650,47 @@ inline mrx_write_result mrx_write(mrx_store *s, lcdf::Str key,
                     std::memory_order_seq_cst);
 
   for (;;) {
-    mrx_val *cur = e->val.load(std::memory_order_acquire);
-    // A key whose value is merely EVICTED still exists — only a
-    // tombstone means absent.
-    const bool live = (cur->tombstone == 0);
-    r.existed = live;
-    if ((require_absent && live) || (require_present && !live)) {
-      w->announce.store(UINT64_MAX, std::memory_order_release);
-      return r;
-    }
+    uint64_t ver = 0;
+    bool published = false;
+    {
+      // Short region: value access only. No blocking, no IO.
+      const auto region = mrx_rcu_region();
+      mrx_val *cur = e->val.load(std::memory_order_acquire);
+      // A key whose value is merely EVICTED still exists — only a
+      // tombstone means absent.
+      const bool live = (cur->tombstone == 0);
+      r.existed = live;
+      if ((require_absent && live) || (require_present && !live)) {
+        w->announce.store(UINT64_MAX, std::memory_order_release);
+        return r;
+      }
 
-    const uint64_t ver =
-        s->version_ctr.fetch_add(1, std::memory_order_seq_cst);
-    mrx_val *nv = mrx_val_new(ver, tombstone, /*resident=*/true, value);
-    if (e->val.compare_exchange_weak(cur, nv, std::memory_order_acq_rel,
-                                     std::memory_order_acquire)) {
-      e->referenced.store(1, std::memory_order_relaxed);
-      mrx_account_swap(s, cur, nv);
-      mrx_val_free_rcu(cur);
-      mrx_submit(s, w, e, ver);  // clears announce
-      r.wrote = true;
-      return r;
+      ver = s->version_ctr.fetch_add(1, std::memory_order_seq_cst);
+      mrx_val *nv = mrx_val_new(ver, tombstone, /*resident=*/true, value);
+      if (e->val.compare_exchange_weak(cur, nv, std::memory_order_acq_rel,
+                                       std::memory_order_acquire)) {
+        e->referenced.store(1, std::memory_order_relaxed);
+        mrx_account_swap(s, cur, nv);
+        mrx_val_free_rcu(cur);
+        published = true;
+      } else {
+        // Lost the race: drop the unpublished record and retry against
+        // whatever is current now. The burned version needs no ticket
+        // — it was never published, so W owes it nothing — and
+        // announce stays set across the retry, so the fresh draw is
+        // still covered.
+        mrx_val_drop(nv);
+      }
     }
-    // Lost the race: drop the unpublished record and retry against
-    // whatever is current now. The burned version needs no ticket — it
-    // was never published, so W owes it nothing — and announce stays
-    // set across the retry, so the fresh draw is still covered.
-    mrx_val_drop(nv);
+    if (!published) continue;
+
+    // NO REGION HELD. mrx_submit can block on ring backpressure
+    // (sched_yield spins, then usleep loops), and blocking inside a
+    // region pins this core's ticker spinlock, stalling epoch
+    // advancement — and therefore all reclamation — process-wide.
+    mrx_submit(s, w, e, ver);  // clears announce
+    r.wrote = true;
+    return r;
   }
 }
 
@@ -682,11 +701,12 @@ inline mrx_write_result mrx_write(mrx_store *s, lcdf::Str key,
 // Answer from memory alone. `done == false` means only that the value
 // is not resident — the KEY's existence is never in question here,
 // because a tree miss is authoritative absence.
-// @unsafe - reads an RCU-protected value (caller holds region)
+// @unsafe - takes its own SHORT region; no IO inside it
 inline mrx_probe_result mrx_cache_probe(mrx_store *s, lcdf::Str key,
                                         std::string &value,
                                         size_t max_bytes_read) {
   mrx_probe_result r{true, false};
+  const auto region = mrx_rcu_region();
   mrx_entry *e = mrx_lookup(s->tree, key);
   if (e == nullptr) return r;  // absent, authoritatively
   e->referenced.store(1, std::memory_order_relaxed);
@@ -717,33 +737,68 @@ inline mrx_probe_result mrx_cache_probe(mrx_store *s, lcdf::Str key,
 // @unsafe - rocksdb read + CAS install
 inline bool mrx_fill(mrx_store *s, lcdf::Str key, std::string &value,
                      size_t max_bytes_read) {
-  mrx_entry *e = mrx_lookup(s->tree, key);
+  // Entries are IMMORTAL (allocated once per key, never freed - the
+  // flusher's dirty map already relies on this), so an mrx_entry* is
+  // safe to hold with no region. mrx_val records are NOT: they are
+  // RCU-freed, so every val access below takes its own short region.
+  mrx_entry *e;
+  {
+    const auto region = mrx_rcu_region();
+    e = mrx_lookup(s->tree, key);
+  }
   if (e == nullptr) return false;
 
   for (;;) {
-    mrx_val *cur = e->val.load(std::memory_order_acquire);
-    if (cur->tombstone) return false;
-    if (cur->resident) {
-      mrx_val_copy_out(cur, value, max_bytes_read);
-      return true;
+    uint64_t want_version = 0;
+    {
+      const auto region = mrx_rcu_region();
+      mrx_val *cur = e->val.load(std::memory_order_acquire);
+      if (cur->tombstone) return false;
+      if (cur->resident) {
+        mrx_val_copy_out(cur, value, max_bytes_read);
+        return true;
+      }
+      want_version = cur->version;
     }
 
+    // NO REGION HELD. An RCU region pins this core's ticker spinlock,
+    // and the tick daemon blocks on that same spinlock to advance every
+    // lagging core -- so a RocksDB read inside a region stalls epoch
+    // advancement, and therefore all reclamation, PROCESS-WIDE.
     std::string full;
     if (!mrx_db_get(s, key, full, std::string::npos)) {
       // The tree says this key exists but RocksDB has no row. Report
       // absent rather than inventing data.
       return false;
     }
-    mrx_val *nv = mrx_val_new(cur->version, /*tombstone=*/false,
-                              /*resident=*/true, full);
-    if (e->val.compare_exchange_strong(cur, nv, std::memory_order_acq_rel,
-                                       std::memory_order_acquire)) {
-      mrx_account_swap(s, cur, nv);
-      mrx_val_free_rcu(cur);
-      value.assign(full.data(), std::min<size_t>(full.size(), max_bytes_read));
-      return true;
+
+    {
+      const auto region = mrx_rcu_region();
+      mrx_val *cur = e->val.load(std::memory_order_acquire);
+      // Re-validate what we fetched bytes FOR. A different version means
+      // a writer won while we were in RocksDB and our bytes are stale --
+      // retry. Same version but now resident means another filler won --
+      // take theirs. Same version and still non-resident means our bytes
+      // are still exactly this version's, so installing them is correct
+      // even though the record pointer may have changed (evict/fill/evict
+      // preserves the version).
+      if (cur->version != want_version) continue;
+      if (cur->resident) {
+        mrx_val_copy_out(cur, value, max_bytes_read);
+        return true;
+      }
+      mrx_val *nv = mrx_val_new(want_version, /*tombstone=*/false,
+                                /*resident=*/true, full);
+      if (e->val.compare_exchange_strong(cur, nv, std::memory_order_acq_rel,
+                                         std::memory_order_acquire)) {
+        mrx_account_swap(s, cur, nv);
+        mrx_val_free_rcu(cur);
+        value.assign(full.data(),
+                     std::min<size_t>(full.size(), max_bytes_read));
+        return true;
+      }
+      mrx_val_drop(nv);
     }
-    mrx_val_drop(nv);
   }
 }
 
@@ -1286,26 +1341,33 @@ inline void mrx_sweeper_loop(mrx_store *s) {
 // provenance — correct, since their bytes came FROM RocksDB.
 // @unsafe - rocksdb iterator + tree inserts
 inline void mrx_load_keys(mrx_store *s) {
-  const auto region = mrx_rcu_region();
   rocksdb_iterator_t *it = rocksdb_create_iterator(s->db, s->ropts);
   rocksdb_iter_seek_to_first(it);
   while (rocksdb_iter_valid(it)) {
     size_t klen = 0;
     const char *k = rocksdb_iter_key(it, &klen);
     const lcdf::Str key(k, static_cast<int>(klen));
-    mrx_val *v = mrx_val_new(0, /*tombstone=*/false, /*resident=*/false,
-                             std::string());
-    mrx_entry *e = mrx_entry_alloc(v, key);
-    if (s->tree->insert_if_absent(
-            mrx_key(key), reinterpret_cast<concurrent_btree::value_type>(e))) {
-      s->resident_bytes.fetch_add(
-          mrx_entry_footprint(e) + mrx_val_footprint(v),
-          std::memory_order_relaxed);
-      s->floor_bytes.fetch_add(mrx_entry_footprint(e) + sizeof(mrx_val),
-                               std::memory_order_relaxed);
-    } else {
-      mrx_val_drop(v);
-      rcu::s_instance.dealloc(e, mrx_entry_footprint(e));
+    {
+      // One region PER KEY. A single region spanning the whole
+      // RocksDB iteration would pin this core's ticker spinlock for
+      // the entire load — seconds on a large database — freezing
+      // epoch advancement process-wide while the store opens.
+      const auto region = mrx_rcu_region();
+      mrx_val *v = mrx_val_new(0, /*tombstone=*/false, /*resident=*/false,
+                               std::string());
+      mrx_entry *e = mrx_entry_alloc(v, key);
+      if (s->tree->insert_if_absent(
+              mrx_key(key),
+              reinterpret_cast<concurrent_btree::value_type>(e))) {
+        s->resident_bytes.fetch_add(
+            mrx_entry_footprint(e) + mrx_val_footprint(v),
+            std::memory_order_relaxed);
+        s->floor_bytes.fetch_add(mrx_entry_footprint(e) + sizeof(mrx_val),
+                                 std::memory_order_relaxed);
+      } else {
+        mrx_val_drop(v);
+        rcu::s_instance.dealloc(e, mrx_entry_footprint(e));
+      }
     }
     rocksdb_iter_next(it);
   }
@@ -1474,7 +1536,6 @@ impl OrderedIndex for masstree_rocks_index {
     // A tree miss is authoritative absence, so a miss here never
     // consults RocksDB. Only a NON-RESIDENT VALUE does.
     fn get(&mut self, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
-        let _guard = unsafe { mrx_rcu_region() };
         let p = unsafe { mrx_cache_probe(self.store, key, value, max_bytes_read) };
         if p.done {
             return p.found;
@@ -1485,13 +1546,11 @@ impl OrderedIndex for masstree_rocks_index {
     // Returns "newly inserted" — answerable in memory now that every
     // key is resident.
     fn put(&mut self, key: lcdf::Str, value: &std::string) -> bool {
-        let _guard = unsafe { mrx_rcu_region() };
         let w = unsafe { mrx_write(self.store, key, value, false, false, false) };
         !w.existed
     }
 
     fn insert(&mut self, key: lcdf::Str, value: &std::string) -> bool {
-        let _guard = unsafe { mrx_rcu_region() };
         let w = unsafe { mrx_write(self.store, key, value, false, true, false) };
         w.wrote
     }
@@ -1500,7 +1559,6 @@ impl OrderedIndex for masstree_rocks_index {
     // tree: removing it would break the key-resident invariant, and
     // reclaiming it races with a concurrent insert (trap 1).
     fn remove(&mut self, key: lcdf::Str) -> bool {
-        let _guard = unsafe { mrx_rcu_region() };
         let w = unsafe { mrx_write(self.store, key, "", true, false, true) };
         w.wrote
     }
