@@ -44,6 +44,19 @@ enum WriteMode {
     Remove,
 }
 
+/// Decrements a waiter count on the way out, however that happens.
+///
+/// `drain_fully` returns from half a dozen places; a manual decrement
+/// would be forgotten on one of them and pin the flusher into its
+/// non-lazy schedule for the life of the process.
+struct WaiterGuard<'a>(&'a AtomicU64);
+
+impl Drop for WaiterGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// Per-entry overhead that eviction can never reclaim.
 ///
 /// Eviction frees a value's *payload*, never the entry or the record
@@ -107,6 +120,14 @@ pub struct Store<K: KeyIndex, B: Blobs> {
     resident_bytes: AtomicU64,
     floor_bytes: AtomicU64,
 
+    /// Flusher cycles completed, for the lazy watermark schedule below.
+    flusher_cycles: AtomicU64,
+    /// Threads currently blocked in [`Store::sync`].
+    ///
+    /// A barrier waiter needs a FRESH watermark, so its presence forces
+    /// the recompute the schedule would otherwise skip.
+    flush_waiters: AtomicU64,
+
     io_failing: AtomicBool,
     stopping: AtomicBool,
 
@@ -137,6 +158,8 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             stash_min: AtomicU64::new(NO_FLOOR),
             resident_bytes: AtomicU64::new(0),
             floor_bytes: AtomicU64::new(0),
+            flusher_cycles: AtomicU64::new(0),
+            flush_waiters: AtomicU64::new(0),
             io_failing: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             sync_lock: Mutex::new(()),
@@ -666,9 +689,37 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             }
         }
 
-        self.recompute_watermark();
+        if self.watermark_due(self.dirty_len()) {
+            self.recompute_watermark();
+        }
         self.sync_cv.notify_all();
         progressed
+    }
+
+    /// Cycles between full watermark recomputes once the dirty map is
+    /// large enough for the scan to dominate.
+    const W_LAZY_CYCLES: u64 = 16;
+
+    /// Whether this cycle should recompute the watermark.
+    ///
+    /// **The scan over the dirty map is the flusher's dominant cost under
+    /// backlog**, and it runs holding the same lock the drain and the
+    /// writeback need. With a 200k-entry map and a flusher spinning as
+    /// fast as it can, doing it every cycle delays the flusher's real
+    /// work, the log fills, and the producers then block on backpressure
+    /// — which is how an O(n) scan on a background thread turns into a
+    /// foreground throughput loss.
+    ///
+    /// Skipping never makes the watermark UNSOUND, only stale: every
+    /// floor it reads is monotone, and `advance_to_floor` takes a
+    /// maximum. Staleness matters to exactly two callers, and both are
+    /// handled — a barrier waiter forces a recompute via `flush_waiters`,
+    /// and the sweeper tolerates a few milliseconds of lag.
+    fn watermark_due(&self, dirty_len: usize) -> bool {
+        let n = self.flusher_cycles.fetch_add(1, Ordering::AcqRel);
+        dirty_len <= self.cfg.writeback_chunk
+            || self.flush_waiters.load(Ordering::Acquire) != 0
+            || n.is_multiple_of(Self::W_LAZY_CYCLES)
     }
 
     fn recompute_watermark(&self) {
@@ -716,21 +767,28 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         if target == 0 {
             return true;
         }
-        loop {
+        // Registered for the whole wait, so the flusher's lazy watermark
+        // schedule recomputes on every cycle while anyone is blocked
+        // here. Without this a barrier could wait up to W_LAZY_CYCLES
+        // flusher cycles for a number that was already true.
+        self.flush_waiters.fetch_add(1, Ordering::AcqRel);
+        let result = loop {
             if self.watermark.get() >= target {
-                return true;
+                break true;
             }
             if self.io_failing.load(Ordering::Acquire)
                 || self.stopping.load(Ordering::Acquire)
             {
-                return self.watermark.get() >= target;
+                break self.watermark.get() >= target;
             }
             let g = self.sync_lock.lock().expect("sync lock poisoned");
             let _unused = self
                 .sync_cv
                 .wait_timeout(g, std::time::Duration::from_millis(1))
                 .expect("sync condvar poisoned");
-        }
+        };
+        self.flush_waiters.fetch_sub(1, Ordering::AcqRel);
+        result
     }
 
     /// Drive the flusher until everything currently owed is discharged.
@@ -743,6 +801,10 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         // retry, so giving up on the first error turns a self-healing
         // hiccup into a caller-visible durability failure.
         let mut consecutive_failures = 0usize;
+        // Same reason as `sync`: this is a barrier, so it needs a fresh
+        // watermark rather than one up to W_LAZY_CYCLES cycles old.
+        self.flush_waiters.fetch_add(1, Ordering::AcqRel);
+        let _guard = WaiterGuard(&self.flush_waiters);
         for spin in 0..1_000_000u64 {
             let target = self.counter.peek().saturating_sub(1);
             if self.watermark.get() >= target {

@@ -178,7 +178,41 @@ escaped both the cache and crash suites entirely — see the
 `publish-gap` mutation. A cheaper floor is possible in principle; a
 *wrong* floor is the data-loss direction.
 
-What was ruled out, each by measurement rather than argument:
+### What was tried, and what it bought
+
+One change moved the number. Nine did not, and they are listed because
+the next person will otherwise try them again:
+
+| change | result |
+|---|---|
+| **entry table: `RwLock<Vec<Arc<Entry>>>` → doubling segments** | **writes 0.24 → 0.60, reads 0.28 → 0.83** |
+| O(1) minimum for the ticket log | noise |
+| unlocked fast path in `steal` | noise |
+| lazy seed in `intern` (dropped a wasted alloc per write) | noise |
+| cache-line padding on `WriterSlot` | **worse** — reverted |
+| flusher scans only registered writer slots | noise |
+| writeback borrows keys/values instead of copying (−8192 allocs/cycle) | noise |
+| RocksDB: stop `increase_parallelism` / `optimize_level_style_compaction` | noise |
+| lazy watermark recompute under backlog (matches the C++) | noise |
+| 8× larger ticket log (do producers block on backpressure?) | noise |
+
+Every one after the first is kept anyway — each is defensible on its own
+terms, and several protect against pathologies this benchmark does not
+reach — but none of them is a throughput fix, and saying otherwise would
+be inventing a result.
+
+**After the entry table there is no single remaining dominant cause.**
+The gap is the sum of many 10–30 ns differences, nearly all of them
+`std::sync::Mutex` where the C++ has a lock-free CAS or a spinlock.
+
+The one structural lever left is dropping the zero-dependency rule:
+`arc-swap` for the value slot and a lock-free queue for the ticket log
+would remove the entry lock (+22 ns) and the writer batch/log (+23 ns),
+which the ablation puts at about 16% of the write path — meaningful, not
+transformative, and paid for with `unsafe` in a dependency. That is a
+decision to take deliberately, not a tuning knob.
+
+### What was ruled out, each by measurement rather than argument:
 
 | suspected | test | effect |
 |---|---|---|
@@ -218,14 +252,18 @@ from 0.28× to 0.83× and writes from 0.24× to 0.60×.
 Worth recording that `perf` was unavailable (`perf_event_paranoid`), and
 scaling the thread count found it faster than a profiler would have.
 
-Also worth recording: the *next* three fixes all measured as noise — an
-O(1) minimum for the ticket log, the lazy seed in `intern`, and the
-unlocked fast path in `steal`. Each is defensible on its own terms (the
-first is O(n) under a shared lock in the deep-backlog regime the cache is
-designed to enter), but none bought the throughput it was predicted to.
-Three predictions in a row that did not survive contact with a
-measurement is the reason this section reports ablations rather than
-reasoning.
+Also worth recording: **nine subsequent fixes all measured as noise or
+worse** — see the table above. Nine predictions that did not survive
+contact with a measurement is the reason this section reports ablations
+rather than reasoning, and the reason each of them is described by what
+it was *measured* to do rather than by what it should have done.
+
+The most valuable thing the performance work produced was not
+performance. Chasing an A/B that hung for ten minutes uncovered a
+flusher deadlock — the blocking `append` on log backpressure — that
+stops the whole process under sustained overload, which is precisely the
+regime the cache exists for. See
+`the_flusher_never_blocks_on_the_backpressure_it_relieves`.
 
 ## How this is verified
 
