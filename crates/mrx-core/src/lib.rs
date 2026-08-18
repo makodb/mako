@@ -46,6 +46,12 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod durability;
+pub mod value;
+
+pub use durability::{Floors, Ticket, TicketLog, VersionCounter, Watermark, WriterSlot};
+pub use value::{Entry, Val, ValState};
+
 /// Version numbers start at 1, never 0.
 ///
 /// This is load-bearing in two places and is the single easiest thing to
