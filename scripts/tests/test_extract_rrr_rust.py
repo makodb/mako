@@ -100,17 +100,17 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 22 hand-authored module units, "
-            "SCAFFOLD=1560 noncomment lines (734 DSL fences + 826 other)",
+            "source boundary: 21 hand-authored module units, "
+            "SCAFFOLD=1507 noncomment lines (716 DSL fences + 791 other)",
             output,
         )
         self.assertIn(
-            "payload census:   dsl=9199  generated=11995 "
+            "payload census:   dsl=8943  generated=11744 "
             "nonblank/non-// lines",
             output,
         )
         self.assertIn(
-            "12 compatibility headers, SCAFFOLD=147 noncomment lines", output
+            "12 compatibility headers, SCAFFOLD=146 noncomment lines", output
         )
         self.assertIn(
             "terminal C:      3 ABI headers/87 lines; 7 kernels/410 lines",

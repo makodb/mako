@@ -933,17 +933,15 @@ Communicator::SendCommit(Coordinator* coo,
       int32_t res;
 			bool_t slow;
       uint64_t coro_id = 0;
-			Profiling profile;
       janus::Command view_md;
       rrr::deserialize_from(fu->get_reply(), res);
       rrr::deserialize_from(fu->get_reply(), slow);
       rrr::deserialize_from(fu->get_reply(), coro_id);
-      rrr::deserialize_from(fu->get_reply(), profile);
       rrr::deserialize_from(fu->get_reply(), view_md);
 			this->slow = slow;
-			// removed `cpu = profile.cpu_util;`
-			// — the `cpu` field was deleted alongside the rest of the
-			// dead CPU / RPC-latency profiling subsystem.
+			// removed the `Profiling profile` reply field along with the
+			// `cpu = profile.cpu_util;` read — the whole CPU /
+			// RPC-latency profiling subsystem is gone.
       // Propagate the result status (including WRONG_LEADER) back to the coordinator
       cmd->reply_.res_ = res;
       
@@ -1060,12 +1058,10 @@ Communicator::SendAbort(Coordinator* coo,
       int32_t res;
       bool_t slow;
       uint64_t coro_id = 0;
-      Profiling profile;
       janus::Command view_md;
       rrr::deserialize_from(fu->get_reply(), res);
       rrr::deserialize_from(fu->get_reply(), slow);
       rrr::deserialize_from(fu->get_reply(), coro_id);
-      rrr::deserialize_from(fu->get_reply(), profile);
       rrr::deserialize_from(fu->get_reply(), view_md);
       this->slow = slow;
 
@@ -1083,8 +1079,8 @@ Communicator::SendAbort(Coordinator* coo,
       }
 
       // removed the CPU-utilization /
-      // network-utilization snapshot (`profile.cpu_util` /
-      // `profile.tx_util` writes into `this->cpu` / `this->tx`)
+      // network-utilization snapshot (the whole `Profiling` reply
+      // field, formerly written into `this->cpu` / `this->tx`)
       // and the rolling-window RPC-latency tracking block that
       // updated `total_time` / `window_time` / `window` / `total`
       // / `index`.  Same dead-state cleanup as the Commit-callback

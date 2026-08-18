@@ -41,11 +41,8 @@ class ServerStatus {
   // Interior mutability is provided by Mutex
 
   void set_ready() const {
-    {
-      auto guard = state_.lock().unwrap();
-      guard->status = Status::RUN;
-    }
-    rrr::CPUInfo::cpu_stat();  // Initialize CPU stats baseline
+    auto guard = state_.lock().unwrap();
+    guard->status = Status::RUN;
   }
 
   void set_shutdown() const {

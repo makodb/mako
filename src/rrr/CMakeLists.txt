@@ -23,7 +23,6 @@ set(RRR_INLINE_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
@@ -141,7 +140,7 @@ endif()
 
 # Production always combines the remaining inline carriers with the seventeen
 # generated providers. The partial crate root remains compile-only until all
-# 38 named modules are canonical Rust.
+# 37 named modules are canonical Rust.
 set(RRR_MODULE_SRC ${RRR_INLINE_MODULE_SRC} ${RRR_GOAL0_CRATE_CHILD_SRC})
 set(RRR_MODULE_BASE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -152,10 +151,10 @@ set_source_files_properties(${RRR_GOAL0_CRATE_CHILD_SRC}
 
 list(LENGTH RRR_INLINE_MODULE_SRC _RRR_INLINE_MODULE_COUNT)
 list(LENGTH RRR_MODULE_SRC _RRR_PRODUCTION_MODULE_COUNT)
-if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 21 OR
-   NOT _RRR_PRODUCTION_MODULE_COUNT EQUAL 38)
+if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 20 OR
+   NOT _RRR_PRODUCTION_MODULE_COUNT EQUAL 37)
     message(FATAL_ERROR
-        "Goal-0 production must contain 21 inline and seventeen generated modules")
+        "Goal-0 production must contain 20 inline and seventeen generated modules")
 endif()
 list(FIND RRR_MODULE_SRC "${RRR_GOAL0_CRATE_ROOT_SRC}" _RRR_GOAL0_ROOT_INDEX)
 if(NOT _RRR_GOAL0_ROOT_INDEX EQUAL -1)
@@ -287,7 +286,6 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
             # misc/
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
         # reactor/ — (fiber_impl.cc, event.cc, quorum_event.cc, reactor.cc were

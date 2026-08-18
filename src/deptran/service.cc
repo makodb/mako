@@ -60,11 +60,11 @@ void ClassicServiceImpl::Prepare(const ClassicService::RpcPrepareRequest& req, C
 }
 
 void ClassicServiceImpl::Commit(const ClassicService::RpcCommitRequest& req, ClassicService::RpcCommitResponse& resp, rrr::DeferredReply defer) {
-  this->Commit(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.profile, &resp.view_data, std::move(defer));
+  this->Commit(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.view_data, std::move(defer));
 }
 
 void ClassicServiceImpl::Abort(const ClassicService::RpcAbortRequest& req, ClassicService::RpcAbortResponse& resp, rrr::DeferredReply defer) {
-  this->Abort(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.profile, &resp.view_data, std::move(defer));
+  this->Abort(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.view_data, std::move(defer));
 }
 
 void ClassicServiceImpl::EarlyAbort(const ClassicService::RpcEarlyAbortRequest& req, ClassicService::RpcEarlyAbortResponse& resp, rrr::DeferredReply defer) {
@@ -475,16 +475,12 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
                                 rrr::i32* res,
 																bool_t* slow,
                                 uint64_t* coro_id,
-																Profiling* profile,
                                 janus::Command* view_data,
                                 rrr::DeferredReply defer) {
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   int ret = sched->OnCommit(tid, dep_id, SUCCESS);
 
-  auto result = rrr::CPUInfo::cpu_stat();  // cpu_stat() returns rusty::Vec<double>
-  *profile = {result[0], result[1], result[2], result[3]};
-  //*profile = {0.0, 0.0, 0.0, 0.0};
   //Log_info("slow2: {}", sched->slow_);
   *slow = sched->slow_;
   auto coro_opt = Fiber::current_fiber();
@@ -521,15 +517,12 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
                                rrr::i32* res,
 															 bool_t* slow,
                                uint64_t* coro_id,
-															 Profiling* profile,
                                janus::Command* view_data,
                                rrr::DeferredReply defer) {
   Log_debug("get abort_txn: tid: {}", tid);
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   sched->OnCommit(tid, dep_id, REJECT);
-  auto result = rrr::CPUInfo::cpu_stat();  // cpu_stat() returns rusty::Vec<double>
-  *profile = {result[0], result[1], result[2]};
   Log_info("slow3: {}", sched->slow_);
   *slow = sched->slow_;
   *res = SUCCESS;

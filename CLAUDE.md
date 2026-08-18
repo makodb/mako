@@ -101,7 +101,7 @@ listed in `src/rrr/rust-modules.toml` are canonical `.rs` sources: rustc
 compiles them directly and rusty-cpp translates those same sources into the
 complete C++ module providers used in every production build. Edit those Rust
 files directly; their former hand-authored `.cpp` carriers have been deleted.
-The other 21 named modules still own 367 inline `RUSTYCPP_RUST` blocks, so a
+The other 20 named modules still own 367 inline `RUSTYCPP_RUST` blocks, so a
 successful Cargo build proves only the current seventeen-module coverage, not full
 Goal 0. Never recreate a top-level `crates/srpc` hand port.
 

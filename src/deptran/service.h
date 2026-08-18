@@ -95,7 +95,6 @@ class ClassicServiceImpl : public ClassicService {
               i32* res,
 							bool_t* slow,
               uint64_t* coro_id,
-	        		Profiling* profile,
               janus::Command* view_data,
               rrr::DeferredReply done);
 
@@ -104,7 +103,6 @@ class ClassicServiceImpl : public ClassicService {
              i32* res,
 						 bool_t* slow,
              uint64_t* coro_id,
-	        	 Profiling* profile,
              janus::Command* view_data,
              rrr::DeferredReply done);
 

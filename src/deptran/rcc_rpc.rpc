@@ -274,9 +274,9 @@ abstract service Classic {
 								bool_t slow,
                 uint64_t coro_id);
 
-  defer Commit(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Profiling profile, Command view_data);
+  defer Commit(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Command view_data);
 
-  defer Abort(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Profiling profile, Command view_data);
+  defer Abort(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Command view_data);
 
   defer EarlyAbort(i64 tid | i32 res);
 
@@ -495,7 +495,6 @@ struct TxnInfoRes {
 
 struct ServerResponse {
     map<string, ValueTimesPair> statistics;
-    double cpu_util;
     i64 r_cnt_sum;
     i64 r_cnt_num;
     i64 r_sz_sum;
@@ -510,13 +509,6 @@ struct ClientResponse  {
     i64 period_nsec;   // running time in nano seconds
     i32 is_finish;  // if client finishs
     i64 n_asking;   // asking finish request count
-}
-
-struct Profiling {
-    double cpu_util;
-    double tx_util;
-    double rx_util;
-		double mem_util;
 }
 
 abstract service ServerControl {

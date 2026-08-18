@@ -24,7 +24,7 @@ WORKTREE = SCRIPT_DIR.parent
 FILES = [
     "src/rrr/base/debugging.cpp", "src/rrr/base/logging.cpp",
     "src/rrr/base/misc.cpp", "src/rrr/base/threading.cpp",
-    "src/rrr/misc/any_message.cpp", "src/rrr/misc/cpuinfo.cpp",
+    "src/rrr/misc/any_message.cpp",
     "src/rrr/misc/serializable.cpp", "src/rrr/misc/serializable_envelope.cpp",
     "src/rrr/reactor/epoll_wrapper.cc", "src/rrr/reactor/fiber.cpp",
     "src/rrr/reactor/future.cpp", "src/rrr/reactor/reactor.cpp",

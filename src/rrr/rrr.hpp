@@ -32,7 +32,6 @@ import rrr.channel;
 import rrr.client;
 // import rrr.connection_metrics;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
 import rrr.connection_state;
-import rrr.cpuinfo;
 import rrr.debugging;
 // import rrr.epoll_wrapper;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
 import rrr.errors;

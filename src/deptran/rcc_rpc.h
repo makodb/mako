@@ -100,7 +100,6 @@ inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxnInfoRe
 
 struct ServerResponse {
     std::map<std::string, ValueTimesPair> statistics;
-    double cpu_util;
     rrr::i64 r_cnt_sum;
     rrr::i64 r_cnt_num;
     rrr::i64 r_sz_sum;
@@ -109,7 +108,6 @@ struct ServerResponse {
 
 inline void serialize(const ServerResponse& o, rrr::BinaryWriteArchive& ar) {
     rrr::Serialize_::serialize(o.statistics, ar);
-    rrr::Serialize_::serialize(o.cpu_util, ar);
     rrr::Serialize_::serialize(o.r_cnt_sum, ar);
     rrr::Serialize_::serialize(o.r_cnt_num, ar);
     rrr::Serialize_::serialize(o.r_sz_sum, ar);
@@ -120,7 +118,6 @@ inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const S
 
 inline void deserialize(ServerResponse& o, rrr::BinaryReadArchive& ar) {
     rrr::Deserialize_::deserialize(o.statistics, ar);
-    rrr::Deserialize_::deserialize(o.cpu_util, ar);
     rrr::Deserialize_::deserialize(o.r_cnt_sum, ar);
     rrr::Deserialize_::deserialize(o.r_cnt_num, ar);
     rrr::Deserialize_::deserialize(o.r_sz_sum, ar);
@@ -162,31 +159,6 @@ inline void deserialize(ClientResponse& o, rrr::BinaryReadArchive& ar) {
 }
 
 inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, ClientResponse& o) { deserialize(o, ar); return ar; }
-
-struct Profiling {
-    double cpu_util;
-    double tx_util;
-    double rx_util;
-    double mem_util;
-};
-
-inline void serialize(const Profiling& o, rrr::BinaryWriteArchive& ar) {
-    rrr::Serialize_::serialize(o.cpu_util, ar);
-    rrr::Serialize_::serialize(o.tx_util, ar);
-    rrr::Serialize_::serialize(o.rx_util, ar);
-    rrr::Serialize_::serialize(o.mem_util, ar);
-}
-
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const Profiling& o) { serialize(o, ar); return ar; }
-
-inline void deserialize(Profiling& o, rrr::BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(o.cpu_util, ar);
-    rrr::Deserialize_::deserialize(o.tx_util, ar);
-    rrr::Deserialize_::deserialize(o.rx_util, ar);
-    rrr::Deserialize_::deserialize(o.mem_util, ar);
-}
-
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, Profiling& o) { deserialize(o, ar); return ar; }
 
 struct TxDispatchRequest {
     rrr::i32 id;
@@ -4248,14 +4220,12 @@ public:
         rrr::i32 res;
         bool_t slow;
         uint64_t coro_id;
-        Profiling profile;
         Command view_data;
     };
     friend inline void serialize(const RpcCommitResponse& o, rrr::BinaryWriteArchive& ar) {
         rrr::Serialize_::serialize(o.res, ar);
         rrr::Serialize_::serialize(o.slow, ar);
         rrr::Serialize_::serialize(o.coro_id, ar);
-        rrr::Serialize_::serialize(o.profile, ar);
         rrr::Serialize_::serialize(o.view_data, ar);
     }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcCommitResponse& o) { serialize(o, ar); return ar; }
@@ -4263,7 +4233,6 @@ public:
         rrr::Deserialize_::deserialize(o.res, ar);
         rrr::Deserialize_::deserialize(o.slow, ar);
         rrr::Deserialize_::deserialize(o.coro_id, ar);
-        rrr::Deserialize_::deserialize(o.profile, ar);
         rrr::Deserialize_::deserialize(o.view_data, ar);
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcCommitResponse& o) { deserialize(o, ar); return ar; }
@@ -4287,14 +4256,12 @@ public:
         rrr::i32 res;
         bool_t slow;
         uint64_t coro_id;
-        Profiling profile;
         Command view_data;
     };
     friend inline void serialize(const RpcAbortResponse& o, rrr::BinaryWriteArchive& ar) {
         rrr::Serialize_::serialize(o.res, ar);
         rrr::Serialize_::serialize(o.slow, ar);
         rrr::Serialize_::serialize(o.coro_id, ar);
-        rrr::Serialize_::serialize(o.profile, ar);
         rrr::Serialize_::serialize(o.view_data, ar);
     }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAbortResponse& o) { serialize(o, ar); return ar; }
@@ -4302,7 +4269,6 @@ public:
         rrr::Deserialize_::deserialize(o.res, ar);
         rrr::Deserialize_::deserialize(o.slow, ar);
         rrr::Deserialize_::deserialize(o.coro_id, ar);
-        rrr::Deserialize_::deserialize(o.profile, ar);
         rrr::Deserialize_::deserialize(o.view_data, ar);
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAbortResponse& o) { deserialize(o, ar); return ar; }
@@ -5942,7 +5908,6 @@ private:
                     rrr::Serialize_::serialize(__typed_resp__->res, m);
                     rrr::Serialize_::serialize(__typed_resp__->slow, m);
                     rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
-                    rrr::Serialize_::serialize(__typed_resp__->profile, m);
                     rrr::Serialize_::serialize(__typed_resp__->view_data, m);
                 },
                 []() {});
@@ -5965,7 +5930,6 @@ private:
                     rrr::Serialize_::serialize(__typed_resp__->res, m);
                     rrr::Serialize_::serialize(__typed_resp__->slow, m);
                     rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
-                    rrr::Serialize_::serialize(__typed_resp__->profile, m);
                     rrr::Serialize_::serialize(__typed_resp__->view_data, m);
                 },
                 []() {});
@@ -7119,7 +7083,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.slow, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.profile, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.view_data, __reply_ar__);
             return rusty::Result<RpcCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7169,7 +7132,6 @@ public:
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.slow, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.profile, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.view_data, __reply_ar__);
             return rusty::Result<RpcAbortResponse, rrr::i32>::Ok(__typed_resp__);
         }
