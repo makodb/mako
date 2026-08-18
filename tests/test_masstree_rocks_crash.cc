@@ -645,6 +645,50 @@ TEST_F(CrashTest, CleanCloseWithDistinctKeysRecoversAll) {
   EXPECT_TRUE(fail.empty()) << fail;
 }
 
+// Property 3 rested on a single test until mutation testing showed
+// that deleting close()'s barrier was caught by exactly one of them --
+// the distinct-key one. Overwrite-based tests mask a lost write when a
+// later write to the same key lands, so distinct keys under real
+// concurrency is the shape that actually detects it. Two more, so the
+// property does not hang on one assertion.
+TEST_F(CrashTest, CleanCloseUnderHighConcurrencyRecoversAll) {
+  const pid_t pid = LaunchChild("distinct", 15000, true, 8);
+  ASSERT_GT(pid, 0);
+  int st = 0;
+  ASSERT_EQ(::waitpid(pid, &st, 0), pid);
+  ASSERT_TRUE(WIFEXITED(st)) << "child did not exit cleanly";
+  ASSERT_EQ(WEXITSTATUS(st), 0);
+
+  const auto hist = History();
+  ASSERT_GT(hist.size(), 50000u) << "not enough distinct keys to be strict";
+  const std::string fail = Verify(db_path_, hist, UINT64_MAX, true);
+  EXPECT_TRUE(fail.empty()) << fail;
+}
+
+// Tombstones must be durable across a clean exit too: a delete that
+// does not survive shutdown resurrects the key on the next open.
+TEST_F(CrashTest, CleanCloseWithRemovesRecoversAll) {
+  const pid_t pid = LaunchChild("mixed", 20000, true, 4);
+  ASSERT_GT(pid, 0);
+  int st = 0;
+  ASSERT_EQ(::waitpid(pid, &st, 0), pid);
+  ASSERT_TRUE(WIFEXITED(st));
+  ASSERT_EQ(WEXITSTATUS(st), 0);
+
+  const auto hist = History();
+  ASSERT_FALSE(hist.empty());
+  size_t removes = 0;
+  for (const auto &kv : hist) {
+    for (const KeyOp &o : kv.second) {
+      if (o.val_id == UINT32_MAX) removes++;
+    }
+  }
+  ASSERT_GT(removes, 100u) << "no tombstones exercised";
+
+  const std::string fail = Verify(db_path_, hist, UINT64_MAX, true);
+  EXPECT_TRUE(fail.empty()) << fail;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {

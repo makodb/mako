@@ -667,6 +667,103 @@ TEST_F(MasstreeRocksCacheTest, ClearIsRefusedWhileIoIsFailing) {
 }
 
 // ---------------------------------------------------------------------------
+// THE PUBLISH GAP (announce floor)
+//
+// A version is drawn by fetch_add BEFORE its CAS publishes and before
+// its ticket reaches a batch. During that window the version exists but
+// is invisible to both the log and batch_min, so the per-writer
+// `announce` floor is the only thing keeping W below it.
+//
+// This is deliberately NOT a crash test. Mutation testing showed that
+// deleting the announce floor escapes the entire crash suite: the gap
+// is only open on a writer's first write after its 64-entry batch
+// drains (~1 write in 64) and only for the few instructions between
+// fetch_add and the batch_min store, while each crash test fires a
+// single kill. Sampling cannot close that. So instead of racing it,
+// this holds the window open deliberately and asserts the floor.
+// ---------------------------------------------------------------------------
+
+TEST_F(MasstreeRocksCacheTest, AnnounceFloorPinsWatermarkBelowInFlightVersion) {
+  // Warm up and let the watermark catch up, so the only thing that can
+  // hold it back afterwards is the floor under test.
+  for (int i = 0; i < 16; i++) {
+    ASSERT_TRUE(Put("warm" + std::to_string(i), "v"));
+  }
+  ASSERT_TRUE(idx_->flush());
+
+  // Occupy exactly the state a writer is in between drawing a version
+  // and getting its ticket into a batch: announced, never submitted.
+  mrx_writer *w = mrx_writer_for(store_);
+  const uint64_t announced =
+      store_->version_ctr.load(std::memory_order_acquire);
+  w->announce.store(announced, std::memory_order_seq_cst);
+
+  // Another thread drives the counter and the dirty map well past the
+  // announced version. Note we must NOT call flush() here: the floor
+  // legitimately blocks it, which is the whole point.
+  std::thread other([&]() {
+    for (int i = 0; i < 64; i++) {
+      idx_->put(S("other" + std::to_string(i)), "v");
+    }
+  });
+  other.join();
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+  const uint64_t w_pinned =
+      store_->persisted_version.load(std::memory_order_acquire);
+  EXPECT_LT(w_pinned, announced)
+      << "the watermark covered a version that was still in flight; the "
+         "publish gap is open";
+
+  // Release the floor and confirm the watermark WOULD otherwise have
+  // advanced -- without this the assertion above could pass simply
+  // because the flusher never ran.
+  w->announce.store(UINT64_MAX, std::memory_order_release);
+  EXPECT_TRUE(idx_->flush());
+  EXPECT_GT(store_->persisted_version.load(std::memory_order_acquire),
+            announced)
+      << "the watermark never advanced even after the floor was released, "
+         "so the test above proved nothing";
+}
+
+// The floor must also survive the flusher's steal path: a partial batch
+// stolen mid-cycle hands coverage from batch_min to the log, and a gap
+// in that hand-off would let W jump an un-discharged version.
+TEST_F(MasstreeRocksCacheTest, AnnounceFloorHoldsAcrossManyFlusherCycles) {
+  ASSERT_TRUE(Put("seed", "v"));
+  ASSERT_TRUE(idx_->flush());
+
+  mrx_writer *w = mrx_writer_for(store_);
+  const uint64_t announced =
+      store_->version_ctr.load(std::memory_order_acquire);
+  w->announce.store(announced, std::memory_order_seq_cst);
+
+  // Sustained traffic from several threads, spanning many flusher
+  // cycles and many batch steals.
+  std::atomic<bool> stop{false};
+  std::vector<std::thread> ts;
+  for (int t = 0; t < 4; t++) {
+    ts.emplace_back([&, t]() {
+      for (int i = 0; !stop.load() && i < 5000; i++) {
+        idx_->put(S("t" + std::to_string(t) + "k" + std::to_string(i)), "v");
+      }
+    });
+  }
+  for (int check = 0; check < 20; check++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    const uint64_t now =
+        store_->persisted_version.load(std::memory_order_acquire);
+    ASSERT_LT(now, announced)
+        << "watermark passed an in-flight version at check " << check;
+  }
+  stop.store(true);
+  for (auto &t : ts) t.join();
+
+  w->announce.store(UINT64_MAX, std::memory_order_release);
+  EXPECT_TRUE(idx_->flush());
+}
+
+// ---------------------------------------------------------------------------
 // Requirement: Bounded Value Memory
 // Requirement: Durable-Only Eviction
 // Requirement: Recency-Biased Reclamation

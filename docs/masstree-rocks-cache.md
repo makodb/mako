@@ -184,6 +184,32 @@ Measured (16 threads, 8M writes, 200K keys, 128B values): write ack
 1.84M/s (7.0x raw RocksDB), end-to-end durable 4.91x, reads 9.9x hot /
 6.1x uniform.
 
+## Under sustained overload the watermark stops advancing
+
+W is a **low-water mark** over undischarged obligations, so it can only
+move when writeback drains a prefix of the dirty map. If writers
+outrun RocksDB ingest indefinitely — as a flat-out distinct-key
+workload does — the dirty map grows, the oldest undischarged version
+stays put, and **W stops moving entirely**.
+
+Consequences, all correct-by-design but worth knowing before relying on
+them:
+
+- writes keep acking and stay readable; nothing is lost
+- but nothing becomes **durable**, so `flush()` blocks for as long as
+  the overload lasts
+- and since eviction requires `version <= W`, the value tier cannot
+  reclaim either — a capacity-bound store under write overload holds
+  everything resident
+
+This is the backpressure boundary of the design: the cache absorbs
+bursts, not permanent excess (see the throughput note above — durable
+throughput is bounded by ingest × coalescing, and coalescing only helps
+when keys repeat). A workload with any think-time lets W advance
+normally, which is why the crash tests pace their writer: with the
+producer flat out, *nothing is ever covered* and the covered ⇒ durable
+property has nothing to test.
+
 ## Scans
 
 Iterate Masstree over the range. Resident values are emitted directly;
