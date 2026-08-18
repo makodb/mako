@@ -219,7 +219,7 @@ static int ChildWriter(const std::string &db_path, const std::string &jpath,
       // discharge a prefix and the watermark move, which is also what
       // any real workload with think-time looks like. The kill still
       // lands during the full-speed phase that follows.
-      if ((i % 8000) == 7999) ::usleep(150000);
+      if (!clean_close && (i % 8000) == 7999) ::usleep(150000);
 
       // Sample W after the write is journaled.
       const uint64_t w = store->persisted_version.load(std::memory_order_acquire);
@@ -644,7 +644,7 @@ TEST_F(CrashTest, CleanCloseMakesEverythingRecoverable) {
 }
 
 TEST_F(CrashTest, CleanCloseWithDistinctKeysRecoversAll) {
-  const pid_t pid = LaunchChild("distinct", 20000, true, 2);
+  const pid_t pid = LaunchChild("distinct", 20000, true, 6);
   ASSERT_GT(pid, 0);
   int st = 0;
   ASSERT_EQ(::waitpid(pid, &st, 0), pid);
@@ -657,12 +657,21 @@ TEST_F(CrashTest, CleanCloseWithDistinctKeysRecoversAll) {
   EXPECT_TRUE(fail.empty()) << fail;
 }
 
-// Property 3 rested on a single test until mutation testing showed
-// that deleting close()'s barrier was caught by exactly one of them --
-// the distinct-key one. Overwrite-based tests mask a lost write when a
-// later write to the same key lands, so distinct keys under real
-// concurrency is the shape that actually detects it. Two more, so the
-// property does not hang on one assertion.
+// Property 3 detection depends on TWO things, learned by mutation
+// testing rather than by reasoning:
+//
+//   - distinct keys, because overwrite-based tests mask a lost write as
+//     soon as a later write to the same key lands; and
+//   - a large UNDISCHARGED TAIL at close, since that is what the
+//     barrier exists to drain.
+//
+// The second was the surprise. A 2-thread distinct run was originally
+// the only detector, then later failed to detect at all: its in-flight
+// tail had simply finished draining before close. So these tests use
+// several writer threads, and the child does NOT pace itself in clean
+// mode (pacing lets the flusher catch up, which shrinks the very tail
+// under test). Property 3 now rests on three tests of differing shape
+// rather than one lucky configuration.
 TEST_F(CrashTest, CleanCloseUnderHighConcurrencyRecoversAll) {
   const pid_t pid = LaunchChild("distinct", 15000, true, 8);
   ASSERT_GT(pid, 0);
