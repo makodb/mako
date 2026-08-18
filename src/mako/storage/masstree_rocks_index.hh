@@ -344,6 +344,13 @@ struct mrx_store {
   // log prefix regardless, so a TRANSIENT failure self-heals.
   std::atomic<bool> io_failing{false};
   std::atomic<bool> stopping{false};
+  // TEST HOOK: when non-zero, the next N writeback commits report
+  // failure without touching RocksDB, then it decrements. UINT32_MAX
+  // means "fail until cleared". Zero in production; one relaxed load
+  // per flusher cycle. Exists because every IO-failure path in this
+  // file (obligations retained, W pinned, flush() false, clear
+  // aborted, close retried) is otherwise unreachable from a test.
+  std::atomic<uint32_t> fail_writebacks{0};
   // mrx_clear <-> sweeper handshake: clear sets `clearing`, then waits
   // for `sweep_active` to drop, so no eviction CAS or byte accounting
   // can race the wipe (review finding: resident_bytes.store(0) racing a
@@ -837,6 +844,18 @@ inline size_t mrx_flusher_cycle(mrx_store *s) {
       }
     }
     char *err = nullptr;
+    uint32_t fail = s->fail_writebacks.load(std::memory_order_relaxed);
+    if (fail != 0) {
+      // Injected failure: do not touch RocksDB at all.
+      if (fail != UINT32_MAX) {
+        s->fail_writebacks.compare_exchange_strong(fail, fail - 1,
+                                                   std::memory_order_relaxed);
+      }
+      rocksdb_writebatch_destroy(batch);
+      s->io_failing.store(true, std::memory_order_release);
+      s->drained_cv.notify_all();
+      return progressed;
+    }
     rocksdb_write(s->db, s->wopts, batch, &err);
     rocksdb_writebatch_destroy(batch);
     if (err != nullptr) {

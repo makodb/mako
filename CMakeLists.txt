@@ -2707,6 +2707,30 @@ if(BUILD_TESTS)
     )
     add_test(NAME MasstreeRocksCacheTests COMMAND test_masstree_rocks_cache)
 
+    # Crash-durability tests. Self-execs a child writer and SIGKILLs it,
+    # so it must be its own binary (see the file header for why fork()
+    # alone is unsound here).
+    add_executable(test_masstree_rocks_crash tests/test_masstree_rocks_crash.cc)
+    target_link_libraries(test_masstree_rocks_crash
+        mako
+        rrr
+        erpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(test_masstree_rocks_crash PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+        ${GTEST_INCLUDE_DIRS}
+    )
+    add_test(NAME MasstreeRocksCrashTests COMMAND test_masstree_rocks_crash)
+
     # Test: SiloRuntime per-site isolation (moved out of src/masstree/tests
     # because its subject matter is the SiloRuntime, not Masstree).
     add_executable(test_silo_runtime tests/test_silo_runtime.cc)

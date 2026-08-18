@@ -553,6 +553,120 @@ TEST_F(MasstreeRocksCacheTest, ConcurrentWritersAndReadersStayConsistent) {
 }
 
 // ---------------------------------------------------------------------------
+// IO FAILURE PATHS
+//
+// Every one of these paths was written in response to a review finding
+// and, until the fail_writebacks hook existed, had never executed. They
+// are the code that decides whether a durability failure is REPORTED or
+// silently swallowed.
+// ---------------------------------------------------------------------------
+
+TEST_F(MasstreeRocksCacheTest, FlushReportsFailureWhileIoIsFailing) {
+  store_->fail_writebacks.store(UINT32_MAX, std::memory_order_release);
+  ASSERT_TRUE(Put("k", "v"));
+  EXPECT_FALSE(idx_->flush())
+      << "flush() must report failure rather than claim durability";
+
+  std::string raw;
+  EXPECT_FALSE(RawDbGet("k", raw)) << "nothing should have reached RocksDB";
+
+  // The value is still readable from memory: a failed flush loses
+  // nothing, it only fails to promise anything.
+  std::string got;
+  ASSERT_TRUE(Get("k", got));
+  EXPECT_EQ(got, "v");
+}
+
+TEST_F(MasstreeRocksCacheTest, WatermarkStaysPinnedWhileIoIsFailing) {
+  store_->fail_writebacks.store(UINT32_MAX, std::memory_order_release);
+  ASSERT_TRUE(Put("k", "v"));
+  const uint64_t before =
+      store_->persisted_version.load(std::memory_order_acquire);
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  const uint64_t after =
+      store_->persisted_version.load(std::memory_order_acquire);
+
+  const auto region = mrx_rcu_region();
+  mrx_entry *e = mrx_lookup(tree_, S("k"));
+  ASSERT_NE(e, nullptr);
+  const uint64_t ver = e->val.load(std::memory_order_acquire)->version;
+  EXPECT_LT(after, ver)
+      << "the watermark must not cover an obligation that never landed";
+  EXPECT_GE(after, before) << "the watermark must be monotone";
+}
+
+TEST_F(MasstreeRocksCacheTest, TransientIoFailureSelfHeals) {
+  // Fail a bounded number of writebacks, then let IO recover.
+  store_->fail_writebacks.store(3, std::memory_order_release);
+  for (int i = 0; i < 32; i++) {
+    ASSERT_TRUE(Put("k" + std::to_string(i), "v" + std::to_string(i)));
+  }
+  // Retry until the flusher gets past the injected failures.
+  bool ok = false;
+  for (int attempt = 0; attempt < 200 && !ok; attempt++) {
+    ok = idx_->flush();
+    if (!ok) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  EXPECT_TRUE(ok) << "a transient failure must self-heal, not latch";
+
+  for (int i = 0; i < 32; i++) {
+    std::string raw;
+    ASSERT_TRUE(RawDbGet("k" + std::to_string(i), raw))
+        << "key " << i << " was dropped by the failed batch instead of retried";
+    EXPECT_EQ(raw, "v" + std::to_string(i));
+  }
+}
+
+TEST_F(MasstreeRocksCacheTest, NonDurableValueIsNeverEvictedUnderIoFailure) {
+  // This is the trap-4 end-to-end case that could not be tested before:
+  // hold IO down so values stay uncovered, apply capacity pressure, and
+  // assert nothing is lost.
+  ReopenWithCapacity(16 * 1024);
+  store_->fail_writebacks.store(UINT32_MAX, std::memory_order_release);
+
+  const std::string value(512, 'p');
+  const int kCount = 200;
+  for (int i = 0; i < kCount; i++) {
+    ASSERT_TRUE(Put("k" + std::to_string(i), value + std::to_string(i)));
+  }
+  // Give the sweeper ample opportunity to misbehave.
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  for (int i = 0; i < kCount; i++) {
+    std::string got;
+    ASSERT_TRUE(Get("k" + std::to_string(i), got))
+        << "eviction discarded the only copy of key " << i;
+    EXPECT_EQ(got, value + std::to_string(i));
+  }
+  store_->fail_writebacks.store(0, std::memory_order_release);
+}
+
+TEST_F(MasstreeRocksCacheTest, ClearIsRefusedWhileIoIsFailing) {
+  ASSERT_TRUE(Put("k", "v"));
+  ASSERT_TRUE(idx_->flush());
+  store_->fail_writebacks.store(UINT32_MAX, std::memory_order_release);
+  ASSERT_TRUE(Put("k2", "v2"));
+
+  // clear() retries the barrier; with IO down it must not proceed to
+  // wipe RocksDB while the flusher still holds obligations. Run it on a
+  // helper thread and require that it does NOT complete.
+  std::atomic<bool> done{false};
+  std::thread t([&]() {
+    idx_->clear();
+    done.store(true);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  const bool completed = done.load();
+
+  // Heal IO so the thread can finish and the fixture can tear down.
+  store_->fail_writebacks.store(0, std::memory_order_release);
+  t.join();
+
+  EXPECT_FALSE(completed)
+      << "clear() wiped RocksDB while un-persisted obligations remained";
+}
+
+// ---------------------------------------------------------------------------
 // Requirement: Bounded Value Memory
 // Requirement: Durable-Only Eviction
 // Requirement: Recency-Biased Reclamation
