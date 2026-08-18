@@ -105,7 +105,13 @@ namespace mako
         std::cout << "[" << prefix << "] printStringAsBit:" << std::endl;
         for (size_t i = 0; i < len; ++i) {
             unsigned char c = str[i];
-            std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c) << " ";
+            // snprintf, not `std::hex << setw(2) << setfill('0')`: under
+            // clang 22 with `import std` the iomanip manipulators lose
+            // their operator<< overloads ("invalid operands ... and
+            // '__iom_t6'").
+            char hexbuf[8];
+            snprintf(hexbuf, sizeof(hexbuf), "%02x ", static_cast<int>(c));
+            std::cout << hexbuf;
             
             // Print newline every 8 bytes
             if ((i + 1) % 8 == 0) {
@@ -609,9 +615,11 @@ namespace mako
     }
 
     static std::string intToString(long long num) {
-        std::ostringstream ss;
-        ss << std::setw(16) << std::setfill('0') << num;
-        return ss.str();
+        // snprintf rather than setw/setfill: see the note above about
+        // iomanip under clang 22 + `import std`.
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%016lld", num);
+        return std::string(buf);
     }
 
     static size_t parse_memory_spec(const std::string &s)

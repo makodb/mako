@@ -16,13 +16,20 @@ if(POLICY CMP0167)
     cmake_policy(SET CMP0167 OLD)  # Use deprecated FindBoost for compatibility
 endif()
 
-# Mako pins its compiler to Clang 21 specifically. Different minor
-# versions of clang 21 are fine (21.0 .. 21.x), but anything else is
-# rejected — see the explicit version check after project() below.
-# The reason for pinning rather than "21 or newer":
-#   * Clang 22's libc++ moved __hash_memory out of line, which leaks
-#     into hashing-heavy link surfaces and breaks every gtest-based
-#     binary on this codebase.
+# Mako requires Clang 21 or newer, and PREFERS the newest available.
+# Different minor versions are fine; anything older than 21 and any
+# non-Clang compiler is rejected — see the explicit check after
+# project() below.
+#
+# This used to pin 21 EXACTLY, blaming Clang 22's libc++ for moving
+# __hash_memory out of line and breaking every gtest-based binary. That
+# diagnosis was wrong in an important way: the failure is not the newer
+# libc++, it is LIBC++ SHADOWING. Homebrew's llvm keg installs its
+# libc++.so.1 somewhere the driver does not search by default, so a
+# stale /usr/lib/x86_64-linux-gnu/libc++.so.1 gets picked up instead and
+# the two disagree about __hash_memory. Resolving libc++ from the
+# toolchain's own lib directory (see the -L/-rpath block below) fixes it
+# and lets the newer compiler through.
 #   * Clang 20 and earlier lack alias-template CTAD support that
 #     rusty-cpp's platform::threading aliases depend on.
 #   * CI standardizes on clang-21 (apt.llvm.org noble repo).
@@ -277,27 +284,40 @@ add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 # rrr module files and the `rrr` target are defined in src/rrr/CMakeLists.txt.
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    # Mako pins to Clang 21 specifically (not "21 or newer"). See the
-    # rationale in the comment at CMakeLists.txt:19. Accept any 21.x
-    # minor version; reject everything else.
-    if (NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "21.0"
-        OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "22.0")
+    # Clang 21 or newer; newer is preferred. See the rationale at
+    # CMakeLists.txt:19 for why this is no longer pinned to 21 exactly.
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "21.0")
         message(FATAL_ERROR
-            "Mako requires Clang 21 exactly (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
-            "Newer Clang (22+) ships a libc++ that moves __hash_memory out of line, "
-            "which breaks linking of gtest-based binaries against system libc++. "
-            "Older Clang (<21) lacks alias-template CTAD support that rusty-cpp's "
+            "Mako requires Clang 21 or newer (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
+            "Older Clang lacks alias-template CTAD support that rusty-cpp's "
             "platform::threading aliases depend on. "
-            "Install clang-21 via apt.llvm.org (Ubuntu) or use the CI image.")
+            "Install clang-21 or newer via apt.llvm.org (Ubuntu), Homebrew, or use the CI image.")
+    endif()
+
+    # Resolve libc++ from the TOOLCHAIN'S OWN lib directory, ahead of any
+    # system copy. Homebrew's llvm keg puts libc++.so.1 where the driver
+    # does not search by default; a stale system libc++ then wins and the
+    # two disagree about out-of-line symbols such as __hash_memory, which
+    # is what used to break every gtest-based binary on Clang 22 and
+    # motivated the old exact-21 pin.
+    get_filename_component(_MAKO_CLANG_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_MAKO_CLANG_ROOT "${_MAKO_CLANG_BIN}" DIRECTORY)
+    set(_MAKO_LIBCXX_DIR "${_MAKO_CLANG_ROOT}/lib")
+    if (EXISTS "${_MAKO_LIBCXX_DIR}/libc++.so.1")
+        message(STATUS "Using toolchain libc++ from ${_MAKO_LIBCXX_DIR}")
+        set(CMAKE_EXE_LINKER_FLAGS
+            "${CMAKE_EXE_LINKER_FLAGS} -L${_MAKO_LIBCXX_DIR} -Wl,-rpath,${_MAKO_LIBCXX_DIR}")
+        set(CMAKE_SHARED_LINKER_FLAGS
+            "${CMAKE_SHARED_LINKER_FLAGS} -L${_MAKO_LIBCXX_DIR} -Wl,-rpath,${_MAKO_LIBCXX_DIR}")
     endif()
 else()
     # Reject GCC, AppleClang, Intel, MSVC: the project's safety
     # annotations, `import std;` integration, and rusty-cpp are all
     # exercised only against Clang 21.
     message(FATAL_ERROR
-        "Mako requires Clang 21 (found ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
+        "Mako requires Clang 21 or newer (found ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
         "at ${CMAKE_CXX_COMPILER}). Other compilers are untested and unsupported. "
-        "Install clang-21 via apt.llvm.org (Ubuntu) or use the CI image.")
+        "Install clang-21 or newer via apt.llvm.org (Ubuntu), Homebrew, or use the CI image.")
 endif()
 # The remaining libc++/codegen flags below run only after we've established
 # we are on Clang 21. The original `if (...Clang)` block continues to gate
