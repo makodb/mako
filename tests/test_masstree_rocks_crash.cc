@@ -157,13 +157,25 @@ static int ChildWriter(const std::string &db_path, const std::string &jpath,
 
   auto run = [&](int tid) {
     for (uint64_t i = 0; i < limit; i++) {
-      const uint32_t key_id =
-          (mode == "distinct")
-              ? static_cast<uint32_t>(tid * 10000000u + i)
-              : static_cast<uint32_t>(tid * kPerThread + (i % kPerThread));
+      const bool do_remove =
+          (mode == "mixed" || mode == "distinct_rm") && (i % 5 == 4);
+      uint32_t key_id;
+      if (mode == "distinct") {
+        key_id = static_cast<uint32_t>(tid * 10000000u + i);
+      } else if (mode == "distinct_rm") {
+        // Distinct keys, but every fifth op REMOVES a key written two
+        // iterations earlier. Most keys are therefore written exactly
+        // once and never touched again, so a lost write cannot be
+        // masked by a later write to the same key -- which is what made
+        // the overwrite-based clean-close tests blind to a missing
+        // shutdown barrier.
+        const uint64_t target = (do_remove && i >= 2) ? (i - 2) : i;
+        key_id = static_cast<uint32_t>(tid * 10000000u + target);
+      } else {
+        key_id = static_cast<uint32_t>(tid * kPerThread + (i % kPerThread));
+      }
       const uint32_t val_id = static_cast<uint32_t>(i * threads + tid);
       const std::string key = KeyOf(key_id);
-      const bool do_remove = (mode == "mixed") && (i % 5 == 4);
 
       if (do_remove) {
         idx.remove(lcdf::Str(key.data(), static_cast<int>(key.size())));
@@ -668,7 +680,7 @@ TEST_F(CrashTest, CleanCloseUnderHighConcurrencyRecoversAll) {
 // Tombstones must be durable across a clean exit too: a delete that
 // does not survive shutdown resurrects the key on the next open.
 TEST_F(CrashTest, CleanCloseWithRemovesRecoversAll) {
-  const pid_t pid = LaunchChild("mixed", 20000, true, 4);
+  const pid_t pid = LaunchChild("distinct_rm", 20000, true, 4);
   ASSERT_GT(pid, 0);
   int st = 0;
   ASSERT_EQ(::waitpid(pid, &st, 0), pid);

@@ -749,15 +749,28 @@ TEST_F(MasstreeRocksCacheTest, AnnounceFloorHoldsAcrossManyFlusherCycles) {
       }
     });
   }
+  // Record a violation rather than asserting mid-loop: an ASSERT here
+  // returns from the test body with the writer threads still joinable,
+  // which terminates the process and hides every later test's result.
+  bool violated = false;
+  uint64_t violating_w = 0;
+  int violating_check = -1;
   for (int check = 0; check < 20; check++) {
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
     const uint64_t now =
         store_->persisted_version.load(std::memory_order_acquire);
-    ASSERT_LT(now, announced)
-        << "watermark passed an in-flight version at check " << check;
+    if (now >= announced) {
+      violated = true;
+      violating_w = now;
+      violating_check = check;
+      break;
+    }
   }
   stop.store(true);
   for (auto &t : ts) t.join();
+  EXPECT_FALSE(violated)
+      << "watermark reached " << violating_w << " at check "
+      << violating_check << ", covering in-flight version " << announced;
 
   w->announce.store(UINT64_MAX, std::memory_order_release);
   EXPECT_TRUE(idx_->flush());
