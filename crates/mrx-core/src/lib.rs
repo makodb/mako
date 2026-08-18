@@ -47,9 +47,14 @@
 #![warn(missing_docs)]
 
 pub mod durability;
+pub mod fakes;
+pub mod runtime;
+pub mod store;
 pub mod value;
 
 pub use durability::{Floors, Ticket, TicketLog, VersionCounter, Watermark, WriterSlot};
+pub use runtime::Runtime;
+pub use store::{Store, WriteOutcome};
 pub use value::{Entry, Val, ValState};
 
 /// Version numbers start at 1, never 0.
@@ -125,6 +130,35 @@ pub trait KeyIndex: Send + Sync {
     }
 }
 
+/// So a caller can keep a handle to the index it hands the store.
+impl<T: KeyIndex + ?Sized> KeyIndex for std::sync::Arc<T> {
+    fn get(&self, key: &[u8]) -> Option<EntryWord> {
+        (**self).get(key)
+    }
+    fn get_or_insert(&self, key: &[u8], word: EntryWord) -> EntryWord {
+        (**self).get_or_insert(key, word)
+    }
+    fn scan_chunk(
+        &self,
+        from: &[u8],
+        budget: usize,
+        out: &mut Vec<(Vec<u8>, EntryWord)>,
+    ) -> usize {
+        (**self).scan_chunk(from, budget, out)
+    }
+    fn rscan_chunk(
+        &self,
+        from: &[u8],
+        budget: usize,
+        out: &mut Vec<(Vec<u8>, EntryWord)>,
+    ) -> usize {
+        (**self).rscan_chunk(from, budget, out)
+    }
+    fn len(&self) -> usize {
+        (**self).len()
+    }
+}
+
 /// A durable byte store: the system of record.
 pub trait Blobs: Send + Sync {
     /// Read one key.
@@ -139,6 +173,21 @@ pub trait Blobs: Send + Sync {
 
     /// Iterate every key, in ascending order, for the open-time load.
     fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError>;
+}
+
+/// So a caller can keep a handle to the durable store — which the crash
+/// and fault-injection tests need, since they assert against the *durable*
+/// ground truth rather than through the cache.
+impl<T: Blobs + ?Sized> Blobs for std::sync::Arc<T> {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+        (**self).get(key)
+    }
+    fn write_batch(&self, ops: &[BlobOp<'_>]) -> Result<(), BlobError> {
+        (**self).write_batch(ops)
+    }
+    fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
+        (**self).for_each_key(f)
+    }
 }
 
 /// One operation in a [`Blobs::write_batch`].
@@ -193,6 +242,13 @@ pub struct Config {
     pub scan_chunk: usize,
     /// Keys visited per CLOCK sweep chunk.
     pub sweep_chunk: usize,
+    /// Consecutive failed flusher cycles before a barrier gives up.
+    ///
+    /// Exists so a *transient* durable-store failure is not reported as a
+    /// failed flush. Obligations stay in the dirty map and the same
+    /// entries retry, so giving up on the first error would turn a
+    /// self-healing hiccup into a caller-visible durability failure.
+    pub flush_retry_limit: usize,
     /// Byte ceiling for the *evictable* value tier. `None` disables
     /// eviction entirely and starts no sweeper.
     ///
@@ -213,6 +269,7 @@ impl Default for Config {
             writeback_chunk: 4096,
             scan_chunk: 512,
             sweep_chunk: 256,
+            flush_retry_limit: 64,
             capacity_bytes: None,
         }
     }
@@ -228,6 +285,7 @@ impl Config {
             writeback_chunk: 2,
             scan_chunk: 4,
             sweep_chunk: 2,
+            flush_retry_limit: 4,
             capacity_bytes: None,
         }
     }
