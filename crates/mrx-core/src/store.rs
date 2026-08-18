@@ -127,21 +127,27 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         for k in keys {
             // Version 0: at or below any watermark, i.e. durable by
             // provenance — correct, since the bytes came FROM the store.
-            let idx = self.intern(&k, Val::evicted(0));
+            let idx = self.intern(&k, || Val::evicted(0));
             let _ = idx;
         }
         Ok(())
     }
 
     /// Find or create the entry for a key, returning its index.
-    fn intern(&self, key: &[u8], seed: Arc<Val>) -> u32 {
+    ///
+    /// The seed is a closure, not a value, because the overwhelmingly
+    /// common case is that the key already exists and the seed is never
+    /// needed. Taking it by value allocated an `Arc<Val>` on **every**
+    /// write and dropped it unused on all but the first — found while
+    /// profiling the write path, and free to fix.
+    fn intern(&self, key: &[u8], seed: impl FnOnce() -> Arc<Val>) -> u32 {
         if let Some(w) = self.index.get(key) {
             return (w - 1) as u32;
         }
         // The entry is fully initialised by `push` before its index is
         // published into the directory below, so no reader can reach a
         // half-built slot.
-        let idx = self.entries.push(Entry::new(key, seed));
+        let idx = self.entries.push(Entry::new(key, seed()));
         let word: EntryWord = idx as u64 + 1;
         let won = self.index.get_or_insert(key, word);
         if won != word {
@@ -267,7 +273,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     }
 
     fn write(&self, key: &[u8], val: Option<&[u8]>, mode: WriteMode) -> WriteOutcome {
-        let idx = self.intern(key, Val::tombstone(0));
+        let idx = self.intern(key, || Val::tombstone(0));
         let e = self.entry(idx);
         let w = self.writer();
 

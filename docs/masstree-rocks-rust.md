@@ -143,22 +143,62 @@ Single-threaded the two are at parity (0.90–1.08×). Against the baseline
 the cache actually exists to beat — plain RocksDB — the Rust version is
 13–15× on writes and 5–10× on reads.
 
-### Where the remaining gap is
+### Where the write cost actually goes
 
-Two places, both direct consequences of `forbid(unsafe_code)` with zero
-dependencies:
+An earlier version of this section blamed `Mutex<Arc<Val>>` and the two
+per-write allocations. **Both were wrong**, and the ablation below is
+what corrected them. It is produced by
+[`write_scaling`](../crates/mrx-masstree/examples/write_scaling.rs),
+which isolates the cache's own bookkeeping by pairing **real masstree**
+with **instant blobs**, so neither the index nor the durable store is
+the limit.
 
-* **`Entry.val` is a `Mutex<Arc<Val>>`** where the C++ has an atomic
-  compare-and-swap on a value pointer. Publication is still *expressed*
-  as a compare-and-swap against the exact record read
-  (`Entry::compare_publish`), so the semantics — and the mutation
-  coverage — match; only the mechanism differs.
-* **Two allocations per write** (the `Arc<Val>` and the value `Vec`)
-  where the C++ does one `malloc` with the bytes inline.
+16 threads, 200k keyspace, per-thread random keys — matching what
+`masstree_rocks_bench` actually does:
 
-Closing either needs `unsafe` or a dependency (`arc-swap`). That is a
-design decision rather than a tuning one, so it is written down here
-instead of being taken quietly.
+| layer added | ops/s | ns/op | cost |
+|---|---|---|---|
+| masstree `get_or_insert` alone | 11.1M | 90 | — |
+| + entry table + publish under the entry lock | 8.9M | 112 | +22 ns |
+| + the two allocations | 8.6M | 116 | ~0 (noise) |
+| + **announce floor and version draw** | 4.5M | 221 | **+106 ns** |
+| + writer batch and ticket log | 4.1M | 244 | +23 ns |
+| + flusher running | 3.9M | 256 | +12 ns |
+
+**The announce floor and the version counter cost more than everything
+else combined.** `arm` is a `seq_cst` store — a full barrier on x86,
+draining the store buffer on every write — and the draw is a `seq_cst`
+fetch-add on one globally shared counter.
+
+That cost is **not** Rust's. The C++ implementation does the same thing
+by the same mechanism (`w->announce.store(..., seq_cst)` before a
+`seq_cst` fetch-add, `masstree_rocks_index.hh`), so both pay it. It is
+the price of closing the publish gap, which is the single defect that
+escaped both the cache and crash suites entirely — see the
+`publish-gap` mutation. A cheaper floor is possible in principle; a
+*wrong* floor is the data-loss direction.
+
+What was ruled out, each by measurement rather than argument:
+
+| suspected | test | effect |
+|---|---|---|
+| the flusher thread | remove it entirely | +14% |
+| the ticket-log mutex | batch 8 → 4096, i.e. 512× fewer acquisitions | +21% |
+| the dirty map's O(n) scan | slow the durable store 4× to force a backlog | 0% |
+| the global version counter alone | one contended `fetch_add`, nothing else | 101M/s — 25× headroom |
+| per-write allocations | publish a pre-built record instead | within noise |
+
+So the residual gap against C++ is **not one thing**. It is spread
+across a `std::sync::Mutex` where the C++ uses a spinlock, a
+mutex-guarded ticket log where the C++ has a lock-free ring, and
+`Vec` churn in the writer batch where the C++ has a fixed array — none
+of them individually large, and all of them consequences of
+`forbid(unsafe_code)` with zero dependencies rather than of oversight.
+
+The profiling did find one real waste: `intern` took its seed value by
+argument, so every write allocated an `Arc<Val>` and dropped it unused
+on all but the first write to a key. Now a closure. It measured as
+noise too, which is the honest report.
 
 ### What was already fixed, and how it was found
 
@@ -178,11 +218,14 @@ from 0.28× to 0.83× and writes from 0.24× to 0.60×.
 Worth recording that `perf` was unavailable (`perf_event_paranoid`), and
 scaling the thread count found it faster than a profiler would have.
 
-Also worth recording: the *next* fix, an O(1) minimum for the ticket log
-in place of a full walk under the producers' lock, measured as noise. It
-was kept because it is O(n)-under-a-shared-lock in exactly the
-deep-backlog regime the cache is designed to enter, but it did not buy
-the throughput it was predicted to.
+Also worth recording: the *next* three fixes all measured as noise — an
+O(1) minimum for the ticket log, the lazy seed in `intern`, and the
+unlocked fast path in `steal`. Each is defensible on its own terms (the
+first is O(n) under a shared lock in the deep-backlog regime the cache is
+designed to enter), but none bought the throughput it was predicted to.
+Three predictions in a row that did not survive contact with a
+measurement is the reason this section reports ablations rather than
+reasoning.
 
 ## How this is verified
 
