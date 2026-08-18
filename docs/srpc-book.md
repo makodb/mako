@@ -1453,10 +1453,10 @@ policy.jitter_enabled = true;       // Randomize delay to avoid herd effects
 Prevents cascade failures using the CLOSED/OPEN/HALF_OPEN pattern:
 
 ```cpp srpc-compile
-auto config = CircuitBreakerConfig::defaults();
-config.failure_threshold = 5;       // Open after 5 consecutive failures
-config.success_threshold = 2;       // Close after 2 successes in half-open
-config.timeout_ms = 5000;           // Try again after 5 seconds
+auto cb = CircuitBreakerConfig::defaults();
+cb.failure_threshold = 5;           // Open after 5 consecutive failures
+cb.success_threshold = 2;           // Close after 2 successes in half-open
+cb.timeout_ms = 5000;               // Try again after 5 seconds
 ```
 
 ### Request Buffering
