@@ -72,6 +72,12 @@ pub struct Store<K: KeyIndex, B: Blobs> {
     watermark: Watermark,
     log: TicketLog,
     writers: Vec<WriterSlot>,
+    /// How many slots have ever been handed to a thread.
+    ///
+    /// Everything the flusher does per cycle — the floor scan and the
+    /// batch steal — is proportional to this rather than to the array
+    /// size, so a process with four writer threads does not pay for
+    /// sixty-four.
     next_writer: AtomicU64,
 
     /// Flusher-only: entry index → **oldest** undischarged version.
@@ -80,6 +86,23 @@ pub struct Store<K: KeyIndex, B: Blobs> {
     /// tickets it generates) and the honesty mechanism (an entry stays
     /// here, pinning the watermark, until a real write discharges it).
     dirty: Mutex<HashMap<u32, Version>>,
+
+    /// Tickets the flusher took from a writer but could not fit in the
+    /// log. They wait here and retry next cycle.
+    ///
+    /// This exists because the flusher must NEVER block on log
+    /// backpressure: it is the only thing that relieves it, so waiting
+    /// for room deadlocks it against itself. Holding the overflow
+    /// instead is what lets the steal path use a non-blocking append and
+    /// still never drop a ticket.
+    stash: Mutex<Vec<Ticket>>,
+    /// Lowest version sitting in `stash`, or [`NO_FLOOR`].
+    ///
+    /// A real watermark floor, not bookkeeping: while a ticket is in the
+    /// stash it is covered by nothing else — the writer's `staged_min`
+    /// is released as part of the hand-off — so without this the
+    /// watermark would sail past an acked write the log has not seen.
+    stash_min: AtomicU64,
 
     resident_bytes: AtomicU64,
     floor_bytes: AtomicU64,
@@ -110,6 +133,8 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             counter: VersionCounter::new(),
             watermark: Watermark::new(),
             dirty: Mutex::new(HashMap::new()),
+            stash: Mutex::new(Vec::new()),
+            stash_min: AtomicU64::new(NO_FLOOR),
             resident_bytes: AtomicU64::new(0),
             floor_bytes: AtomicU64::new(0),
             io_failing: AtomicBool::new(false),
@@ -172,6 +197,17 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         self.entries.get(idx)
     }
 
+    /// The slots that have actually been handed to a thread.
+    ///
+    /// Slots are assigned in order and never released, so the used set is
+    /// always a prefix — which is what makes this a slice rather than a
+    /// scan with a liveness test.
+    fn live_writers(&self) -> &[WriterSlot] {
+        let n = (self.next_writer.load(Ordering::Acquire) as usize)
+            .min(self.writers.len());
+        &self.writers[..n]
+    }
+
     /// This thread's writer slot.
     ///
     /// Slots are owned by the store and never recycled, and the
@@ -187,7 +223,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         let idx = SLOT.with(|s| match s.get() {
             Some(i) => i,
             None => {
-                let i = (self.next_writer.fetch_add(1, Ordering::Relaxed) as usize) % n;
+                let i = (self.next_writer.fetch_add(1, Ordering::AcqRel) as usize) % n;
                 s.set(Some(i));
                 i
             }
@@ -511,21 +547,43 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             }
         }
 
-        // --- steal partial batches -----------------------------------
-        // Bounds the straggler window: an acked write sitting in an idle
-        // (or dead) thread's batch would otherwise pin the watermark
-        // forever. try_append, never append: blocking here would deadlock
-        // the flusher against the backpressure only it can relieve.
-        for w in &self.writers {
-            if let Some(batch) = w.steal() {
+        // --- retire the stash, then steal partial batches -------------
+        //
+        // try_append ONLY, on every path. The flusher blocking on log
+        // backpressure deadlocks it against the very queue it exists to
+        // drain, and every thread in the process then sleeps forever.
+        // Anything that does not fit goes to the stash and retries next
+        // cycle.
+        {
+            let mut st = self.stash.lock().expect("stash lock poisoned");
+            if !st.is_empty() && self.log.try_append(&st) {
+                progressed += st.len();
+                st.clear();
+                self.stash_min.store(NO_FLOOR, Ordering::Release);
+            }
+        }
+        // Stealing while the stash is occupied would reorder tickets
+        // behind it and grow the stash without bound; drain it first.
+        if self.stash_min.load(Ordering::Acquire) == NO_FLOOR {
+            // Bounds the straggler window: an acked write sitting in an
+            // idle (or dead) thread's batch would otherwise pin the
+            // watermark forever.
+            for w in self.live_writers() {
+                let Some(batch) = w.steal() else { continue };
                 if self.log.try_append(&batch) {
                     w.clear_staged();
-                } else {
-                    // No room; put it back so nothing is lost. staged_min
-                    // still covers these versions meanwhile.
-                    self.log.append(&batch);
-                    w.clear_staged();
+                    continue;
                 }
+                // No room. Take coverage BEFORE releasing the writer's,
+                // so the versions are never uncovered in between — the
+                // same hand-off discipline as batch_min -> staged_min.
+                let min = batch.iter().map(|t| t.version).min().unwrap_or(NO_FLOOR);
+                let mut st = self.stash.lock().expect("stash lock poisoned");
+                self.stash_min.fetch_min(min, Ordering::AcqRel);
+                st.extend_from_slice(&batch);
+                drop(st);
+                w.clear_staged();
+                break; // the log is full; the remaining writers wait
             }
         }
 
@@ -538,9 +596,24 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
                 .collect()
         };
         if !candidates.is_empty() {
-            let mut keys: Vec<Vec<u8>> = Vec::new();
-            let mut vals: Vec<Option<Vec<u8>>> = Vec::new();
-            let mut wrote: Vec<u32> = Vec::new();
+            // Borrow the bytes; do not copy them.
+            //
+            // This used to build a `Vec<u8>` per key AND per value — up to
+            // 8192 heap allocations and a full copy of the entire chunk,
+            // every cycle, purely to satisfy the borrow in `BlobOp<'_>`.
+            // Neither copy is necessary: entries are IMMORTAL, so
+            // `e.key()` is valid for the life of the store, and holding
+            // the `Arc<Val>` keeps its bytes alive for one atomic
+            // increment instead of a memcpy.
+            //
+            // It matters where the cache is actually used. Against an
+            // instant durable store the flusher is idle and this is
+            // invisible; against a real RocksDB it runs constantly, and
+            // the allocator traffic lands on the same arenas the sixteen
+            // producer threads are using.
+            let mut held: Vec<(&Entry, Arc<Val>)> =
+                Vec::with_capacity(candidates.len());
+            let mut wrote: Vec<u32> = Vec::with_capacity(candidates.len());
             for (idx, owed) in &candidates {
                 let e = self.entry(*idx);
                 // Re-read the CURRENT value: writing bytes snapshotted at
@@ -554,31 +627,21 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
                     "entry {idx} went backwards: {} < {owed}",
                     cur.version
                 );
-                match &cur.state {
-                    ValState::Resident(b) => {
-                        keys.push(e.key().to_vec());
-                        vals.push(Some(b.clone()));
-                        wrote.push(*idx);
-                    }
-                    ValState::Tombstone => {
-                        keys.push(e.key().to_vec());
-                        vals.push(None);
-                        wrote.push(*idx);
-                    }
-                    // Non-resident means already durable (eviction
-                    // requires version <= W), so the obligation is met
-                    // with no write. It still must be DISCHARGED, or the
-                    // entry wedges in the map and pins the watermark
-                    // forever.
-                    ValState::Evicted => wrote.push(*idx),
+                // Non-resident means already durable (eviction requires
+                // version <= W), so the obligation is met with no write.
+                // It still must be DISCHARGED, or the entry wedges in the
+                // map and pins the watermark forever.
+                if !matches!(cur.state, ValState::Evicted) {
+                    held.push((e, cur));
                 }
+                wrote.push(*idx);
             }
-            let ops: Vec<BlobOp<'_>> = keys
+            let ops: Vec<BlobOp<'_>> = held
                 .iter()
-                .zip(vals.iter())
-                .map(|(k, v)| match v {
-                    Some(b) => BlobOp::Put { key: k, val: b },
-                    None => BlobOp::Delete { key: k },
+                .map(|(e, v)| match &v.state {
+                    ValState::Resident(b) => BlobOp::Put { key: e.key(), val: b },
+                    // Tombstone; `Evicted` never reaches here.
+                    _ => BlobOp::Delete { key: e.key() },
                 })
                 .collect();
 
@@ -612,10 +675,17 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         // ORDER IS LOAD-BEARING: counter, then writer floors, then the
         // log, then the dirty map. See Floors::min_over.
         let c = self.counter.peek();
-        let mut m = Floors::min_over(&self.writers, c);
+        let mut m = Floors::min_over(self.live_writers(), c);
         let log_min = self.log.min_version();
         if log_min < m {
             m = log_min;
+        }
+        // ORDER IS LOAD-BEARING: the stash is read after the log, mirroring
+        // the order tickets move (writer -> stash -> log), so a ticket in
+        // flight between the two is seen by whichever floor still holds it.
+        let stash_min = self.stash_min.load(Ordering::Acquire);
+        if stash_min < m {
+            m = stash_min;
         }
         {
             let d = self.dirty.lock().expect("dirty lock poisoned");
@@ -821,6 +891,11 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             Some(w) => self.evict((w - 1) as u32),
             None => false,
         }
+    }
+
+    /// Tickets the flusher is holding because the log had no room.
+    pub fn stash_len(&self) -> usize {
+        self.stash.lock().expect("stash lock poisoned").len()
     }
 
     /// Entries with undischarged writeback obligations.

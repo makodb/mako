@@ -26,6 +26,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
+use std::time::Duration;
 
 use mrx_core::fakes::{MemBlobs, MemIndex};
 use mrx_core::{Config, Runtime, Store};
@@ -466,6 +467,99 @@ fn the_barrier_does_not_return_early_under_sustained_writes() {
         stop.store(1, Ordering::Release);
     });
     rt.abort();
+}
+
+#[test]
+fn the_flusher_never_blocks_on_the_backpressure_it_relieves() {
+    // A DEADLOCK REGRESSION, and the one gap every other test in this
+    // file shared: none of them ever FILLED the ticket log.
+    //
+    // The flusher steals partial batches from idle writers. When the log
+    // has no room for a stolen batch, the flusher must hold it and retry
+    // — never wait for room, because it is the only thing that makes
+    // room. Waiting deadlocks it against itself and every producer then
+    // sleeps forever behind log backpressure.
+    //
+    // A tiny log plus a durable store slow enough to keep it full is
+    // what reproduces it. Before the fix this hung with all threads in
+    // state S; the harness bounds it so a regression fails instead.
+    let blobs = Arc::new(MemBlobs::new());
+    blobs.set_write_delay_us(500);
+    let cfg = Config {
+        log_slots: 64,      // fills almost immediately
+        batch: 8,           // so partial batches are common
+        drain_bound: 8,
+        writeback_chunk: 4, // and writeback cannot keep up
+        ..Config::default()
+    };
+    let store = open(cfg, &blobs);
+    let mut rt = Runtime::start(Arc::clone(&store));
+
+    let done = Arc::new(AtomicU64::new(0));
+
+    // DETACHED threads, not `std::thread::scope`.
+    //
+    // Scoped threads are joined on the way out of the closure — including
+    // while unwinding from a panic — so a watchdog inside a scope can
+    // detect the deadlock and then block forever trying to join the very
+    // threads that are stuck. The first version of this test did exactly
+    // that: it noticed the hang and hung anyway, which is indistinguishable
+    // from having no watchdog at all.
+    let mut handles = Vec::new();
+    for t in 0..4u64 {
+        let store = Arc::clone(&store);
+        let done = Arc::clone(&done);
+        handles.push(std::thread::spawn(move || {
+            for i in 0..500u64 {
+                store.put(format!("t{t}-{i:04}").as_bytes(), b"v");
+                done.fetch_add(1, Ordering::Release);
+            }
+        }));
+    }
+
+    // A deadlock here is a HANG, and a hung test the runner eventually
+    // kills reports as an infrastructure problem rather than as this bug.
+    // Failing loudly is worth the plumbing.
+    let mut last = 0u64;
+    let mut stalled_since = std::time::Instant::now();
+    loop {
+        let n = done.load(Ordering::Acquire);
+        if n >= 2000 {
+            break;
+        }
+        if n != last {
+            last = n;
+            stalled_since = std::time::Instant::now();
+        } else if stalled_since.elapsed() > Duration::from_secs(20) {
+            panic!(
+                "no progress for 20s at {n}/2000 writes: the flusher is \
+                 blocked on log backpressure it is itself responsible for \
+                 relieving (stash={}, dirty={})",
+                store.stash_len(),
+                store.dirty_len()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    for h in handles {
+        h.join().expect("writer thread panicked");
+    }
+
+    // And nothing was lost on the way through the stash.
+    assert!(rt.shutdown(), "clean shutdown after backpressure");
+    drop(store);
+    let re = open(Config::default(), &blobs);
+    for t in 0..4u64 {
+        for i in 0..500u64 {
+            assert_eq!(
+                re.get(format!("t{t}-{i:04}").as_bytes())
+                    .expect("get")
+                    .as_deref(),
+                Some(&b"v"[..]),
+                "t{t}-{i:04} was lost while the log was full"
+            );
+        }
+    }
 }
 
 #[test]

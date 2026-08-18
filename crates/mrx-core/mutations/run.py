@@ -40,26 +40,18 @@ MUTATIONS = [
     (
         "stale-writeback",
         "src/store.rs",
-        """                match &cur.state {
-                    ValState::Resident(b) => {
-                        keys.push(e.key().to_vec());
-                        vals.push(Some(b.clone()));
-                        wrote.push(*idx);
-                    }""",
-        """                match &cur.state {
-                    ValState::Resident(b) => {
-                        // MUTANT: skip an entry whose current version has
-                        // moved past the ticket, on the theory that the
-                        // newer write will carry it. It will not: a hot
-                        // key is never current at drain time.
-                        if cur.version != *owed {
-                            wrote.push(*idx);
-                        } else {
-                            keys.push(e.key().to_vec());
-                            vals.push(Some(b.clone()));
-                            wrote.push(*idx);
-                        }
-                    }""",
+        """                if !matches!(cur.state, ValState::Evicted) {
+                    held.push((e, cur));
+                }
+                wrote.push(*idx);""",
+        """                // MUTANT: skip an entry whose current version has
+                // moved past the ticket, on the theory that the newer
+                // write will carry it. It will not: a hot key is never
+                // current at drain time.
+                if cur.version == *owed && !matches!(cur.state, ValState::Evicted) {
+                    held.push((e, cur));
+                }
+                wrote.push(*idx);""",
         "confirms an obligation without writing the current bytes, so a "
         "key overwritten faster than drain latency is reported durable "
         "having never reached the store",

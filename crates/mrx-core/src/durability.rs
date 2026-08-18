@@ -32,7 +32,22 @@ pub struct Ticket {
 /// The three floors exist to cover a version through every instant
 /// between being drawn and being visible to the flusher. The hand-off
 /// between them is ordered, and the order is load-bearing in both
-/// directions — see [`Floors::snapshot`] and [`WriterSlot::submit`].
+/// directions — see [`Floors::min_over`] and [`WriterSlot::submit`].
+///
+/// # Deliberately NOT cache-line padded
+///
+/// The obvious move — `#[repr(align(128))]`, so sixteen threads storing
+/// to their own `announce` stop invalidating each other's lines — was
+/// tried and **measured worse** (median 3.19M vs 3.50M ops/s, losing
+/// four interleaved pairs out of five).
+///
+/// The reason it backfires is [`Floors::min_over`]: the flusher reads
+/// every slot's three floors on every cycle. Unpadded, the slot array is
+/// about fourteen cache lines; padded, it is sixty-four. The scan's line
+/// traffic grows faster than the producers' false sharing shrinks.
+///
+/// Restore the padding only together with a measurement, and only if
+/// that scan has stopped touching every slot.
 #[derive(Debug, Default)]
 pub struct WriterSlot {
     /// Set **before** a version is drawn, cleared only once the ticket is
@@ -189,6 +204,10 @@ impl Floors {
     /// Do **not** rewrite it as `slots.iter().flat_map(...).min()` — that
     /// bakes in whatever field order was typed — and never parallelise
     /// it.
+    /// `slots` must be only the **registered** prefix, not the whole
+    /// array. The flusher runs this every cycle; walking 64 slots to
+    /// read 16 live ones costs four times the cache-line traffic and
+    /// pulls lines the producers own into shared state for nothing.
     pub fn min_over(slots: &[WriterSlot], counter: Version) -> u64 {
         let mut m = counter;
         for w in slots {

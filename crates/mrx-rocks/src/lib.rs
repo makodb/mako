@@ -45,11 +45,6 @@ mod sys {
         pub fn rocksdb_options_create() -> *mut rocksdb_options_t;
         pub fn rocksdb_options_destroy(o: *mut rocksdb_options_t);
         pub fn rocksdb_options_set_create_if_missing(o: *mut rocksdb_options_t, v: c_uchar);
-        pub fn rocksdb_options_increase_parallelism(o: *mut rocksdb_options_t, n: c_int);
-        pub fn rocksdb_options_optimize_level_style_compaction(
-            o: *mut rocksdb_options_t,
-            budget: u64,
-        );
 
         pub fn rocksdb_readoptions_create() -> *mut rocksdb_readoptions_t;
         pub fn rocksdb_readoptions_destroy(o: *mut rocksdb_readoptions_t);
@@ -200,13 +195,28 @@ impl RocksBlobs {
         unsafe {
             let opts = sys::rocksdb_options_create();
             sys::rocksdb_options_set_create_if_missing(opts, 1);
-            sys::rocksdb_options_increase_parallelism(
-                opts,
-                std::thread::available_parallelism()
-                    .map(|n| n.get() as i32)
-                    .unwrap_or(4),
-            );
-            sys::rocksdb_options_optimize_level_style_compaction(opts, 512 * 1024 * 1024);
+
+            // DELIBERATELY NOT `increase_parallelism` OR
+            // `optimize_level_style_compaction`.
+            //
+            // Both look like free wins and neither is, here. RocksDB sits
+            // BEHIND a cache: it takes coalesced batches from one flusher
+            // thread, not the application's write rate, so the thing to
+            // optimise is how little CPU it steals from the foreground —
+            // not how fast it can ingest.
+            //
+            // `increase_parallelism(available_parallelism())` spawned 64
+            // background threads on this machine, to compete with the
+            // application's writers for the same cores, and
+            // `optimize_level_style_compaction(512 MiB)` bought more
+            // compaction work on top. Measured against the C++ cache,
+            // which sets neither, this made the Rust arm look far slower
+            // than it is — the benchmark was comparing two different
+            // RocksDB configurations and calling the difference a
+            // language gap.
+            //
+            // Callers who genuinely want a heavier RocksDB should say so
+            // explicitly rather than inherit it from a default.
 
             let write = sys::rocksdb_writeoptions_create();
             match durability {
