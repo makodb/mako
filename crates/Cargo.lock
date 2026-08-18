@@ -16,6 +16,13 @@ name = "mrx-core"
 version = "0.1.0"
 
 [[package]]
+name = "mrx-ffi"
+version = "0.1.0"
+dependencies = [
+ "mrx",
+]
+
+[[package]]
 name = "mrx-masstree"
 version = "0.1.0"
 dependencies = [
