@@ -22,7 +22,7 @@ trd=6
 script_name="$(basename "$0")"
 
 # Determine transport type and create unique log prefix (match Paxos)
-transport="${MAKO_TRANSPORT:-rrr}"
+transport="rrr"
 log_prefix="${script_name}_${transport}"
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null

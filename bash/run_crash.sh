@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script to reproduce and debug eRPC crash with gdb
+# Script to reproduce and debug shard crashes with gdb
 # Runs multiple iterations, starting processes under gdb to catch crashes
 # It will run to the end, and keep all gdb crash information
 
@@ -24,7 +24,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo "========================================"
-echo "eRPC Crash Reproduction Script"
+echo "Crash Reproduction Script"
 echo "========================================"
 echo "Max iterations: $MAX_ITERATIONS"
 echo "Wait time per iteration: ${WAIT_TIME}s"
@@ -77,11 +77,11 @@ EOF
     CMD_SHARD1="$CMD_BASE --shard-index 1 -F config/1leader_2followers/paxos${THREADS}_shardidx1.yml"
 
     echo "Starting shard 0 under gdb..."
-    MAKO_TRANSPORT=erpc gdb -batch -x /tmp/gdb_commands_shard0.txt --args $CMD_SHARD0 > ${LOG_DIR}/gdb_output_shard0_iter${i}.log 2>&1 &
+    gdb -batch -x /tmp/gdb_commands_shard0.txt --args $CMD_SHARD0 > ${LOG_DIR}/gdb_output_shard0_iter${i}.log 2>&1 &
     PID_SHARD0=$!
 
     echo "Starting shard 1 under gdb..."
-    MAKO_TRANSPORT=erpc gdb -batch -x /tmp/gdb_commands_shard1.txt --args $CMD_SHARD1 > ${LOG_DIR}/gdb_output_shard1_iter${i}.log 2>&1 &
+    gdb -batch -x /tmp/gdb_commands_shard1.txt --args $CMD_SHARD1 > ${LOG_DIR}/gdb_output_shard1_iter${i}.log 2>&1 &
     PID_SHARD1=$!
 
     echo "Shard 0 PID: $PID_SHARD0"

@@ -2,7 +2,7 @@
 /***********************************************************************
  *
  * fasttransport.cc:
- *   High-performance transport layer with pluggable backends
+ *   Transport layer over the rrr/rpc (TCP/IP) backend
  *
  **********************************************************************/
 
@@ -24,10 +24,6 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <signal.h>
-
-#ifdef MAKO_ENABLE_ERPC
-#include "lib/erpc_backend.h"
-#endif
 
 import std;
 
@@ -106,26 +102,8 @@ FastTransport::FastTransport(std::string file,
     }
     fasttransport_lock.unlock();
 
-    // Load transport configuration
-    config_.LoadTransportConfig();
-
-    // Create transport backend based on configuration
-    switch (config_.transport_type) {
-        case mako::TransportType::ERPC:
-#ifdef MAKO_ENABLE_ERPC
-            backend_ = new mako::ErpcBackend(config_, shardIdx, id, cluster);
-            break;
-#else
-            Panic("Transport type ERPC requested but this build was compiled without MAKO_ENABLE_ERPC");
-#endif
-
-        case mako::TransportType::RRR_RPC:
-            backend_ = new mako::RrrRpcBackend(config_, shardIdx, id, cluster);
-            break;
-
-        default:
-            Panic("Unknown transport type");
-    }
+    // Create the transport backend
+    backend_ = new mako::RrrRpcBackend(config_, shardIdx, id, cluster);
 
     // Initialize the backend
     int port = std::atoi(config_.shard(shardIdx, mako::convertCluster(cluster)).port.c_str());
@@ -137,8 +115,8 @@ FastTransport::FastTransport(std::string file,
         Panic("Failed to initialize transport backend");
     }
 
-    Notice("FastTransport initialized with %s backend on %s",
-           backend_->GetName(), local_uri.c_str());
+    Notice("FastTransport initialized with rrr/rpc backend on %s",
+           local_uri.c_str());
 }
 
 FastTransport::~FastTransport() {
@@ -209,21 +187,12 @@ int FastTransport::GetSession(TransportReceiver *src, uint8_t dstShardIdx,
                                uint16_t id, int forceCenter)
 {
     Assert(backend_ != nullptr);
-
-    // For eRPC backend, delegate directly
-#ifdef MAKO_ENABLE_ERPC
-    if (backend_->GetType() == mako::TransportType::ERPC) {
-        auto* erpc_backend = static_cast<mako::ErpcBackend*>(backend_);
-        return erpc_backend->GetSession(src, dstShardIdx, id, forceCenter);
-    }
-#else
     (void)src;
     (void)dstShardIdx;
     (void)id;
     (void)forceCenter;
-#endif
 
-    // For other backends, session management is internal
+    // rrr/rpc manages sessions internally.
     return 0;
 }
 
@@ -264,15 +233,6 @@ bool FastTransport::SendBatchRequestToAll(
 void FastTransport::RunNoQueue()
 {
     Assert(backend_ != nullptr);
-
-#ifdef MAKO_ENABLE_ERPC
-    // For eRPC backend with special RunNoQueue implementation
-    if (backend_->GetType() == mako::TransportType::ERPC) {
-        auto* erpc_backend = static_cast<mako::ErpcBackend*>(backend_);
-        erpc_backend->RunNoQueue();
-        return;
-    }
-#endif
     backend_->RunEventLoop();
 }
 
@@ -291,102 +251,38 @@ void FastTransport::Stop()
 void FastTransport::setBreakTimeout(bool bt)
 {
     Assert(backend_ != nullptr);
-
-#ifdef MAKO_ENABLE_ERPC
-    // For eRPC backend with break timeout support
-    if (backend_->GetType() == mako::TransportType::ERPC) {
-        auto* erpc_backend = static_cast<mako::ErpcBackend*>(backend_);
-        erpc_backend->SetBreakTimeout(bt);
-    }
-#else
+    // rrr/rpc has no break-timeout hook.
     (void)bt;
-#endif
 }
 
 void FastTransport::SetHelperQueues(const std::unordered_map<uint16_t, mako::HelperQueue*>& queues)
 {
     Assert(backend_ != nullptr);
-
-    // For eRPC backend
-#ifdef MAKO_ENABLE_ERPC
-    if (backend_->GetType() == mako::TransportType::ERPC) {
-        auto* erpc_backend = static_cast<mako::ErpcBackend*>(backend_);
-        erpc_backend->SetHelperQueues(queues);
-        return;
-    }
-#endif
-    // For rrr/rpc backend
-    if (backend_->GetType() == mako::TransportType::RRR_RPC) {
-        auto* rrr_backend = static_cast<mako::RrrRpcBackend*>(backend_);
-        rrr_backend->SetHelperQueues(queues);
-    }
+    backend_->SetHelperQueues(queues);
 }
 
 void FastTransport::SetHelperQueuesResponse(const std::unordered_map<uint16_t, mako::HelperQueue*>& queues)
 {
     Assert(backend_ != nullptr);
-
-    // For eRPC backend
-#ifdef MAKO_ENABLE_ERPC
-    if (backend_->GetType() == mako::TransportType::ERPC) {
-        auto* erpc_backend = static_cast<mako::ErpcBackend*>(backend_);
-        erpc_backend->SetHelperQueuesResponse(queues);
-        return;
-    }
-#endif
-    // For rrr/rpc backend
-    if (backend_->GetType() == mako::TransportType::RRR_RPC) {
-        auto* rrr_backend = static_cast<mako::RrrRpcBackend*>(backend_);
-        rrr_backend->SetHelperQueuesResponse(queues);
-    }
+    backend_->SetHelperQueuesResponse(queues);
 }
 
 mako::HelperQueue* FastTransport::GetHelperQueue(uint16_t id)
 {
     Assert(backend_ != nullptr);
 
-    // For eRPC backend
-#ifdef MAKO_ENABLE_ERPC
-    if (backend_->GetType() == mako::TransportType::ERPC) {
-        auto* erpc_backend = static_cast<mako::ErpcBackend*>(backend_);
-        const auto& queues = erpc_backend->GetHelperQueues();
-        auto it = queues.find(id);
-        return (it != queues.end()) ? it->second : nullptr;
-    }
-#endif
-    // For rrr/rpc backend
-    if (backend_->GetType() == mako::TransportType::RRR_RPC) {
-        auto* rrr_backend = static_cast<mako::RrrRpcBackend*>(backend_);
-        const auto& queues = rrr_backend->GetHelperQueues();
-        auto it = queues.find(id);
-        return (it != queues.end()) ? it->second : nullptr;
-    }
-
-    return nullptr;
+    const auto& queues = backend_->GetHelperQueues();
+    auto it = queues.find(id);
+    return (it != queues.end()) ? it->second : nullptr;
 }
 
 mako::HelperQueue* FastTransport::GetHelperQueueResponse(uint16_t id)
 {
     Assert(backend_ != nullptr);
 
-    // For eRPC backend
-#ifdef MAKO_ENABLE_ERPC
-    if (backend_->GetType() == mako::TransportType::ERPC) {
-        auto* erpc_backend = static_cast<mako::ErpcBackend*>(backend_);
-        const auto& queues = erpc_backend->GetHelperQueuesResponse();
-        auto it = queues.find(id);
-        return (it != queues.end()) ? it->second : nullptr;
-    }
-#endif
-    // For rrr/rpc backend
-    if (backend_->GetType() == mako::TransportType::RRR_RPC) {
-        auto* rrr_backend = static_cast<mako::RrrRpcBackend*>(backend_);
-        const auto& queues = rrr_backend->GetHelperQueuesResponse();
-        auto it = queues.find(id);
-        return (it != queues.end()) ? it->second : nullptr;
-    }
-
-    return nullptr;
+    const auto& queues = backend_->GetHelperQueuesResponse();
+    auto it = queues.find(id);
+    return (it != queues.end()) ? it->second : nullptr;
 }
 
 // ===== Timer Implementation (transport-independent) =====

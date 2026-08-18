@@ -22,7 +22,7 @@ HelperQueue::HelperQueue(int id,bool is_req): my_atomic_int(0) {
     this->is_req=is_req;
  }
 
-bool HelperQueue::add_one_req(erpc::ReqHandle *req_handle, size_t msg_size) {
+bool HelperQueue::add_one_req(void *req_handle, size_t msg_size) {
     // if (is_req_buffer_full()) {
     //     Warning("the buffer is full");
     //     return false;
@@ -38,7 +38,7 @@ bool HelperQueue::add_one_req(erpc::ReqHandle *req_handle, size_t msg_size) {
     return true;
 }
 
-bool HelperQueue::fetch_one_req(erpc::ReqHandle **req_handle, size_t &msg_size) {
+bool HelperQueue::fetch_one_req(void **req_handle, size_t &msg_size) {
     std::unique_lock<std::mutex> lock(condition_mutex); // if no such lock, the TPUT is not even cross shards
     if (is_req_buffer_empty())
         return false;

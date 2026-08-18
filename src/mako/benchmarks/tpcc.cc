@@ -3742,7 +3742,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
 {
   if (run==1){
     ((tpcc_bench_runner*)rc)->run();
-    mako::stop_erpc_server();
+    mako::stop_rpc_server();
     return rc; // rc is same object as r below
   }
   if (BenchmarkConfig::getInstance().getIsMicro()) {
@@ -3839,8 +3839,8 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
 
   tpcc_bench_runner *r = NULL;
   r = new tpcc_bench_runner(db, f_mode==1);
-  // the erpc server and redirect requests to helper threads on the server side
-  mako::setup_erpc_server();
+  // the rpc server and redirect requests to helper threads on the server side
+  mako::setup_rpc_server();
   std::map<int, abstract_ordered_index *> open_tables_by_id;
   for (const auto &entry : r->get_open_tables_ref()) {
     abstract_ordered_index *tbl = entry.second;
@@ -3867,7 +3867,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run, bench_runner *rc, 
 {
   if (run==1){
     ((tpcc_bench_runner*)rc)->run();
-    mako::stop_erpc_server();
+    mako::stop_rpc_server();
     return rc;
   }
   if (BenchmarkConfig::getInstance().getIsMicro()) {
@@ -3953,7 +3953,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run, bench_runner *rc, 
   auto* config = BenchmarkConfig::getInstance().getConfig();
   bool multi_shard_mode = config && config->multi_shard_mode;
   if (!multi_shard_mode) {
-    mako::setup_erpc_server();
+    mako::setup_rpc_server();
     std::map<int, abstract_ordered_index *> open_tables_by_id;
     for (const auto &entry : r->get_open_tables_ref()) {
       abstract_ordered_index *tbl = entry.second;

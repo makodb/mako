@@ -2,7 +2,7 @@
 /***********************************************************************
  *
  * Client.h:
- *   Client information - issue eRPC request
+ *   Client information - issue RPC request
  *
  **********************************************************************/
 

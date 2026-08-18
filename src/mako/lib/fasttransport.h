@@ -2,8 +2,7 @@
 /***********************************************************************
  *
  * fasttransport.h:
- *   High-performance transport layer with pluggable backends
- *   Supports eRPC (RDMA) and rrr/rpc (TCP/IP)
+ *   Transport layer over the rrr/rpc (TCP/IP) backend
  *
  **********************************************************************/
 
@@ -14,7 +13,6 @@
 #include "lib/configuration.h"
 #include "lib/transport.h"
 #include "lib/message.h"
-#include "lib/transport_backend.h"
 
 #include <event2/event.h>
 
@@ -29,17 +27,18 @@
 #include <netinet/in.h>
 #include <chrono>
 
+namespace mako { class RrrRpcBackend; }
+
 void register_fasttransport_for_bench(std::function<int(int,int)>);
 void register_fasttransport_for_dbtest(std::function<int(int,int)>);
 void set_fasttransport_signal_handlers_enabled(bool enabled);
 
 /*
  * Class FastTransport implements a multi-threaded transport layer
- * with pluggable backends (eRPC for RDMA, rrr/rpc for TCP/IP).
+ * over the rrr/rpc (TCP/IP) backend.
  *
- * This class delegates to a TransportBackend implementation selected
- * at runtime based on configuration. It maintains API compatibility
- * with existing code while allowing transport switching.
+ * This class delegates to RrrRpcBackend, the single transport
+ * implementation. It maintains API compatibility with existing code.
  *
  * The Register function is used to register a transport receiver.
  * The transport is responsible for sending and dispatching messages
@@ -101,8 +100,10 @@ public:
     mako::HelperQueue* GetHelperQueueResponse(uint16_t id);
 
 private:
-    // Transport backend (eRPC, rrr/rpc, etc.)
-    mako::TransportBackend* backend_{nullptr};
+    // The rrr/rpc backend. Held by pointer rather than by value only so this
+    // header does not have to pull in rrr_rpc_backend.h -> rrr/rrr.hpp;
+    // fasttransport.cc includes it and owns the lifetime.
+    mako::RrrRpcBackend* backend_{nullptr};
 
     // Mutex to protect backend_ during concurrent access (stats vs destructor)
     mutable std::mutex backend_mutex_;

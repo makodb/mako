@@ -27,9 +27,9 @@ export namespace rrr {
 // base/debugging.hpp; the modularization commit dropped them with
 // "unused externally" in the message, which was incorrect.
 //
-// erpc's `third-party/erpc/src/common.h` defines `likely(x)` /
-// `unlikely(x)` as preprocessor macros. Wrap in `#ifndef` so we
-// don't fight the macros when the erpc header has already won.
+// Some C headers define `likely(x)` / `unlikely(x)` as preprocessor
+// macros. Wrap in `#ifndef` so we don't fight a macro that has
+// already won.
 // The four `#ifndef`/`#endif` guard lines stay hand-written on purpose:
 // they ask whether another header defined a C MACRO of that name, which
 // Rust `#[cfg]` cannot ask. The transpiler is textual, so the DSL block

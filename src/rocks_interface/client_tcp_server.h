@@ -12,7 +12,7 @@
  * - Each worker slot binds to a unique transaction context
  * - When all workers are busy, new clients receive a rejection message
  *
- * This is separate from the main transport layer (eRPC/rrr) which is used
+ * This is separate from the main transport layer (rrr/rpc) which is used
  * for inter-shard communication. The ClientTcpServer provides a simple
  * TCP-based interface for external client applications.
  *

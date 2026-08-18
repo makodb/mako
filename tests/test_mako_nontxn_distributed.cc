@@ -73,10 +73,10 @@ std::string config_path() {
 
 // Binds the fake (UDP) transport to shard 1's URI, wires the helper
 // queues for client warehouse 0, and runs the event loop. Mirrors the
-// production erpc_server in benchmarks/rpc_setup.cc (handler range
+// production rpc_server in benchmarks/rpc_setup.cc (handler range
 // 1..17 inclusive covers the non-txn types 14-17; rpc id = warehouses
 // + 5 + alpha matches what Invoke* computes as the destination).
-void erpc_server_thread(std::string cluster, transport::Configuration* config) {
+void rpc_server_thread(std::string cluster, transport::Configuration* config) {
     std::string local_uri =
         config->shard(kServerShard, mako::convertCluster(cluster)).host;
     int id = kNumWarehouses + 5 + 0;  // base=5, alpha=0
@@ -152,7 +152,7 @@ protected:
 
         // Server role in detached threads (transport first, then the
         // worker that consumes its queues).
-        std::thread t1(erpc_server_thread, std::string("localhost"), g_config);
+        std::thread t1(rpc_server_thread, std::string("localhost"), g_config);
         t1.detach();
         sleep(2);
         std::map<int, abstract_ordered_index*> open_tables_by_id;

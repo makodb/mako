@@ -237,8 +237,6 @@ find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 set(mkfile_path "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
 set(HOME "${CMAKE_CURRENT_SOURCE_DIR}")
 set(BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
-set(ERPC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc")
-message(STATUS "I: ${ERPC_PATH}")
 set(W "src/mako")
 set(MASSTREE_DIR "src/masstree")
 set(TOP "${CMAKE_SOURCE_DIR}")
@@ -385,140 +383,10 @@ set_target_properties(rust_lib PROPERTIES
 )
 add_dependencies(rust_lib rust_build)
 
-# Read environment variable from env.txt (ib or dpdk or eth)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/env.txt" env_raw LIMIT_COUNT 1)
-string(STRIP "${env_raw}" env_clean)
-
-if(env_clean STREQUAL "ib")
-  set(env "ib")
-elseif(env_clean STREQUAL "dpdk")
-  set(env "dpdk")
-else()
-  set(env "eth")
-endif()
-message(STATUS "environment: ${env}")
-
-# Configure erpc based on environment
-if(env STREQUAL "ib")
-  # if env == "ib", erpc compile flag: cmake . -DTRANSPORT=infiniband -DROCE=on -DPERF=ON
-  set(TRANSPORT "infiniband" CACHE STRING "eRPC transport type")
-  set(ROCE ON CACHE BOOL "eRPC RoCE setting")
-  set(PERF ON CACHE BOOL "eRPC performance setting")
-  set(LOG_LEVEL "none" CACHE STRING "eRPC log level")
-elseif(env STREQUAL "dpdk")
-  # if env == "dpdk", erpc compile flag: -DTRANSPORT=dpdk -DAZURE=on -DPERF=ON -DLOG_LEVEL=none"
-  set(TRANSPORT "dpdk" CACHE STRING "eRPC transport type")
-  set(AZURE ON CACHE BOOL "eRPC Azure setting")
-  set(PERF ON CACHE BOOL "eRPC performance setting")
-  set(LOG_LEVEL "none" CACHE STRING "eRPC log level")
-else()
-  # else if env == "eth", erpc compile flag: cmake . -DTRANSPORT=fake -DROCE=off -DPERF=ON
-  set(TRANSPORT "fake" CACHE STRING "eRPC transport type")
-  set(ROCE OFF CACHE BOOL "eRPC RoCE setting")
-  set(PERF ON CACHE BOOL "eRPC performance setting")
-  set(LOG_LEVEL "none" CACHE STRING "eRPC log level")
-endif()
-
-# Prevent vendored gflags (pulled in by eRPC) from registering its own CTest
-# suite in the top-level build. Keep CI focused on mako/rrr tests.
-set(GFLAGS_BUILD_TESTING OFF CACHE BOOL "Disable gflags tests from eRPC dependency" FORCE)
-
-add_subdirectory(third-party/erpc)
-
 # rrr was previously a C++23 named-modules library with a per-build
 # PCM cache; de-modularized in 2026-04 (replaced module declarations
 # with plain headers). The PCM-cache compile options are no longer
 # needed.
-
-# eRPC's latency target enables -flto at compile time when PERF=ON. With Clang,
-# object files become LLVM bitcode and require matching link-time -flto.
-if(TARGET latency AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  target_link_options(latency PRIVATE -flto)
-endif()
-
-# Keep all eRPC artifacts inside the active build tree.
-# The eRPC submodule sets output dirs to ${CMAKE_SOURCE_DIR}/build, which
-# pollutes host builds when compiling in Docker.
-set(ERPC_BINARY_DIR "${CMAKE_BINARY_DIR}/third-party/erpc")
-get_property(ERPC_TARGETS DIRECTORY "${ERPC_BINARY_DIR}" PROPERTY BUILDSYSTEM_TARGETS)
-foreach(ERPC_TARGET IN LISTS ERPC_TARGETS)
-  if(TARGET "${ERPC_TARGET}")
-    get_target_property(ERPC_TARGET_TYPE "${ERPC_TARGET}" TYPE)
-    if(NOT ERPC_TARGET_TYPE STREQUAL "INTERFACE_LIBRARY")
-      set_target_properties("${ERPC_TARGET}" PROPERTIES
-        ARCHIVE_OUTPUT_DIRECTORY "${ERPC_BINARY_DIR}"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY "${ERPC_BINARY_DIR}"
-      )
-    endif()
-  endif()
-endforeach()
-
-# eRPC flags
-set(ERPC_CFLAGS_DPDK
-  -Isrc/mako
-  -I${ERPC_PATH}/src
-  -DERPC_DPDK=true
-  -march=native
-  # ${DPDK_CXXFLAGS}
-  -DERPC_LOG_LEVEL=6
-  -DERPC_TESTING=false
-  -DGFLAGS_IS_A_DLL=0
-)
-set(ERPC_LDFLAGS_DPDK
-  -Wl,--whole-archive
-  ${DPDK_LDFLAGS}
-  -Wl,--no-whole-archive
-  -lpthread
-  -lnuma
-  -ldl
-  -lgflags
-  -libverbs
-  -lmlx4
-  -lmlx5
-)
-set(ERPC_CFLAGS_IB
-  -Isrc/mako
-  -I${ERPC_PATH}/src
-  -DERPC_INFINIBAND=true
-  -march=native
-  -DERPC_LOG_LEVEL=6
-  -DERPC_TESTING=false
-  -DGFLAGS_IS_A_DLL=0
-)
-set(ERPC_LDFLAGS_IB
-  -Wl,--whole-archive
-  ${DPDK_LDFLAGS}
-  -Wl,--no-whole-archive
-  -lpthread
-  -lnuma
-  -ldl
-  -lgflags
-  -libverbs
-  -lmlx4
-  -lmlx5
-)
-set(ERPC_CFLAGS_ETH
-  -Isrc/mako
-  -I${ERPC_PATH}/src
-  -DERPC_FAKE=true
-  -march=native
-  -DERPC_LOG_LEVEL=6
-  -DERPC_TESTING=false
-  -DGFLAGS_IS_A_DLL=0
-)
-set(ERPC_LDFLAGS_ETH
-  -Wl,--whole-archive
-  ${DPDK_LDFLAGS}
-  -Wl,--no-whole-archive
-  -lpthread
-  -lnuma
-  -ldl
-  -lgflags
-  #-libverbs
-  #-lmlx4
-  #-lmlx5
-)
 
 # Options
 option(DEBUG "Enable debug mode" OFF)
@@ -636,9 +504,7 @@ set(BORROW_CHECKER_INCLUDE_PATHS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
     ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/masstree-beta
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
 )
 
@@ -783,13 +649,11 @@ if(RAFT_TEST)
   list(APPEND CXXFLAGS -DRAFT_TEST_CORO)
 endif()
 
-if(env STREQUAL "ib")
-  list(APPEND CXXFLAGS ${ERPC_CFLAGS_IB})
-elseif(env STREQUAL "dpdk")
-  list(APPEND CXXFLAGS ${ERPC_CFLAGS_DPDK})
-else()
-  list(APPEND CXXFLAGS ${ERPC_CFLAGS_ETH})
-endif()
+# These four flags used to reach the build through the (now removed) eRPC
+# per-environment flag sets. They are NOT eRPC-specific and are kept verbatim:
+# `-Isrc/mako` and `-march=native` are load-bearing for masstree/Silo SIMD, and
+# `-DGFLAGS_IS_A_DLL=0` matches how gflags is linked here.
+list(APPEND CXXFLAGS -Isrc/mako -march=native -DGFLAGS_IS_A_DLL=0)
 if(GPROF)
   list(APPEND CXXFLAGS -pg -static-libstdc++ -static-libgcc)
 endif()
@@ -891,23 +755,20 @@ if(DEFINED CUSTOM_LDPATH)
   set(LDFLAGS "${LDFLAGS} ${CUSTOM_LDPATH}")
 endif()
 
+# Same story as the CXXFLAGS block above: these C flags and link deps arrived
+# via the removed eRPC flag sets but are not eRPC-specific, so they are kept
+# byte-for-byte (dpdk whole-archive, pthread, numa, dl, gflags).
 set(CFLAGS "")
-if(env STREQUAL "ib")
-  separate_arguments(ERPC_CFLAGS_IB_LIST UNIX_COMMAND "${ERPC_CFLAGS_IB}")
-  list(APPEND CFLAGS ${ERPC_CFLAGS_IB_LIST})
-  separate_arguments(ERPC_LDFLAGS_IB_LIST UNIX_COMMAND "${ERPC_LDFLAGS_IB}")
-  list(APPEND LDFLAGS ${ERPC_LDFLAGS_IB_LIST})
-elseif(env STREQUAL "dpdk")
-  separate_arguments(ERPC_CFLAGS_DPDK_LIST UNIX_COMMAND "${ERPC_CFLAGS_DPDK}")
-  list(APPEND CFLAGS ${ERPC_CFLAGS_DPDK_LIST})
-  separate_arguments(ERPC_LDFLAGS_DPDK_LIST UNIX_COMMAND "${ERPC_LDFLAGS_DPDK}")
-  list(APPEND LDFLAGS ${ERPC_LDFLAGS_DPDK_LIST})
-else()
-  separate_arguments(ERPC_CFLAGS_ETH_LIST UNIX_COMMAND "${ERPC_CFLAGS_ETH}")
-  list(APPEND CFLAGS ${ERPC_CFLAGS_ETH_LIST})
-  separate_arguments(ERPC_LDFLAGS_ETH_LIST UNIX_COMMAND "${ERPC_LDFLAGS_ETH}")
-  list(APPEND LDFLAGS ${ERPC_LDFLAGS_ETH_LIST})
-endif()
+list(APPEND CFLAGS -Isrc/mako -march=native -DGFLAGS_IS_A_DLL=0)
+list(APPEND LDFLAGS
+  -Wl,--whole-archive
+  ${DPDK_LDFLAGS}
+  -Wl,--no-whole-archive
+  -lpthread
+  -lnuma
+  -ldl
+  -lgflags
+)
 
 list(APPEND LDFLAGS
   -levent_pthreads
@@ -969,7 +830,6 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/helper_queue.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/transport.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/fasttransport.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/erpc_backend.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rrr_rpc_backend.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/multi_transport_manager.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/configuration.cc"
@@ -1414,11 +1274,16 @@ endif()
 
 # Add the mako library
 add_library(mako STATIC ${MAKO_SRCFILES})
-# erpc/src MUST come before src/mako/benchmarks on the -I list so that
-# erpc's `#include "common.h"` from cc/timely.h resolves to erpc/src/common.h
-# rather than src/mako/benchmarks/common.h (both files exist). Use BEFORE.
+# masstree/compiler.hh does a bare `#include "config.h"`. Put the masstree
+# generated-config dir at the FRONT of this target's include path so it
+# resolves to masstree's own config.h and not src/deptran/config.h (also on
+# the path), which pulls deptran/__dep__.h's `using namespace std;` and then
+# collides with mako's Silo `::allocator` / `::lock_guard` under `import std;`.
+# A target-scoped BEFORE slot is required: target includes outrank the
+# `-I${MASSTREE_CONFIG_INCLUDE_DIR}` in CXXFLAGS. (This slot used to be filled
+# — accidentally — by third-party/erpc/src/config.h.)
 target_include_directories(mako BEFORE PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src"
+    "${MASSTREE_CONFIG_INCLUDE_DIR}"
 )
 target_include_directories(mako PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}"
@@ -1513,9 +1378,11 @@ function(add_apps exec_name exec_path)
 
   # Configure target
   target_include_directories(${exec_name} PRIVATE
+      # masstree's config.h must outrank src/deptran/config.h (see the mako
+      # target above for why).
+      ${MASSTREE_CONFIG_INCLUDE_DIR}
       ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
       ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
-      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
       ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
@@ -1527,7 +1394,6 @@ function(add_apps exec_name exec_path)
   # Link dbtest against mako library and dependencies
   target_link_libraries(${exec_name}
       mako
-      erpc
       rust_lib
       ${APP_TXLOG_LINK_LIBS}
       ${BENCH_LDFLAGS}
@@ -1544,9 +1410,9 @@ function(add_apps exec_name exec_path)
 
   # Add dependencies
   if(ENABLE_BORROW_CHECKING)
-    add_dependencies(${exec_name} mako erpc rust_lib ${APP_TXLOG_BUILD_DEPS} build_rusty_cpp_checker)
+    add_dependencies(${exec_name} mako rust_lib ${APP_TXLOG_BUILD_DEPS} build_rusty_cpp_checker)
   else()
-    add_dependencies(${exec_name} mako erpc rust_lib ${APP_TXLOG_BUILD_DEPS})
+    add_dependencies(${exec_name} mako rust_lib ${APP_TXLOG_BUILD_DEPS})
   endif()
 endfunction()
 
@@ -1599,8 +1465,6 @@ endif()
 
 add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
-add_apps(erpc_client src/mako/benchmarks/ut/erpc_client.cc)
-add_apps(erpc_server src/mako/benchmarks/ut/erpc_server.cc)
 add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 
 # RPC benchmark binary
@@ -1651,10 +1515,9 @@ set(FRAGILE_GTEST_FROM_SOURCE OFF)
 set(MAKO_GTEST_ROOT "")
 set(MAKO_GTEST_MAIN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/tests/fragile_gtest_main.cc)
 
-# Prefer root-level third-party layout. Keep erpc-nested path as fallback.
+# Vendored GoogleTest under third-party/googletest.
 foreach(_gtest_candidate
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/googletest/googletest
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/googletest/googletest
 )
     if(EXISTS ${_gtest_candidate}/src/gtest-all.cc AND EXISTS ${_gtest_candidate}/include/gtest/gtest.h)
         set(MAKO_GTEST_ROOT ${_gtest_candidate})
@@ -1665,7 +1528,7 @@ endforeach()
 if(NOT EXISTS ${MAKO_GTEST_MAIN_SRC})
     message(WARNING "GoogleTest main stub missing at ${MAKO_GTEST_MAIN_SRC}. Tests will be disabled.")
 elseif(MAKO_GTEST_ROOT STREQUAL "")
-    message(WARNING "Vendored GoogleTest not found under third-party/googletest or erpc fallback. Tests will be disabled.")
+    message(WARNING "Vendored GoogleTest not found under third-party/googletest. Tests will be disabled.")
 else()
     set(MAKO_GTEST_SRC ${MAKO_GTEST_ROOT}/src/gtest-all.cc)
     if(CMAKE_CXX_COMPILER MATCHES "(/|^)fragilec$")
@@ -2033,22 +1896,12 @@ if(BUILD_TESTS)
     target_link_libraries(test_and_event ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_and_event COMMAND test_and_event)
 
-    # Transport Backend Tests (Comprehensive)
-    # Tests use mock implementations to avoid mako/eRPC dependencies
-    add_executable(test_transport_backend src/rrr/tests/test_transport_backend.cc)
-    target_include_directories(test_transport_backend PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_transport_backend PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_transport_backend ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_transport_backend COMMAND test_transport_backend)
-
-    # Transport Backend Stress Tests
-    add_executable(stress_transport_backend src/rrr/tests/stress_transport_backend.cc)
-    target_include_directories(stress_transport_backend PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(stress_transport_backend PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(stress_transport_backend ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    # Stress tests have longer timeout
-    add_test(NAME stress_transport_backend COMMAND stress_transport_backend)
-    set_tests_properties(stress_transport_backend PROPERTIES TIMEOUT 120)
+    # NOTE: test_transport_backend and stress_transport_backend were deleted
+    # together with the TransportBackend abstraction. Both exercised only a
+    # MockTransportBackend defined inside the test file itself (against a local
+    # copy of the TransportType enum), i.e. the interface's own dispatch and no
+    # rrr code at all. Real rrr/rpc coverage lives in test_transport_integration
+    # below.
 
     # Transport Integration Tests (uses real rrr/rpc network I/O)
     add_executable(test_transport_integration src/rrr/tests/test_transport_integration.cc)
@@ -2066,31 +1919,6 @@ if(BUILD_TESTS)
     )
     add_test(NAME test_transport_integration COMMAND test_transport_integration)
     set_tests_properties(test_transport_integration PROPERTIES TIMEOUT 120)
-
-    # eRPC Integration Tests — EXCLUDED from the default build/run.
-    # Despite the "fake" transport, eRPC's HugeAlloc requires configured
-    # hugepages and SIGSEGVs without them; CI already skips erpc
-    # (ctest -E 'erpc'). Opt in with -DBUILD_ERPC_TESTS=ON on a host with
-    # hugepages/RDMA set up.
-    option(BUILD_ERPC_TESTS "Build eRPC integration tests (require hugepages/RDMA)" OFF)
-    if(BUILD_ERPC_TESTS)
-        add_executable(test_erpc_integration tests/test_erpc_integration.cc)
-        target_include_directories(test_erpc_integration PRIVATE
-            ${TEST_INCLUDE_DIRS}
-            ${GTEST_INCLUDE_DIRS}
-            ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
-        )
-        target_compile_options(test_erpc_integration PRIVATE ${TEST_COMPILE_OPTIONS})
-        target_link_libraries(test_erpc_integration
-            erpc
-            ${GTEST_LIBRARIES}
-            ${GTEST_MAIN_LIBRARIES}
-            pthread
-            numa
-        )
-        add_test(NAME test_erpc_integration COMMAND test_erpc_integration)
-        set_tests_properties(test_erpc_integration PROPERTIES TIMEOUT 120)
-    endif()
 
     # ============================================================================
     # RPC Reliability Unit Tests (Phase 7.1)
@@ -2665,7 +2493,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_silo_varint
         mako
         rrr
-        erpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
@@ -2688,7 +2515,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_silo_rcu_thread
         mako
         rrr
-        erpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
@@ -2711,7 +2537,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_silo_allocator_tuple
         mako
         rrr
-        erpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
@@ -2848,7 +2673,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_sto_transaction
         mako
         rrr
-        erpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
@@ -2871,7 +2695,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_sto_transaction_real
         mako
         rrr
-        erpc
         ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}

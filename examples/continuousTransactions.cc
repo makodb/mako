@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
 
     if (benchConfig.getLeaderConfig()) {
         // pre-declare sharded tables
-        mako::setup_erpc_server();
+        mako::setup_rpc_server();
         mako::setup_helper(db, {});
         mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
     }

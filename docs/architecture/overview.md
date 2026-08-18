@@ -38,7 +38,7 @@ Mako is a **distributed transactional key-value store** with a layered architect
 │  ┌─────────────┬──────────────┬────────────┬──────────────┐ │
 │  │ TCP Sockets │  Coroutines  │  Reactor   │  Event Loop  │ │
 │  └─────────────┴──────────────┴────────────┴──────────────┘ │
-│         (Optional: DPDK / RDMA / eRPC)                       │
+│         (Optional: DPDK / RDMA)                              │
 └──────────────────────┬───────────────────────────────────────┘
                        │
 ┌──────────────────────▼───────────────────────────────────────┐
@@ -108,7 +108,7 @@ Each **Shard** manages a partition of data:
 - **Asynchronous RPC**: Non-blocking remote procedure calls
 - **Coroutines**: Lightweight concurrency (thousands of concurrent operations)
 - **Reactor Pattern**: Event-driven I/O without threads
-- **Multiple transports**: TCP/IP, DPDK, RDMA, eRPC
+- **Multiple transports**: TCP/IP, DPDK, RDMA
 
 See **[Coroutines & Reactor Guide](coroutines_guide.md)** for details.
 
@@ -416,11 +416,6 @@ See **[Coroutines Guide](coroutines_guide.md)** for details.
 - Zero-copy networking
 - Lowest latency
 - Requires InfiniBand hardware
-
-**eRPC**:
-- Optimized datacenter RPC
-- Better than gRPC for small messages
-- Multiple backend transports
 
 ---
 

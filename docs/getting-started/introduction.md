@@ -56,7 +56,7 @@ The key insight is that we don't need to wait for replication consensus before c
                       │
 ┌─────────────────────▼───────────────────────────────────┐
 │                RPC Communication Layer                   │
-│        (TCP/IP, DPDK, RDMA, eRPC)                       │
+│        (TCP/IP, DPDK, RDMA)                             │
 └─────────────────────┬───────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────┐
@@ -98,7 +98,7 @@ The key insight is that we don't need to wait for replication consensus before c
 - **Load balancing**: Distribute workload evenly across shards *(To be implemented)*
 
 ### Advanced Networking
-- **Multiple transports**: TCP/IP, DPDK (kernel bypass), RDMA, eRPC
+- **Multiple transports**: TCP/IP, DPDK (kernel bypass), RDMA
 - **Memory optimized**: jemalloc for efficient memory allocation
 - **Lock-free data structures**: Minimize contention in critical paths
 
