@@ -128,8 +128,15 @@ impl WriterSlot {
                 self.batch_min.store(t.version, Ordering::Release);
             }
             if b.len() >= batch_cap {
-                let taken = std::mem::take(&mut *b);
-                let min = taken.iter().map(|x| x.version).min().unwrap_or(NO_FLOOR);
+                // `mem::replace` with a sized Vec, not `mem::take`: take
+                // leaves the batch at ZERO capacity, so the next
+                // `batch_cap` pushes re-grow it 1, 2, 4 ... 64 — six
+                // reallocations per batch, every batch, inside this lock.
+                let taken =
+                    std::mem::replace(&mut *b, Vec::with_capacity(batch_cap));
+                // `batch_min` already holds this; the O(batch_cap) rescan
+                // it replaced was pure duplicated work under the lock.
+                let min = self.batch_min.load(Ordering::Relaxed);
                 // staged_min before batch_min is reset, so the handover
                 // has no gap.
                 self.staged_min.store(min, Ordering::Release);
@@ -285,14 +292,6 @@ impl LogInner {
         self.q.push_back(t);
     }
 
-    fn pop(&mut self) -> Option<Ticket> {
-        let t = self.q.pop_front()?;
-        if self.mins.front() == Some(&t.version) {
-            self.mins.pop_front();
-        }
-        Some(t)
-    }
-
     fn min(&self) -> u64 {
         self.mins.front().copied().unwrap_or(NO_FLOOR)
     }
@@ -303,8 +302,12 @@ impl TicketLog {
     pub fn new(cap: usize) -> Self {
         Self {
             inner: Mutex::new(LogInner {
-                q: VecDeque::new(),
-                mins: VecDeque::new(),
+                // Preallocated. Growing this deque means a reallocation
+                // and a copy of up to `cap` tickets — 16 MB at the
+                // default — performed while holding the lock every
+                // producer needs.
+                q: VecDeque::with_capacity(cap),
+                mins: VecDeque::with_capacity(cap),
                 stopping: false,
             }),
             space: Condvar::new(),
@@ -313,12 +316,26 @@ impl TicketLog {
     }
 
     /// Append, waiting for room. Never drops.
+    ///
+    /// Waits once for the whole batch rather than once per ticket. The
+    /// per-ticket wait re-checked the predicate and could re-block 64
+    /// times for one batch; the C++ ring reserves a whole batch with a
+    /// single `fetch_add`.
     pub fn append(&self, tickets: &[Ticket]) {
+        if tickets.is_empty() {
+            return;
+        }
         let mut g = self.inner.lock().expect("log mutex poisoned");
+        // The `is_empty` escape matters: a batch larger than the entire
+        // log would otherwise wait for room that can never exist. An
+        // empty queue is as much room as there will ever be, so take it.
+        while !g.stopping
+            && !g.q.is_empty()
+            && g.q.len() + tickets.len() > self.cap
+        {
+            g = self.space.wait(g).expect("log condvar poisoned");
+        }
         for t in tickets {
-            while g.q.len() >= self.cap && !g.stopping {
-                g = self.space.wait(g).expect("log condvar poisoned");
-            }
             g.push(*t);
         }
     }
@@ -338,16 +355,40 @@ impl TicketLog {
         true
     }
 
-    /// Drain up to `budget` tickets.
-    pub fn drain(&self, budget: usize, out: &mut Vec<Ticket>) -> usize {
-        let mut g = self.inner.lock().expect("log mutex poisoned");
-        let n = budget.min(g.q.len());
-        for _ in 0..n {
-            out.push(g.pop().expect("q holds at least n tickets"));
-        }
-        if n > 0 {
-            self.space.notify_all();
-        }
+    /// Take everything currently in the log.
+    ///
+    /// **The whole queue, and the swap is O(1) under the lock.** This
+    /// used to drain a bounded chunk by popping one ticket at a time —
+    /// up to 65,536 `pop_front`s plus monotonic-deque maintenance —
+    /// while holding the same mutex every producer appends under. That
+    /// is a convoy: the flusher excluded all sixteen writers for the
+    /// length of a drain, and it is the single largest difference from
+    /// the C++ log, which is lock-free and never excludes producers at
+    /// all.
+    ///
+    /// Bounding the drain was never load-bearing. Draining is the cheap
+    /// half of a flusher cycle — tickets fold into the dirty map at
+    /// memory speed and coalesce there — and `writeback_chunk` still
+    /// bounds the expensive half.
+    pub fn drain(&self, out: &mut Vec<Ticket>) -> usize {
+        let (taken, n) = {
+            let mut g = self.inner.lock().expect("log mutex poisoned");
+            if g.q.is_empty() {
+                return 0;
+            }
+            let n = g.q.len();
+            // Swap the buffers out and put empty ones back, sized so the
+            // next cycle does not reallocate under the lock either.
+            let taken = std::mem::replace(
+                &mut g.q,
+                VecDeque::with_capacity(n.max(1024)),
+            );
+            g.mins.clear();
+            (taken, n)
+        };
+        // Copying out happens with the lock RELEASED.
+        self.space.notify_all();
+        out.extend(taken);
         n
     }
 
@@ -568,12 +609,10 @@ mod tests {
             x ^= x >> 7;
             x ^= x << 17;
             if step % 3 == 2 && !shadow.is_empty() {
-                let n = (x as usize % shadow.len()) + 1;
                 let mut out = Vec::new();
-                log.drain(n, &mut out);
-                for _ in 0..n {
-                    shadow.pop_front();
-                }
+                let n = log.drain(&mut out);
+                assert_eq!(n, shadow.len(), "drain takes the whole queue");
+                shadow.clear();
             } else {
                 let v = (x % 50) + 1;
                 assert!(log.try_append(&[Ticket { entry: 0, version: v }]));

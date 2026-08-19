@@ -488,7 +488,6 @@ fn the_flusher_never_blocks_on_the_backpressure_it_relieves() {
     let cfg = Config {
         log_slots: 64,      // fills almost immediately
         batch: 8,           // so partial batches are common
-        drain_bound: 8,
         writeback_chunk: 4, // and writeback cannot keep up
         ..Config::default()
     };

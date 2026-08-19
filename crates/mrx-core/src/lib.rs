@@ -236,8 +236,6 @@ pub struct Config {
     pub log_slots: usize,
     /// Tickets a writer buffers before appending to the ring.
     pub batch: usize,
-    /// Ring slots drained into the dirty map per flusher cycle.
-    pub drain_bound: usize,
     /// Dirty entries written back per flusher cycle.
     pub writeback_chunk: usize,
     /// Keys visited per scan chunk.
@@ -267,7 +265,6 @@ impl Default for Config {
         Self {
             log_slots: 1 << 20,
             batch: 64,
-            drain_bound: 1 << 16,
             writeback_chunk: 4096,
             scan_chunk: 512,
             sweep_chunk: 256,
@@ -283,7 +280,6 @@ impl Config {
         Self {
             log_slots: 4,
             batch: 2,
-            drain_bound: 4,
             writeback_chunk: 2,
             scan_chunk: 4,
             sweep_chunk: 2,

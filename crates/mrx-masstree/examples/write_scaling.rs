@@ -17,17 +17,56 @@
 //!   mode  full       flusher running (the real configuration)
 //!         noflusher  no background thread at all; the log just fills
 //!
-//!   ...and four ablations, each removing one layer, so the cost of a
-//!   write can be attributed rather than guessed at:
+//!   ...and the ablations, each adding one layer, so the cost of a write
+//!   can be attributed rather than guessed at. In ladder order:
 //!
-//!         atomic     ONE shared fetch_add per op. The floor any design
-//!                    with a global version counter has to live above.
 //!         index      masstree get_or_insert only. The ceiling.
-//!         entry      index + entry table + publish under the entry's
-//!                    lock. Adds everything except versioning and the
-//!                    ticket log.
-//!         alloc      `entry` without the per-write allocations, to
-//!                    separate allocator cost from lock cost.
+//!         index_ver  + one draw from the shared version counter. The
+//!                    first thing in the write path that all sixteen
+//!                    threads touch, and not a small addition.
+//!         alloc      + entry table + publish under the entry's lock,
+//!                    republishing a pre-built record instead of
+//!                    allocating one.
+//!         alloc_ring as `alloc`, but from a per-thread ring rather
+//!                    than one record shared by every thread — the
+//!                    other end of the bracket on what allocation
+//!                    costs. See `Prebuilt`.
+//!         entry      + the two per-write allocations, i.e. the real
+//!                    `Val::resident(ver, bytes)`.
+//!         floors     + the announce floor. Splits the durability
+//!                    bookkeeping into its memory-ordering half and its
+//!                    locking half, which is the difference between a
+//!                    cost inherent to the design and one that comes
+//!                    from choosing a futex Mutex over a spinlock.
+//!         noflusher  the real `Store`, with no background thread at
+//!                    all; the log just fills.
+//!         full       the real `Store` with the flusher running.
+//!
+//!         atomic     ONE shared fetch_add per op, and NOTHING else.
+//!                    Read it as a lower bound and a lesson, not as a
+//!                    floor: with no work between two increments a core
+//!                    keeps the line and retires a run of them before
+//!                    losing it, so it reports a fraction of what the
+//!                    same instruction costs once real work sits
+//!                    between draws. `index` -> `index_ver` is that
+//!                    same instruction measured in place.
+//!
+//!   What `entry` and `floors` still do NOT mirror, so that the rung
+//!   above them is not read as being about only what its name says:
+//!
+//!     * neither calls `Store::account`, whose `resident_bytes`
+//!       fetch_add is a SECOND counter every thread touches. Its cost
+//!       lands in the `floors` -> `noflusher` rung, which is therefore
+//!       not purely "batch and ticket log".
+//!     * both draw the version BEFORE taking the entry lock, where
+//!       `Store::write` draws it inside. Same operations, shorter
+//!       critical section; it matters only for same-entry collisions,
+//!       which at a 200k keyspace and 16 threads are rare.
+//!     * `noflusher` sizes the ticket log to hold every ticket
+//!       (`threads*ops*2`) where `full` always uses 1<<20, so those two
+//!       rows differ in log geometry as well as in the flusher. At
+//!       `ops = 32768` the two sizes coincide exactly, which is how to
+//!       check whether a gap between them is the flusher or the log.
 //!
 //!   Read-side ablations, which answer a different question: how much of
 //!   a read is the Arc refcount traffic that epoch reclamation would
@@ -37,13 +76,30 @@
 //!         rd_entry   + entry table + `Entry::load` (the Arc clone/drop
 //!                    and the slot lock)
 //!         rd_full    + copying the value out, i.e. `Store::get`
-//!         floors     `entry` plus the announce floor and the version
-//!                    draw, but no ticket. Splits the durability
-//!                    bookkeeping into its memory-ordering half and its
-//!                    locking half, which is the difference between a
-//!                    cost inherent to the design and one that comes
-//!                    from choosing a futex Mutex over a spinlock.
 //! ```
+//!
+//! # An ablation only measures the real path if it SHARES what the real
+//! # path shares
+//!
+//! Every mode below is a hand-written stand-in for a slice of
+//! `Store::write`, and the way a stand-in goes wrong is not usually by
+//! computing the wrong thing — it is by putting a per-thread field on a
+//! shared cache line, or a shared field on sixteen. Then the mode
+//! measures coherence traffic the real store never generates, the layer
+//! it was supposed to isolate is charged for it, and the number does not
+//! merely have error bars, it points at the wrong code.
+//!
+//! That happened here. `floors` built ONE `WriterSlot` and shared it
+//! across all sixteen threads, where `Store` gives each thread its own
+//! slot out of a `Vec<WriterSlot>`. Its seq_cst `announce` store — a
+//! thread-private write in production — became a sixteen-way contended
+//! line, and the mode reported the announce floor costing +106 ns/op.
+//! See `Writers` below for what the real assignment is.
+//!
+//! The rule this file now follows: for each mode, ask of every piece of
+//! state whether `Store` gives it to one thread or to all of them, and
+//! match that. Where a mode cannot (see `Prebuilt::Shared`), say so next
+//! to the number rather than in a commit message nobody reads.
 //!
 //! Measures ACK throughput, matching the benchmark's "write (ack)" row:
 //! writes return once visible, and making them durable is the flusher's
@@ -66,30 +122,103 @@ use mrx_core::fakes::MemBlobs;
 use mrx_core::{Config, EntryTable, KeyIndex, Runtime, Store, Val};
 use mrx_masstree::MasstreeIndex;
 
+/// The real store's writer-slot pool, mirrored.
+///
+/// `Store` holds a `Vec<WriterSlot>` of 64 and hands each thread one
+/// slot — `next_writer.fetch_add() % len`, cached in a `thread_local` so
+/// the assignment happens once per thread and every subsequent write
+/// goes straight to its own slot. `announce`, `batch_min` and
+/// `staged_min` are therefore written by exactly one thread.
+///
+/// The count is 64 rather than `threads` on purpose: it reproduces the
+/// store's actual array, so the used slots are the same contiguous
+/// prefix of the same unpadded layout, sharing lines with each other the
+/// same way. Sizing the array to the thread count would quietly change
+/// the geometry that `WriterSlot`'s "deliberately NOT cache-line padded"
+/// note was measured against.
+struct Writers {
+    slots: Vec<mrx_core::WriterSlot>,
+    next: AtomicU64,
+}
+
+impl Writers {
+    fn new() -> Self {
+        Self {
+            slots: (0..64).map(|_| mrx_core::WriterSlot::new()).collect(),
+            next: AtomicU64::new(0),
+        }
+    }
+
+    /// This thread's slot, assigned once and remembered — the body of
+    /// `Store::writer`.
+    fn mine(&self) -> &mrx_core::WriterSlot {
+        thread_local! {
+            static SLOT: std::cell::Cell<Option<usize>> =
+                const { std::cell::Cell::new(None) };
+        }
+        let n = self.slots.len();
+        let i = SLOT.with(|s| match s.get() {
+            Some(i) => i,
+            None => {
+                let i = (self.next.fetch_add(1, Ordering::AcqRel) as usize) % n;
+                s.set(Some(i));
+                i
+            }
+        });
+        &self.slots[i]
+    }
+}
+
+/// Where the `entry` family gets the record it publishes.
+enum Prebuilt {
+    /// Allocate one per write, as `Store::write` does: an `Arc` and a
+    /// `Vec` of bytes, both fresh, both refcount-1 and thread-local
+    /// until published.
+    Fresh,
+    /// Republish clones of ONE record shared by every thread.
+    ///
+    /// This is `alloc` mode, and it does NOT cleanly isolate allocation.
+    /// It removes two thread-local allocations and adds a refcount
+    /// increment on a line all sixteen threads increment, plus the
+    /// matching decrement when the previous value is dropped. The
+    /// substitute is contended where the thing it replaced was not, so
+    /// read `entry - alloc` as a LOWER bound on allocation cost and
+    /// `entry - alloc_ring` as the upper one.
+    Shared(Arc<Val>),
+    /// Republish from a per-thread ring of distinct records.
+    ///
+    /// Same "no allocation" as `Shared` without the shared refcount:
+    /// each thread cycles 64 records that only it increments, so the
+    /// refcount traffic keeps the shape the real path has — one
+    /// increment by the writer, one decrement by whoever overwrites —
+    /// and the ring is small enough to stay resident.
+    Ring(Vec<Vec<Arc<Val>>>),
+}
+
+/// Records per thread in [`Prebuilt::Ring`]. 64 x ~150 B is under
+/// 10 KiB, so a thread's ring stays in L1 and the reuse does not itself
+/// turn into a cache-miss ablation.
+const RING: usize = 64;
+
 /// What one op does, per mode.
 enum Work {
     Store(Arc<Store<MasstreeIndex, MemBlobs>>),
-    Index(Arc<MasstreeIndex>, Arc<AtomicU64>),
-    Entry(
-        Arc<MasstreeIndex>,
-        Arc<EntryTable>,
-        Arc<AtomicU64>,
-        bool,
-        Arc<mrx_core::Val>,
-    ),
+    Index(Arc<MasstreeIndex>),
+    /// `index`, plus one draw from the shared version counter.
+    IndexVer(Arc<MasstreeIndex>, Arc<AtomicU64>),
+    Entry(Arc<MasstreeIndex>, Arc<EntryTable>, Arc<AtomicU64>, Prebuilt),
     Atomic(Arc<AtomicU64>),
     /// (index, table, how far to go: 0 = lookup, 1 = +load, 2 = +copy)
     Read(Arc<MasstreeIndex>, Arc<EntryTable>, u8),
-    Floors(
-        Arc<MasstreeIndex>,
-        Arc<EntryTable>,
-        Arc<AtomicU64>,
-        Arc<mrx_core::WriterSlot>,
-    ),
+    Floors(Arc<MasstreeIndex>, Arc<EntryTable>, Arc<AtomicU64>, Arc<Writers>),
 }
 
 impl Work {
-    fn run(&self, key: &[u8], value: &[u8]) {
+    /// `tid` and `seq` are the calling thread's index and its op
+    /// number, both computed by the caller with no atomics — so a mode
+    /// that needs a unique value per op does not draw one from a shared
+    /// counter and charge the contention to whatever it was measuring.
+    fn run(&self, tid: usize, seq: u64, key: &[u8], value: &[u8]) {
         match self {
             Work::Store(s) => {
                 s.put(key, value);
@@ -97,9 +226,28 @@ impl Work {
             Work::Atomic(c) => {
                 c.fetch_add(1, Ordering::SeqCst);
             }
-            Work::Index(idx, next) => {
-                let w = next.fetch_add(1, Ordering::Relaxed) + 1;
-                idx.get_or_insert(key, w);
+            Work::Index(idx) => {
+                // The word comes from `seq`, not from a shared counter.
+                // `Store` bumps a shared atomic for it (the entry
+                // table's `next`) only when a key is ABSENT — about 6%
+                // of ops at the bench's 200k keyspace — so charging
+                // every op for one put a contended `lock xadd` into the
+                // ablation's BASELINE, where it was then subtracted back
+                // out of every layer above. `index_ver` is that same
+                // instruction measured as its own rung, which is where
+                // it belongs.
+                idx.get_or_insert(key, seq);
+            }
+            Work::IndexVer(idx, ver) => {
+                // The rung `index` used to hide. Until this was split
+                // out, the baseline the whole ladder was measured
+                // against included a contended counter, so every layer
+                // above had that cost silently subtracted back out of
+                // it: the ladder charged masstree 90 ns and the version
+                // draw nothing, where masstree is 25 ns and the draw is
+                // most of the rest.
+                idx.get_or_insert(key, seq);
+                ver.fetch_add(1, Ordering::SeqCst);
             }
             Work::Read(idx, table, depth) => {
                 let Some(word) = idx.get(key) else { return };
@@ -128,7 +276,12 @@ impl Work {
                     std::hint::black_box(b.to_vec());
                 }
             }
-            Work::Floors(idx, table, ver, slot) => {
+            Work::Floors(idx, table, ver, writers) => {
+                // One slot per thread, exactly as `Store::writer` hands
+                // them out. Sharing one slot here measured 16-way false
+                // sharing on `announce` and called it the cost of the
+                // announce floor.
+                let slot = writers.mine();
                 let word = match idx.get(key) {
                     Some(w) => w,
                     None => {
@@ -146,10 +299,10 @@ impl Work {
                 e.with_slot(|_| (Some(Val::resident(v, value.to_vec())), ()));
                 slot.disarm();
             }
-            Work::Entry(idx, table, ver, allocate, shared) => {
-                // The cache's write path with versioning and the ticket
-                // log removed: find or create the entry, then publish a
-                // new value under its lock.
+            Work::Entry(idx, table, ver, prebuilt) => {
+                // The cache's write path with the announce floor and the
+                // ticket log removed: find or create the entry, draw a
+                // version, publish under the entry's lock.
                 let word = match idx.get(key) {
                     Some(w) => w,
                     None => {
@@ -160,16 +313,16 @@ impl Work {
                 };
                 let e = table.get((word - 1) as u32);
                 let v = ver.fetch_add(1, Ordering::SeqCst);
-                // `allocate = false` publishes a clone of one pre-built
-                // record: one atomic increment instead of two
-                // allocations, and — this part matters — the SAME single
+                // Every variant publishes under the SAME single
                 // acquisition of the entry lock. An earlier version read
                 // the current value first, which took the lock twice and
                 // charged the difference to allocation.
-                let nv = if *allocate {
-                    Val::resident(v, value.to_vec())
-                } else {
-                    Arc::clone(shared)
+                let nv = match prebuilt {
+                    Prebuilt::Fresh => Val::resident(v, value.to_vec()),
+                    Prebuilt::Shared(one) => Arc::clone(one),
+                    Prebuilt::Ring(rings) => {
+                        Arc::clone(&rings[tid][(seq as usize) % RING])
+                    }
                 };
                 e.with_slot(|_| (Some(nv), ()));
             }
@@ -235,7 +388,11 @@ fn main() {
     let (work, mut rt) = match mode {
         "atomic" => (Work::Atomic(Arc::clone(&counter)), None),
         "index" => (
-            Work::Index(
+            Work::Index(Arc::new(MasstreeIndex::new().expect("masstree"))),
+            None,
+        ),
+        "index_ver" => (
+            Work::IndexVer(
                 Arc::new(MasstreeIndex::new().expect("masstree")),
                 Arc::clone(&counter),
             ),
@@ -268,17 +425,35 @@ fn main() {
                 Arc::new(MasstreeIndex::new().expect("masstree")),
                 Arc::new(EntryTable::new()),
                 Arc::clone(&counter),
-                Arc::new(mrx_core::WriterSlot::new()),
+                Arc::new(Writers::new()),
             ),
             None,
         ),
-        "entry" | "alloc" => (
+        "entry" | "alloc" | "alloc_ring" => (
             Work::Entry(
                 Arc::new(MasstreeIndex::new().expect("masstree")),
                 Arc::new(EntryTable::new()),
                 Arc::clone(&counter),
-                mode == "entry",
-                Val::resident(0, vec![b'v'; 100]),
+                match mode {
+                    "entry" => Prebuilt::Fresh,
+                    "alloc" => {
+                        Prebuilt::Shared(Val::resident(0, vec![b'v'; 100]))
+                    }
+                    _ => Prebuilt::Ring(
+                        (0..threads)
+                            .map(|t| {
+                                (0..RING)
+                                    .map(|r| {
+                                        Val::resident(
+                                            (t * RING + r) as u64,
+                                            vec![b'v'; 100],
+                                        )
+                                    })
+                                    .collect()
+                            })
+                            .collect(),
+                    ),
+                },
             ),
             None,
         ),
@@ -306,7 +481,8 @@ fn main() {
                 scope.spawn(move || {
                     barrier.wait();
                     for i in 0..ops {
-                        work.run(&keys[t * ops + i], value);
+                        let n = t * ops + i;
+                        work.run(t, n as u64 + 1, &keys[n], value);
                     }
                 })
             })

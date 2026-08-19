@@ -229,13 +229,28 @@ fn eviction_keeps_values_correct_against_real_rocksdb() {
         expected.insert(k, v);
     }
     db.flush().expect("flush");
-    // Let the sweeper work.
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let evicted = expected
-        .keys()
-        .filter(|k| db.store().is_resident(k.as_bytes()) == Some(false))
-        .count();
-    assert!(evicted > 0, "nothing was evicted, so this proves nothing");
+
+    // POLL, do not sleep. Eviction is asynchronous, so a fixed sleep is a
+    // race: it passed locally and failed once on a loaded machine, which
+    // is the worst possible way for a test to behave. Waiting for the
+    // condition makes the slow case slow instead of red.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let evicted = loop {
+        let n = expected
+            .keys()
+            .filter(|k| db.store().is_resident(k.as_bytes()) == Some(false))
+            .count();
+        if n > 0 {
+            break n;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sweeper evicted nothing in 30s under {} bytes of pressure",
+            db.store().evictable_bytes()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert!(evicted > 0);
 
     for (k, v) in &expected {
         assert_eq!(

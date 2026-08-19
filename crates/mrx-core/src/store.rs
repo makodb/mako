@@ -384,8 +384,11 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             };
             let freed = cur.payload_bytes();
             let added = nv.payload_bytes();
+            // `nv` is MOVED, not cloned. Returning `Arc::clone(&nv)` and
+            // dropping the local was an atomic increment and decrement
+            // per write for nothing — `added` is already computed above.
             (
-                Some(Arc::clone(&nv)),
+                Some(nv),
                 (
                     WriteOutcome { wrote: true, existed: live },
                     ver,
@@ -586,7 +589,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
 
         // --- drain ---------------------------------------------------
         let mut taken: Vec<Ticket> = Vec::new();
-        progressed += self.log.drain(self.cfg.drain_bound, &mut taken);
+        progressed += self.log.drain(&mut taken);
         if !taken.is_empty() {
             let mut d = self.dirty.lock().expect("dirty lock poisoned");
             for t in &taken {
