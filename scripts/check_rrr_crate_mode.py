@@ -1098,6 +1098,55 @@ ABI_SPECS = {
             }
         ),
     ),
+    # Measured on the crate-generated object, not declared: nine provider-owned
+    # strong entries plus the module initializer (which `module_symbols` drops
+    # because it carries no `@module` attachment). `verify` is an exported
+    # function TEMPLATE, so its instantiations belong to importers and never
+    # appear here; the `debugging_ffi` extern "C" block is declarations only.
+    "rrr.debugging": AbiSpec(
+        surface=frozenset(
+            {
+                "export module rrr.debugging;",
+                "import vec_port.vec;",
+                "namespace rrr {",
+                "namespace debugging_ffi {",
+                "export bool likely(bool value);",
+                "export bool unlikely(bool value);",
+                "export void print_stack_trace(FILE* stream = stderr);",
+                "export void verify_failed(std::string_view file, uint32_t line);",
+                "export template<typename Expr>",
+                "void verify(const Expr& expr, const std::source_location& location = std::source_location::current());",
+                "struct BtCapture {",
+                "bool ok;",
+                "rusty::Vec<std::string> symbols;",
+                "static BtCapture new_();",
+                "export FILE* srpc_stderr();",
+                "export int32_t srpc_backtrace_capture(std::string::value_type*** out_symbols);",
+                "export void srpc_backtrace_free(std::string::value_type** symbols);",
+                "export int32_t fputs(const std::string::value_type* text, FILE* stream);",
+            }
+        ),
+        symbols=frozenset(
+            {
+                ("T", "rrr::BtCapture@rrr.debugging::new_()"),
+                ("T", "rrr::bt_capture@rrr.debugging()"),
+                ("T", "rrr::bt_empty_string@rrr.debugging()"),
+                ("T", "rrr::bt_index_prefix@rrr.debugging(int)"),
+                (
+                    "T",
+                    "rrr::bt_render@rrr.debugging(rrr::BtCapture@rrr.debugging const&)",
+                ),
+                ("T", "rrr::likely@rrr.debugging(bool)"),
+                ("T", "rrr::print_stack_trace@rrr.debugging(_IO_FILE*)"),
+                ("T", "rrr::unlikely@rrr.debugging(bool)"),
+                (
+                    "T",
+                    "rrr::verify_failed@rrr.debugging(std::__1::basic_string_view<char, "
+                    "std::__1::char_traits<char>>, unsigned int)",
+                ),
+            }
+        ),
+    ),
 }
 
 
@@ -2232,6 +2281,7 @@ def importer_source() -> str:
 #include <memory>
 #include <netdb.h>
 #include <span>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -2244,6 +2294,7 @@ def importer_source() -> str:
 
 import rrr.callback_wrapper;
 import rrr.basetypes;
+import rrr.debugging;
 import rrr.circuit_breaker;
 import rrr.completion_tracker;
 import rrr.connection_metrics;
@@ -2306,6 +2357,63 @@ extern "C" void srpc_sleep_us(std::uint64_t microseconds) {
 
 extern "C" int srpc_find_open_port(void) {
     return selected_open_port;
+}
+
+// rrr.debugging reaches libc through exactly three plain-C seams
+// (base/srpc_base.c in production). Model them here so the generated lane
+// links and so the rendered report is observable: the capture stub hands back
+// a fixed symbol array, and srpc_stderr hands back an in-memory FILE the
+// importer can read.
+static char debugging_report[512] = {};
+static FILE* debugging_stream = nullptr;
+static std::int32_t debugging_capture_frames = -1;
+static std::uint32_t debugging_capture_calls = 0;
+static std::uint32_t debugging_free_calls = 0;
+static char* debugging_symbols[3] = {};
+static char debugging_symbol_storage[3][16] = {
+    "frame-zero", "frame-one", "frame-two"};
+
+extern "C" FILE* srpc_stderr(void) {
+    return debugging_stream;
+}
+
+extern "C" int srpc_backtrace_capture(char*** out_syms) {
+    ++debugging_capture_calls;
+    if (out_syms == nullptr) {
+        return -1;
+    }
+    *out_syms = nullptr;
+    if (debugging_capture_frames < 0) {
+        return -1;
+    }
+    for (std::size_t index = 0; index < 3; ++index) {
+        debugging_symbols[index] = debugging_symbol_storage[index];
+    }
+    *out_syms = debugging_symbols;
+    return debugging_capture_frames;
+}
+
+extern "C" void srpc_backtrace_free(char**) {
+    ++debugging_free_calls;
+}
+
+static void reset_debugging(std::int32_t frames) {
+    debugging_capture_frames = frames;
+    debugging_capture_calls = 0;
+    debugging_free_calls = 0;
+    std::memset(debugging_report, 0, sizeof(debugging_report));
+    if (debugging_stream != nullptr) {
+        std::fclose(debugging_stream);
+    }
+    debugging_stream =
+        fmemopen(debugging_report, sizeof(debugging_report) - 1, "w");
+}
+
+static std::string_view debugging_rendered() {
+    if (debugging_stream != nullptr) {
+        std::fflush(debugging_stream);
+    }
+    return std::string_view(debugging_report);
 }
 
 extern "C" void freeaddrinfo(addrinfo* info) {
@@ -5160,6 +5268,70 @@ int main() {
         invalid_queue.size() != 1) {
         return 176;
     }
+
+    // rrr.debugging: branch hints keep boolean identity, verify() only reaches
+    // the failure tail on a false predicate, and the failure tail renders the
+    // captured frames BEFORE it panics (the trace must survive a swallowed
+    // panic). `frames - 1` is the historical loop bound, so a three-frame
+    // capture renders two lines.
+    if (!rrr::likely(true) || rrr::likely(false) ||
+        !rrr::unlikely(true) || rrr::unlikely(false)) {
+        return 177;
+    }
+    reset_debugging(3);
+    rrr::verify(true);
+    rrr::verify(reinterpret_cast<const void*>(1));
+    rrr::verify(7);
+    if (debugging_capture_calls != 0 || !debugging_rendered().empty()) {
+        return 178;
+    }
+
+    reset_debugging(3);
+    bool debugging_panicked = false;
+    try {
+        rrr::verify(false);
+    } catch (const std::exception& error) {
+        debugging_panicked =
+            std::string_view(error.what()).find("verify failed at ") !=
+            std::string_view::npos;
+    }
+    if (!debugging_panicked || debugging_capture_calls != 1 ||
+        debugging_free_calls != 1) {
+        return 179;
+    }
+    if (debugging_rendered() !=
+        "  *** begin stack trace ***\\n"
+        "0    frame-zero\\n"
+        "1    frame-one\\n"
+        "  ***  end stack trace  ***\\n") {
+        return 180;
+    }
+
+    reset_debugging(-1);
+    debugging_panicked = false;
+    try {
+        rrr::verify_failed("goal0.cc", 42);
+    } catch (const std::exception& error) {
+        debugging_panicked =
+            std::string_view(error.what()) == "verify failed at goal0.cc, line 42";
+    }
+    if (!debugging_panicked || debugging_capture_calls != 1 ||
+        debugging_free_calls != 0) {
+        return 181;
+    }
+    if (debugging_rendered() != "  *** failed to obtain stack trace!\\n") {
+        return 182;
+    }
+
+    reset_debugging(3);
+    rrr::print_stack_trace(debugging_stream);
+    if (debugging_rendered() !=
+        "  *** begin stack trace ***\\n"
+        "0    frame-zero\\n"
+        "1    frame-one\\n"
+        "  ***  end stack trace  ***\\n") {
+        return 183;
+    }
     return 0;
 }
 """
@@ -5722,7 +5894,8 @@ def check(args: argparse.Namespace) -> None:
         "contracts, LoadBalancer layout/strategy/selection/wrapping runtime "
         "contracts, Utils layout/move/teardown/port/hostname/logging runtime "
         "contracts, FrameCodec layout/wire/fragmentation/compaction/wrapping runtime "
-        "contracts, and "
+        "contracts, Debugging branch-hint/verify/backtrace-render/panic-tail "
+        "runtime contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )
 

@@ -18,6 +18,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Return libc's process-wide stderr stream without exposing a C global through
+ * Rust's foreign-static lowering. */
+FILE* srpc_stderr(void) {
+    return stderr;
+}
+
 /* Capture the current call stack's symbol strings.
  *
  * On success returns the frame count (>= 0) and stores the malloc'd

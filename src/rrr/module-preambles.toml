@@ -43,3 +43,10 @@ includes = [
     { path = "vector", form = "angle" },
     { path = "rusty/io.hpp", form = "angle" },
 ]
+
+[[module]]
+name = "rrr.debugging"
+includes = [
+    { path = "stdio.h", form = "angle" },
+    { path = "source_location", form = "angle" },
+]

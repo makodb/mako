@@ -7,10 +7,199 @@
 //! omits it from generated C++ because the production definitions already
 //! live in the rusty runtime headers.
 
-use std::ops::{Deref, DerefMut, Index};
+use ::std::ops::{Deref, DerefMut, Index};
+
+pub mod std {
+    use ::std::cell::UnsafeCell;
+
+    /// Values accepted by the rustc-only `std::string::append` model.
+    pub trait StringAppend {
+        fn append_to(self, output: &mut Vec<u8>);
+    }
+
+    impl StringAppend for &str {
+        fn append_to(self, output: &mut Vec<u8>) {
+            output.extend_from_slice(self.as_bytes());
+        }
+    }
+
+    impl StringAppend for &::std::string::String {
+        fn append_to(self, output: &mut Vec<u8>) {
+            output.extend_from_slice(self.as_bytes());
+        }
+    }
+
+    /// Rustc-only byte model of `std::string`.
+    #[allow(non_camel_case_types)]
+    pub struct string(UnsafeCell<Vec<u8>>);
+
+    impl Default for string {
+        fn default() -> Self {
+            Self(UnsafeCell::new(Vec::new()))
+        }
+    }
+
+    impl StringAppend for string {
+        fn append_to(self, output: &mut Vec<u8>) {
+            output.extend_from_slice(self.0.into_inner().as_slice());
+        }
+    }
+
+    impl StringAppend for &string {
+        #[allow(unsafe_code)]
+        fn append_to(self, output: &mut Vec<u8>) {
+            // SAFETY: this facade is used only by single-threaded direct-rustc
+            // logging tests; generated C++ maps the type to `std::string`.
+            output.extend_from_slice(unsafe { (&*self.0.get()).as_slice() });
+        }
+    }
+
+    /// Equality/ordering/hash and value-copy for the byte model. The
+    /// production type is `std::string`, which is `Regular` and totally
+    /// ordered, so canonical sources use it as a map key, inside a `Cell`, and
+    /// compare it directly. The `UnsafeCell` interior blocks `derive`, so the
+    /// four traits are written out over the same byte view `size()` uses.
+    #[allow(unsafe_code)]
+    fn string_bytes(value: &string) -> &[u8] {
+        // SAFETY: identical to `size`/`to_rust_string` above -- direct-rustc
+        // facade callers do not mutate this model concurrently.
+        unsafe { (&*value.0.get()).as_slice() }
+    }
+
+    /// `std::string` converts to `std::string_view` implicitly in C++, which is
+    /// what canonical sources rely on when they hand a stored address to a
+    /// `&str` parameter. `Deref` is the Rust spelling of that implicit
+    /// conversion and is invisible to the emitter: deref coercion happens in
+    /// rustc's type checker, so the generated C++ call is unchanged.
+    impl ::std::ops::Deref for string {
+        type Target = str;
+
+        fn deref(&self) -> &str {
+            ::std::str::from_utf8(string_bytes(self)).unwrap_or("")
+        }
+    }
+
+    impl Clone for string {
+        fn clone(&self) -> Self {
+            Self(UnsafeCell::new(string_bytes(self).to_vec()))
+        }
+    }
+
+    impl PartialEq for string {
+        fn eq(&self, other: &Self) -> bool {
+            string_bytes(self) == string_bytes(other)
+        }
+    }
+
+    impl Eq for string {}
+
+    impl PartialOrd for string {
+        fn partial_cmp(&self, other: &Self) -> Option<::std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl Ord for string {
+        fn cmp(&self, other: &Self) -> ::std::cmp::Ordering {
+            string_bytes(self).cmp(string_bytes(other))
+        }
+    }
+
+    impl ::std::hash::Hash for string {
+        fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
+            string_bytes(self).hash(state);
+        }
+    }
+
+    impl string {
+        pub fn append<T: StringAppend>(&mut self, value: T) {
+            value.append_to(self.0.get_mut());
+        }
+
+        pub fn push_back(&mut self, value: i8) {
+            self.0.get_mut().push(value as u8);
+        }
+
+        pub fn resize(&mut self, size: usize) {
+            self.0.get_mut().resize(size, 0);
+        }
+
+        /// Rustc-only signature model of `std::string::c_str`.
+        pub fn c_str(&self) -> *const i8 {
+            core::ptr::null()
+        }
+
+        /// # Safety
+        ///
+        /// The returned pointer must not outlive this value or overlap any
+        /// other access to its byte storage.
+        #[allow(unsafe_code)]
+        pub unsafe fn data(&self) -> *mut i8 {
+            unsafe { (&mut *self.0.get()).as_mut_ptr().cast() }
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.size() == 0
+        }
+
+        #[allow(unsafe_code)]
+        pub fn size(&self) -> usize {
+            // SAFETY: direct-rustc facade callers do not access this model
+            // concurrently; the generated C++ uses `std::string` instead.
+            unsafe { (&*self.0.get()).len() }
+        }
+
+        /// Clone the facade bytes into an ordinary Rust string for tests.
+        #[allow(unsafe_code)]
+        pub fn to_rust_string(&self) -> ::std::string::String {
+            // SAFETY: direct-rustc facade callers do not mutate this model
+            // concurrently; production maps the type to `std::string`.
+            let bytes = unsafe { (&*self.0.get()).clone() };
+            ::std::string::String::from_utf8(bytes).expect("valid UTF-8 in std::string facade")
+        }
+    }
+}
+
+/// Rust-only facade spelling mapped to the public `std::string` ABI.
+pub type LoggingString = std::string;
+
+/// Opaque rustc-only model mapped to libc's `FILE` in generated C++.
+#[repr(C)]
+pub struct CFile {
+    _opaque: [u8; 0],
+}
+
+/// Rust-side model of `std::source_location` used by Debugging tests.
+pub struct SourceLocation {
+    file: &'static str,
+    line: u32,
+}
+
+impl SourceLocation {
+    pub fn current() -> SourceLocation {
+        SourceLocation {
+            file: file!(),
+            line: line!(),
+        }
+    }
+
+    pub fn file_name(&self) -> &'static str {
+        self.file
+    }
+
+    pub fn line(&self) -> u32 {
+        self.line
+    }
+}
 
 /// Rust-only spelling for exact `std::vector<T>` ABI mappings.
 pub type StdVector<T> = Vec<T>;
+
+pub mod panic {
+    pub fn do_panic(message: crate::std::string) -> ! {
+        ::std::panic::panic_any(message.to_rust_string())
+    }
+}
 
 /// Rust-side model of helpers supplied by the C++ rusty runtime.
 pub mod sys {

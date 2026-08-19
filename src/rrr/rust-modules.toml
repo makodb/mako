@@ -75,3 +75,7 @@ source = "src/rrr/src/utils.rs"
 [[module]]
 cpp_module = "rrr.frame_codec"
 source = "src/rrr/src/frame_codec.rs"
+
+[[module]]
+cpp_module = "rrr.debugging"
+source = "src/rrr/src/debugging.rs"

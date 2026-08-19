@@ -100,8 +100,8 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 21 hand-authored module units, "
-            "SCAFFOLD=1507 noncomment lines (716 DSL fences + 791 other)",
+            "source boundary: 20 hand-authored module units, "
+            "SCAFFOLD=1460 noncomment lines (698 DSL fences + 762 other)",
             output,
         )
         # Re-measured 2026-08-18 when the rusty-cpp pin moved
@@ -123,7 +123,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         # `Box<Shim> -> Box<Base>` upcast in the reactor and channel code.
         # Adopting that model is its own migration.
         self.assertIn(
-            "payload census:   dsl=8942  generated=12414 "
+            "payload census:   dsl=8874  generated=12336 "
             "nonblank/non-// lines",
             output,
         )
@@ -131,7 +131,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "12 compatibility headers, SCAFFOLD=146 noncomment lines", output
         )
         self.assertIn(
-            "terminal C:      3 ABI headers/87 lines; 7 kernels/410 lines",
+            "terminal C:      3 ABI headers/87 lines; 7 kernels/413 lines",
             output,
         )
 
@@ -213,6 +213,19 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 },
                             ],
                         },
+                        {
+                            "name": "rrr.debugging",
+                            "includes": [
+                                {
+                                    "path": "stdio.h",
+                                    "form": "angle",
+                                },
+                                {
+                                    "path": "source_location",
+                                    "form": "angle",
+                                },
+                            ],
+                        },
                     ],
                 },
             )
@@ -223,8 +236,14 @@ class CheckedInCanaryTests(unittest.TestCase):
                 tomllib.load(stream),
                 {
                     "LegacyAddrInfo": "addrinfo",
+                    "LegacyCChar": "std::string::value_type",
                     "LegacyStdString": "std::string",
-                    "rusty": {"StdVector": "std::vector"},
+                    "rusty": {
+                        "StdVector": "std::vector",
+                        "LoggingString": "std::string",
+                        "CFile": "FILE",
+                        "SourceLocation": "std::source_location",
+                    },
                 },
             )
         with (REPOSITORY / "src/rrr/cpp-module-index.toml").open("rb") as stream:
@@ -367,6 +386,12 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "frame_codec",
                     "src/rrr/src/frame_codec.rs",
                     "src/rrr/src/frame_codec.rs",
+                ),
+                (
+                    "rrr.debugging",
+                    "debugging",
+                    "src/rrr/src/debugging.rs",
+                    "src/rrr/src/debugging.rs",
                 ),
             ],
         )
@@ -543,7 +568,9 @@ class CheckedInCanaryTests(unittest.TestCase):
         # `#[cfg_attr(any(), cpp_import_namespace(rrr))]` marker lines were
         # deleted when these sources adopted factory-only construction and the
         # crate-level `flat_import_namespace`. No logic line moved.
-        self.assertEqual(canonical_lines, 2563)
+        # 2563 -> 2677: +114, the canonical `src/rrr/src/debugging.rs` grafted
+        # from srpc when `base/debugging.cpp` was retired.
+        self.assertEqual(canonical_lines, 2677)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -610,6 +637,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 "src/rrr/src/load_balancer.rs",
                 "src/rrr/src/utils.rs",
                 "src/rrr/src/frame_codec.rs",
+                "src/rrr/src/debugging.rs",
             },
         )
 
@@ -631,6 +659,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         basetypes_path = rust_root / "basetypes.rs"
         utils_path = rust_root / "utils.rs"
         frame_codec_path = rust_root / "frame_codec.rs"
+        debugging_path = rust_root / "debugging.rs"
         for path in sorted(rust_root.rglob("*.rs")):
             if path in {
                 rand_path,
@@ -638,6 +667,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                 basetypes_path,
                 utils_path,
                 frame_codec_path,
+                debugging_path,
             }:
                 continue
             self.assertIsNone(
@@ -751,6 +781,23 @@ class CheckedInCanaryTests(unittest.TestCase):
         ):
             self.assertIn(symbol, frame_codec)
 
+        # Audited C boundary: `rrr.debugging` reaches libc's execinfo pair,
+        # `stderr`, and `fputs` through one `unsafe extern "C"` block in
+        # `debugging_ffi`, then walks the C-owned `char**` byte by byte.
+        debugging = debugging_path.read_text(encoding="utf-8")
+        self.assertEqual(debugging.count("#[allow(unsafe_code)]"), 4)
+        self.assertEqual(debugging.count('unsafe extern "C"'), 1)
+        self.assertEqual(debugging.count("pub unsafe fn"), 1)
+        self.assertEqual(debugging.count("unsafe {"), 8)
+        self.assertEqual(debugging.count("/// # Safety"), 1)
+        for symbol in (
+            "srpc_stderr",
+            "srpc_backtrace_capture",
+            "srpc_backtrace_free",
+            "fputs",
+        ):
+            self.assertIn(symbol, debugging)
+
         facade_manifest = REPOSITORY / "src/rrr/rusty-rustc/Cargo.toml"
         with facade_manifest.open("rb") as stream:
             facade_cargo = tomllib.load(stream)
@@ -765,11 +812,72 @@ class CheckedInCanaryTests(unittest.TestCase):
             "_level: i32, _line: i32, _file: *const i8, _message: &String) {}"
         )
         self.assertEqual(facade.count(logging_boundary), 1)
-        self.assertEqual(facade.count("/// # Safety"), 1)
+        # 1 -> 2 `/// # Safety`: the canonical `rrr.debugging` graft needs the
+        # `rusty::LoggingString` (= facade `std::string`) byte model, whose
+        # `data()` carries the second one. The facade's unsafe surface stays a
+        # closed set: log_line plus exactly five `UnsafeCell` reads inside that
+        # one byte model, each listed below and each removed before the
+        # remainder is re-scanned.
+        self.assertEqual(facade.count("/// # Safety"), 2)
+        string_model_boundaries = (
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                        fn append_to(self, output: &mut Vec<u8>) {
+                            // SAFETY: this facade is used only by single-threaded direct-rustc
+                            // logging tests; generated C++ maps the type to `std::string`.
+                            output.extend_from_slice(unsafe { (&*self.0.get()).as_slice() });
+                        }
+                """
+            ).strip(),
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                    fn string_bytes(value: &string) -> &[u8] {
+                        // SAFETY: identical to `size`/`to_rust_string` above -- direct-rustc
+                        // facade callers do not mutate this model concurrently.
+                        unsafe { (&*value.0.get()).as_slice() }
+                    }
+                """
+            ).strip(),
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                        pub unsafe fn data(&self) -> *mut i8 {
+                            unsafe { (&mut *self.0.get()).as_mut_ptr().cast() }
+                        }
+                """
+            ).strip(),
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                        pub fn size(&self) -> usize {
+                            // SAFETY: direct-rustc facade callers do not access this model
+                            // concurrently; the generated C++ uses `std::string` instead.
+                            unsafe { (&*self.0.get()).len() }
+                        }
+                """
+            ).strip(),
+            textwrap.dedent(
+                """\
+                #[allow(unsafe_code)]
+                        pub fn to_rust_string(&self) -> ::std::string::String {
+                            // SAFETY: direct-rustc facade callers do not mutate this model
+                            // concurrently; production maps the type to `std::string`.
+                            let bytes = unsafe { (&*self.0.get()).clone() };
+                            ::std::string::String::from_utf8(bytes).expect("valid UTF-8 in std::string facade")
+                        }
+                """
+            ).strip(),
+        )
         facade_remainder = facade.replace(logging_boundary, "", 1)
+        for section in string_model_boundaries:
+            self.assertEqual(facade.count(section), 1)
+            facade_remainder = facade_remainder.replace(section, "", 1)
         self.assertIsNone(
             unsafe_syntax.search(facade_remainder),
-            "rustc-only rusty facade gained unsafe Rust outside log_line",
+            "rustc-only rusty facade gained unsafe Rust outside log_line "
+            "and the std::string byte model",
         )
         self.assertIn("inner: Option<Box<F>>", facade)
         self.assertIn("runtime_layout_padding: [u8; 32]", facade)
@@ -2213,6 +2321,7 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.load_balancer"),
             mock.Mock(cpp_module="rrr.utils"),
             mock.Mock(cpp_module="rrr.frame_codec"),
+            mock.Mock(cpp_module="rrr.debugging"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

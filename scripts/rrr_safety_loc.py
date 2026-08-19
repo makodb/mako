@@ -22,7 +22,7 @@ WORKTREE = SCRIPT_DIR.parent
 
 # Files in RRR_BORROW_SRC (per src/rrr/CMakeLists.txt).
 FILES = [
-    "src/rrr/base/debugging.cpp", "src/rrr/base/logging.cpp",
+    "src/rrr/base/logging.cpp",
     "src/rrr/base/misc.cpp", "src/rrr/base/threading.cpp",
     "src/rrr/misc/any_message.cpp",
     "src/rrr/misc/serializable.cpp", "src/rrr/misc/serializable_envelope.cpp",

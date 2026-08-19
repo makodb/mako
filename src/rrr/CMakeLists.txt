@@ -18,7 +18,6 @@ file(GLOB RRR_BENCH_SRC
 # an inline carrier. Keep this census complete so none is also compiled through
 # the regular source glob.
 set(RRR_INLINE_MODULE_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
@@ -41,7 +40,7 @@ set(RRR_INLINE_MODULE_SRC
 )
 list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_INLINE_MODULE_SRC})
 
-# These seventeen modules are owned by canonical Rust sources. rusty-cpp generates
+# These eighteen modules are owned by canonical Rust sources. rusty-cpp generates
 # their complete C++ module interfaces; no hand-authored carrier remains.
 set(RRR_GOAL0_CANONICAL_MODULES
     basetypes
@@ -61,15 +60,16 @@ set(RRR_GOAL0_CANONICAL_MODULES
     load_balancer
     utils
     frame_codec
+    debugging
 )
 set(_RRR_GOAL0_UNIQUE_MODULES ${RRR_GOAL0_CANONICAL_MODULES})
 list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_MODULES)
 list(LENGTH RRR_GOAL0_CANONICAL_MODULES _RRR_GOAL0_MODULE_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_MODULES _RRR_GOAL0_UNIQUE_MODULE_COUNT)
-if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 17 OR
-   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 17)
+if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 18 OR
+   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 18)
     message(FATAL_ERROR
-        "Goal-0 canonical module inventory must contain seventeen unique names")
+        "Goal-0 canonical module inventory must contain eighteen unique names")
 endif()
 
 set(RRR_GOAL0_CRATE_CPP_DIR
@@ -102,6 +102,7 @@ set(RRR_GOAL0_RETIRED_CARRIER_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
 )
 foreach(_RRR_GOAL0_CANONICAL_SOURCE IN LISTS RRR_GOAL0_CANONICAL_RUST_SRC)
     if(NOT EXISTS "${_RRR_GOAL0_CANONICAL_SOURCE}")
@@ -129,16 +130,16 @@ list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC)
 list(LENGTH _RRR_GOAL0_UNIQUE_CANONICAL_RUST_SRC
     _RRR_GOAL0_UNIQUE_CANONICAL_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC _RRR_GOAL0_UNIQUE_CHILD_COUNT)
-if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 17 OR
-   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 17 OR
-   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 17 OR
-   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 17)
+if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 18 OR
+   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 18 OR
+   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 18 OR
+   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 18)
     message(FATAL_ERROR
-        "Goal-0 crate production must own exactly seventeen unique "
+        "Goal-0 crate production must own exactly eighteen unique "
         "Rust/generated providers")
 endif()
 
-# Production always combines the remaining inline carriers with the seventeen
+# Production always combines the remaining inline carriers with the eighteen
 # generated providers. The partial crate root remains compile-only until all
 # 37 named modules are canonical Rust.
 set(RRR_MODULE_SRC ${RRR_INLINE_MODULE_SRC} ${RRR_GOAL0_CRATE_CHILD_SRC})
@@ -151,10 +152,10 @@ set_source_files_properties(${RRR_GOAL0_CRATE_CHILD_SRC}
 
 list(LENGTH RRR_INLINE_MODULE_SRC _RRR_INLINE_MODULE_COUNT)
 list(LENGTH RRR_MODULE_SRC _RRR_PRODUCTION_MODULE_COUNT)
-if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 20 OR
+if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 19 OR
    NOT _RRR_PRODUCTION_MODULE_COUNT EQUAL 37)
     message(FATAL_ERROR
-        "Goal-0 production must contain 20 inline and seventeen generated modules")
+        "Goal-0 production must contain 19 inline and eighteen generated modules")
 endif()
 list(FIND RRR_MODULE_SRC "${RRR_GOAL0_CRATE_ROOT_SRC}" _RRR_GOAL0_ROOT_INDEX)
 if(NOT _RRR_GOAL0_ROOT_INDEX EQUAL -1)
@@ -277,11 +278,10 @@ if(NOT TARGET rrr)
     target_sources(rrr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
 
     # Remaining hand-authored RRR C++ module units for borrow checking. The
-    # seventeen canonical Rust modules are checked by rustc and are not duplicated
+    # eighteen canonical Rust modules are checked by rustc and are not duplicated
     # here as generated C++ providers.
     set(RRR_BORROW_SRC
         # base/
-        ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp

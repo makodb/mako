@@ -1,5 +1,9 @@
 LegacyAddrInfo = "addrinfo"
+LegacyCChar = "std::string::value_type"
 LegacyStdString = "std::string"
 
 [rusty]
 StdVector = "std::vector"
+LoggingString = "std::string"
+CFile = "FILE"
+SourceLocation = "std::source_location"
