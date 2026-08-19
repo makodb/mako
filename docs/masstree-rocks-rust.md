@@ -195,6 +195,8 @@ the next person will otherwise try them again:
 | RocksDB: stop `increase_parallelism` / `optimize_level_style_compaction` | noise |
 | lazy watermark recompute under backlog (matches the C++) | noise |
 | 8× larger ticket log (do producers block on backpressure?) | noise |
+| `arc-swap` value slot (lock-free CAS) | **1.7× worse** — reverted |
+| `spin::Mutex` value slot | no change — reverted |
 
 Every one after the first is kept anyway — each is defensible on its own
 terms, and several protect against pathologies this benchmark does not
@@ -202,15 +204,42 @@ reach — but none of them is a throughput fix, and saying otherwise would
 be inventing a result.
 
 **After the entry table there is no single remaining dominant cause.**
-The gap is the sum of many 10–30 ns differences, nearly all of them
-`std::sync::Mutex` where the C++ has a lock-free CAS or a spinlock.
+The gap is the sum of many 10–30 ns differences.
 
-The one structural lever left is dropping the zero-dependency rule:
-`arc-swap` for the value slot and a lock-free queue for the ticket log
-would remove the entry lock (+22 ns) and the writer batch/log (+23 ns),
-which the ablation puts at about 16% of the write path — meaningful, not
-transformative, and paid for with `unsafe` in a dependency. That is a
-decision to take deliberately, not a tuning knob.
+### "Why not a CAS or a spinlock? Rust has those."
+
+It does, and both were tried. Neither helps, and the reasons are worth
+writing down because the question is the obvious one to ask.
+
+| approach | result |
+|---|---|
+| `arc-swap` for the value slot (lock-free atomic `Arc`) | **1.7× WORSE on writes** (0.63 → 0.36), reads unchanged |
+| `spin::Mutex` for the value slot | **identical** (0.62 vs 0.63) |
+
+**The CAS is not the hard part; reclaiming what the CAS displaced is.**
+Swapping an `Arc` means storing a raw pointer, and a reader that loads it
+and is preempted before bumping the refcount can have the last reference
+dropped underneath it. C++ does not have to solve this — its CAS runs
+*inside a masstree RCU epoch it is already holding*, so reclamation is
+free. This crate cannot see those epochs by design: the `mtx_*` ABI hides
+RCU from callers, which is what lets the cache do IO and run arbitrary
+Rust between tree operations.
+
+`arc-swap` supplies the missing guarantee with a safe API — so it was
+never an `unsafe` question — but it is built for **read-mostly** slots,
+and its write path has to synchronise with the reader-protection slots on
+every publish. This cache's value slot is write-heavy: every `put`
+replaces it. Hence the regression.
+
+The spinlock is the more direct comparison, since a spinlock is exactly
+what the C++ uses for its writer batch. It measured as no change, which
+the ablation already predicted: `std::sync::Mutex` on Linux spins before
+it parks, the critical section is two atomics either way, and the entry
+lock is only +22 ns of a 286 ns write.
+
+So the remaining gap is not one lock in the wrong shape. It is spread
+thin, and the largest single item — the announce floor and version draw,
+at +106 ns — is paid identically by both implementations.
 
 ### What was ruled out, each by measurement rather than argument:
 
