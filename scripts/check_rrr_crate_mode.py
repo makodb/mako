@@ -8836,6 +8836,57 @@ def executable(root: Path, value: str, description: str) -> Path:
     return resolved
 
 
+def resolve_archiver(root: Path, nm: Path) -> Path:
+    """Locate llvm-ar for the same toolchain as `nm`.
+
+    The gate needs llvm-ar to bundle the non-crate support objects into an
+    archive (see compile_support_inputs). This used to hard-code a bare
+    `llvm-ar` beside nm, which only holds when the toolchain is installed
+    unsuffixed -- a Homebrew keg, say. apt.llvm.org, which the CI image uses,
+    installs VERSION-SUFFIXED binaries and only runs update-alternatives for
+    clang/clang++/llvm-config, so beside `/usr/bin/llvm-nm-22` there is an
+    `llvm-ar-22` and no plain `llvm-ar` at all -- the gate died with
+    "ar is unavailable: /usr/bin/llvm-ar".
+
+    So mirror nm's NAME SHAPE, not just its directory: substitute
+    `llvm-nm` -> `llvm-ar` while preserving whatever version suffix nm carries
+    (`llvm-nm-22` -> `llvm-ar-22`). The version is never hard-coded; it is read
+    off nm.
+
+    Candidates are tried most-toolchain-specific first, so a matching llvm-ar
+    always wins over a stray one:
+
+      1. `<nm dir>/llvm-ar<suffix>`   -- same directory AND same version
+      2. `<nm dir>/llvm-ar`           -- same directory, unversioned layout
+      3. `llvm-ar<suffix>` on PATH
+      4. `llvm-ar` on PATH
+      5. `ar` on PATH                -- last resort, only if no llvm-ar exists
+
+    If nothing is found this raises, naming every path it tried, rather than
+    proceeding without an archiver.
+    """
+    suffix = nm.name[len("llvm-nm") :] if nm.name.startswith("llvm-nm") else ""
+    # Preserve order, drop duplicates (suffix == "" collapses 1 into 2).
+    beside_names = list(dict.fromkeys(["llvm-ar" + suffix, "llvm-ar"]))
+    path_names = list(dict.fromkeys(["llvm-ar" + suffix, "llvm-ar", "ar"]))
+
+    attempted = []
+    for name in beside_names:
+        candidate = nm.parent / name
+        attempted.append(str(candidate))
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return Path(os.path.abspath(candidate))
+    for name in path_names:
+        attempted.append(f"{name} (PATH)")
+        found = shutil.which(name)
+        if found is not None:
+            return Path(os.path.abspath(found))
+    raise GateError(
+        f"ar is unavailable for the toolchain of {nm}: tried "
+        + ", ".join(attempted)
+    )
+
+
 def run(command: list[str], cwd: Path) -> str:
     completed = subprocess.run(
         command,
@@ -13564,14 +13615,10 @@ def check(args: argparse.Namespace) -> None:
     modules = load_owned_modules(root)
     clang = executable(root, args.clang, "Clang C++ compiler")
     nm = executable(root, args.nm, "nm")
-    # llvm-ar sits beside the configured nm; the gate needs it to bundle
-    # the non-crate support objects as an archive (see
+    # llvm-ar comes from the same toolchain as the configured nm; the gate
+    # needs it to bundle the non-crate support objects as an archive (see
     # compile_support_inputs).
-    archiver = executable(
-        root,
-        str(Path(nm).parent / "llvm-ar"),
-        "ar",
-    )
+    archiver = resolve_archiver(root, Path(nm))
     production_raw = getattr(args, "production_library", None)
     production = (
         resolve_file(root, production_raw, "production library")

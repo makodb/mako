@@ -2300,6 +2300,95 @@ class ForeignOwnedCheckoutTests(unittest.TestCase):
                             )
 
 
+class ArchiverResolutionTests(unittest.TestCase):
+    """The gate needs llvm-ar from the same toolchain as its nm. It used to
+    demand a bare `llvm-ar` beside nm, which the CI image does not have:
+    apt.llvm.org installs version-suffixed binaries and only aliases
+    clang/clang++/llvm-config, so `/usr/bin/llvm-nm-22` sits next to
+    `llvm-ar-22` and the gate died with "ar is unavailable: /usr/bin/llvm-ar".
+    """
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="rrr-archiver-")
+        self.addCleanup(temporary.cleanup)
+        self.bindir = Path(temporary.name)
+
+    def tool(self, name: str) -> Path:
+        path = self.bindir / name
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def test_suffixed_toolchain_resolves_the_matching_archiver(self) -> None:
+        """The exact CI layout: llvm-nm-22 beside llvm-ar-22, no plain
+        llvm-ar. This is the case that was failing."""
+        nm = self.tool("llvm-nm-22")
+        expected = self.tool("llvm-ar-22")
+        self.assertFalse((self.bindir / "llvm-ar").exists())
+        self.assertEqual(GATE.resolve_archiver(REPOSITORY, nm), expected)
+
+    def test_unsuffixed_toolchain_still_resolves(self) -> None:
+        """The Homebrew-style layout that used to be the only one handled."""
+        nm = self.tool("llvm-nm")
+        expected = self.tool("llvm-ar")
+        self.assertEqual(GATE.resolve_archiver(REPOSITORY, nm), expected)
+
+    def test_suffixed_nm_prefers_the_suffixed_archiver(self) -> None:
+        """With both spellings present, stay within one toolchain version."""
+        nm = self.tool("llvm-nm-22")
+        self.tool("llvm-ar")
+        expected = self.tool("llvm-ar-22")
+        self.assertEqual(GATE.resolve_archiver(REPOSITORY, nm), expected)
+
+    def test_version_suffix_is_read_off_nm_never_hard_coded(self) -> None:
+        """Any suffix, not just -22, so a toolchain bump needs no edit here."""
+        for suffix in ("-19", "-22", "-30", "-22.1"):
+            with self.subTest(suffix=suffix):
+                bindir = self.bindir / f"tc{suffix}"
+                bindir.mkdir()
+                made = {}
+                for stem in (f"llvm-nm{suffix}", f"llvm-ar{suffix}"):
+                    path = bindir / stem
+                    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    path.chmod(0o755)
+                    made[stem] = path
+                self.assertEqual(
+                    GATE.resolve_archiver(REPOSITORY, made[f"llvm-nm{suffix}"]),
+                    made[f"llvm-ar{suffix}"],
+                )
+
+    def test_falls_back_to_path_when_nothing_sits_beside_nm(self) -> None:
+        nm = self.tool("llvm-nm-22")
+        (self.bindir / "llvm-ar-22").unlink(missing_ok=True)
+        elsewhere = self.bindir / "onpath"
+        elsewhere.mkdir()
+        expected = elsewhere / "llvm-ar-22"
+        expected.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        expected.chmod(0o755)
+        with mock.patch.object(
+            GATE.shutil,
+            "which",
+            side_effect=lambda name: (
+                str(expected) if name == "llvm-ar-22" else None
+            ),
+        ):
+            self.assertEqual(GATE.resolve_archiver(REPOSITORY, nm), expected)
+
+    def test_missing_archiver_fails_closed_naming_every_path_tried(self) -> None:
+        """No archiver anywhere must stay a hard error, and the diagnostic has
+        to say what it looked for -- that is the whole value of the message."""
+        nm = self.tool("llvm-nm-22")
+        with mock.patch.object(GATE.shutil, "which", return_value=None):
+            with self.assertRaises(GATE.GateError) as caught:
+                GATE.resolve_archiver(REPOSITORY, nm)
+        message = str(caught.exception)
+        self.assertIn("ar is unavailable", message)
+        self.assertIn(str(self.bindir / "llvm-ar-22"), message)
+        self.assertIn(str(self.bindir / "llvm-ar"), message)
+        for name in ("llvm-ar-22 (PATH)", "llvm-ar (PATH)", "ar (PATH)"):
+            self.assertIn(name, message)
+
+
 class CrateModeGateTests(unittest.TestCase):
     def test_frame_codec_io_preamble_is_rejected_from_siblings(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-gate-preamble-") as temporary:
@@ -2660,8 +2749,14 @@ class CrateModeGateTests(unittest.TestCase):
                     Path("/transpiler"),
                     Path("/clang++"),
                     Path("/nm"),
-                    Path("/ar"),
                 ],
+            ), mock.patch.object(
+                # The archiver is no longer resolved through `executable`: it
+                # is derived from nm's own spelling so a version-suffixed
+                # toolchain (the CI image) finds llvm-ar-NN.
+                GATE,
+                "resolve_archiver",
+                return_value=Path("/ar"),
             ), mock.patch.object(
                 GATE, "verify_pinned_toolchain"
             ), mock.patch.object(
@@ -2714,8 +2809,14 @@ class CrateModeGateTests(unittest.TestCase):
                     Path("/transpiler"),
                     Path("/clang++"),
                     Path("/nm"),
-                    Path("/ar"),
                 ],
+            ), mock.patch.object(
+                # The archiver is no longer resolved through `executable`: it
+                # is derived from nm's own spelling so a version-suffixed
+                # toolchain (the CI image) finds llvm-ar-NN.
+                GATE,
+                "resolve_archiver",
+                return_value=Path("/ar"),
             ), mock.patch.object(
                 GATE, "verify_pinned_toolchain"
             ), mock.patch.object(
