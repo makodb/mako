@@ -28,6 +28,15 @@
 //!                    ticket log.
 //!         alloc      `entry` without the per-write allocations, to
 //!                    separate allocator cost from lock cost.
+//!
+//!   Read-side ablations, which answer a different question: how much of
+//!   a read is the Arc refcount traffic that epoch reclamation would
+//!   remove?
+//!
+//!         rd_index   masstree lookup only
+//!         rd_entry   + entry table + `Entry::load` (the Arc clone/drop
+//!                    and the slot lock)
+//!         rd_full    + copying the value out, i.e. `Store::get`
 //!         floors     `entry` plus the announce floor and the version
 //!                    draw, but no ticket. Splits the durability
 //!                    bookkeeping into its memory-ordering half and its
@@ -69,6 +78,8 @@ enum Work {
         Arc<mrx_core::Val>,
     ),
     Atomic(Arc<AtomicU64>),
+    /// (index, table, how far to go: 0 = lookup, 1 = +load, 2 = +copy)
+    Read(Arc<MasstreeIndex>, Arc<EntryTable>, u8),
     Floors(
         Arc<MasstreeIndex>,
         Arc<EntryTable>,
@@ -89,6 +100,33 @@ impl Work {
             Work::Index(idx, next) => {
                 let w = next.fetch_add(1, Ordering::Relaxed) + 1;
                 idx.get_or_insert(key, w);
+            }
+            Work::Read(idx, table, depth) => {
+                let Some(word) = idx.get(key) else { return };
+                if *depth == 0 {
+                    return;
+                }
+                let e = table.get((word - 1) as u32);
+                // `load` is the Arc clone + drop and the slot lock: the
+                // exact pair that epoch reclamation would replace with a
+                // plain atomic load.
+                if *depth == 3 {
+                    // The refcount-free shape: hold the slot, copy out.
+                    e.with_value(|v| {
+                        if let Some(b) = v.bytes() {
+                            std::hint::black_box(b.to_vec());
+                        }
+                    });
+                    return;
+                }
+                let cur = e.load_touched();
+                if *depth == 1 {
+                    return;
+                }
+                // And the copy every caller pays regardless of mechanism.
+                if let Some(b) = cur.bytes() {
+                    std::hint::black_box(b.to_vec());
+                }
             }
             Work::Floors(idx, table, ver, slot) => {
                 let word = match idx.get(key) {
@@ -203,6 +241,28 @@ fn main() {
             ),
             None,
         ),
+        m if m.starts_with("rd_") => {
+            // Populate first, then measure reads over the same key set.
+            let idx = Arc::new(MasstreeIndex::new().expect("masstree"));
+            let table = Arc::new(EntryTable::new());
+            let seen = std::collections::HashSet::<&[u8]>::from_iter(
+                keys.iter().map(|k| k.as_slice()),
+            );
+            for k in seen {
+                let i = table.push(mrx_core::Entry::new(
+                    k,
+                    Val::resident(1, vec![b'v'; 100]),
+                ));
+                idx.get_or_insert(k, u64::from(i) + 1);
+            }
+            let depth = match m {
+                "rd_index" => 0,
+                "rd_entry" => 1,
+                "rd_value" => 3,
+                _ => 2,
+            };
+            (Work::Read(idx, table, depth), None)
+        }
         "floors" => (
             Work::Floors(
                 Arc::new(MasstreeIndex::new().expect("masstree")),

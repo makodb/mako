@@ -267,6 +267,24 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             return Ok(None);
         };
         let e = self.entry((word - 1) as u32);
+        // Fast path: copy the bytes out while holding the slot, without
+        // cloning the Arc. The refcount traffic that avoids is about half
+        // the cost of a resident read on a hot key — see
+        // [`Entry::with_value`].
+        //
+        // `Evicted` falls through, because the fill path genuinely needs
+        // the record's identity: it compares against the EXACT record it
+        // read, after going to the durable store, and a version number
+        // would not distinguish a record that was replaced, flushed and
+        // re-evicted in between.
+        let fast = e.with_value(|v| match &v.state {
+            ValState::Tombstone => Some(None),
+            ValState::Resident(b) => Some(Some(b.clone())),
+            ValState::Evicted => None,
+        });
+        if let Some(r) = fast {
+            return Ok(r);
+        }
         let cur = e.load_touched();
         match &cur.state {
             ValState::Tombstone => Ok(None),
@@ -485,14 +503,25 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         let mut pairs = Vec::with_capacity(n);
         for (k, word) in raw.into_iter().skip(usize::from(skip_first)) {
             let e = self.entry((word - 1) as u32);
-            let cur = e.load_touched();
-            let bytes = match &cur.state {
-                ValState::Tombstone => continue,
-                ValState::Resident(b) => b.clone(),
-                ValState::Evicted => match self.fill(e, &cur)? {
-                    Some(b) => b,
-                    None => continue,
-                },
+            let fast = e.with_value(|v| match &v.state {
+                ValState::Tombstone => Some(None),
+                ValState::Resident(b) => Some(Some(b.clone())),
+                ValState::Evicted => None,
+            });
+            let bytes = match fast {
+                Some(None) => continue,
+                Some(Some(b)) => b,
+                None => {
+                    let cur = e.load();
+                    match &cur.state {
+                        ValState::Tombstone => continue,
+                        ValState::Resident(b) => b.clone(),
+                        ValState::Evicted => match self.fill(e, &cur)? {
+                            Some(b) => b,
+                            None => continue,
+                        },
+                    }
+                }
             };
             pairs.push((k, bytes));
         }

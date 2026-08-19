@@ -135,9 +135,9 @@ unbounded capacity; median of three runs:
 
 | phase | masstree (ceiling) | cache C++ | cache Rust | RocksDB | rust/cpp |
 |---|---|---|---|---|---|
-| write (ack) | 7.5M/s | 3.8M/s | 2.3M/s | 0.27M/s | **0.60** |
-| read (hot set) | 41M/s | 24M/s | 21M/s | 3.0M/s | **0.83** |
-| read (uniform) | 18M/s | 13M/s | 11M/s | 2.5M/s | **0.87** |
+| write (ack) | 7.7M/s | 3.9M/s | 2.4M/s | 0.29M/s | **0.61** |
+| read (hot set) | 44M/s | 24M/s | 27M/s | 3.2M/s | **1.13** |
+| read (uniform) | 20M/s | 15M/s | 13M/s | 2.7M/s | **0.90** |
 
 Single-threaded the two are at parity (0.90–1.08×). Against the baseline
 the cache actually exists to beat — plain RocksDB — the Rust version is
@@ -180,7 +180,7 @@ escaped both the cache and crash suites entirely — see the
 
 ### What was tried, and what it bought
 
-One change moved the number. Nine did not, and they are listed because
+Two changes moved the number. Ten did not, and they are listed because
 the next person will otherwise try them again:
 
 | change | result |
@@ -197,6 +197,7 @@ the next person will otherwise try them again:
 | 8× larger ticket log (do producers block on backpressure?) | noise |
 | `arc-swap` value slot (lock-free CAS) | **1.7× worse** — reverted |
 | `spin::Mutex` value slot | no change — reverted |
+| **read fast path: copy under the lock, no `Arc` clone** | **reads 0.83 → 1.13** |
 
 Every one after the first is kept anyway — each is defensible on its own
 terms, and several protect against pathologies this benchmark does not
@@ -205,6 +206,53 @@ be inventing a result.
 
 **After the entry table there is no single remaining dominant cause.**
 The gap is the sum of many 10–30 ns differences.
+
+### Reads: what the C++ actually does, and why it was faster
+
+This one came from asking what the C++ read path *is*, rather than what
+it uses:
+
+```cpp
+const auto region = mrx_rcu_region();          // enter epoch
+mrx_val *cur = e->val.load(acquire);           // plain atomic load
+mrx_val_copy_out(cur, value, max_bytes_read);  // memcpy into the caller's string
+return;                                         // leave epoch
+```
+
+**The caller never receives the pointer.** The bytes are copied out
+inside the region and the region ends on return. RCU protects exactly one
+window — between the load and the end of the memcpy — during which a
+writer may CAS a new record in and `mrx_val_free_rcu` the old one, a
+deferred free that cannot reclaim until every thread then inside a region
+has left.
+
+The consequence is the useful part: **because C++ never hands out a
+reference, it never needs a refcount.** The Rust `get` was cloning the
+`Arc` and *then* copying the bytes — an atomic increment and decrement on
+the record's refcount, landing on the same cache line for every reader of
+a hot key.
+
+[`Entry::with_value`] does what the C++ does: hold the record still, copy
+the bytes, let go. Same shape, different protection mechanism (the slot
+lock instead of an epoch), and no refcount either way. Measured in
+isolation on a 2000-key hot set with 16 threads:
+
+| read mechanism | ops/s | ns/op |
+|---|---|---|
+| `Arc` clone + copy | 18.7M | 53.6 |
+| lock + copy, no refcount | **23.2M** | **43.0** |
+
++24% in isolation, and hot reads in the full benchmark went from
+0.83 to **1.13** — the Rust cache is now faster than the C++ one there.
+The evicted case still takes the `Arc`, because the fill path needs the
+record's *identity* for the ABA guard, and a version number would not
+distinguish a record that was replaced, flushed and re-evicted in
+between.
+
+Worth noting what this did **not** require: no epochs, no `unsafe`, no
+dependency, and nothing moved behind the C ABI. The win was in noticing
+that the reference was never needed, not in reproducing the mechanism
+that makes references cheap.
 
 ### "Why not a CAS or a spinlock? Rust has those."
 
