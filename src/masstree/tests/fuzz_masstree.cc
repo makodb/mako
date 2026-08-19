@@ -150,7 +150,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   Cb cb;
   const std::string empty_key;
   varkey lo = vk(empty_key);
-  tree.search_range_call(lo, nullptr, cb);
+  tree.search_range_call_unbounded(lo, cb);
 
   if (cb.seen.len() != oracle.len()) Diverge("scan.size");
   size_t i = 0;

@@ -33,6 +33,7 @@
 #include <gtest/gtest.h>
 
 #include <rusty/option.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -191,7 +192,7 @@ void RunLinearizabilitySession(uint64_t seed) {
   std::mt19937_64 master_rng(seed);
   TestTree tree;
 
-  std::atomic<uint64_t> clock{0};
+  rusty::sync::atomic::Atomic<uint64_t> clock{0};
   constexpr int kThreads = 4;
   constexpr int kOpsPerThread = 30;
   constexpr int kKeyspace = 8;
@@ -220,7 +221,7 @@ void RunLinearizabilitySession(uint64_t seed) {
         op.value = any_val(rng);
       }
 
-      op.begin_seq = clock.fetch_add(1, std::memory_order_seq_cst);
+      op.begin_seq = clock.fetch_add(1, rusty::sync::atomic::Ordering::SeqCst);
 
       switch (op.kind) {
         case OpKind::Insert:
@@ -240,7 +241,7 @@ void RunLinearizabilitySession(uint64_t seed) {
         }
       }
 
-      op.end_seq = clock.fetch_add(1, std::memory_order_seq_cst);
+      op.end_seq = clock.fetch_add(1, rusty::sync::atomic::Ordering::SeqCst);
       log.push(op);
     }
   };

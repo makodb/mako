@@ -439,14 +439,14 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcBulkDecideResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        PREPARE = 0x28cac838,
-        ACCEPT = 0x395402ea,
-        DECIDE = 0x61c1b31b,
-        FORWARDTOLEARNERSERVER = 0x23d22c8f,
-        BULKACCEPT = 0x49e3f066,
-        SYNCLOG = 0x3d383ee2,
-        SYNCCOMMIT = 0x5a88ff14,
-        BULKDECIDE = 0x2962ac46,
+        PREPARE = 0x6f478870,
+        ACCEPT = 0x20887b5b,
+        DECIDE = 0x6ccaea21,
+        FORWARDTOLEARNERSERVER = 0x4aedcaeb,
+        BULKACCEPT = 0x18c1d1f9,
+        SYNCLOG = 0x510c8e22,
+        SYNCCOMMIT = 0x311f9a47,
+        BULKDECIDE = 0x11c83c3a,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -1188,9 +1188,9 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDecideResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        PREPARE = 0x1cd5a51d,
-        SUGGEST = 0x546cab84,
-        DECIDE = 0x1330c8e9,
+        PREPARE = 0x45bf2806,
+        SUGGEST = 0x1bf4f598,
+        DECIDE = 0x3d0b2835,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -1689,12 +1689,12 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDecideResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        HEARTBEAT = 0x1ffd8104,
-        VOTE = 0x35b086b2,
-        VOTE2FPGA = 0x10993a23,
-        APPENDENTRIES = 0x64f75070,
-        APPENDENTRIES2 = 0x436875b5,
-        DECIDE = 0x1914cb49,
+        HEARTBEAT = 0x58d23c6d,
+        VOTE = 0x66092887,
+        VOTE2FPGA = 0x50690d2a,
+        APPENDENTRIES = 0x50d44f21,
+        APPENDENTRIES2 = 0x56e3d907,
+        DECIDE = 0x6b7e272c,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -2579,16 +2579,16 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRemoveServerResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        VOTE = 0x6b030337,
-        VOTEDURABLE = 0x21efdc41,
-        APPENDENTRIES = 0x4877f237,
-        EMPTYAPPENDENTRIES = 0x50eacfc5,
-        APPENDENTRIESDURABLE = 0x4db1db80,
-        TIMEOUTNOW = 0x3a21c3b9,
-        NOTIFYRESTART = 0x35f36f0e,
-        INSTALLSNAPSHOT = 0x4d6837a3,
-        ADDSERVER = 0x55fc2b84,
-        REMOVESERVER = 0x4b9e0e02,
+        VOTE = 0x2802b911,
+        VOTEDURABLE = 0x538739a2,
+        APPENDENTRIES = 0x3935326f,
+        EMPTYAPPENDENTRIES = 0x6e089268,
+        APPENDENTRIESDURABLE = 0x1e8b9027,
+        TIMEOUTNOW = 0x59a6a5f9,
+        NOTIFYRESTART = 0x3df03452,
+        INSTALLSNAPSHOT = 0x5276442f,
+        ADDSERVER = 0x10e10b20,
+        REMOVESERVER = 0x68ea2fc0,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -3667,10 +3667,10 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcCommitResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        PREPARE = 0x4711b584,
-        FASTACCEPT = 0x635652ef,
-        ACCEPT = 0x2c5c801e,
-        COMMIT = 0x3ea97041,
+        PREPARE = 0x1466367d,
+        FASTACCEPT = 0x35412f49,
+        ACCEPT = 0x6f2ec138,
+        COMMIT = 0x4424ed87,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -5396,51 +5396,51 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcJetpackFinishRecoveryResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        MSGSTRING = 0x4075aa22,
-        MSGMARSHALL = 0x6602ec53,
-        REELECT = 0x2bcd0e52,
-        RULESPECULATIVEEXECUTE = 0x15bd499e,
-        DISPATCH = 0x63b62f50,
-        PREPARE = 0x5ef5071b,
-        COMMIT = 0x1b3bdc7d,
-        ABORT = 0x4d934a81,
-        EARLYABORT = 0x4a31f986,
-        UPGRADEEPOCH = 0x63d5a0e1,
-        TRUNCATEEPOCH = 0x2c8a9f38,
-        ISLEADER = 0x4b803f58,
-        ISFPGALEADER = 0x3a601bea,
-        SIMPLECMD = 0x40161224,
-        FAILOVERPAUSESOCKETOUT = 0x566789af,
-        FAILOVERRESUMESOCKETOUT = 0x61f54de5,
-        RPC_NULL = 0x6315d00c,
-        TAPIRACCEPT = 0x6afb4b6c,
-        TAPIRFASTACCEPT = 0x3942ae5a,
-        TAPIRDECIDE = 0x53c67705,
-        RCCDISPATCH = 0x55256154,
-        RCCFINISH = 0x644485ff,
-        RCCINQUIRE = 0x48ef4f11,
-        RCCDISPATCHRO = 0x6e560eac,
-        RCCINQUIREVALIDATION = 0x1d5efebb,
-        RCCNOTIFYGLOBALVALIDATION = 0x53ba2d5e,
-        JANUSDISPATCH = 0x38e84031,
-        RCCCOMMIT = 0x4e47267b,
-        JANUSCOMMIT = 0x50247bc3,
-        JANUSCOMMITWOGRAPH = 0x54f9701f,
-        JANUSINQUIRE = 0x124208f5,
-        RCCPREACCEPT = 0x21d3c639,
-        JANUSPREACCEPT = 0x3285a28a,
-        JANUSPREACCEPTWOGRAPH = 0x28bf34a9,
-        RCCACCEPT = 0x6fc6c306,
-        JANUSACCEPT = 0x3bef0a0d,
-        JETPACKBEGINRECOVERY = 0x50c73c47,
-        JETPACKPULLIDSET = 0x6f8bb3e1,
-        JETPACKPULLCMD = 0x32301751,
-        JETPACKRECORDCMD = 0x467071a3,
-        JETPACKPREPARE = 0x6042d72f,
-        JETPACKACCEPT = 0x4d33cd93,
-        JETPACKCOMMIT = 0x38189bf8,
-        JETPACKPULLRECSETINS = 0x184ee0eb,
-        JETPACKFINISHRECOVERY = 0x545f28a6,
+        MSGSTRING = 0x4a0cf032,
+        MSGMARSHALL = 0x33c1ef95,
+        REELECT = 0x639b0997,
+        RULESPECULATIVEEXECUTE = 0x60252cdf,
+        DISPATCH = 0x311764bb,
+        PREPARE = 0x19f4e55c,
+        COMMIT = 0x361be89a,
+        ABORT = 0x52eb7e7c,
+        EARLYABORT = 0x47a5ec14,
+        UPGRADEEPOCH = 0x3f0efd61,
+        TRUNCATEEPOCH = 0x21d5a5b0,
+        ISLEADER = 0x4f8be919,
+        ISFPGALEADER = 0x66967793,
+        SIMPLECMD = 0x1c1489ae,
+        FAILOVERPAUSESOCKETOUT = 0x1162c930,
+        FAILOVERRESUMESOCKETOUT = 0x416a2316,
+        RPC_NULL = 0x325cf4b3,
+        TAPIRACCEPT = 0x48f7c4a0,
+        TAPIRFASTACCEPT = 0x4b1b5504,
+        TAPIRDECIDE = 0x54b52f2f,
+        RCCDISPATCH = 0x3ecb0b7a,
+        RCCFINISH = 0x4806fa6e,
+        RCCINQUIRE = 0x173d8a4b,
+        RCCDISPATCHRO = 0x30a7a20b,
+        RCCINQUIREVALIDATION = 0x23811931,
+        RCCNOTIFYGLOBALVALIDATION = 0x5a26c6c9,
+        JANUSDISPATCH = 0x26b90ef6,
+        RCCCOMMIT = 0x52649607,
+        JANUSCOMMIT = 0x1304baec,
+        JANUSCOMMITWOGRAPH = 0x1595b13b,
+        JANUSINQUIRE = 0x6bd6655c,
+        RCCPREACCEPT = 0x1f008145,
+        JANUSPREACCEPT = 0x2c3201fa,
+        JANUSPREACCEPTWOGRAPH = 0x6f182fb2,
+        RCCACCEPT = 0x1f1006de,
+        JANUSACCEPT = 0x5af562ad,
+        JETPACKBEGINRECOVERY = 0x2727a509,
+        JETPACKPULLIDSET = 0x29e9a93a,
+        JETPACKPULLCMD = 0x5be91353,
+        JETPACKRECORDCMD = 0x5b21253d,
+        JETPACKPREPARE = 0x1113585a,
+        JETPACKACCEPT = 0x1c7501ac,
+        JETPACKCOMMIT = 0x5385c794,
+        JETPACKPULLRECSETINS = 0x4e7dda78,
+        JETPACKFINISHRECOVERY = 0x5112ee82,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -8962,10 +8962,10 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcServerHeartBeatResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        SERVER_SHUTDOWN = 0x4eb35edf,
-        SERVER_READY = 0x4965bedc,
-        SERVER_HEART_BEAT_WITH_DATA = 0x3caefb9f,
-        SERVER_HEART_BEAT = 0x12271c0c,
+        SERVER_SHUTDOWN = 0x10af16ed,
+        SERVER_READY = 0x4780016f,
+        SERVER_HEART_BEAT_WITH_DATA = 0x46c9fd6b,
+        SERVER_HEART_BEAT = 0x174c78b8,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -9432,14 +9432,14 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDispatchTxnResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        CLIENT_GET_TXN_NAMES = 0x256199c1,
-        CLIENT_SHUTDOWN = 0x3af88122,
-        CLIENT_FORCE_STOP = 0x33192842,
-        CLIENT_RESPONSE = 0x3b2760e0,
-        CLIENT_READY = 0x4e8bdefc,
-        CLIENT_READY_BLOCK = 0x2239cb27,
-        CLIENT_START = 0x3e9876d4,
-        DISPATCHTXN = 0x22e75ded,
+        CLIENT_GET_TXN_NAMES = 0x5f6fbcfc,
+        CLIENT_SHUTDOWN = 0x137d1d5e,
+        CLIENT_FORCE_STOP = 0x56a23a61,
+        CLIENT_RESPONSE = 0x181b3a96,
+        CLIENT_READY = 0x3ff8b812,
+        CLIENT_READY_BLOCK = 0x545f5490,
+        CLIENT_START = 0x22d1ab87,
+        DISPATCHTXN = 0x48796373,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -10046,7 +10046,7 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcReadConfigKeyResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        READCONFIGKEY = 0x5a5886fc,
+        READCONFIGKEY = 0x584cdad1,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)

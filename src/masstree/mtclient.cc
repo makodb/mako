@@ -760,7 +760,7 @@ void KVConn::hard_check(int tryhard) {
             delete[] x;
         oldinbuf_.clear();
     } else if (inbufpos_ == inbufsz) {
-        oldinbuf_.push_back(inbuf_);
+        oldinbuf_.push(inbuf_);
         inbuf_ = new char[inbufsz];
         inbufpos_ = inbuflen_ = 0;
     }
@@ -1634,7 +1634,6 @@ volt2b(struct child *c)
   printf("%s\n", result.unparse().c_str());
 }
 
-using std::vector;
 using std::string;
 
 void

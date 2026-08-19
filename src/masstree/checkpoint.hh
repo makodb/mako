@@ -51,7 +51,7 @@ void ckstate::insert(T& table, msgpack::parser& par, threadinfo& ti) {
     par >> key >> ts;
     row_type* row = row_type::checkpoint_read(par, ts, ti);
 
-    typename T::cursor_type lp(table, key);
+    auto lp = T::cursor_type::from_mutable_str(table, key);
     bool found = lp.find_insert(ti);
     masstree_invariant(!found); (void) found;
     ti.observe_phantoms(lp.node());

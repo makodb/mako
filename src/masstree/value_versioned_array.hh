@@ -24,6 +24,7 @@
 #include "timestamp.hh"
 #include "value_array.hh"
 #include <rusty/ptr.hpp>
+#include <rusty/vec.hpp>
 using lcdf::Str;
 
 // @unsafe - Optimistic row versioning with fence-based synchronization
@@ -96,7 +97,7 @@ class value_versioned_array {
     void deallocate_rcu(threadinfo &ti);
 
     void snapshot(rusty::MutPtr<value_versioned_array>& storage,
-                  const std::vector<index_type>& f, threadinfo& ti) const;
+                  const rusty::Vec<index_type>& f, threadinfo& ti) const;
 
     rusty::MutPtr<value_versioned_array> update(const Json* first, const Json* last,
                                                 kvtimestamp_t ts, threadinfo& ti,
@@ -143,7 +144,7 @@ struct query_helper<value_versioned_array> {
     }
     // @unsafe { Calls value_versioned_array::snapshot which uses memcpy }
     inline rusty::Ptr<value_versioned_array> snapshot(rusty::Ptr<value_versioned_array> row,
-                                                      const std::vector<value_versioned_array::index_type>& f,
+                                                      const rusty::Vec<value_versioned_array::index_type>& f,
                                                       threadinfo& ti) {
         row->snapshot(snapshot_, f, ti);
         return snapshot_;
@@ -168,9 +169,9 @@ inline int value_versioned_array::ncol() const {
 // @unsafe { Accesses cols_ array via raw pointer dereference }
 inline Str value_versioned_array::col(int i) const {
     if (unsigned(i) < unsigned(ncol_) && cols_[i])
-        return Str(cols_[i]->s, cols_[i]->len);
+        return Str::from_chars(cols_[i]->s, cols_[i]->len);
     else
-        return Str();
+        return Str::empty();
 }
 
 // @safe - pure computation

@@ -96,7 +96,7 @@ struct PropertyState {
     Cb cb;
     const std::string empty;
     varkey lo = vk(empty);
-    tree.search_range_call(lo, nullptr, cb);
+    tree.search_range_call_unbounded(lo, cb);
 
     ASSERT_EQ(cb.seen.len(), oracle.len())
         << "seed=" << std::hex << seed << " step=" << std::dec << step;
@@ -188,7 +188,7 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
       CollectAll cb;
       varkey lo = vk(lo_s);
       varkey hi = vk(hi_s);
-      s.tree.search_range_call(lo, &hi, cb);
+      s.tree.search_range_call_bounded(lo, hi, cb);
 
       rusty::Vec<std::pair<std::string, uint64_t>> expected;
       {

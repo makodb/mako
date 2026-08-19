@@ -62,7 +62,24 @@ using namespace std;
 #include <cstdlib>
 #include <cassert>
 #include <cstring>
-#include <cinttypes>
+#include <stdint.h>
+#ifndef PRId32
+#define PRId32 "d"
+#endif
+#ifndef PRId64
+#if defined(__APPLE__) && defined(__MACH__)
+#define PRId64 "lld"
+#else
+#define PRId64 "ld"
+#endif
+#endif
+#ifndef PRIx64
+#if defined(__APPLE__) && defined(__MACH__)
+#define PRIx64 "llx"
+#else
+#define PRIx64 "lx"
+#endif
+#endif
 
 // google library
 

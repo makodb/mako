@@ -7,7 +7,7 @@
 #include "json.hh"
 #include "small_vector.hh"
 #include "straccum.hh"
-#include <vector>
+#include <rusty/vec.hpp>
 namespace msgpack {
 using lcdf::Json;
 using lcdf::Str;
@@ -384,13 +384,22 @@ class streaming_parser {
 class parser {
   public:
     explicit inline parser(const char* s)
-        : s_(reinterpret_cast<const unsigned char*>(s)), str_() {
+        : parser(from_const_char(s)) {
     }
     explicit inline parser(const unsigned char* s)
-        : s_(s), str_() {
+        : parser(from_const_unsigned_char(s)) {
     }
     explicit inline parser(const String& str)
-        : s_(reinterpret_cast<const uint8_t*>(str.begin())), str_(str) {
+        : parser(from_string(str)) {
+    }
+    static parser from_const_char(const char* s) {
+        return parser(reinterpret_cast<const uint8_t*>(s), String());
+    }
+    static parser from_const_unsigned_char(const unsigned char* s) {
+        return parser(reinterpret_cast<const uint8_t*>(s), String());
+    }
+    static parser from_string(const String& str) {
+        return parser(reinterpret_cast<const uint8_t*>(str.begin()), str);
     }
     inline const char* position() const {
         return reinterpret_cast<const char*>(s_);
@@ -468,7 +477,7 @@ class parser {
         }
         return *this;
     }
-    template <typename T> parser& operator>>(::std::vector<T>& x);
+    template <typename T> parser& operator>>(rusty::Vec<T>& x);
     inline parser& operator>>(Json& j);
 
     inline parser& skip_primitives(unsigned n) {
@@ -508,6 +517,10 @@ class parser {
         return *this;
     }
   private:
+    explicit inline parser(const uint8_t* s, String str)
+        : s_(s), str_(str) {
+    }
+
     const uint8_t* s_;
     String str_;
     template <typename T> void hard_read_int(T& x);
@@ -607,7 +620,7 @@ inline T& unparse_wide(T& s, const X& x) {
 }
 
 template <typename T>
-parser& parser::operator>>(::std::vector<T>& x) {
+parser& parser::operator>>(rusty::Vec<T>& x) {
     uint32_t sz;
     if ((uint32_t) *s_ - format::ffixarray < format::nfixarray) {
         sz = *s_ - format::ffixarray;
@@ -621,7 +634,7 @@ parser& parser::operator>>(::std::vector<T>& x) {
         s_ += 5;
     }
     for (; sz != 0; --sz) {
-        x.push_back(T());
+        x.push(T());
         parse(x.back());
     }
     return *this;

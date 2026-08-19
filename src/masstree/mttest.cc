@@ -115,10 +115,11 @@ namespace mttest_unsafe_file {} // Sets file_default to Unsafe for borrow checke
 #include "kvrow.hh"
 #include "kvio.hh"
 #include "clp.h"
+#include <rusty/vec.hpp>
 
 import std;
 
-static std::vector<int> cores;
+static rusty::Vec<int> cores;
 volatile bool timeout[2] = {false, false};
 double duration[2] = {10, 0};
 // Do not start timer until asked
@@ -149,7 +150,7 @@ struct mttest_numainfo {
     long long free;
     long long size;
 };
-std::vector<mttest_numainfo> numa;
+rusty::Vec<mttest_numainfo> numa;
 #endif
 
 volatile bool recovering = false; // so don't add log entries, and free old value immediately
@@ -265,9 +266,9 @@ struct kvtest_client {
     //void many_get_check(int nk, long ikey[], long iexpected[]);
 
     void scan_sync(const Str &firstkey, int n,
-                   std::vector<Str> &keys, std::vector<Str> &values);
+                   rusty::Vec<Str> &keys, rusty::Vec<Str> &values);
     void rscan_sync(const Str &firstkey, int n,
-                    std::vector<Str> &keys, std::vector<Str> &values);
+                    rusty::Vec<Str> &keys, rusty::Vec<Str> &values);
 
     void put(const Str &key, const Str &value);
     void put(const char *key, const char *value) {
@@ -356,7 +357,7 @@ struct kvtest_client {
     kvout *kvo_;
 
   private:
-    void output_scan(const Json& req, std::vector<Str>& keys, std::vector<Str>& values) const;
+    void output_scan(const Json& req, rusty::Vec<Str>& keys, rusty::Vec<Str>& values) const;
 };
 
 static volatile int kvtest_printing;
@@ -417,7 +418,7 @@ void kvtest_client<T>::get_col_check(const Str &key, int col,
 
 /*template <typename T>
 void kvtest_client<T>::many_get_check(int nk, long ikey[], long iexpected[]) {
-    std::vector<quick_istr> ka(2*nk, quick_istr());
+    rusty::Vec<quick_istr> ka(2*nk, quick_istr());
     for(int i = 0; i < nk; i++){
       ka[i].set(ikey[i]);
       ka[i+nk].set(iexpected[i]);
@@ -436,8 +437,8 @@ void kvtest_client<T>::many_get_check(int nk, long ikey[], long iexpected[]) {
 
 template <typename T>
 void kvtest_client<T>::scan_sync(const Str &firstkey, int n,
-                                 std::vector<Str> &keys,
-                                 std::vector<Str> &values) {
+                                 rusty::Vec<Str> &keys,
+                                 rusty::Vec<Str> &values) {
     req_ = Json::array(0, 0, firstkey, n);
     q_[0].run_scan(table_->table(), req_, *ti_);
     output_scan(req_, keys, values);
@@ -445,21 +446,21 @@ void kvtest_client<T>::scan_sync(const Str &firstkey, int n,
 
 template <typename T>
 void kvtest_client<T>::rscan_sync(const Str &firstkey, int n,
-                                  std::vector<Str> &keys,
-                                  std::vector<Str> &values) {
+                                  rusty::Vec<Str> &keys,
+                                  rusty::Vec<Str> &values) {
     req_ = Json::array(0, 0, firstkey, n);
     q_[0].run_rscan(table_->table(), req_, *ti_);
     output_scan(req_, keys, values);
 }
 
 template <typename T>
-void kvtest_client<T>::output_scan(const Json& req, std::vector<Str>& keys,
-                                   std::vector<Str>& values) const {
+void kvtest_client<T>::output_scan(const Json& req, rusty::Vec<Str>& keys,
+                                   rusty::Vec<Str>& values) const {
     keys.clear();
     values.clear();
     for (int i = 2; i != req.size(); i += 2) {
-        keys.push_back(req[i].as_s());
-        values.push_back(req[i + 1].as_s());
+        keys.push(req[i].as_s());
+        values.push(req[i + 1].as_s());
     }
 }
 
@@ -711,9 +712,9 @@ static struct {
 
 
 void runtest(int nthreads, void* (*func)(void*)) {
-    std::vector<threadinfo*> tis;
+    rusty::Vec<threadinfo*> tis;
     for (int i = 0; i < nthreads; ++i)
-        tis.push_back(threadinfo::make(threadinfo::TI_PROCESS, i));
+        tis.push(threadinfo::make(threadinfo::TI_PROCESS, i));
     signal(SIGALRM, test_timeout);
     for (int i = 0; i < nthreads; ++i) {
         int r = pthread_create(&tis[i]->pthread(), 0, func, tis[i]);
@@ -816,7 +817,7 @@ on the same tree.\n");
 static void run_one_test(int trial, const char *treetype, const char *test,
                          const int *collectorpipe, int nruns);
 enum { normtype_none, normtype_pertest, normtype_firsttest };
-static void print_gnuplot(FILE *f, const char * const *types_begin, const char * const *types_end, std::vector<String> &comparisons, int normalizetype);
+static void print_gnuplot(FILE *f, const char * const *types_begin, const char * const *types_end, rusty::Vec<String> &comparisons, int normalizetype);
 static void update_labnotebook(String notebook);
 
 #if HAVE_EXECINFO_H
@@ -853,8 +854,8 @@ main(int argc, char *argv[])
     threadcounter_names[(int) tc_leaf_lock] = "leaf_lock_retry";
 
     int ret, ntrials = 1, normtype = normtype_pertest, firstcore = -1, corestride = 1;
-    std::vector<const char *> tests, treetypes;
-    std::vector<String> comparisons;
+    rusty::Vec<const char *> tests, treetypes;
+    rusty::Vec<String> comparisons;
     const char *notebook = "notebook-mttest.json";
     tcpthreads = udpthreads = sysconf(_SC_NPROCESSORS_ONLN);
 
@@ -900,10 +901,10 @@ main(int argc, char *argv[])
             test_limit = uint64_t(clp->val.d);
             break;
         case opt_test:
-            tests.push_back(clp->vstr);
+            tests.push(clp->vstr);
             break;
         case opt_test_name:
-            tests.push_back(clp->option->long_name + 5);
+            tests.push(clp->option->long_name + 5);
             break;
         case opt_normalize:
             normtype = clp->negated ? normtype_none : clp->val.i;
@@ -929,7 +930,7 @@ main(int argc, char *argv[])
                 notebook = "notebook-mttest.json";
             break;
         case opt_compare:
-            comparisons.push_back(clp->vstr);
+            comparisons.push(clp->vstr);
             break;
         case opt_no_run:
             ntrials = 0;
@@ -953,7 +954,7 @@ main(int argc, char *argv[])
                   firstcore = pj1.to_i(), corestride = pj2.to_i();
               else if (aj) {
                   for (int i = 0; i < aj.size(); ++i)
-                      cores.push_back(aj[i].to_i());
+                      cores.push(aj[i].to_i());
               } else {
                   Clp_OptionError(clp, "bad %<%O%>, expected %<CORE1%>, %<CORE1+STRIDE%>, or %<CORE1,CORE2,...%>");
                   exit(EXIT_FAILURE);
@@ -979,7 +980,7 @@ main(int argc, char *argv[])
                 bool is_treetype = false;
                 for (int i = 0; i < (int) arraysize(test_thread_map) && !is_treetype; ++i)
                     is_treetype = (strcmp(test_thread_map[i].treetype, clp->vstr) == 0);
-                (is_treetype ? treetypes.push_back(clp->vstr) : tests.push_back(clp->vstr));
+                (is_treetype ? treetypes.push(clp->vstr) : tests.push(clp->vstr));
             }
             break;
         default:
@@ -992,7 +993,7 @@ Try 'mttest --help' for options.\n");
     if (firstcore < 0)
         firstcore = cores.size() ? cores.back() + 1 : 0;
     for (; (int) cores.size() < udpthreads; firstcore += corestride)
-        cores.push_back(firstcore);
+        cores.push(firstcore);
 
 #if PMC_ENABLED
     always_assert(pinthreads && "Using performance counter requires pinning threads to cores!");
@@ -1000,7 +1001,7 @@ Try 'mttest --help' for options.\n");
 #if MEMSTATS && HAVE_NUMA_H && HAVE_LIBNUMA
     if (numa_available() != -1)
         for (int i = 0; i <= numa_max_node(); i++) {
-            numa.push_back(mttest_numainfo());
+            numa.push(mttest_numainfo());
             numa.back().size = numa_node_size64(i, &numa.back().free);
         }
 #endif
@@ -1010,10 +1011,10 @@ Try 'mttest --help' for options.\n");
         signal(*it, abortable_signal_handler);
 #endif
 
-    if (treetypes.empty())
-        treetypes.push_back("m");
-    if (tests.empty())
-        tests.push_back("rw1");
+    if (treetypes.is_empty())
+        treetypes.push("m");
+    if (tests.is_empty())
+        tests.push("rw1");
 
     pthread_mutex_init(&subtest_mutex, 0);
     pthread_cond_init(&subtest_cond, 0);
@@ -1031,15 +1032,15 @@ Try 'mttest --help' for options.\n");
 
     // run tests
     int nruns = ntrials * (int) tests.size() * (int) treetypes.size();
-    std::vector<int> runlist(nruns, 0);
+    rusty::Vec<int> runlist = rusty::Vec<int>::with_capacity(nruns);
     for (int i = 0; i < nruns; ++i)
-        runlist[i] = i;
+        runlist.push(i);
 
     for (int counter = 0; counter < nruns; ++counter) {
         int x = random() % runlist.size();
         int run = runlist[x];
         runlist[x] = runlist.back();
-        runlist.pop_back();
+        runlist.pop();
 
         int trial = run % ntrials;
         run /= ntrials;
@@ -1069,7 +1070,7 @@ Try 'mttest --help' for options.\n");
 
     // print Gnuplot
     if (ntrials != 0)
-        comparisons.insert(comparisons.begin(), "");
+        comparisons.insert(0, "");
     if (!isatty(STDOUT_FILENO))
         print_gnuplot(stdout, kvstats_name, kvstats_name + arraysize(kvstats_name),
                       comparisons, normtype);
@@ -1110,13 +1111,26 @@ static void run_one_test(int trial, const char *treetype, const char *test,
     }
 }
 
-static double level(const std::vector<double> &v, double frac) {
+static double level(const rusty::Vec<double> &v, double frac) {
     frac *= v.size() - 1;
     int base = (int) frac;
     if (base == frac)
         return v[base];
     else
         return v[base] * (1 - (frac - base)) + v[base + 1] * (frac - base);
+}
+
+template <typename T>
+static void vec_unique_sorted(rusty::Vec<T>& v) {
+    if (!v.size())
+        return;
+
+    size_t out = 1;
+    for (size_t in = 1; in < v.size(); ++in)
+        if (!(v[in] == v[out - 1]))
+            v[out++] = v[in];
+    while (v.size() > out)
+        v.pop();
 }
 
 static String experiment_test_table_trial(const String &key) {
@@ -1156,8 +1170,8 @@ struct gnuplot_info {
     String last_test;
     int normalizetype;
 
-    std::vector<lcdf::StringAccum> candlesticks;
-    std::vector<lcdf::StringAccum> medians;
+    rusty::Vec<lcdf::StringAccum> candlesticks;
+    rusty::Vec<lcdf::StringAccum> medians;
     lcdf::StringAccum xtics;
 
     gnuplot_info(int nt)
@@ -1181,30 +1195,30 @@ void gnuplot_info::one(const String &xname, int ti, const String &datatype_name)
     }
     double beginpos = pos, firstpos = pos + nextdelta;
 
-    std::vector<int> trials;
+    rusty::Vec<int> trials;
     for (Json::object_iterator it = experiment_stats.obegin();
          it != experiment_stats.oend(); ++it) {
         String key = it.key();
         if (experiment_run_test_table(key) == xname)
-            trials.push_back(strtol(key.c_str() + xname.length() + 1, 0, 0));
+            trials.push(strtol(key.c_str() + xname.length() + 1, 0, 0));
     }
     std::sort(trials.begin(), trials.end());
 
-    for (std::vector<int>::iterator tit = trials.begin();
+    for (int* tit = trials.begin();
          tit != trials.end(); ++tit) {
         Json &this_trial = experiment_stats[xname + "/" + String(*tit)];
-        std::vector<double> values;
+        rusty::Vec<double> values;
         for (int jn = 0; jn < this_trial.size(); ++jn)
             if (this_trial[jn].get(datatype_name).is_number())
-                values.push_back(this_trial[jn].get(datatype_name).to_d());
+                values.push(this_trial[jn].get(datatype_name).to_d());
         if (values.size()) {
             pos += nextdelta;
             std::sort(values.begin(), values.end());
             if (normalization < 0)
                 normalization = normalizetype == normtype_none ? 1 : level(values, 0.5);
-            if (int(candlesticks.size()) <= ti) {
-                candlesticks.resize(ti + 1);
-                medians.resize(ti + 1);
+            while (int(candlesticks.size()) <= ti) {
+                candlesticks.push(lcdf::StringAccum());
+                medians.push(lcdf::StringAccum());
             }
             candlesticks[ti] << pos << " " << level(values, 0)
                              << " " << level(values, 0.25)
@@ -1224,7 +1238,9 @@ void gnuplot_info::one(const String &xname, int ti, const String &datatype_name)
 }
 
 void gnuplot_info::print(FILE *f, const char * const *types_begin) {
-    std::vector<int> linetypes(medians.size(), 0);
+    rusty::Vec<int> linetypes = rusty::Vec<int>::with_capacity(medians.size());
+    for (int i = 0; i < int(medians.size()); ++i)
+        linetypes.push(0);
     int next_linetype = 1;
     for (int i = 0; i < int(medians.size()); ++i)
         if (medians[i])
@@ -1266,8 +1282,8 @@ void gnuplot_info::print(FILE *f, const char * const *types_begin) {
 }
 
 static void print_gnuplot(FILE *f, const char * const *types_begin, const char * const *types_end,
-                          std::vector<String> &comparisons, int normalizetype) {
-    for (std::vector<String>::iterator cit = comparisons.begin();
+                          rusty::Vec<String> &comparisons, int normalizetype) {
+    for (String* cit = comparisons.begin();
          cit != comparisons.end(); ++cit) {
         if (!*cit)
             *cit = "[^x]*";
@@ -1277,31 +1293,29 @@ static void print_gnuplot(FILE *f, const char * const *types_begin, const char *
             *cit = String("x*") + *cit + String("*");
     }
 
-    std::vector<String> all_versions, all_experiments;
+    rusty::Vec<String> all_versions, all_experiments;
     for (Json::object_iterator it = experiment_stats.obegin();
          it != experiment_stats.oend(); ++it)
-        for (std::vector<String>::const_iterator cit = comparisons.begin();
+        for (const String* cit = comparisons.begin();
              cit != comparisons.end(); ++cit)
             if (it.key().glob_match(*cit)) {
-                all_experiments.push_back(experiment_run_test_table(it.key()));
-                all_versions.push_back(experiment_test_table(it.key()));
+                all_experiments.push(experiment_run_test_table(it.key()));
+                all_versions.push(experiment_test_table(it.key()));
                 break;
             }
     std::sort(all_experiments.begin(), all_experiments.end());
-    all_experiments.erase(std::unique(all_experiments.begin(), all_experiments.end()),
-                          all_experiments.end());
+    vec_unique_sorted(all_experiments);
     std::sort(all_versions.begin(), all_versions.end());
-    all_versions.erase(std::unique(all_versions.begin(), all_versions.end()),
-                       all_versions.end());
+    vec_unique_sorted(all_versions);
 
     int ntypes = (int) (types_end - types_begin);
     gnuplot_info gpinfo(normalizetype);
 
     for (int ti = 0; ti < ntypes; ++ti) {
         double typepos = gpinfo.pos;
-        for (std::vector<String>::iterator vit = all_versions.begin();
+        for (String* vit = all_versions.begin();
              vit != all_versions.end(); ++vit) {
-            for (std::vector<String>::iterator xit = all_experiments.begin();
+            for (String* xit = all_experiments.begin();
                  xit != all_experiments.end(); ++xit)
                 if (experiment_test_table(*xit) == *vit)
                     gpinfo.one(*xit, ti, types_begin[ti]);

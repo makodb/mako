@@ -86,7 +86,7 @@ inline bool oi_mt_get(concurrent_btree *t, lcdf::Str key, std::string &value,
 inline bool oi_mt_put(concurrent_btree *t, lcdf::Str key,
                       const std::string &value) {
   concurrent_btree::value_type old = nullptr;
-  bool inserted = t->insert(oi_mt_key(key), oi_mt_make_val(value), &old);
+  bool inserted = t->insert_with_old(oi_mt_key(key), oi_mt_make_val(value), old);
   if (!inserted && old != nullptr) oi_mt_free_val_rcu(old);
   return inserted;
 }
@@ -103,7 +103,7 @@ inline bool oi_mt_insert(concurrent_btree *t, lcdf::Str key,
 // @unsafe - RCU-defers the removed value (caller holds region)
 inline bool oi_mt_remove(concurrent_btree *t, lcdf::Str key) {
   concurrent_btree::value_type old = nullptr;
-  if (!t->remove(oi_mt_key(key), &old)) return false;
+  if (!t->remove_with_old(oi_mt_key(key), old)) return false;
   if (old != nullptr) oi_mt_free_val_rcu(old);
   return true;
 }
@@ -129,9 +129,9 @@ inline void oi_mt_scan(concurrent_btree *t, const std::string &start_key,
   varkey lower = oi_mt_key(lcdf::Str(start_key));
   if (end_key != nullptr) {
     varkey upper = oi_mt_key(lcdf::Str(*end_key));
-    t->search_range(lower, &upper, c);
+    t->search_range_bounded(lower, upper, c);
   } else {
-    t->search_range(lower, nullptr, c);
+    t->search_range_unbounded(lower, c);
   }
 }
 
@@ -142,9 +142,9 @@ inline void oi_mt_rscan(concurrent_btree *t, const std::string &start_key,
   varkey upper = oi_mt_key(lcdf::Str(start_key));
   if (end_key != nullptr) {
     varkey lower = oi_mt_key(lcdf::Str(*end_key));
-    t->rsearch_range(upper, &lower, c);
+    t->rsearch_range_bounded(upper, lower, c);
   } else {
-    t->rsearch_range(upper, nullptr, c);
+    t->rsearch_range_unbounded(upper, c);
   }
 }
 
