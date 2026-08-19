@@ -1143,30 +1143,18 @@ class CheckedInCanaryTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('canonical_input="src/rrr/src/frame_codec.rs"', workflow)
+        # These used to pin the `<name>_generated_path=` / `..._before=$(stat
+        # -c %Y ...)` / `test ... -gt ...` machinery of the determinism step.
+        # That machinery is gone: it asserted outputs were REWRITTEN, which the
+        # emitters deliberately do not do for byte-identical content, so it
+        # failed CI on a correct build. The coverage it was protecting -- that
+        # the facade and sidecar sub-checks still watch utils and frame_codec --
+        # is now pinned directly on the disposition assertions that replaced it.
         self.assertIn(
-            'utils_generated_path="${GOAL0_BUILD_DIR}/src/rrr/'
-            'goal0-crate-cpp/rrr.utils.cppm"',
-            workflow,
+            "scripts/ci/assert_crate_codegen.sh", workflow
         )
-        self.assertIn(
-            'facade_utils_before="$(stat -c %Y "${utils_generated_path}")"',
-            workflow,
-        )
-        self.assertIn(
-            'test "$(stat -c %Y "${utils_generated_path}")" -gt '
-            '"${facade_utils_before}"',
-            workflow,
-        )
-        self.assertIn(
-            'frame_codec_generated_path="${GOAL0_BUILD_DIR}/src/rrr/'
-            'goal0-crate-cpp/rrr.frame_codec.cppm"',
-            workflow,
-        )
-        self.assertIn(
-            'facade_frame_codec_before="$(stat -c %Y '
-            '"${frame_codec_generated_path}")"',
-            workflow,
-        )
+        for generated in ("rrr.utils.cppm", "rrr.frame_codec.cppm"):
+            self.assertIn(generated, workflow)
         # This used to pin `test_rpc_tcp_channel`, one of the nineteen
         # `src/rrr/tests/` binaries the Goal-0 job named. 4a06ef0e stopped
         # building that corpus (it is srpc's, and runs in srpc's CI), so the
@@ -2298,6 +2286,111 @@ class ForeignOwnedCheckoutTests(unittest.TestCase):
                             module.verify_pinned_toolchain(
                                 REPOSITORY, Path("/nonexistent-transpiler")
                             )
+
+
+class CrateCodegenAssertionTests(unittest.TestCase):
+    """`scripts/ci/assert_crate_codegen.sh` replaced the CI step's output-mtime
+    assertions, which were measuring "the file was rewritten" -- only true by
+    accident, since the emitters skip writing byte-identical output. These
+    tests pin the replacement, and in particular that it is not weaker: it must
+    still FAIL when regeneration genuinely does not happen.
+    """
+
+    SCRIPT = REPOSITORY / "scripts/ci/assert_crate_codegen.sh"
+
+    # A faithful sample of what `cmake --build --target rrr_goal0_crate_codegen`
+    # prints when it really regenerates (trimmed to the lines that matter).
+    REGENERATED = """\
+[1/4] Building rusty-cpp-transpiler...
+   Compiling rusty-cpp-transpiler v0.1.0 (/w/third-party/rusty-cpp/transpiler)
+    Finished `release` profile [optimized] target(s) in 6m 23s
+[2/4] Fingerprinting the Goal-0 rusty-cpp emitter
+[3/4] Generating Goal-0 rrr crate C++ child modules
+Transpiling crate 'rrr' (38 source files)
+  src/frame_codec.rs → rrr.frame_codec.cppm (module: rrr.frame_codec)
+  src/utils.rs → rrr.utils.cppm (module: rrr.utils)
+  src/request_queue.rs → rrr.request_queue.cppm (module: rrr.request_queue)
+  src/load_balancer.rs → rrr.load_balancer.cppm (module: rrr.load_balancer)
+Done: 38 files transpiled, 0 errors
+"""
+
+    # What a no-op build prints: ninja has nothing to do, so the codegen edge
+    # never fires and none of the generator's own output appears.
+    NOT_REGENERATED = "ninja: no work to do.\n"
+
+    def assert_script(self, stdin: str, *generated: str):
+        return subprocess.run(
+            [str(self.SCRIPT), *generated],
+            input=stdin,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def test_passes_when_regeneration_reached_every_named_output(self) -> None:
+        completed = self.assert_script(
+            self.REGENERATED,
+            "rrr.request_queue.cppm",
+            "rrr.load_balancer.cppm",
+            "rrr.utils.cppm",
+            "rrr.frame_codec.cppm",
+        )
+        self.assertEqual(
+            completed.returncode, 0, msg=completed.stdout + completed.stderr
+        )
+
+    def test_fails_when_regeneration_did_not_happen(self) -> None:
+        """THE point of the gate. If this ever passes, stale generated C++
+        ships silently and the whole step is decoration."""
+        completed = self.assert_script(
+            self.NOT_REGENERATED, "rrr.frame_codec.cppm"
+        )
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("crate generation did not re-run", completed.stderr)
+
+    def test_fails_when_the_generator_never_reached_the_output(self) -> None:
+        """Regeneration ran but skipped the file we care about -- exactly the
+        drift an mtime check cannot distinguish from success."""
+        completed = self.assert_script(
+            self.REGENERATED, "rrr.serializable.cppm"
+        )
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn(
+            "generator did not report rrr.serializable.cppm", completed.stderr
+        )
+
+    def test_fails_when_generation_did_not_finish_cleanly(self) -> None:
+        broken = self.REGENERATED.replace(
+            "Done: 38 files transpiled, 0 errors",
+            "Done: 38 files transpiled, 2 errors",
+        )
+        completed = self.assert_script(broken, "rrr.frame_codec.cppm")
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("did not finish cleanly", completed.stderr)
+
+    def test_workflow_uses_the_script_and_no_output_mtime_assertions(self) -> None:
+        workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8"
+        )
+        step = workflow.split(
+            "Verify emitter and canonical Rust invalidate crate generation"
+        )[1].split("Run focused production consumers")[0]
+        self.assertIn("scripts/ci/assert_crate_codegen.sh", step)
+        # The bug class: comparing generated-output timestamps. Nothing in the
+        # step may go back to it. Scan code only -- the comments explain the
+        # old `stat -c %Y` assertions and naming them is the point.
+        code = "\n".join(
+            line
+            for line in step.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        self.assertNotIn("stat -c %Y", code)
+        # The steady check -- "a no-op build must NOT regenerate" -- is the one
+        # assertion that was always correct, and must survive.
+        self.assertIn(
+            "crate generation reran without an emitter or source change", step
+        )
 
 
 class ArchiverResolutionTests(unittest.TestCase):

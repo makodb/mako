@@ -62,15 +62,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          emitter_path="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-executable.txt")"
+          # Only inputs are needed now: the outputs are identified by the
+          # basenames the generator reports, not by path+mtime.
           emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-input.txt")"
           canonical_input="src/rrr/src/frame_codec.rs"
-          generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.frame_codec.cppm"
           runtime_facade_input="src/rrr/rusty-rustc/src/lib.rs"
-          request_queue_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.request_queue.cppm"
-          load_balancer_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.load_balancer.cppm"
-          utils_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.utils.cppm"
-          frame_codec_generated_path="${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rrr.frame_codec.cppm"
           type_map_input="src/rrr/rust-type-map.toml"
           module_index_input="src/rrr/cpp-module-index.toml"
 
@@ -81,60 +77,51 @@ jobs:
             exit 1
           fi
 
-          emitter_before="$(stat -c %Y "${emitter_path}")"
-          generated_before="$(stat -c %Y "${generated_path}")"
-          sleep 1
+          # The sub-checks below assert on what the generator REPORTS, not on
+          # output mtimes. The emitters deliberately skip writing
+          # byte-identical output, so a touched input legitimately regenerates
+          # without bumping any mtime -- the old `stat -c %Y ... -gt` assertions
+          # were measuring "was rewritten" instead of "was regenerated and
+          # re-confirmed", and failed in CI on a correct build. See
+          # scripts/ci/assert_crate_codegen.sh for the full reasoning; it is a
+          # script (not inline) so the assertion logic is unit-tested, including
+          # that it still FAILS when regeneration does not happen.
+          assert_regenerated=scripts/ci/assert_crate_codegen.sh
+
           touch "${emitter_input}"
           changed_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${changed_output}"
 
-          grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${changed_output}"
-          test "$(stat -c %Y "${emitter_path}")" -gt "${emitter_before}"
-          test "$(stat -c %Y "${generated_path}")" -gt "${generated_before}"
+          "${assert_regenerated}" rrr.frame_codec.cppm <<<"${changed_output}"
+          # Touching the emitter's source must actually rebuild the emitter, so
+          # require cargo to say it recompiled rather than trusting a timestamp.
+          grep -Fq 'Compiling rusty-cpp-transpiler' <<<"${changed_output}"
 
-          canonical_generated_before="$(stat -c %Y "${generated_path}")"
-          sleep 1
           touch "${canonical_input}"
           canonical_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${canonical_output}"
 
-          grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${canonical_output}"
-          test "$(stat -c %Y "${generated_path}")" -gt "${canonical_generated_before}"
-          test "$(stat -c %Y "${generated_path}")" -ge "$(stat -c %Y "${canonical_input}")"
+          "${assert_regenerated}" rrr.frame_codec.cppm <<<"${canonical_output}"
 
-          facade_generated_before="$(stat -c %Y "${request_queue_generated_path}")"
-          facade_load_balancer_before="$(stat -c %Y "${load_balancer_generated_path}")"
-          facade_utils_before="$(stat -c %Y "${utils_generated_path}")"
-          facade_frame_codec_before="$(stat -c %Y "${frame_codec_generated_path}")"
-          sleep 1
           touch "${runtime_facade_input}"
           facade_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${facade_output}"
 
-          grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${facade_output}"
-          test "$(stat -c %Y "${request_queue_generated_path}")" -gt "${facade_generated_before}"
-          test "$(stat -c %Y "${request_queue_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
-          test "$(stat -c %Y "${load_balancer_generated_path}")" -gt "${facade_load_balancer_before}"
-          test "$(stat -c %Y "${load_balancer_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
-          test "$(stat -c %Y "${utils_generated_path}")" -gt "${facade_utils_before}"
-          test "$(stat -c %Y "${utils_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
-          test "$(stat -c %Y "${frame_codec_generated_path}")" -gt "${facade_frame_codec_before}"
-          test "$(stat -c %Y "${frame_codec_generated_path}")" -ge "$(stat -c %Y "${runtime_facade_input}")"
+          "${assert_regenerated}" \
+            rrr.request_queue.cppm \
+            rrr.load_balancer.cppm \
+            rrr.utils.cppm \
+            rrr.frame_codec.cppm \
+            <<<"${facade_output}"
           test ! -e "${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rusty"
 
           for sidecar_input in "${type_map_input}" "${module_index_input}"; do
-            sidecar_before="$(stat -c %Y "${utils_generated_path}")"
-            sidecar_frame_before="$(stat -c %Y "${frame_codec_generated_path}")"
-            sleep 1
             touch "${sidecar_input}"
             sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
             printf '%s\n' "${sidecar_output}"
 
-            grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${sidecar_output}"
-            test "$(stat -c %Y "${utils_generated_path}")" -gt "${sidecar_before}"
-            test "$(stat -c %Y "${utils_generated_path}")" -ge "$(stat -c %Y "${sidecar_input}")"
-            test "$(stat -c %Y "${frame_codec_generated_path}")" -gt "${sidecar_frame_before}"
-            test "$(stat -c %Y "${frame_codec_generated_path}")" -ge "$(stat -c %Y "${sidecar_input}")"
+            "${assert_regenerated}" rrr.utils.cppm rrr.frame_codec.cppm \
+              <<<"${sidecar_output}"
           done
 
       # --no-tests=error is load-bearing, not decoration: plain `ctest -R` exits

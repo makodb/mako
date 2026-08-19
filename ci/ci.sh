@@ -639,7 +639,15 @@ run_rrr_unit_tests() {
     # still registers them -> ctest counts the missing binaries as "Not Run"
     # failures. Those tests belong to rusty-cpp's own CI, not mako's. (Verified
     # no mako test name matches these patterns.)
-    MAKO_CONFIG="$tmp_config" ctest --output-on-failure -E '_port|rusty_|async_module_test|dispatch_test|test_channel|test_mutex|test_thread|test_traits|test_external_annotations|test_simplified_external|test_stl_lifetimes|test_unified_annotations'
+    # hashset_set_algebra_test is the same class as the rest of this list --
+    # third-party/rusty-cpp/CMakeLists.txt:624 registers it, mako never builds
+    # it -- but its name carries neither the `_port` nor the `rusty_` marker the
+    # patterns keyed on, so it slipped through and was the single "Not Run"
+    # failure of `ci.sh rrrTests` (46/47 passing). Match it by name. NOTE: this
+    # denylist is name-shaped, so a future rusty-cpp test named outside these
+    # patterns will slip through the same way; the durable fix is for the
+    # exclusion to key on test provenance rather than spelling.
+    MAKO_CONFIG="$tmp_config" ctest --output-on-failure -E '_port|rusty_|async_module_test|dispatch_test|test_channel|test_mutex|test_thread|test_traits|test_external_annotations|test_simplified_external|test_stl_lifetimes|test_unified_annotations|hashset_set_algebra_test'
     local test_result=$?
     cd ..
     rm -f "$tmp_config"
