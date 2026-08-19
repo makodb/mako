@@ -1,13 +1,23 @@
 //! Durability bookkeeping: version issuance, the per-writer floors, the
 //! dirty-ticket log, and the watermark.
 //!
+//! # The one `unsafe` in this crate
+//!
+//! [`TicketLog`] is a lock-free ring, and its slots are `UnsafeCell`.
+//! Three lines of `unsafe`, all in this file, all justified by the
+//! sequence protocol documented on the type. Everything else in
+//! `mrx-core` is `forbid(unsafe_code)`; this module is
+//! `#![allow(unsafe_code)]` and nothing else is.
+//!
 //! This is the part of the cache that is easy to write and hard to write
 //! *correctly*. Nearly every subtlety here corresponds to a specific way
 //! an idiomatic translation loses a property silently.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex};
+#![allow(unsafe_code)]
+
+use std::cell::UnsafeCell;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use crate::{Version, FIRST_VERSION};
 
@@ -238,168 +248,278 @@ impl Floors {
     }
 }
 
-/// The shared dirty-ticket log.
+/// The shared dirty-ticket log: a bounded MPSC ring, lock-free for
+/// producers.
 ///
-/// A plain mutex-guarded deque: this is the *semantics* of the C++ ring,
-/// with the lock-free machinery left for later. What matters here is the
-/// contract, which the tests pin:
+/// # Why this is not a mutex-guarded queue any more
 ///
-/// * appending **waits**, never drops. A dropped ticket is an acked write
-///   the flusher never learns about, which is silent data loss under
-///   exactly the overload the cache exists to absorb. There is
-///   deliberately no `try_append`.
-/// * the flusher's own append must never block on that backpressure —
-///   see [`TicketLog::try_append`], used only by the steal path, which
-///   would otherwise deadlock the flusher against the queue it exists to
-///   drain.
-#[derive(Debug)]
+/// It was, and it cost about a third of the write path. The mutex was not
+/// the problem — a spinlock measured identically. The problem was that
+/// producers and the consumer *excluded each other at all*: `drain` took
+/// the same lock `append` needs and held it while it emptied the queue,
+/// so every writer that filled a batch stopped dead for the length of a
+/// drain. Here they never exclude each other. A producer reserves a
+/// contiguous run with one `fetch_add` per BATCH and writes its slots; the
+/// consumer walks the published prefix and recycles slots behind itself.
+///
+/// # The protocol
+///
+/// Vyukov's bounded MPMC ring with a single consumer, which is what the
+/// C++ implementation uses (`mrx_log` in `masstree_rocks_index.hh`) and
+/// mirroring it keeps the two comparable.
+///
+/// Each slot carries a sequence number. For a slot serving position `p`:
+///
+/// * `seq == p` — free, and reserved by whoever drew `p`. Only that
+///   producer may write it.
+/// * `seq == p + 1` — published. Only the consumer may read it.
+/// * `seq == p + cap` — recycled, i.e. free for position `p + cap`, which
+///   is the same slot one lap later.
+///
+/// Slots start at `seq[i] = i`, so lap zero is immediately reservable.
+///
+/// # Safety argument
+///
+/// The `unsafe` here is three lines, and rests on four facts:
+///
+/// 1. **`tail.fetch_add` hands each position to exactly one producer.**
+///    Two producers can never hold the same `p`, so the write to
+///    `slot.data` has a single writer by construction.
+/// 2. **A producer waits for `seq == p` before writing.** That value is
+///    published only by the consumer recycling the previous lap
+///    (`seq = p_prev + cap`, and `p_prev + cap == p`), so the slot is not
+///    being read while it is written.
+/// 3. **The consumer reads only at `seq == p + 1`**, which the producer
+///    stores with `Release` *after* writing the data. The consumer's
+///    `Acquire` load pairs with it, so the data is visible.
+/// 4. **`Ticket` is `Copy` and owns nothing** — two `u64`-ish scalars, no
+///    pointers, no allocation. This is the fact that makes the whole
+///    thing tractable: even a torn or duplicated read could only produce a
+///    wrong number, never a leak, a double free, or a dangling pointer.
+///    Do not put an owning type in a slot without revisiting all of this.
+///
+/// The consumer must be unique. That is enforced rather than assumed —
+/// see [`TicketLog::drain`].
 pub struct TicketLog {
-    inner: Mutex<LogInner>,
-    space: Condvar,
-    cap: usize,
+    slots: Box<[Slot]>,
+    mask: u64,
+    cap: u64,
+    /// Next position to reserve. Producers `fetch_add` this.
+    tail: crate::CacheLine<AtomicU64>,
+    /// Positions strictly below this have been drained and recycled.
+    /// Only the consumer writes it.
+    confirmed: crate::CacheLine<AtomicU64>,
+    /// Set at shutdown so producers waiting for a slot give up.
+    stopping: AtomicBool,
+    /// Enforces the single-consumer invariant. Taken once per drain, not
+    /// once per ticket, so it is off the producers' path entirely.
+    consumer: Mutex<()>,
 }
 
-#[derive(Debug)]
-struct LogInner {
-    q: VecDeque<Ticket>,
-    /// Monotonic non-decreasing deque of minimum candidates, so
-    /// [`TicketLog::min_version`] is O(1) instead of a walk of `q`.
-    ///
-    /// The walk mattered: `min_version` runs once per flusher cycle while
-    /// holding the same lock producers append under, and `q` holds up to
-    /// `log_slots` (a million by default) tickets whenever writers are
-    /// ahead of writeback — which is exactly the state the cache exists
-    /// to be in. It was the write path's remaining scaling bottleneck
-    /// after the entry table.
-    ///
-    /// The invariant: `mins` holds a non-decreasing subsequence of `q`'s
-    /// versions whose front is the minimum over all of `q`. Pushing pops
-    /// every strictly larger candidate (they can never be the minimum
-    /// again, because this one outlives them); popping removes the front
-    /// only when the value leaving `q` is the one `mins` is holding.
-    /// Equal values are kept, so duplicates survive as many pops as
-    /// there are copies. Amortised O(1) per ticket.
-    mins: VecDeque<Version>,
-    stopping: bool,
+struct Slot {
+    seq: AtomicU64,
+    data: UnsafeCell<Ticket>,
 }
 
-impl LogInner {
-    fn push(&mut self, t: Ticket) {
-        while self.mins.back().is_some_and(|b| *b > t.version) {
-            self.mins.pop_back();
-        }
-        self.mins.push_back(t.version);
-        self.q.push_back(t);
-    }
+// SAFETY: `Slot`'s data is only ever accessed under the sequence protocol
+// described above, which gives it a single writer and then a single
+// reader, never concurrently.
+unsafe impl Sync for Slot {}
 
-    fn min(&self) -> u64 {
-        self.mins.front().copied().unwrap_or(NO_FLOOR)
+impl std::fmt::Debug for TicketLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TicketLog")
+            .field("cap", &self.cap)
+            .field("len", &self.len())
+            .finish()
     }
 }
 
 impl TicketLog {
-    /// A log holding at most `cap` un-drained tickets.
+    /// A ring holding at most `cap` un-drained tickets.
+    ///
+    /// `cap` is rounded up to a power of two: the index is a mask, and a
+    /// modulo on the producer's hot path would be a division.
+    ///
+    /// **Depth is the coalescing multiplier.** A ticket sitting behind a
+    /// deep backlog is usually superseded by drain time and costs nothing
+    /// at RocksDB; a shallow ring degenerates into write-through. The C++
+    /// version measured 65K slots pinning 16 writers to RocksDB's ingest
+    /// rate.
     pub fn new(cap: usize) -> Self {
+        let cap = cap.max(2).next_power_of_two() as u64;
+        let slots = (0..cap)
+            .map(|i| Slot {
+                seq: AtomicU64::new(i),
+                data: UnsafeCell::new(Ticket { entry: 0, version: 0 }),
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         Self {
-            inner: Mutex::new(LogInner {
-                // Preallocated. Growing this deque means a reallocation
-                // and a copy of up to `cap` tickets — 16 MB at the
-                // default — performed while holding the lock every
-                // producer needs.
-                q: VecDeque::with_capacity(cap),
-                mins: VecDeque::with_capacity(cap),
-                stopping: false,
-            }),
-            space: Condvar::new(),
+            slots,
+            mask: cap - 1,
             cap,
+            tail: crate::CacheLine(AtomicU64::new(0)),
+            confirmed: crate::CacheLine(AtomicU64::new(0)),
+            stopping: AtomicBool::new(false),
+            consumer: Mutex::new(()),
         }
     }
 
-    /// Append, waiting for room. Never drops.
+    /// Append, waiting for room. Never drops a ticket.
     ///
-    /// Waits once for the whole batch rather than once per ticket. The
-    /// per-ticket wait re-checked the predicate and could re-block 64
-    /// times for one batch; the C++ ring reserves a whole batch with a
-    /// single `fetch_add`.
+    /// A dropped ticket is an acked write the flusher never learns about,
+    /// which is silent data loss under exactly the overload this exists to
+    /// absorb. Waiting is the only acceptable behaviour for a producer.
     pub fn append(&self, tickets: &[Ticket]) {
         if tickets.is_empty() {
             return;
         }
-        let mut g = self.inner.lock().expect("log mutex poisoned");
-        // The `is_empty` escape matters: a batch larger than the entire
-        // log would otherwise wait for room that can never exist. An
-        // empty queue is as much room as there will ever be, so take it.
-        while !g.stopping
-            && !g.q.is_empty()
-            && g.q.len() + tickets.len() > self.cap
-        {
-            g = self.space.wait(g).expect("log condvar poisoned");
+        let k = tickets.len() as u64;
+        // One reservation for the whole batch.
+        let pos = self.tail.fetch_add(k, Ordering::SeqCst);
+        for (i, t) in tickets.iter().enumerate() {
+            self.publish(pos + i as u64, *t);
         }
-        for t in tickets {
-            g.push(*t);
+    }
+
+    /// Write one ticket into its reserved slot, waiting for the slot's
+    /// previous lap to be recycled.
+    fn publish(&self, want: u64, t: Ticket) {
+        let slot = &self.slots[(want & self.mask) as usize];
+        let mut spins = 0u32;
+        while slot.seq.load(Ordering::Acquire) != want {
+            if self.stopping.load(Ordering::Relaxed) {
+                // Shutting down and the consumer may be gone. Writing
+                // anyway would race it; dropping the ticket is safe here
+                // and only here, because nothing will read the log again.
+                return;
+            }
+            spins += 1;
+            if spins < 512 {
+                std::hint::spin_loop();
+            } else if spins < 4096 {
+                std::thread::yield_now();
+            } else {
+                std::thread::sleep(std::time::Duration::from_micros(50));
+            }
         }
+        // SAFETY: `seq == want` means this slot is reserved for `want`,
+        // and `tail.fetch_add` gave `want` to this thread alone. No other
+        // thread may read or write the slot until the store below.
+        unsafe {
+            *slot.data.get() = t;
+        }
+        slot.seq.store(want + 1, Ordering::Release);
     }
 
     /// Append only if there is room right now.
     ///
-    /// The flusher uses this: blocking here would deadlock it against the
-    /// backpressure only it can relieve.
+    /// The flusher uses this on its steal path: blocking there would
+    /// deadlock it against the backpressure only it can relieve.
     pub fn try_append(&self, tickets: &[Ticket]) -> bool {
-        let mut g = self.inner.lock().expect("log mutex poisoned");
-        if g.q.len() + tickets.len() > self.cap {
+        if tickets.is_empty() {
+            return true;
+        }
+        let k = tickets.len() as u64;
+        if k > self.cap {
             return false;
         }
-        for t in tickets {
-            g.push(*t);
-        }
-        true
-    }
-
-    /// Take everything currently in the log.
-    ///
-    /// **The whole queue, and the swap is O(1) under the lock.** This
-    /// used to drain a bounded chunk by popping one ticket at a time —
-    /// up to 65,536 `pop_front`s plus monotonic-deque maintenance —
-    /// while holding the same mutex every producer appends under. That
-    /// is a convoy: the flusher excluded all sixteen writers for the
-    /// length of a drain, and it is the single largest difference from
-    /// the C++ log, which is lock-free and never excludes producers at
-    /// all.
-    ///
-    /// Bounding the drain was never load-bearing. Draining is the cheap
-    /// half of a flusher cycle — tickets fold into the dirty map at
-    /// memory speed and coalesce there — and `writeback_chunk` still
-    /// bounds the expensive half.
-    pub fn drain(&self, out: &mut Vec<Ticket>) -> usize {
-        let (taken, n) = {
-            let mut g = self.inner.lock().expect("log mutex poisoned");
-            if g.q.is_empty() {
-                return 0;
+        // Reserve by CAS rather than fetch_add: an unconditional
+        // fetch_add cannot be taken back if there turns out to be no
+        // room, and a reserved-but-unpublished position stalls the
+        // consumer at that hole forever.
+        let mut t = self.tail.load(Ordering::Relaxed);
+        for _ in 0..64 {
+            let conf = self.confirmed.load(Ordering::Acquire);
+            if t + k > conf + self.cap {
+                return false;
             }
-            let n = g.q.len();
-            // Swap the buffers out and put empty ones back, sized so the
-            // next cycle does not reallocate under the lock either.
-            let taken = std::mem::replace(
-                &mut g.q,
-                VecDeque::with_capacity(n.max(1024)),
-            );
-            g.mins.clear();
-            (taken, n)
-        };
-        // Copying out happens with the lock RELEASED.
-        self.space.notify_all();
-        out.extend(taken);
-        n
+            match self.tail.compare_exchange_weak(
+                t,
+                t + k,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    for (i, tk) in tickets.iter().enumerate() {
+                        self.publish(t + i as u64, *tk);
+                    }
+                    return true;
+                }
+                Err(cur) => t = cur,
+            }
+        }
+        false
     }
 
-    /// The lowest version still sitting in the log.
+    /// Take the published prefix. Returns how many tickets were taken.
+    ///
+    /// **Single consumer**, enforced by a lock taken once per call — not
+    /// once per ticket, so producers never touch it. `flush_cycle` can run
+    /// on the flusher thread and on a caller inside `drain_fully` at the
+    /// same time, and with a lock-free ring that would otherwise be two
+    /// consumers racing on `confirmed` and on slot recycling.
+    ///
+    /// Stops at the first *hole* — a reserved position whose producer has
+    /// not published yet. Those tickets are not lost; the next call picks
+    /// them up. Their versions are still covered by the producer's
+    /// `staged_min` floor until then.
+    pub fn drain(&self, out: &mut Vec<Ticket>) -> usize {
+        let _consumer = self.consumer.lock().expect("consumer lock poisoned");
+        let base = self.confirmed.load(Ordering::Relaxed);
+        let t0 = self.tail.load(Ordering::Acquire);
+        let mut end = base;
+        while end < t0 {
+            let slot = &self.slots[(end & self.mask) as usize];
+            if slot.seq.load(Ordering::Acquire) != end + 1 {
+                break; // hole: reserved, not yet published
+            }
+            // SAFETY: `seq == end + 1` was stored with Release by the
+            // producer after it wrote the data, and this Acquire load
+            // pairs with it. The slot is not written again until it is
+            // recycled below.
+            let t = unsafe { *slot.data.get() };
+            out.push(t);
+            // Recycle for the next lap.
+            slot.seq.store(end + self.cap, Ordering::Release);
+            end += 1;
+        }
+        self.confirmed.store(end, Ordering::Release);
+        (end - base) as usize
+    }
+
+    /// The lowest version still published-but-undrained.
+    ///
+    /// Scans the unconfirmed window, which is why the caller gates how
+    /// often it runs (see `Store::watermark_due`). After a drain the
+    /// window is normally empty, so this is normally free.
     pub fn min_version(&self) -> u64 {
-        self.inner.lock().expect("log mutex poisoned").min()
+        let base = self.confirmed.load(Ordering::Acquire);
+        let t0 = self.tail.load(Ordering::Acquire);
+        let mut m = NO_FLOOR;
+        let mut p = base;
+        while p < t0 {
+            let slot = &self.slots[(p & self.mask) as usize];
+            if slot.seq.load(Ordering::Acquire) == p + 1 {
+                // SAFETY: published, as in `drain`. This only reads; the
+                // slot is not recycled here, so the consumer will still
+                // see it.
+                let v = unsafe { (*slot.data.get()).version };
+                if v < m {
+                    m = v;
+                }
+            }
+            p += 1;
+        }
+        m
     }
 
-    /// Number of un-drained tickets.
+    /// Tickets reserved but not yet drained.
     pub fn len(&self) -> usize {
-        self.inner.lock().expect("log mutex poisoned").q.len()
+        let t = self.tail.load(Ordering::Acquire);
+        let c = self.confirmed.load(Ordering::Acquire);
+        (t - c) as usize
     }
 
     /// Whether the log is empty.
@@ -407,12 +527,9 @@ impl TicketLog {
         self.len() == 0
     }
 
-    /// Release anyone blocked in [`TicketLog::append`] so shutdown can
-    /// proceed.
+    /// Release anyone waiting for a slot so shutdown can proceed.
     pub fn stop(&self) {
-        let mut g = self.inner.lock().expect("log mutex poisoned");
-        g.stopping = true;
-        self.space.notify_all();
+        self.stopping.store(true, Ordering::Release);
     }
 }
 
@@ -488,6 +605,7 @@ impl Watermark {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn watermark_never_wraps_on_an_empty_store() {
@@ -584,6 +702,7 @@ mod tests {
     #[test]
     fn log_try_append_refuses_rather_than_blocking() {
         let log = TicketLog::new(2);
+        // (the ring rounds capacity up to a power of two)
         assert!(log.try_append(&[Ticket { entry: 0, version: 1 }]));
         assert!(log.try_append(&[Ticket { entry: 0, version: 2 }]));
         assert!(
@@ -593,34 +712,131 @@ mod tests {
     }
 
     #[test]
-    fn incremental_minimum_matches_a_brute_force_walk() {
-        // The monotonic deque is the kind of optimisation that is right
-        // for a thousand operations and wrong for one specific
-        // interleaving, so it is checked against the definition rather
-        // than against itself.
-        let log = TicketLog::new(4096);
-        let mut shadow: std::collections::VecDeque<u64> =
-            std::collections::VecDeque::new();
-        // Deterministic pseudo-random with plenty of duplicates and
-        // descending runs, which is where a naive version breaks.
-        let mut x: u64 = 0x2545_F491_4F6C_DD1D;
-        for step in 0..20_000 {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            if step % 3 == 2 && !shadow.is_empty() {
+    fn the_ring_never_loses_or_duplicates_a_ticket() {
+        // The property the whole design rests on: producers never drop
+        // and the consumer never double-takes. Run it with more producers
+        // than cores and a ring far too small, so slots are recycled
+        // under contention many times over.
+        const PRODUCERS: u64 = 8;
+        // Miri interprets every instruction, so the stress size that is
+        // right for a real run never finishes under it. Miri is not here
+        // to find the rare interleaving anyway — it is here to prove the
+        // unsafe is sound on the interleavings it does explore.
+        #[cfg(miri)]
+        const PER: u64 = 40;
+        #[cfg(not(miri))]
+        const PER: u64 = 20_000;
+        let log = Arc::new(TicketLog::new(64));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let done = Arc::new(AtomicU64::new(0));
+
+        let consumer = {
+            let log = Arc::clone(&log);
+            let seen = Arc::clone(&seen);
+            let done = Arc::clone(&done);
+            std::thread::spawn(move || {
                 let mut out = Vec::new();
-                let n = log.drain(&mut out);
-                assert_eq!(n, shadow.len(), "drain takes the whole queue");
-                shadow.clear();
-            } else {
-                let v = (x % 50) + 1;
-                assert!(log.try_append(&[Ticket { entry: 0, version: v }]));
-                shadow.push_back(v);
-            }
-            let want = shadow.iter().copied().min().unwrap_or(NO_FLOOR);
-            assert_eq!(log.min_version(), want, "diverged at step {step}");
+                loop {
+                    let finished = done.load(Ordering::Acquire) == PRODUCERS;
+                    log.drain(&mut out);
+                    if finished && log.is_empty() {
+                        // One last pass for anything published between
+                        // the two checks.
+                        log.drain(&mut out);
+                        break;
+                    }
+                    std::hint::spin_loop();
+                }
+                seen.lock().unwrap().extend(out);
+            })
+        };
+
+        let mut hs = Vec::new();
+        for t in 0..PRODUCERS {
+            let log = Arc::clone(&log);
+            let done = Arc::clone(&done);
+            hs.push(std::thread::spawn(move || {
+                for i in 0..PER {
+                    log.append(&[Ticket {
+                        entry: t as u32,
+                        version: t * PER + i + 1,
+                    }]);
+                }
+                done.fetch_add(1, Ordering::Release);
+            }));
         }
+        for h in hs {
+            h.join().unwrap();
+        }
+        consumer.join().unwrap();
+
+        let mut got: Vec<u64> =
+            seen.lock().unwrap().iter().map(|t| t.version).collect();
+        let n = got.len();
+        got.sort_unstable();
+        got.dedup();
+        assert_eq!(
+            got.len(),
+            (PRODUCERS * PER) as usize,
+            "ring lost or duplicated tickets ({n} taken, {} distinct)",
+            got.len()
+        );
+        assert_eq!(got[0], 1);
+        assert_eq!(*got.last().unwrap(), PRODUCERS * PER);
+    }
+
+    #[test]
+    fn batches_are_reserved_contiguously() {
+        let log = TicketLog::new(1024);
+        let batch: Vec<Ticket> = (1..=64)
+            .map(|v| Ticket { entry: 7, version: v })
+            .collect();
+        log.append(&batch);
+        let mut out = Vec::new();
+        assert_eq!(log.drain(&mut out), 64);
+        assert_eq!(out.len(), 64);
+        // A single fetch_add per batch means the batch lands in order.
+        assert!(out.windows(2).all(|w| w[0].version < w[1].version));
+    }
+
+    #[test]
+    fn a_hole_stops_the_drain_without_losing_what_follows() {
+        // A producer that has reserved but not published blocks the
+        // prefix. The tickets behind it must NOT be skipped -- skipping
+        // would drop an acked write -- and must arrive once it lands.
+        let log = Arc::new(TicketLog::new(64));
+        let started = Arc::new(AtomicU64::new(0));
+        let release = Arc::new(AtomicBool::new(false));
+
+        // Occupy position 0 without publishing, by holding a reservation
+        // in another thread that waits before writing.
+        let slow = {
+            let log = Arc::clone(&log);
+            let started = Arc::clone(&started);
+            let release = Arc::clone(&release);
+            std::thread::spawn(move || {
+                let pos = log.tail.fetch_add(1, Ordering::SeqCst);
+                started.store(1, Ordering::Release);
+                while !release.load(Ordering::Acquire) {
+                    std::hint::spin_loop();
+                }
+                log.publish(pos, Ticket { entry: 0, version: 1 });
+            })
+        };
+        while started.load(Ordering::Acquire) == 0 {
+            std::hint::spin_loop();
+        }
+        log.append(&[Ticket { entry: 1, version: 2 }]);
+
+        let mut out = Vec::new();
+        assert_eq!(log.drain(&mut out), 0, "the hole must stop the drain");
+        assert!(out.is_empty());
+
+        release.store(true, Ordering::Release);
+        slow.join().unwrap();
+        assert_eq!(log.drain(&mut out), 2, "and both arrive afterwards");
+        assert_eq!(out[0].version, 1);
+        assert_eq!(out[1].version, 2);
     }
 
     #[test]
@@ -632,5 +848,12 @@ mod tests {
             Ticket { entry: 1, version: 4 },
         ]);
         assert_eq!(log.min_version(), 4);
+        let mut out = Vec::new();
+        log.drain(&mut out);
+        assert_eq!(
+            log.min_version(),
+            NO_FLOOR,
+            "a drained ring constrains the watermark with nothing"
+        );
     }
 }

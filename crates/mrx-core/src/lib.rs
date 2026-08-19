@@ -43,7 +43,14 @@
 //! eviction stalls with it. A "fix" that lets `W` advance under backlog
 //! is a data-loss bug wearing a performance hat.
 
-#![forbid(unsafe_code)]
+// DENY, not forbid, so that exactly one module can opt out and the
+// compiler enforces that the list stays exactly one. `durability`
+// carries three lines of unsafe for the lock-free ticket ring; every
+// other file in this crate is unsafe-free and stays that way.
+//
+// If a second `#![allow(unsafe_code)]` ever appears in this crate, that
+// is the moment to argue about it, not after.
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod durability;
