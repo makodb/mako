@@ -486,6 +486,7 @@ add_custom_command(
         --crate "${RRR_GOAL0_CRATE_MANIFEST}"
         --output-dir "${RRR_GOAL0_CRATE_CPP_DIR}"
         --cxx-namespace rrr
+        --flat-import-namespace rrr
         --module-preamble "${RRR_GOAL0_MODULE_PREAMBLE}"
         --type-map "${RRR_GOAL0_TYPE_MAP}"
         --cpp-module-index "${RRR_GOAL0_CPP_MODULE_INDEX}"

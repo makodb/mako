@@ -2,7 +2,6 @@
 // Compiled directly by rustc and translated by rusty-cpp crate mode.
 use std::cell::{Cell, RefCell};
 
-#[cfg_attr(any(), cpp_import_namespace(rrr))]
 use crate::circuit_breaker::current_time_us;
 
 pub fn heartbeat_time_us() -> u64 {

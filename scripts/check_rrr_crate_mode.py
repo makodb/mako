@@ -310,8 +310,8 @@ ABI_SPECS = {
                 "rusty::sync::atomic::AtomicU64 queries_;",
                 "rusty::sync::atomic::AtomicU64 query_hits_;",
                 "rusty::sync::atomic::AtomicU64 evictions_;",
-                "CompletionTracker();",
-                "CompletionTracker(CompletionTrackerConfig config);",
+                "static CompletionTracker new_();",
+                "static CompletionTracker with_config(CompletionTrackerConfig config);",
                 "bool enabled() const;",
                 "CompletionTrackerConfig config() const;",
                 "void set_config(CompletionTrackerConfig config);",
@@ -346,8 +346,8 @@ ABI_SPECS = {
                 "rrr::CompletionTrackerConfig@rrr.completion_tracker::disabled()",
                 "rrr::CompletedEntry@rrr.completion_tracker::new_(long, unsigned long)",
                 "rrr::CompletedEntry@rrr.completion_tracker::is_expired(unsigned long, unsigned long) const",
-                "rrr::CompletionTracker@rrr.completion_tracker::CompletionTracker()",
-                "rrr::CompletionTracker@rrr.completion_tracker::CompletionTracker(rrr::CompletionTrackerConfig@rrr.completion_tracker)",
+                "rrr::CompletionTracker@rrr.completion_tracker::new_()",
+                "rrr::CompletionTracker@rrr.completion_tracker::with_config(rrr::CompletionTrackerConfig@rrr.completion_tracker)",
                 "rrr::CompletionTracker@rrr.completion_tracker::enabled() const",
                 "rrr::CompletionTracker@rrr.completion_tracker::config() const",
                 "rrr::CompletionTracker@rrr.completion_tracker::set_config(rrr::CompletionTrackerConfig@rrr.completion_tracker)",
@@ -884,8 +884,8 @@ ABI_SPECS = {
                 "rusty::Cell<bool> owned_;",
                 "AddrInfo(AddrInfo&& other) noexcept",
                 "AddrInfo& operator=(AddrInfo&& other) noexcept",
-                "AddrInfo();",
-                "AddrInfo(addrinfo* info);",
+                "static AddrInfo new_();",
+                "static AddrInfo adopt(addrinfo* info);",
                 "addrinfo* get() const;",
                 "bool valid() const;",
                 "~AddrInfo() noexcept(false);",
@@ -901,8 +901,8 @@ ABI_SPECS = {
         symbols=frozenset(
             ("T", symbol)
             for symbol in {
-                "rrr::AddrInfo@rrr.utils::AddrInfo()",
-                "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*)",
+                "rrr::AddrInfo@rrr.utils::new_()",
+                "rrr::AddrInfo@rrr.utils::adopt(addrinfo*)",
                 "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
                 "rrr::AddrInfo@rrr.utils::AddrInfo(rrr::AddrInfo@rrr.utils&&)",
                 "rrr::AddrInfo@rrr.utils::get() const",
@@ -1042,8 +1042,8 @@ ABI_SPECS = {
                 "export struct RequestQueue",
                 "rusty::Cell<RequestQueueConfig> config_;",
                 "rusty::Mutex<rusty::VecDeque<QueuedRequest>> queue_;",
-                "RequestQueue();",
-                "RequestQueue(RequestQueueConfig config);",
+                "static RequestQueue new_();",
+                "static RequestQueue with_config(RequestQueueConfig config);",
                 "bool enqueue(QueuedRequest request) const;",
                 "rusty::Option<QueuedRequest> dequeue();",
                 "size_t expire_stale() const;",
@@ -1079,8 +1079,8 @@ ABI_SPECS = {
                         "rrr::RequestQueueConfig@rrr.request_queue::small()",
                         "rrr::RequestQueueConfig@rrr.request_queue::large()",
                         "rrr::RequestQueueConfig@rrr.request_queue::disabled()",
-                        "rrr::RequestQueue@rrr.request_queue::RequestQueue()",
-                        "rrr::RequestQueue@rrr.request_queue::RequestQueue(rrr::RequestQueueConfig@rrr.request_queue)",
+                        "rrr::RequestQueue@rrr.request_queue::new_()",
+                        "rrr::RequestQueue@rrr.request_queue::with_config(rrr::RequestQueueConfig@rrr.request_queue)",
                         "rrr::RequestQueue@rrr.request_queue::enqueue(rrr::QueuedRequest@rrr.request_queue) const",
                         "rrr::RequestQueue@rrr.request_queue::dequeue()",
                         "rrr::RequestQueue@rrr.request_queue::expire_stale() const",
@@ -1677,33 +1677,27 @@ def require_completion_raw_symbols(
     description: str,
     entries: list[tuple[str, str]],
 ) -> None:
-    """Pin initializer and constructor aliases as well as the unique API."""
+    """Pin the initializer as well as the unique API.
+
+    Factory-only construction: `CompletionTracker::new_()` and
+    `CompletionTracker::with_config()` replaced the two public constructors, so
+    this module now has NO constructor alias at all. An Itanium-ABI constructor
+    is emitted twice (C1 complete-object and C2 base-object) and both demangle
+    to the same name, which is exactly what the two entries here used to
+    account for; a static factory is emitted once and is already covered by its
+    ABI_SPECS entry. Measured on the object: two aliases -> zero, 33 -> 31.
+    """
 
     expected = Counter(ABI_SPECS["rrr.completion_tracker"].symbols)
-    expected.update(
-        {
-            (
-                "T",
-                "rrr::CompletionTracker@rrr.completion_tracker::"
-                "CompletionTracker()",
-            ): 1,
-            (
-                "T",
-                "rrr::CompletionTracker@rrr.completion_tracker::"
-                "CompletionTracker(rrr::CompletionTrackerConfig@"
-                "rrr.completion_tracker)",
-            ): 1,
-            ("T", "initializer for module rrr.completion_tracker"): 1,
-        }
-    )
+    expected[("T", "initializer for module rrr.completion_tracker")] += 1
     actual = Counter(entries)
     if actual == expected:
         return
     missing = sorted((expected - actual).elements())
     unexpected = sorted((actual - expected).elements())
     raise GateError(
-        f"{description} completion ABI must contain exactly 33 raw strong "
-        "entries (30 unique API symbols, two constructor aliases, and the "
+        f"{description} completion ABI must contain exactly 31 raw strong "
+        "entries (30 unique API symbols, no constructor alias, and the "
         f"module initializer); missing={missing!r}, unexpected={unexpected!r}"
     )
 
@@ -2018,20 +2012,18 @@ def require_request_queue_raw_symbols(
     description: str,
     entries: list[tuple[str, str]],
 ) -> None:
-    """Pin request-queue's API, constructor aliases, and initializer exactly."""
+    """Pin request-queue's API and initializer exactly.
 
-    default_constructor = (
-        "T",
-        "rrr::RequestQueue@rrr.request_queue::RequestQueue()",
-    )
-    config_constructor = (
-        "T",
-        "rrr::RequestQueue@rrr.request_queue::RequestQueue("
-        "rrr::RequestQueueConfig@rrr.request_queue)",
-    )
+    Factory-only construction: `RequestQueue::new_()` and
+    `RequestQueue::with_config()` replaced the two public constructors, so this
+    module now has NO constructor alias at all. An Itanium-ABI constructor is
+    emitted twice (C1 complete-object and C2 base-object) and both demangle to
+    the same name, which is exactly what the two `+= 1` lines here used to
+    account for; a static factory is emitted once and is already covered by its
+    ABI_SPECS entry. Measured on the object: two aliases -> zero, 30 -> 28.
+    """
+
     expected = Counter(ABI_SPECS["rrr.request_queue"].symbols)
-    expected[default_constructor] += 1
-    expected[config_constructor] += 1
     expected[("T", "initializer for module rrr.request_queue")] += 1
     actual = Counter(entries)
     if actual == expected:
@@ -2039,8 +2031,8 @@ def require_request_queue_raw_symbols(
     missing = sorted((expected - actual).elements())
     unexpected = sorted((actual - expected).elements())
     raise GateError(
-        f"{description} request-queue ABI must contain exactly 30 raw strong "
-        "entries (27 unique provider-owned symbols, two constructor aliases, "
+        f"{description} request-queue ABI must contain exactly 28 raw strong "
+        "entries (27 unique provider-owned symbols, no constructor alias, "
         f"and the module initializer); missing={missing!r}, "
         f"unexpected={unexpected!r}"
     )
@@ -2062,9 +2054,14 @@ def require_utils_raw_symbols(
 ) -> None:
     """Pin Utils' API, C++ ctor/dtor aliases, and initializer exactly."""
 
+    # Factory-only construction: `AddrInfo::new_()` and `AddrInfo::adopt()`
+    # replaced the two public constructors. An Itanium-ABI constructor is
+    # emitted twice (C1 complete-object and C2 base-object) and both demangle
+    # to one name, so each contributed one ALIAS here on top of its unique
+    # symbol; a static factory is emitted once and contributes no alias. The
+    # private fieldwise ctor, the move ctor and the dtor are unaffected.
+    # Measured on the object: five aliases -> three, 17 -> 15.
     aliased = (
-        "rrr::AddrInfo@rrr.utils::AddrInfo()",
-        "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*)",
         "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
         "rrr::AddrInfo@rrr.utils::AddrInfo(rrr::AddrInfo@rrr.utils&&)",
         "rrr::AddrInfo@rrr.utils::~AddrInfo()",
@@ -2079,8 +2076,8 @@ def require_utils_raw_symbols(
     missing = sorted((expected - actual).elements())
     unexpected = sorted((actual - expected).elements())
     raise GateError(
-        f"{description} Utils ABI must contain exactly 17 raw strong "
-        "entries (11 unique provider-owned symbols, five C++ ABI aliases, "
+        f"{description} Utils ABI must contain exactly 15 raw strong "
+        "entries (11 unique provider-owned symbols, three C++ ABI aliases, "
         f"and the module initializer); missing={missing!r}, "
         f"unexpected={unexpected!r}"
     )
@@ -3207,7 +3204,7 @@ static bool completion_tracker_concurrent_operations_are_safe() {
         auto config = rrr::CompletionTrackerConfig::defaults();
         config.ttl_ms = 0;
         config.max_entries = kUpdates + 1;
-        rrr::CompletionTracker tracker(config);
+        auto tracker = rrr::CompletionTracker::with_config(config);
         std::atomic<std::uint64_t> ready{0};
         std::atomic<bool> start{false};
         std::atomic<bool> failed{false};
@@ -3690,7 +3687,7 @@ int main() {
         return 62;
     }
 
-    rrr::CompletionTracker disabled_tracker(completion_disabled);
+    auto disabled_tracker = rrr::CompletionTracker::with_config(completion_disabled);
     disabled_tracker.mark_completed(1, 0);
     if (disabled_tracker.enabled() || disabled_tracker.size() != 0 ||
         disabled_tracker.total_tracked() != 0 ||
@@ -3703,7 +3700,7 @@ int main() {
     auto lifecycle_config = rrr::CompletionTrackerConfig::defaults();
     lifecycle_config.ttl_ms = 10;
     lifecycle_config.max_entries = 2;
-    rrr::CompletionTracker lifecycle_tracker(lifecycle_config);
+    auto lifecycle_tracker = rrr::CompletionTracker::with_config(lifecycle_config);
     lifecycle_tracker.mark_completed(1, 0);
     lifecycle_tracker.mark_completed(1, 1);
     lifecycle_tracker.mark_completed(2, 0);
@@ -3732,7 +3729,7 @@ int main() {
 
     auto mutation_config = rrr::CompletionTrackerConfig::defaults();
     mutation_config.ttl_ms = 0;
-    rrr::CompletionTracker mutation_tracker(mutation_config);
+    auto mutation_tracker = rrr::CompletionTracker::with_config(mutation_config);
     mutation_tracker.mark_completed(10, 1);
     mutation_tracker.mark_completed(11, 1);
     if (!mutation_tracker.remove(10) || mutation_tracker.remove(10) ||
@@ -3752,7 +3749,7 @@ int main() {
     auto overflow_config = rrr::CompletionTrackerConfig::defaults();
     overflow_config.ttl_ms = 0;
     overflow_config.max_entries = 1;
-    rrr::CompletionTracker overflow_tracker(overflow_config);
+    auto overflow_tracker = rrr::CompletionTracker::with_config(overflow_config);
     overflow_tracker.mark_completed(1, 0);
     using rusty::sync::atomic::Ordering;
     overflow_tracker.total_tracked_.store(
@@ -4533,7 +4530,7 @@ int main() {
     }
 
     {
-        rrr::AddrInfo empty;
+        auto empty = rrr::AddrInfo::new_();
         if (empty.get() != nullptr || empty.valid() || empty.owned_.get() ||
             empty._rusty_forgotten) {
             return 184;
@@ -4543,7 +4540,7 @@ int main() {
     {
         auto* first = new addrinfo{};
         auto* second = new addrinfo{};
-        rrr::AddrInfo source(first);
+        auto source = rrr::AddrInfo::adopt(first);
         if (source.get() != first || !source.valid() || !source.owned_.get()) {
             return 185;
         }
@@ -4552,7 +4549,7 @@ int main() {
             source.get() != first || !source._rusty_forgotten) {
             return 186;
         }
-        rrr::AddrInfo target(second);
+        auto target = rrr::AddrInfo::adopt(second);
         target = std::move(moved);
         if (target.get() != first || !target.owned_.get() ||
             moved.get() != first || !moved._rusty_forgotten) {
@@ -5008,7 +5005,7 @@ int main() {
     auto fifo_config = queue_defaults;
     fifo_config.max_size = 2;
     fifo_config.default_ttl_ms = 77;
-    rrr::RequestQueue fifo(fifo_config);
+    auto fifo = rrr::RequestQueue::with_config(fifo_config);
     if (!fifo.empty() || fifo.remaining_capacity() != 2) {
         return 163;
     }
@@ -5040,7 +5037,7 @@ int main() {
         auto config = queue_defaults;
         config.max_size = 1;
         config.overflow_strategy = strategy;
-        rrr::RequestQueue queue(config);
+        auto queue = rrr::RequestQueue::with_config(config);
         if (!queue.enqueue(make_queued_request(3))) {
             return 167;
         }
@@ -5062,7 +5059,7 @@ int main() {
 
     auto oldest_config = queue_defaults;
     oldest_config.max_size = 1;
-    rrr::RequestQueue oldest_queue(oldest_config);
+    auto oldest_queue = rrr::RequestQueue::with_config(oldest_config);
     bool oldest_called = false;
     auto oldest = make_queued_request(
         5,
@@ -5083,7 +5080,7 @@ int main() {
         return 170;
     }
 
-    rrr::RequestQueue disabled_queue(rrr::RequestQueueConfig::disabled());
+    auto disabled_queue = rrr::RequestQueue::with_config(rrr::RequestQueueConfig::disabled());
     bool disabled_called = false;
     auto disabled_request = make_queued_request(
         7,
@@ -5101,7 +5098,7 @@ int main() {
     }
 
     monotonic_now_us = 2'000'000;
-    rrr::RequestQueue expiring;
+    auto expiring = rrr::RequestQueue::new_();
     std::vector<std::int64_t> expired_order;
     for (std::int64_t xid : {8, 9}) {
         auto request = make_queued_request(
@@ -5131,7 +5128,7 @@ int main() {
         return 173;
     }
 
-    rrr::RequestQueue clearing;
+    auto clearing = rrr::RequestQueue::new_();
     std::vector<std::int64_t> cleared_order;
     for (std::int64_t xid : {11, 12}) {
         auto request = make_queued_request(
@@ -5158,7 +5155,7 @@ int main() {
     auto invalid_config = queue_defaults;
     invalid_config.max_size = 0;
     invalid_config.overflow_strategy = static_cast<rrr::OverflowStrategy>(99);
-    rrr::RequestQueue invalid_queue(invalid_config);
+    auto invalid_queue = rrr::RequestQueue::with_config(invalid_config);
     if (!invalid_queue.enqueue(make_queued_request(13)) ||
         invalid_queue.size() != 1) {
         return 176;
@@ -5661,6 +5658,14 @@ def check(args: argparse.Namespace) -> None:
             prebuilt_module_dirs=prebuilt_module_dirs,
         )
     else:
+        flat_import_namespace = extraction.load_flat_import_namespace(
+            root, root / EXTRACTION_MANIFEST
+        )
+        flat_import_arguments = (
+            ["--flat-import-namespace", flat_import_namespace]
+            if flat_import_namespace is not None
+            else []
+        )
         with tempfile.TemporaryDirectory(prefix="rrr-crate-mode-") as temporary:
             output = Path(temporary)
             run(
@@ -5672,6 +5677,7 @@ def check(args: argparse.Namespace) -> None:
                     str(output),
                     "--cxx-namespace",
                     "rrr",
+                    *flat_import_arguments,
                     "--module-preamble",
                     str(root / MODULE_PREAMBLE),
                     "--type-map",

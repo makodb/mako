@@ -41,6 +41,14 @@ APPROVED_PRODUCTION_ROOTS = (
     PurePosixPath("src/rrr/reactor"),
 )
 BLOCK_ID_RE = re.compile(r"[A-Za-z0-9_.-]+\Z")
+# Optional crate-level flat-import namespace: when present, crate mode runs
+# with --flat-import-namespace <value> and every private
+# `use crate::<child>::<Name leaves>;` in a canonical source carries an
+# implicit cpp_import_namespace(<value>) contract (no per-item marker).
+FLAT_IMPORT_NAMESPACE_KEY = "flat_import_namespace"
+FLAT_IMPORT_NAMESPACE_RE = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\Z"
+)
 CPP_MODULE_RE = re.compile(r"rrr\.([A-Za-z_][A-Za-z0-9_]*)\Z")
 NAMED_MODULE_DECL_RE = re.compile(
     r"(?:(export)\s+)?module\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;\Z"
@@ -321,8 +329,22 @@ def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
             f"cannot read Rust ownership manifest {manifest_path}: {exc}"
         ) from exc
 
-    if set(data) != {"schema_version", "module"}:
-        raise ExtractionError("manifest keys must be exactly schema_version and module")
+    required_keys = {"schema_version", "module"}
+    if not required_keys <= set(data) or set(data) - required_keys - {
+        FLAT_IMPORT_NAMESPACE_KEY
+    }:
+        raise ExtractionError(
+            "manifest keys must be exactly schema_version and module, "
+            f"plus optional {FLAT_IMPORT_NAMESPACE_KEY}"
+        )
+    flat_import_namespace = data.get(FLAT_IMPORT_NAMESPACE_KEY)
+    if flat_import_namespace is not None and (
+        not isinstance(flat_import_namespace, str)
+        or FLAT_IMPORT_NAMESPACE_RE.fullmatch(flat_import_namespace) is None
+    ):
+        raise ExtractionError(
+            f"manifest {FLAT_IMPORT_NAMESPACE_KEY} must be a C++ namespace path"
+        )
     schema_version = data["schema_version"]
     if schema_version not in {1, 2}:
         raise ExtractionError("manifest schema_version must be 1 or 2")
@@ -479,6 +501,14 @@ def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
         seen_cpp_modules.add(cpp_module)
         seen_outputs.add(output_label)
     return loaded
+
+
+def load_flat_import_namespace(root: Path, manifest_path: Path) -> str | None:
+    """The validated optional crate-level flat-import namespace, or None."""
+    load_manifest(root, manifest_path)
+    data = tomllib.loads(manifest_path.read_bytes().decode("utf-8"))
+    value = data.get(FLAT_IMPORT_NAMESPACE_KEY)
+    return value if isinstance(value, str) else None
 
 
 def resolve_transpiler(root: Path, value: str) -> Path:

@@ -411,6 +411,75 @@ class CheckedInCanaryTests(unittest.TestCase):
         ):
             self.assertIn(fragment, cmake)
 
+    def test_flat_import_namespace_is_declared_and_passed_to_crate_mode(
+        self,
+    ) -> None:
+        """The manifest key and the emitter flag must agree.
+
+        The seventeen canonical sources carry NO per-item
+        `cpp_import_namespace` marker: every private
+        `use crate::<child>::<Name leaves>;` gets its contract from the
+        crate-level namespace instead. That inference only happens when the
+        emitter is actually invoked with `--flat-import-namespace`, so a
+        manifest key with no flag (or a flag with no key) would silently
+        change what the generated providers mean.
+        """
+
+        manifest = REPOSITORY / "src/rrr/rust-modules.toml"
+        self.assertEqual(
+            DRIVER.load_flat_import_namespace(REPOSITORY, manifest), "rrr"
+        )
+        cmake = (REPOSITORY / "src/rrr/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("--flat-import-namespace rrr", cmake)
+        gate = (REPOSITORY / "scripts/check_rrr_crate_mode.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("extraction.load_flat_import_namespace(", gate)
+        self.assertIn('["--flat-import-namespace", flat_import_namespace]', gate)
+        self.assertIn("*flat_import_arguments,", gate)
+        for source in (
+            REPOSITORY / "src/rrr/src" / f"{module.rust_module}.rs"
+            for module in DRIVER.load_manifest(REPOSITORY, manifest)
+        ):
+            self.assertNotIn(
+                "cpp_import_namespace",
+                source.read_text(encoding="utf-8"),
+                msg=f"{source} still carries a per-item marker",
+            )
+
+    def test_manifest_rejects_an_unknown_top_level_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "rust-modules.toml"
+            manifest.write_text(
+                'schema_version = 2\nstray = "x"\n'
+                '[[module]]\ncpp_module = "rrr.example"\n'
+                'source = "src/rrr/src/example.rs"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                DRIVER.ExtractionError, "manifest keys must be exactly"
+            ):
+                DRIVER.load_manifest(root, manifest)
+
+    def test_manifest_rejects_a_non_namespace_flat_import_value(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "rust-modules.toml"
+            manifest.write_text(
+                'schema_version = 2\nflat_import_namespace = "not a ns"\n'
+                '[[module]]\ncpp_module = "rrr.example"\n'
+                'source = "src/rrr/src/example.rs"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                DRIVER.ExtractionError,
+                "flat_import_namespace must be a C\\+\\+ namespace path",
+            ):
+                DRIVER.load_manifest(root, manifest)
+
         workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(
             encoding="utf-8"
         )
@@ -470,7 +539,11 @@ class CheckedInCanaryTests(unittest.TestCase):
                     bool(line.strip()) and not line.lstrip().startswith("//")
                     for line in source.splitlines()
                 )
-        self.assertEqual(canonical_lines, 2574)
+        # 2574 -> 2563: the eleven `#[cfg_attr(any(), cpp_ctor)]` /
+        # `#[cfg_attr(any(), cpp_import_namespace(rrr))]` marker lines were
+        # deleted when these sources adopted factory-only construction and the
+        # crate-level `flat_import_namespace`. No logic line moved.
+        self.assertEqual(canonical_lines, 2563)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -1668,11 +1741,23 @@ class CrateModeGateTests(unittest.TestCase):
             ), mock.patch.object(
                 GATE, "load_owned_modules", return_value=modules
             ), mock.patch.object(
+                GATE.extraction,
+                "load_flat_import_namespace",
+                return_value="rrr",
+            ), mock.patch.object(
                 GATE, "check_generated_output"
             ), mock.patch.object(GATE, "run") as run:
                 GATE.check(args)
 
             command = run.call_args.args[0]
+            # The crate-level flat-import namespace must reach the emitter:
+            # without it the seventeen marker-free canonical sources lose the
+            # `cpp_import_namespace` contract their private `use crate::...`
+            # items now depend on.
+            self.assertIn("--flat-import-namespace", command)
+            self.assertEqual(
+                command[command.index("--flat-import-namespace") + 1], "rrr"
+            )
             self.assertEqual(
                 command[-6:],
                 [
@@ -1733,21 +1818,8 @@ class CrateModeGateTests(unittest.TestCase):
             return GATE.ABI_SPECS[module_name].symbols
 
         completion_raw = list(GATE.ABI_SPECS["rrr.completion_tracker"].symbols)
-        completion_raw.extend(
-            [
-                (
-                    "T",
-                    "rrr::CompletionTracker@rrr.completion_tracker::"
-                    "CompletionTracker()",
-                ),
-                (
-                    "T",
-                    "rrr::CompletionTracker@rrr.completion_tracker::"
-                    "CompletionTracker(rrr::CompletionTrackerConfig@"
-                    "rrr.completion_tracker)",
-                ),
-                ("T", "initializer for module rrr.completion_tracker"),
-            ]
+        completion_raw.append(
+            ("T", "initializer for module rrr.completion_tracker")
         )
         rand_raw = list(GATE.ABI_SPECS["rrr.rand"].symbols)
         rand_raw.append(("T", "initializer for module rrr.rand"))
@@ -1772,19 +1844,8 @@ class CrateModeGateTests(unittest.TestCase):
         basetypes_raw = list(GATE.ABI_SPECS["rrr.basetypes"].symbols)
         basetypes_raw.append(("T", "initializer for module rrr.basetypes"))
         request_queue_raw = list(GATE.ABI_SPECS["rrr.request_queue"].symbols)
-        request_queue_raw.extend(
-            [
-                (
-                    "T",
-                    "rrr::RequestQueue@rrr.request_queue::RequestQueue()",
-                ),
-                (
-                    "T",
-                    "rrr::RequestQueue@rrr.request_queue::RequestQueue("
-                    "rrr::RequestQueueConfig@rrr.request_queue)",
-                ),
-                ("T", "initializer for module rrr.request_queue"),
-            ]
+        request_queue_raw.append(
+            ("T", "initializer for module rrr.request_queue")
         )
         exact_raw = {
             name: [
@@ -1800,8 +1861,6 @@ class CrateModeGateTests(unittest.TestCase):
         }
         utils_raw = list(GATE.ABI_SPECS["rrr.utils"].symbols)
         for symbol in (
-            "rrr::AddrInfo@rrr.utils::AddrInfo()",
-            "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*)",
             "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
             "rrr::AddrInfo@rrr.utils::AddrInfo(rrr::AddrInfo@rrr.utils&&)",
             "rrr::AddrInfo@rrr.utils::~AddrInfo()",
@@ -1967,27 +2026,15 @@ class CrateModeGateTests(unittest.TestCase):
             production_link.index("/production.a"),
         )
 
-    def test_completion_raw_symbol_ratchet_pins_all_33_entries(self) -> None:
+    def test_completion_raw_symbol_ratchet_pins_all_31_entries(self) -> None:
+        # Factory-only construction: the two public constructors became the
+        # static `new_()` / `with_config()` factories, so the two C1/C2
+        # constructor aliases are gone and the raw total is 33 -> 31.
         entries = list(GATE.ABI_SPECS["rrr.completion_tracker"].symbols)
-        entries.extend(
-            [
-                (
-                    "T",
-                    "rrr::CompletionTracker@rrr.completion_tracker::"
-                    "CompletionTracker()",
-                ),
-                (
-                    "T",
-                    "rrr::CompletionTracker@rrr.completion_tracker::"
-                    "CompletionTracker(rrr::CompletionTrackerConfig@"
-                    "rrr.completion_tracker)",
-                ),
-                ("T", "initializer for module rrr.completion_tracker"),
-            ]
-        )
-        self.assertEqual(len(entries), 33)
+        entries.append(("T", "initializer for module rrr.completion_tracker"))
+        self.assertEqual(len(entries), 31)
         GATE.require_completion_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 33 raw"):
+        with self.assertRaisesRegex(GATE.GateError, "exactly 31 raw"):
             GATE.require_completion_raw_symbols("test provider", entries[:-1])
 
     def test_rand_raw_symbol_ratchet_pins_all_13_entries(self) -> None:
@@ -2047,20 +2094,22 @@ class CrateModeGateTests(unittest.TestCase):
                         module_name, "test provider", entries[:-1]
                     )
 
-    def test_utils_raw_symbol_ratchet_pins_all_17_entries(self) -> None:
+    def test_utils_raw_symbol_ratchet_pins_all_15_entries(self) -> None:
+        # Factory-only construction: `AddrInfo::new_()` / `AddrInfo::adopt()`
+        # replaced the two public constructors, so their C1/C2 aliases are gone
+        # and the raw total is 17 -> 15. The private fieldwise ctor, the move
+        # ctor and the dtor still alias.
         entries = list(GATE.ABI_SPECS["rrr.utils"].symbols)
         for symbol in (
-            "rrr::AddrInfo@rrr.utils::AddrInfo()",
-            "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*)",
             "rrr::AddrInfo@rrr.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
             "rrr::AddrInfo@rrr.utils::AddrInfo(rrr::AddrInfo@rrr.utils&&)",
             "rrr::AddrInfo@rrr.utils::~AddrInfo()",
         ):
             entries.append(("T", symbol))
         entries.append(("T", "initializer for module rrr.utils"))
-        self.assertEqual(len(entries), 17)
+        self.assertEqual(len(entries), 15)
         GATE.require_utils_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 17 raw"):
+        with self.assertRaisesRegex(GATE.GateError, "exactly 15 raw"):
             GATE.require_utils_raw_symbols("test provider", entries[:-1])
 
     def test_basetypes_raw_symbol_ratchet_pins_all_29_entries(self) -> None:
@@ -2071,25 +2120,15 @@ class CrateModeGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GATE.GateError, "exactly 29 raw"):
             GATE.require_basetypes_raw_symbols("test provider", entries[:-1])
 
-    def test_request_queue_raw_symbol_ratchet_pins_all_30_entries(self) -> None:
+    def test_request_queue_raw_symbol_ratchet_pins_all_28_entries(self) -> None:
+        # Factory-only construction: the two public constructors became the
+        # static `new_()` / `with_config()` factories, so the two C1/C2
+        # constructor aliases are gone and the raw total is 30 -> 28.
         entries = list(GATE.ABI_SPECS["rrr.request_queue"].symbols)
-        entries.extend(
-            [
-                (
-                    "T",
-                    "rrr::RequestQueue@rrr.request_queue::RequestQueue()",
-                ),
-                (
-                    "T",
-                    "rrr::RequestQueue@rrr.request_queue::RequestQueue("
-                    "rrr::RequestQueueConfig@rrr.request_queue)",
-                ),
-                ("T", "initializer for module rrr.request_queue"),
-            ]
-        )
-        self.assertEqual(len(entries), 30)
+        entries.append(("T", "initializer for module rrr.request_queue"))
+        self.assertEqual(len(entries), 28)
         GATE.require_request_queue_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 30 raw"):
+        with self.assertRaisesRegex(GATE.GateError, "exactly 28 raw"):
             GATE.require_request_queue_raw_symbols(
                 "test provider", entries[:-1]
             )

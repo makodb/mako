@@ -2,7 +2,6 @@
 // Compiled directly by rustc and translated by rusty-cpp crate mode.
 use std::cell::Cell;
 
-#[cfg_attr(any(), cpp_import_namespace(rrr))]
 use crate::rand::{randgen_rand_max, randgen_rand_raw};
 
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, PartialEq))]

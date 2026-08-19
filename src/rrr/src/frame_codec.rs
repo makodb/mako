@@ -2,7 +2,6 @@
 // Compiled directly by rustc and translated by rusty-cpp crate mode.
 use std::cell::Cell;
 
-#[cfg_attr(any(), cpp_import_namespace(rrr))]
 use crate::internal_protocol::{
     encode_response_size, response_has_extended_header, response_payload_size,
 };

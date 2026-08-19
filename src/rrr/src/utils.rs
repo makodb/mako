@@ -30,7 +30,6 @@ pub struct AddrInfo {
 
 impl AddrInfo {
     /// Construct an invalid, non-owning value.
-    #[cfg_attr(any(), cpp_ctor)]
     #[allow(clippy::new_without_default)]
     pub fn new() -> AddrInfo {
         AddrInfo {
@@ -46,7 +45,6 @@ impl AddrInfo {
     /// `info` must be null or a uniquely owned chain returned by a compatible
     /// libc allocation routine. After this call, the caller must not free or
     /// otherwise use the chain through another owning handle.
-    #[cfg_attr(any(), cpp_ctor)]
     #[allow(unsafe_code)]
     pub unsafe fn adopt(info: *mut LegacyAddrInfo) -> AddrInfo {
         AddrInfo {

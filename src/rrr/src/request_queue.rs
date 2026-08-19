@@ -5,7 +5,6 @@ use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Mutex;
 
-#[cfg_attr(any(), cpp_import_namespace(rrr))]
 use crate::circuit_breaker::current_time_us;
 
 #[allow(non_camel_case_types)]
@@ -141,7 +140,6 @@ pub struct RequestQueue {
 }
 
 impl RequestQueue {
-    #[cfg_attr(any(), cpp_ctor)]
     #[allow(clippy::new_without_default)]
     pub fn new() -> RequestQueue {
         RequestQueue {
@@ -150,7 +148,6 @@ impl RequestQueue {
         }
     }
 
-    #[cfg_attr(any(), cpp_ctor)]
     pub fn with_config(config: self::RequestQueueConfig) -> RequestQueue {
         RequestQueue {
             config_: Cell::new(config),

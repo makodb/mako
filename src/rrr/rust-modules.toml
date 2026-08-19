@@ -2,6 +2,12 @@
 # translated into complete C++ module providers by rusty-cpp crate mode.
 schema_version = 2
 
+# Crate-level flat-import namespace: crate mode passes
+# --flat-import-namespace rrr, so every private
+# `use crate::<child>::<Name leaves>;` item in a canonical source carries an
+# implicit cpp_import_namespace(rrr) contract; per-item markers are gone.
+flat_import_namespace = "rrr"
+
 [[module]]
 cpp_module = "rrr.basetypes"
 source = "src/rrr/src/basetypes.rs"

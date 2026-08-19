@@ -11,7 +11,6 @@ pub enum TimeoutType {
     TOTAL_TIMEOUT,
 }
 
-#[cfg_attr(any(), cpp_import_namespace(rrr))]
 use crate::rand::{randgen_rand_max, randgen_rand_raw};
 
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, PartialEq))]

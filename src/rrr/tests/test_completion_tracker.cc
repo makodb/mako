@@ -97,7 +97,7 @@ TEST_F(CompletedEntryTest, IsExpired) {
 
 class CompletionTrackerTest : public ::testing::Test {
 protected:
-    CompletionTracker tracker_;
+    CompletionTracker tracker_ = CompletionTracker::new_();
 
     // Explicit noexcept dtor — gtest's `virtual ~Test()` is defaulted in
     // the .cc TU, so it's noexcept(true). `CompletionTracker` transitively

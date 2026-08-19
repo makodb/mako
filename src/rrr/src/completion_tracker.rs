@@ -80,7 +80,6 @@ pub struct CompletionTracker {
 }
 
 impl CompletionTracker {
-    #[cfg_attr(any(), cpp_ctor)]
     pub fn new() -> CompletionTracker {
         CompletionTracker {
             config_: Mutex::new(CompletionTrackerConfig::defaults()),
@@ -93,7 +92,6 @@ impl CompletionTracker {
         }
     }
 
-    #[cfg_attr(any(), cpp_ctor)]
     pub fn with_config(config: self::CompletionTrackerConfig) -> CompletionTracker {
         CompletionTracker {
             config_: Mutex::new(config),

@@ -3846,15 +3846,16 @@ namespace rrr {
 // DSL-inline. The all-public DSL struct needs no friend declarations.
 // ============================================================================
 
-// @safe - ctor helper: RequestQueue has a config-taking ctor, not a new_().
+// @safe - factory helper: RequestQueue is factory-only, so a config-carrying
+// queue comes from the static `with_config` factory rather than a ctor.
 #if RUSTYCPP_RUST
 fn make_pending_queue(c: &RequestQueueConfig) -> RequestQueue {
-    RequestQueue(c)
+    RequestQueue::with_config(*c)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.38 version=1 rust_sha256=b6ae865426332ccf95e9461479fbc2bde420aa762ef1e3b4e9a24255e45fb164*/
+/*RUSTYCPP:GEN-BEGIN id=client.38 version=1 rust_sha256=9dd144aed42badd26b65c813a50d1037a0986cc7c91672074509cd0391b484c4*/
 RequestQueue make_pending_queue(const RequestQueueConfig& c) {
-    return RequestQueue(c);
+    return RequestQueue::with_config(c);
 }
 /*RUSTYCPP:GEN-END id=client.38*/
 
