@@ -2168,6 +2168,18 @@ class ForeignOwnedCheckoutTests(unittest.TestCase):
     OWNER` reproduces exactly that condition without needing a second uid.
     """
 
+    # Build the fixture with the knob explicitly OFF. These tests must *own*
+    # the ownership condition, not inherit it: if the variable is already set
+    # in the environment (e.g. someone reproducing a CI failure by exporting
+    # it for a whole gate run), bare git would disown even the scratch repo
+    # this setUp just created and every test here would error in setUp instead
+    # of testing anything.
+    NATIVE_ENV = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "GIT_TEST_ASSUME_DIFFERENT_OWNER"
+    }
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="rrr-ownership-")
         self.addCleanup(temporary.cleanup)
@@ -2182,6 +2194,7 @@ class ForeignOwnedCheckoutTests(unittest.TestCase):
             subprocess.run(
                 ["git", *arguments],
                 cwd=self.repository,
+                env=self.NATIVE_ENV,
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -2189,6 +2202,7 @@ class ForeignOwnedCheckoutTests(unittest.TestCase):
         self.head = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=self.repository,
+            env=self.NATIVE_ENV,
             text=True,
             stdout=subprocess.PIPE,
             check=True,
@@ -2232,6 +2246,27 @@ class ForeignOwnedCheckoutTests(unittest.TestCase):
         # A blanket "trust everything" opt-out would also silence genuine
         # ownership problems in unrelated repositories.
         self.assertNotIn("safe.directory=*", flags)
+
+    def test_repository_scripts_that_shell_out_to_git_survive(self) -> None:
+        """Every script the source gate runs must tolerate a foreign-owned
+        checkout, not just the pin attestation. `rrr_handwritten_census.py`
+        did not, and CI died with `git ls-files ... exit status 128` once the
+        attestation stopped failing first and stopped masking it."""
+        if not (REPOSITORY / ".git").exists():
+            self.skipTest("not a git checkout")
+        completed = subprocess.run(
+            [sys.executable, "scripts/rrr_handwritten_census.py"],
+            cwd=REPOSITORY,
+            env=dict(os.environ, GIT_TEST_ASSUME_DIFFERENT_OWNER="1"),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode, 0, msg=completed.stdout + completed.stderr
+        )
+        self.assertIn("source boundary:", completed.stdout)
 
     def test_pin_attestation_still_fails_closed_on_a_foreign_checkout(self) -> None:
         """Relaxing git's ownership heuristic must not relax the pin itself:

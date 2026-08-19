@@ -17,9 +17,14 @@ retained below it because it remains useful when choosing the next carriers.
 Usage:  python3 scripts/rrr_handwritten_census.py [--files]
 """
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
+
+# Same directory as this script, so this import works from the repository root
+# (which is where every caller runs it -- ROOT below is relative to it).
+from extract_rrr_rust import ownership_exception
 
 ROOT = "src/rrr"
 EXTS = (".cpp", ".hpp", ".h", ".cc")
@@ -210,8 +215,12 @@ CPP_ENDIF_RE = re.compile(r"^#\s*endif\b")
 def tracked_module_sources():
     """Return tracked, non-test C++ module-source units."""
 
+    # `ownership_exception`: this runs inside CI containers whose checkout is
+    # owned by a different uid than the process, where bare `git` refuses with
+    # "detected dubious ownership" and this census dies with exit 128.
     tracked = subprocess.check_output(
-        ["git", "ls-files", "-z", "--", ROOT], text=False
+        ["git", *ownership_exception(Path.cwd()), "ls-files", "-z", "--", ROOT],
+        text=False,
     ).decode("utf-8").split("\0")
     return sorted(
         path
