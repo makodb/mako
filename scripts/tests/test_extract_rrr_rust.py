@@ -127,8 +127,14 @@ class CheckedInCanaryTests(unittest.TestCase):
             "nonblank/non-// lines",
             output,
         )
+        # 146 -> 148 when mako-dev merged in: PR #78's macOS support added
+        # `#include <queue>` and `#include <stack>` to the
+        # src/rrr/rpc/frame_codec.hpp compatibility shim. Two lines of std
+        # includes in a shim that otherwise only re-exports the module; kept
+        # so the macOS build keeps working, at the cost of the ratchet going
+        # the wrong way by 2.
         self.assertIn(
-            "12 compatibility headers, SCAFFOLD=146 noncomment lines", output
+            "12 compatibility headers, SCAFFOLD=148 noncomment lines", output
         )
         self.assertIn(
             "terminal C:      3 ABI headers/89 lines; 8 kernels/531 lines",

@@ -7,7 +7,13 @@
 #include "json.hh"
 #include "small_vector.hh"
 #include "straccum.hh"
-#include <rusty/vec.hpp>
+// NOTE (merge of PR #78 onto the a1f8fef8 rusty-cpp pin): this legacy
+// masstree corpus is compiled as plain non-module TUs, and since
+// rusty-cpp #185 rusty::Vec / rusty::HashMap exist only as C++20 modules
+// (<rusty/vec.hpp> and <rusty/hashmap.hpp> are gone/empty). A header
+// cannot `import`, and importing before the textual includes clashes with
+// libc++ under `import std`, so these stay std:: containers.
+#include <vector>
 namespace msgpack {
 using lcdf::Json;
 using lcdf::Str;
@@ -477,7 +483,7 @@ class parser {
         }
         return *this;
     }
-    template <typename T> parser& operator>>(rusty::Vec<T>& x);
+    template <typename T> parser& operator>>(::std::vector<T>& x);
     inline parser& operator>>(Json& j);
 
     inline parser& skip_primitives(unsigned n) {
@@ -620,7 +626,7 @@ inline T& unparse_wide(T& s, const X& x) {
 }
 
 template <typename T>
-parser& parser::operator>>(rusty::Vec<T>& x) {
+parser& parser::operator>>(::std::vector<T>& x) {
     uint32_t sz;
     if ((uint32_t) *s_ - format::ffixarray < format::nfixarray) {
         sz = *s_ - format::ffixarray;
@@ -634,7 +640,7 @@ parser& parser::operator>>(rusty::Vec<T>& x) {
         s_ += 5;
     }
     for (; sz != 0; --sz) {
-        x.push(T());
+        x.push_back(T());
         parse(x.back());
     }
     return *this;

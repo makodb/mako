@@ -26,8 +26,12 @@
 #include <stdlib.h>
 
 #include "json.hh"
-#include <rusty/hashmap.hpp>
-#include <rusty/vec.hpp>
+// NOTE (merge of PR #78 onto the a1f8fef8 rusty-cpp pin): this legacy
+// masstree corpus is compiled as plain non-module TUs, and since
+// rusty-cpp #185 rusty::Vec / rusty::HashMap exist only as C++20 modules
+// (<rusty/vec.hpp> and <rusty/hashmap.hpp> are gone/empty). A header
+// cannot `import`, and importing before the textual includes clashes with
+// libc++ under `import std`, so these stay std:: containers.
 
 import std;
 using namespace lcdf;
@@ -45,12 +49,12 @@ void incr(T& x) {
 #endif
 
 void benchmark_parse() {
-    rusty::Vec<String> parse_examples;
-    parse_examples.push("{}");
-    parse_examples.push("{\"foo\":\"bar\",\"baz\":\"flim\"}");
-    parse_examples.push("[1,2,3,4,5]");
-    parse_examples.push("[]");
-    parse_examples.push("[{},{\"b\":[]}]");
+    std::vector<String> parse_examples;
+    parse_examples.push_back("{}");
+    parse_examples.push_back("{\"foo\":\"bar\",\"baz\":\"flim\"}");
+    parse_examples.push_back("[1,2,3,4,5]");
+    parse_examples.push_back("[]");
+    parse_examples.push_back("[{},{\"b\":[]}]");
     Json j;
 #if 0
     for (int i = 0; i < 10000000; ++i)
@@ -536,16 +540,16 @@ int main(int argc, char** argv) {
     }
 
     {
-        rusty::Vec<int> v = {1, 2, 3, 4, 5};
+        std::vector<int> v = {1, 2, 3, 4, 5};
         Json j(v.begin(), v.end());
         CHECK(j.unparse() == "[1,2,3,4,5]");
     }
 
     {
-        rusty::HashMap<String, String> h;
-        h.insert("a", "b");
-        h.insert("c", "d");
-        h.insert("x", "e");
+        std::unordered_map<String, String> h;
+        h["a"] = "b";
+        h["c"] = "d";
+        h["x"] = "e";
         Json j(h.begin(), h.end());
         CHECK(j.is_o());
         CHECK(j.size() == 3);

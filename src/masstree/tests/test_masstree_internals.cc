@@ -16,7 +16,9 @@
 
 #include <gtest/gtest.h>
 
-#include <rusty/hashset.hpp>
+// No <rusty/hashset.hpp>: upstream deleted the header-form HashMap/HashSet
+// (rusty-cpp task #185). rusty::HashSet now comes from the std_port module,
+// re-aliased by `import rusty;` below.
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
@@ -254,7 +256,7 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
             ASSERT_NE(ti, nullptr);
             EXPECT_EQ(ti->index(), 6000 + i);
             thread_infos[i] = ti;
-            created++;
+            created.fetch_add(1);
         }));
     }
 
@@ -311,7 +313,7 @@ TEST_F(MasstreeInternalsTest, MultithreadedRcuOperations) {
             ti->rcu_quiesce();
             ti->rcu_stop();
 
-            completed++;
+            completed.fetch_add(1);
         }));
     }
 

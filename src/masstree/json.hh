@@ -22,7 +22,13 @@
 #define JSON_HH
 #include "straccum.hh"
 #include "str.hh"
-#include <rusty/vec.hpp>
+// NOTE (merge of PR #78 onto the a1f8fef8 rusty-cpp pin): this legacy
+// masstree corpus is compiled as plain non-module TUs, and since
+// rusty-cpp #185 rusty::Vec / rusty::HashMap exist only as C++20 modules
+// (<rusty/vec.hpp> and <rusty/hashmap.hpp> are gone/empty). A header
+// cannot `import`, and importing before the textual includes clashes with
+// libc++ under `import std`, so these stay std:: containers.
+#include <vector>
 #include <utility>
 #include <stdlib.h>
 namespace lcdf {
@@ -96,7 +102,7 @@ class Json {
     inline Json(const std::string& x);
     inline Json(Str x);
     inline Json(const char* x);
-    template <typename T> inline Json(const rusty::Vec<T>& x);
+    template <typename T> inline Json(const std::vector<T>& x);
     template <typename T> inline Json(T first, T last);
     inline ~Json();
 
@@ -451,7 +457,7 @@ struct Json::ObjectJson : public ComplexJson {
     ObjectItem *os_;
     int n_;
     int capacity_;
-    rusty::Vec<int> hash_;
+    std::vector<int> hash_;
     ObjectJson()
         : os_(), n_(0), capacity_(0) {
         size = 0;
@@ -1581,10 +1587,11 @@ inline Json::Json(const char* x) {
 }
 /** @brief Construct an array Json containing the elements of @a x. */
 template <typename T>
-inline Json::Json(const rusty::Vec<T> &x) {
+inline Json::Json(const std::vector<T> &x) {
     u_.a.type = j_array;
     u_.a.x = ArrayJson::make(int(x.size()));
-    for (const T* it = x.begin(); it != x.end(); ++it) {
+    for (typename std::vector<T>::const_iterator it = x.begin();
+         it != x.end(); ++it) {
         new((void*) &u_.a.x->a[u_.a.x->size]) Json(*it);
         ++u_.a.x->size;
     }
@@ -2844,7 +2851,7 @@ class Json::streaming_parser {
     };
 
     int state_;
-    rusty::Vec<Json*> stack_;
+    std::vector<Json*> stack_;
     String str_;
     Json json_;
 

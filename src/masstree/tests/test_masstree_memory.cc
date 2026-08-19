@@ -138,9 +138,9 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
           TestTree::value_type out = nullptr;
           if (!tree.search(K(k), out) ||
               static_cast<uint64_t>(reinterpret_cast<uintptr_t>(out)) != k) {
-            ++reader_failures;
+            reader_failures.fetch_add(1);
           }
-          ++reader_ops;
+          reader_ops.fetch_add(1);
         }
       }
     }));

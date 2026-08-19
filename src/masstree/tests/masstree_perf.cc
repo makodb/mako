@@ -2,7 +2,9 @@
 #include <stddef.h>
 
 #include <rusty/box.hpp>
-#include <rusty/hashmap.hpp>
+// No <rusty/hashmap.hpp>: upstream deleted the header-form HashMap/HashSet
+// (rusty-cpp task #185). rusty::HashMap now comes from the std_port module,
+// re-aliased by `import rusty;` below.
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
