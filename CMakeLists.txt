@@ -2203,17 +2203,15 @@ if(BUILD_TESTS)
         COMMENT "Running all Silo/STO tests"
     )
 
+    # Keep this summary honest: it must name only targets this file actually
+    # defines. It went stale in 4a06ef0e (which stopped building srpc's
+    # `src/rrr/tests/` corpus) and then told CI logs that `test_timer`,
+    # `test_marshal`, `test_rpc`, `test_rpc_extended`, `test_future`,
+    # `test_reactor`, `test_reactor_extended` and `rpcbench` were configured
+    # when ninja had no such targets.
     message(STATUS "Test targets configured:")
-    message(STATUS "  RRR Framework Tests:")
-    message(STATUS "    - test_timer: Canonical basetypes clock and Timer smoke tests")
-    message(STATUS "    - test_marshal: Marshal/Unmarshal tests")
-    message(STATUS "    - test_rpc: RPC client/server tests")
-    message(STATUS "    - test_rpc_extended: Extended RPC tests (timeouts, reconnection, load)")
-    message(STATUS "    - test_future: Future/async operation tests")
+    message(STATUS "  Masstree Tests:")
     message(STATUS "    - test_masstree: Core Masstree b-tree regression tests")
-    message(STATUS "    - test_reactor: Reactor/event system tests")
-    message(STATUS "    - test_reactor_extended: Extended reactor tests (events, fibers, load)")
-    message(STATUS "    - rpcbench: RPC performance benchmark test")
     message(STATUS "  Silo/STO Tests:")
     message(STATUS "    - test_silo_varint: Varint encoding/decoding (22 tests)")
     message(STATUS "    - test_silo_rcu_thread: RCU memory management (9 tests)")

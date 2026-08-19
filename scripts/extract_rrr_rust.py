@@ -547,10 +547,37 @@ def resolve_transpiler(root: Path, value: str) -> Path:
     return executable
 
 
+def ownership_exception(cwd: Path) -> list[str]:
+    """`-c safe.directory=...` flags vouching for exactly `cwd`.
+
+    git refuses to read a repository whose directory belongs to another uid
+    ("detected dubious ownership"), which is the normal shape of a GitHub
+    Actions container job: the checkout is owned by the runner user while the
+    step runs as root. Naming the one directory being inspected on the command
+    line keeps this attestation working in every environment instead of
+    depending on ambient `git config --global` state -- `actions/checkout`
+    writes its own `safe.directory` entry under a *temporary* HOME that is gone
+    by the time the build runs, and it only ever names the superproject, never
+    the submodule this gate also has to read.
+
+    This suppresses git's ownership heuristic and nothing else. Every pin
+    comparison in `verify_pinned_toolchain` still runs against real git output
+    and still fails closed on a mismatch.
+    """
+    # Cover the path as given and as resolved: git matches `safe.directory`
+    # against the worktree path it computed, which has symlinks resolved.
+    directories = sorted({str(cwd), str(cwd.resolve())})
+    return [
+        argument
+        for directory in directories
+        for argument in ("-c", f"safe.directory={directory}")
+    ]
+
+
 def git_output(cwd: Path, arguments: list[str], description: str) -> str:
     try:
         completed = subprocess.run(
-            ["git", *arguments],
+            ["git", *ownership_exception(cwd), *arguments],
             cwd=cwd,
             text=True,
             stdout=subprocess.PIPE,

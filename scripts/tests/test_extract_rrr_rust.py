@@ -1167,7 +1167,15 @@ class CheckedInCanaryTests(unittest.TestCase):
             '"${frame_codec_generated_path}")"',
             workflow,
         )
-        self.assertIn("test_rpc_tcp_channel", workflow)
+        # This used to pin `test_rpc_tcp_channel`, one of the nineteen
+        # `src/rrr/tests/` binaries the Goal-0 job named. 4a06ef0e stopped
+        # building that corpus (it is srpc's, and runs in srpc's CI), so the
+        # canary was pinning a target that no longer exists. What is worth
+        # pinning is the property that made the breakage survivable-but-silent:
+        # `ctest -R` exits 0 when its pattern matches nothing, so without this
+        # flag a stale name list goes green having run zero tests. See
+        # GoalZeroConsumerSelectionTests for the list-agreement checks.
+        self.assertIn("--no-tests=error", workflow)
         self.assertIn('type_map_input="src/rrr/rust-type-map.toml"', workflow)
         self.assertIn(
             'module_index_input="src/rrr/cpp-module-index.toml"', workflow
@@ -2111,6 +2119,143 @@ class DriverBehaviorTests(unittest.TestCase):
             stderr=DRIVER.subprocess.PIPE,
             check=False,
         )
+
+
+class GoalZeroConsumerSelectionTests(unittest.TestCase):
+    """The Goal-0 job builds a list of consumer targets and then runs a ctest
+    pattern naming the same tests. Both lists were left naming `src/rrr/tests/`
+    binaries after 4a06ef0e deleted them, which failed the job with
+    `ninja: error: unknown target 'test_timer'`. Pin the two properties that
+    turn that class of drift into a local failure instead of a red CI run.
+    """
+
+    @staticmethod
+    def goal_zero_steps() -> tuple[str, str]:
+        workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8"
+        )
+        build = re.search(r"--target ([^\n]*?)\n\s*-- -k 0", workflow)
+        assert build is not None, "Goal-0 build step lost its --target list"
+        selection = re.search(r"-R '\^\((.*?)\)\$'", workflow)
+        assert selection is not None, "Goal-0 ctest step lost its -R pattern"
+        return build.group(1), selection.group(1)
+
+    def test_built_targets_and_selected_tests_agree(self) -> None:
+        built, selected = self.goal_zero_steps()
+        targets = [
+            target
+            for target in built.split()
+            if target != "rrr_goal0_dual_compile"
+        ]
+        self.assertTrue(targets, "Goal-0 builds no consumer targets")
+        self.assertEqual(sorted(targets), sorted(selected.split("|")))
+
+    def test_selected_tests_are_targets_this_repository_defines(self) -> None:
+        """The exact check the broken workflow would have failed: every name
+        must be an `add_executable` in mako's own CMakeLists."""
+        _, selected = self.goal_zero_steps()
+        cmake = (REPOSITORY / "CMakeLists.txt").read_text(encoding="utf-8")
+        defined = set(re.findall(r"add_executable\(\s*([A-Za-z0-9_]+)", cmake))
+        for name in selected.split("|"):
+            with self.subTest(target=name):
+                self.assertIn(name, defined)
+
+
+class ForeignOwnedCheckoutTests(unittest.TestCase):
+    """The pin attestation runs in a container whose checkout belongs to a
+    different uid than the process, so bare `git` answers "detected dubious
+    ownership" instead of reading the repository. `GIT_TEST_ASSUME_DIFFERENT_-
+    OWNER` reproduces exactly that condition without needing a second uid.
+    """
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="rrr-ownership-")
+        self.addCleanup(temporary.cleanup)
+        self.repository = Path(temporary.name) / "checkout"
+        self.repository.mkdir()
+        for arguments in (
+            ["init", "--quiet", "."],
+            ["config", "user.name", "gate"],
+            ["config", "user.email", "gate@example.invalid"],
+            ["commit", "--quiet", "--allow-empty", "-m", "seed"],
+        ):
+            subprocess.run(
+                ["git", *arguments],
+                cwd=self.repository,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        self.head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.repository,
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        ).stdout.strip()
+
+    def test_bare_git_really_is_refused(self) -> None:
+        """Guard the guard: if this ever stops failing, the tests below stop
+        proving anything, because they would pass without the exception."""
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.repository,
+            env=dict(os.environ, GIT_TEST_ASSUME_DIFFERENT_OWNER="1"),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("dubious ownership", completed.stderr)
+
+    def test_git_output_reads_a_foreign_owned_checkout(self) -> None:
+        with mock.patch.dict(
+            os.environ, {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
+        ):
+            for module in (DRIVER, GATE):
+                with self.subTest(module=module.__name__):
+                    self.assertEqual(
+                        module.git_output(
+                            self.repository, ["rev-parse", "HEAD"], "probe"
+                        ),
+                        self.head,
+                    )
+
+    def test_ownership_exception_names_only_the_inspected_directory(self) -> None:
+        flags = DRIVER.ownership_exception(self.repository)
+        self.assertEqual(flags[::2], ["-c"] * (len(flags) // 2))
+        self.assertEqual(
+            {flag.removeprefix("safe.directory=") for flag in flags[1::2]},
+            {str(self.repository), str(self.repository.resolve())},
+        )
+        # A blanket "trust everything" opt-out would also silence genuine
+        # ownership problems in unrelated repositories.
+        self.assertNotIn("safe.directory=*", flags)
+
+    def test_pin_attestation_still_fails_closed_on_a_foreign_checkout(self) -> None:
+        """Relaxing git's ownership heuristic must not relax the pin itself:
+        against the real repository, a wrong required commit is still caught."""
+        if not (REPOSITORY / ".git").exists():
+            self.skipTest("not a git checkout")
+        cases = (
+            (DRIVER, DRIVER.ExtractionError),
+            (GATE, GATE.GateError),
+        )
+        with mock.patch.dict(
+            os.environ, {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
+        ):
+            for module, failure in cases:
+                with self.subTest(module=module.__name__):
+                    with mock.patch.object(
+                        module, "REQUIRED_RUSTY_CPP_COMMIT", "0" * 40
+                    ):
+                        with self.assertRaisesRegex(
+                            failure, "gitlink pin mismatch"
+                        ):
+                            module.verify_pinned_toolchain(
+                                REPOSITORY, Path("/nonexistent-transpiler")
+                            )
 
 
 class CrateModeGateTests(unittest.TestCase):

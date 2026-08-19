@@ -8857,7 +8857,12 @@ def run(command: list[str], cwd: Path) -> str:
 def git_output(cwd: Path, arguments: list[str], description: str) -> str:
     try:
         completed = subprocess.run(
-            ["git", *arguments],
+            # See `extraction.ownership_exception`: vouch for exactly the
+            # directory being inspected so the pin attestation survives a
+            # container job whose checkout is owned by a different uid. It
+            # relaxes git's ownership heuristic only -- every pin comparison
+            # below still fails closed.
+            ["git", *extraction.ownership_exception(cwd), *arguments],
             cwd=cwd,
             text=True,
             stdout=subprocess.PIPE,
