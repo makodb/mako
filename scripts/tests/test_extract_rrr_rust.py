@@ -1233,7 +1233,14 @@ class CheckedInCanaryTests(unittest.TestCase):
         # same way, so the crate now owns all thirty-seven modules. The count
         # is unchanged by the move to the layout-mirroring paths -- the same
         # bytes, minus a banner that was only ever comment lines.
-        self.assertEqual(canonical_lines, 13656)
+        # 13656 -> 13654: -2, collapsing one `else { if .. }` into `else if`
+        # in `reactor.rs::event_core_recycle_or_reset` (clippy 1.91's
+        # `collapsible_else_if`, which the CI image pins and which fails the
+        # source gate's `clippy -D warnings` step). Pure syntax: the closing
+        # brace and the `else {` opener are the only lines that went away, no
+        # logic line moved, and the dual-compile gate still reports the same
+        # 1961 provider-owned strong ABI symbols from the generated C++.
+        self.assertEqual(canonical_lines, 13654)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"

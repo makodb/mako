@@ -2508,10 +2508,8 @@ fn event_test_impl<W: EventCore>(ev: &W) -> bool {
             reactor_verify(false);
         }
         return true;
-    } else {
-        if ev.core_status().get() == EventStatus::DONE {
-            ev.core_status().set(EventStatus::INIT);
-        }
+    } else if ev.core_status().get() == EventStatus::DONE {
+        ev.core_status().set(EventStatus::INIT);
     }
     false
 }
