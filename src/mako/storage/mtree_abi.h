@@ -82,7 +82,7 @@ extern "C" {
 /* Bumped on any incompatible change. The caller should compare this against
  * the value it was compiled with, and check mtx_kv_size() too: a struct
  * layout drift is the failure mode a version number alone will not catch. */
-#define MTX_ABI_VERSION 2u
+#define MTX_ABI_VERSION 3u
 
 /* Status codes. */
 #define MTX_OK 0
@@ -144,6 +144,20 @@ int mtx_get(mtx_tree *t, const char *key, size_t klen, uint64_t *out);
  * the caller cannot see which word is live. */
 int mtx_get_or_insert(mtx_tree *t, const char *key, size_t klen, uint64_t word,
                       uint64_t *out);
+
+/* As mtx_get_or_insert, but WITHOUT the leading probe.
+ *
+ * For a caller that has already established the key is absent -- it has just
+ * done its own lookup and missed. mtx_get_or_insert's probe would re-walk the
+ * tree to re-discover that miss, making the insert path cost three traversals
+ * instead of two.
+ *
+ * Semantics are identical: *out receives whichever word is associated with the
+ * key on return, whether this call installed it or a racing writer did. Use
+ * mtx_get_or_insert when the key is likely to exist; use this when you already
+ * know it does not. */
+int mtx_insert_if_absent(mtx_tree *t, const char *key, size_t klen,
+                         uint64_t word, uint64_t *out);
 
 /* --- range operations --------------------------------------------------- */
 

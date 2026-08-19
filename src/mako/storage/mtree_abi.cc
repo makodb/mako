@@ -148,6 +148,54 @@ int mtx_get(mtx_tree *t, const char *key, size_t klen, uint64_t *out) {
   }
 }
 
+int mtx_insert_if_absent(mtx_tree *t, const char *key, size_t klen,
+                         uint64_t word, uint64_t *out) {
+  if (t == nullptr || key == nullptr || out == nullptr) return MTX_ERR_INVALID;
+  if (word == MTX_WORD_NULL) return MTX_ERR_INVALID;  // reserved
+  if (!tl_attached) return MTX_ERR_NOT_ATTACHED;
+  try {
+    const auto region = scoped_rcu_region();
+    concurrent_btree *tree = as_tree(t);
+    const varkey k = to_varkey(key, klen);
+
+    // NO leading probe, and that is the entire point of this entry point
+    // existing alongside mtx_get_or_insert.
+    //
+    // The probe in mtx_get_or_insert is justified by "the overwhelmingly
+    // common case is that the key already exists". That is true for a
+    // caller who knows nothing, and FALSE for the one production caller:
+    // the cache's Store::intern only reaches here after ITS OWN lookup
+    // has already missed. So the probe re-walked the tree to re-discover
+    // a miss the caller had just established, and the insert path paid
+    // THREE full traversals where the C++ implementation pays two.
+    //
+    // Measured with callgrind: reach_leaf self-cost on the insert path
+    // was 694.8 instructions per op in Rust -- exactly 3 x 231.6 --
+    // against 463.2 (2 x 231.6) in C++, and find_unlocked was exactly
+    // 2.00x. That accounted for the whole of the Rust insert path's
+    // deficit.
+    concurrent_btree::value_type v{};
+    if (tree->insert_if_absent(
+            k, reinterpret_cast<concurrent_btree::value_type>(word))) {
+      *out = word;
+      return MTX_OK;
+    }
+    // Present already -- either from before this call or from a racing
+    // writer. Either way the winner is what the caller needs, and this is
+    // the same second traversal mtx_get_or_insert does on a lost race.
+    if (tree->search(k, v)) {
+      *out = reinterpret_cast<uint64_t>(v);
+      return MTX_OK;
+    }
+    // insert_if_absent said "present" and search says "absent". Not
+    // reachable while the tree has no remove (which this ABI does not
+    // expose, deliberately), so report it rather than invent a word.
+    return MTX_ERR_INTERNAL;
+  } catch (...) {
+    return MTX_ERR_INTERNAL;
+  }
+}
+
 int mtx_get_or_insert(mtx_tree *t, const char *key, size_t klen, uint64_t word,
                       uint64_t *out) {
   if (t == nullptr || key == nullptr || out == nullptr) return MTX_ERR_INVALID;

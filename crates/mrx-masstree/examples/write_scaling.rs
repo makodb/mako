@@ -119,8 +119,63 @@ use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
 use mrx_core::fakes::MemBlobs;
-use mrx_core::{Config, EntryTable, KeyIndex, Record, Runtime, Store};
+use mrx_core::{CacheLine, Config, EntryTable, KeyIndex, Record, Runtime, Store};
 use mrx_masstree::MasstreeIndex;
+
+/// A version counter living where the **C++** ladder's lives.
+///
+/// The two ladders priced one `seq_cst` fetch_add 58% apart (+57.0 ns in
+/// C++, +36.0 in Rust) on top of near-identical ~36 ns baselines. They
+/// were not incrementing the same kind of memory. C++ draws from
+/// `mrx_store::version_ctr`: `alignas(64)`, near the front of ONE ~24 MB
+/// allocation whose tail is the ticket ring. Rust's `index_ver` drew
+/// from an `Arc<AtomicU64>` — 24 bytes off the small-object allocator,
+/// the word at offset 16, sharing its line with the Arc's own refcounts
+/// and with whatever the allocator placed next to it.
+///
+/// This is the C++ home, rebuilt in Rust, so the difference between the
+/// two rungs is the language and not the address. `index_ver` keeps the
+/// Arc, `index_ver_store` uses this, and `mrx_write_ablation` gained the
+/// mirror-image pair (`index_ver` / `index_ver_bare`) so the comparison
+/// is a 2x2 rather than two unmatched numbers.
+#[repr(C)]
+struct StoreLike {
+    /// `mrx_store`'s cold prefix: gen, tree, db, opts, ropts, wopts.
+    _cold: [usize; 6],
+    version_ctr: CacheLine<AtomicU64>,
+    _resident_bytes: CacheLine<AtomicU64>,
+    _floor_bytes: CacheLine<AtomicU64>,
+    _persisted: CacheLine<AtomicU64>,
+    /// Stand-in for `mrx_log::slots[1 << 20]`: 24 MB of tail, INLINE,
+    /// because what is being reproduced is a counter inside a large
+    /// allocation — a 64-aligned counter in a small one is a different
+    /// experiment.
+    bulk: [u64; 3 << 20],
+}
+
+impl StoreLike {
+    /// Heap-allocate and leak, since `Box::new` would build 24 MB on the
+    /// stack first. Leaking matches the C++ ablation, which also never
+    /// frees its store.
+    fn leak() -> &'static StoreLike {
+        let layout = std::alloc::Layout::new::<StoreLike>();
+        // SAFETY: non-zero layout; every field is valid all-zeroes
+        // (integers and atomics). The allocation is leaked, so the
+        // 'static borrow is sound.
+        unsafe {
+            let p = std::alloc::alloc_zeroed(layout) as *mut StoreLike;
+            assert!(!p.is_null(), "24 MB alloc failed");
+            (*p).version_ctr.0.store(1, Ordering::Relaxed);
+            // First-touch every page, as `mrx_store_open`'s slot-init
+            // loop does, so the timed run is not measuring page faults
+            // in one arm and not the other.
+            for i in (0..(3usize << 20)).step_by(512) {
+                (*p).bulk[i] = 1;
+            }
+            &*p
+        }
+    }
+}
 
 /// The real store's writer-slot pool, mirrored.
 ///
@@ -203,9 +258,20 @@ const RING: usize = 64;
 /// What one op does, per mode.
 enum Work {
     Store(Arc<Store<MasstreeIndex, MemBlobs>>),
+    /// The same store with **RocksDB** underneath instead of
+    /// [`MemBlobs`], i.e. what `mrx_write_ablation`'s `full` rung has
+    /// always been. Until this existed the two ladders' top rungs were
+    /// not the same experiment: C++ paid a durable store and Rust did
+    /// not, so `full - floors` charged C++ for RocksDB and Rust for
+    /// nothing, and the difference was read as a language gap.
+    Db(Arc<mrx::Db>),
     Index(Arc<MasstreeIndex>),
     /// `index`, plus one draw from the shared version counter.
     IndexVer(Arc<MasstreeIndex>, Arc<AtomicU64>),
+    /// `index_ver`, with the counter moved into [`StoreLike`] — the
+    /// C++ counter's home. The pair isolates the memory from the
+    /// instruction.
+    IndexVerStore(Arc<MasstreeIndex>, &'static StoreLike),
     Entry(Arc<MasstreeIndex>, Arc<EntryTable>, Arc<AtomicU64>, Prebuilt),
     Atomic(Arc<AtomicU64>),
     /// (index, table, how far to go: 0 = lookup, 1 = +load, 2 = +copy)
@@ -222,6 +288,9 @@ impl Work {
         match self {
             Work::Store(s) => {
                 s.put(key, value);
+            }
+            Work::Db(db) => {
+                db.put(key, value).expect("put");
             }
             Work::Atomic(c) => {
                 c.fetch_add(1, Ordering::SeqCst);
@@ -248,6 +317,12 @@ impl Work {
                 // most of the rest.
                 idx.get_or_insert(key, seq);
                 ver.fetch_add(1, Ordering::SeqCst);
+            }
+            Work::IndexVerStore(idx, s) => {
+                // Byte-for-byte the rung above, except for WHERE the
+                // counter lives. See `StoreLike`.
+                idx.get_or_insert(key, seq);
+                s.version_ctr.0.fetch_add(1, Ordering::SeqCst);
             }
             Work::Read(idx, table, depth) => {
                 let Some(word) = idx.get(key) else { return };
@@ -341,6 +416,18 @@ fn main() {
     // slow enough that a backlog builds, which is the only state in which
     // the flusher's per-cycle work over the dirty map is visible at all.
     let blob_us: u64 = a.get(5).map_or(0, |s| s.parse().unwrap());
+    // Untimed passes before the timed one; see the spawn below. Same
+    // env name the C++ ablation reads, so a sweep cannot warm one
+    // ladder and not the other.
+    let warmup: usize = std::env::var("MRX_ABL_WARMUP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    assert!(
+        warmup == 0 || mode != "noflusher",
+        "`noflusher` has no drain: a warm-up pass fills the log the timed \
+         pass then blocks on"
+    );
 
     // Keys are built up front. Building them inside the timed loop costs
     // about as much as the write itself and silently halves every number
@@ -395,6 +482,13 @@ fn main() {
             Work::IndexVer(
                 Arc::new(MasstreeIndex::new().expect("masstree")),
                 Arc::clone(&counter),
+            ),
+            None,
+        ),
+        "index_ver_store" => (
+            Work::IndexVerStore(
+                Arc::new(MasstreeIndex::new().expect("masstree")),
+                StoreLike::leak(),
             ),
             None,
         ),
@@ -457,6 +551,21 @@ fn main() {
             ),
             None,
         ),
+        "full_rocks" => {
+            // A fresh directory per run: reopening a populated one costs
+            // an O(keyspace) scan at open, which is not what is being
+            // timed.
+            let dir = std::env::temp_dir().join(format!(
+                "mrx_ws_rocks_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let db = mrx::Db::open(&dir, mrx::Options::default()).expect("open");
+            (Work::Db(Arc::new(db)), None)
+        }
         _ => {
             let blobs = MemBlobs::new();
             blobs.set_write_delay_us(blob_us);
@@ -479,6 +588,31 @@ fn main() {
                 let keys = &keys;
                 let value = &value;
                 scope.spawn(move || {
+                    // WARM-UP, untimed, before the barrier. At the
+                    // ladder's usual 50k ops/thread a 16-thread run
+                    // lasts ~0.03 s, and in 0.03 s the transients ARE
+                    // the measurement: the masstree starts empty so
+                    // most ops take the insert path and split nodes,
+                    // every page is a first-touch fault, and the boost
+                    // clock has not finished ramping. The same rung
+                    // measured 38.7 ns/op at 50k ops and 22.1 ns/op at
+                    // 500k — a 1.8x error, larger than most of the
+                    // rungs the ladder is trying to resolve. Env
+                    // MRX_ABL_WARMUP, so both harnesses take it the
+                    // same way.
+                    //
+                    // NOT free for `full`/`full_rocks`: a warm-up pass
+                    // doubles the writes the durable path sees, and the
+                    // C++ arm's cost is a step function of exactly that
+                    // (its ticket ring is 1<<20 and its flusher falls a
+                    // full ring behind past ~2.5 laps). Quote a `full`
+                    // number WITH its write count.
+                    for _ in 0..warmup {
+                        for i in 0..ops {
+                            let n = t * ops + i;
+                            work.run(t, n as u64 + 1, &keys[n], value);
+                        }
+                    }
                     barrier.wait();
                     for i in 0..ops {
                         let n = t * ops + i;

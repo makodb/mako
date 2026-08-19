@@ -172,9 +172,17 @@ impl MasstreeIndex {
         );
         attach_thread()?;
         let mut out: u64 = sys::MTX_WORD_NULL;
+        // `insert_if_absent`, NOT `get_or_insert`.
+        //
+        // The cache calls this only after its own lookup has missed, so
+        // `get_or_insert`'s leading probe would re-walk the tree to
+        // re-discover that miss — three traversals per insert against the
+        // C++ implementation's two, which callgrind attributed as the
+        // whole of the Rust insert path's deficit.
+        //
         // SAFETY: as `try_get`.
         check(unsafe {
-            sys::mtx_get_or_insert(
+            sys::mtx_insert_if_absent(
                 self.tree,
                 key.as_ptr() as *const core::ffi::c_char,
                 key.len(),

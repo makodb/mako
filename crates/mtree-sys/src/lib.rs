@@ -28,7 +28,7 @@
 use core::ffi::c_char;
 
 /// Bumped on any incompatible change to the C ABI.
-pub const MTX_ABI_VERSION: u32 = 2;
+pub const MTX_ABI_VERSION: u32 = 3;
 
 /// Success.
 pub const MTX_OK: i32 = 0;
@@ -101,6 +101,20 @@ extern "C" {
     /// Install `word` if absent; `*out` receives whichever word is now
     /// associated with the key.
     pub fn mtx_get_or_insert(
+        t: *mut MtxTree,
+        key: *const c_char,
+        klen: usize,
+        word: u64,
+        out: *mut u64,
+    ) -> i32;
+
+    /// As [`mtx_get_or_insert`], but without the leading probe.
+    ///
+    /// For a caller that has ALREADY established the key is absent. The
+    /// probe would re-walk the tree to re-discover a miss the caller just
+    /// found, which is what made this crate's insert path cost three
+    /// masstree traversals against the C++ implementation's two.
+    pub fn mtx_insert_if_absent(
         t: *mut MtxTree,
         key: *const c_char,
         klen: usize,
@@ -182,12 +196,13 @@ mod tests {
     // differential harness.
 
     #[test]
-    fn abi_version_is_two() {
-        // Bumped from 1 when `arena_used` gained its overflow meaning.
+    fn abi_version_is_three() {
+        // 1 -> 2 when `arena_used` gained its overflow meaning; 2 -> 3
+        // when mtx_insert_if_absent was added.
         // The runtime check in assert_abi_matches is what actually
         // enforces agreement; this pins the constant against an
         // accidental edit.
-        assert_eq!(MTX_ABI_VERSION, 2);
+        assert_eq!(MTX_ABI_VERSION, 3);
     }
 
     #[test]
