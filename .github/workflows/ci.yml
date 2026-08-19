@@ -86,13 +86,16 @@ jobs:
           # scripts/ci/assert_crate_codegen.sh for the full reasoning; it is a
           # script (not inline) so the assertion logic is unit-tested, including
           # that it still FAILS when regeneration does not happen.
-          assert_regenerated=scripts/ci/assert_crate_codegen.sh
+          # Via `bash` deliberately: core.fileMode=false in this repo means a
+          # chmod +x can be silently dropped from the index, so do not depend
+          # on the exec bit (it is set, but this makes it not matter).
+          assert_regenerated=(bash scripts/ci/assert_crate_codegen.sh)
 
           touch "${emitter_input}"
           changed_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${changed_output}"
 
-          "${assert_regenerated}" rrr.frame_codec.cppm <<<"${changed_output}"
+          "${assert_regenerated[@]}" rrr.frame_codec.cppm <<<"${changed_output}"
           # Touching the emitter's source must actually rebuild the emitter, so
           # require cargo to say it recompiled rather than trusting a timestamp.
           grep -Fq 'Compiling rusty-cpp-transpiler' <<<"${changed_output}"
@@ -101,13 +104,13 @@ jobs:
           canonical_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${canonical_output}"
 
-          "${assert_regenerated}" rrr.frame_codec.cppm <<<"${canonical_output}"
+          "${assert_regenerated[@]}" rrr.frame_codec.cppm <<<"${canonical_output}"
 
           touch "${runtime_facade_input}"
           facade_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${facade_output}"
 
-          "${assert_regenerated}" \
+          "${assert_regenerated[@]}" \
             rrr.request_queue.cppm \
             rrr.load_balancer.cppm \
             rrr.utils.cppm \
@@ -120,7 +123,7 @@ jobs:
             sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
             printf '%s\n' "${sidecar_output}"
 
-            "${assert_regenerated}" rrr.utils.cppm rrr.frame_codec.cppm \
+            "${assert_regenerated[@]}" rrr.utils.cppm rrr.frame_codec.cppm \
               <<<"${sidecar_output}"
           done
 

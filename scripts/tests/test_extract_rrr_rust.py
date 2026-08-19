@@ -2319,8 +2319,12 @@ Done: 38 files transpiled, 0 errors
     NOT_REGENERATED = "ninja: no work to do.\n"
 
     def assert_script(self, stdin: str, *generated: str):
+        # Invoked through `bash` on purpose: this repo has core.fileMode=false,
+        # so a `chmod +x` in a worktree is silently NOT recorded and the script
+        # lands in git as 100644. Relying on the exec bit made CI die with
+        # PermissionError. The mode is now 100755 as well, but not depended on.
         return subprocess.run(
-            [str(self.SCRIPT), *generated],
+            ["bash", str(self.SCRIPT), *generated],
             input=stdin,
             text=True,
             stdout=subprocess.PIPE,
