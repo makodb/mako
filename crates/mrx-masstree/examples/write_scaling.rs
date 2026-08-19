@@ -32,7 +32,7 @@
 //!                    other end of the bracket on what allocation
 //!                    costs. See `Prebuilt`.
 //!         entry      + the two per-write allocations, i.e. the real
-//!                    `Val::resident(ver, bytes)`.
+//!                    `Record::resident(ver, bytes)`.
 //!         floors     + the announce floor. Splits the durability
 //!                    bookkeeping into its memory-ordering half and its
 //!                    locking half, which is the difference between a
@@ -119,7 +119,7 @@ use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
 use mrx_core::fakes::MemBlobs;
-use mrx_core::{Config, EntryTable, KeyIndex, Runtime, Store, Val};
+use mrx_core::{Config, EntryTable, KeyIndex, Record, Runtime, Store};
 use mrx_masstree::MasstreeIndex;
 
 /// The real store's writer-slot pool, mirrored.
@@ -184,7 +184,7 @@ enum Prebuilt {
     /// substitute is contended where the thing it replaced was not, so
     /// read `entry - alloc` as a LOWER bound on allocation cost and
     /// `entry - alloc_ring` as the upper one.
-    Shared(Arc<Val>),
+    Shared(Record),
     /// Republish from a per-thread ring of distinct records.
     ///
     /// Same "no allocation" as `Shared` without the shared refcount:
@@ -192,7 +192,7 @@ enum Prebuilt {
     /// refcount traffic keeps the shape the real path has — one
     /// increment by the writer, one decrement by whoever overwrites —
     /// and the ring is small enough to stay resident.
-    Ring(Vec<Vec<Arc<Val>>>),
+    Ring(Vec<Vec<Record>>),
 }
 
 /// Records per thread in [`Prebuilt::Ring`]. 64 x ~150 B is under
@@ -285,7 +285,7 @@ impl Work {
                 let word = match idx.get(key) {
                     Some(w) => w,
                     None => {
-                        let e = mrx_core::Entry::new(key, Val::tombstone(0));
+                        let e = mrx_core::Entry::new(key, Record::tombstone(0));
                         let i = table.push(e);
                         idx.get_or_insert(key, u64::from(i) + 1)
                     }
@@ -296,7 +296,7 @@ impl Work {
                 // on x86), draw a version, publish, release the floor.
                 slot.arm(ver.load(Ordering::SeqCst));
                 let v = ver.fetch_add(1, Ordering::SeqCst);
-                e.with_slot(|_| (Some(Val::resident(v, value.to_vec())), ()));
+                e.with_slot(|_| (Some(Record::resident(v, value)), ()));
                 slot.disarm();
             }
             Work::Entry(idx, table, ver, prebuilt) => {
@@ -306,7 +306,7 @@ impl Work {
                 let word = match idx.get(key) {
                     Some(w) => w,
                     None => {
-                        let e = mrx_core::Entry::new(key, Val::tombstone(0));
+                        let e = mrx_core::Entry::new(key, Record::tombstone(0));
                         let idx_new = table.push(e);
                         idx.get_or_insert(key, u64::from(idx_new) + 1)
                     }
@@ -318,10 +318,10 @@ impl Work {
                 // the current value first, which took the lock twice and
                 // charged the difference to allocation.
                 let nv = match prebuilt {
-                    Prebuilt::Fresh => Val::resident(v, value.to_vec()),
-                    Prebuilt::Shared(one) => Arc::clone(one),
+                    Prebuilt::Fresh => Record::resident(v, value),
+                    Prebuilt::Shared(one) => one.clone(),
                     Prebuilt::Ring(rings) => {
-                        Arc::clone(&rings[tid][(seq as usize) % RING])
+                        rings[tid][(seq as usize) % RING].clone()
                     }
                 };
                 e.with_slot(|_| (Some(nv), ()));
@@ -408,7 +408,7 @@ fn main() {
             for k in seen {
                 let i = table.push(mrx_core::Entry::new(
                     k,
-                    Val::resident(1, vec![b'v'; 100]),
+                    Record::resident(1, &[b'v'; 100]),
                 ));
                 idx.get_or_insert(k, u64::from(i) + 1);
             }
@@ -437,16 +437,16 @@ fn main() {
                 match mode {
                     "entry" => Prebuilt::Fresh,
                     "alloc" => {
-                        Prebuilt::Shared(Val::resident(0, vec![b'v'; 100]))
+                        Prebuilt::Shared(Record::resident(0, &[b'v'; 100]))
                     }
                     _ => Prebuilt::Ring(
                         (0..threads)
                             .map(|t| {
                                 (0..RING)
                                     .map(|r| {
-                                        Val::resident(
+                                        Record::resident(
                                             (t * RING + r) as u64,
-                                            vec![b'v'; 100],
+                                            &[b'v'; 100],
                                         )
                                     })
                                     .collect()

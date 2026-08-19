@@ -40,7 +40,7 @@ MUTATIONS = [
     (
         "stale-writeback",
         "src/store.rs",
-        """                if !matches!(cur.state, ValState::Evicted) {
+        """                if cur.kind() != Kind::Evicted {
                     held.push((e, cur));
                 }
                 wrote.push(*idx);""",
@@ -48,7 +48,7 @@ MUTATIONS = [
                 // moved past the ticket, on the theory that the newer
                 // write will carry it. It will not: a hot key is never
                 // current at drain time.
-                if cur.version == *owed && !matches!(cur.state, ValState::Evicted) {
+                if cur.version() == *owed && cur.kind() != Kind::Evicted {
                     held.push((e, cur));
                 }
                 wrote.push(*idx);""",
@@ -75,7 +75,7 @@ MUTATIONS = [
     (
         "evict-above-watermark",
         "src/store.rs",
-        """        if cur.version > self.watermark.get() {
+        """        if cur.version() > self.watermark.get() {
             return false; // the only copy
         }
 """,

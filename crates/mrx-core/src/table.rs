@@ -150,7 +150,7 @@ impl EntryTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::Val;
+    use crate::record::Record;
 
     #[test]
     fn segments_tile_the_index_space_without_gaps_or_overlap() {
@@ -187,13 +187,13 @@ mod tests {
         for i in 0..5000u32 {
             let idx = t.push(Entry::new(
                 format!("k{i}").as_bytes(),
-                Val::resident(u64::from(i) + 1, vec![]),
+                Record::resident(u64::from(i) + 1, &[]),
             ));
             assert_eq!(idx, i);
         }
         for i in 0..5000u32 {
             assert_eq!(t.get(i).key(), format!("k{i}").as_bytes());
-            assert_eq!(t.get(i).load().version, u64::from(i) + 1);
+            assert_eq!(t.get(i).load().version(), u64::from(i) + 1);
         }
         assert_eq!(t.len(), 5000);
     }
@@ -211,7 +211,7 @@ mod tests {
                     for i in 0..500u32 {
                         mine.push(t.push(Entry::new(
                             format!("k{i}").as_bytes(),
-                            Val::tombstone(0),
+                            Record::tombstone(0),
                         )));
                     }
                     got.lock().unwrap().extend(mine);

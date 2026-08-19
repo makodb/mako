@@ -5,12 +5,13 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Condvar, Mutex};
 
 use crate::durability::{Floors, Ticket, TicketLog, VersionCounter, Watermark, WriterSlot,
                         NO_FLOOR};
 use crate::table::EntryTable;
-use crate::value::{Entry, Val, ValState};
+use crate::record::{Kind, Record};
+use crate::value::Entry;
 use crate::{Blobs, BlobOp, CacheLine, Config, EntryWord, KeyIndex, Version};
 
 /// What a write did.
@@ -180,7 +181,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         for k in keys {
             // Version 0: at or below any watermark, i.e. durable by
             // provenance — correct, since the bytes came FROM the store.
-            let idx = self.intern(&k, || Val::evicted(0));
+            let idx = self.intern(&k, || Record::evicted(0));
             let _ = idx;
         }
         Ok(())
@@ -193,7 +194,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// needed. Taking it by value allocated an `Arc<Val>` on **every**
     /// write and dropped it unused on all but the first — found while
     /// profiling the write path, and free to fix.
-    fn intern(&self, key: &[u8], seed: impl FnOnce() -> Arc<Val>) -> u32 {
+    fn intern(&self, key: &[u8], seed: impl FnOnce() -> Record) -> u32 {
         if let Some(w) = self.index.get(key) {
             return (w - 1) as u32;
         }
@@ -282,19 +283,19 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         // read, after going to the durable store, and a version number
         // would not distinguish a record that was replaced, flushed and
         // re-evicted in between.
-        let fast = e.with_value(|v| match &v.state {
-            ValState::Tombstone => Some(None),
-            ValState::Resident(b) => Some(Some(b.clone())),
-            ValState::Evicted => None,
+        let fast = e.with_value(|v| match v.kind() {
+            Kind::Tombstone => Some(None),
+            Kind::Resident => Some(v.bytes().map(<[u8]>::to_vec)),
+            Kind::Evicted => None,
         });
         if let Some(r) = fast {
             return Ok(r);
         }
         let cur = e.load_touched();
-        match &cur.state {
-            ValState::Tombstone => Ok(None),
-            ValState::Resident(b) => Ok(Some(b.clone())),
-            ValState::Evicted => self.fill(e, &cur),
+        match cur.kind() {
+            Kind::Tombstone => Ok(None),
+            Kind::Resident => Ok(cur.bytes().map(<[u8]>::to_vec)),
+            Kind::Evicted => self.fill(e, &cur),
         }
     }
 
@@ -307,27 +308,28 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     fn fill(
         &self,
         e: &Entry,
-        seen: &Arc<Val>,
+        seen: &Record,
     ) -> Result<Option<Vec<u8>>, crate::BlobError> {
         let Some(bytes) = self.blobs.get(e.key())? else {
             // The index says this key exists but the store has no row.
             // Report absent rather than inventing data.
             return Ok(None);
         };
-        let installed = Val::resident(seen.version, bytes.clone());
-        if e.compare_publish(seen, Arc::clone(&installed)) {
-            self.account(seen.payload_bytes(), installed.payload_bytes());
+        let installed = Record::resident(seen.version(), &bytes);
+        let added = installed.payload_bytes();
+        if e.compare_publish(seen, installed) {
+            self.account(seen.payload_bytes(), added);
             return Ok(Some(bytes));
         }
         // Someone won. Serve whatever is published now, without
         // installing our possibly-stale bytes.
         let now = e.load();
-        match &now.state {
-            ValState::Tombstone => Ok(None),
-            ValState::Resident(b) => Ok(Some(b.clone())),
+        match now.kind() {
+            Kind::Tombstone => Ok(None),
+            Kind::Resident => Ok(now.bytes().map(<[u8]>::to_vec)),
             // Re-evicted already; our bytes are still that version's, but
             // the caller asked for a value, so hand back what we read.
-            ValState::Evicted => Ok(Some(bytes)),
+            Kind::Evicted => Ok(Some(bytes)),
         }
     }
 
@@ -355,7 +357,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     }
 
     fn write(&self, key: &[u8], val: Option<&[u8]>, mode: WriteMode) -> WriteOutcome {
-        let idx = self.intern(key, || Val::tombstone(0));
+        let idx = self.intern(key, || Record::tombstone(0));
         let e = self.entry(idx);
         let w = self.writer();
 
@@ -383,9 +385,9 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             }
             let ver = self.counter.draw();
             let nv = match (mode, val) {
-                (WriteMode::Remove, _) => Val::tombstone(ver),
-                (_, Some(v)) => Val::resident(ver, v.to_vec()),
-                (_, None) => Val::tombstone(ver),
+                (WriteMode::Remove, _) => Record::tombstone(ver),
+                (_, Some(v)) => Record::resident(ver, v),
+                (_, None) => Record::tombstone(ver),
             };
             let freed = cur.payload_bytes();
             let added = nv.payload_bytes();
@@ -511,20 +513,22 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         let mut pairs = Vec::with_capacity(n);
         for (k, word) in raw.into_iter().skip(usize::from(skip_first)) {
             let e = self.entry((word - 1) as u32);
-            let fast = e.with_value(|v| match &v.state {
-                ValState::Tombstone => Some(None),
-                ValState::Resident(b) => Some(Some(b.clone())),
-                ValState::Evicted => None,
+            let fast = e.with_value(|v| match v.kind() {
+                Kind::Tombstone => Some(None),
+                Kind::Resident => Some(v.bytes().map(<[u8]>::to_vec)),
+                Kind::Evicted => None,
             });
             let bytes = match fast {
                 Some(None) => continue,
                 Some(Some(b)) => b,
                 None => {
                     let cur = e.load();
-                    match &cur.state {
-                        ValState::Tombstone => continue,
-                        ValState::Resident(b) => b.clone(),
-                        ValState::Evicted => match self.fill(e, &cur)? {
+                    match cur.kind() {
+                        Kind::Tombstone => continue,
+                        Kind::Resident => {
+                            cur.bytes().expect("resident has bytes").to_vec()
+                        }
+                        Kind::Evicted => match self.fill(e, &cur)? {
                             Some(b) => b,
                             None => continue,
                         },
@@ -671,7 +675,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             // invisible; against a real RocksDB it runs constantly, and
             // the allocator traffic lands on the same arenas the sixteen
             // producer threads are using.
-            let mut held: Vec<(&Entry, Arc<Val>)> =
+            let mut held: Vec<(&Entry, Record)> =
                 Vec::with_capacity(candidates.len());
             let mut wrote: Vec<u32> = Vec::with_capacity(candidates.len());
             for (idx, owed) in &candidates {
@@ -683,25 +687,25 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
                 // move forward.
                 let cur = e.load();
                 debug_assert!(
-                    cur.version >= *owed,
+                    cur.version() >= *owed,
                     "entry {idx} went backwards: {} < {owed}",
-                    cur.version
+                    cur.version()
                 );
                 // Non-resident means already durable (eviction requires
                 // version <= W), so the obligation is met with no write.
                 // It still must be DISCHARGED, or the entry wedges in the
                 // map and pins the watermark forever.
-                if !matches!(cur.state, ValState::Evicted) {
+                if cur.kind() != Kind::Evicted {
                     held.push((e, cur));
                 }
                 wrote.push(*idx);
             }
             let ops: Vec<BlobOp<'_>> = held
                 .iter()
-                .map(|(e, v)| match &v.state {
-                    ValState::Resident(b) => BlobOp::Put { key: e.key(), val: b },
+                .map(|(e, v)| match v.bytes() {
+                    Some(b) => BlobOp::Put { key: e.key(), val: b },
                     // Tombstone; `Evicted` never reaches here.
-                    _ => BlobOp::Delete { key: e.key() },
+                    None => BlobOp::Delete { key: e.key() },
                 })
                 .collect();
 
@@ -905,14 +909,13 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     pub fn evict(&self, idx: u32) -> bool {
         let e = self.entry(idx);
         let cur = e.load();
-        match cur.state {
-            ValState::Resident(_) => {}
-            ValState::Tombstone | ValState::Evicted => return false,
+        if cur.kind() != Kind::Resident {
+            return false;
         }
-        if cur.version > self.watermark.get() {
+        if cur.version() > self.watermark.get() {
             return false; // the only copy
         }
-        let marker = Val::evicted(cur.version);
+        let marker = Record::evicted(cur.version());
         if e.compare_publish(&cur, marker) {
             self.account(cur.payload_bytes(), 0);
             true
@@ -970,17 +973,17 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     pub fn is_resident(&self, key: &[u8]) -> Option<bool> {
         let word = self.index.get(key)?;
         let cur = self.entry((word - 1) as u32).load();
-        match cur.state {
-            ValState::Resident(_) => Some(true),
-            ValState::Evicted => Some(false),
-            ValState::Tombstone => None,
+        match cur.kind() {
+            Kind::Resident => Some(true),
+            Kind::Evicted => Some(false),
+            Kind::Tombstone => None,
         }
     }
 
     /// The version currently published for a key, if it is known.
     pub fn version_of(&self, key: &[u8]) -> Option<Version> {
         let word = self.index.get(key)?;
-        Some(self.entry((word - 1) as u32).load().version)
+        Some(self.entry((word - 1) as u32).load().version())
     }
 
     /// Try to evict one key's value by name. Test-facing wrapper around
