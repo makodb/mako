@@ -11,7 +11,7 @@ use crate::durability::{Floors, Ticket, TicketLog, VersionCounter, Watermark, Wr
                         NO_FLOOR};
 use crate::table::EntryTable;
 use crate::value::{Entry, Val, ValState};
-use crate::{Blobs, BlobOp, Config, EntryWord, KeyIndex, Version};
+use crate::{Blobs, BlobOp, CacheLine, Config, EntryWord, KeyIndex, Version};
 
 /// What a write did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,8 +81,11 @@ pub struct Store<K: KeyIndex, B: Blobs> {
     /// much as the write path.
     entries: EntryTable,
 
-    counter: VersionCounter,
-    watermark: Watermark,
+    // Each on its own line: every writer draws a version, and the flusher
+    // writes the watermark. Sharing a line makes those two operations
+    // fight over cache-line ownership for no reason.
+    counter: CacheLine<VersionCounter>,
+    watermark: CacheLine<Watermark>,
     log: TicketLog,
     writers: Vec<WriterSlot>,
     /// How many slots have ever been handed to a thread.
@@ -117,7 +120,9 @@ pub struct Store<K: KeyIndex, B: Blobs> {
     /// watermark would sail past an acked write the log has not seen.
     stash_min: AtomicU64,
 
-    resident_bytes: AtomicU64,
+    /// Written by every writer on every write; kept off the counter's
+    /// line for the same reason.
+    resident_bytes: CacheLine<AtomicU64>,
     floor_bytes: AtomicU64,
 
     /// Flusher cycles completed, for the lazy watermark schedule below.
@@ -151,12 +156,12 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             index,
             blobs,
             entries: EntryTable::new(),
-            counter: VersionCounter::new(),
-            watermark: Watermark::new(),
+            counter: CacheLine(VersionCounter::new()),
+            watermark: CacheLine(Watermark::new()),
             dirty: Mutex::new(HashMap::new()),
             stash: Mutex::new(Vec::new()),
             stash_min: AtomicU64::new(NO_FLOOR),
-            resident_bytes: AtomicU64::new(0),
+            resident_bytes: CacheLine(AtomicU64::new(0)),
             floor_bytes: AtomicU64::new(0),
             flusher_cycles: AtomicU64::new(0),
             flush_waiters: AtomicU64::new(0),

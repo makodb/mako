@@ -77,6 +77,30 @@ pub use value::{Entry, Val, ValState};
 /// subtraction, and assert it.
 pub const FIRST_VERSION: u64 = 1;
 
+/// A value on a cache line of its own.
+///
+/// For scalars that EVERY writer hits on EVERY write. Without this the
+/// store's version counter, its watermark, and the ticket log's mutex
+/// word all sit inside one 64-byte line, so a writer drawing a version
+/// invalidates the line under the flusher's watermark write and vice
+/// versa — coherence traffic between threads that never actually share
+/// data.
+///
+/// Note this is the OPPOSITE case to [`WriterSlot`], where padding was
+/// measured and rejected: those are per-thread and read in bulk by the
+/// flusher, so spreading them multiplied its scan. These are genuinely
+/// shared single words.
+#[derive(Debug, Default)]
+#[repr(align(64))]
+pub struct CacheLine<T>(pub T);
+
+impl<T> std::ops::Deref for CacheLine<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
 /// A monotonically increasing version stamped on every published value.
 pub type Version = u64;
 

@@ -202,11 +202,23 @@ impl Entry {
     /// proceed?) and the publication happen under one acquisition, so no
     /// other writer can interleave between them.
     pub fn with_slot<R>(&self, f: impl FnOnce(&Arc<Val>) -> (Option<Arc<Val>>, R)) -> R {
-        let mut slot = self.val.lock().expect("entry mutex poisoned");
-        let (new, r) = f(&slot);
-        if let Some(v) = new {
-            *slot = v;
-        }
+        let (displaced, r) = {
+            let mut slot = self.val.lock().expect("entry mutex poisoned");
+            let (new, r) = f(&slot);
+            (new.map(|v| std::mem::replace(&mut *slot, v)), r)
+        };
+        // The lock is RELEASED here, and only then does the displaced
+        // record's refcount reach zero and its allocation get freed.
+        //
+        // `*slot = v` dropped it inside the critical section, so every
+        // overwrite ran `free()` — of a block another thread almost
+        // certainly allocated — while holding the lock that every reader
+        // and writer of this key is queued behind. The C++ implementation
+        // never frees on this path at all: it pushes the old record onto a
+        // thread-local queue and defers the free to an epoch boundary.
+        // This does not defer, but it does get the allocator out of the
+        // critical section.
+        drop(displaced);
         r
     }
 
