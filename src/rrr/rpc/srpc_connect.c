@@ -12,6 +12,8 @@
  *   -3    TCP self-connect guard tripped (see below)
  */
 
+#include "rpc/srpc_connect.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -19,9 +21,57 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+/* Plain-C transport syscall seam used by canonical Rust. Keeping libc's
+ * variadic and platform-specific declarations here gives the generated C++
+ * module a small, exact C ABI and keeps errno thread-local. */
+static _Thread_local int32_t srpc_tcp_io_errno;
+static _Thread_local unsigned char srpc_tcp_recv_storage[64 * 1024];
+
+unsigned char* srpc_tcp_recv_scratch(void) {
+    return srpc_tcp_recv_storage;
+}
+
+int32_t srpc_tcp_last_errno(void) {
+    return srpc_tcp_io_errno;
+}
+
+uint32_t srpc_tcp_current_thread_id(void) {
+    return (uint32_t)syscall(SYS_gettid);
+}
+
+int64_t srpc_tcp_recv_bytes(int32_t fd, unsigned char* data, size_t size) {
+    const ssize_t result = recv(fd, data, size, 0);
+    srpc_tcp_io_errno = result < 0 ? errno : 0;
+    return (int64_t)result;
+}
+
+int64_t srpc_tcp_send_bytes(int32_t fd, const unsigned char* data, size_t size) {
+    const ssize_t result = send(fd, data, size, MSG_NOSIGNAL);
+    srpc_tcp_io_errno = result < 0 ? errno : 0;
+    return (int64_t)result;
+}
+
+int32_t srpc_tcp_shutdown(int32_t fd) {
+    const int result = shutdown(fd, SHUT_RDWR);
+    srpc_tcp_io_errno = result < 0 ? errno : 0;
+    return result;
+}
+
+int32_t srpc_tcp_set_nonblocking(int32_t fd) {
+    const int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        srpc_tcp_io_errno = errno;
+        return -1;
+    }
+    const int result = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    srpc_tcp_io_errno = result < 0 ? errno : 0;
+    return result;
+}
 
 int32_t srpc_tcp_connect_socket(uint32_t addr_be, uint16_t port_be,
                                 int32_t timeout_ms, int32_t* out_errno) {

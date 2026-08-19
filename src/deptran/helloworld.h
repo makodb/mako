@@ -72,7 +72,7 @@ private:
         // @unsafe
         {
             RpcTxnReadRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -119,7 +119,7 @@ public:
             }
             RpcTxnReadResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
         }

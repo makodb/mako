@@ -17,30 +17,13 @@ file(GLOB RRR_BENCH_SRC
 # Remaining C++23 named-module interface units whose Rust is still embedded in
 # an inline carrier. Keep this census complete so none is also compiled through
 # the regular source glob.
-set(RRR_INLINE_MODULE_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
-)
-list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_INLINE_MODULE_SRC})
+# Goal 0 complete: NO hand-authored module interface unit remains under
+# src/rrr. Every one of the thirty-seven named modules is generated from a
+# canonical Rust source by rusty-cpp crate mode, so this census is empty and
+# nothing has to be removed from the regular source glob.
+set(RRR_INLINE_MODULE_SRC)
 
-# These eighteen modules are owned by canonical Rust sources. rusty-cpp generates
+# These thirty-seven modules are owned by canonical Rust sources. rusty-cpp generates
 # their complete C++ module interfaces; no hand-authored carrier remains.
 set(RRR_GOAL0_CANONICAL_MODULES
     basetypes
@@ -58,30 +41,94 @@ set(RRR_GOAL0_CANONICAL_MODULES
     heartbeat
     request_queue
     load_balancer
+    debugging
+    logging
     utils
     frame_codec
-    debugging
+    serializable
+    serializable_envelope
+    epoll_wrapper
+    misc
+    pollable_proxy
+    reactor
+    future
+    idempotency
+    fiber
+    channel
+    callbacks
+    inmemory_channel
+    fiber_channel
+    threading
+    any_message
+    tcp_channel
+    server
+    client
 )
 set(_RRR_GOAL0_UNIQUE_MODULES ${RRR_GOAL0_CANONICAL_MODULES})
 list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_MODULES)
 list(LENGTH RRR_GOAL0_CANONICAL_MODULES _RRR_GOAL0_MODULE_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_MODULES _RRR_GOAL0_UNIQUE_MODULE_COUNT)
-if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 18 OR
-   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 18)
+if(NOT _RRR_GOAL0_MODULE_COUNT EQUAL 37 OR
+   NOT _RRR_GOAL0_UNIQUE_MODULE_COUNT EQUAL 37)
     message(FATAL_ERROR
-        "Goal-0 canonical module inventory must contain eighteen unique names")
+        "Goal-0 canonical module inventory must contain thirty-seven unique names")
 endif()
 
 set(RRR_GOAL0_CRATE_CPP_DIR
     ${CMAKE_CURRENT_BINARY_DIR}/goal0-crate-cpp
 )
+# Canonical Rust lives beside the C++ it replaced -- base/, misc/, rpc/,
+# reactor/ -- so `src/rrr` mirrors srpc's tree exactly and a future sync is a
+# copy rather than a merge. The manifest owns the mapping; this list is its
+# CMake mirror and the census check below keeps the two in step.
+set(RRR_GOAL0_CANONICAL_SOURCE_RELPATH
+    base/basetypes.rs
+    base/callback_wrapper.rs
+    rpc/internal_protocol.rs
+    misc/stat.rs
+    rpc/errors.rs
+    rpc/connection_metrics.rs
+    rpc/completion_tracker.rs
+    misc/rand.rs
+    rpc/request_options.rs
+    rpc/reconnect_policy.rs
+    rpc/circuit_breaker.rs
+    rpc/connection_state.rs
+    rpc/heartbeat.rs
+    rpc/request_queue.rs
+    rpc/load_balancer.rs
+    base/debugging.rs
+    base/logging.rs
+    rpc/utils.rs
+    rpc/frame_codec.rs
+    misc/serializable.rs
+    misc/serializable_envelope.rs
+    reactor/epoll_wrapper.rs
+    base/misc.rs
+    rpc/pollable_proxy.rs
+    reactor/reactor.rs
+    reactor/future.rs
+    rpc/idempotency.rs
+    reactor/fiber.rs
+    rpc/channel.rs
+    rpc/callbacks.rs
+    rpc/inmemory_channel.rs
+    rpc/fiber_channel.rs
+    base/threading.rs
+    misc/any_message.rs
+    rpc/tcp_channel.rs
+    rpc/server.rs
+    rpc/client.rs
+)
 set(RRR_GOAL0_CANONICAL_RUST_SRC)
 set(RRR_GOAL0_CRATE_CHILD_SRC)
 foreach(_RRR_GOAL0_MODULE IN LISTS RRR_GOAL0_CANONICAL_MODULES)
-    list(APPEND RRR_GOAL0_CANONICAL_RUST_SRC
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/${_RRR_GOAL0_MODULE}.rs)
     list(APPEND RRR_GOAL0_CRATE_CHILD_SRC
         ${RRR_GOAL0_CRATE_CPP_DIR}/rrr.${_RRR_GOAL0_MODULE}.cppm)
+endforeach()
+foreach(_RRR_GOAL0_RELPATH IN LISTS RRR_GOAL0_CANONICAL_SOURCE_RELPATH)
+    list(APPEND RRR_GOAL0_CANONICAL_RUST_SRC
+        ${CMAKE_CURRENT_SOURCE_DIR}/${_RRR_GOAL0_RELPATH})
 endforeach()
 
 set(RRR_GOAL0_RETIRED_CARRIER_SRC
@@ -103,6 +150,25 @@ set(RRR_GOAL0_RETIRED_CARRIER_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
 )
 foreach(_RRR_GOAL0_CANONICAL_SOURCE IN LISTS RRR_GOAL0_CANONICAL_RUST_SRC)
     if(NOT EXISTS "${_RRR_GOAL0_CANONICAL_SOURCE}")
@@ -130,18 +196,18 @@ list(REMOVE_DUPLICATES _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC)
 list(LENGTH _RRR_GOAL0_UNIQUE_CANONICAL_RUST_SRC
     _RRR_GOAL0_UNIQUE_CANONICAL_COUNT)
 list(LENGTH _RRR_GOAL0_UNIQUE_CRATE_CHILD_SRC _RRR_GOAL0_UNIQUE_CHILD_COUNT)
-if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 18 OR
-   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 18 OR
-   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 18 OR
-   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 18)
+if(NOT _RRR_GOAL0_CANONICAL_COUNT EQUAL 37 OR
+   NOT _RRR_GOAL0_CHILD_COUNT EQUAL 37 OR
+   NOT _RRR_GOAL0_UNIQUE_CANONICAL_COUNT EQUAL 37 OR
+   NOT _RRR_GOAL0_UNIQUE_CHILD_COUNT EQUAL 37)
     message(FATAL_ERROR
-        "Goal-0 crate production must own exactly eighteen unique "
+        "Goal-0 crate production must own exactly thirty-seven unique "
         "Rust/generated providers")
 endif()
 
-# Production always combines the remaining inline carriers with the eighteen
-# generated providers. The partial crate root remains compile-only until all
-# 37 named modules are canonical Rust.
+# Production is now exactly the thirty-seven generated providers; the inline
+# census is empty. The crate root stays compile-only: it is the crate's
+# umbrella, not a production module provider.
 set(RRR_MODULE_SRC ${RRR_INLINE_MODULE_SRC} ${RRR_GOAL0_CRATE_CHILD_SRC})
 set(RRR_MODULE_BASE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -152,10 +218,10 @@ set_source_files_properties(${RRR_GOAL0_CRATE_CHILD_SRC}
 
 list(LENGTH RRR_INLINE_MODULE_SRC _RRR_INLINE_MODULE_COUNT)
 list(LENGTH RRR_MODULE_SRC _RRR_PRODUCTION_MODULE_COUNT)
-if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 19 OR
+if(NOT _RRR_INLINE_MODULE_COUNT EQUAL 0 OR
    NOT _RRR_PRODUCTION_MODULE_COUNT EQUAL 37)
     message(FATAL_ERROR
-        "Goal-0 production must contain 19 inline and eighteen generated modules")
+        "Goal-0 production must contain 0 inline and thirty-seven generated modules")
 endif()
 list(FIND RRR_MODULE_SRC "${RRR_GOAL0_CRATE_ROOT_SRC}" _RRR_GOAL0_ROOT_INDEX)
 if(NOT _RRR_GOAL0_ROOT_INDEX EQUAL -1)
@@ -248,6 +314,7 @@ if(NOT TARGET rrr)
     # them); the C++ modules keep thin type-converting shims.
     target_sources(rrr PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_connect.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_server.c
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_net.c
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_timing.c
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_rand.c
@@ -280,46 +347,12 @@ if(NOT TARGET rrr)
     # Remaining hand-authored RRR C++ module units for borrow checking. The
     # eighteen canonical Rust modules are checked by rustc and are not duplicated
     # here as generated C++ providers.
-    set(RRR_BORROW_SRC
-        # base/
-        ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
-            # misc/
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
-        # reactor/ — (fiber_impl.cc, event.cc, quorum_event.cc, reactor.cc were
-        # merged into rrr.reactor / reactor.cpp during modularization.)
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
-        # rpc/
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
-        # Notes on parse-recovery:
-        # - rpc/server.cpp and rpc/fiber_channel.cpp trip a libclang-22 crash
-        #   on the first parse attempt (clang++ CLI compiles them fine — it's
-        #   a libclang-specific bug). rusty-cpp's parser detects the crash
-        #   and retries with module args dropped (keeps `import std;` only),
-        #   producing a partial AST. Findings against these two files are
-        #   missing cross-module callee-name resolution, so they show up as
-        #   `Calling non-safe function 'unknown'` and may include false
-        #   positives. Once upstream libclang is fixed the recovery will
-        #   become a no-op and findings will gain full precision.
-        # Exclusions (each with a reason):
-        # - reactor/fiber_context_{aarch64,x86_64}.cc: arch-specific inline
-        #   `__asm__ volatile(...)` context-switch trampolines (~30 lines
-        #   each). C++ semantics don't reach them.
-    )
+    # Goal 0 complete: every src/rrr module is generated from canonical Rust
+    # and checked by rustc, so no hand-authored C++ module unit remains to
+    # borrow-check. The arch-specific fiber context-switch trampolines
+    # (reactor/fiber_context_{aarch64,x86_64}.cc) stay excluded: they are
+    # inline `__asm__ volatile(...)` that C++ semantics do not reach.
+    set(RRR_BORROW_SRC)
 
     if(ENABLE_BORROW_CHECKING AND RRR_BORROW_SRC)
         add_library(rrr_borrow OBJECT ${RRR_BORROW_SRC})
@@ -582,6 +615,11 @@ add_custom_target(rrr_goal0_dual_compile ALL
         --production-library "$<TARGET_FILE:rrr>"
         --runtime-module-root
             "${CMAKE_BINARY_DIR}/third-party/rusty-cpp/CMakeFiles"
+        # Canonical rrr.logging / rrr.serializable / rrr.reactor / rrr.future
+        # `import std;`, so the gate's standalone module compiles need CMake's
+        # own std BMI, not just the rusty runtime ones.
+        --runtime-module-root
+            "${CMAKE_BINARY_DIR}/CMakeFiles/__cmake_cxx_std_23.dir"
         ${RRR_GOAL0_RUNTIME_LIBRARY_ARGS}
         ${RRR_GOAL0_DIRECT_TOOLCHAIN_ARGS}
         --clang "${CMAKE_CXX_COMPILER}"

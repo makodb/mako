@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 static _Thread_local srpc_fiber* g_active_fiber = NULL;
@@ -94,4 +96,23 @@ void srpc_fiber_yield(srpc_fiber* f) {
   if (f->state != SRPC_FIBER_FINISHED) {
     f->state = SRPC_FIBER_RUNNING;
   }
+}
+
+/* ---- reactor platform / build-configuration facade (see header) ---- */
+
+int64_t srpc_reactor_gettid(void) {
+  /* <sys/syscall.h> supplies SYS_gettid for the target being compiled.
+   * Never hardcode the number: it differs per architecture. */
+  return (int64_t)syscall(SYS_gettid);
+}
+
+int32_t srpc_reactor_reusing_fiber(void) {
+  /* The historical reactor.h predicate, verbatim. This TU is compiled with
+   * the library's own flags, so the answer is the library's real
+   * configuration rather than a constant frozen into portable source. */
+#if defined(REUSE_FIBER) || defined(REUSE_CORO)
+  return 1;
+#else
+  return 0;
+#endif
 }

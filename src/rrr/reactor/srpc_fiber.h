@@ -95,6 +95,30 @@ void srpc_fiber_resume(srpc_fiber* f);
  * On the next resume, execution continues here (back to RUNNING). */
 void srpc_fiber_yield(srpc_fiber* f);
 
+/* ---- reactor platform / build-configuration facade -------------------
+ *
+ * Canonical Rust cannot read a C preprocessor macro: crate mode compiles
+ * the same source under rustc, where `SYS_gettid` and `REUSE_FIBER` do
+ * not exist. Spelling them as Rust constants bakes one target's syscall
+ * table and one build's configuration into the source. Both facts are
+ * therefore answered by this C translation unit, which is compiled by the
+ * same build, with the same flags, against the same platform headers as
+ * the rest of librrr.
+ */
+
+/* The calling OS thread's kernel thread id: syscall(SYS_gettid) using
+ * <sys/syscall.h>'s own number for the target being compiled. That number
+ * is arch-specific (186 on x86-64, 178 on aarch64, 224 on i386) and this
+ * directory already ships an aarch64 context-switch trampoline, so it must
+ * never be written down in portable source. */
+int64_t srpc_reactor_gettid(void);
+
+/* Non-zero when this library was compiled with fiber reuse enabled.
+ * Exactly the historical `REUSING_FIBER` predicate,
+ *     #if defined(REUSE_FIBER) || defined(REUSE_CORO)
+ * evaluated in a translation unit that actually sees the build's flags. */
+int32_t srpc_reactor_reusing_fiber(void);
+
 #ifdef __cplusplus
 }
 #endif

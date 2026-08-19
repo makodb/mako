@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 /* srpc_base.c — plain-C helpers for the base layer (Goal-0 C demotion).
  * Same convention as srpc_net.c / srpc_io.c: no header, and no C++ type
  * crosses this boundary. Callers declare these `extern "C"`.
@@ -14,14 +16,50 @@
  */
 
 #include <execinfo.h>
+#include <locale.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* Return libc's process-wide stderr stream without exposing a C global through
  * Rust's foreign-static lowering. */
 FILE* srpc_stderr(void) {
     return stderr;
+}
+
+/* Keep rrr::get_ncpu's historical sysconf behavior behind a plain-C seam so
+ * the canonical Rust owner need not duplicate libc's platform-specific
+ * _SC_NPROCESSORS_ONLN constant. */
+int32_t srpc_get_ncpu(void) {
+    return (int32_t)sysconf(_SC_NPROCESSORS_ONLN);
+}
+
+/* Render the locale-independent fixed two-decimal spelling consumed by
+ * rrr::format_thousands. std::format's default form ignores the ambient
+ * locale, so pin snprintf to a thread-local C numeric locale as well. The
+ * 384-byte Rust caller buffer covers every finite double and inf/nan. */
+int32_t srpc_format_fixed_2(double value, int8_t* output, size_t capacity) {
+    locale_t c_locale;
+    locale_t previous_locale;
+    int length;
+
+    c_locale = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0);
+    if (c_locale == (locale_t)0) {
+        return -1;
+    }
+    previous_locale = uselocale(c_locale);
+    if (previous_locale == (locale_t)0) {
+        freelocale(c_locale);
+        return -1;
+    }
+    length = snprintf((char*)output, capacity, "%.2f", value);
+    if (uselocale(previous_locale) == (locale_t)0) {
+        length = -1;
+    }
+    freelocale(c_locale);
+    return (int32_t)length;
 }
 
 /* Capture the current call stack's symbol strings.

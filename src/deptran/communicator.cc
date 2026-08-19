@@ -350,9 +350,11 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
       // Keep a host-scoped reference to the connection through PollableProxy.
       auto conn_opt = rpc_cli->connection();
       if (conn_opt.is_some()) {
-        // Client::host() now returns rusty::String (post-DSL migration);
-        // rrr::reactor_clients_th_ is keyed by std::string — convert once.
-        std::string host_key = rpc_cli->host().to_string();
+        // Client::host() returns std::string again: the canonical
+        // src/rrr/src/client.rs maps its Rust String through the type map's
+        // LegacyStdString, and rrr::reactor_clients_th_ is keyed by
+        // std::string, so no conversion is needed.
+        std::string host_key = rpc_cli->host();
         if (!rrr::reactor_clients_th_.contains_key(host_key)) {
           rrr::reactor_clients_th_.insert(host_key, rusty::Vec<rrr::PollableProxy>{});
         }

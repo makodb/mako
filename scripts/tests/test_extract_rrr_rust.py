@@ -100,8 +100,8 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 20 hand-authored module units, "
-            "SCAFFOLD=1460 noncomment lines (698 DSL fences + 762 other)",
+            "source boundary: 1 hand-authored module units, "
+            "SCAFFOLD=20 noncomment lines (10 DSL fences + 10 other)",
             output,
         )
         # Re-measured 2026-08-18 when the rusty-cpp pin moved
@@ -123,7 +123,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         # `Box<Shim> -> Box<Base>` upcast in the reactor and channel code.
         # Adopting that model is its own migration.
         self.assertIn(
-            "payload census:   dsl=8874  generated=12336 "
+            "payload census:   dsl=52  generated=61 "
             "nonblank/non-// lines",
             output,
         )
@@ -131,7 +131,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             "12 compatibility headers, SCAFFOLD=146 noncomment lines", output
         )
         self.assertIn(
-            "terminal C:      3 ABI headers/87 lines; 7 kernels/413 lines",
+            "terminal C:      3 ABI headers/89 lines; 8 kernels/531 lines",
             output,
         )
 
@@ -161,7 +161,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 {
                                     "path": "rusty/sync/atomic.hpp",
                                     "form": "angle",
-                                }
+                                },
                             ],
                         },
                         {
@@ -170,7 +170,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 {
                                     "path": "rusty/sync/atomic.hpp",
                                     "form": "angle",
-                                }
+                                },
                             ],
                         },
                         {
@@ -179,7 +179,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 {
                                     "path": "misc/srpc_rand.h",
                                     "form": "quote",
-                                }
+                                },
                             ],
                         },
                         {
@@ -188,7 +188,24 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 {
                                     "path": "misc/srpc_timing.h",
                                     "form": "quote",
-                                }
+                                },
+                            ],
+                        },
+                        {
+                            "name": "rrr.threading",
+                            "includes": [
+                                {
+                                    "path": "pthread.h",
+                                    "form": "angle",
+                                },
+                                {
+                                    "path": "misc/srpc_timing.h",
+                                    "form": "quote",
+                                },
+                                {
+                                    "path": "rusty/sync/atomic.hpp",
+                                    "form": "angle",
+                                },
                             ],
                         },
                         {
@@ -197,7 +214,7 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 {
                                     "path": "netdb.h",
                                     "form": "angle",
-                                }
+                                },
                             ],
                         },
                         {
@@ -209,6 +226,63 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 },
                                 {
                                     "path": "rusty/io.hpp",
+                                    "form": "angle",
+                                },
+                            ],
+                        },
+                        {
+                            "name": "rrr.misc",
+                            "includes": [
+                                {
+                                    "path": "base/rustc_markers.hpp",
+                                    "form": "quote",
+                                },
+                            ],
+                        },
+                        {
+                            "name": "rrr.inmemory_channel",
+                            "includes": [
+                                {
+                                    "path": "base/rustc_markers.hpp",
+                                    "form": "quote",
+                                },
+                            ],
+                        },
+                        {
+                            "name": "rrr.server",
+                            "includes": [
+                                {
+                                    "path": "base/rustc_markers.hpp",
+                                    "form": "quote",
+                                },
+                                {
+                                    "path": "rpc/srpc_server.h",
+                                    "form": "quote",
+                                },
+                            ],
+                        },
+                        {
+                            "name": "rrr.tcp_channel",
+                            "includes": [
+                                {
+                                    "path": "base/rustc_markers.hpp",
+                                    "form": "quote",
+                                },
+                                {
+                                    "path": "rpc/srpc_connect.h",
+                                    "form": "quote",
+                                },
+                            ],
+                        },
+                        {
+                            "name": "rrr.epoll_wrapper",
+                            "includes": [
+                                {
+                                    "path": "rusty/os/fd.hpp",
+                                    "form": "angle",
+                                },
+                                {
+                                    "path": "rusty/sync/atomic.hpp",
                                     "form": "angle",
                                 },
                             ],
@@ -226,8 +300,30 @@ class CheckedInCanaryTests(unittest.TestCase):
                                 },
                             ],
                         },
+                        {
+                            "name": "rrr.serializable",
+                            "includes": [
+                                {
+                                    "path": "misc/serializable_support.hpp",
+                                    "form": "quote",
+                                },
+                            ],
+                        },
+                        {
+                            "name": "rrr.reactor",
+                            "includes": [
+                                {
+                                    "path": "reactor/srpc_fiber.h",
+                                    "form": "quote",
+                                },
+                                {
+                                    "path": "set",
+                                    "form": "angle",
+                                },
+                            ],
+                        },
                     ],
-                },
+                }
             )
 
     def test_utils_sidecars_are_narrow_and_fail_closed_inputs(self) -> None:
@@ -238,13 +334,77 @@ class CheckedInCanaryTests(unittest.TestCase):
                     "LegacyAddrInfo": "addrinfo",
                     "LegacyCChar": "std::string::value_type",
                     "LegacyStdString": "std::string",
+                    "LegacyCallbackWrapper": "::rrr::detail::CallbackWrapper",
+                    "LegacyChannelConnectionBase": "rrr::ChannelConnectionBase",
+                    "LegacyStdDeque": "std::deque",
+                    "LegacyTcpListener": "rusty::net::TcpListener",
+                    "LegacySocketAddrV4": "rusty::net::SocketAddrV4",
+                    "LegacyIoErrorKind": "rusty::io::Error::Kind",
+                    "std::marker::PhantomPinned": "rusty::marker::PhantomPinned",
+                    "BinaryReadArchive": "BinaryReadArchive",
+                    "BinaryWriteArchive": "BinaryWriteArchive",
+                    "SerializableBase": "SerializableBase",
+                    "SerializableProxy": "rusty::Arc<SerializableBase>",
+                    "SerializableSharedPtrHolder": "details::SerializableSharedPtrHolder",
+                    "SrcFileCStr": "const char*",
                     "rusty": {
+                        "CallbackWrapper": "::rrr::detail::CallbackWrapper",
+                        "ReactorJobSet": "std::set",
                         "StdVector": "std::vector",
+                        "PthreadSpinlock": "::pthread_spinlock_t",
+                        "PthreadMutex": "::pthread_mutex_t",
+                        "PthreadMutexAttr": "::pthread_mutexattr_t",
+                        "PthreadCond": "::pthread_cond_t",
+                        "PthreadCondAttr": "::pthread_condattr_t",
+                        "BinaryReadArchive": "BinaryReadArchive",
+                        "BinaryWriteArchive": "BinaryWriteArchive",
+                        "SerializableBase": "SerializableBase",
+                        "SerializableProxy": "rusty::Arc<SerializableBase>",
+                        "SerializableSharedPtrHolder": "details::SerializableSharedPtrHolder",
                         "LoggingString": "std::string",
                         "CFile": "FILE",
                         "SourceLocation": "std::source_location",
+                        "ReactorBoxEvent": "BoxEvent",
+                        "ReactorFiber": "Fiber",
+                        "ReactorIntEvent": "IntEvent",
+                        "ReactorPollThread": "PollThread",
+                        "ReactorFiberContext": "::srpc_fiber_ctx",
+                        "ReactorFiberState": "::srpc_fiber",
+                        "StdPair": "std::pair",
+                        "Mutex": "rusty::Mutex",
+                        "BTreeSet": "rusty::BTreeSet",
+                        "BTreeMap": "rusty::BTreeMap",
+                        "HashSet": "rusty::HashSet",
+                        "HashMap": "rusty::HashMap",
+                        "SerializableStdStringView": "std::string_view",
+                        "SerializableStdList": "std::list",
+                        "SerializableStdVector": "std::vector",
+                        "SerializableStdSet": "std::set",
+                        "SerializableStdUnorderedSet": "std::unordered_set",
+                        "SerializableStdMap": "std::map",
+                        "SerializableStdUnorderedMap": "std::unordered_map",
+                        "SerializableV32": "v32",
+                        "SerializableV64": "v64",
+                        "LegacyCVoid": "void",
+                        "RustcSinkBaseAdapterRefMut": "SinkBaseAdapterRefMut",
+                        "RustcSourceBaseAdapterRefMut": "SourceBaseAdapterRefMut",
+                        "SerializableSerializeDispatch": "Serialize_",
+                        "SerializableDeserializeDispatch": "Deserialize_",
+                        "SerializableRegistryFactory": "rusty::Function<SerializableProxy()>",
+                        "rrr::serializable::BinaryWriteArchive": "rrr::BinaryWriteArchive",
+                        "rrr::serializable::BinaryReadArchive": "rrr::BinaryReadArchive",
+                        "LegacyOwnedFd": "rusty::os::fd::OwnedFd",
+                        "RustcOwnedFd": "rusty::os::fd::OwnedFd",
+                        "LegacyTcpListener": "rusty::net::TcpListener",
+                        "RustcTcpListener": "rusty::net::TcpListener",
+                        "RustcTcpStream": "rusty::net::TcpStream",
+                        "RustcSocketAddrV4": "rusty::net::SocketAddrV4",
+                        "RustcIoError": "rusty::io::Error",
+                        "RustcIoErrorKind": "rusty::io::Error::Kind",
+                        "errors::RpcError": "::rrr::RpcError",
+                        "LegacyRpcError": "::rrr::RpcError",
                     },
-                },
+                }
             )
         with (REPOSITORY / "src/rrr/cpp-module-index.toml").open("rb") as stream:
             self.assertEqual(
@@ -252,22 +412,345 @@ class CheckedInCanaryTests(unittest.TestCase):
                 {
                     "version": 1,
                     "modules": {
+                        "rrr::basetypes": {
+                            "cpp_module": "rrr.basetypes",
+                            "namespace": "rrr",
+                            "symbols": {
+                                "SparseInt::buf_size": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "size_t(uint8_t)",
+                                    ],
+                                },
+                                "SparseInt::dump32": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "size_t(int32_t,uint8_t*)",
+                                    ],
+                                },
+                                "SparseInt::dump64": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "size_t(int64_t,uint8_t*)",
+                                    ],
+                                },
+                                "SparseInt::load32": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "int32_t(const uint8_t*)",
+                                    ],
+                                },
+                                "SparseInt::load64": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "int64_t(const uint8_t*)",
+                                    ],
+                                },
+                                "Time": {
+                                    "kind": "type",
+                                    "callable_signatures": [
+                                    ],
+                                },
+                                "Time::now": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "uint64_t(bool)",
+                                    ],
+                                },
+                            },
+                        },
                         "rrr::logging": {
-                            # Required since the rusty-cpp pin moved to
-                            # fa7dd9d9; previously derived from the key.
                             "cpp_module": "rrr.logging",
                             "namespace": "rrr",
                             "symbols": {
                                 "log_line": {
                                     "kind": "function",
                                     "callable_signatures": [
-                                        "void(int32_t,int32_t,const int8_t*,const std::string&)"
+                                        "void(int32_t,int32_t,const int8_t*,const std::string&)",
                                     ],
-                                }
+                                },
                             },
-                        }
+                        },
+                        "rrr::reactor": {
+                            "cpp_module": "rrr.reactor",
+                            "namespace": "rrr",
+                            "symbols": {
+                                "create_sp_box_event": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "rusty::Arc<BoxEvent<T>>()",
+                                    ],
+                                },
+                                "Fiber": {
+                                    "kind": "type",
+                                    "callable_signatures": [
+                                    ],
+                                },
+                                "IntEvent": {
+                                    "kind": "type",
+                                    "callable_signatures": [
+                                    ],
+                                },
+                                "create_sp_int_event": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "rusty::Arc<IntEvent>(int32_t)",
+                                    ],
+                                },
+                                "IntEvent::set": {
+                                    "kind": "method",
+                                    "callable_signatures": [
+                                        "int32_t(int32_t)",
+                                    ],
+                                },
+                                "IntEvent::wait": {
+                                    "kind": "method",
+                                    "callable_signatures": [
+                                        "void()",
+                                    ],
+                                },
+                                "Fiber::current_fiber": {
+                                    "kind": "method",
+                                    "callable_signatures": [
+                                        "rusty::Option<rusty::Rc<Fiber>>()",
+                                    ],
+                                },
+                                "Fiber::yield_": {
+                                    "kind": "method",
+                                    "callable_signatures": [
+                                        "void()",
+                                    ],
+                                },
+                                "fiber_sleep": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "void(uint64_t)",
+                                    ],
+                                },
+                                "pollworker_is_on_poll_thread": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "bool()",
+                                    ],
+                                },
+                                "PollThread": {
+                                    "kind": "type",
+                                    "callable_signatures": [
+                                    ],
+                                },
+                                "PollThread::add_proxy": {
+                                    "kind": "method",
+                                    "callable_signatures": [
+                                        "void(PollableProxy)",
+                                    ],
+                                },
+                                "PollThread::update_mode": {
+                                    "kind": "method",
+                                    "callable_signatures": [
+                                        "void(int32_t,int32_t)",
+                                    ],
+                                },
+                                "PollThread::create": {
+                                    "kind": "method",
+                                    "callable_signatures": [
+                                        "rusty::Arc<PollThread>()",
+                                    ],
+                                },
+                                "PollThread::add": {
+                                    "kind": "method",
+                                    "callable_signatures": [
+                                        "void(rusty::Arc<Job>)",
+                                    ],
+                                },
+                                "fiber_create_run_impl": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "rusty::Rc<Fiber>(rusty::Function<void()>,const char*,int64_t)",
+                                    ],
+                                },
+                            },
+                        },
+                        "rrr::debugging": {
+                            "cpp_module": "rrr.debugging",
+                            "namespace": "rrr",
+                            "symbols": {
+                                "verify": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "void(bool)",
+                                    ],
+                                },
+                            },
+                        },
+                        "rrr::rand": {
+                            "cpp_module": "rrr.rand",
+                            "namespace": "rrr",
+                            "symbols": {
+                                "RandomGenerator::rand": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "int32_t(int32_t,int32_t)",
+                                    ],
+                                },
+                            },
+                        },
+                        "rrr::errors": {
+                            "cpp_module": "rrr.errors",
+                            "namespace": "rrr",
+                        },
+                        "rrr::serializable": {
+                            "cpp_module": "rrr.serializable",
+                            "namespace": "rrr",
+                            "symbols": {
+                                "make_sink_proxy_buffer": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "SinkProxy(BufferSink*)",
+                                    ],
+                                },
+                                "make_source_proxy_buffer": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "SourceProxy(BufferSource*)",
+                                    ],
+                                },
+                                "serializable_holder_of": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "const Holder<T>*(const SerializableBase*)",
+                                    ],
+                                },
+                                "SerializableRegistry::create": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "SerializableProxy(int32_t)",
+                                    ],
+                                },
+                                "BinaryWriteArchive": {
+                                    "kind": "type",
+                                },
+                                "BinaryReadArchive": {
+                                    "kind": "type",
+                                },
+                                "SerializableBase": {
+                                    "kind": "type",
+                                },
+                                "details::SerializableSharedPtrHolder": {
+                                    "kind": "type_template_constructor",
+                                    "callable_signatures": [
+                                        "details::SerializableSharedPtrHolder<T>(rusty::Arc<T>)",
+                                    ],
+                                },
+                                "Serialize_::serialize": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "void(const std::string&,BinaryWriteArchive&)",
+                                    ],
+                                },
+                                "Deserialize_::deserialize": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "void(std::string&,BinaryReadArchive&)",
+                                    ],
+                                },
+                            },
+                        },
+                        "rusty": {
+                            "cpp_module": "rusty",
+                            "namespace": "rusty",
+                            "symbols": {
+                                "Arc::get": {
+                                    "kind": "method",
+                                    "callable_signatures": [
+                                        "const T*()",
+                                    ],
+                                },
+                                "arc_make_default": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "rusty::Arc<T>()",
+                                    ],
+                                },
+                                "os::fd::OwnedFd": {
+                                    "kind": "type",
+                                    "callable_signatures": [
+                                    ],
+                                },
+                                "os::fd::OwnedFd::from_raw_fd": {
+                                    "kind": "function",
+                                    "callable_signatures": [
+                                        "OwnedFd(int)",
+                                    ],
+                                },
+                                "srpc_adl_serialize": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "void(const T&,Archive&)",
+                                    ],
+                                },
+                                "srpc_adl_deserialize": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "void(T&,Archive&)",
+                                    ],
+                                },
+                                "srpc_sink_write": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "void(Sink&,const uint8_t*,size_t)",
+                                    ],
+                                },
+                                "srpc_source_read": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "size_t(Source&,uint8_t*,size_t)",
+                                    ],
+                                },
+                                "srpc_arc_default": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "rusty::Arc<T>()",
+                                    ],
+                                },
+                                "srpc_arc_copy": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "rusty::Arc<T>(const T&)",
+                                    ],
+                                },
+                                "srpc_holder_proxy": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "rrr::SerializableProxy(rusty::Arc<T>)",
+                                    ],
+                                },
+                                "srpc_factory_from_callable": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "rusty::Function<R()>(Callable)",
+                                    ],
+                                },
+                            },
+                        },
+                        "std": {
+                            "cpp_module": "std",
+                            "namespace": "std",
+                            "symbols": {
+                                "make_pair": {
+                                    "kind": "function_template",
+                                    "callable_signatures": [
+                                        "std::pair<A,B>(A,B)",
+                                    ],
+                                },
+                                "cout": {
+                                    "kind": "object",
+                                    "callable_signatures": [
+                                    ],
+                                },
+                            },
+                        },
                     },
-                },
+                }
             )
 
     def test_manifest_names_the_canonical_rust_sources(self) -> None:
@@ -288,110 +771,224 @@ class CheckedInCanaryTests(unittest.TestCase):
                 (
                     "rrr.basetypes",
                     "basetypes",
-                    "src/rrr/src/basetypes.rs",
-                    "src/rrr/src/basetypes.rs",
+                    "src/rrr/base/basetypes.rs",
+                    "src/rrr/base/basetypes.rs",
                 ),
                 (
                     "rrr.callback_wrapper",
                     "callback_wrapper",
-                    "src/rrr/src/callback_wrapper.rs",
-                    "src/rrr/src/callback_wrapper.rs",
+                    "src/rrr/base/callback_wrapper.rs",
+                    "src/rrr/base/callback_wrapper.rs",
                 ),
                 (
                     "rrr.internal_protocol",
                     "internal_protocol",
-                    "src/rrr/src/internal_protocol.rs",
-                    "src/rrr/src/internal_protocol.rs",
+                    "src/rrr/rpc/internal_protocol.rs",
+                    "src/rrr/rpc/internal_protocol.rs",
                 ),
                 (
                     "rrr.stat",
                     "stat",
-                    "src/rrr/src/stat.rs",
-                    "src/rrr/src/stat.rs",
+                    "src/rrr/misc/stat.rs",
+                    "src/rrr/misc/stat.rs",
                 ),
                 (
                     "rrr.errors",
                     "errors",
-                    "src/rrr/src/errors.rs",
-                    "src/rrr/src/errors.rs",
+                    "src/rrr/rpc/errors.rs",
+                    "src/rrr/rpc/errors.rs",
                 ),
                 (
                     "rrr.connection_metrics",
                     "connection_metrics",
-                    "src/rrr/src/connection_metrics.rs",
-                    "src/rrr/src/connection_metrics.rs",
+                    "src/rrr/rpc/connection_metrics.rs",
+                    "src/rrr/rpc/connection_metrics.rs",
                 ),
                 (
                     "rrr.completion_tracker",
                     "completion_tracker",
-                    "src/rrr/src/completion_tracker.rs",
-                    "src/rrr/src/completion_tracker.rs",
+                    "src/rrr/rpc/completion_tracker.rs",
+                    "src/rrr/rpc/completion_tracker.rs",
                 ),
                 (
                     "rrr.rand",
                     "rand",
-                    "src/rrr/src/rand.rs",
-                    "src/rrr/src/rand.rs",
+                    "src/rrr/misc/rand.rs",
+                    "src/rrr/misc/rand.rs",
                 ),
                 (
                     "rrr.request_options",
                     "request_options",
-                    "src/rrr/src/request_options.rs",
-                    "src/rrr/src/request_options.rs",
+                    "src/rrr/rpc/request_options.rs",
+                    "src/rrr/rpc/request_options.rs",
                 ),
                 (
                     "rrr.reconnect_policy",
                     "reconnect_policy",
-                    "src/rrr/src/reconnect_policy.rs",
-                    "src/rrr/src/reconnect_policy.rs",
+                    "src/rrr/rpc/reconnect_policy.rs",
+                    "src/rrr/rpc/reconnect_policy.rs",
                 ),
                 (
                     "rrr.circuit_breaker",
                     "circuit_breaker",
-                    "src/rrr/src/circuit_breaker.rs",
-                    "src/rrr/src/circuit_breaker.rs",
+                    "src/rrr/rpc/circuit_breaker.rs",
+                    "src/rrr/rpc/circuit_breaker.rs",
                 ),
                 (
                     "rrr.connection_state",
                     "connection_state",
-                    "src/rrr/src/connection_state.rs",
-                    "src/rrr/src/connection_state.rs",
+                    "src/rrr/rpc/connection_state.rs",
+                    "src/rrr/rpc/connection_state.rs",
                 ),
                 (
                     "rrr.heartbeat",
                     "heartbeat",
-                    "src/rrr/src/heartbeat.rs",
-                    "src/rrr/src/heartbeat.rs",
+                    "src/rrr/rpc/heartbeat.rs",
+                    "src/rrr/rpc/heartbeat.rs",
                 ),
                 (
                     "rrr.request_queue",
                     "request_queue",
-                    "src/rrr/src/request_queue.rs",
-                    "src/rrr/src/request_queue.rs",
+                    "src/rrr/rpc/request_queue.rs",
+                    "src/rrr/rpc/request_queue.rs",
                 ),
                 (
                     "rrr.load_balancer",
                     "load_balancer",
-                    "src/rrr/src/load_balancer.rs",
-                    "src/rrr/src/load_balancer.rs",
-                ),
-                (
-                    "rrr.utils",
-                    "utils",
-                    "src/rrr/src/utils.rs",
-                    "src/rrr/src/utils.rs",
-                ),
-                (
-                    "rrr.frame_codec",
-                    "frame_codec",
-                    "src/rrr/src/frame_codec.rs",
-                    "src/rrr/src/frame_codec.rs",
+                    "src/rrr/rpc/load_balancer.rs",
+                    "src/rrr/rpc/load_balancer.rs",
                 ),
                 (
                     "rrr.debugging",
                     "debugging",
-                    "src/rrr/src/debugging.rs",
-                    "src/rrr/src/debugging.rs",
+                    "src/rrr/base/debugging.rs",
+                    "src/rrr/base/debugging.rs",
+                ),
+                (
+                    "rrr.logging",
+                    "logging",
+                    "src/rrr/base/logging.rs",
+                    "src/rrr/base/logging.rs",
+                ),
+                (
+                    "rrr.utils",
+                    "utils",
+                    "src/rrr/rpc/utils.rs",
+                    "src/rrr/rpc/utils.rs",
+                ),
+                (
+                    "rrr.frame_codec",
+                    "frame_codec",
+                    "src/rrr/rpc/frame_codec.rs",
+                    "src/rrr/rpc/frame_codec.rs",
+                ),
+                (
+                    "rrr.serializable",
+                    "serializable",
+                    "src/rrr/misc/serializable.rs",
+                    "src/rrr/misc/serializable.rs",
+                ),
+                (
+                    "rrr.serializable_envelope",
+                    "serializable_envelope",
+                    "src/rrr/misc/serializable_envelope.rs",
+                    "src/rrr/misc/serializable_envelope.rs",
+                ),
+                (
+                    "rrr.epoll_wrapper",
+                    "epoll_wrapper",
+                    "src/rrr/reactor/epoll_wrapper.rs",
+                    "src/rrr/reactor/epoll_wrapper.rs",
+                ),
+                (
+                    "rrr.misc",
+                    "misc",
+                    "src/rrr/base/misc.rs",
+                    "src/rrr/base/misc.rs",
+                ),
+                (
+                    "rrr.pollable_proxy",
+                    "pollable_proxy",
+                    "src/rrr/rpc/pollable_proxy.rs",
+                    "src/rrr/rpc/pollable_proxy.rs",
+                ),
+                (
+                    "rrr.reactor",
+                    "reactor",
+                    "src/rrr/reactor/reactor.rs",
+                    "src/rrr/reactor/reactor.rs",
+                ),
+                (
+                    "rrr.future",
+                    "future",
+                    "src/rrr/reactor/future.rs",
+                    "src/rrr/reactor/future.rs",
+                ),
+                (
+                    "rrr.idempotency",
+                    "idempotency",
+                    "src/rrr/rpc/idempotency.rs",
+                    "src/rrr/rpc/idempotency.rs",
+                ),
+                (
+                    "rrr.fiber",
+                    "fiber",
+                    "src/rrr/reactor/fiber.rs",
+                    "src/rrr/reactor/fiber.rs",
+                ),
+                (
+                    "rrr.channel",
+                    "channel",
+                    "src/rrr/rpc/channel.rs",
+                    "src/rrr/rpc/channel.rs",
+                ),
+                (
+                    "rrr.callbacks",
+                    "callbacks",
+                    "src/rrr/rpc/callbacks.rs",
+                    "src/rrr/rpc/callbacks.rs",
+                ),
+                (
+                    "rrr.inmemory_channel",
+                    "inmemory_channel",
+                    "src/rrr/rpc/inmemory_channel.rs",
+                    "src/rrr/rpc/inmemory_channel.rs",
+                ),
+                (
+                    "rrr.fiber_channel",
+                    "fiber_channel",
+                    "src/rrr/rpc/fiber_channel.rs",
+                    "src/rrr/rpc/fiber_channel.rs",
+                ),
+                (
+                    "rrr.threading",
+                    "threading",
+                    "src/rrr/base/threading.rs",
+                    "src/rrr/base/threading.rs",
+                ),
+                (
+                    "rrr.any_message",
+                    "any_message",
+                    "src/rrr/misc/any_message.rs",
+                    "src/rrr/misc/any_message.rs",
+                ),
+                (
+                    "rrr.tcp_channel",
+                    "tcp_channel",
+                    "src/rrr/rpc/tcp_channel.rs",
+                    "src/rrr/rpc/tcp_channel.rs",
+                ),
+                (
+                    "rrr.server",
+                    "server",
+                    "src/rrr/rpc/server.rs",
+                    "src/rrr/rpc/server.rs",
+                ),
+                (
+                    "rrr.client",
+                    "client",
+                    "src/rrr/rpc/client.rs",
+                    "src/rrr/rpc/client.rs",
                 ),
             ],
         )
@@ -418,8 +1015,30 @@ class CheckedInCanaryTests(unittest.TestCase):
         manifest_modules = tuple(module.rust_module for module in modules)
         self.assertEqual(cmake_modules, manifest_modules)
         self.assertEqual(len(cmake_modules), len(set(cmake_modules)))
+        # Canonical sources mirror the C++ layout now, so CMake carries the
+        # relative paths explicitly instead of deriving `src/<name>.rs`. The
+        # list must equal the manifest's, in manifest order.
+        relpath_match = re.search(
+            r"set\(RRR_GOAL0_CANONICAL_SOURCE_RELPATH\n(?P<body>.*?)\n\)",
+            cmake,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(relpath_match)
+        assert relpath_match is not None
+        cmake_relpaths = tuple(
+            line.strip()
+            for line in relpath_match.group("body").splitlines()
+            if line.strip()
+        )
+        self.assertEqual(
+            cmake_relpaths,
+            tuple(
+                module.canonical_source_label[len("src/rrr/") :]
+                for module in modules
+            ),
+        )
         self.assertIn(
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/${_RRR_GOAL0_MODULE}.rs",
+            "${CMAKE_CURRENT_SOURCE_DIR}/${_RRR_GOAL0_RELPATH}",
             cmake,
         )
         self.assertIn(
@@ -465,12 +1084,21 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertIn('["--flat-import-namespace", flat_import_namespace]', gate)
         self.assertIn("*flat_import_arguments,", gate)
         for source in (
-            REPOSITORY / "src/rrr/src" / f"{module.rust_module}.rs"
+            module.output
             for module in DRIVER.load_manifest(REPOSITORY, manifest)
         ):
+            # The invariant is "no per-item MARKER", i.e. no
+            # `#[cfg_attr(any(), cpp_import_namespace(...))]` attribute. Scan
+            # code only: `channel.rs` explains the emitter's leaf contract in
+            # a doc comment, and prose naming the mechanism is not a marker.
+            code = "\n".join(
+                line
+                for line in source.read_text(encoding="utf-8").splitlines()
+                if not line.lstrip().startswith("//")
+            )
             self.assertNotIn(
                 "cpp_import_namespace",
-                source.read_text(encoding="utf-8"),
+                code,
                 msg=f"{source} still carries a per-item marker",
             )
 
@@ -547,16 +1175,33 @@ class CheckedInCanaryTests(unittest.TestCase):
         modules = DRIVER.load_manifest(
             REPOSITORY, REPOSITORY / "src/rrr/rust-modules.toml"
         )
+        # `src/rrr` is now srpc's tree byte for byte, so the two-line
+        # "// Canonical Rust source for the rrr.X module." banner is gone from
+        # the seventeen sources srpc never carried it on. Nothing is dropped:
+        # the banner only claimed ownership and location, and BOTH facts are
+        # now enforced structurally and more tightly --
+        #   * the driver already pins the file to an approved production root
+        #     with a basename equal to the module (validate_production_source_path),
+        #   * and the generated crate index must reach exactly this file
+        #     through a `#[path]` attribute, checked here.
+        # The "not a generated artifact" half of the banner's job stays as the
+        # explicit marker assertions.
+        library = (REPOSITORY / "src/rrr/src/lib.rs").read_text(encoding="utf-8")
         canonical_lines = 0
         for module in modules:
             with self.subTest(cpp_module=module.cpp_module):
                 source = module.output.read_text(encoding="utf-8")
-                self.assertTrue(
-                    source.startswith(
-                        f"// Canonical Rust source for the {module.cpp_module} module.\n"
-                        "// Compiled directly by rustc and translated by "
-                        "rusty-cpp crate mode.\n"
-                    )
+                self.assertIsNotNone(module.canonical_source_label)
+                value = DRIVER.module_path_attribute_value(
+                    module.canonical_source_label
+                )
+                self.assertIn(
+                    f'#[path = "{value}"]\npub mod {module.rust_module};',
+                    library,
+                )
+                self.assertEqual(
+                    (REPOSITORY / "src/rrr/src" / value).resolve(),
+                    module.output.resolve(),
                 )
                 self.assertNotIn("@generated", source)
                 self.assertNotIn("provenance-input", source)
@@ -570,7 +1215,11 @@ class CheckedInCanaryTests(unittest.TestCase):
         # crate-level `flat_import_namespace`. No logic line moved.
         # 2563 -> 2677: +114, the canonical `src/rrr/src/debugging.rs` grafted
         # from srpc when `base/debugging.cpp` was retired.
-        self.assertEqual(canonical_lines, 2677)
+        # 2677 -> 13656: the remaining nineteen carriers were retired in the
+        # same way, so the crate now owns all thirty-seven modules. The count
+        # is unchanged by the move to the layout-mirroring paths -- the same
+        # bytes, minus a banner that was only ever comment lines.
+        self.assertEqual(canonical_lines, 13656)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -586,14 +1235,18 @@ class CheckedInCanaryTests(unittest.TestCase):
     def test_write_never_replaces_a_canonical_source_snapshot(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rrr-canonical-write-") as temporary:
             root = Path(temporary)
-            source = root / "src/rrr/src/example.rs"
+            # A canonical source lives at its layout-mirroring path, not in
+            # src/. src/ holds only the generated crate index, and the census
+            # rejects anything else that appears there.
+            source = root / "src/rrr/rpc/example.rs"
             source.parent.mkdir(parents=True)
+            (root / "src/rrr/src").mkdir(parents=True)
             original = b"pub fn canonical() -> i32 { 1 }\n"
             changed = b"pub fn canonical() -> i32 { 2 }\n"
             source.write_bytes(original)
             generated = [
                 DRIVER.GeneratedFile(
-                    output_label="src/rrr/src/example.rs",
+                    output_label="src/rrr/rpc/example.rs",
                     output=source,
                     content=original,
                     writable=False,
@@ -619,25 +1272,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertEqual(
             DRIVER.rust_source_census(REPOSITORY),
             {
-                "src/rrr/src/callback_wrapper.rs",
                 "src/rrr/src/lib.rs",
-                "src/rrr/src/internal_protocol.rs",
-                "src/rrr/src/stat.rs",
-                "src/rrr/src/errors.rs",
-                "src/rrr/src/connection_metrics.rs",
-                "src/rrr/src/completion_tracker.rs",
-                "src/rrr/src/rand.rs",
-                "src/rrr/src/reconnect_policy.rs",
-                "src/rrr/src/request_options.rs",
-                "src/rrr/src/circuit_breaker.rs",
-                "src/rrr/src/connection_state.rs",
-                "src/rrr/src/heartbeat.rs",
-                "src/rrr/src/basetypes.rs",
-                "src/rrr/src/request_queue.rs",
-                "src/rrr/src/load_balancer.rs",
-                "src/rrr/src/utils.rs",
-                "src/rrr/src/frame_codec.rs",
-                "src/rrr/src/debugging.rs",
             },
         )
 
@@ -653,27 +1288,79 @@ class CheckedInCanaryTests(unittest.TestCase):
             r"|\bunsafe\s+(?:extern|impl|trait)\b"
             r"|\bunsafe\s*\{"
         )
-        rust_root = REPOSITORY / "src/rrr/src"
-        rand_path = rust_root / "rand.rs"
-        circuit_path = rust_root / "circuit_breaker.rs"
-        basetypes_path = rust_root / "basetypes.rs"
-        utils_path = rust_root / "utils.rs"
-        frame_codec_path = rust_root / "frame_codec.rs"
-        debugging_path = rust_root / "debugging.rs"
-        for path in sorted(rust_root.rglob("*.rs")):
-            if path in {
-                rand_path,
-                circuit_path,
-                basetypes_path,
-                utils_path,
-                frame_codec_path,
-                debugging_path,
-            }:
-                continue
-            self.assertIsNone(
-                unsafe_syntax.search(path.read_text(encoding="utf-8")),
-                f"unsafe Rust escaped the audited C boundaries: {path}",
+        # Canonical sources mirror the C++ layout; take every path from the
+        # manifest so this audit can never drift from where the bytes live.
+        rand_path = REPOSITORY / "src/rrr/misc/rand.rs"
+        circuit_path = REPOSITORY / "src/rrr/rpc/circuit_breaker.rs"
+        basetypes_path = REPOSITORY / "src/rrr/base/basetypes.rs"
+        utils_path = REPOSITORY / "src/rrr/rpc/utils.rs"
+        frame_codec_path = REPOSITORY / "src/rrr/rpc/frame_codec.rs"
+        debugging_path = REPOSITORY / "src/rrr/base/debugging.rs"
+
+        # Goal 0 complete: all thirty-seven modules are canonical Rust, and
+        # `unsafe` is no longer confined to a handful of files -- the reactor,
+        # the serializer, and the transports each own a real C/FFI boundary.
+        # A blanket "no unsafe outside these six" assertion can no longer be
+        # written, so it is replaced by an EXACT per-file census over EVERY
+        # canonical source. Nothing is exempted: a file that should have no
+        # unsafe is pinned at all-zero, which is exactly the old assertion,
+        # and any new unsafe anywhere moves a number. Columns are
+        #   (#[allow(unsafe_code)], #![allow(unsafe_code)], unsafe extern,
+        #    unsafe fn, unsafe {, unsafe impl, unsafe trait)
+        unsafe_census = {
+            "src/rrr/base/basetypes.rs": (10, 0, 1, 4, 9, 0, 0),
+            "src/rrr/base/callback_wrapper.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/internal_protocol.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/misc/stat.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/errors.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/connection_metrics.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/completion_tracker.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/misc/rand.rs": (3, 0, 1, 0, 2, 0, 0),
+            "src/rrr/rpc/request_options.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/reconnect_policy.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/circuit_breaker.rs": (2, 0, 1, 0, 1, 0, 0),
+            "src/rrr/rpc/connection_state.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/heartbeat.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/request_queue.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/load_balancer.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/base/debugging.rs": (4, 0, 1, 1, 8, 0, 0),
+            "src/rrr/base/logging.rs": (5, 0, 1, 2, 7, 0, 0),
+            "src/rrr/rpc/utils.rs": (5, 0, 1, 1, 5, 0, 0),
+            "src/rrr/rpc/frame_codec.rs": (5, 0, 0, 3, 4, 0, 0),
+            "src/rrr/misc/serializable.rs": (43, 0, 3, 14, 56, 0, 0),
+            "src/rrr/misc/serializable_envelope.rs": (8, 0, 0, 2, 16, 0, 0),
+            "src/rrr/reactor/epoll_wrapper.rs": (6, 0, 2, 0, 5, 0, 0),
+            "src/rrr/base/misc.rs": (5, 0, 1, 0, 2, 2, 2),
+            "src/rrr/rpc/pollable_proxy.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/reactor/reactor.rs": (0, 0, 3, 0, 66, 0, 0),
+            "src/rrr/reactor/future.rs": (3, 0, 0, 0, 3, 0, 0),
+            "src/rrr/rpc/idempotency.rs": (4, 0, 0, 0, 4, 0, 0),
+            "src/rrr/reactor/fiber.rs": (0, 1, 0, 0, 10, 0, 0),
+            "src/rrr/rpc/channel.rs": (2, 0, 0, 1, 0, 2, 2),
+            "src/rrr/rpc/callbacks.rs": (0, 0, 0, 0, 0, 0, 0),
+            "src/rrr/rpc/inmemory_channel.rs": (1, 1, 0, 3, 4, 1, 0),
+            "src/rrr/rpc/fiber_channel.rs": (0, 0, 0, 1, 7, 0, 0),
+            "src/rrr/base/threading.rs": (15, 0, 1, 13, 14, 0, 0),
+            "src/rrr/misc/any_message.rs": (1, 0, 0, 0, 8, 0, 0),
+            "src/rrr/rpc/tcp_channel.rs": (1, 0, 0, 6, 33, 5, 0),
+            "src/rrr/rpc/server.rs": (1, 1, 1, 7, 44, 4, 0),
+            "src/rrr/rpc/client.rs": (2, 1, 0, 2, 25, 2, 0),
+        }
+        measured = {}
+        for module in DRIVER.load_manifest(
+            REPOSITORY, REPOSITORY / "src/rrr/rust-modules.toml"
+        ):
+            text = module.output.read_text(encoding="utf-8")
+            measured[module.output_label] = (
+                text.count("#[allow(unsafe_code"),
+                text.count("#![allow(unsafe_code"),
+                text.count("unsafe extern"),
+                text.count("unsafe fn"),
+                text.count("unsafe {"),
+                text.count("unsafe impl"),
+                text.count("unsafe trait"),
             )
+        self.assertEqual(measured, unsafe_census)
 
         rust = rand_path.read_text(encoding="utf-8")
         allowed_sections = (
@@ -803,6 +1490,10 @@ class CheckedInCanaryTests(unittest.TestCase):
             facade_cargo = tomllib.load(stream)
         self.assertEqual(facade_cargo["package"]["name"], "rusty")
         self.assertEqual(facade_cargo["lib"]["path"], "src/lib.rs")
+        self.assertEqual(
+            facade_cargo["dependencies"]["rusty-cpp-markers"],
+            {"path": "../rusty-cpp-markers"},
+        )
         self.assertEqual(facade_cargo["lints"]["rust"]["unsafe_code"], "deny")
         self.assertFalse((facade_manifest.parent / "Cargo.lock").exists())
         facade = (facade_manifest.parent / "src/lib.rs").read_text(encoding="utf-8")
@@ -812,81 +1503,60 @@ class CheckedInCanaryTests(unittest.TestCase):
             "_level: i32, _line: i32, _file: *const i8, _message: &String) {}"
         )
         self.assertEqual(facade.count(logging_boundary), 1)
-        # 1 -> 2 `/// # Safety`: the canonical `rrr.debugging` graft needs the
-        # `rusty::LoggingString` (= facade `std::string`) byte model, whose
-        # `data()` carries the second one. The facade's unsafe surface stays a
-        # closed set: log_line plus exactly five `UnsafeCell` reads inside that
-        # one byte model, each listed below and each removed before the
-        # remainder is re-scanned.
-        self.assertEqual(facade.count("/// # Safety"), 2)
-        string_model_boundaries = (
-            textwrap.dedent(
-                """\
-                #[allow(unsafe_code)]
-                        fn append_to(self, output: &mut Vec<u8>) {
-                            // SAFETY: this facade is used only by single-threaded direct-rustc
-                            // logging tests; generated C++ maps the type to `std::string`.
-                            output.extend_from_slice(unsafe { (&*self.0.get()).as_slice() });
-                        }
-                """
-            ).strip(),
-            textwrap.dedent(
-                """\
-                #[allow(unsafe_code)]
-                    fn string_bytes(value: &string) -> &[u8] {
-                        // SAFETY: identical to `size`/`to_rust_string` above -- direct-rustc
-                        // facade callers do not mutate this model concurrently.
-                        unsafe { (&*value.0.get()).as_slice() }
-                    }
-                """
-            ).strip(),
-            textwrap.dedent(
-                """\
-                #[allow(unsafe_code)]
-                        pub unsafe fn data(&self) -> *mut i8 {
-                            unsafe { (&mut *self.0.get()).as_mut_ptr().cast() }
-                        }
-                """
-            ).strip(),
-            textwrap.dedent(
-                """\
-                #[allow(unsafe_code)]
-                        pub fn size(&self) -> usize {
-                            // SAFETY: direct-rustc facade callers do not access this model
-                            // concurrently; the generated C++ uses `std::string` instead.
-                            unsafe { (&*self.0.get()).len() }
-                        }
-                """
-            ).strip(),
-            textwrap.dedent(
-                """\
-                #[allow(unsafe_code)]
-                        pub fn to_rust_string(&self) -> ::std::string::String {
-                            // SAFETY: direct-rustc facade callers do not mutate this model
-                            // concurrently; production maps the type to `std::string`.
-                            let bytes = unsafe { (&*self.0.get()).clone() };
-                            ::std::string::String::from_utf8(bytes).expect("valid UTF-8 in std::string facade")
-                        }
-                """
-            ).strip(),
+        # The facade is the rustc-only model of the rusty C++ runtime. With
+        # all thirty-seven modules canonical it has to model the runtime's own
+        # unsafe surface (fd/socket handles, Arc, the archives, the reactor
+        # types), so the earlier "one boundary (log_line)" and then
+        # "log_line + the std::string byte model" forms no longer describe it.
+        # Replace them with an EXACT count ratchet over the whole file. This
+        # is not a relaxation: every count is equality, so any new unsafe in
+        # the facade -- or any removal -- fails the gate.
+        #   #[allow(unsafe_code)]        1  -> 58
+        #   unsafe extern                1  ->  1
+        #   unsafe fn                    1  -> 53
+        #   unsafe {                     0  -> 29
+        #   /// # Safety                 1  -> 38
+        # `unsafe impl` / `unsafe trait` / `#![allow(unsafe_code)]` stay at
+        # zero: the facade never asserts a thread-safety property, it only
+        # models call boundaries.
+        self.assertEqual(facade.count(logging_boundary), 1)
+        self.assertEqual(facade.count("#[allow(unsafe_code"), 58)
+        self.assertEqual(facade.count("#![allow(unsafe_code"), 0)
+        self.assertEqual(facade.count("unsafe extern"), 1)
+        self.assertEqual(facade.count("unsafe fn"), 53)
+        self.assertEqual(facade.count("unsafe {"), 29)
+        self.assertEqual(facade.count("unsafe impl"), 0)
+        self.assertEqual(facade.count("unsafe trait"), 0)
+        self.assertEqual(facade.count("/// # Safety"), 38)
+
+        # The inert-attribute crate exists only so rustc accepts
+        # `#[cpp_inherit]` on the trait impls the emitter turns into C++ base
+        # classes. It must stay a proc-macro shim with no unsafe of its own.
+        markers_manifest = REPOSITORY / "src/rrr/rusty-cpp-markers/Cargo.toml"
+        with markers_manifest.open("rb") as stream:
+            markers_cargo = tomllib.load(stream)
+        self.assertEqual(markers_cargo["package"]["name"], "rusty-cpp-markers")
+        self.assertTrue(markers_cargo["lib"]["proc-macro"])
+        self.assertEqual(markers_cargo["lints"]["rust"]["unsafe_code"], "deny")
+        markers = (markers_manifest.parent / "src/lib.rs").read_text(
+            encoding="utf-8"
         )
-        facade_remainder = facade.replace(logging_boundary, "", 1)
-        for section in string_model_boundaries:
-            self.assertEqual(facade.count(section), 1)
-            facade_remainder = facade_remainder.replace(section, "", 1)
-        self.assertIsNone(
-            unsafe_syntax.search(facade_remainder),
-            "rustc-only rusty facade gained unsafe Rust outside log_line "
-            "and the std::string byte model",
-        )
+        self.assertIsNone(unsafe_syntax.search(markers))
+        self.assertIn("pub fn cpp_inherit(", markers)
+
         self.assertIn("inner: Option<Box<F>>", facade)
         self.assertIn("runtime_layout_padding: [u8; 32]", facade)
         self.assertIn("impl<F: ?Sized> Deref for Function<F>", facade)
         self.assertIn("impl<F: ?Sized> DerefMut for Function<F>", facade)
-        self.assertIn("impl<A: 'static> Function<dyn FnMut(A)>", facade)
+        # srpc's facade specializes the one-argument FnMut erasure on the
+        # concrete `i32` the canonical sources use rather than a generic `A`.
+        self.assertIn("impl Function<dyn FnMut(i32)>", facade)
         self.assertIn("pub type StdVector<T> = Vec<T>;", facade)
 
-        self.assertEqual(cargo["workspace"]["members"], ["rusty-rustc"])
+        self.assertEqual(
+            cargo["workspace"]["members"],
+            ["rusty-cpp-markers", "rusty-rustc"],
+        )
         self.assertEqual(cargo["dependencies"]["rusty"], {"path": "rusty-rustc"})
 
 
@@ -1793,7 +2463,12 @@ class CrateModeGateTests(unittest.TestCase):
             ), mock.patch.object(
                 GATE,
                 "executable",
-                side_effect=[Path("/transpiler"), Path("/clang++"), Path("/nm")],
+                side_effect=[
+                    Path("/transpiler"),
+                    Path("/clang++"),
+                    Path("/nm"),
+                    Path("/ar"),
+                ],
             ), mock.patch.object(
                 GATE, "verify_pinned_toolchain"
             ), mock.patch.object(
@@ -1814,6 +2489,7 @@ class CrateModeGateTests(unittest.TestCase):
                 modules=modules,
                 clang=Path("/clang++"),
                 nm=Path("/nm"),
+                archiver=Path("/ar"),
                 production=production,
                 runtime_libraries=[],
                 cxx_flags=["-stdlib=libc++"],
@@ -1841,7 +2517,12 @@ class CrateModeGateTests(unittest.TestCase):
             ), mock.patch.object(
                 GATE,
                 "executable",
-                side_effect=[Path("/transpiler"), Path("/clang++"), Path("/nm")],
+                side_effect=[
+                    Path("/transpiler"),
+                    Path("/clang++"),
+                    Path("/nm"),
+                    Path("/ar"),
+                ],
             ), mock.patch.object(
                 GATE, "verify_pinned_toolchain"
             ), mock.patch.object(
@@ -1916,14 +2597,44 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.heartbeat"),
             mock.Mock(cpp_module="rrr.request_queue"),
             mock.Mock(cpp_module="rrr.load_balancer"),
+            mock.Mock(cpp_module="rrr.debugging"),
+            mock.Mock(cpp_module="rrr.logging"),
             mock.Mock(cpp_module="rrr.utils"),
             mock.Mock(cpp_module="rrr.frame_codec"),
+            mock.Mock(cpp_module="rrr.serializable"),
+            mock.Mock(cpp_module="rrr.serializable_envelope"),
+            mock.Mock(cpp_module="rrr.epoll_wrapper"),
+            mock.Mock(cpp_module="rrr.misc"),
+            mock.Mock(cpp_module="rrr.pollable_proxy"),
+            mock.Mock(cpp_module="rrr.reactor"),
+            mock.Mock(cpp_module="rrr.future"),
+            mock.Mock(cpp_module="rrr.idempotency"),
+            mock.Mock(cpp_module="rrr.fiber"),
+            mock.Mock(cpp_module="rrr.channel"),
+            mock.Mock(cpp_module="rrr.callbacks"),
+            mock.Mock(cpp_module="rrr.inmemory_channel"),
+            mock.Mock(cpp_module="rrr.fiber_channel"),
+            mock.Mock(cpp_module="rrr.threading"),
+            mock.Mock(cpp_module="rrr.any_message"),
+            mock.Mock(cpp_module="rrr.tcp_channel"),
+            mock.Mock(cpp_module="rrr.server"),
+            mock.Mock(cpp_module="rrr.client"),
         ]
 
         def symbols_for_module(
-            _nm: Path, _root: Path, _path: Path, module_name: str
+            _nm: Path, _root: Path, path: Path, module_name: str
         ) -> frozenset[tuple[str, str]]:
-            return GATE.ABI_SPECS[module_name].symbols
+            # rrr.epoll_wrapper follows Rust std's sys-module pattern: its
+            # platform implementation unit is compiled into librrr.a but is not
+            # a crate output, so the production library legitimately carries
+            # ABI_SPECS plus exactly PLATFORM_IMPL_SYMBOLS. Model that here or
+            # the union check below has nothing to check.
+            symbols = set(GATE.ABI_SPECS[module_name].symbols)
+            if path == Path("/production.a"):
+                symbols |= GATE.PLATFORM_IMPL_SYMBOLS.get(
+                    module_name, frozenset()
+                )
+            return frozenset(symbols)
 
         completion_raw = list(GATE.ABI_SPECS["rrr.completion_tracker"].symbols)
         completion_raw.append(
@@ -2041,6 +2752,7 @@ class CrateModeGateTests(unittest.TestCase):
                     modules=modules,
                     clang=Path("/clang++"),
                     nm=Path("/nm"),
+                    archiver=Path("/ar"),
                     production=Path("/production.a"),
                     runtime_libraries=[Path("/rusty.a")],
                     cxx_flags=["-stdlib=libc++"],
@@ -2052,7 +2764,6 @@ class CrateModeGateTests(unittest.TestCase):
         self.assertEqual(
             compiled_names,
             [
-                "rrr.logging",
                 "rrr.basetypes",
                 "rrr.callback_wrapper",
                 "rrr.internal_protocol",
@@ -2068,8 +2779,28 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.heartbeat",
                 "rrr.request_queue",
                 "rrr.load_balancer",
+                "rrr.debugging",
+                "rrr.logging",
                 "rrr.utils",
                 "rrr.frame_codec",
+                "rrr.serializable",
+                "rrr.serializable_envelope",
+                "rrr.epoll_wrapper",
+                "rrr.misc",
+                "rrr.pollable_proxy",
+                "rrr.reactor",
+                "rrr.future",
+                "rrr.idempotency",
+                "rrr.fiber",
+                "rrr.channel",
+                "rrr.callbacks",
+                "rrr.inmemory_channel",
+                "rrr.fiber_channel",
+                "rrr.threading",
+                "rrr.any_message",
+                "rrr.tcp_channel",
+                "rrr.server",
+                "rrr.client",
                 "rrr",
             ],
         )
@@ -2110,29 +2841,31 @@ class CrateModeGateTests(unittest.TestCase):
                 self.assertIn("-Wl,--start-group", command)
                 self.assertIn("-Wl,--end-group", command)
 
+        # The rrr.logging forwarding fixture is retired: rrr.logging is a
+        # canonical Rust module, so the production lane links librrr.a's own
+        # provider and the generated lane links the generated object. Neither
+        # lane carries a probe object any more, and there is nothing left to
+        # order ahead of the archive.
         production_link = next(
             command
             for command in link_commands
             if any(argument == "/production.a" for argument in command)
         )
-        logging_interface = next(
-            argument
-            for argument in production_link
-            if argument.endswith("/rrr.logging.o")
+        self.assertFalse(
+            [
+                argument
+                for argument in production_link
+                if argument.endswith("/rrr.logging.probe.o")
+                or argument.endswith("/rrr.logging.o")
+            ]
         )
-        logging_implementation = next(
-            argument
-            for argument in production_link
-            if argument.endswith("/rrr.logging.probe.o")
+        generated_link = next(
+            command
+            for command in link_commands
+            if command is not production_link
         )
-        self.assertLess(
-            production_link.index(logging_interface),
-            production_link.index("/production.a"),
-        )
-        self.assertLess(
-            production_link.index(logging_implementation),
-            production_link.index("/production.a"),
-        )
+        self.assertIn("/rrr.logging.o", generated_link)
+        self.assertNotIn("/rrr.logging.probe.o", generated_link)
 
     def test_completion_raw_symbol_ratchet_pins_all_31_entries(self) -> None:
         # Factory-only construction: the two public constructors became the
@@ -2319,9 +3052,28 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.heartbeat"),
             mock.Mock(cpp_module="rrr.request_queue"),
             mock.Mock(cpp_module="rrr.load_balancer"),
+            mock.Mock(cpp_module="rrr.debugging"),
+            mock.Mock(cpp_module="rrr.logging"),
             mock.Mock(cpp_module="rrr.utils"),
             mock.Mock(cpp_module="rrr.frame_codec"),
-            mock.Mock(cpp_module="rrr.debugging"),
+            mock.Mock(cpp_module="rrr.serializable"),
+            mock.Mock(cpp_module="rrr.serializable_envelope"),
+            mock.Mock(cpp_module="rrr.epoll_wrapper"),
+            mock.Mock(cpp_module="rrr.misc"),
+            mock.Mock(cpp_module="rrr.pollable_proxy"),
+            mock.Mock(cpp_module="rrr.reactor"),
+            mock.Mock(cpp_module="rrr.future"),
+            mock.Mock(cpp_module="rrr.idempotency"),
+            mock.Mock(cpp_module="rrr.fiber"),
+            mock.Mock(cpp_module="rrr.channel"),
+            mock.Mock(cpp_module="rrr.callbacks"),
+            mock.Mock(cpp_module="rrr.inmemory_channel"),
+            mock.Mock(cpp_module="rrr.fiber_channel"),
+            mock.Mock(cpp_module="rrr.threading"),
+            mock.Mock(cpp_module="rrr.any_message"),
+            mock.Mock(cpp_module="rrr.tcp_channel"),
+            mock.Mock(cpp_module="rrr.server"),
+            mock.Mock(cpp_module="rrr.client"),
         ]
         with mock.patch.object(
             GATE.extraction, "load_manifest", return_value=modules

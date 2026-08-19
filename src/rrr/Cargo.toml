@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [workspace]
-members = ["rusty-rustc"]
+members = ["rusty-cpp-markers", "rusty-rustc"]
 resolver = "2"
 
 [lib]

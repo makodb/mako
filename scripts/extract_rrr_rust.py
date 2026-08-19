@@ -185,11 +185,22 @@ def reject_symlink_components(
             )
 
 
+# Suffix sets are per-call because the two kinds of manifest input are now
+# genuinely different languages. A schema-2 `source` is CANONICAL RUST and ends
+# in .rs; a schema-1 `input` is a hand-written C++ inline-DSL carrier and still
+# ends in .cpp/.cc/.cxx. Defaulting to the C++ set keeps the schema-1 callers
+# unchanged, so only the canonical-source caller opts into .rs.
+CPP_CARRIER_SUFFIXES = frozenset({".cpp", ".cc", ".cxx"})
+CANONICAL_RUST_SUFFIXES = frozenset({".rs"})
+
+
 def validate_production_source_path(
     root: Path,
     source_label: str,
     source: Path,
     description: str,
+    allowed_suffixes: frozenset = CPP_CARRIER_SUFFIXES,
+    language: str = "C++",
 ) -> None:
     relative = PurePosixPath(source_label)
     approved = next(
@@ -208,9 +219,9 @@ def validate_production_source_path(
             f"root ({roots}): {source_label}"
         )
     reject_symlink_components(root, source, description)
-    if source.suffix not in {".cpp", ".cc", ".cxx"} or not source.is_file():
+    if source.suffix not in allowed_suffixes or not source.is_file():
         raise ExtractionError(
-            f"{description} is not an existing C++ file: {source_label}"
+            f"{description} is not an existing {language} file: {source_label}"
         )
     try:
         physical_source = source.resolve(strict=True)
@@ -398,7 +409,7 @@ def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
             root, module[source_key], f"module {module_index} {source_key}"
         )
         expected_output = (GENERATED_ROOT / f"{rust_module}.rs").as_posix()
-        if output_label != expected_output:
+        if schema_version == 1 and output_label != expected_output:
             raise ExtractionError(
                 f"module {module_index} output does not match cpp_module "
                 f"{cpp_module!r}: expected {expected_output}, got {output_label}"
@@ -410,23 +421,25 @@ def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
             )
         if output_label in seen_outputs:
             raise ExtractionError(f"duplicate output ownership: {output_label}")
-        validate_generated_path(
-            root,
-            output,
-            f"module {module_index} {source_key} {output_label}",
-        )
-
         if schema_version == 2:
-            if not output.is_file() or output.suffix != ".rs":
-                raise ExtractionError(
-                    f"module {module_index} canonical source is not an existing "
-                    f"Rust file: {output_label}"
-                )
-            reject_symlink_components(
+            validate_production_source_path(
                 root,
+                output_label,
                 output,
                 f"module {module_index} canonical source {output_label}",
+                allowed_suffixes=CANONICAL_RUST_SUFFIXES,
+                language="Rust",
             )
+            if output.stem != rust_module:
+                raise ExtractionError(
+                    f"module {module_index} canonical source basename does not "
+                    f"match {cpp_module!r}: {output_label}"
+                )
+            # No discovery shim to validate. The generated lib.rs names this
+            # canonical file directly in a `#[path]` attribute, and --check
+            # byte-compares that file, so the declaration is already pinned to
+            # the manifest. `src/` holds nothing but lib.rs; the census below
+            # rejects anything else that appears there, symlink included.
             loaded.append(
                 ModuleEntry(
                     cpp_module=cpp_module,
@@ -440,6 +453,12 @@ def load_manifest(root: Path, manifest_path: Path) -> list[ModuleEntry]:
             seen_cpp_modules.add(cpp_module)
             seen_outputs.add(output_label)
             continue
+
+        validate_generated_path(
+            root,
+            output,
+            f"module {module_index} {source_key} {output_label}",
+        )
 
         raw_inputs = module["input"]
         if not isinstance(raw_inputs, list) or not raw_inputs:
@@ -704,6 +723,28 @@ def render_module(module: ModuleEntry, payloads: list[bytes]) -> bytes:
     return ("\n".join(header) + "\n").encode("utf-8") + payload
 
 
+def module_path_attribute_value(output_label: str) -> str:
+    """The `#[path]` value naming output_label from the generated lib.rs.
+
+    rustc resolves a module `#[path]` against the directory holding the
+    declaring file, so every value is relative to GENERATED_ROOT. Derive it
+    from the manifest label rather than hardcoding a table: the manifest is
+    the single owner of where a module's bytes live.
+    """
+
+    ascent = ("..",) * len(GENERATED_ROOT.parts)
+    value = PurePosixPath(*ascent, output_label).as_posix()
+    # The value is emitted verbatim into a Rust string literal. Reject any
+    # character that would need escaping instead of escaping it, so a manifest
+    # can never smuggle syntax into the generated crate index.
+    if any(character in value for character in '"\\\n\r'):
+        raise ExtractionError(
+            f"canonical source path is not expressible as a Rust `#[path]` "
+            f"string literal: {output_label!r}"
+        )
+    return value
+
+
 def render_lib(
     manifest_label: str,
     manifest_path: Path,
@@ -718,13 +759,24 @@ def render_lib(
         "",
     ]
     for module in sorted(modules, key=lambda entry: entry.rust_module):
-        lines.extend(
-            [
-                "#[allow(dead_code, non_upper_case_globals, "
-                "clippy::new_without_default)]",
-                f"pub mod {module.rust_module};",
-            ]
+        # rrr.epoll_wrapper keeps the historical C++ spellings of the Epoll
+        # members (Add/Remove/Update/Wait) and of the PollMode/PollReady
+        # constant namespaces, because ~40 mako call sites name them. Pin the
+        # style lint for that one module rather than renaming a public API.
+        style_allow = (
+            "non_snake_case, " if module.rust_module == "epoll_wrapper" else ""
         )
+        lines.append(
+            f"#[allow(dead_code, {style_allow}non_upper_case_globals, "
+            "clippy::new_without_default)]"
+        )
+        # A schema-2 module's canonical bytes live outside src/, so the
+        # declaration has to name that file. A schema-1 output is generated
+        # into src/ and stays conventional.
+        if module.canonical_source_label is not None:
+            value = module_path_attribute_value(module.canonical_source_label)
+            lines.append(f'#[path = "{value}"]')
+        lines.append(f"pub mod {module.rust_module};")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -828,7 +880,12 @@ def rust_source_census(root: Path) -> set[str]:
         source_root, followlinks=False
     ):
         current = Path(directory)
-        for name in [*child_directories, *files]:
+        # Every entry, file or directory, must be a real thing in src/. A
+        # module now reaches its canonical bytes through the `#[path]` in the
+        # generated lib.rs, so a symlink here is never a legitimate discovery
+        # shim -- it is a second, unowned route to a source. Skipping one
+        # silently would let the whole retired shim layer grow back unnoticed.
+        for name in (*child_directories, *files):
             child = current / name
             if child.is_symlink():
                 raise ExtractionError(
@@ -847,8 +904,8 @@ def validate_census(
     generated: list[GeneratedFile],
     allow_missing: bool,
 ) -> None:
-    expected = {item.output_label for item in generated}
-    if len(expected) != len(generated):
+    expected = {item.output_label for item in generated if item.writable}
+    if len({item.output_label for item in generated}) != len(generated):
         raise AssertionError("generated output labels are not unique")
     actual = rust_source_census(root)
     orphans = actual - expected
@@ -869,19 +926,21 @@ def validate_census(
 
 def apply_mode(root: Path, generated: list[GeneratedFile], mode: str) -> None:
     for item in generated:
-        validate_generated_path(
-            root,
-            item.output,
-            f"generated output {item.output_label}",
-        )
+        if item.writable:
+            validate_generated_path(
+                root,
+                item.output,
+                f"generated output {item.output_label}",
+            )
     validate_census(root, generated, allow_missing=mode == "write")
     drift: list[str] = []
     for item in generated:
-        validate_generated_path(
-            root,
-            item.output,
-            f"generated output {item.output_label}",
-        )
+        if item.writable:
+            validate_generated_path(
+                root,
+                item.output,
+                f"generated output {item.output_label}",
+            )
         actual = item.output.read_bytes() if item.output.is_file() else None
         if mode == "check":
             if actual != item.content:

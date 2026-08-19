@@ -159,7 +159,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
     auto cli_it = rpc_clients_.find(id);
     std::string ip = "";
     if (cli_it != rpc_clients_.end()) {
-      ip = cli_it->second->host().to_string();
+      ip = cli_it->second->host();
 			//cli = cli_it->second;
     }
     ip_addrs.insert(ip);
@@ -173,7 +173,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
     auto cli_it = rpc_clients_.find(follower_id);
     std::string ip = "";
     if (cli_it != rpc_clients_.end()) {
-      ip = cli_it->second->host().to_string();
+      ip = cli_it->second->host();
     }
 	if (p.first == leader_site_id) {
         // fix the 1c1s1p bug

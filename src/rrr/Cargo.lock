@@ -12,3 +12,10 @@ dependencies = [
 [[package]]
 name = "rusty"
 version = "0.0.0"
+dependencies = [
+ "rusty-cpp-markers",
+]
+
+[[package]]
+name = "rusty-cpp-markers"
+version = "0.0.0"

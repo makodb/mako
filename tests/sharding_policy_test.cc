@@ -25,11 +25,11 @@ template <class T>
 static T serialize_roundtrip(const T& in) {
     rrr::BufferSink sink;
     {
-        rrr::BinaryWriteArchive w(rrr::make_sink_proxy(&sink));
+        rrr::BinaryWriteArchive w(rrr::make_sink_proxy_buffer(&sink));
         in.save(w);
     }
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive r(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive r(rrr::make_source_proxy_buffer(&src));
     T out;
     out.load(r);
     return out;
@@ -234,9 +234,9 @@ TEST_F(ShardingPolicyTest, ShardingPolicySetSerialization) {
     ShardingPolicySet restored = ShardingPolicySet::with_shards(0);
     {
         rrr::BufferSink sink;
-        { rrr::BinaryWriteArchive w(rrr::make_sink_proxy(&sink)); original.save(w); }
+        { rrr::BinaryWriteArchive w(rrr::make_sink_proxy_buffer(&sink)); original.save(w); }
         rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-        rrr::BinaryReadArchive r(rrr::make_source_proxy(&src));
+        rrr::BinaryReadArchive r(rrr::make_source_proxy_buffer(&src));
         restored.load(r);
     }
 

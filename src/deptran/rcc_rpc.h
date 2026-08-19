@@ -527,7 +527,7 @@ private:
         // @unsafe
         {
             RpcPrepareRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcPrepareResponse>();
@@ -547,7 +547,7 @@ private:
         // @unsafe
         {
             RpcAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.time, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
@@ -569,7 +569,7 @@ private:
         // @unsafe
         {
             RpcDecideRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
@@ -588,7 +588,7 @@ private:
         // @unsafe
         {
             RpcForwardToLearnerServerRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.par_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
@@ -610,7 +610,7 @@ private:
         // @unsafe
         {
             RpcBulkAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcBulkAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -629,7 +629,7 @@ private:
         // @unsafe
         {
             RpcSyncLogRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcSyncLogResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -649,7 +649,7 @@ private:
         // @unsafe
         {
             RpcSyncCommitRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcSyncCommitResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -668,7 +668,7 @@ private:
         // @unsafe
         {
             RpcBulkDecideRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcBulkDecideResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -730,7 +730,7 @@ public:
             }
             RpcPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
@@ -777,7 +777,7 @@ public:
             }
             RpcAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcAcceptResponse, rrr::i32>::Ok(__typed_resp__);
@@ -870,7 +870,7 @@ public:
             }
             RpcForwardToLearnerServerResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ret_slot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.ret_ballot, __reply_ar__);
             return rusty::Result<RpcForwardToLearnerServerResponse, rrr::i32>::Ok(__typed_resp__);
@@ -919,7 +919,7 @@ public:
             }
             RpcBulkAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcBulkAcceptResponse, rrr::i32>::Ok(__typed_resp__);
@@ -965,7 +965,7 @@ public:
             }
             RpcSyncLogResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.ret, __reply_ar__);
@@ -1012,7 +1012,7 @@ public:
             }
             RpcSyncCommitResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcSyncCommitResponse, rrr::i32>::Ok(__typed_resp__);
@@ -1058,7 +1058,7 @@ public:
             }
             RpcBulkDecideResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcBulkDecideResponse, rrr::i32>::Ok(__typed_resp__);
@@ -1236,7 +1236,7 @@ private:
         // @unsafe
         {
             RpcPrepareRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcPrepareResponse>();
@@ -1256,7 +1256,7 @@ private:
         // @unsafe
         {
             RpcSuggestRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.time, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
@@ -1281,7 +1281,7 @@ private:
         // @unsafe
         {
             RpcDecideRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
@@ -1333,7 +1333,7 @@ public:
             }
             RpcPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
@@ -1380,7 +1380,7 @@ public:
             }
             RpcSuggestResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcSuggestResponse, rrr::i32>::Ok(__typed_resp__);
@@ -1761,7 +1761,7 @@ private:
         // @unsafe
         {
             RpcHeartbeatRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogIndex, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcHeartbeatResponse>();
@@ -1780,7 +1780,7 @@ private:
         // @unsafe
         {
             RpcVoteRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.lst_log_idx, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.lst_log_term, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.par_id, __req_ar__);
@@ -1802,7 +1802,7 @@ private:
         // @unsafe
         {
             RpcVote2FPGARequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.lst_log_idx, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.lst_log_term, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.par_id, __req_ar__);
@@ -1824,7 +1824,7 @@ private:
         // @unsafe
         {
             RpcAppendEntriesRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.leaderCurrentTerm, __req_ar__);
@@ -1851,7 +1851,7 @@ private:
         // @unsafe
         {
             RpcAppendEntries2Request __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.leaderCurrentTerm, __req_ar__);
@@ -1878,7 +1878,7 @@ private:
         // @unsafe
         {
             RpcDecideRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
@@ -1937,7 +1937,7 @@ public:
             }
             RpcHeartbeatResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.followerPrevLogIndex, __reply_ar__);
             return rusty::Result<RpcHeartbeatResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -1983,7 +1983,7 @@ public:
             }
             RpcVoteResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.vote_granted, __reply_ar__);
             return rusty::Result<RpcVoteResponse, rrr::i32>::Ok(__typed_resp__);
@@ -2032,7 +2032,7 @@ public:
             }
             RpcVote2FPGAResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.vote_granted, __reply_ar__);
             return rusty::Result<RpcVote2FPGAResponse, rrr::i32>::Ok(__typed_resp__);
@@ -2081,7 +2081,7 @@ public:
             }
             RpcAppendEntriesResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
@@ -2135,7 +2135,7 @@ public:
             }
             RpcAppendEntries2Response __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
@@ -2683,7 +2683,7 @@ private:
         // @unsafe
         {
             RpcVoteRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.lst_log_idx, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.lst_log_term, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.site_id, __req_ar__);
@@ -2714,7 +2714,7 @@ private:
         // @unsafe
         {
             RpcVoteDurableRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.voter_id, __req_ar__);
             auto __fiber_req__ = std::move(req);
@@ -2742,7 +2742,7 @@ private:
         // @unsafe
         {
             RpcAppendEntriesRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.leaderCurrentTerm, __req_ar__);
@@ -2780,7 +2780,7 @@ private:
         // @unsafe
         {
             RpcEmptyAppendEntriesRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.leaderCurrentTerm, __req_ar__);
@@ -2817,7 +2817,7 @@ private:
         // @unsafe
         {
             RpcAppendEntriesDurableRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.follower_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.lastLogIndex, __req_ar__);
@@ -2846,7 +2846,7 @@ private:
         // @unsafe
         {
             RpcTimeoutNowRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.leaderTerm, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.leaderSiteId, __req_ar__);
             auto __fiber_req__ = std::move(req);
@@ -2875,7 +2875,7 @@ private:
         // @unsafe
         {
             RpcNotifyRestartRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.restartedSiteId, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
@@ -2902,7 +2902,7 @@ private:
         // @unsafe
         {
             RpcInstallSnapshotRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.leader_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.last_included_index, __req_ar__);
@@ -2933,7 +2933,7 @@ private:
         // @unsafe
         {
             RpcAddServerRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.new_server_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.new_server_addr, __req_ar__);
@@ -2964,7 +2964,7 @@ private:
         // @unsafe
         {
             RpcRemoveServerRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.server_id, __req_ar__);
             auto __fiber_req__ = std::move(req);
@@ -3041,7 +3041,7 @@ public:
             }
             RpcVoteResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.vote_granted, __reply_ar__);
             return rusty::Result<RpcVoteResponse, rrr::i32>::Ok(__typed_resp__);
@@ -3090,7 +3090,7 @@ public:
             }
             RpcVoteDurableResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
             return rusty::Result<RpcVoteDurableResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -3136,7 +3136,7 @@ public:
             }
             RpcAppendEntriesResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
@@ -3192,7 +3192,7 @@ public:
             }
             RpcEmptyAppendEntriesResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
@@ -3247,7 +3247,7 @@ public:
             }
             RpcAppendEntriesDurableResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
             return rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -3294,7 +3294,7 @@ public:
             }
             RpcTimeoutNowResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.followerTerm, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
             return rusty::Result<RpcTimeoutNowResponse, rrr::i32>::Ok(__typed_resp__);
@@ -3341,7 +3341,7 @@ public:
             }
             RpcNotifyRestartResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
             return rusty::Result<RpcNotifyRestartResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -3386,7 +3386,7 @@ public:
             }
             RpcInstallSnapshotResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.term_out, __reply_ar__);
             return rusty::Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -3435,7 +3435,7 @@ public:
             }
             RpcAddServerResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.error_msg, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.leader_hint, __reply_ar__);
@@ -3484,7 +3484,7 @@ public:
             }
             RpcRemoveServerResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.error_msg, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.leader_hint, __reply_ar__);
@@ -3723,7 +3723,7 @@ private:
         // @unsafe
         {
             RpcPrepareRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.is_pilot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
@@ -3747,7 +3747,7 @@ private:
         // @unsafe
         {
             RpcFastAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.is_pilot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
@@ -3771,7 +3771,7 @@ private:
         // @unsafe
         {
             RpcAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.is_pilot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
@@ -3794,7 +3794,7 @@ private:
         // @unsafe
         {
             RpcCommitRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.is_pilot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.dep, __req_ar__);
@@ -3849,7 +3849,7 @@ public:
             }
             RpcPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ret_cmd, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.dep, __reply_ar__);
@@ -3900,7 +3900,7 @@ public:
             }
             RpcFastAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.ret_dep, __reply_ar__);
             return rusty::Result<RpcFastAcceptResponse, rrr::i32>::Ok(__typed_resp__);
@@ -3951,7 +3951,7 @@ public:
             }
             RpcAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             return rusty::Result<RpcAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -5780,7 +5780,7 @@ private:
         // @unsafe
         {
             RpcMsgStringRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.arg, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcMsgStringResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -5798,7 +5798,7 @@ private:
         // @unsafe
         {
             RpcMsgMarshallRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.arg, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcMsgMarshallResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -5832,7 +5832,7 @@ private:
         // @unsafe
         {
             RpcRuleSpeculativeExecuteRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.md, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRuleSpeculativeExecuteResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -5852,7 +5852,7 @@ private:
         // @unsafe
         {
             RpcDispatchRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
@@ -5875,7 +5875,7 @@ private:
         // @unsafe
         {
             RpcPrepareRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.sids, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
@@ -5897,7 +5897,7 @@ private:
         // @unsafe
         {
             RpcCommitRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcCommitResponse>();
@@ -5919,7 +5919,7 @@ private:
         // @unsafe
         {
             RpcAbortRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcAbortResponse>();
@@ -5941,7 +5941,7 @@ private:
         // @unsafe
         {
             RpcEarlyAbortRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcEarlyAbortResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -5959,7 +5959,7 @@ private:
         // @unsafe
         {
             RpcUpgradeEpochRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.curr_epoch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcUpgradeEpochResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -5977,7 +5977,7 @@ private:
         // @unsafe
         {
             RpcTruncateEpochRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.old_epoch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTruncateEpochResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -5994,7 +5994,7 @@ private:
         // @unsafe
         {
             RpcIsLeaderRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cur_pause, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcIsLeaderResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -6012,7 +6012,7 @@ private:
         // @unsafe
         {
             RpcIsFPGALeaderRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cur_pause, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcIsFPGALeaderResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -6030,7 +6030,7 @@ private:
         // @unsafe
         {
             RpcSimpleCmdRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcSimpleCmdResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -6095,7 +6095,7 @@ private:
         // @unsafe
         {
             RpcTapirAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.decision, __req_ar__);
@@ -6114,7 +6114,7 @@ private:
         // @unsafe
         {
             RpcTapirFastAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.txn_cmds, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTapirFastAcceptResponse>();
@@ -6133,7 +6133,7 @@ private:
         // @unsafe
         {
             RpcTapirDecideRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.commit, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTapirDecideResponse>();
@@ -6151,7 +6151,7 @@ private:
         // @unsafe
         {
             RpcRccDispatchRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccDispatchResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -6171,7 +6171,7 @@ private:
         // @unsafe
         {
             RpcRccFinishRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.md_graph, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccFinishResponse>();
@@ -6190,7 +6190,7 @@ private:
         // @unsafe
         {
             RpcRccInquireRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccInquireResponse>();
@@ -6209,7 +6209,7 @@ private:
         // @unsafe
         {
             RpcRccDispatchRoRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccDispatchRoResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -6227,7 +6227,7 @@ private:
         // @unsafe
         {
             RpcRccInquireValidationRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.tx_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccInquireValidationResponse>();
@@ -6246,7 +6246,7 @@ private:
         // @unsafe
         {
             RpcRccNotifyGlobalValidationRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.tx_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.res, __req_ar__);
@@ -6265,7 +6265,7 @@ private:
         // @unsafe
         {
             RpcJanusDispatchRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJanusDispatchResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -6285,7 +6285,7 @@ private:
         // @unsafe
         {
             RpcRccCommitRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.need_validation, __req_ar__);
@@ -6307,7 +6307,7 @@ private:
         // @unsafe
         {
             RpcJanusCommitRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.need_validation, __req_ar__);
@@ -6329,7 +6329,7 @@ private:
         // @unsafe
         {
             RpcJanusCommitWoGraphRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.need_validation, __req_ar__);
@@ -6350,7 +6350,7 @@ private:
         // @unsafe
         {
             RpcJanusInquireRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.epoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJanusInquireResponse>();
@@ -6369,7 +6369,7 @@ private:
         // @unsafe
         {
             RpcRccPreAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
@@ -6390,7 +6390,7 @@ private:
         // @unsafe
         {
             RpcJanusPreAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
@@ -6412,7 +6412,7 @@ private:
         // @unsafe
         {
             RpcJanusPreAcceptWoGraphRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
@@ -6433,7 +6433,7 @@ private:
         // @unsafe
         {
             RpcRccAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
@@ -6454,7 +6454,7 @@ private:
         // @unsafe
         {
             RpcJanusAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
@@ -6475,7 +6475,7 @@ private:
         // @unsafe
         {
             RpcJetpackBeginRecoveryRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.old_view, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.new_view, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.new_view_id, __req_ar__);
@@ -6494,7 +6494,7 @@ private:
         // @unsafe
         {
             RpcJetpackPullIdSetRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackPullIdSetResponse>();
@@ -6518,7 +6518,7 @@ private:
         // @unsafe
         {
             RpcJetpackPullCmdRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.key_batch, __req_ar__);
@@ -6543,7 +6543,7 @@ private:
         // @unsafe
         {
             RpcJetpackRecordCmdRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.sid, __req_ar__);
@@ -6564,7 +6564,7 @@ private:
         // @unsafe
         {
             RpcJetpackPrepareRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.max_seen_ballot, __req_ar__);
@@ -6592,7 +6592,7 @@ private:
         // @unsafe
         {
             RpcJetpackAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.max_seen_ballot, __req_ar__);
@@ -6619,7 +6619,7 @@ private:
         // @unsafe
         {
             RpcJetpackCommitRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.sid, __req_ar__);
@@ -6639,7 +6639,7 @@ private:
         // @unsafe
         {
             RpcJetpackPullRecSetInsRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             rrr::Deserialize_::deserialize(__typed_req__.sid, __req_ar__);
@@ -6665,7 +6665,7 @@ private:
         // @unsafe
         {
             RpcJetpackFinishRecoveryRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackFinishRecoveryResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -6799,7 +6799,7 @@ public:
             }
             RpcMsgStringResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ret, __reply_ar__);
             return rusty::Result<RpcMsgStringResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -6844,7 +6844,7 @@ public:
             }
             RpcMsgMarshallResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ret, __reply_ar__);
             return rusty::Result<RpcMsgMarshallResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -6889,7 +6889,7 @@ public:
             }
             RpcReElectResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
             return rusty::Result<RpcReElectResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -6933,7 +6933,7 @@ public:
             }
             RpcRuleSpeculativeExecuteResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.accepted, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.result, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
@@ -6980,7 +6980,7 @@ public:
             }
             RpcDispatchResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
@@ -7030,7 +7030,7 @@ public:
             }
             RpcPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.slow, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
@@ -7079,7 +7079,7 @@ public:
             }
             RpcCommitResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.slow, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
@@ -7128,7 +7128,7 @@ public:
             }
             RpcAbortResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.slow, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
@@ -7177,7 +7177,7 @@ public:
             }
             RpcEarlyAbortResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcEarlyAbortResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7222,7 +7222,7 @@ public:
             }
             RpcUpgradeEpochResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcUpgradeEpochResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7309,7 +7309,7 @@ public:
             }
             RpcIsLeaderResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
             return rusty::Result<RpcIsLeaderResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7354,7 +7354,7 @@ public:
             }
             RpcIsFPGALeaderResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
             return rusty::Result<RpcIsFPGALeaderResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7399,7 +7399,7 @@ public:
             }
             RpcSimpleCmdResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcSimpleCmdResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7444,7 +7444,7 @@ public:
             }
             RpcFailoverPauseSocketOutResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcFailoverPauseSocketOutResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7488,7 +7488,7 @@ public:
             }
             RpcFailoverResumeSocketOutResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcFailoverResumeSocketOutResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7617,7 +7617,7 @@ public:
             }
             RpcTapirFastAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcTapirFastAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7706,7 +7706,7 @@ public:
             }
             RpcRccDispatchResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.md_graph, __reply_ar__);
@@ -7753,7 +7753,7 @@ public:
             }
             RpcRccFinishResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.outputs, __reply_ar__);
             return rusty::Result<RpcRccFinishResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7799,7 +7799,7 @@ public:
             }
             RpcRccInquireResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.out_0, __reply_ar__);
             return rusty::Result<RpcRccInquireResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7845,7 +7845,7 @@ public:
             }
             RpcRccDispatchRoResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcRccDispatchRoResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7890,7 +7890,7 @@ public:
             }
             RpcRccInquireValidationResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcRccInquireValidationResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -7980,7 +7980,7 @@ public:
             }
             RpcJanusDispatchResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
@@ -8027,7 +8027,7 @@ public:
             }
             RpcRccCommitResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcRccCommitResponse, rrr::i32>::Ok(__typed_resp__);
@@ -8076,7 +8076,7 @@ public:
             }
             RpcJanusCommitResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcJanusCommitResponse, rrr::i32>::Ok(__typed_resp__);
@@ -8125,7 +8125,7 @@ public:
             }
             RpcJanusCommitWoGraphResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcJanusCommitWoGraphResponse, rrr::i32>::Ok(__typed_resp__);
@@ -8173,7 +8173,7 @@ public:
             }
             RpcJanusInquireResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusInquireResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -8219,7 +8219,7 @@ public:
             }
             RpcRccPreAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.x, __reply_ar__);
             return rusty::Result<RpcRccPreAcceptResponse, rrr::i32>::Ok(__typed_resp__);
@@ -8267,7 +8267,7 @@ public:
             }
             RpcJanusPreAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusPreAcceptResponse, rrr::i32>::Ok(__typed_resp__);
@@ -8316,7 +8316,7 @@ public:
             }
             RpcJanusPreAcceptWoGraphResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusPreAcceptWoGraphResponse, rrr::i32>::Ok(__typed_resp__);
@@ -8364,7 +8364,7 @@ public:
             }
             RpcRccAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcRccAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -8412,7 +8412,7 @@ public:
             }
             RpcJanusAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcJanusAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -8504,7 +8504,7 @@ public:
             }
             RpcJetpackPullIdSetResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
@@ -8555,7 +8555,7 @@ public:
             }
             RpcJetpackPullCmdResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
@@ -8653,7 +8653,7 @@ public:
             }
             RpcJetpackPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
@@ -8708,7 +8708,7 @@ public:
             }
             RpcJetpackAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
@@ -8807,7 +8807,7 @@ public:
             }
             RpcJetpackPullRecSetInsResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
@@ -9156,7 +9156,7 @@ public:
             }
             RpcServerReadyResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcServerReadyResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -9200,7 +9200,7 @@ public:
             }
             RpcServerHeartBeatWithDataResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcServerHeartBeatWithDataResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -9566,7 +9566,7 @@ private:
         // @unsafe
         {
             RpcClientResponseRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcClientResponseResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -9631,7 +9631,7 @@ private:
         // @unsafe
         {
             RpcDispatchTxnRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcDispatchTxnResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -9692,7 +9692,7 @@ public:
             }
             RpcClientGetTxnNamesResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.txn_names, __reply_ar__);
             return rusty::Result<RpcClientGetTxnNamesResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -9818,7 +9818,7 @@ public:
             }
             RpcClientResponseResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcClientResponseResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -9863,7 +9863,7 @@ public:
             }
             RpcClientReadyResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcClientReadyResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -9907,7 +9907,7 @@ public:
             }
             RpcClientReadyBlockResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcClientReadyBlockResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -9992,7 +9992,7 @@ public:
             }
             RpcDispatchTxnResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.result, __reply_ar__);
             return rusty::Result<RpcDispatchTxnResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -10078,7 +10078,7 @@ private:
         // @unsafe
         {
             RpcReadConfigKeyRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__.key, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcReadConfigKeyResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
@@ -10126,7 +10126,7 @@ public:
             }
             RpcReadConfigKeyResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.found, __reply_ar__);
             rrr::Deserialize_::deserialize(__typed_resp__.value, __reply_ar__);
             return rusty::Result<RpcReadConfigKeyResponse, rrr::i32>::Ok(__typed_resp__);

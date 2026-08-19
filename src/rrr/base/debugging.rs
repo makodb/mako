@@ -1,5 +1,3 @@
-// Canonical Rust source for the rrr.debugging module.
-// Compiled directly by rustc and translated by rusty-cpp crate mode.
 //! Canonical Rust owner for branch hints, verification, and stack traces.
 
 type LegacyCChar = i8;
