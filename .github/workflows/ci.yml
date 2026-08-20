@@ -65,10 +65,24 @@ jobs:
           # Only inputs are needed now: the outputs are identified by the
           # basenames the generator reports, not by path+mtime.
           emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-input.txt")"
-          canonical_input="src/rrr/src/frame_codec.rs"
+          # Canonical Rust lives at its layout-mirroring path (base/misc/reactor/
+          # rpc), not a flat src/. Only lib.rs remains under src/.
+          canonical_input="src/rrr/rpc/frame_codec.rs"
           runtime_facade_input="src/rrr/rusty-rustc/src/lib.rs"
           type_map_input="src/rrr/rust-type-map.toml"
           module_index_input="src/rrr/cpp-module-index.toml"
+
+          # `touch` CREATES a missing path instead of failing, so a stale name
+          # here would silently plant a stray file in the crate and make the
+          # NEXT build die with no output (set -e aborts inside the command
+          # substitution, before its printf). Fail loudly and early instead.
+          for probe_input in "${emitter_input}" "${canonical_input}" \
+            "${runtime_facade_input}" "${type_map_input}" "${module_index_input}"; do
+            if [ ! -e "${probe_input}" ]; then
+              echo "invalidation input does not exist: ${probe_input}" >&2
+              exit 1
+            fi
+          done
 
           steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${steady_output}"
