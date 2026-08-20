@@ -344,7 +344,19 @@ impl Work {
                 // out of every layer above. `index_ver` is that same
                 // instruction measured as its own rung, which is where
                 // it belongs.
-                idx.get_or_insert(key, seq);
+                //
+                // MIRROR Store::intern: lookup first, and get_or_insert
+                // ONLY on a miss. Calling get_or_insert unconditionally
+                // stopped being equivalent at mtx ABI v3, which dropped
+                // the leading probe from the insert path -- correct for
+                // the real caller, which has already missed, but it makes
+                // an unconditional call cost TWO traversals for a key
+                // that exists. At this keyspace three ops in four are
+                // overwrites, so the rung was measuring a path nothing
+                // takes and charging the difference to the baseline.
+                if idx.get(key).is_none() {
+                    idx.get_or_insert(key, seq);
+                }
             }
             Work::IndexVer(idx, ver) => {
                 // The rung `index` used to hide. Until this was split
@@ -700,7 +712,7 @@ fn main() {
     let total = (threads * ops) as f64;
     println!(
         "threads={threads:3} mode={mode:9} keyspace={:8} blob_us={blob_us:5} \
-         {:9.0} ops/s  cpu={:5.2} busy={:5.2} skew={:4.2} ({:.3}s)",
+         {:9.0} ops/s  cpu={:.2} busy={:.2} skew={:.2} ({:.3}s)",
         if keyspace == 0 { threads * ops } else { keyspace },
         total / elapsed.as_secs_f64(),
         cpu / elapsed.as_secs_f64(),
