@@ -115,7 +115,7 @@
 //! 200000 to match it.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// CPU seconds this process has burned, from /proc/self/stat.
@@ -299,6 +299,13 @@ enum Work {
     IndexVerStore(Arc<MasstreeIndex>, &'static StoreLike),
     Entry(Arc<MasstreeIndex>, Arc<EntryTable>, Arc<AtomicU64>, Prebuilt),
     Atomic(Arc<AtomicU64>),
+    /// Pure arithmetic in registers: no shared state, no memory traffic.
+    ///
+    /// The CONTROL for the cpu= column. 16 threads doing this must report
+    /// cpu=16.00. Anything less means the measurement is wrong, not that
+    /// the subject failed to saturate — which is exactly the mistake this
+    /// mode exists to catch.
+    Spin,
     /// (index, table, how far to go: 0 = lookup, 1 = +load, 2 = +copy)
     Read(Arc<MasstreeIndex>, Arc<EntryTable>, u8),
     Floors(Arc<MasstreeIndex>, Arc<EntryTable>, Arc<AtomicU64>, Arc<Writers>),
@@ -319,6 +326,13 @@ impl Work {
             }
             Work::Atomic(c) => {
                 c.fetch_add(1, Ordering::SeqCst);
+            }
+            Work::Spin => {
+                let mut x = seq | 1;
+                for _ in 0..300 {
+                    x = x.wrapping_mul(6364136223846793005).wrapping_add(1);
+                }
+                std::hint::black_box(x);
             }
             Work::Index(idx) => {
                 // The word comes from `seq`, not from a shared counter.
@@ -499,6 +513,7 @@ fn main() {
     let counter = Arc::new(AtomicU64::new(1));
     let (work, mut rt) = match mode {
         "atomic" => (Work::Atomic(Arc::clone(&counter)), None),
+        "spin" => (Work::Spin, None),
         "index" => (
             Work::Index(Arc::new(MasstreeIndex::new().expect("masstree"))),
             None,
@@ -604,12 +619,14 @@ fn main() {
     };
     let work = Arc::new(work);
 
-    let barrier = Arc::new(Barrier::new(threads + 1));
+    let ready = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let go = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let elapsed = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..threads)
             .map(|t| {
                 let work = Arc::clone(&work);
-                let barrier = Arc::clone(&barrier);
+                let ready = Arc::clone(&ready);
+                let go = Arc::clone(&go);
                 let keys = &keys;
                 let value = &value;
                 scope.spawn(move || {
@@ -638,23 +655,43 @@ fn main() {
                             work.run(t, n as u64 + 1, &keys[n], value);
                         }
                     }
-                    barrier.wait();
+                    // Announce, then SPIN. No parking, so this thread is
+                    // already on a core when the flag flips.
+                    ready.fetch_add(1, Ordering::Release);
+                    while !go.load(Ordering::Acquire) {
+                        std::hint::spin_loop();
+                    }
+                    let t0 = Instant::now();
                     for i in 0..ops {
                         let n = t * ops + i;
                         work.run(t, n as u64 + 1, &keys[n], value);
                     }
+                    t0.elapsed().as_secs_f64()
                 })
             })
             .collect();
-        barrier.wait();
+        while ready.load(Ordering::Acquire) < threads {
+            std::thread::sleep(std::time::Duration::from_micros(200));
+        }
         let c0 = cpu_secs();
         let t0 = Instant::now();
-        for h in handles {
-            h.join().expect("writer thread panicked");
-        }
-        (t0.elapsed(), cpu_secs() - c0)
+        go.store(true, Ordering::Release);
+        let per: Vec<f64> = handles
+            .into_iter()
+            .map(|h| h.join().expect("writer thread panicked"))
+            .collect();
+        (t0.elapsed(), cpu_secs() - c0, per)
     });
-    let (elapsed, cpu) = elapsed;
+    let (elapsed, cpu, per) = elapsed;
+    // `busy` is how many threads were RUNNING on average; `cpu` is how
+    // many were consuming CPU. If busy is ~threads but cpu is lower, the
+    // threads were resident and stalled or blocked. If busy is ALSO low,
+    // they merely finished at different times and the wall clock includes
+    // a tail with most threads already done -- which lowers cpu/wall for
+    // a reason that has nothing to do with saturation.
+    let busy: f64 = per.iter().sum::<f64>() / elapsed.as_secs_f64();
+    let skew = per.iter().cloned().fold(0.0, f64::max)
+        / per.iter().cloned().fold(f64::MAX, f64::min).max(1e-9);
 
     if let Some(rt) = rt.as_mut() {
         rt.abort();
@@ -663,10 +700,12 @@ fn main() {
     let total = (threads * ops) as f64;
     println!(
         "threads={threads:3} mode={mode:9} keyspace={:8} blob_us={blob_us:5} \
-         {:9.0} ops/s  cpu={:5.2} ({:.3}s)",
+         {:9.0} ops/s  cpu={:5.2} busy={:5.2} skew={:4.2} ({:.3}s)",
         if keyspace == 0 { threads * ops } else { keyspace },
         total / elapsed.as_secs_f64(),
         cpu / elapsed.as_secs_f64(),
+        busy,
+        skew,
         elapsed.as_secs_f64()
     );
 }
