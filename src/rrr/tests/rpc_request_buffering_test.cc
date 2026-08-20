@@ -85,7 +85,7 @@ protected:
 };
 
 TEST_F(RequestBufferingTest, BufferingConfigMethods) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Check default config
     const auto& default_config = conn->buffering_config();
@@ -104,14 +104,14 @@ TEST_F(RequestBufferingTest, BufferingConfigMethods) {
 }
 
 TEST_F(RequestBufferingTest, PendingRequestCount) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Initially no pending requests
     EXPECT_EQ(conn->pending_request_count(), 0u);
 }
 
 TEST_F(RequestBufferingTest, DISABLED_RequestWhenDisconnectedQueues) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Connection starts in NEW state (not connected)
     EXPECT_FALSE(conn->connected());
@@ -130,7 +130,7 @@ TEST_F(RequestBufferingTest, DISABLED_RequestWhenDisconnectedQueues) {
 }
 
 TEST_F(RequestBufferingTest, RequestWhenDisconnectedFailsFast) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Disable buffering (fail fast)
     conn->set_buffering_config(BufferingConfig::disabled());
@@ -153,7 +153,7 @@ TEST_F(RequestBufferingTest, RequestWhenDisconnectedFailsFast) {
 }
 
 TEST_F(RequestBufferingTest, DISABLED_MultipleRequestsQueued) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Make multiple requests
     for (int i = 0; i < 5; i++) {
@@ -167,7 +167,7 @@ TEST_F(RequestBufferingTest, DISABLED_MultipleRequestsQueued) {
 }
 
 TEST_F(RequestBufferingTest, DISABLED_ClearPendingRequests) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Queue some requests
     for (int i = 0; i < 3; i++) {
@@ -183,7 +183,7 @@ TEST_F(RequestBufferingTest, DISABLED_ClearPendingRequests) {
 }
 
 TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsOldest) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Set small queue
     BufferingConfig config;
@@ -204,7 +204,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsOldest) {
 }
 
 TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsNewest) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Set small queue with DROP_NEWEST
     BufferingConfig config;
@@ -228,7 +228,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsNewest) {
 }
 
 TEST_F(RequestBufferingTest, DISABLED_DropNewestOverflowDoesNotLeakPendingFutures) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     BufferingConfig config;
     config.max_pending = 3;
@@ -262,7 +262,7 @@ TEST_F(RequestBufferingTest, DISABLED_DropNewestOverflowDoesNotLeakPendingFuture
 }
 
 TEST_F(RequestBufferingTest, DISABLED_ReplayReenqueueRejectDoesNotLeaveFuturePending) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     BufferingConfig config;
     config.max_pending = 8;
@@ -299,7 +299,7 @@ TEST_F(RequestBufferingTest, DISABLED_ReplayReenqueueRejectDoesNotLeaveFuturePen
 }
 
 TEST_F(RequestBufferingTest, DISABLED_ReplayExpiredRequestUsesTimeoutErrorCode) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     BufferingConfig config;
     config.max_pending = 8;
@@ -331,7 +331,7 @@ TEST_F(RequestBufferingTest, DISABLED_ReplayExpiredRequestUsesTimeoutErrorCode) 
 }
 
 TEST_F(RequestBufferingTest, DISABLED_OverflowAndExpiryDoNotLeavePendingFutures) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     BufferingConfig config;
     config.max_pending = 8;
@@ -411,7 +411,7 @@ TEST_F(RequestBufferingTest, ClientBufferingConfig) {
 // ============================================================================
 
 TEST_F(RequestBufferingTest, DISABLED_QueuedRequestReturnsFuture) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
@@ -432,7 +432,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueuedRequestReturnsFuture) {
 // ============================================================================
 
 TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueing) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Set larger queue for concurrent test
     BufferingConfig config;
@@ -468,7 +468,7 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueing) {
 }
 
 TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueAndClearHasNoStuckFutures) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     BufferingConfig config;
     config.max_pending = 16;  // Keep queue small to force contention/overflow
@@ -562,7 +562,7 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueAndClearHasNoStuckFutures) 
 // ============================================================================
 
 TEST_F(RequestBufferingTest, DISABLED_QueuedRequestHasTTL) {
-    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+    auto conn = rusty::Arc<ClientConnection>::new_(ClientConnection::new_(get_poll_thread()));
 
     // Set short TTL
     BufferingConfig config;

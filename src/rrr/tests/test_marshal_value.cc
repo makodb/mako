@@ -16,7 +16,7 @@ TEST(marshal, value) {
     Value v3((double)3.14);
     Value v4(s);
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
 
     Value v5, v6, v7, v8;
     rrr::Serialize_::serialize(v1, war);
@@ -24,7 +24,7 @@ TEST(marshal, value) {
     rrr::Serialize_::serialize(v3, war);
     rrr::Serialize_::serialize(v4, war);
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(v5, rar);
     rrr::Deserialize_::deserialize(v6, rar);
     rrr::Deserialize_::deserialize(v7, rar);

@@ -39,7 +39,7 @@ private:
     void echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
         i32 input;
-        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
         rrr::Deserialize_::deserialize(input, __req_ar__);
 
         auto sconn_opt = weak_sconn.upgrade();

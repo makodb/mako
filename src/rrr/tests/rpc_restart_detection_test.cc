@@ -79,7 +79,7 @@ TEST_F(RestartDetectionTest, ClientInitialIdIsZero) {
 
 TEST_F(RestartDetectionTest, ClientTracksServerId) {
     auto poll_thread = PollThread::create();
-    ClientConnection conn(poll_thread);
+    auto conn = ClientConnection::new_(poll_thread);
 
     // Initially should be 0
     EXPECT_EQ(0u, conn.server_instance_id());
@@ -92,7 +92,7 @@ TEST_F(RestartDetectionTest, ClientTracksServerId) {
 
 TEST_F(RestartDetectionTest, RestartCallbackCalled) {
     auto poll_thread = PollThread::create();
-    ClientConnection conn(poll_thread);
+    auto conn = ClientConnection::new_(poll_thread);
 
     std::atomic<bool> callback_called{false};
     uint64_t old_id_received = 0;
@@ -119,7 +119,7 @@ TEST_F(RestartDetectionTest, RestartCallbackCalled) {
 
 TEST_F(RestartDetectionTest, RestartCallbackNotCalledSameId) {
     auto poll_thread = PollThread::create();
-    ClientConnection conn(poll_thread);
+    auto conn = ClientConnection::new_(poll_thread);
 
     std::atomic<int> callback_count{0};
 
@@ -144,7 +144,7 @@ TEST_F(RestartDetectionTest, RestartCallbackNotCalledSameId) {
 
 TEST_F(RestartDetectionTest, MultipleRestarts) {
     auto poll_thread = PollThread::create();
-    ClientConnection conn(poll_thread);
+    auto conn = ClientConnection::new_(poll_thread);
 
     std::vector<std::pair<uint64_t, uint64_t>> restarts;
 
@@ -169,7 +169,7 @@ TEST_F(RestartDetectionTest, MultipleRestarts) {
 
 TEST_F(RestartDetectionTest, NoCallbackIfNotSet) {
     auto poll_thread = PollThread::create();
-    ClientConnection conn(poll_thread);
+    auto conn = ClientConnection::new_(poll_thread);
 
     // No callback set - should not crash
     conn.check_server_instance(1000);  // Initial

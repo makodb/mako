@@ -6,11 +6,18 @@
  * - IdempotencyKey: creation, comparison, hashing
  * - IdempotencyKeyGenerator: sequence generation
  * - IdempotencyConfig: presets and configuration
- * - IdempotencyCache: lookup, store, eviction, TTL, thread-safety
+ * - IdempotencyCache: lookup, store, eviction, TTL, and statistics
+ *
+ * IdempotencyCache contains Cell-backed configuration and counters outside
+ * its payload mutex. It is intentionally not Sync and must not be shared
+ * across threads without external synchronization.
  */
 
-#include <stdint.h>
+#include <array>
+#include <cstring>
 #include <stddef.h>
+#include <stdint.h>
+#include <type_traits>
 
 #include <gtest/gtest.h>
 #include "../rrr.hpp"
@@ -21,12 +28,157 @@ import rusty;
 using namespace rrr;
 using namespace std::chrono;
 
+template <typename T>
+concept HasSendMarker = requires { T::is_send; };
+
+template <typename T>
+concept HasSyncMarker = requires { T::is_sync; };
+
+// Pin the complete C++ ABI shape emitted from the canonical Rust source. The
+// negative marker checks matter: adding either marker would promise a thread
+// safety contract that the Cell-backed types do not provide.
+static_assert(sizeof(IdempotencyKey) == 16 && alignof(IdempotencyKey) == 8);
+static_assert(offsetof(IdempotencyKey, client_id) == 0);
+static_assert(offsetof(IdempotencyKey, sequence) == 8);
+static_assert(sizeof(IdempotencyKeyHash) == 1 && alignof(IdempotencyKeyHash) == 1);
+static_assert(sizeof(IdempotencyConfig) == 24 && alignof(IdempotencyConfig) == 8);
+static_assert(offsetof(IdempotencyConfig, ttl_ms) == 0);
+static_assert(offsetof(IdempotencyConfig, max_entries) == 8);
+static_assert(offsetof(IdempotencyConfig, enabled) == 16);
+static_assert(sizeof(CachedResponse) == 80 && alignof(CachedResponse) == 8);
+static_assert(offsetof(CachedResponse, key) == 0);
+static_assert(offsetof(CachedResponse, error_code) == 16);
+static_assert(offsetof(CachedResponse, response_data) == 24);
+static_assert(offsetof(CachedResponse, timestamp_ms) == 72);
+static_assert(sizeof(IdempotencyKeyGenerator) == 16);
+static_assert(alignof(IdempotencyKeyGenerator) == 8);
+static_assert(offsetof(IdempotencyKeyGenerator, client_id_field) == 0);
+static_assert(offsetof(IdempotencyKeyGenerator, sequence_field) == 8);
+static_assert(sizeof(IdempotencyCache) == 120 && alignof(IdempotencyCache) == 8);
+static_assert(offsetof(IdempotencyCache, config_) == 0);
+static_assert(offsetof(IdempotencyCache, cache_) == 24);
+static_assert(offsetof(IdempotencyCache, hits_) == 96);
+static_assert(offsetof(IdempotencyCache, misses_) == 104);
+static_assert(offsetof(IdempotencyCache, evictions_) == 112);
+
+static_assert(HasSendMarker<IdempotencyKey> && HasSyncMarker<IdempotencyKey>);
+static_assert(HasSendMarker<IdempotencyKeyHash> && HasSyncMarker<IdempotencyKeyHash>);
+static_assert(HasSendMarker<IdempotencyConfig> && HasSyncMarker<IdempotencyConfig>);
+static_assert(!HasSendMarker<CachedResponse> && !HasSyncMarker<CachedResponse>);
+static_assert(HasSendMarker<IdempotencyKeyGenerator>);
+static_assert(!HasSyncMarker<IdempotencyKeyGenerator>);
+static_assert(!HasSendMarker<IdempotencyCache> && !HasSyncMarker<IdempotencyCache>);
+
+static_assert(std::is_aggregate_v<IdempotencyKey>);
+static_assert(std::is_default_constructible_v<IdempotencyKey>);
+static_assert(std::is_trivially_copyable_v<IdempotencyKey>);
+static_assert(std::is_aggregate_v<IdempotencyKeyHash>);
+static_assert(std::is_empty_v<IdempotencyKeyHash>);
+static_assert(std::is_standard_layout_v<IdempotencyKeyHash>);
+static_assert(std::is_trivially_copyable_v<IdempotencyKeyHash>);
+static_assert(std::is_aggregate_v<IdempotencyConfig>);
+static_assert(std::is_default_constructible_v<IdempotencyConfig>);
+static_assert(std::is_trivially_copyable_v<IdempotencyConfig>);
+static_assert(std::is_aggregate_v<CachedResponse>);
+static_assert(std::is_standard_layout_v<CachedResponse>);
+static_assert(std::is_default_constructible_v<CachedResponse>);
+static_assert(std::is_copy_constructible_v<CachedResponse>);
+static_assert(std::is_copy_assignable_v<CachedResponse>);
+static_assert(std::is_move_constructible_v<CachedResponse>);
+static_assert(std::is_move_assignable_v<CachedResponse>);
+static_assert(!std::is_trivially_copyable_v<CachedResponse>);
+static_assert(std::is_aggregate_v<IdempotencyKeyGenerator>);
+static_assert(std::is_standard_layout_v<IdempotencyKeyGenerator>);
+static_assert(std::is_default_constructible_v<IdempotencyKeyGenerator>);
+static_assert(!std::is_copy_constructible_v<IdempotencyKeyGenerator>);
+static_assert(!std::is_copy_assignable_v<IdempotencyKeyGenerator>);
+static_assert(std::is_move_constructible_v<IdempotencyKeyGenerator>);
+static_assert(std::is_move_assignable_v<IdempotencyKeyGenerator>);
+// Factory-only construction: no user ctors remain (aggregate); the
+// sanctioned construction paths are the generated static factories.
+static_assert(std::is_aggregate_v<IdempotencyCache>);
+static_assert(std::is_standard_layout_v<IdempotencyCache>);
+static_assert(requires { IdempotencyCache::new_(); });
+static_assert(requires(IdempotencyConfig c) {
+  IdempotencyCache::with_config(std::move(c));
+});
+static_assert(!std::is_copy_constructible_v<IdempotencyCache>);
+static_assert(!std::is_copy_assignable_v<IdempotencyCache>);
+static_assert(std::is_move_constructible_v<IdempotencyCache>);
+static_assert(std::is_move_assignable_v<IdempotencyCache>);
+
+using SerializeFn = void (*)(const IdempotencyKey&, BinaryWriteArchive&);
+using DeserializeFn = void (*)(IdempotencyKey&, BinaryReadArchive&);
+using SetResponseFn = void (*)(CachedResponse&, const rusty::Vec<std::uint8_t>&);
+using GetResponseFn = void (*)(const CachedResponse&, rusty::Vec<std::uint8_t>&);
+using KeyFactoryFn = IdempotencyKey (*)(std::uint64_t, std::uint64_t);
+using EmptyKeyFn = IdempotencyKey (*)();
+using KeyValidFn = bool (IdempotencyKey::*)() const;
+using KeyEqualFn = bool (IdempotencyKey::*)(const IdempotencyKey&) const;
+using KeyHashFn = std::uint64_t (IdempotencyKeyHash::*)(const IdempotencyKey&) const;
+using ConfigFactoryFn = IdempotencyConfig (*)();
+using ExpiredFn = bool (CachedResponse::*)(std::uint64_t, std::uint64_t) const;
+using GeneratorFactoryFn = IdempotencyKeyGenerator (*)(std::uint64_t);
+using GeneratorNextFn = IdempotencyKey (IdempotencyKeyGenerator::*)() const;
+using GeneratorGetFn = std::uint64_t (IdempotencyKeyGenerator::*)() const;
+using GeneratorSetFn = void (IdempotencyKeyGenerator::*)(std::uint64_t) const;
+using CacheEnabledFn = bool (IdempotencyCache::*)() const;
+using CacheConfigFn = IdempotencyConfig (IdempotencyCache::*)() const;
+using CacheSetConfigFn = void (IdempotencyCache::*)(const IdempotencyConfig&) const;
+using CacheLookupFn = bool (IdempotencyCache::*)(
+    const IdempotencyKey&, std::uint64_t, std::int32_t&,
+    rusty::Vec<std::uint8_t>&) const;
+using CacheStoreFn = void (IdempotencyCache::*)(
+    const IdempotencyKey&, std::int32_t, const rusty::Vec<std::uint8_t>&,
+    std::uint64_t) const;
+using CacheRemoveFn = bool (IdempotencyCache::*)(const IdempotencyKey&) const;
+using CacheVoidFn = void (IdempotencyCache::*)() const;
+using CacheSizeFn = std::size_t (IdempotencyCache::*)() const;
+using CacheCounterFn = std::uint64_t (IdempotencyCache::*)() const;
+using CacheRateFn = double (IdempotencyCache::*)() const;
+using CacheEvictFn = std::size_t (IdempotencyCache::*)(std::uint64_t) const;
+
+static_assert(std::is_same_v<decltype(&rrr::serialize), SerializeFn>);
+static_assert(std::is_same_v<decltype(&rrr::deserialize), DeserializeFn>);
+static_assert(std::is_same_v<decltype(&rrr::cached_response_set), SetResponseFn>);
+static_assert(std::is_same_v<decltype(&rrr::cached_response_get), GetResponseFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKey::new_), KeyFactoryFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKey::empty), EmptyKeyFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKey::is_valid), KeyValidFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKey::operator==), KeyEqualFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKeyHash::hash_one), KeyHashFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyConfig::new_), ConfigFactoryFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyConfig::defaults), ConfigFactoryFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyConfig::small), ConfigFactoryFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyConfig::large), ConfigFactoryFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyConfig::disabled), ConfigFactoryFn>);
+static_assert(std::is_same_v<decltype(&CachedResponse::is_expired), ExpiredFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKeyGenerator::new_), GeneratorFactoryFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKeyGenerator::next), GeneratorNextFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKeyGenerator::client_id), GeneratorGetFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKeyGenerator::set_client_id), GeneratorSetFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyKeyGenerator::current_sequence), GeneratorGetFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::enabled), CacheEnabledFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::config), CacheConfigFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::set_config), CacheSetConfigFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::lookup), CacheLookupFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::store), CacheStoreFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::remove), CacheRemoveFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::clear), CacheVoidFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::size), CacheSizeFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::hits), CacheCounterFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::misses), CacheCounterFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::evictions), CacheCounterFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::hit_rate), CacheRateFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::reset_stats), CacheVoidFn>);
+static_assert(std::is_same_v<decltype(&IdempotencyCache::evict_expired), CacheEvictFn>);
+
 // Serialize a value into an owned byte vector (the cache API's payload
 // type since the Marshal-deprecation retype).
 template <typename T>
 static rusty::Vec<std::uint8_t> to_bytes(const T& v) {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive ar(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive ar(rrr::make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(v, ar);
     return std::move(sink.bytes);
 }
@@ -100,16 +252,29 @@ TEST_F(IdempotencyKeyTest, Hash) {
 TEST_F(IdempotencyKeyTest, MarshalRoundTrip) {
     IdempotencyKey original(12345, 67890);
 
+    // Independent native-endian oracle for the historical archive contract.
+    // Validate the wire bytes before decoding so a paired encoder/decoder bug
+    // cannot hide behind a successful round trip.
+    std::array<std::uint8_t, 16> expected{};
+    std::memcpy(expected.data(), &original.client_id, sizeof(original.client_id));
+    std::memcpy(expected.data() + sizeof(original.client_id), &original.sequence,
+                sizeof(original.sequence));
+
     // Serialize
     rrr::BufferSink sink;
     {
-        rrr::BinaryWriteArchive ar(rrr::make_sink_proxy(&sink));
+        rrr::BinaryWriteArchive ar(rrr::make_sink_proxy_buffer(&sink));
         rrr::Serialize_::serialize(original, ar);
     }
 
-    // Deserialize
-    rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    ASSERT_EQ(sink.bytes.len(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        EXPECT_EQ(sink.bytes[index], expected[index]);
+    }
+
+    // Decode the independent bytes, rather than the encoder's output.
+    rrr::BufferSource src(expected.data(), expected.size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     auto restored = IdempotencyKey::empty();
     rrr::Deserialize_::deserialize(restored, rar);
 
@@ -244,7 +409,7 @@ TEST_F(CachedResponseTest, IsExpired) {
 
 class IdempotencyCacheTest : public ::testing::Test {
 protected:
-    IdempotencyCache cache_;
+    IdempotencyCache cache_ = IdempotencyCache::new_();
 
     void SetUp() override {
         cache_.set_config(IdempotencyConfig::defaults());
@@ -532,44 +697,6 @@ TEST_F(IdempotencyCacheTest, EvictExpired) {
 
     EXPECT_EQ(evicted, 3);
     EXPECT_EQ(cache_.size(), 2);
-}
-
-TEST_F(IdempotencyCacheTest, ThreadSafety) {
-    const int num_threads = 4;
-    const int ops_per_thread = 1000;
-    std::atomic<int> completed{0};
-
-    auto worker = [&](int thread_id) {
-        auto gen = IdempotencyKeyGenerator::new_(thread_id);
-
-        for (int i = 0; i < ops_per_thread; i++) {
-            auto key = gen.next();
-            uint64_t now = current_time_ms();
-
-            auto response = to_bytes(i);
-            cache_.store(key, i, response, now);
-
-            int32_t error_code;
-            rusty::Vec<std::uint8_t> out_response;
-            cache_.lookup(key, now, error_code, out_response);
-        }
-
-        completed++;
-    };
-
-    std::vector<std::thread> threads;
-    for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back(worker, i);
-    }
-
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    EXPECT_EQ(completed, num_threads);
-    // All operations should have succeeded without crashes
-    // Cache size may vary due to concurrent eviction
-    EXPECT_LE(cache_.size(), cache_.config().max_entries);
 }
 
 // ===========================================================================

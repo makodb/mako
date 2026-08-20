@@ -49,7 +49,7 @@ class EchoService {
     void __dispatch__(i32 /*rpc_id*/, rusty::Box<Request> req,
                       WeakServerConnection sconn) {
         std::string echo;
-        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
         rrr::Deserialize_::deserialize(echo, __req_ar__);
         {
             std::lock_guard<std::mutex> lk(mu_);

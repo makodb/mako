@@ -146,7 +146,7 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
 
   BufferSink sink;
   {
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
+    BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
 
@@ -154,7 +154,7 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   AnyMessage incoming;
   {
     BufferSource src(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy(&src));
+    BinaryReadArchive reader(make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
 
@@ -190,13 +190,13 @@ TEST(AnyMessageTest, PackAsAdHocName) {
   AnyMessage outgoing = am;
   BufferSink sink;
   {
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
+    BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
   AnyMessage incoming;
   {
     BufferSource src(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy(&src));
+    BinaryReadArchive reader(make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
   EXPECT_EQ(incoming.type_name_, "graph.alias.v1");
@@ -220,14 +220,14 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
   AnyMessage outgoing = AnyMessage::pack(val);
   BufferSink sink;
   {
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
+    BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
 
   AnyMessage incoming;
   {
     BufferSource src(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy(&src));
+    BinaryReadArchive reader(make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
   const auto recovered = incoming.unpack<OtherPayload>();
@@ -255,7 +255,7 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   AnyMessage outgoing(AnyMessage::pack(val));
   BufferSink sink;
   {
-    BinaryWriteArchive ar(make_sink_proxy(&sink));
+    BinaryWriteArchive ar(make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(outgoing, ar);
   }
 
@@ -263,7 +263,7 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   AnyMessage incoming;
   {
     BufferSource source(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive ar(make_source_proxy(&source));
+    BinaryReadArchive ar(make_source_proxy_buffer(&source));
     rrr::Deserialize_::deserialize(incoming, ar);
   }
 
@@ -291,14 +291,14 @@ TEST(AnyMessageTest, SerializableUnpackWrongTypeReturnsNullptr) {
   AnyMessage outgoing(AnyMessage::pack(val));
   BufferSink sink;
   {
-    BinaryWriteArchive ar(make_sink_proxy(&sink));
+    BinaryWriteArchive ar(make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(outgoing, ar);
   }
 
   AnyMessage incoming;
   {
     BufferSource source(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive ar(make_source_proxy(&source));
+    BinaryReadArchive ar(make_source_proxy_buffer(&source));
     rrr::Deserialize_::deserialize(incoming, ar);
   }
 

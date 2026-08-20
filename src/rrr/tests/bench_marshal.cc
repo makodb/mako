@@ -84,11 +84,11 @@ int main() {
        [](std::size_t n) {
          for (std::size_t i = 0; i < n; ++i) {
            rrr::BufferSink sink;
-           rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+           rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
            i64 v = static_cast<i64>(i);
            rrr::Serialize_::serialize(v, war);
            rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
            i64 out;
            rrr::Deserialize_::deserialize(out, rar);
            if (out != v) std::abort();
@@ -102,13 +102,13 @@ int main() {
        5'000'000,
        [](std::size_t n) {
          rrr::BufferSink sink;
-         rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+         rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
          for (std::size_t i = 0; i < n; ++i) {
            sink.bytes.clear();
            i64 v = static_cast<i64>(i);
            rrr::Serialize_::serialize(v, war);
            rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
            i64 out;
            rrr::Deserialize_::deserialize(out, rar);
            if (out != v) std::abort();
@@ -123,13 +123,13 @@ int main() {
          constexpr std::size_t kCount = 1024;
          for (std::size_t k = 0; k < n; ++k) {
            rrr::BufferSink sink;
-           rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+           rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
            for (std::size_t i = 0; i < kCount; ++i) {
              i64 v = static_cast<i64>(i);
              rrr::Serialize_::serialize(v, war);
            }
            rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
            for (std::size_t i = 0; i < kCount; ++i) {
              i64 out;
              rrr::Deserialize_::deserialize(out, rar);
@@ -176,10 +176,10 @@ int main() {
          std::string out;
          for (std::size_t i = 0; i < n; ++i) {
            rrr::BufferSink sink;
-           rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+           rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
            rrr::Serialize_::serialize(in, war);
            rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
            rrr::Deserialize_::deserialize(out, rar);
            if (out != in) std::abort();
          }
@@ -192,7 +192,7 @@ int main() {
          std::string in = kStr100;
          for (std::size_t i = 0; i < n; ++i) {
            rrr::BufferSink sink;
-           rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+           rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
            i32 a = 1, b = 2, c = 3, d = 4;
            rrr::Serialize_::serialize(a, war);
            rrr::Serialize_::serialize(b, war);
@@ -202,7 +202,7 @@ int main() {
            i32 ao, bo, co, dxo;
            std::string so;
            rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
            rrr::Deserialize_::deserialize(ao, rar);
            rrr::Deserialize_::deserialize(bo, rar);
            rrr::Deserialize_::deserialize(co, rar);

@@ -2,3 +2,4 @@
 *.swp
 event/build/*
 /target/
+/build*/

@@ -44,7 +44,7 @@ public:
         }
 
         v32 payload;
-        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
         rrr::Deserialize_::deserialize(payload, __req_ar__);
 
         int call = call_count.fetch_add(1) + 1;

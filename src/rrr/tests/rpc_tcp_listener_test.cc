@@ -94,7 +94,7 @@ int connect_to_local(const std::string& local_address) {
 class TcpListenerTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        listener_ = rusty::Some(rusty::Arc<TcpListener>::make());
+        listener_ = rusty::Some(rusty::Arc<TcpListener>::new_(TcpListener::new_()));
     }
 
     void TearDown() override {

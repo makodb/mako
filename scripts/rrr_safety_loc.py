@@ -20,7 +20,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORKTREE = SCRIPT_DIR.parent
 
-# Files in RRR_BORROW_SRC (per src/rrr/CMakeLists.txt).
+# Files in RRR_BORROW_SRC (per src/rrr_build/CMakeLists.txt).
 FILES = [
     "src/rrr/base/logging.cpp",
     "src/rrr/base/misc.cpp", "src/rrr/base/threading.cpp",

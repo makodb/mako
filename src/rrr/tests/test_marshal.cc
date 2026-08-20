@@ -21,7 +21,7 @@ public:
     ~MarshalTest() noexcept override {}
 protected:
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war{rrr::make_sink_proxy(&sink)};
+    rrr::BinaryWriteArchive war{rrr::make_sink_proxy_buffer(&sink)};
 };
 
 TEST_F(MarshalTest, BasicIntegerTypes) {
@@ -41,7 +41,7 @@ TEST_F(MarshalTest, BasicIntegerTypes) {
     i64 i64_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(i8_out, rar);
     rrr::Deserialize_::deserialize(i16_out, rar);
     rrr::Deserialize_::deserialize(i32_out, rar);
@@ -70,7 +70,7 @@ TEST_F(MarshalTest, UnsignedIntegerTypes) {
     uint64_t u64_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(u8_out, rar);
     rrr::Deserialize_::deserialize(u16_out, rar);
     rrr::Deserialize_::deserialize(u32_out, rar);
@@ -97,7 +97,7 @@ TEST_F(MarshalTest, VariableLengthIntegers) {
     v64 v64_small_out, v64_large_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(v32_small_out, rar);
     rrr::Deserialize_::deserialize(v32_large_out, rar);
     rrr::Deserialize_::deserialize(v64_small_out, rar);
@@ -124,7 +124,7 @@ TEST_F(MarshalTest, DoubleValues) {
     
     double d1_out, d2_out, d3_out, d4_out, d5_out;
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(d1_out, rar);
     rrr::Deserialize_::deserialize(d2_out, rar);
     rrr::Deserialize_::deserialize(d3_out, rar);
@@ -153,7 +153,7 @@ TEST_F(MarshalTest, StringValues) {
     
     std::string empty_out, short_out, long_out, unicode_out, special_out;
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(empty_out, rar);
     rrr::Deserialize_::deserialize(short_out, rar);
     rrr::Deserialize_::deserialize(long_out, rar);
@@ -181,7 +181,7 @@ TEST_F(MarshalTest, PairValues) {
     std::pair<std::string, std::vector<int>> p3_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(p1_out, rar);
     rrr::Deserialize_::deserialize(p2_out, rar);
     rrr::Deserialize_::deserialize(p3_out, rar);
@@ -207,7 +207,7 @@ TEST_F(MarshalTest, VectorValues) {
     std::vector<std::vector<int>> nested_vec_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(empty_vec_out, rar);
     rrr::Deserialize_::deserialize(int_vec_out, rar);
     rrr::Deserialize_::deserialize(str_vec_out, rar);
@@ -233,7 +233,7 @@ TEST_F(MarshalTest, ListValues) {
     std::list<std::string> str_list_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(empty_list_out, rar);
     rrr::Deserialize_::deserialize(double_list_out, rar);
     rrr::Deserialize_::deserialize(str_list_out, rar);
@@ -256,7 +256,7 @@ TEST_F(MarshalTest, SetValues) {
     std::set<std::string> str_set_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(empty_set_out, rar);
     rrr::Deserialize_::deserialize(int_set_out, rar);
     rrr::Deserialize_::deserialize(str_set_out, rar);
@@ -282,7 +282,7 @@ TEST_F(MarshalTest, MapValues) {
     std::map<std::string, std::vector<int>> str_vec_map_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(empty_map_out, rar);
     rrr::Deserialize_::deserialize(int_str_map_out, rar);
     rrr::Deserialize_::deserialize(str_vec_map_out, rar);
@@ -305,7 +305,7 @@ TEST_F(MarshalTest, UnorderedSetValues) {
     std::unordered_set<std::string> str_uset_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(empty_uset_out, rar);
     rrr::Deserialize_::deserialize(int_uset_out, rar);
     rrr::Deserialize_::deserialize(str_uset_out, rar);
@@ -332,7 +332,7 @@ TEST_F(MarshalTest, UnorderedMapValues) {
     std::unordered_map<std::string, int> str_int_umap_out;
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(empty_umap_out, rar);
     rrr::Deserialize_::deserialize(int_double_umap_out, rar);
     rrr::Deserialize_::deserialize(str_int_umap_out, rar);
@@ -355,7 +355,7 @@ TEST_F(MarshalTest, ComplexNestedStructures) {
     
     ComplexType complex_data_out;
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(complex_data_out, rar);
     
     EXPECT_EQ(complex_data, complex_data_out);
@@ -372,7 +372,7 @@ TEST_F(MarshalTest, LargeDataSets) {
     
     std::vector<int> large_vec_out;
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(large_vec_out, rar);
     
     EXPECT_EQ(large_vec, large_vec_out);
@@ -395,7 +395,7 @@ TEST_F(MarshalTest, MixedDataTypes) {
     std::map<int, std::string> map_out;
 
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(int_out, rar);
     rrr::Deserialize_::deserialize(str_out, rar);
     rrr::Deserialize_::deserialize(vec_out, rar);
@@ -453,7 +453,7 @@ TEST_F(MarshalTest, PeekOperation) {
     size_t peeked;
     {
         rrr::BufferSource peek_src(sink.bytes.data(), sink.bytes.len());
-        rrr::BinaryReadArchive peek_rar(rrr::make_source_proxy(&peek_src));
+        rrr::BinaryReadArchive peek_rar(rrr::make_source_proxy_buffer(&peek_src));
         rrr::Deserialize_::deserialize(peeked_val, peek_rar);
         peeked = sink.bytes.len() - peek_src.remaining();
     }
@@ -462,7 +462,7 @@ TEST_F(MarshalTest, PeekOperation) {
 
     i32 read_val1, read_val2;
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(read_val1, rar);
     rrr::Deserialize_::deserialize(read_val2, rar);
 
@@ -481,7 +481,7 @@ TEST_F(MarshalTest, MultipleChunks) {
     }
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     for (size_t i = 0; i < num_items; ++i) {
         i64 val;
         rrr::Deserialize_::deserialize(val, rar);
@@ -508,7 +508,7 @@ TEST_F(MarshalTest, EdgeCasesEmptyCollections) {
     std::map<int, int> map_out;
 
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(vec_out, rar);
     rrr::Deserialize_::deserialize(list_out, rar);
     rrr::Deserialize_::deserialize(set_out, rar);
@@ -533,7 +533,7 @@ TEST_F(MarshalTest, SpecialFloatingPointValues) {
     
     double inf_pos_out, inf_neg_out, nan_val_out, denorm_out;
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(inf_pos_out, rar);
     rrr::Deserialize_::deserialize(inf_neg_out, rar);
     rrr::Deserialize_::deserialize(nan_val_out, rar);
@@ -571,7 +571,7 @@ TEST_F(MarshalTest, RandomizedStressTest) {
     }
     
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     for (int i = 0; i < num_items; ++i) {
         i32 int_out;
         double double_out;

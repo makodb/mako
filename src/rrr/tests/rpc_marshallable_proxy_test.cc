@@ -78,7 +78,7 @@ void ExpectMakoKindWireByte(int32_t expected) {
   ASSERT_EQ(T::static_kind(), expected);
 
   rrr::BufferSink sink;
-  rrr::BinaryWriteArchive writer(rrr::make_sink_proxy(&sink));
+  rrr::BinaryWriteArchive writer(rrr::make_sink_proxy_buffer(&sink));
   const rrr::v32 tag(expected);
   rrr::Serialize_::serialize(tag, writer);
 
@@ -100,12 +100,12 @@ rusty::Option<rusty::Arc<T>> RoundTripTypedPayload(const rusty::Arc<T>& src) {
   // Command's templated non-Marshallable ctor.
   janus::Command outgoing{src};
   rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
   rrr::Serialize_::serialize(outgoing, war);
 
   janus::Command incoming;
   rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&source));
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&source));
   rrr::Deserialize_::deserialize(incoming, rar);
 
   return marshallable_cast<T>(incoming);
@@ -172,7 +172,7 @@ TEST(MakoCommandKindTest, ExplicitMappingControlsExactEnvelopeWireBytes) {
   EXPECT_EQ(envelope.kind(), 13);
 
   rrr::BufferSink sink;
-  rrr::BinaryWriteArchive writer(rrr::make_sink_proxy(&sink));
+  rrr::BinaryWriteArchive writer(rrr::make_sink_proxy_buffer(&sink));
   rrr::Serialize_::serialize(envelope, writer);
 
   ASSERT_EQ(sink.bytes.len(), 1u);
@@ -253,12 +253,12 @@ TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataNonEmptyRoundTrip) {
   // path).
   janus::Command outgoing{rusty::Arc<janus::VecPieceData>::make(std::move(payload))};
   rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
   rrr::Serialize_::serialize(outgoing, war);
 
   janus::Command incoming;
   rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
   rrr::Deserialize_::deserialize(incoming, rar);
   const auto decoded = marshallable_cast<janus::VecPieceData>(incoming);
   ASSERT_TRUE(decoded.is_some());
@@ -307,12 +307,12 @@ TEST(MarshallableProxyFacadeTest, DeptranViewDataMarshalRoundTrip) {
   // round-trip — the Marshal-based to_marshal/from_marshal methods
   // are gone.
   BufferSink sink;
-  BinaryWriteArchive writer(make_sink_proxy(&sink));
+  BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
   src.save(writer);
 
   janus::ViewData dst;
   BufferSource source(sink.bytes.data(), sink.bytes.len());
-  BinaryReadArchive reader(make_source_proxy(&source));
+  BinaryReadArchive reader(make_source_proxy_buffer(&source));
   dst.load(reader);
 
   EXPECT_EQ(dst.view_.n_, 3);
@@ -372,12 +372,12 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
   EXPECT_EQ(outgoing.kind_, janus::TpcCommitCommand::static_kind());
 
   rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
   rrr::Serialize_::serialize(outgoing, war);
 
   janus::Command incoming;
   rrr::BufferSource byte_src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&byte_src));
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&byte_src));
   rrr::Deserialize_::deserialize(incoming, rar);
   EXPECT_EQ(incoming.kind_, janus::TpcCommitCommand::static_kind());
 
@@ -411,12 +411,12 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
       rusty::Arc<janus::TpcBatchCommand>::make(std::move(batch))};
   EXPECT_EQ(batch_outgoing.kind_, janus::TpcBatchCommand::static_kind());
   rrr::BufferSink batch_sink;
-  rrr::BinaryWriteArchive batch_war(rrr::make_sink_proxy(&batch_sink));
+  rrr::BinaryWriteArchive batch_war(rrr::make_sink_proxy_buffer(&batch_sink));
   rrr::Serialize_::serialize(batch_outgoing, batch_war);
 
   janus::Command batch_incoming;
   rrr::BufferSource batch_src(batch_sink.bytes.data(), batch_sink.bytes.len());
-  rrr::BinaryReadArchive batch_rar(rrr::make_source_proxy(&batch_src));
+  rrr::BinaryReadArchive batch_rar(rrr::make_source_proxy_buffer(&batch_src));
   rrr::Deserialize_::deserialize(batch_incoming, batch_rar);
   const auto decoded_batch =
       marshallable_cast<janus::TpcBatchCommand>(batch_incoming);
@@ -455,12 +455,12 @@ TEST(MarshallableProxyFacadeTest,
   EXPECT_EQ(outgoing.kind_, janus::ReplicatedDBCommand::static_kind());
 
   rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
   rrr::Serialize_::serialize(outgoing, war);
 
   janus::Command incoming;
   rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
   rrr::Deserialize_::deserialize(incoming, rar);
   EXPECT_EQ(incoming.kind_, janus::ReplicatedDBCommand::static_kind());
 
@@ -483,14 +483,14 @@ TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
 
   BufferSink sink;
   {
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
+    BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
 
   rrr::AnyMessage incoming;
   {
     BufferSource src(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy(&src));
+    BinaryReadArchive reader(make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
   EXPECT_TRUE(incoming.is_a<janus::EmptyGraph>());
@@ -505,14 +505,14 @@ TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesAnyMessageEnvelope) {
 
   BufferSink sink;
   {
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
+    BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
 
   rrr::AnyMessage incoming;
   {
     BufferSource src(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy(&src));
+    BinaryReadArchive reader(make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
 

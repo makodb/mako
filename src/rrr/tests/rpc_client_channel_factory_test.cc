@@ -185,7 +185,7 @@ class ClientChannelFactoryTest : public ::testing::Test {
  protected:
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
-        conn_ = rusty::Some(rusty::Arc<ClientConnection>::make(poll_thread_.as_ref().unwrap().clone()));
+        conn_ = rusty::Some(rusty::Arc<ClientConnection>::new_(ClientConnection::new_(poll_thread_.as_ref().unwrap().clone())));
         mut_conn().install_self_weak_for_testing(
             WeakClientConnection{rusty::sync::downgrade(conn_.as_ref().unwrap())});
 

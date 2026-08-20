@@ -88,14 +88,14 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
     // exercise an on-wire round-trip.
     rrr::BufferSink sink;
     {
-        rrr::BinaryWriteArchive writer(make_sink_proxy(&sink));
+        rrr::BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
         original.save(writer);
     }
 
     LogEntry restored;
     {
         rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-        rrr::BinaryReadArchive reader(make_source_proxy(&src));
+        rrr::BinaryReadArchive reader(make_source_proxy_buffer(&src));
         restored.load(reader);
     }
 
@@ -116,7 +116,7 @@ TEST_F(LogEntryTest, SerializationWithCommand) {
     // the to_marshal → save migration rationale.
     rrr::BufferSink sink;
     {
-        rrr::BinaryWriteArchive writer(make_sink_proxy(&sink));
+        rrr::BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
         original.save(writer);
     }
 
@@ -128,7 +128,7 @@ TEST_F(LogEntryTest, SerializationWithCommand) {
     // The basic fields can still be deserialized:
     LogEntry partial;
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(partial.slot_id, rar);
     rrr::Deserialize_::deserialize(partial.term, rar);
 

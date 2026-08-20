@@ -314,7 +314,8 @@ add_custom_command(
 # Create a custom target that depends on the output
 add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 
-# rrr module files and the `rrr` target are defined in src/rrr/CMakeLists.txt.
+# rrr module files and the `rrr` target are defined in
+# src/rrr_build/CMakeLists.txt.
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Mako targets Clang 22.x (see the rationale at CMakeLists.txt:19 and the
@@ -907,7 +908,10 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so")
 endif()
 
 # Build and export rrr target wiring from a dedicated CMakeLists.
-add_subdirectory(src/rrr)
+# The glue lives in src/rrr_build so that src/rrr itself holds only the
+# vendored srpc tree; the explicit binary directory keeps every generated
+# artifact under <build>/src/rrr exactly where it has always been.
+add_subdirectory(src/rrr_build src/rrr)
 # Build and export masstree-specific test wiring from a dedicated CMakeLists.
 add_subdirectory(src/masstree)
 

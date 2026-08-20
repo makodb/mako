@@ -25,20 +25,33 @@ import tempfile
 import tomllib
 
 
-DEFAULT_MANIFEST = "src/rrr/rust-modules.toml"
+# `src/rrr` is a vendored copy of the standalone srpc repository, which is
+# where these Rust sources are upstream. There the crate sits at the repository
+# root, so srpc spells every crate-owned path relative to that root:
+# `rust-modules.toml`, `src/lib.rs`, `base/`, `misc/`, `rpc/`, `reactor/`. This
+# driver uses the same spellings and resolves them against CRATE_ROOT, which is
+# what lets mako consume srpc's `rust-modules.toml` and its generated
+# `src/lib.rs` byte-for-byte instead of maintaining rewritten copies -- and what
+# will let `src/rrr` become a submodule without touching either file.
+#
+# The toolchain attestation below stays REPOSITORY-relative on purpose: the
+# rusty-cpp submodule and the transpiler built from it belong to mako, not to
+# the vendored tree.
+CRATE_ROOT = PurePosixPath("src/rrr")
+DEFAULT_MANIFEST = "rust-modules.toml"
 DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 PACKAGE_NAME = "rrr"
-GENERATED_ROOT = PurePosixPath("src/rrr/src")
+GENERATED_ROOT = PurePosixPath("src")
 GENERATED_LIB = GENERATED_ROOT / "lib.rs"
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
 REQUIRED_RUSTY_CPP_COMMIT = "a1f8fef85e8d43bb00f85f8ef32e5ecc69408642"
 APPROVED_PRODUCTION_ROOTS = (
-    PurePosixPath("src/rrr/base"),
-    PurePosixPath("src/rrr/misc"),
-    PurePosixPath("src/rrr/rpc"),
-    PurePosixPath("src/rrr/reactor"),
+    PurePosixPath("base"),
+    PurePosixPath("misc"),
+    PurePosixPath("rpc"),
+    PurePosixPath("reactor"),
 )
 BLOCK_ID_RE = re.compile(r"[A-Za-z0-9_.-]+\Z")
 # Optional crate-level flat-import namespace: when present, crate mode runs
@@ -131,6 +144,18 @@ def sha256(data: bytes) -> str:
 
 def repository_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def crate_root(root: Path) -> Path:
+    """The directory every crate-relative label resolves against.
+
+    In srpc this is the repository root itself; in mako the same tree is
+    vendored one level down, at CRATE_ROOT. Callers that resolve crate content
+    (manifest, canonical sources, generated `src/`) pass this; callers that
+    resolve mako's own toolchain (the rusty-cpp submodule) pass `root`.
+    """
+
+    return root.joinpath(*CRATE_ROOT.parts)
 
 
 def normalized_repo_path(
@@ -1031,19 +1056,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = repository_root()
+    # Crate content resolves against the vendored tree; the pinned toolchain
+    # resolves against mako's own checkout. See CRATE_ROOT.
+    crate = crate_root(root)
     try:
-        manifest_label, manifest = normalized_repo_path(root, args.manifest, "manifest")
-        modules = load_manifest(root, manifest)
+        manifest_label, manifest = normalized_repo_path(
+            crate, args.manifest, "manifest"
+        )
+        modules = load_manifest(crate, manifest)
         transpiler = resolve_transpiler(root, args.transpiler)
         verify_pinned_toolchain(root, transpiler)
         generated = generate_all(
-            root,
+            crate,
             modules,
             transpiler,
             manifest_label,
             manifest,
         )
-        apply_mode(root, generated, "write" if args.write else "check")
+        apply_mode(crate, generated, "write" if args.write else "check")
     except ExtractionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

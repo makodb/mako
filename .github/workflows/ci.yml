@@ -43,7 +43,7 @@ jobs:
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       # The consumer targets below are mako's own tests that link the
-      # production `rrr` archive -- which, per src/rrr/CMakeLists.txt, is built
+      # production `rrr` archive -- which, per src/rrr_build/CMakeLists.txt, is built
       # from exactly the thirty-seven generated canonical-Rust providers. They
       # replace the nineteen `src/rrr/tests/` binaries this step used to name:
       # those are srpc's tests, mako stopped building them in 4a06ef0e, and
