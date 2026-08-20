@@ -28,7 +28,7 @@
 use core::ffi::c_char;
 
 /// Bumped on any incompatible change to the C ABI.
-pub const MTX_ABI_VERSION: u32 = 3;
+pub const MTX_ABI_VERSION: u32 = 4;
 
 /// Success.
 pub const MTX_OK: i32 = 0;
@@ -107,6 +107,21 @@ extern "C" {
         word: u64,
         out: *mut u64,
     ) -> i32;
+
+    /// Hold ONE RCU region across several calls on this thread.
+    ///
+    /// The first region on a thread takes the core's ticker spinlock and
+    /// reads the clock; nested ones skip both. Pinning once around a run
+    /// of tree calls pays that setup once instead of per call.
+    ///
+    /// **Never hold a pin across IO or a blocking call.** An open region
+    /// pins this core's ticker slot, which the ticker daemon needs to
+    /// advance every lagging core, so holding one across a disk read
+    /// stalls reclamation process-wide. Reentrant.
+    pub fn mtx_region_pin() -> i32;
+
+    /// Release a pin taken by [`mtx_region_pin`].
+    pub fn mtx_region_unpin();
 
     /// As [`mtx_get_or_insert`], but without the leading probe.
     ///
@@ -196,13 +211,13 @@ mod tests {
     // differential harness.
 
     #[test]
-    fn abi_version_is_three() {
+    fn abi_version_is_four() {
         // 1 -> 2 when `arena_used` gained its overflow meaning; 2 -> 3
-        // when mtx_insert_if_absent was added.
+        // when mtx_insert_if_absent was added; 3 -> 4 for region pinning.
         // The runtime check in assert_abi_matches is what actually
         // enforces agreement; this pins the constant against an
         // accidental edit.
-        assert_eq!(MTX_ABI_VERSION, 3);
+        assert_eq!(MTX_ABI_VERSION, 4);
     }
 
     #[test]

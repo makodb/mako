@@ -86,6 +86,16 @@ struct chunk_collector {
 // exhaustion instead of returning a status.
 thread_local bool tl_attached = false;
 
+// An RCU region this thread opened explicitly, via mtx_region_pin.
+//
+// scoped_rcu_region is RAII and mtx_region_pin/unpin are not, so the
+// object is held in raw storage and constructed/destroyed by hand. The
+// depth counter makes pinning reentrant; only the outermost pin creates
+// or destroys the region.
+thread_local unsigned tl_pin_depth = 0;
+alignas(scoped_rcu_region) thread_local unsigned char
+    tl_pin_storage[sizeof(scoped_rcu_region)];
+
 }  // namespace
 
 extern "C" {
@@ -111,6 +121,32 @@ int mtx_thread_attach(void) {
     return MTX_OK;
   } catch (...) {
     return MTX_ERR_INTERNAL;
+  }
+}
+
+int mtx_region_pin(void) {
+  if (!tl_attached) return MTX_ERR_NOT_ATTACHED;
+  try {
+    if (tl_pin_depth == 0) {
+      new (tl_pin_storage) scoped_rcu_region();
+    }
+    tl_pin_depth++;
+    return MTX_OK;
+  } catch (...) {
+    return MTX_ERR_INTERNAL;
+  }
+}
+
+void mtx_region_unpin(void) {
+  if (tl_pin_depth == 0) return;  // unbalanced; ignore rather than corrupt
+  if (--tl_pin_depth == 0) {
+    try {
+      reinterpret_cast<scoped_rcu_region *>(tl_pin_storage)
+          ->~scoped_rcu_region();
+    } catch (...) {
+      // A destructor that throws has nowhere to report; swallowing beats
+      // unwinding into C.
+    }
   }
 }
 

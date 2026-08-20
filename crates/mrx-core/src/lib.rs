@@ -155,6 +155,23 @@ pub trait KeyIndex: Send + Sync {
     fn rscan_chunk(&self, from: &[u8], budget: usize, out: &mut Vec<(Vec<u8>, EntryWord)>)
         -> usize;
 
+    /// Hint that several calls are about to happen back to back on this
+    /// thread, and that the index may amortise per-call setup across them.
+    ///
+    /// Must be paired with [`KeyIndex::unpin`]; [`Pin`] does that. The
+    /// default is a no-op, which is correct for any index with no
+    /// per-call setup to amortise — the in-memory fakes, for instance.
+    ///
+    /// **A pin must not be held across IO, a blocking call, or arbitrary
+    /// caller code.** For masstree it opens an RCU region, and an open
+    /// region stalls epoch advancement — all reclamation — process-wide,
+    /// not merely for the pinning thread. The only sanctioned use is a
+    /// short run of adjacent index calls.
+    fn pin(&self) {}
+
+    /// Release a pin taken by [`KeyIndex::pin`].
+    fn unpin(&self) {}
+
     /// Approximate key count. Counts tombstones, so it overcounts live
     /// keys — see trap 1.
     fn len(&self) -> usize;
@@ -189,8 +206,34 @@ impl<T: KeyIndex + ?Sized> KeyIndex for std::sync::Arc<T> {
     ) -> usize {
         (**self).rscan_chunk(from, budget, out)
     }
+    fn pin(&self) {
+        (**self).pin();
+    }
+    fn unpin(&self) {
+        (**self).unpin();
+    }
     fn len(&self) -> usize {
         (**self).len()
+    }
+}
+
+/// Holds a [`KeyIndex::pin`] for a scope.
+///
+/// Exists so the unpin cannot be missed on an early return — and `intern`
+/// has one on its hot path.
+pub struct Pin<'a, K: KeyIndex + ?Sized>(&'a K);
+
+impl<'a, K: KeyIndex + ?Sized> Pin<'a, K> {
+    /// Pin `index` until this guard drops.
+    pub fn new(index: &'a K) -> Self {
+        index.pin();
+        Self(index)
+    }
+}
+
+impl<K: KeyIndex + ?Sized> Drop for Pin<'_, K> {
+    fn drop(&mut self) {
+        self.0.unpin();
     }
 }
 

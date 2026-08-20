@@ -82,7 +82,7 @@ extern "C" {
 /* Bumped on any incompatible change. The caller should compare this against
  * the value it was compiled with, and check mtx_kv_size() too: a struct
  * layout drift is the failure mode a version number alone will not catch. */
-#define MTX_ABI_VERSION 3u
+#define MTX_ABI_VERSION 4u
 
 /* Status codes. */
 #define MTX_OK 0
@@ -158,6 +158,39 @@ int mtx_get_or_insert(mtx_tree *t, const char *key, size_t klen, uint64_t word,
  * know it does not. */
 int mtx_insert_if_absent(mtx_tree *t, const char *key, size_t klen,
                          uint64_t word, uint64_t *out);
+
+/* --- region pinning ------------------------------------------------------ */
+
+/* Hold ONE RCU region across several calls on this thread.
+ *
+ * Every mtx_* call opens its own region. The FIRST region on a thread is not
+ * free: it takes this core's ticker spinlock and reads the clock. Nested ones
+ * skip both. So a caller making two or three tree calls in a row pays that
+ * setup two or three times unless it pins first.
+ *
+ * Measured at 16 threads: the masstree rung alone cost 50.7 ns/op called
+ * inline from C++ and 76.1 ns/op called through this ABI, and the difference
+ * is this. At one thread it is under 2 ns -- the cost is contention on the
+ * per-core ticker state, so it only appears under load.
+ *
+ * Reentrant: pins nest, and only the outermost creates or destroys the region.
+ * Unbalanced unpins are ignored rather than corrupting the depth.
+ *
+ * ===========================================================================
+ * DO NOT HOLD A PIN ACROSS IO, A BLOCKING CALL, OR ARBITRARY CALLER CODE
+ * ===========================================================================
+ *
+ * An open region pins this core's ticker slot, and the ticker daemon must take
+ * that slot to advance every lagging core. Holding one across a disk read
+ * stalls epoch advancement -- and therefore ALL reclamation -- process-wide,
+ * not just for the pinning thread. That is the one hazard this ABI otherwise
+ * removes by opening and closing a region inside each call, and pinning hands
+ * it back to the caller for the duration.
+ *
+ * The intended use is narrow: a lookup and an insert that must happen back to
+ * back, with nothing between them but a memory allocation. */
+int mtx_region_pin(void);
+void mtx_region_unpin(void);
 
 /* --- range operations --------------------------------------------------- */
 

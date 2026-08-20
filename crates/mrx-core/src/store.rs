@@ -198,6 +198,15 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         if let Some(w) = self.index.get(key) {
             return (w - 1) as u32;
         }
+        // Missed, so an insert follows. Hold ONE pin across the rest:
+        // masstree charges per-call setup only for the outermost region,
+        // and the insert path makes two more calls (the entry push is
+        // allocation, not IO, so it is safe to span).
+        //
+        // The pin covers exactly this block and nothing else. It must
+        // never reach the flusher, the durable store, or caller code —
+        // see KeyIndex::pin.
+        let _pin = crate::Pin::new(&self.index);
         // The entry is fully initialised by `push` before its index is
         // published into the directory below, so no reader can reach a
         // half-built slot.
