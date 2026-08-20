@@ -181,7 +181,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         for k in keys {
             // Version 0: at or below any watermark, i.e. durable by
             // provenance — correct, since the bytes came FROM the store.
-            let idx = self.intern(&k, || Record::evicted(0));
+            let idx = self.intern(&k, Record::shared_evicted);
             let _ = idx;
         }
         Ok(())
@@ -366,7 +366,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     }
 
     fn write(&self, key: &[u8], val: Option<&[u8]>, mode: WriteMode) -> WriteOutcome {
-        let idx = self.intern(key, || Record::tombstone(0));
+        let idx = self.intern(key, Record::shared_tombstone);
         let e = self.entry(idx);
         let w = self.writer();
 

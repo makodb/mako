@@ -320,6 +320,34 @@ impl Record {
         }
     }
 
+    /// The seed a brand-new entry starts from: a version-0 tombstone.
+    ///
+    /// One shared record, cloned. Every insert used to ALLOCATE one of
+    /// these, and the write path then displaced it with the real value
+    /// immediately — an allocation and a free per insert for a record
+    /// nobody ever reads.
+    ///
+    /// Sharing is sound because records are immutable and refcounted, and
+    /// because identity comparison ([`Record::ptr_eq`], the fill path's
+    /// ABA guard) always compares a value read from an entry against that
+    /// same entry's slot. Two entries holding the same seed cannot
+    /// confuse it.
+    ///
+    /// Version 0 is at or below every watermark, so a seed is durable by
+    /// provenance — which is what makes it safe to publish without a
+    /// ticket.
+    pub fn shared_tombstone() -> Self {
+        static SEED: std::sync::OnceLock<Record> = std::sync::OnceLock::new();
+        SEED.get_or_init(|| Record::tombstone(0)).clone()
+    }
+
+    /// The seed for a key loaded from the durable store at open: its
+    /// bytes exist, they are simply not in memory. Shared, as above.
+    pub fn shared_evicted() -> Self {
+        static SEED: std::sync::OnceLock<Record> = std::sync::OnceLock::new();
+        SEED.get_or_init(|| Record::evicted(0)).clone()
+    }
+
     /// Whether two handles refer to the same record.
     ///
     /// Identity, not equality: two records can be equal in content and
@@ -421,6 +449,21 @@ mod tests {
         assert_eq!(a.bytes(), Some(&b"shared"[..]), "still readable");
         // `a` frees here; Miri checks that it is exactly once and with
         // the right layout.
+    }
+
+    #[test]
+    fn shared_seeds_are_one_record_with_the_right_shape() {
+        let a = Record::shared_tombstone();
+        let b = Record::shared_tombstone();
+        assert!(Record::ptr_eq(&a, &b), "the seed must be shared, not rebuilt");
+        assert_eq!(a.version(), 0, "version 0 is durable by provenance");
+        assert!(!a.is_live());
+
+        let e = Record::shared_evicted();
+        assert!(Record::ptr_eq(&e, &Record::shared_evicted()));
+        assert_eq!(e.version(), 0);
+        assert!(e.is_live(), "an evicted value still EXISTS");
+        assert!(!Record::ptr_eq(&a, &e), "and the two seeds are distinct");
     }
 
     #[test]
