@@ -118,6 +118,31 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
+/// CPU seconds this process has burned, from /proc/self/stat.
+///
+/// Used to report how many cores were actually BUSY during the timed
+/// region. With N workers the ideal is N; materially below it means the
+/// workers were blocked rather than computing, which is a different
+/// bottleneck from executing too many instructions.
+///
+/// Reads utime+stime (fields 14 and 15). The comm field can contain
+/// spaces and parentheses, so parsing starts after the LAST ')'.
+fn cpu_secs() -> f64 {
+    let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else {
+        return 0.0;
+    };
+    let Some(idx) = stat.rfind(')') else { return 0.0 };
+    let f: Vec<&str> = stat[idx + 1..].split_whitespace().collect();
+    // After ')' the first field is `state`, which is field 3.
+    let get = |n: usize| -> f64 {
+        f.get(n - 3).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0)
+    };
+    // USER_HZ is 100 on every Linux this runs on; the C++ arm uses
+    // getrusage and needs no such assumption, so the two agreeing is the
+    // check that this is right.
+    (get(14) + get(15)) / 100.0
+}
+
 use mrx_core::fakes::MemBlobs;
 use mrx_core::{CacheLine, Config, EntryTable, KeyIndex, Record, Runtime, Store};
 use mrx_masstree::MasstreeIndex;
@@ -622,12 +647,14 @@ fn main() {
             })
             .collect();
         barrier.wait();
+        let c0 = cpu_secs();
         let t0 = Instant::now();
         for h in handles {
             h.join().expect("writer thread panicked");
         }
-        t0.elapsed()
+        (t0.elapsed(), cpu_secs() - c0)
     });
+    let (elapsed, cpu) = elapsed;
 
     if let Some(rt) = rt.as_mut() {
         rt.abort();
@@ -636,9 +663,10 @@ fn main() {
     let total = (threads * ops) as f64;
     println!(
         "threads={threads:3} mode={mode:9} keyspace={:8} blob_us={blob_us:5} \
-         {:9.0} ops/s  ({:.3}s)",
+         {:9.0} ops/s  cpu={:5.2} ({:.3}s)",
         if keyspace == 0 { threads * ops } else { keyspace },
         total / elapsed.as_secs_f64(),
+        cpu / elapsed.as_secs_f64(),
         elapsed.as_secs_f64()
     );
 }

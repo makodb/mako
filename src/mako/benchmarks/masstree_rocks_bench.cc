@@ -63,6 +63,30 @@ bool g_no_latency = false;
 // keyspace, which is the case the cache is supposed to win.
 int g_hot_keys = 2000;
 
+// Which arms to run, from MRX_BENCH_ARMS (comma-separated, default all).
+//
+// The four arms share a process on purpose -- "two separate runs compare
+// machine state as much as they compare implementations" -- but sharing
+// a process is not free either, and until this knob existed there was no
+// way to price it. Every arm that is open has a RocksDB under it with
+// background flush and compaction threads, and those threads do not stop
+// when the arm's phase ends: the C++ cache writes first, and its 3.2M
+// deferred tickets are still being compacted while the Rust arm is being
+// timed. An arm also leaves 25-35 MB of its own resident values in the
+// caches for whoever runs next.
+//
+// So: `MRX_BENCH_ARMS=cpp` and `MRX_BENCH_ARMS=rust` in two processes
+// give the interference-free ratio, and the difference between that and
+// the all-four ratio IS the interference. Unselected arms are never
+// opened, so they cost nothing at all.
+std::string g_arms = "mt,cpp,rust,rocks";
+
+// @safe - substring match against the comma-separated selection
+bool ArmOn(const char *name) {
+  const std::string n = std::string(",") + name + ",";
+  return (std::string(",") + g_arms + ",").find(n) != std::string::npos;
+}
+
 struct Result {
   double seconds{0};
   uint64_t ops{0};
@@ -71,6 +95,10 @@ struct Result {
 
   double ops_per_sec() const { return seconds > 0 ? ops / seconds : 0; }
 };
+
+// A phase an unselected arm did not run. ops_per_sec() is 0, which
+// PrintRow already renders as a 0 ratio rather than dividing by it.
+const Result kSkipped{};
 
 // Keys and values are materialized ONCE, before timing. Building them
 // per-op (snprintf + a std::string allocation) cost roughly as much as
@@ -330,6 +358,7 @@ int main(int argc, char **argv) {
   if (argc > 3) g_value_bytes = atoi(argv[3]);
   if (argc > 4) g_capacity = strtoull(argv[4], nullptr, 10);
   if (argc > 5) g_no_latency = (atoi(argv[5]) != 0);
+  if (const char *a = ::getenv("MRX_BENCH_ARMS")) g_arms = a;
 
   g_keys.reserve(g_keyspace);
   g_vals.reserve(g_keyspace);
@@ -352,6 +381,8 @@ int main(int argc, char **argv) {
   printf("  threads=%d ops/thread=%d value=%dB keyspace=%d hot=%d\n",
          g_threads, g_ops_per_thread, g_value_bytes, g_keyspace, g_hot_keys);
   printf("  total ops per phase: %d\n", g_threads * g_ops_per_thread);
+  printf("  arms=%s  latency-capture=%s\n", g_arms.c_str(),
+         g_no_latency ? "off" : "on (2 clock reads inside every timed op)");
   if (g_capacity == 0) {
     printf("  capacity=UNBOUNDED - nothing is evicted, so every read is a\n");
     printf("  memory hit and the fill path is NEVER exercised.\n");
@@ -363,10 +394,13 @@ int main(int argc, char **argv) {
   printf("  which already has a memtable and block cache of its own.\n\n");
 
   concurrent_btree tree;
-  mrx_store *store = mrx_store_open(&tree, mrx_path, g_capacity);
-  if (store == nullptr) {
-    fprintf(stderr, "mrx_store_open failed\n");
-    return 1;
+  mrx_store *store = nullptr;
+  if (ArmOn("cpp")) {
+    store = mrx_store_open(&tree, mrx_path, g_capacity);
+    if (store == nullptr) {
+      fprintf(stderr, "mrx_store_open failed\n");
+      return 1;
+    }
   }
   masstree_rocks_index idx("bench", 1, &tree, store);
 
@@ -377,84 +411,101 @@ int main(int argc, char **argv) {
   masstree_ordered_index mt("bench_mt", 2, &mt_tree);
 
   RawRocks raw;
-  if (!raw.Open(raw_path)) return 1;
+  if (ArmOn("rocks") && !raw.Open(raw_path)) return 1;
 
   // The Rust port of the cache, over its own RocksDB directory so the two
   // caches never share a durable store.
   RustCache rust;
-  if (!rust.Open(base + "/rust", g_capacity)) return 1;
+  if (ArmOn("rust") && !rust.Open(base + "/rust", g_capacity)) return 1;
 
   // --- write phase -------------------------------------------------
-  const auto mrx_w0 = Clock::now();
-  Result mrx_write = RunWrites([&](const std::string &k, const std::string &v) {
-    idx.put(lcdf::Str(k.data(), static_cast<int>(k.size())), v);
-  });
-  const double mrx_ack_secs =
-      std::chrono::duration<double>(Clock::now() - mrx_w0).count();
-  idx.flush();
-  const double mrx_durable_secs =
-      std::chrono::duration<double>(Clock::now() - mrx_w0).count();
+  double mrx_ack_secs = 0, mrx_durable_secs = 0;
+  Result mrx_write = kSkipped;
+  if (ArmOn("cpp")) {
+    const auto mrx_w0 = Clock::now();
+    mrx_write = RunWrites([&](const std::string &k, const std::string &v) {
+      idx.put(lcdf::Str(k.data(), static_cast<int>(k.size())), v);
+    });
+    mrx_ack_secs = std::chrono::duration<double>(Clock::now() - mrx_w0).count();
+    idx.flush();
+    mrx_durable_secs =
+        std::chrono::duration<double>(Clock::now() - mrx_w0).count();
+  }
 
-  Result mt_write = RunWrites([&](const std::string &k, const std::string &v) {
-    mt.put(lcdf::Str(k.data(), static_cast<int>(k.size())), v);
-  });
+  Result mt_write = kSkipped;
+  if (ArmOn("mt")) {
+    mt_write = RunWrites([&](const std::string &k, const std::string &v) {
+      mt.put(lcdf::Str(k.data(), static_cast<int>(k.size())), v);
+    });
+  }
 
-  const auto rust_w0 = Clock::now();
-  Result rust_write = RunWrites(
-      [&](const std::string &k, const std::string &v) { rust.Put(k, v); });
-  const double rust_ack_secs =
-      std::chrono::duration<double>(Clock::now() - rust_w0).count();
-  rust.Flush();
-  const double rust_durable_secs =
-      std::chrono::duration<double>(Clock::now() - rust_w0).count();
+  double rust_ack_secs = 0, rust_durable_secs = 0;
+  Result rust_write = kSkipped;
+  if (ArmOn("rust")) {
+    const auto rust_w0 = Clock::now();
+    rust_write = RunWrites(
+        [&](const std::string &k, const std::string &v) { rust.Put(k, v); });
+    rust_ack_secs =
+        std::chrono::duration<double>(Clock::now() - rust_w0).count();
+    rust.Flush();
+    rust_durable_secs =
+        std::chrono::duration<double>(Clock::now() - rust_w0).count();
+  }
 
-  const auto raw_w0 = Clock::now();
-  Result raw_write = RunWrites(
-      [&](const std::string &k, const std::string &v) { raw.Put(k, v); });
-  const double raw_ack_secs =
-      std::chrono::duration<double>(Clock::now() - raw_w0).count();
-  raw.Flush();
-  const double raw_durable_secs =
-      std::chrono::duration<double>(Clock::now() - raw_w0).count();
+  double raw_ack_secs = 0, raw_durable_secs = 0;
+  Result raw_write = kSkipped;
+  if (ArmOn("rocks")) {
+    const auto raw_w0 = Clock::now();
+    raw_write = RunWrites(
+        [&](const std::string &k, const std::string &v) { raw.Put(k, v); });
+    raw_ack_secs = std::chrono::duration<double>(Clock::now() - raw_w0).count();
+    raw.Flush();
+    raw_durable_secs =
+        std::chrono::duration<double>(Clock::now() - raw_w0).count();
+  }
 
   // --- read phases -------------------------------------------------
-  Result mrx_hot = RunReads(
-      [&](const std::string &k, std::string &out) {
-        return idx.get(lcdf::Str(k.data(), static_cast<int>(k.size())), out,
-                       std::string::npos);
-      },
-      g_hot_keys);
-  Result mt_hot = RunReads(
-      [&](const std::string &k, std::string &out) {
-        return mt.get(lcdf::Str(k.data(), static_cast<int>(k.size())), out,
-                      std::string::npos);
-      },
-      g_hot_keys);
-  Result rust_hot = RunReads(
-      [&](const std::string &k, std::string &out) { return rust.Get(k, out); },
-      g_hot_keys);
-  Result raw_hot = RunReads(
-      [&](const std::string &k, std::string &out) { return raw.Get(k, out); },
-      g_hot_keys);
+  auto reads = [&](int range, Result &mrx_r, Result &mt_r, Result &rust_r,
+                   Result &raw_r) {
+    if (ArmOn("cpp")) {
+      mrx_r = RunReads(
+          [&](const std::string &k, std::string &out) {
+            return idx.get(lcdf::Str(k.data(), static_cast<int>(k.size())), out,
+                           std::string::npos);
+          },
+          range);
+    }
+    if (ArmOn("mt")) {
+      mt_r = RunReads(
+          [&](const std::string &k, std::string &out) {
+            return mt.get(lcdf::Str(k.data(), static_cast<int>(k.size())), out,
+                          std::string::npos);
+          },
+          range);
+    }
+    if (ArmOn("rust")) {
+      rust_r = RunReads(
+          [&](const std::string &k, std::string &out) {
+            return rust.Get(k, out);
+          },
+          range);
+    }
+    if (ArmOn("rocks")) {
+      raw_r = RunReads(
+          [&](const std::string &k, std::string &out) {
+            return raw.Get(k, out);
+          },
+          range);
+    }
+  };
 
-  Result mrx_uni = RunReads(
-      [&](const std::string &k, std::string &out) {
-        return idx.get(lcdf::Str(k.data(), static_cast<int>(k.size())), out,
-                       std::string::npos);
-      },
-      g_keyspace);
-  Result mt_uni = RunReads(
-      [&](const std::string &k, std::string &out) {
-        return mt.get(lcdf::Str(k.data(), static_cast<int>(k.size())), out,
-                      std::string::npos);
-      },
-      g_keyspace);
-  Result rust_uni = RunReads(
-      [&](const std::string &k, std::string &out) { return rust.Get(k, out); },
-      g_keyspace);
-  Result raw_uni = RunReads(
-      [&](const std::string &k, std::string &out) { return raw.Get(k, out); },
-      g_keyspace);
+  Result mrx_hot = kSkipped, mt_hot = kSkipped, rust_hot = kSkipped,
+         raw_hot = kSkipped;
+  reads(g_hot_keys, mrx_hot, mt_hot, rust_hot, raw_hot);
+
+  Result mrx_uni = kSkipped, mt_uni = kSkipped, rust_uni = kSkipped,
+         raw_uni = kSkipped;
+  reads(g_keyspace, mrx_uni, mt_uni, rust_uni, raw_uni);
 
   // --- report ------------------------------------------------------
   printf("%-18s %11s %11s %11s %11s %8s %10s %9s\n", "phase", "masstree/s",
@@ -484,10 +535,12 @@ int main(int argc, char **argv) {
          raw_durable_secs);
   printf("  end-to-end durable speedup: %.2fx\n",
          mrx_durable_secs > 0 ? raw_durable_secs / mrx_durable_secs : 0.0);
-  printf("\ncache resident bytes: %llu\n",
-         static_cast<unsigned long long>(idx.resident_bytes()));
+  if (store != nullptr) {
+    printf("\ncache resident bytes: %llu\n",
+           static_cast<unsigned long long>(idx.resident_bytes()));
+  }
 
-  mrx_store_close(store);
+  if (store != nullptr) mrx_store_close(store);
   rust.Close();
   raw.Close();
   std::string cmd = "rm -rf " + base;
