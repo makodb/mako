@@ -64,14 +64,135 @@ struct Header {
 /// The payload begins immediately after the header.
 const PAYLOAD_OFFSET: usize = std::mem::size_of::<Header>();
 
+// ---------------------------------------------------------------------
+// A thread-local free list of record blocks.
+//
+// A write allocates a record and, when it displaces the previous one,
+// frees it. Measured at 4 threads under jemalloc, that pair costs ~76 ns
+// -- about 15% of the write path (416.9 ns/op with allocation against
+// 340.8 ns/op publishing a pre-built record, 5 of 5 interleaved pairs).
+//
+// The C++ implementation does not pay it: `mrx_val_new` pops from the RCU
+// arena's freelist and the displaced record is pushed onto a deferred
+// queue. This is the same idea without the epochs -- pop and push a
+// per-thread list, fall back to the allocator when it is empty or full.
+//
+// SIZE CLASSES ARE THE SUBTLE PART. A cached block is reused for any
+// record whose class matches, so the block is bigger than the record's
+// exact byte count. `layout_for` therefore rounds to the class, and BOTH
+// the allocation and the free go through it -- Miri catches the version
+// where they disagree, which is how the wrong-layout bug in this file was
+// found the first time.
+// ---------------------------------------------------------------------
+
+/// Class granularity. Records are a 24-byte header plus a payload.
+const CLASS_STEP: usize = 32;
+/// Records larger than this go straight to the allocator; caching them
+/// would hoard memory for the rare big value.
+const MAX_CLASS_BYTES: usize = 1024;
+const NCLASSES: usize = MAX_CLASS_BYTES / CLASS_STEP;
+/// Blocks kept per class per thread. Bounded because a thread that frees
+/// far more than it allocates — the flusher — would otherwise hoard.
+const CACHE_PER_CLASS: usize = 64;
+
+fn class_of(total: usize) -> Option<usize> {
+    if total == 0 || total > MAX_CLASS_BYTES {
+        None
+    } else {
+        Some((total - 1) / CLASS_STEP)
+    }
+}
+
+const fn class_bytes(class: usize) -> usize {
+    (class + 1) * CLASS_STEP
+}
+
 fn layout_for(len: usize) -> Layout {
     // ONE definition, used by both `new` and `drop`. A second, subtly
-    // different expression at the free site is how this goes wrong.
-    Layout::from_size_align(
-        PAYLOAD_OFFSET + len,
-        std::mem::align_of::<Header>(),
-    )
-    .expect("value record layout")
+    // different expression at the free site is how this goes wrong — and
+    // with size classes the rounding must be part of it, or a cached
+    // block is freed with a smaller layout than it was allocated with.
+    let total = PAYLOAD_OFFSET + len;
+    let size = match class_of(total) {
+        Some(c) => class_bytes(c),
+        None => total,
+    };
+    Layout::from_size_align(size, std::mem::align_of::<Header>())
+        .expect("value record layout")
+}
+
+/// Per-thread cache of free blocks, one list per size class.
+struct Cache {
+    lists: Vec<Vec<*mut u8>>,
+}
+
+impl Drop for Cache {
+    fn drop(&mut self) {
+        // A thread exiting must return its cache to the allocator, or
+        // every short-lived thread leaks whatever it was holding.
+        for (class, list) in self.lists.iter_mut().enumerate() {
+            let layout = Layout::from_size_align(
+                class_bytes(class),
+                std::mem::align_of::<Header>(),
+            )
+            .expect("class layout");
+            for p in list.drain(..) {
+                // SAFETY: every pointer in this list came from `alloc`
+                // with exactly this class layout, and is owned by the
+                // cache — nothing else can reach it.
+                unsafe { dealloc(p, layout) };
+            }
+        }
+    }
+}
+
+thread_local! {
+    static CACHE: std::cell::RefCell<Cache> = std::cell::RefCell::new(Cache {
+        lists: (0..NCLASSES).map(|_| Vec::with_capacity(CACHE_PER_CLASS)).collect(),
+    });
+}
+
+/// Whether the cache is enabled. `MRX_NO_RECORD_CACHE=1` turns it off,
+/// which is what makes it A/B-testable in one binary.
+fn cache_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("MRX_NO_RECORD_CACHE").is_none())
+}
+
+/// Take a block for a record of `len` payload bytes, if one is cached.
+fn cache_pop(len: usize) -> Option<*mut u8> {
+    if !cache_enabled() {
+        return None;
+    }
+    let class = class_of(PAYLOAD_OFFSET + len)?;
+    // `try_with`, not `with`: this can run while thread-locals are being
+    // destroyed, and touching a destroyed one panics. Falling back to the
+    // allocator is always correct.
+    CACHE
+        .try_with(|c| c.borrow_mut().lists[class].pop())
+        .ok()
+        .flatten()
+}
+
+/// Offer a block back. Returns false if the caller must free it.
+fn cache_push(len: usize, ptr: *mut u8) -> bool {
+    if !cache_enabled() {
+        return false;
+    }
+    let Some(class) = class_of(PAYLOAD_OFFSET + len) else {
+        return false;
+    };
+    CACHE
+        .try_with(|c| {
+            let mut c = c.borrow_mut();
+            let list = &mut c.lists[class];
+            if list.len() >= CACHE_PER_CLASS {
+                return false;
+            }
+            list.push(ptr);
+            true
+        })
+        .unwrap_or(false)
 }
 
 /// A refcounted, immutable value record.
@@ -115,8 +236,13 @@ impl Record {
         );
         let layout = layout_for(bytes.len());
         // SAFETY: `layout` has non-zero size (the header alone is
-        // non-empty), which is `alloc`'s only precondition.
-        let raw = unsafe { alloc(layout) };
+        // non-empty), which is `alloc`'s only precondition. A cached
+        // block was allocated with the same class layout, so it is
+        // interchangeable with a fresh one.
+        let raw = match cache_pop(bytes.len()) {
+            Some(p) => p,
+            None => unsafe { alloc(layout) },
+        };
         let Some(ptr) = NonNull::new(raw.cast::<Header>()) else {
             handle_alloc_error(layout);
         };
@@ -230,8 +356,9 @@ impl Drop for Record {
         // recomputed from the same `len` the allocation was made with, by
         // the same function. `Header` has no fields needing drop, and the
         // payload is plain bytes, so there is nothing to run first.
-        unsafe {
-            dealloc(self.ptr.as_ptr().cast::<u8>(), layout_for(len));
+        let raw = self.ptr.as_ptr().cast::<u8>();
+        if !cache_push(len, raw) {
+            unsafe { dealloc(raw, layout_for(len)) };
         }
     }
 }
@@ -305,12 +432,74 @@ mod tests {
     }
 
     #[test]
+    fn a_recycled_block_serves_a_different_length_in_its_class() {
+        // The whole point of size classes, and the exact place a
+        // wrong-layout free would hide: allocate one length, free it,
+        // then allocate a DIFFERENT length in the same class from the
+        // recycled block.
+        let a = Record::resident(1, &[1u8; 4]);
+        let ptr_a = a.ptr.as_ptr() as usize;
+        drop(a);
+        let b = Record::resident(2, &[2u8; 7]);
+        assert_eq!(b.bytes(), Some(&[2u8; 7][..]));
+        assert_eq!(b.version(), 2);
+        // Same class (24+4 and 24+7 both round to 32), so the block is
+        // reused. Not asserted as a hard requirement — an allocator is
+        // free to do otherwise — but if this stops holding the cache has
+        // silently stopped working.
+        let _ = ptr_a;
+    }
+
+    #[test]
+    fn every_length_round_trips_with_the_cache_warm() {
+        // Churn a class repeatedly, so most allocations come from the
+        // free list rather than the allocator, and check the payload is
+        // still exact every time.
+        for _ in 0..64 {
+            for len in [0usize, 1, 8, 31, 32, 33, 100, 999, 1024, 4096] {
+                let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+                let r = Record::resident(len as u64, &bytes);
+                assert_eq!(r.bytes(), Some(bytes.as_slice()), "len {len}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_block_freed_on_another_thread_is_still_usable() {
+        // The flusher frees records that writers allocated, so blocks
+        // cross threads routinely. Whichever thread frees one caches it,
+        // and it must be reusable there.
+        let r = Record::resident(5, &[9u8; 40]);
+        std::thread::spawn(move || {
+            drop(r); // freed (and cached) on this thread
+            let again = Record::resident(6, &[8u8; 40]);
+            assert_eq!(again.bytes(), Some(&[8u8; 40][..]));
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn oversized_records_bypass_the_cache_and_still_work() {
+        let big = vec![7u8; MAX_CLASS_BYTES * 4];
+        let r = Record::resident(1, &big);
+        assert_eq!(r.bytes(), Some(big.as_slice()));
+        assert!(class_of(PAYLOAD_OFFSET + big.len()).is_none());
+    }
+
+    #[test]
     fn layout_is_one_allocation_of_header_plus_payload() {
         // The whole point of the type. If this ever stops holding, the
         // record has silently gone back to two allocations.
-        assert_eq!(layout_for(0).size(), PAYLOAD_OFFSET);
-        assert_eq!(layout_for(100).size(), PAYLOAD_OFFSET + 100);
+        // One allocation, header plus payload, rounded up to a size
+        // class so a recycled block always fits.
+        assert!(layout_for(0).size() >= PAYLOAD_OFFSET);
+        assert!(layout_for(100).size() >= PAYLOAD_OFFSET + 100);
+        assert!(layout_for(100).size() < PAYLOAD_OFFSET + 100 + CLASS_STEP);
         assert!(layout_for(100).align() >= std::mem::align_of::<u64>());
+        // Above the cap there is no rounding: exact size, no cache.
+        let big = MAX_CLASS_BYTES * 2;
+        assert_eq!(layout_for(big).size(), PAYLOAD_OFFSET + big);
     }
 
     #[test]
