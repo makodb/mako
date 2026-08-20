@@ -35,7 +35,11 @@
 //! segments would need a 256 KiB outer array per store, allocated at open
 //! whether or not a single key is ever written.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+#![allow(unsafe_code)]
+
+use std::cell::UnsafeCell;
+use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 use crate::value::Entry;
@@ -47,8 +51,58 @@ const BASE_SHIFT: u32 = 10;
 /// Enough to index every `u32`: segment 22 ends at `1024 * 2^22` > 2^32.
 const MAX_SEGMENTS: usize = 32;
 
+/// One slot: an entry written once, then read forever.
+///
+/// # Why not `OnceLock<Entry>`
+///
+/// It was, and `OnceLock::set` runs the full `Once` state machine —
+/// callgrind put 90 of `push`'s 182 instructions per op in `Once::call`,
+/// `initialize` and `call_once_force`. All of that exists to arbitrate
+/// between racing initialisers, and here there are none: `next.fetch_add`
+/// hands each index to exactly one caller, so a slot has exactly one
+/// writer by construction. The arbitration was paid for on every insert
+/// and never used.
+///
+/// What remains is the part that IS load-bearing: a `Release` store after
+/// the write, paired with an `Acquire` load before any read. `get` is no
+/// cheaper than before — it was already a single atomic load — but `push`
+/// is.
+struct Slot {
+    /// Set `Release` once `entry` is initialised.
+    ready: AtomicBool,
+    entry: UnsafeCell<MaybeUninit<Entry>>,
+}
+
+// SAFETY: a slot is written by exactly one thread, before `ready` is set,
+// and read only after an `Acquire` load observes `ready`. So the write and
+// every read are ordered, and no two threads ever touch it concurrently in
+// a conflicting way.
+unsafe impl Sync for Slot {}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        // Entries are immortal for the life of the table, but the TABLE is
+        // dropped with the store, and an uninitialised slot must not be.
+        if *self.ready.get_mut() {
+            // SAFETY: `ready` is true, so `entry` was initialised, and
+            // `&mut self` means nothing else can reach it.
+            unsafe { self.entry.get_mut().assume_init_drop() };
+        }
+    }
+}
+
 /// One segment: a fixed run of slots, each filled at most once.
-type Segment = Box<[OnceLock<Entry>]>;
+type Segment = Box<[Slot]>;
+
+fn new_segment(len: usize) -> Segment {
+    (0..len)
+        .map(|_| Slot {
+            ready: AtomicBool::new(false),
+            entry: UnsafeCell::new(MaybeUninit::uninit()),
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice()
+}
 
 /// An append-only table of immortal entries.
 pub struct EntryTable {
@@ -108,16 +162,19 @@ impl EntryTable {
             s < MAX_SEGMENTS,
             "entry table exhausted: more than u32::MAX keys"
         );
-        let seg = self.segments[s].get_or_init(|| {
-            (0..segment_len(s))
-                .map(|_| OnceLock::new())
-                .collect::<Vec<_>>()
-                .into_boxed_slice()
-        });
-        // Each index is handed to exactly one caller, so this never loses.
-        seg[off]
-            .set(entry)
-            .unwrap_or_else(|_| panic!("entry index {idx} was allocated twice"));
+        let seg = self.segments[s].get_or_init(|| new_segment(segment_len(s)));
+        let slot = &seg[off];
+        debug_assert!(
+            !slot.ready.load(Ordering::Acquire),
+            "entry index {idx} was allocated twice"
+        );
+        // SAFETY: `next.fetch_add` gave `idx` to this caller alone, and
+        // nothing can read the slot until the `Release` store below, so
+        // this write has no other party.
+        unsafe {
+            (*slot.entry.get()).write(entry);
+        }
+        slot.ready.store(true, Ordering::Release);
         idx
     }
 
@@ -129,11 +186,36 @@ impl EntryTable {
     #[inline]
     pub fn get(&self, idx: u32) -> &Entry {
         let (s, off) = locate(idx);
-        self.segments[s]
+        let slot = &self.segments[s]
             .get()
-            .expect("segment is initialised before its index is published")[off]
-            .get()
-            .expect("entry is initialised before its index is published")
+            .expect("segment is initialised before its index is published")[off];
+        // NOT a debug_assert: this Acquire load is what pairs with the
+        // Release in `push`, so it has to happen in release builds too.
+        // The check it performs is then free.
+        assert!(
+            slot.ready.load(Ordering::Acquire),
+            "entry index {idx} read before it was published"
+        );
+        // SAFETY: `ready` was stored with Release after the entry was
+        // written, and the Acquire load above pairs with it, so the entry
+        // is initialised and visible. It is never written again, and the
+        // table outlives every reference it hands out.
+        unsafe { (*slot.entry.get()).assume_init_ref() }
+    }
+
+    /// Whether a slot has been published yet.
+    ///
+    /// Test-only, and it exists so the ordering test can SPIN on
+    /// readiness rather than assert it: a reader that learned the index
+    /// through a relaxed store may legitimately not see `ready` yet, and
+    /// that is not the bug the test is hunting.
+    #[cfg(test)]
+    fn is_ready(&self, idx: u32) -> bool {
+        let (s, off) = locate(idx);
+        match self.segments[s].get() {
+            None => false,
+            Some(seg) => seg[off].ready.load(Ordering::Acquire),
+        }
     }
 
     /// How many entries have been appended.
@@ -157,7 +239,14 @@ mod tests {
         // An off-by-one here aliases two indices onto one slot, which is
         // silent data corruption rather than a crash.
         let mut seen = std::collections::HashSet::new();
-        for idx in 0..100_000u32 {
+        // Miri interprets every instruction, so the full sweep never
+        // finishes under it. It is here to prove the unsafe is sound, not
+        // to sweep the whole index space.
+        #[cfg(miri)]
+        const N: u32 = 3_000;
+        #[cfg(not(miri))]
+        const N: u32 = 100_000;
+        for idx in 0..N {
             let (s, off) = locate(idx);
             assert!(off < segment_len(s), "index {idx} overruns segment {s}");
             assert!(seen.insert((s, off)), "index {idx} collides at ({s},{off})");
@@ -184,23 +273,108 @@ mod tests {
     #[test]
     fn entries_keep_their_identity_across_growth() {
         let t = EntryTable::new();
-        for i in 0..5000u32 {
+        #[cfg(miri)]
+        const M: u32 = 200;
+        #[cfg(not(miri))]
+        const M: u32 = 5000;
+        for i in 0..M {
             let idx = t.push(Entry::new(
                 format!("k{i}").as_bytes(),
                 Record::resident(u64::from(i) + 1, &[]),
             ));
             assert_eq!(idx, i);
         }
-        for i in 0..5000u32 {
+        for i in 0..M {
             assert_eq!(t.get(i).key(), format!("k{i}").as_bytes());
             assert_eq!(t.get(i).load().version(), u64::from(i) + 1);
         }
-        assert_eq!(t.len(), 5000);
+        assert_eq!(t.len(), M);
+    }
+
+    #[test]
+    fn a_reader_racing_a_push_never_sees_an_uninitialised_slot() {
+        // THE test for the Release/Acquire pair, and the reason the
+        // `assert!` in `get` is not a `debug_assert!`.
+        //
+        // The index is handed to the reader through a RELAXED atomic on
+        // purpose. Anything stronger — a channel, a mutex, an Acquire
+        // load — would supply the happens-before edge itself and hide
+        // whether the slot's own ordering is right. With relaxed
+        // publication the only thing ordering the reader's view of the
+        // entry against the writer's initialisation of it is `ready`.
+        //
+        // Reordering `push` to store `ready` before writing the entry
+        // makes Miri report a data race here. Without this test that
+        // reordering passes everything.
+        use std::sync::atomic::AtomicU32;
+        #[cfg(miri)]
+        const ROUNDS: u32 = 30;
+        #[cfg(not(miri))]
+        const ROUNDS: u32 = 2_000;
+
+        let t = std::sync::Arc::new(EntryTable::new());
+        let published = std::sync::Arc::new(AtomicU32::new(u32::MAX));
+
+        std::thread::scope(|scope| {
+            {
+                let t = std::sync::Arc::clone(&t);
+                let published = std::sync::Arc::clone(&published);
+                scope.spawn(move || {
+                    for i in 0..ROUNDS {
+                        let idx = t.push(Entry::new(
+                            format!("k{i:06}").as_bytes(),
+                            Record::resident(u64::from(i) + 1, &[0xAB; 24]),
+                        ));
+                        published.store(idx, Ordering::Relaxed);
+                    }
+                });
+            }
+            let t = std::sync::Arc::clone(&t);
+            let published = std::sync::Arc::clone(&published);
+            scope.spawn(move || {
+                let mut seen = 0u32;
+                while seen < ROUNDS - 1 {
+                    let idx = published.load(Ordering::Relaxed);
+                    // Not-yet-published is expected: the relaxed store
+                    // above carries no ordering, so the index can arrive
+                    // before `ready` does. Spin rather than assert — the
+                    // bug being hunted is the opposite case, `ready` set
+                    // while the entry is still uninitialised.
+                    if idx == u32::MAX || !t.is_ready(idx) {
+                        std::hint::spin_loop();
+                        continue;
+                    }
+                    let e = t.get(idx);
+                    assert!(e.key().starts_with(b"k"));
+                    assert_eq!(e.load().bytes(), Some(&[0xAB; 24][..]));
+                    seen = idx;
+                }
+            });
+        });
+    }
+
+    #[test]
+    fn dropping_the_table_drops_initialised_entries_only() {
+        // Half a segment filled, the rest never written. Dropping must run
+        // Entry's destructor for the first half and touch nothing in the
+        // second -- Miri fails this if an uninitialised slot is dropped.
+        let t = EntryTable::new();
+        for i in 0..50u32 {
+            t.push(Entry::new(
+                format!("k{i}").as_bytes(),
+                Record::resident(1, &[7u8; 32]),
+            ));
+        }
+        drop(t);
     }
 
     #[test]
     fn concurrent_pushes_get_distinct_indices() {
         let t = std::sync::Arc::new(EntryTable::new());
+        #[cfg(miri)]
+        const PER: u32 = 20;
+        #[cfg(not(miri))]
+        const PER: u32 = 500;
         let got = std::sync::Mutex::new(Vec::new());
         std::thread::scope(|scope| {
             for _ in 0..8 {
@@ -208,7 +382,7 @@ mod tests {
                 let got = &got;
                 scope.spawn(move || {
                     let mut mine = Vec::new();
-                    for i in 0..500u32 {
+                    for i in 0..PER {
                         mine.push(t.push(Entry::new(
                             format!("k{i}").as_bytes(),
                             Record::tombstone(0),
@@ -221,7 +395,7 @@ mod tests {
         let mut all = got.into_inner().unwrap();
         all.sort_unstable();
         all.dedup();
-        assert_eq!(all.len(), 4000, "two threads got the same index");
+        assert_eq!(all.len(), 8 * PER as usize, "two threads got the same index");
         // And every one of them resolves, which is what would break if a
         // segment were published before it was filled.
         for idx in all {

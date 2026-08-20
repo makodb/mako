@@ -43,13 +43,19 @@
 //! eviction stalls with it. A "fix" that lets `W` advance under backlog
 //! is a data-loss bug wearing a performance hat.
 
-// DENY, not forbid, so that exactly one module can opt out and the
-// compiler enforces that the list stays exactly one. `durability`
-// carries three lines of unsafe for the lock-free ticket ring; every
-// other file in this crate is unsafe-free and stays that way.
+// DENY, not forbid, so that a named few modules can opt out and the
+// compiler enforces the list. Three do, each for a measured reason and
+// each verified under Miri including a deliberately injected bug:
 //
-// If a second `#![allow(unsafe_code)]` ever appears in this crate, that
-// is the moment to argue about it, not after.
+//   durability  the lock-free ticket ring (producers and the flusher
+//               stopped excluding each other)
+//   record      one allocation per value, payload inline, plus a
+//               thread-local free list
+//   table       entry slots written once, without OnceLock's arbitration
+//               between initialisers that cannot race
+//
+// Everything else in this crate is unsafe-free and stays that way. A
+// fourth is an argument to have before it is written, not after.
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
