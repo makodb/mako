@@ -1142,7 +1142,29 @@ class CheckedInCanaryTests(unittest.TestCase):
         workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn('canonical_input="src/rrr/src/frame_codec.rs"', workflow)
+        # Pin the INVARIANT, not the literal path. This used to hardcode
+        # `canonical_input="src/rrr/src/frame_codec.rs"`; the srpc graft moved
+        # canonical Rust to its layout-mirroring paths and the stale name made
+        # the CI step `touch` a nonexistent file -- which CREATES it, planting
+        # an unmanifested .rs in the crate and killing the next build with no
+        # output. Assert instead that whatever path the step names is a real
+        # canonical module, so a future move fails here with a clear reason.
+        canonical_match = re.search(
+            r'canonical_input="([^"]+)"', workflow
+        )
+        self.assertIsNotNone(
+            canonical_match, "ci.yml no longer defines canonical_input"
+        )
+        canonical_rel = canonical_match.group(1)
+        self.assertTrue(
+            canonical_rel.startswith("src/rrr/")
+            and canonical_rel.endswith(".rs"),
+            f"canonical_input is not a canonical Rust source: {canonical_rel}",
+        )
+        self.assertTrue(
+            (REPOSITORY / canonical_rel).is_file(),
+            f"canonical_input does not exist: {canonical_rel}",
+        )
         # These used to pin the `<name>_generated_path=` / `..._before=$(stat
         # -c %Y ...)` / `test ... -gt ...` machinery of the determinism step.
         # That machinery is gone: it asserted outputs were REWRITTEN, which the
