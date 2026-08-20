@@ -25,7 +25,7 @@ namespace {
 // const, so a `const Reactor*` (what `Rc<Reactor>::get()` yields) is fine.
 void pump_reactor(const ::rrr::Reactor* reactor, int iterations = 8) {
   for (int i = 0; i < iterations; ++i) {
-    reactor->loop(false);
+    reactor->run_loop(false, true);
   }
 }
 

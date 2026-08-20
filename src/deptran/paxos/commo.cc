@@ -36,7 +36,7 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
                                  const janus::Command& cmd) {
   verify(0);
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-//  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, /2n/2+1);
+//  auto e = reactor_create_sp_event<PaxosAcceptQuorumEvent>(n, /2n/2+1);
   auto e = std::make_shared<PaxosAcceptQuorumEvent>(n, n);
   // auto proxies = rpc_par_proxies_[par_id];
   // vector<Future*> fus;
@@ -49,7 +49,7 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
   //   FutureAttr fuattr;
   //   fuattr.callback = [e, ballot] (Future* fu) {
   //     ballot_t b = 0;
-  //     fu->get_reply() >> b;
+  //     rrr::deserialize_from(fu->get_reply(), b);
   //     e->FeedResponse(b==ballot);
   //   };
   //   janus::Command md(cmd);
@@ -82,7 +82,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
   // Log_info("ForwardToLearner: par_id={}, slot={}, n={}, proxies.size={}, batch_idx={}",
   //          par_id, slot, n, proxies.size(), cur_batch_idx);
 
-  //auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(1,1);
+  //auto e = reactor_create_sp_event<PaxosAcceptQuorumEvent>(1,1);
   int sent_count = 0;
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
@@ -91,7 +91,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
     if (site_role!=2) continue;
      auto proxy = (MultiPaxosProxy*) p.second;
      FutureAttr fuattr;
-     fuattr.callback = [/*e, */cb] (rusty::Arc<Future> fu) {
+     fuattr.callback = rrr::FutureCallback::from_callable([/*e, */cb] (rusty::Arc<Future> fu) {
         if (fu->get_error_code()!=0) {
           Log_info("received an error message6");
           return;
@@ -100,10 +100,11 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         ballot_t ballot;
         // if the learner is killed at this moment, throw an error
         // in datacenter failover, keep learners are alive
-        rrr::deserialize_from(fu->get_reply(), slot, ballot);
+        rrr::deserialize_from(fu->get_reply(), slot);
+        rrr::deserialize_from(fu->get_reply(), ballot);
         cb(slot, ballot);
         //e->FeedResponse(1);
-	      };
+	      });
 	     janus::Command md(cmd);
 	     //Log_info("ForwardToLearner: SENDING to learner site_id={}, slot={}", p.first, slot);
        MultiPaxosProxy::RpcForwardToLearnerServerRequest req;
@@ -183,7 +184,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
     if (Config::GetConfig()->SiteById(p.first).role==0) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message3");
         return;
@@ -191,11 +192,13 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
       i32 valid;
       i32 ballot;
       janus::Command response_val;
-      rrr::deserialize_from(fu->get_reply(), ballot, valid, response_val);
+      rrr::deserialize_from(fu->get_reply(), ballot);
+      rrr::deserialize_from(fu->get_reply(), valid);
+      rrr::deserialize_from(fu->get_reply(), response_val);
       auto sp_md = make_shared<janus::Command>(response_val);
       cb(sp_md, ballot, valid);
       e->FeedResponse(valid);
-    };
+    });
     verify(cmd.has_value());
     janus::Command md(cmd);
     MultiPaxosProxy::RpcSyncLogRequest req;
@@ -233,7 +236,8 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
   //   fuattr.callback = [e, cb] (Future* fu) {
   //     i32 valid;
   //     i32 ballot;
-  //     fu->get_reply() >> ballot >> valid;
+  //     rrr::deserialize_from(fu->get_reply(), ballot);
+  //     rrr::deserialize_from(fu->get_reply(), valid);
   //     cb(ballot, valid);
   //     e->FeedResponse(valid);
   //   };
@@ -264,20 +268,21 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     auto proxy = (MultiPaxosProxy*) p.second;  // a Proxy pool for the concurrent request
     FutureAttr fuattr;
     int st = p.first;
-    fuattr.callback = [e, cb, st] (rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, cb, st] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message2");
         return;
       }
       i32 valid;
       i32 ballot;
-      rrr::deserialize_from(fu->get_reply(), ballot, valid);
+      rrr::deserialize_from(fu->get_reply(), ballot);
+      rrr::deserialize_from(fu->get_reply(), valid);
        // it's possible during failure because the client can receive reponse even the distant server shutdowns
       if (!valid)
         Log_debug("Accept invalid response received from {} site", st);
       cb(ballot, valid);
       e->FeedResponse(valid);
-    };
+    });
     verify(cmd.has_value());
     janus::Command md(cmd);
     MultiPaxosProxy::RpcBulkAcceptRequest req;
@@ -307,17 +312,18 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
     if (Config::GetConfig()->SiteById(p.first).role==2) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message");
         return;
       }
       i32 valid;
       i32 ballot;
-      rrr::deserialize_from(fu->get_reply(), ballot, valid);
+      rrr::deserialize_from(fu->get_reply(), ballot);
+      rrr::deserialize_from(fu->get_reply(), valid);
       cb(ballot, valid);
       e->FeedResponse(valid);
-    };
+    });
     janus::Command md(cmd);
     MultiPaxosProxy::RpcBulkDecideRequest req;
     req.cmd = md;

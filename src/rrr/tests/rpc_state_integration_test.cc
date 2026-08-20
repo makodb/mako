@@ -39,11 +39,7 @@ static std::atomic<int> g_state_test_port{11000};
 namespace {
 
 int count_open_fds() {
-#if defined(__APPLE__)
-    static constexpr const char* kFdDir = "/dev/fd";
-#else
     static constexpr const char* kFdDir = "/proc/self/fd";
-#endif
     DIR* dir = ::opendir(kFdDir);
     if (dir == nullptr) {
         return -1;
@@ -644,6 +640,16 @@ TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
         return false;
     };
 
+    // Clear callbacks on EVERY exit path — a failed ASSERT returns out of
+    // TestBody early, and a late on_disconnected job would otherwise invoke
+    // these stack-capturing lambdas after the frame is gone (was a ~50%
+    // full-suite SIGSEGV under ASan). CallbackManager::clear_all() drains
+    // in-flight dispatches, so once the guard runs the captures may die.
+    struct ClearCallbacksGuard {
+        rusty::Arc<Client>& c;
+        ~ClearCallbacksGuard() { c->clear_connection_callbacks(); }
+    } clear_callbacks_guard{client};
+
     client->add_on_connected([&]() { record_event(kConnected); });
     client->add_on_disconnected([&]() { record_event(kDisconnected); });
     client->add_on_error([&](RpcError err, const std::string&) {
@@ -807,9 +813,13 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
     second_fu->wait();
     ASSERT_EQ(second_fu->get_error_code(), 0);
 
+    // 4000ms, not 1000ms: restart detection rides the response path plus a
+    // poll-thread job hop; under ctest -j8 CPU contention the 1s budget
+    // flaked (gate 65) while every sibling wait in this file already uses
+    // 4000-5000ms.
     ASSERT_TRUE(wait_for_condition([&]() {
         return restart_callback_count.load(std::memory_order_acquire) >= 1;
-    }, milliseconds(1000)));
+    }, milliseconds(4000)));
 
     EXPECT_EQ(restart_callback_count.load(std::memory_order_acquire), 1);
     EXPECT_EQ(observed_old_id.load(std::memory_order_acquire), first_server_id);

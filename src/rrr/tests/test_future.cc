@@ -184,7 +184,7 @@ TEST_F(FutureTest, BasicFutureCreation) {
     EXPECT_EQ(fu->get_error_code(), 0);
 
     std::string output;
-    fu->get_reply() >> output;
+    rrr::deserialize_from(fu->get_reply(), output);
     EXPECT_EQ(input, output);
 
     // Arc auto-released
@@ -259,10 +259,10 @@ TEST_F(FutureTest, FutureCallback) {
     std::atomic<bool> callback_called{false};
     std::atomic<int> callback_error_code{-1};
 
-    FutureAttr attr([&](rusty::Arc<Future> f) {
+    FutureAttr attr{FutureCallback::from_callable([&](rusty::Arc<Future> f) {
         callback_called = true;
         callback_error_code = f->get_error_code();
-    });
+    })};
 
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, attr, [&](BinaryWriteArchive& m) {
@@ -294,7 +294,7 @@ TEST_F(FutureTest, FutureGetReply) {
     auto reply_guard = fu->get_reply();
 
     i32 result;
-    reply_guard >> result;
+    rrr::deserialize_from(std::move(reply_guard), result);
 
     EXPECT_EQ(result, 34);  // 17 * 2
 
@@ -336,7 +336,7 @@ TEST_F(FutureTest, MultipleFuturesConcurrent) {
         EXPECT_EQ(futures[i]->get_error_code(), 0);
 
         std::string output;
-        futures[i]->get_reply() >> output;
+        rrr::deserialize_from(futures[i]->get_reply(), output);
         EXPECT_EQ(output, "test_" + std::to_string(i));
     }
 
@@ -379,7 +379,7 @@ TEST_F(FutureTest, StressTestManyFutures) {
         EXPECT_EQ(futures[i]->get_error_code(), 0);
 
         i32 result;
-        futures[i]->get_reply() >> result;
+        rrr::deserialize_from(futures[i]->get_reply(), result);
         EXPECT_EQ(result, i * 2);
 
         // Arc auto-released
@@ -467,17 +467,17 @@ TEST_F(FutureTest, MixedSyncAsync) {
     // Wait for them in different order
     fu2->wait();
     i32 result;
-    fu2->get_reply() >> result;
+    rrr::deserialize_from(fu2->get_reply(), result);
     EXPECT_EQ(result, 100);
 
     fu1->wait();
     std::string output1;
-    fu1->get_reply() >> output1;
+    rrr::deserialize_from(fu1->get_reply(), output1);
     EXPECT_EQ(output1, input1);
 
     fu3->wait();
     std::string output3;
-    fu3->get_reply() >> output3;
+    rrr::deserialize_from(fu3->get_reply(), output3);
     EXPECT_EQ(output3, input3);
 
     // Arc auto-released for all three futures

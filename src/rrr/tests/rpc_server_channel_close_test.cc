@@ -43,10 +43,10 @@ class StubChannel {
     void set_on_error (OnErrorCallback  cb) { on_error_  = std::move(cb); }
 
     void deliver_closed(ChannelError reason) {
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
     void deliver_error(ChannelError err, std::string_view msg) {
-        if (on_error_) on_error_(err, msg);
+        if (on_error_.has_value()) on_error_.callable()(err, msg);
     }
 
  private:
@@ -91,8 +91,8 @@ inline rusty::Arc<RpcServiceContext> make_test_ctx() {
     rusty::HashMap<i32, std::size_t> rpc_to_service;
     rusty::HashSet<i32> fast_rpc_ids;
     rusty::Vec<rusty::RefCell<ServiceProxy>> services;
-    auto pending = rusty::Arc<std::atomic<int>>::make(0);
-    auto drop = rusty::Arc<std::atomic<bool>>::make(false);
+    auto pending = rusty::Arc<ServerPendingRequestsAtomic>::make(0);
+    auto drop = rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false);
     return rusty::Arc<RpcServiceContext>::new_(
         RpcServiceContext::new_(
             std::move(rpc_to_service),

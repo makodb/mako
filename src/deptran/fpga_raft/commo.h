@@ -11,9 +11,9 @@ class TxData;
 // removed `class FpgaRaftForwardQuorumEvent`
 // — only constructed by the now-deleted `FpgaRaftCommo::SendForward`.
 
-class FpgaRaftPrepareQuorumEvent: public QuorumEventWrapper {
+class FpgaRaftPrepareQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
 //  ballot_t max_ballot_{0};
   bool HasAcceptedValue() {
     // TODO implement this
@@ -28,9 +28,9 @@ class FpgaRaftPrepareQuorumEvent: public QuorumEventWrapper {
   }
 };
 
-class FpgaRaftVoteQuorumEvent: public QuorumEventWrapper {
+class FpgaRaftVoteQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   bool HasAcceptedValue() {
     return false;
   }
@@ -51,9 +51,9 @@ class FpgaRaftVoteQuorumEvent: public QuorumEventWrapper {
   }
 };
 
-class FpgaRaftVote2FPGAQuorumEvent: public QuorumEventWrapper {
+class FpgaRaftVote2FPGAQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   bool HasAcceptedValue() {
     return false;
   }
@@ -74,9 +74,9 @@ class FpgaRaftVote2FPGAQuorumEvent: public QuorumEventWrapper {
   }
 };
 
-class FpgaRaftAcceptQuorumEvent: public QuorumEventWrapper {
+class FpgaRaftAcceptQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   void FeedResponse(bool y) {
     if (y) {
       vote_yes();
@@ -89,10 +89,10 @@ class FpgaRaftAcceptQuorumEvent: public QuorumEventWrapper {
   }
 };
 
-class FpgaRaftAppendQuorumEvent: public QuorumEventWrapper {
+class FpgaRaftAppendQuorumEvent: public QuorumEventBase {
  public:
     uint64_t minIndex;
-    using QuorumEventWrapper::QuorumEventWrapper;
+    using QuorumEventBase::QuorumEventBase;
     void FeedResponse(bool appendOK, uint64_t index, std::string ip_addr = "") {
         if (appendOK) {
             if ((q().n_voted_yes_.get() == 0) && (q().n_voted_no_.get() == 0))

@@ -52,9 +52,9 @@ class StubChannel {
     void set_on_error (OnErrorCallback cb) { on_error_  = std::move(cb); }
 
     void deliver(const std::vector<std::uint8_t>& payload) {
-        if (!on_frame_) return;
+        if (!on_frame_.has_value()) return;
         ChannelFrame f{payload.data(), payload.size()};
-        on_frame_(f);
+        on_frame_.callable()(f);
     }
 
     const std::vector<std::vector<std::uint8_t>>& captured() const { return captured_; }
@@ -152,7 +152,17 @@ class RecordingService {
     i64 last_xid_       = 0;
     std::string last_payload_;
 };
-static_assert(ServiceLike<RecordingService>);
+static_assert(requires(
+    RecordingService& svc,
+    Server& server,
+    std::size_t svc_index,
+    i32 rpc_id,
+    rusty::Box<Request> req,
+    WeakServerConnection weak_sconn) {
+  { svc.__reg_to__(server, svc_index) } -> std::convertible_to<int>;
+  { svc.__dispatch__(rpc_id, std::move(req), std::move(weak_sconn)) }
+      -> std::same_as<void>;
+});
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -172,8 +182,8 @@ class ServerChannelRecvTest : public ::testing::Test {
         rusty::HashMap<i32, std::size_t> rpc_to_service;
         rusty::HashSet<i32> fast_rpc_ids;
         rusty::Vec<rusty::RefCell<ServiceProxy>> services;
-        auto pending = rusty::Arc<std::atomic<int>>::make(0);
-        auto drop = rusty::Arc<std::atomic<bool>>::make(false);
+        auto pending = rusty::Arc<ServerPendingRequestsAtomic>::make(0);
+        auto drop = rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false);
         ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
             RpcServiceContext::new_(
                 std::move(rpc_to_service),
@@ -306,8 +316,8 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     rpc_to_service.insert(RecordingService::kEchoRpcId, std::size_t{0});
     rusty::HashSet<i32> fast_rpc_ids;
     fast_rpc_ids.insert(RecordingService::kEchoRpcId);
-    auto pending = rusty::Arc<std::atomic<int>>::make(0);
-    auto drop = rusty::Arc<std::atomic<bool>>::make(false);
+    auto pending = rusty::Arc<ServerPendingRequestsAtomic>::make(0);
+    auto drop = rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false);
     ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
         RpcServiceContext::new_(
             std::move(rpc_to_service),

@@ -275,7 +275,7 @@ class TxnMgr: public NoCopy {
 
   void reg_table(const std::string &tbl_name, Table *tbl) {
     verify(tables_.find(tbl_name) == tables_.end());
-    insert_into_map(tables_, tbl_name, tbl);
+    tables_.emplace(tbl_name, tbl);
   }
 
   Table *get_table(const std::string &tbl_name) const {
@@ -512,7 +512,7 @@ static void redirect_locks(std::unordered_multimap<Row *, colid_t> &locks,
     locks.erase(old_row);
   }
   for (auto &col_id : locked_columns) {
-    insert_into_map(locks, new_row, col_id);
+    locks.emplace(new_row, col_id);
   }
 }
 

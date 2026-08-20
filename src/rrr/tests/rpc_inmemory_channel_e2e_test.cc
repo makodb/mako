@@ -77,7 +77,17 @@ class EchoService {
     int         dispatch_count_ = 0;
     std::string last_payload_;
 };
-static_assert(ServiceLike<EchoService>);
+static_assert(requires(
+    EchoService& svc,
+    Server& server,
+    std::size_t svc_index,
+    i32 rpc_id,
+    rusty::Box<Request> req,
+    WeakServerConnection weak_sconn) {
+  { svc.__reg_to__(server, svc_index) } -> std::convertible_to<int>;
+  { svc.__dispatch__(rpc_id, std::move(req), std::move(weak_sconn)) }
+      -> std::same_as<void>;
+});
 
 class InMemoryE2ETest : public ::testing::Test {
  protected:
@@ -144,7 +154,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
 
     EXPECT_EQ(fu->get_error_code(), 0);
     std::string echoed;
-    fu->get_reply() >> echoed;
+    rrr::deserialize_from(fu->get_reply(), echoed);
     EXPECT_EQ(echoed, input);
 
     EXPECT_EQ(svc_raw->dispatch_count(), 1);
@@ -184,7 +194,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
 
     EXPECT_EQ(fu->get_error_code(), 0);
     std::string echoed;
-    fu->get_reply() >> echoed;
+    rrr::deserialize_from(fu->get_reply(), echoed);
     EXPECT_EQ(echoed, input);
 
     EXPECT_EQ(svc_raw->dispatch_count(), 1);
@@ -220,7 +230,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0);
         std::string echoed;
-        fu->get_reply() >> echoed;
+        rrr::deserialize_from(fu->get_reply(), echoed);
         EXPECT_EQ(echoed, input);
     }
     // Archive-flavoured request, same client.
@@ -231,7 +241,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0);
         std::string echoed;
-        fu->get_reply() >> echoed;
+        rrr::deserialize_from(fu->get_reply(), echoed);
         EXPECT_EQ(echoed, input);
     }
     EXPECT_EQ(svc_raw->dispatch_count(), 2);
@@ -264,7 +274,7 @@ TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0) << "iter=" << i;
         std::string echoed;
-        fu->get_reply() >> echoed;
+        rrr::deserialize_from(fu->get_reply(), echoed);
         EXPECT_EQ(echoed, input);
     }
     EXPECT_EQ(svc_raw->dispatch_count(), kIterations);

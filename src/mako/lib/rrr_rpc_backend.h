@@ -10,7 +10,6 @@
 #ifndef _MAKO_RRR_RPC_BACKEND_H_
 #define _MAKO_RRR_RPC_BACKEND_H_
 
-#include "transport_backend.h"
 #include "transport_request_handle.h"
 #include "lib/configuration.h"
 #include "lib/transport.h"
@@ -144,7 +143,7 @@ public:
  * Thread safety: Individual methods are NOT thread-safe. Caller must
  * ensure proper synchronization if using from multiple threads.
  */
-class RrrRpcBackend : public TransportBackend {
+class RrrRpcBackend {
     // Grant access to RequestHandler for dispatch
     friend class TransportBackendService;
 
@@ -154,25 +153,25 @@ public:
                   uint16_t id,
                   const std::string& cluster);
 
-    virtual ~RrrRpcBackend();
+    ~RrrRpcBackend();
 
-    // TransportBackend interface implementation
+    // rrr/rpc transport operations (formerly the TransportBackend interface)
     int Initialize(const std::string& local_uri,
                    uint8_t numa_node,
                    uint8_t phy_port,
                    uint8_t st_nr_req_types,
-                   uint8_t end_nr_req_types) override;
+                   uint8_t end_nr_req_types);
 
-    void Shutdown() override;
+    void Shutdown();
 
-    char* AllocRequestBuffer(size_t req_len, size_t resp_len) override;
-    void FreeRequestBuffer() override;
+    char* AllocRequestBuffer(size_t req_len, size_t resp_len);
+    void FreeRequestBuffer();
 
     bool SendToShard(TransportReceiver* src,
                     uint8_t req_type,
                     uint8_t shard_idx,
                     uint16_t server_id,
-                    size_t msg_len) override;
+                    size_t msg_len);
 
     bool SendToAll(TransportReceiver* src,
                    uint8_t req_type,
@@ -180,20 +179,18 @@ public:
                    uint16_t server_id,
                    size_t resp_len,
                    size_t req_len,
-                   int force_center = -1) override;
+                   int force_center = -1);
 
     bool SendBatchToAll(TransportReceiver* src,
                        uint8_t req_type,
                        uint16_t server_id,
                        size_t resp_len,
-                       const std::map<int, std::pair<char*, size_t>>& data) override;
+                       const std::map<int, std::pair<char*, size_t>>& data);
 
-    void RunEventLoop() override;
-    void Stop() override;
+    void RunEventLoop();
+    void Stop();
 
-    void PrintStats() override;
-
-    TransportType GetType() const override { return TransportType::RRR_RPC; }
+    void PrintStats();
 
     // Set helper queues (for server-side request handling)
     void SetHelperQueues(const std::unordered_map<uint16_t, mako::HelperQueue*>& queues) {
@@ -244,7 +241,7 @@ private:
     std::atomic<int> msg_counter_resp_sent_{0};
 
     // Rrr request handle storage for helper queue processing
-    // Maps erpc::ReqHandle* (used as key) to RrrRequestHandle data
+    // Maps the opaque request token (used as key) to RrrRequestHandle data
     std::map<void*, std::unique_ptr<RrrRequestHandle>> rrr_request_map_;
     std::mutex rrr_request_map_lock_;
 

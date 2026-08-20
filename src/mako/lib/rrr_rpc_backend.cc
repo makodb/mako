@@ -175,7 +175,7 @@ rusty::Option<rusty::Arc<rrr::Client>> RrrRpcBackend::GetOrCreateClient(uint8_t 
                                                           int force_center) {
     int clusterRoleSentTo = cluster_role_;
 
-    // Handle shard failure scenarios (same logic as eRPC)
+    // Handle shard failure scenarios
     auto session_key = std::make_tuple(LOCALHOST_CENTER_INT, shard_idx, server_id);
 
     if (sync_util::sync_logger::failed_shard_index >= 0) {
@@ -528,7 +528,7 @@ void RrrRpcBackend::RunEventLoop() {
             auto server_id = it.first;
             auto* server_queue = it.second;
 
-            erpc::ReqHandle* req_handle_ptr;
+            void* req_handle_ptr;
             size_t msg_size = 0;
 
             // Fetch responses from helper thread queue
@@ -833,8 +833,8 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
     backend->rrr_request_map_[key] = std::move(rrr_handle);
     backend->rrr_request_map_lock_.unlock();
 
-    // Enqueue to helper queue (cast void* to erpc::ReqHandle* for compatibility)
-    helper_queue->add_one_req(reinterpret_cast<erpc::ReqHandle*>(key), 0);
+    // Enqueue to helper queue (opaque token)
+    helper_queue->add_one_req(key, 0);
 }
 
 // RrrRequestHandle::EnqueueResponse - enqueues response to response queue
@@ -854,5 +854,5 @@ void RrrRequestHandle::EnqueueResponse(size_t msg_size) {
     auto* response_queue = it->second;
 
     // Enqueue response (using GetOpaqueHandle as the key, same as for requests)
-    response_queue->add_one_req(reinterpret_cast<erpc::ReqHandle*>(GetOpaqueHandle()), msg_size);
+    response_queue->add_one_req(GetOpaqueHandle(), msg_size);
 }

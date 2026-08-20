@@ -2080,7 +2080,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
 }
 
 void RaftLabTest::wait(uint64_t microseconds) {
-  Reactor::create_sp_event<TimeoutEvent>(microseconds)->wait();
+  create_sp_timeout_event(microseconds)->wait();
 }
 
 // ============================================================================
@@ -7457,14 +7457,14 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   // Marshal
   // @unsafe { Archive I/O }
   rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
   cmd->save(war);
 
   // Unmarshal into a new command
   // @unsafe { Archive I/O }
   auto cmd2 = std::make_shared<ReplicatedDBCommand>();
   rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
   cmd2->load(rar);
 
   Assert2(cmd2->op_ == ReplicatedDBOp::PUT,
@@ -7480,11 +7480,11 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   // @unsafe { Factory creates rusty::Arc }
   auto cmd_empty = ReplicatedDBCommand::CreatePut("", "");
   rrr::BufferSink sink2;
-  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy(&sink2));
+  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy_buffer(&sink2));
   cmd_empty->save(war2);
   auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
   rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
-  rrr::BinaryReadArchive rar2(rrr::make_source_proxy(&src2));
+  rrr::BinaryReadArchive rar2(rrr::make_source_proxy_buffer(&src2));
   cmd_empty2->load(rar2);
   Assert2(cmd_empty2->op_ == ReplicatedDBOp::PUT, "Empty PUT op should be PUT");
   Assert2(cmd_empty2->key_.empty(), "Empty PUT key should be empty");
@@ -7496,11 +7496,11 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   // @unsafe { Factory creates rusty::Arc }
   auto cmd_large = ReplicatedDBCommand::CreatePut(large_key, large_value);
   rrr::BufferSink sink3;
-  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy(&sink3));
+  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy_buffer(&sink3));
   cmd_large->save(war3);
   auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
   rrr::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
-  rrr::BinaryReadArchive rar3(rrr::make_source_proxy(&src3));
+  rrr::BinaryReadArchive rar3(rrr::make_source_proxy_buffer(&src3));
   cmd_large2->load(rar3);
   Assert2(cmd_large2->key_ == large_key,
           "Large key should survive round-trip");
@@ -7528,14 +7528,14 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   // Marshal
   // @unsafe { Archive I/O }
   rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
   cmd->save(war);
 
   // Unmarshal into a new command
   // @unsafe { Archive I/O }
   auto cmd2 = std::make_shared<ReplicatedDBCommand>();
   rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
   cmd2->load(rar);
 
   Assert2(cmd2->op_ == ReplicatedDBOp::DELETE,
@@ -7553,12 +7553,12 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   janus::Command md;
   md = std::move(cmd3);
   rrr::BufferSink sink2;
-  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy(&sink2));
+  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy_buffer(&sink2));
   rrr::Serialize_::serialize(md, war2);
 
   janus::Command md2;
   rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
-  rrr::BinaryReadArchive rar2(rrr::make_source_proxy(&src2));
+  rrr::BinaryReadArchive rar2(rrr::make_source_proxy_buffer(&src2));
   rrr::Deserialize_::deserialize(md2, rar2);
   Assert2(md2.has_value(), "janus::Command should have deserialized data");
   const auto cmd4 = marshallable_cast<ReplicatedDBCommand>(md2);
@@ -7594,14 +7594,14 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   // Marshal
   // @unsafe { Archive I/O }
   rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
   cmd->save(war);
 
   // Unmarshal into a new command
   // @unsafe { Archive I/O }
   auto cmd2 = std::make_shared<ReplicatedDBCommand>();
   rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
   cmd2->load(rar);
 
   Assert2(cmd2->op_ == ReplicatedDBOp::BATCH,
@@ -7636,11 +7636,11 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   // @unsafe { Factory creates rusty::Arc }
   auto cmd_empty = ReplicatedDBCommand::CreateBatch(empty_ops);
   rrr::BufferSink sink2;
-  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy(&sink2));
+  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy_buffer(&sink2));
   cmd_empty->save(war2);
   auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
   rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
-  rrr::BinaryReadArchive rar2(rrr::make_source_proxy(&src2));
+  rrr::BinaryReadArchive rar2(rrr::make_source_proxy_buffer(&src2));
   cmd_empty2->load(rar2);
   Assert2(cmd_empty2->op_ == ReplicatedDBOp::BATCH,
           "Empty batch op should be BATCH");
@@ -7656,11 +7656,11 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   // @unsafe { Factory creates rusty::Arc }
   auto cmd_large = ReplicatedDBCommand::CreateBatch(large_ops);
   rrr::BufferSink sink3;
-  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy(&sink3));
+  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy_buffer(&sink3));
   cmd_large->save(war3);
   auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
   rrr::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
-  rrr::BinaryReadArchive rar3(rrr::make_source_proxy(&src3));
+  rrr::BinaryReadArchive rar3(rrr::make_source_proxy_buffer(&src3));
   cmd_large2->load(rar3);
   Assert2(cmd_large2->batch_ops_.size() == 100,
           "Large batch should have 100 ops, got %zu", cmd_large2->batch_ops_.size());

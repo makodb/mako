@@ -865,3 +865,3330 @@ finally `event_wait_impl`). The fixes, in order landed:
 
 `event_core_record_place` stays hand-C++: it is a genuine `sprintf`/`char[]`
 kernel, not a transpiler gap.
+
+### 7.11 Raw pointer + length is usually a slice, not a kernel (July 2026)
+
+A `(T* buf, size_t len)` signature *looks* like permanent floor. Usually
+it is not: it is a slice that lost its length at the C boundary. Under
+the rule-2 half of `docs/dev/rrr_migration_policy.md`, rewrite the call
+site rather than teaching the DSL to emit pointer arithmetic.
+
+`frame_codec` is the worked example — both "kernels" dissolved:
+
+```rust
+fn frame_codec_write_header(out_buf: &mut [u8], payload_size: i32, ext: bool) -> bool
+fn frame_codec_peek_header(buf: &[u8], out_header: &mut FrameHeader) -> FrameDecodeStatus
+```
+
+`&[u8]` / `&mut [u8]` lower to `std::span<const uint8_t>` / `std::span<uint8_t>`.
+Two things fall out for free, and both are why this is worth doing:
+
+ - a span cannot be null, so the old `if (buf == nullptr) return false`
+   null check becomes a real **bounds** check;
+ - a span carries its length, so a separate `available` / `len`
+   parameter **disappears from the signature** — the caller can no
+   longer pass a length that disagrees with the buffer.
+
+The `memcpy` pair that reads/writes a scalar through the pointer is not
+floor either: `to_ne_bytes()` lowers to
+`std::bit_cast<std::array<uint8_t, N>>` and `from_ne_bytes` to
+`rusty::from_ne_bytes<T>`, both byte-for-byte identical to the memcpy
+they replace, and both host-order (so `Marshal::write_bookmark`
+semantics are preserved without an endianness decision).
+
+Call sites: `std::array` and `std::vector` convert to `std::span`
+implicitly, so most sites go from `x.data(), x.size()` to plain `x`. For
+a deliberate short read, spell it — `std::span<const std::uint8_t>(got).first(4)`
+— rather than passing a mismatched length.
+
+**Two mechanical gotchas, both cost a build cycle:**
+
+1. A *new* DSL block must be followed by its GEN scaffold carrying an
+   explicit `id=`:
+
+   ```
+   /*RUSTYCPP:GEN-BEGIN id=<file>.<name> version=1 rust_sha256=<64 zeros>*/
+   /*RUSTYCPP:GEN-END id=<file>.<name>*/
+   ```
+
+   Without it the rewriter auto-numbers the block by *position*
+   (`<stem>.<index>`), which collides with any existing explicit id at
+   that index — `duplicate inline block id=frame_codec.4`. The sha is
+   rewritten for you; zeros are fine.
+
+2. Blocks are transpiled **one at a time**. Historically a block could
+   not see types declared in a sibling block, so a unit variant of an
+   enum declared elsewhere in the same file was guessed to be an
+   external data enum and emitted as `E::Variant()` — a call on an
+   enumerator. Fixed in rusty-cpp `78a0d9a7` (sibling enums are fed
+   through `cross_file_enums`). If you see a cross-block type resolve
+   oddly, check the pin before redesigning the DSL around it.
+
+### 7.12 RESOLVED: integer-returning fn + uppercase-named callee (July 2026)
+
+A DSL fn whose return type is an **integer** mis-qualifies calls to any
+free function whose name starts with an uppercase letter — it prefixes
+them with the mapped return type, emitting a call to something that does
+not exist:
+
+```rust
+fn f(x: bool) -> i32 {
+    if x {
+        Log_warn("empty");   // -> int32_t::Log_warn("empty");  ✗
+        return 5i32;
+    }
+    0i32
+}
+```
+
+```
+error: no member named 'Log_warn' in namespace ... / not a class or namespace
+```
+
+Characterized against the transpiler at the pin recorded in this repo:
+
+| return type | callee            | emitted            |
+|-------------|-------------------|--------------------|
+| `i32`       | `Log_warn(..)`    | `int32_t::Log_warn(..)`  ✗ |
+| `()`        | `Log_warn(..)`    | `Log_warn(..)`      ✓ |
+| `bool`      | `Log_warn(..)`    | `Log_warn(..)`      ✓ |
+| `i32`       | `log_warn(..)`    | `log_warn(..)`      ✓ |
+
+So it needs BOTH an integer return type and an uppercase-initial callee;
+`bool` does not trigger it, and a lowercase name never does. Wrapping the
+call in `unsafe { .. }` makes no difference. The heuristic being hit is
+"uppercase-initial name in a typed position looks like an enum variant of
+the expected type" — but nothing verifies the expected type is an enum,
+and `i32` is not.
+
+**Why this matters for the burndown:** it blocks a whole shape, not one
+function. Every `Log_debug/info/warn/error/fatal` is uppercase-initial,
+and plenty of rrr functions return `int` status codes — so any such
+function that logs cannot be converted until this is fixed. It is why
+`sconn_run_async` (9 lines, otherwise trivial: an emptiness check, a
+call, a status return) is still a C++ kernel.
+
+Do NOT work around it by renaming the logger or reshaping the function
+to return `()`; that is exactly the "rewrite our own counterpart"
+failure the policy doc warns about. Fix the qualification guard, then
+convert.
+
+**Fixed** in rusty-cpp `b1d7a7c1`. It WAS
+`try_emit_data_enum_variant_call_with_expected` — reached through a
+single-segment fallback branch, not the >= 2-segment one I first checked.
+`emit_call_expr_to_string` passes `expected_ty.or(current_return_type_hint())`,
+so a bare call with no expected type inherits the fn's return type as its
+candidate enum owner, and nothing rejected a primitive.
+
+The near-miss worth remembering: the existing `owner_maps_to_bare_ident`
+guard already covered `bool` and `char`, purely because their C++ spelling
+is unchanged (`mapped_owner == owner_tail`). `i32` maps to `int32_t`, so
+the guard did not fire. Same bug, and whether you saw it depended only on
+whether the primitive gets renamed — which is why the `-> bool` probe came
+back clean and sent me looking in the wrong place.
+
+Finding it took instrumenting rather than reading: wrapping the emitters
+in a backtrace probe showed nothing (they were not the producer), while a
+probe on `escape_cpp_keyword` for the callee name landed exactly on the
+branch. When a grep-hunt across ~200 candidate sites stalls, probe the
+narrowest thing the bad output must have passed through.
+
+### 7.13 Box method dispatch through a Mutex guard needs a named type
+
+Calling a trait method on a `Box` normally lowers fine — all three of
+these emit `->close()` on their own:
+
+```rust
+fn a(b: &mut Box<dyn Conn>)          { b.close(); }
+fn c(b: &mut Box<dyn Conn>)          { (*b).close(); }
+fn d(o: &mut Option<Box<dyn Conn>>)  { o.as_mut().unwrap().close(); }
+```
+
+What breaks is reaching the Box **through a Mutex guard**, where the
+transpiler loses the element type and emits `.close()` on the Box itself:
+
+```
+error: no member named 'close' in 'rusty::Box<rrr::ChannelConnectionBase>';
+       did you mean to use '->' instead of '.'?
+```
+
+Two non-fixes, both worth knowing so they aren't retried:
+
+ - **An explicit deref is silently dropped.** `(*(*guard).as_mut().unwrap()).close()`
+   emits `((..)).close()` — the `*` does not survive, so it is not an
+   escape hatch here.
+ - **A C++ type alias does not help.** Annotating with the project alias
+   (`let proxy: &mut ChannelConnectionProxy = ..`) changes nothing: the
+   transpiler cannot tell that alias is a Box.
+
+What works is naming the type in the form the transpiler recognises:
+
+```rust
+let proxy: &mut Box<ChannelConnectionBase> = (*guard).as_mut().unwrap();
+proxy.close();          // -> proxy->close();
+```
+
+So the rule is: when a Box comes out of a guard, bind it with an
+explicit `Box<T>` annotation before calling through it. The underlying
+gap — guard types not carrying their element type through
+`as_mut().unwrap()` — is the same inference weakness behind the
+`let mut cb` note in DeferredReply::reply (§ commit 1e32afe9); fixing
+that inference would retire both workarounds.
+
+### 7.14 `rusty::str_runtime` does not exist for the DSL path
+
+Rust `str` methods lower to `rusty::str_runtime::*`, and the transpiler
+emits calls to twelve of them:
+
+```
+char_indices  chars  eq_ignore_ascii_case  find  from_utf
+is_char_boundary  lines  matches  parse  replace  replacen  rfind
+```
+
+None are declared in `include/rusty/`. They are emitted as part of the
+per-cppm runtime boilerplate, so whole-file transpilation is
+self-consistent — but an inline-DSL block rewritten in place gets the
+call with nothing defining it:
+
+```
+error: no member named 'rfind' in namespace 'rusty::str_runtime'
+```
+
+This is the same shape as the `unreachable` bug fixed in `6e34c151`:
+boilerplate-only surface that the DSL path cannot reach. The proper fix
+is the same — give these a home in a header both paths include — but it
+is a larger job (twelve functions, several with char/str overloads, and
+they return `rusty::Option<size_t>` rather than `npos`).
+
+**Until then**, in DSL bodies working on a C++ `std::string`, prefer
+member functions with no Rust counterpart, so no mapping applies:
+
+| avoid (maps to str_runtime) | use instead            |
+|-----------------------------|------------------------|
+| `s.rfind(x)`                | `s.find_last_of(x)`    |
+| `s.find(x)` (1 arg)         | `s.find(x, 0)` (2 args)|
+
+The arity matters: `content.find("\n", pos)` already works everywhere in
+`cpuinfo.cpp` precisely because two arguments do not match Rust's
+`str::find(pat)`, so it falls through to a plain member call. One
+argument does match, and gets remapped.
+
+Note the semantic difference if these are ever wired up: `str_runtime`
+returns `rusty::Option<std::size_t>`, not `npos`. DSL written against
+the C++ member functions compares against `std::string::npos`, and would
+need rewriting rather than just relinking.
+
+### 7.15 `let mut guard` is correct Rust, not a transpiler wart
+
+Assigning through a lock guard needs a `mut` binding:
+
+```rust
+let mut guard = mutex.lock().unwrap();
+(*guard).field = value;          // needs `mut`
+```
+
+Without it the transpiler emits `const auto&& guard` and the assignment
+fails to compile. That is the RIGHT behaviour and should not be "fixed":
+Rust requires `let mut guard` here too, because mutating through a
+`MutexGuard` goes via `DerefMut`, which needs a `&mut` binding.
+
+This is worth stating explicitly because it looks identical to a real
+deviation recorded elsewhere, and conflating them would lead someone to
+patch the transpiler in the wrong direction:
+
+| shape | needs `mut` in real Rust? | verdict |
+|---|---|---|
+| `let g = m.lock().unwrap(); (*g).f = v;` | yes (DerefMut) | correct as-is |
+| `let cb = opt.unwrap(); takes_by_value(cb);` | **no** (a move out of a non-mut binding is legal) | genuine transpiler bug |
+
+So: `let mut guard` — write it and move on. `let mut cb` — a workaround
+for the consumed-binding inference gap, and the `mut` should disappear
+once that is fixed.
+
+### 7.16 const_cast taxonomy: fix the runtime, not the call site
+
+A `const_cast` in this tree is one of two things, and a grep cannot tell
+them apart. Sorting them was worth three upstream commits.
+
+**Removable — the method never needed exclusive access.** Rust spells it
+`&self`; ours did not, so every caller holding a shared handle had to
+cast. Fixed upstream, and the casts evaporate at every call site at once:
+
+| method | Rust | fixed in |
+|---|---|---|
+| `Mutex::lock` | `&self` | already had a `lock() const` overload — the casts were simply unnecessary |
+| `mpsc::Sender::send` / `try_send` | `&self` | rusty-cpp `ec173e55` |
+| `net::TcpListener::accept` | `&self` | rusty-cpp `90cc8977` |
+| `net::{TcpListener,TcpStream}::set_nonblocking` | `&self` | rusty-cpp `90cc8977` |
+
+The tell: the body only READS the object (an fd, a shared_ptr) and the
+real state change happens elsewhere — in the kernel, or behind a mutex
+the callee takes itself.
+
+**Genuine — a real mutation through a const path.** `self.listener_ = x`,
+or calling a non-const method on an `Arc` that is actually shared.
+Deleting the cast here just moves the lie; the SIGNATURE has to change.
+Leave it and keep it `// @unsafe`.
+
+**Counting note.** Grep over-reports badly: of 55 `const_cast<` matches in
+`src/rrr` production files, 27 are inside `RUSTYCPP:GEN` blocks — emitted
+by the transpiler as `const_cast<uint8_t*>(reinterpret_cast<const
+uint8_t*>(p))`, a no-op round trip, not something to hand-edit. The real
+hand-written figure is **28**. Always split by GEN-block membership before
+quoting a number (the census script does this for lines; do the same here).
+
+**One removable cluster remains**: five casts of the shape
+`const_cast<std::atomic<int32_t>*>(arc.get())->fetch_add(..)` in
+`server.cpp`. `std::atomic`'s `fetch_add`/`store` are non-const, whereas
+`rusty::sync::atomic::Atomic` already declares both `const` (matching
+Rust). Retyping `ServerPendingRequestsAtomic` /
+`ServerDropHeartbeatRepliesAtomic` onto the rusty atomics removes all
+five — but note `std::atomic<i32>` also appears INSIDE DSL blocks and in
+`Request::attach_pending_guard`'s signature, so it needs a regen and a
+signature change, not just an alias swap.
+
+### 7.17 Two findings from regenerating an already-converted file
+
+Converting `this_fiber::get_id` in `fiber.cpp` surfaced two problems that
+have nothing to do with that function.
+
+**(a) The drift guard does not catch GENERATED-output drift.**
+`scripts/rrr_dsl_check.sh` runs `inline-rust --check`, which compares the
+`rust_sha256` in each GEN marker against the DSL source. It says nothing
+about whether the checked-in C++ still matches what the CURRENT
+transpiler would emit. So a file can sit "0 drift" for months while the
+transpiler's output for it has changed underneath.
+
+`--rewrite` regenerates EVERY block in the file, so the first person to
+convert one more function in an old file inherits all of that drift at
+once. Expect it; do not assume your own change caused it.
+
+**(b) A qualified static call gets the libc-collision rename.**
+
+```rust
+fn f(x: u64) { Fiber::sleep(x); Foo::pause(x); Bar::dup(x); }
+```
+```cpp
+Fiber::sleep_(std::move(x));   // ✗ no member named 'sleep_' in 'rrr::Fiber'
+Foo::pause_(std::move(x));     // ✗
+Bar::dup_(std::move(x));       // ✗
+```
+
+The checked-in `fiber.cpp` GEN blocks contain the CORRECT `Fiber::sleep(..)`,
+so this is a regression relative to whatever transpiler produced them.
+
+The rename is right for a bare `sleep(x)` — an unqualified user function
+loses overload resolution to libc's exact match. It is wrong here for the
+reason `escape_cpp_keyword_in_runtime_path` already documents for
+`rusty::thread::sleep`: a QUALIFIED path can never select `::sleep`, and
+the class declares `sleep`, not `sleep_`. Two of the three escape
+variants already exempt `dup/sleep/raise/kill/pause`
+(`..._in_member_position`, `..._in_runtime_path`); the qualified-static
+path does not.
+
+NOT the site: `try_resolve_nested_local_type_path` (mod.rs ~19889).
+Routing its lookup escaping through the member-position helper does not
+change the output, so the emitted spelling comes from somewhere else on
+the `emit_call_func_with_owner_template_recovery` ->
+`emit_expr_path_to_string` -> `emit_path_to_string` chain. That chain is
+the backtrace from probing `escape_cpp_keyword` for `"sleep"`.
+
+Until it is fixed, `fiber.cpp` cannot be regenerated: converting anything
+in it rewrites the four `Fiber::sleep` call sites into non-compiling code.
+`get_id` is otherwise ready to convert — the `Rc<T>` field-access blocker
+its comment cites is GONE (`rc.field` now lowers to `(*rc).field`,
+provided the binding's type is known; annotate it if it comes from a C++
+static like `Fiber::current_fiber()`).
+
+### 7.18 Output drift is real and widespread — 26 of 41 files (measured)
+
+§7.17 predicted the drift guard cannot see generated-output drift.
+Measured it: regenerating all 41 DSL files with the current transpiler
+changes **26 of them** (+234/−101), while `rrr_dsl_check.sh` reports
+"0 drift" throughout — it only hashes the DSL source.
+
+Most of the delta is IMPROVEMENT accumulated from fixes landed since
+those blocks were generated:
+ - `rusty_mark_forgotten()` now propagates to fields
+   (`mark_forgotten_if_supported(this->info_)`) — the forget machinery was
+   silently incomplete;
+ - enum variants resolve to their factories
+   (`LoadBalancingStrategy_ROUND_ROBIN()`), from the cross-block enum fix;
+ - `is_send` / `is_sync` markers are emitted.
+
+But a bulk regeneration does NOT currently compile, for two separate
+reasons, so do not do one casually:
+
+ 1. **Generic structs** emit `rusty::is_send<T>` / `rusty::is_sync<T>`,
+    whose primary templates live in `<rusty/traits.hpp>`. inline-rust
+    cannot add includes, so the file must include it itself — same shape
+    as the intrinsics include in channel.cpp. Fixable per-file.
+ 2. **`errno` is renamed to `errno_`** in epoll_platform_linux.cc, which
+    does not compile. This one needs a DECISION, not a patch. The rename
+    exists for a good reason (mod.rs ~54690): `errno` is a libc MACRO, so
+    a fn *named* errno emitted verbatim gets textually replaced and fails
+    with a diagnostic naming neither. But this DSL is *reading* libc's
+    errno on purpose in a syscall kernel, where the macro is exactly what
+    is wanted. Definition position and reference position want opposite
+    answers, and the escape currently cannot tell them apart.
+
+Not caused by the qualified-path fix (`ed90e566`): that only touches the
+trailing segment of MULTI-segment paths, and `errno` is single-segment.
+
+**Practical guidance:** regenerate one file at a time, as part of
+converting something in it, and build. A file that has not been touched
+in a while may not round-trip, and you will discover that only by trying
+— which is exactly how fiber.cpp's `Fiber::sleep_` breakage surfaced.
+
+### 7.19 Callback installation: neither closure form is currently usable
+
+Installing a long-lived callback needs a lambda that is **captured by
+value** and **const-callable**. The DSL can express neither, so
+`fiberchannel_bind_callbacks` and `sconn_bind_channel` stay hand-written.
+
+| DSL | emitted | why it fails |
+|---|---|---|
+| `move \|f\| { .. }` | `[=, x = std::move(x)](..) mutable` | `mutable` makes `operator()` non-const, so it will not convert to `CallbackWrapper<void(..) const>` |
+| `\|f\| { .. }` | `[&](..)` | const-callable, but captures the local BY REFERENCE — the closure outlives the function, so this is a latent use-after-free that COMPILES |
+
+The second is the dangerous one. It builds clean and passes the fiber
+channel tests, because nothing invokes the callback after the frame that
+created it has returned in those tests. Do not "fix" the conversion by
+dropping `move`.
+
+What is needed is `[self_ptr](..)` — by value, no `mutable`. In Rust the
+capture IS by value (a raw pointer is Copy) and the body does not mutate
+the capture, so `mutable` is unnecessary; emitting it is what closes the
+door. A `move` closure whose captures are all Copy and which never
+mutates them should lower without `mutable`.
+
+**FIXED (partly)** in rusty-cpp `369c6897`: `mutable` is now suppressed
+when every capture is a RAW POINTER and the body reassigns none of them.
+That unblocked `FiberChannel::bind_callbacks`, whose closures capture a
+`*mut FiberChannel`.
+
+It does NOT unblock `sconn_bind_channel`, and I claimed otherwise in
+5f7d34b6 before checking — a probe shows a value-typed capture still
+emits `mutable`:
+
+```rust
+let w: W = ..; take(move |x: i32| { w.upgrade(); });
+//  -> ::take([=, w = std::move(w)](int32_t x) mutable { .. })
+```
+
+`sconn_bind_channel` captures a `WeakServerConnection` BY VALUE, so it
+stays floor. Extending the rule to value captures needs to know whether
+the body calls a non-const method on one, and for a C++ type like
+WeakServerConnection the transpiler has no such information. A cruder
+rule — suppress whenever no capture is ASSIGNED — would unblock it, and
+would fail loudly (compile error) rather than silently when wrong, but
+it is a much wider behavioural change than the pointer case and is not
+worth making blind.
+
+Historical note, kept because the failure mode is nasty:
+
+**Where the fix went:** `emit_expr.rs:24350` —
+`let lambda_mutability = if is_move_closure { " mutable" } else { "" };`
+— which adds `mutable` to EVERY move closure unconditionally.
+
+`mutable` is only actually required when the body ASSIGNS to a capture,
+or calls a non-const method on a captured VALUE. Calling through a
+captured raw pointer (our case) needs neither: the pointer itself is
+never modified. So the guard wants to be "move closure AND body mutates
+a capture".
+
+One shortcut that does NOT work: keying it off a const-callable expected
+type. The expected type is not threaded to these call arguments — the
+evidence is that closure parameter types had to be annotated by hand
+(`|f: &ChannelFrame|`) rather than inferred from `set_on_frame`'s
+signature.
+
+Until then, callback installation is rule-3 floor. Note this is NOT the
+same as the `{}` default-callback problem — that one was solvable with
+channel.cpp's `empty_*_callback` factories (see the FiberChannel Drop
+conversion, fb430ec9), and only affects DETACHING callbacks, not
+installing them.
+
+### 7.20 A DSL block cannot read a static defined in the impl namespace
+
+`rand.cpp` declares helpers in the EXPORTED namespace and defines them
+further down in a plain `namespace rrr { ... }` impl section, where the
+file-scope statics (`randgen_nu_constant`, the seed) live. That split is
+fine for hand-written C++: the declaration is exported, the definition
+sees the statics.
+
+A DSL block cannot reproduce it. `inline-rust` emits the declaration AND
+the definition together, inside the block, which sits in the exported
+namespace — so the static it reads is a DIFFERENT entity under C++
+modules:
+
+```
+undefined reference to `rrr::randgen_nu_constant@rrr.rand'
+```
+
+Adding `extern int randgen_nu_constant;` above the block does not help,
+for the same reason — the extern is then declared in the exported
+namespace too.
+
+So `randgen_nu_constant_now()` stays C++, while `randgen_rand_max()`
+converts fine: it reads only the `RAND_MAX` macro, which is not a
+module-scoped entity.
+
+**Rule of thumb:** a function is convertible only if everything it reads
+is visible from the exported namespace. A file-scope static in the impl
+section is not. Converting one means first moving the state (e.g. behind
+an accessor that is itself exported), which is a design change, not a
+port.
+
+### 7.21 Mutating a map value through get_mut needs three annotations — and the un-annotated form is SILENTLY wrong
+
+`ClientPool::remove_all_unhealthy` is the worked example. The C++ is:
+
+```cpp
+auto  clients_opt = (*guard).cache.get_mut(addr);   // by value
+auto& clients     = clients_opt.unwrap();           // REFERENCE into the map
+...
+clients = std::move(kept);                          // writes back through it
+```
+
+Converting it straight produced four defects in a row, each hidden by
+fixing the previous one:
+
+1. `let mut v: Vec<T> = Vec::new()` → `rusty::Vec<T> v = rusty::Vec<size_t>::new_()`
+   — element type ignored. Needs the turbofish: `Vec::<T>::new()`.
+2. `clients = kept` → assigns to the binding, not through it. Needs `*clients = kept`.
+3. **`let clients = clients_opt.unwrap()` → `auto clients` (BY VALUE).**
+   The write-back then updates a copy and the map never changes. This
+   COMPILES, and `test_rpc_client_pool` passes 20/20 — because its only
+   remove_all_unhealthy test asserts the all-healthy case
+   (`EXPECT_EQ(removed, 0u)`) and never exercises the mutation path.
+   Fixed by annotating: `let clients: &mut Vec<rusty::Arc<Client>> = ..`.
+4. `clients_opt` then became `auto&` bound to a temporary. Fixed by
+   annotating it too: `let clients_opt: rusty::Option<&mut Vec<..>> = ..`.
+
+With all four, it builds and passes. It was still REVERTED: a
+connection-lifecycle rewrite whose mutation path has no test coverage,
+and which already produced one silently-wrong version, is not worth 46
+lines. Land it only alongside a test that actually removes something.
+
+**The general point:** for map-value mutation, the DSL's default
+lowering drops the reference, and dropping a reference is invisible to
+the compiler. Whenever a conversion writes back through something
+obtained from a container, READ the emitted C++ for `auto x =` where the
+original had `auto& x =`.
+
+### 7.21a remove_all_unhealthy's removal branch IS reachable (retracted)
+
+**This section previously argued the branch was unreachable dead code.
+That was wrong, and both load-bearing premises were false.** Two
+independent adversarial agents refuted it; the errors are recorded here
+because the *shape* of the mistake generalizes.
+
+What I claimed, and what the code actually says:
+
+ - **"a cache miss creates one client"** — false. `clientpool_get_client`
+   reads `int num_connections = cfg.min_connections;` (client.cpp:5175)
+   and *both* creation loops push that many. A cache miss creates
+   `min_connections` clients, not one.
+ - **"`min_connections` cannot be lowered"** — false. The
+   `verify(min_connections > 0)` lives only in `ClientPool::new_`
+   (client.cpp:3768). `set_pool_config` (client.cpp:3777) is public,
+   exported, `const`, and validates **nothing** — it is a bare
+   `config_.set(std::move(config))`.
+
+So the removal branch is reachable through the ordinary public API, no
+concurrency required: construct with `PoolConfig::aggressive()`
+(`min_connections = 2`) → `get_client` populates 2 clients → lower
+`min_connections` to 1 via `set_pool_config` → `remove_all_unhealthy`
+now sees `clients.len() - removed > cfg.min_connections` and fires. The
+gate arithmetic was confirmed by *executing* an extracted simulation, not
+by reading it.
+
+Two further findings worth keeping:
+
+ - The concurrency angle I *did* hypothesize (a TOCTOU between the
+   emptiness check and the insert) is **refuted** — the `state_` mutex
+   covers both. But a different race is real: `config_` is a
+   `rusty::Cell` read **outside** the lock at both sites
+   (`get_client` reads at :5174 *before* locking at :5177;
+   `remove_all_unhealthy` reads at :5076 *after* locking at :5074).
+   `Cell::get` racing `Cell::set` on a ~40-byte struct is UB.
+ - Deleting the branch would not have been a no-op-with-no-consequences:
+   it would have made the function unconditionally do nothing, orphaned
+   the empty-key cache-eviction path, and left it inconsistent with three
+   sibling kernels at :5012, :5052, and :5146.
+
+**The generalizable lesson.** "No test covers it" and "no input can reach
+it" are different claims, and I slid from the first to the second. The
+reachability argument was built by reading the code and reasoning about
+it — the premises were plausible, adjacent to the truth, and both wrong
+in the same direction (each assumed a validation or a bound that the code
+does not actually enforce). Note the asymmetry that makes this the
+dangerous direction to be wrong in: **a false "this is reachable" costs
+you a test you did not need; a false "this is unreachable" deletes live
+code.** So for any deletion justified by a reachability argument, try to
+*refute* it — enumerate the public mutators of every quantity in the
+gate condition, and execute the arithmetic rather than eyeballing it.
+The original conclusion — that the conversion stays deferred — happened
+to survive, but for the opposite reason: the branch is live and needs
+coverage, not adjudication.
+
+### 7.22 A DSL method body can only use types complete AT THE BLOCK
+
+`inline-rust` emits a method's declaration and DEFINITION together,
+inside the `#if RUSTYCPP_RUST` block. So the body may only name types
+that are complete at that point in the file — not at the point where the
+hand-written definition used to sit.
+
+`SharedIntEvent::wait_until_gte` is the worked example. Its DSL block is
+near the top of reactor.cpp, where `class Reactor;` is only a forward
+declaration; the kernel it replaced lived ~2500 lines later, after
+Reactor is defined. Converting it gives:
+
+```
+error: incomplete type 'rrr::Reactor' named in nested name specifier
+   const auto ev = Reactor::create_sp_event<IntEvent>();
+```
+
+This is the ORDERING sibling of 7.20 (which is about namespaces), and
+neither fix helps the other:
+
+| symptom | cause | fix |
+|---|---|---|
+| `undefined reference to X@mod` | definition is in the impl namespace, DSL block is in the exported one | move the STATE, or leave it C++ (7.20) |
+| `incomplete type X` in a DSL body | the type is defined after the block | move the type's definition earlier, or leave it C++ |
+| `undefined reference` after forward-declaring an `inline` fn | declaration promises external linkage the inline definition never emits | move the DEFINITION above first use (see PollThread::shutdown) |
+
+Check before converting: everything the body names must be COMPLETE at
+the block, not merely declared. A forward declaration is enough for a
+pointer or reference, not for `Type::static_method()`.
+
+### 7.16a The const_cast audit, completed
+
+28 hand-written casts at the start of the sweep, 14 left, and every
+remaining one has been checked against the callee's DECLARATION rather
+than its comment. That distinction mattered: two casts were classified
+genuine on the strength of a comment and turned out to be removable.
+
+Removed (the 7.16 "removable" category):
+ - `Mutex::lock` sites — a `lock() const` overload already existed
+ - `mpsc::Sender::send`, `net::TcpListener::accept`/`set_nonblocking` —
+   made const upstream to match Rust's `&self`
+ - `std::atomic` counters — retyped to `rusty::sync::atomic`, whose ops
+   are const
+ - `ServerConnection::status_`, `Fiber::id`, `RequestQueue::config_` —
+   moved behind `Cell`, which is what a shared handle wants
+ - two uniquely-owned Arcs — `Arc::get_mut` (checks the claim the cast
+   asserted)
+ - one vestigial cast whose callee already took `const&`
+
+Remaining 14, all genuine, with the reason each resists:
+
+| where | n | why |
+|---|---|---|
+| tcp_channel.cpp | 9 | field writes on a const facade; self-documented "localized-const_cast pattern". Retiring them means RefCell over 110 references — a design decision |
+| reactor.cpp (Job) | 2 | `Job::Ready`/`Work` are `fn (&mut self)` in the DSL trait; changing them changes every implementor |
+| reactor.cpp (Fiber) | 1 | a const method binds the non-const `run_wrapper` on `this` |
+| client.cpp | 1 | `FiberChannel::recv_frame` is `&mut self` |
+| serializable_envelope.cpp | 1 | deliberate: the non-const `unpack` keeps a historical `T*` contract, and its comment already points new code at the const overload |
+
+None of these five are cleanup; each is a signature or API change with
+its own blast radius. The sweep is finished.
+
+### 7.23 Cross-MODULE enums are treated as data enums; tcp_channel.cpp is unregenerable
+
+Two blockers found trying to convert `io_kind_to_channel_error` in
+tcp_channel.cpp — a pure `switch` mapping `rusty::io::Error::Kind` onto
+`ChannelError`, which should have been the easiest kind of conversion.
+
+**(a) An enum from another MODULE is matched as a data enum.** 78a0d9a7
+taught the transpiler about enums declared in a SIBLING BLOCK of the same
+file. It does not cover enums from elsewhere: `Error::Kind` lives in the
+rusty headers and `ChannelError` in rrr.channel, and the match lowered to
+
+```cpp
+rusty::detail::variant_holds<rusty::io::Error::Kind_ConnectionRefused>(_m)
+   -> error: no member named 'Kind_ConnectionRefused' in 'rusty::io::Error'
+ChannelError::ConnectionRefused()   // enumerator called as a function
+```
+
+So a `match` over an imported C-like enum does not currently work,
+whichever side it comes from. Same shape as the bug fixed for sibling
+blocks, one scope wider.
+
+**(b) tcp_channel.cpp cannot be regenerated at all**, for the §7.18
+reason: it reads libc `errno` in two syscall kernels, and the current
+transpiler renames that to `errno_`. Any `--rewrite` of this file
+re-emits those blocks and breaks the build, independent of what you were
+trying to convert.
+
+(b) is the harder gate: it makes every conversion in this file
+impossible, not just enum-matching ones. It is the same open decision
+from §7.18 — the rename is right for a fn NAMED errno and wrong for DSL
+that READS it — and this is now a concrete cost of leaving it unresolved,
+not a hypothetical one. tcp_channel.cpp has 350 hand-written lines.
+
+### 7.24 Class templates are a hard floor — and the burndown metric was blind to it
+
+`pub struct` lowers to a **concrete** C++ class. The DSL has no
+class-template construct. Function templates are fine (`fn foo<T>` →
+`template<...>`, see §7.9), but a `template<typename T> class X` — and
+every member of it, template or not — cannot be authored as DSL.
+
+This is category (3) under the decision rule: not a translator bug, not
+rewritable at the call site. It is a legitimate C++ kernel.
+
+**How this cost time.** `serializable_envelope.cpp` was carried in my
+own notes as "the concrete unexplored target — 158 hand-written lines,
+0 DSL". Reading it took one minute to discover the entire file is one
+class template `SerializableEnvelope<TypeList>` plus template free
+functions. Zero of the 158 lines were ever convertible. The census
+reported the number that made it look like the biggest untouched
+opportunity in the tree.
+
+**The measurement.** Splitting all remaining hand-written lines by
+whether they sit inside a class template vs a function template vs
+plain code:
+
+| | lines |
+|---|---|
+| class templates (floor) | **530** |
+| function templates (convertible, §7.9) | 656 |
+| plain (convertible) | 4,606 |
+
+Concentrated in `serializable.cpp` (272), `serializable_envelope.cpp`
+(124), `client.cpp` (62), `callback_wrapper.cpp` (24), `reactor.cpp`
+(30), `misc.cpp` (18).
+
+**So step 1's reachable target is ~5,260, not 0** — unless the DSL gains
+a class-template construct, which is a transpiler feature request, not a
+porting task.
+
+`scripts/rrr_handwritten_census.py` now reports this as a separate
+advisory line. It is deliberately NOT folded into the headline number:
+the classifier is a regex heuristic (it reads the text between
+`template<` and the opening brace), and a metric that is exact should
+not be silently contaminated by one that is estimated. The two numbers
+disagree by ~2 lines on the current tree, which is about the accuracy
+you should expect from it.
+
+**Generalisable lesson.** A burndown metric that counts lines cannot see
+*expressibility*. Before treating a high-count file as an opportunity,
+open it — the count is evidence about size, never about tractability.
+
+### 7.25 A DSL `impl` requires a DSL-declared struct — reactor.cpp needs whole-class conversions
+
+Every one of the ~60 `impl` blocks across src/rrr targets a type the DSL
+itself declares (`pub struct X` in the same block). A scan for an `impl`
+whose target is a hand-written `class`/`struct` in the same file returns
+**zero** hits. There is no precedent for attaching a DSL method to a C++
+class the DSL does not own.
+
+Consequence: you cannot nibble a hand-written class method-by-method.
+Converting `Fiber::finished` — four trivial lines of `Cell::get` and an
+enum compare — first requires converting the whole `Fiber` class to a
+`pub struct`.
+
+**How much this actually blocks (measured):**
+
+| | lines |
+|---|---|
+| methods of hand-written C++ classes | **522** |
+| — of which `reactor.cpp` (`Fiber`, `Reactor`) | 500 |
+| — everywhere else | 22 |
+
+So this is a *localized* constraint, not a broad one. Outside
+reactor.cpp the remaining backlog is free functions and methods of types
+already declared as DSL structs, and stays convertible piecemeal. Do not
+let this finding scare you off the rest of the tree.
+
+**Why Fiber/Reactor are a project, not a task.** Both are non-virtual,
+which helps. But `Reactor` stacks several known DSL limits at once:
+
+ - deleted copy *and* move ctors — a `pub struct` with an inherent impl
+   lowers to a **copyable aggregate** (only `#[cpp_inherit] impl Trait`
+   is move-only), which is the wrong shape;
+ - ~20 fields carrying inline default initializers, which the DSL does
+   not support (§ CLAUDE.md: use `fn new`/factories) — and `Reactor() =
+   default` means every one of them would need a factory;
+ - 7 static members, plus 5 on `Fiber`. **Resolved, and it is good news:**
+   a DSL struct cannot carry a static data member at all, but the
+   established workaround is to hoist it to a namespace-scope static —
+   `server.cpp` already does exactly this for `g_rpc_id_missing`, with
+   the comment "Hoisted out of ServerConnection (the DSL struct can't
+   carry a static data member)". So statics are a mechanical hoist, not
+   a blocker. Note this changes linkage/visibility, so check each one is
+   not part of a public API before moving it;
+ - one `friend` declaration on `Fiber`.
+
+Any of these alone is tractable. Together they are the exact profile —
+several uncertain lowerings entangled in one change — that has cost this
+campaign more reverts than progress. Treat Fiber/Reactor as a planned
+conversion with its own probe sequence, not as burndown filler.
+
+**Rule of thumb.** Before picking a hand-written method as a conversion
+target, check whether its owning type is a DSL struct. If it is not, the
+real unit of work is the class, and the line count you were looking at
+is not the size of the job.
+
+### 7.26 Re-check deferral *causes* after a big sweep lands — they expire
+
+The J+K census deferred every `*_to_string` function with the cause
+"varargs-UB": they return `const char*`, the DSL can only return
+`&'static str` (→ `std::string_view`), and passing a non-POD
+`string_view` through C varargs is undefined behaviour. That was
+correct when written.
+
+It is no longer true. The DSL-native logging sweep replaced the
+printf/`va_list` surface with `std::format`, so `Log_info` is now
+
+    template <typename... Args>
+    inline void Log_info(std::format_string<Args...> fmt, Args&&... args)
+
+— a variadic *template*, not C varargs. A `string_view` argument is
+type-checked and formats correctly. The deferral outlived its reason by
+several sweeps, and nothing flagged it, because a deferral is recorded
+once and then read as settled.
+
+Concretely this unblocks six switch-table functions (~47 lines):
+
+| file | function |
+|---|---|
+| `rpc/connection_state.cpp` | `connection_state_to_string` |
+| `rpc/request_options.cpp` | `timeout_type_to_string` |
+| `rpc/load_balancer.cpp` | `load_balancing_strategy_to_string` |
+| `rpc/completion_tracker.cpp` | `completion_status_to_string` |
+| `rpc/circuit_breaker.cpp` | `circuit_state_to_string` |
+| (`tests/rpcbench.cc` — test, not a target) | `rpc_mode_name` |
+
+Only `connection_state_to_string` has production callers
+(`src/deptran/communicator.cc:172,185`); the rest are called from tests
+only. **Check callers before converting one of these** — the varargs
+hazard is real for any caller that is still genuinely printf-style, and
+this file cannot promise none will ever reappear.
+
+`errors.cpp` is the worked example (now 0 hand-written lines): convert
+the switch to a `match` returning `&'static str`, then change the tests
+from `EXPECT_STREQ` (which requires `char*`) to `EXPECT_EQ` — the same
+assertion, since `string_view` compares equal to a string literal.
+
+**Generalisable lesson.** A deferral records a decision *and* a
+justification, but only the decision survives review. When a sweep
+removes a whole mechanism — varargs here — walk the deferral list and
+ask which causes it just invalidated.
+
+**A second expired deferral, found immediately.** The first version of
+this section asserted that `idempotency-LRU` was still blocked because
+it "waits on Marshal deprecation, not yet done". That was written from
+memory and is false: `Marshal` has **zero** non-comment references
+anywhere in the repo, and no definition — the type is gone. All 42
+remaining mentions in `src/rrr` are comments describing the historical
+migration, which is exactly what made memory feel confirmed. Marshal
+deprecation is complete, so that deferral is expired too.
+
+Note what happened there: the lesson of this very section is "verify the
+cause, do not trust the record", and the first draft of it restated a
+remembered blocker without checking. A grep would have taken ten
+seconds. When auditing deferrals, grep for the *blocker*, not for
+mentions of it — comments about a removed mechanism outlive the
+mechanism and read exactly like live references.
+
+Deferrals still believed live, each needing its own check before use:
+the kernel classifications (`clientconn`, `server-atomics`).
+
+### 7.27 GMF reachability: the module-global fragment must include what the GEN names
+
+`inline-rust` cannot add `#include`s. It emits C++ that calls into the
+rusty runtime, and the file's module-global fragment has to already
+reach every symbol that generated code names. Introduce a new *construct*
+in a DSL block and you may introduce a new *symbol* — and the file that
+compiled yesterday stops compiling.
+
+This rule was already in this document, but only as two passing mentions
+inside other sections (§ syscalls, § bulk regeneration), phrased as
+specific instances. That is why it did not fire when it should have:
+adding a `match` to `errors.cpp` — a file whose GMF was only
+`move.hpp` + `slice.hpp` — produced
+
+    error: no member named 'unreachable_panic' in namespace 'rusty::intrinsics'
+
+`logging.cpp` has the same construct and compiles because it includes the
+umbrella `<rusty/rusty.hpp>`; `channel.cpp` shows the narrow fix. The
+lesson is not "remember channel.cpp", it is: **when you add a construct,
+check what its GEN names.**
+
+Definition sites, verified against the pinned runtime (grep for the
+*definition*, not for mentions — several of these appear in headers that
+merely use them):
+
+| generated symbol | construct that emits it | defining header |
+|---|---|---|
+| `rusty::intrinsics::unreachable_panic` | `match` fallthrough arm | `rusty/intrinsics.hpp:34` |
+| `rusty::detail::deref_if_pointer_like` | most field/param reads | `rusty/slice.hpp:421` |
+| `rusty::for_in` | `for x in ...` | `rusty/slice.hpp:2133` |
+| `rusty::iter_mut` | `for x in &mut ...` | `rusty/slice.hpp:2072` |
+| `rusty::is_send<T>` / `is_sync<T>` | generic (templated) structs | `rusty/traits.hpp:49` |
+| `rusty::clone` | `.clone()`, and defensive transpiler emission | `rusty/move.hpp:129` |
+
+Two ways to satisfy it: the umbrella `<rusty/rusty.hpp>` (simple, but
+pulls in the world and slows the TU), or the narrow header (preferred —
+what `channel.cpp` and now `errors.cpp` do).
+
+**And note what this cost.** The conversion had been checked two ways
+before it was built: the 28-arm switch→match mapping was diffed
+structurally and found identical, and every arm was confirmed pinned by
+a test. Both checks were sound and neither could have caught this,
+because a missing include is not a semantics question. Structural
+verification tells you the translation is *right*; only a compiler tells
+you the translation unit can *resolve* itself. Do both; neither
+substitutes for the other.
+
+### 7.28 A Rust-keyword *parameter* name fails to parse — and the error never says so
+
+CLAUDE.md documents that struct **fields** named after Rust keywords
+(`type`, `match`, `ref`, …) must be renamed or the type stays C++. The
+same applies to function **parameters**, and the diagnostic is unhelpful:
+
+    inline-rust error: src/rrr/rpc/request_options.cpp:318: failed to
+    transpile inline block id=request_options.3: Parse error: expected
+    one of: identifier, `::`, `<`, `_`, literal, `const`, `ref`, `mut`,
+    `&`, parentheses, square brackets, `..`, `const`
+
+The culprit was `fn timeout_type_to_string(type: TimeoutType)`. Nothing
+in the message names `type`, points at the token, or mentions keywords —
+it reads like a grammar bug in the block.
+
+**The fix is materially cheaper than for a field.** A field rename
+changes the type's shape and every construction site; a *parameter*
+rename is local, because C++ callers pass positionally and never name
+it. So `type` → `ty` and move on — do not conclude the function is
+unconvertible.
+
+**Measured exposure in this tree:** small. Excluding tests (not a
+target) and the 64 parameters named `self` — which are the deliberate
+"free fn taking `const X& self`" convention that exists *because* the
+DSL cannot own a method on a hand-written class (§7.25), not an
+accident — only about three hand-written production parameters carry
+keyword names. This will not obstruct the remaining backlog; it is a
+paper cut to recognise, not a hazard to plan around.
+
+### 7.29 Type aliases ARE supported — two narrow gaps block the last line of four files
+
+Four files sit 1–5 hand-written lines from zero, and what remains is not
+logic. It is type aliases and `using` declarations:
+
+| file | hand-written left | what it is |
+|---|---|---|
+| `rpc/heartbeat.cpp` | 1 | `using HeartbeatTimeoutCallback = rusty::Function<void()>;` |
+| `rpc/connection_state.cpp` | 2 | `using StateChangeCallback = rusty::Function<void(ConnectionState, ConnectionState) const>;` |
+| `rpc/connection_metrics.cpp` | 2 | `using rusty::sync::atomic::Ordering;` / `AtomicU64;` |
+| `rpc/pollable_proxy.cpp` | 5 | `using PollableProxy = rusty::Box<PollableBase>;` + a fn template |
+
+There are **zero** `type X = ...` aliases in any DSL block in the tree,
+which reads like "unsupported". It is not. Probed directly:
+
+| DSL source | result |
+|---|---|
+| `type Foo = i32;` | ✅ `using Foo = int32_t;` |
+| `type PollableProxy = rusty::Box<PollableBase>;` | ✅ exact, unchanged |
+| `type Cb = rusty::Function<void()>;` | ❌ `Parse error: expected ','` |
+| `type Cb = rusty::Function<fn()>;` | ⚠️ `rusty::Function<rusty::SafeFn<void()>>` |
+| `type Cb = rusty::Function<dyn Fn()>;` | ⚠️ `rusty::Function<std::function<void()>>` |
+| `type Cb = rusty::Function<Fn()>;` | ❌ `Parse error: expected ','` |
+| `type Cb = rusty::Function<()>;` | ⚠️ `rusty::Function<rusty::Unit>` |
+| `use rusty::sync::atomic::Ordering;` | ⚠️ **silently dropped** — emits only `// TODO: external crate 'rusty'` |
+
+So aliases work; two narrow things do not.
+
+**Gap 1 — a C++ callable signature as a template argument.** `void()`
+is not Rust grammar, and every Rust spelling lowers to a *different*
+type. The ⚠️ rows are the dangerous ones: they succeed and silently
+produce the wrong type. `SafeFn<void()>` and `std::function<void()>`
+are not `rusty::Function<void()>`, and a reader skimming the GEN would
+not notice.
+
+**Gap 2 — `use` on an external crate is dropped, not translated.** It
+parses, emits a TODO comment, and the `using` declaration vanishes.
+Anything relying on the imported name then fails to compile — a silent
+semantic deletion, which is worse than the parse error in gap 1.
+
+Both are category (1) under the decision rule — translator gaps, not
+design choices — and both are small and precisely characterised, with
+copy-paste repros above. Until they land, three files cannot reach zero
+hand-written lines no matter how much logic is converted, and that is a
+property of the tooling, not of the code.
+
+`pollable_proxy.cpp` is the exception: its alias converts today (row 2),
+and its `make_pollable_proxy_from_typed_arc` is a function template,
+which §7.9 covers. That one is reachable now.
+
+#### 7.27a Regeneration can break a file nobody edited — one known landmine
+
+§7.18 says regenerating changes output in blocks you did not touch. Here
+is what that costs in practice, and it is worse than cosmetic drift.
+
+`pollable_proxy.cpp` had compiled for months. Converting one alias and
+one function template in it meant running `inline-rust --rewrite`, which
+regenerated **all four** blocks — and the untouched generic-struct block
+`PollableArcShim<T>` came back emitting
+
+    static constexpr bool is_send = rusty::is_send<T>::value && rusty::is_sync<T>::value;
+
+which its GMF (`arc.hpp`, `box.hpp`) could not reach. Six errors, in a
+block nobody hand-edited. Fix was one line: `#include <rusty/traits.hpp>`
+(§7.27 table: primary templates at `rusty/traits.hpp:49`).
+
+**So generated output is not stable across transpiler versions.** Any
+regen can surface new symbol requirements in code no human touched.
+Regenerate deliberately, one file at a time, and build after — never as
+a sweep. (§7.14 already says do not bulk-regenerate; this is the
+concrete reason.)
+
+**Audit of every file with a generic DSL struct** — a generic struct is
+what triggers the `is_send`/`is_sync` emission:
+
+| file | generic structs | traits reachable | emits today |
+|---|---|---|---|
+| `rpc/pollable_proxy.cpp` | 1 | ✅ (added) | yes |
+| `rpc/server.cpp` | 1 | ✅ | yes |
+| `misc/serializable.cpp` | 1 | ✅ | yes |
+| `reactor/reactor.cpp` | 1 | ✅ | no |
+| **`reactor/future.cpp`** | **2** | **❌** | **no** |
+
+**`reactor/future.cpp` is a landmine.** It has two generic structs
+(`FiberPromise<T>`, …), does not emit the traits today, and cannot reach
+them. It compiles now and will break the moment anyone regenerates it —
+with an error pointing at a line they did not write. Whoever touches it
+next should add `#include <rusty/traits.hpp>` to the GMF *first*, before
+running the transpiler, so the failure never happens.
+
+### 7.30 Auditing stated blockers: structural ones hold, tool ones rot
+
+Six workarounds in this tree outlived the constraint that created them.
+Each carried a comment stating a reason that had quietly become false,
+and nothing linked the two, so the comment kept reading as settled.
+
+| workaround | stated cause | why it expired |
+|---|---|---|
+| `*_to_string` deferral | varargs UB | logging became `std::format` (§7.26) |
+| `idempotency-LRU` deferral | waits on Marshal deprecation | `Marshal` no longer exists |
+| drain phase name dropped | "cannot drive `*_to_string` varargs" | same as above (§7.26) |
+| 5× `server_atomic_*` kernels | classified "kernels", no cause given | DSL expresses the ops directly |
+| 2× `log_connect_*` helpers | `int32_t::Log_error` miscodegen | that transpiler bug was fixed here |
+| `fiber_yield_invoke` | "transpiler can't translate raw deref" | raw deref lowers cleanly |
+
+**The discriminator.** A deferral that names a *structural fact* does not
+rot. One that names a *tool limitation* does — because the tool is under
+active development, often by us.
+
+`frame_codec.cpp:519` was once treated as the model of the first kind, but that
+conclusion has since been superseded. Canonical `frame_codec.rs` uses the
+rustc-only `rusty::StdVector<T>` facade plus a checked source type-map entry
+that emits exact `std::vector<T>`. The callers and hot-buffer representation
+therefore stayed unchanged. Raw payload copying is exposed honestly through
+documented `unsafe fn` contracts and narrow internal unsafe blocks.
+
+**Correction.** An earlier revision of this paragraph claimed "re-checked:
+`rusty::Vec` still has neither `erase` nor `drain`". That is **false** —
+`rusty::Vec` *does* have `drain`
+(`third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5217`). The
+check had grepped only `include/rusty/vec.hpp`, which is a 27-line
+wrapper; the real Vec is the transpiled port. Note the original
+`frame_codec` comment already said as much — "which rustc's Vec does not
+have (it has `drain`)" — so the re-derivation contradicted the source it
+was supposedly confirming. The conclusion survives, but on the comment's
+own reasoning: the blocker is *rewriting `tcp_channel`'s drain path on a
+hot buffer*, not an absent API. A true conclusion resting on a false
+premise is still a defect, because the next person inherits the premise.
+
+Every entry in the table above is the second kind.
+
+**Method.** Probing is cheap and decisive — the transpiler is a
+standalone binary, so a scratchpad file answers "does this lower?"
+in seconds with no build:
+
+    $ cat > /tmp/probe.cpp   # module + one #if RUSTYCPP_RUST block
+    $ rusty-cpp-transpiler inline-rust --rewrite --files /tmp/probe.cpp
+
+Then read the GEN. Cheaper than reasoning, and it produces evidence
+rather than an opinion.
+
+**Two probe traps, both hit in one session:**
+ - **Don't name a probe parameter `self`.** The DSL treats it as the
+   receiver and emits `(*this)`, which answers a different question than
+   the one asked. A raw-deref probe looked like it worked for the wrong
+   reason until it was re-run with `p`.
+ - **Isolate one variable.** `type Cb = rusty::Function<void()>` failed,
+   which looked like "aliases are unsupported". Aliases work fine; only
+   the C++ callable-signature argument fails (§7.29). One probe, two
+   confounded variables, nearly the wrong conclusion.
+
+**And grep for the blocker, not for mentions of it.** `Marshal` appeared
+42 times in `src/rrr` and every one was a comment describing the historical
+migration. The type had been gone for some time.
+
+### 7.31 `!= nullptr` emits a non-existent `nullptr_`; use `.is_null()`
+
+The natural spelling of a null check does not work:
+
+| DSL | generated | verdict |
+|---|---|---|
+| `p != nullptr` | `deref_if_pointer_like(p) != deref_if_pointer_like(nullptr_)` | ❌ `nullptr_` is not defined anywhere in the runtime |
+| `!p.is_null()` | `rusty::detail::rust_not((p == nullptr))` | ✅ real `nullptr`, correct |
+| `p != std::ptr::null_mut()` | `deref_if_pointer_like(p) != rusty::ptr::null_mut()` | ✅ compiles, but wordier |
+| `p` (truthiness) | `verify(p)` | ✅ works; loses the explicit intent |
+
+`nullptr` is picking up the same trailing-underscore rename that hits
+`errno` (§7.18, §7.23) — the transpiler's libc-identifier handling
+applied to a C++ keyword. It fails loudly at build time rather than
+silently, but the error names `nullptr_`, which appears nowhere in the
+source and reads as nonsense.
+
+**Use `!p.is_null()`.** It is the Rust-native spelling anyway, and it
+lowers to exactly the C++ you would write by hand.
+
+Found while converting `fiber_yield_invoke` (§7.30 table): the *stated*
+blocker (raw-pointer deref) really had expired, but probing the actual
+function shape surfaced this second, unstated one. Worth generalising —
+**"the stated blocker expired" does not mean "the conversion works".**
+Probe the real body, not the claim about it.
+
+#### 7.30a The discriminator says what to CHECK first, not what to assume
+
+§7.30 says deferrals naming a *structural fact* hold and those naming a
+*tool limitation* rot. Six rotted; that is a real signal. It is not a
+licence to treat "tool limitation" as "probably expired, go convert it."
+
+`clientpool_get_healthy_client_count` (client.cpp) is delegated to a
+hand-written free fn with this stated cause:
+
+> the inline `let clients = opt.unwrap()` lowered to a Vec copy (vs the
+> `auto& clients` reference here), which corrupted the cached Arcs.
+> Keep the proven reference-based body.
+
+That names a *tool behaviour*, so by the discriminator it is a rot
+candidate. Probed it:
+
+    DSL:  let clients = opt.unwrap();
+    GEN:  const auto clients = opt.unwrap();      // BY VALUE. still a copy.
+
+Still true. The deferral holds and the function stays hand-written.
+
+Note what is different about this one: **the failure mode is silent.** A
+wrong `nullptr_` fails at build; a wrong memory ordering is at least
+findable by reading the diff; but an `Option::unwrap` that copies a
+`Vec<Arc<Client>>` instead of borrowing it corrupts refcounted state and
+compiles cleanly. Tests may well pass. For deferrals whose stated
+consequence is corruption rather than a compile error, probe first and
+treat a green build as weak evidence — the original author wrote
+"keep the proven body" for a reason.
+
+Two deferrals now checked and CONFIRMED VALID: this one, and
+`frame_codec.cpp:519` (§7.30). Both were worth the check; neither was
+worth the conversion.
+
+#### 7.30b Probe fidelity: three ways I got a wrong answer from a correct tool
+
+The scratchpad probe (§7.30) is the best tool here, and every wrong
+answer it gave came from the probe not matching reality:
+
+1. **Parameter named `self`.** Probing raw-pointer deref with
+   `fn dp(self: *mut Thing)` emitted `(*this)` — the DSL treats `self`
+   as the receiver, so it answered a question about methods, not
+   pointer params. Looked like success for the wrong reason. Re-probe
+   with any other name.
+2. **Editing a probe file in place.** Patching a previous probe with
+   `sed`/regex left a malformed block; the transpiler reported
+   `cannot parse string into token stream`, which reads like the DSL
+   rejecting the *form* under test. It was rejecting my broken file.
+   Write a fresh probe file per variant.
+3. **Signature that does not match the real callee.** Probing
+   `event_state_seed(sp.state_)` against a stub declared
+   `void f(EvState&)` produced `std::move(...)` binding failures and a
+   confident "genuinely blocked" conclusion. The real function takes
+   **`const EventState&`** — and a const reference binds an rvalue
+   happily, so the emission is fine. The blocker was invented by the
+   probe.
+
+All three share a shape: **the probe was not the thing.** Copy the real
+signature, the real parameter names, and the real types out of the
+source rather than approximating them — an approximated probe answers
+an approximated question, and the failure mode is a confident wrong
+conclusion rather than an error.
+
+Corollary: when a probe says "blocked", check the probe before
+believing it. Two of these three produced false blockers, which is the
+expensive direction — a false "works" gets caught by the build, a false
+"blocked" just quietly removes work from the plan.
+
+#### 7.24a A second structural floor: Rust has no function overloading
+
+§7.24 counts class templates as the DSL floor. There is another one, and
+`serializable.cpp` is where it bites.
+
+That file defines **14 `deserialize` and 15 `serialize` free-function
+overloads**, distinguished only by first-parameter type (`std::pair`,
+`rusty::Vec<T>`, `std::vector<T>`, `std::set<T>`, `rusty::HashSet<T>`, …).
+Rust has no overloading, so they cannot coexist as `fn deserialize<T>`.
+This is a *structural fact* (§7.30) — it will not rot.
+
+Measured for that one file, counting the **union** (overloads and class
+templates overlap heavily — do not add them):
+
+| | lines |
+|---|---|
+| hand-written | 461 |
+| in class templates | 272 |
+| in overloaded-name fns | 267 |
+| overlap (both) | 214 |
+| **union — structurally blocked** | **325** |
+| remainder — potentially convertible | 136 |
+
+So ~70% of `serializable.cpp` cannot convert without a redesign of the
+serde surface (one generic entry point + trait dispatch, which is a
+design change, not a port).
+
+**A tree-wide figure is NOT given here on purpose.** Two attempts to
+produce one were both unsound, in different ways:
+ - scanning without a DSL/GEN mask counts every DSL `fn foo` against its
+   own generated `void foo` mirror — every converted function looks like
+   a 2-way overload;
+ - scanning *with* the mask still cannot tell `Foo::method` from
+   `Bar::method`, so unrelated same-named methods on different classes
+   inflate the count. It reported 445 lines; the diagnostic written to
+   check that number shared the first flaw and so confirmed nothing.
+
+The honest position: the overloading floor is real and large in
+`serializable.cpp` (verified by reading the functions), and unquantified
+elsewhere. Counting it properly needs qualified-name resolution, not a
+regex over declaration lines.
+
+### 7.32 Block-id collisions: a failed regen leaves the file BROKEN — commit first
+
+Adding a DSL block to a file that already has many can fail with
+
+    inline-rust error: reactor.cpp:3345: duplicate inline block id=reactor.22
+
+**and the failure is destructive.** `--rewrite` deletes the hand-written
+body *before* it detects the collision, so the function ends up declared
+and never defined. The file does not compile, and the damage is not
+in the block you were editing.
+
+Two rules follow, both cheap:
+
+ 1. **Commit before regenerating.** `git checkout <file>` is the recovery,
+    and it only works if the previous work is committed. This is how the
+    first `waitany_make` attempt was recovered without losing four landed
+    factory conversions.
+ 2. **Try a risky regen on a copy first.** `cp` the file to a scratchpad,
+    apply the edit there, run the transpiler. That is how the fix below
+    was found with the real file never at risk.
+
+**Why it happens.** `reactor.cpp` carries 29 GEN blocks. Most have
+explicit ids (`reactor.wait_any`, `reactor.timeout_event`,
+`reactor.tls_singletons`), but some are auto-numbered (`reactor.3`,
+`reactor.12`, … `reactor.23`). Inserting a block auto-numbers it by
+position, and it lands on a number a *later* block already holds — the
+later block keeps its id because ids are preserved, so the two collide.
+
+**The fix — ids are author-controllable.** The transpiler preserves any id
+already present in a `GEN-BEGIN` comment and only auto-numbers blocks that
+lack one. So pre-seed an empty stub immediately after the `#endif`:
+
+```
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.waitany_make version=1 rust_sha256=0*/
+/*RUSTYCPP:GEN-END id=reactor.waitany_make*/
+```
+
+The transpiler fills in the body and the real hash on the next rewrite.
+Give it a *name*, not a number — a name cannot collide with the
+auto-numbering sequence, and it survives future insertions.
+
+**Worth an upstream report.** Auto-numbering that collides with existing
+ids in the same file is a bug on its own; that it half-deletes the source
+before erroring is the serious part. A regen failure should leave the file
+exactly as it found it.
+
+### 7.33 Bind the guard, then deref — never chain a method through `borrow_mut()`
+
+Two spellings of the same operation, one of which is silently wrong:
+
+```rust
+// WRONG — chained through the guard
+self.events_.borrow_mut().push(x);
+```
+```cpp
+this->events_.borrow_mut()->push(std::move(rusty::Vec<rusty::Arc<Ev>>::from_iter(std::move(x))));
+```
+
+```rust
+// CORRECT — bind the guard, then deref
+let mut g = self.events_.borrow_mut();
+(*g).push(x);
+```
+```cpp
+((*g)).push(std::move(x));
+```
+
+The chained form wraps the *element* in a `Vec::from_iter` — it tries to
+push a collection where an element belongs. It fails to compile here, but
+do not rely on that: the transformation is silent at the DSL level and
+there is no reason a different element type could not produce something
+that compiles and misbehaves.
+
+**This is category (2) under the decision rule** — not a translator bug to
+fix, an equivalent call-site spelling that avoids it. Prefer the bound
+form everywhere a guard is involved.
+
+**It also retracts a verdict.** §7.30a listed `waitall_add_event`
+(reactor.cpp) as a deferral *confirmed still valid*, on the strength of
+probing the chained form and seeing it mis-lower. The deferral is
+avoidable: rewriting the body with a bound guard converts fine. That was
+a **false blocker** — the expensive direction (§7.30b), because a false
+"works" is caught by the build while a false "blocked" silently removes
+work from the plan.
+
+Found while probing `idem_lookup`, whose `(*guard).push_front(entry)`
+lowers correctly — the contrast between that and the earlier failure is
+what exposed the idiom as the variable. The former request-queue carrier also
+used the same bind-then-deref shape in `for req in &mut (*guard)`. Its canonical
+replacement, `src/rrr/src/request_queue.rs`, now drains the queue explicitly
+with `while let Some(request) = guard.pop_front()`.
+
+**Correction — the scope is narrower than first stated.** The rule above
+was originally written as "never chain a method through `borrow_mut()`".
+That is wrong; chaining is fine for most containers. Probing the same
+method against two containers isolates it:
+
+| chained call | generated | verdict |
+|---|---|---|
+| `Vec::push(x)` | `push(std::move(Vec::from_iter(std::move(x))))` | ❌ |
+| `Vec::insert(0, x)` | `insert(0, std::move(Vec::from_iter(std::move(x))))` | ❌ |
+| `VecDeque::push_back(x)` | `push_back(std::move(x))` | ✅ |
+| **`VecDeque::insert(0, x)`** | `insert(0, std::move(x))` | ✅ |
+
+Same method `insert`, opposite results — so it is the **container**, not
+the method and not chaining as such. Chained calls through a guard over a
+`RefCell<Vec<T>>` wrap the argument in `Vec::from_iter`; over a
+`RefCell<VecDeque<T>>` they are correct.
+
+`VecDeque` chained calls route through `rusty::deref_call(guard,
+rusty::detail::__mdisp_push_back, …)` — the method-dispatch shim — which
+is why they survive. The three live `push_back` call sites in
+`reactor.cpp` (3074/3079/3085) use that path and are **correct**; they
+were checked before this correction was written.
+
+So: **for a `Vec` behind a guard, bind then deref.** For other containers
+chaining works, but binding is never wrong, so prefer it uniformly rather
+than memorising which containers are safe.
+
+#### 7.30c A probe verifies LOWERING, not COMPILABILITY
+
+§7.30b catalogues four probes that gave wrong answers because the probe
+did not match the real code. This one is different: the probe matched
+perfectly and still misled, because reading generated C++ is not the same
+as compiling it.
+
+Probing `entry_set(&mut (*guard)[i], resp)` produced
+
+    entry_set(rusty::addr_of_temp_mut((*guard)[i]), resp);
+
+which I read as correct — `addr_of_temp_mut` really does return a pointer
+to the actual element, not to a temporary (the name is about *tolerating*
+temporaries). The reasoning was sound. The conclusion was wrong:
+
+    error: no matching function for call to 'cached_response_set'
+    note: no known conversion from 'CachedResponse *' to 'CachedResponse &'
+
+**`&mut expr` lowers to a pointer; `&expr` lowers to a plain lvalue.** A
+C++ callee taking `T&` accepts the second and rejects the first.
+
+| DSL argument | generated | binds to `T&`? |
+|---|---|---|
+| `&mut expr` | `&expr` / `addr_of_temp_mut(expr)` | ❌ pointer |
+| `&expr` | `expr` | ✅ lvalue |
+
+So for a C++ function taking a mutable reference, pass `&expr` — even
+though `&mut` reads as the "obviously right" Rust spelling.
+
+**The general rule: a transpiler probe answers "what does this lower to",
+never "does that compile".** For anything where the question is type
+binding — argument passing, overload resolution, reference vs pointer —
+the generated snippet has to go through a compiler before you believe it.
+Cheapest reliable form: convert one call site in the real file and build
+that file, which is what finally settled this.
+
+Note the fix came from in-tree evidence rather than another probe:
+`lookup`'s `cached_response_get(&(*guard)[i], …)` had already compiled in
+a previous commit, which is direct proof that `&expr` binds where `&mut
+expr` does not.
+
+#### 7.24b A third structural floor: function-local `static`
+
+§7.24 names class templates, §7.24a function overloading. This one is
+smaller per site but appears everywhere, and — unlike the other two — it
+is almost never written down, so each occurrence reads like a missed
+conversion until you open the body.
+
+The DSL has no construct for a `static` (or `static thread_local`)
+declared *inside* a function body. Four functions blocked by it, found in
+one session, **none of which said so**:
+
+| function | the static |
+|---|---|
+| `reactor.cpp` `prune_finished_events` | `static thread_local std::size_t prune_hwm` |
+| `reactor.cpp` `stackless_profile_report_periodic` | `static thread_local uint64_t last_report_us` |
+| `misc/cpuinfo.cpp` `cpuinfo_cpu_stat` | `static rusty::OnceCell<CPUInfo> inst` |
+| `misc/any_message.cpp` `registry()` | `static rusty::Mutex<AnyMessageRegistryMap> r` |
+
+Each cost a fresh derivation: read the body, spot the static, conclude
+"blocked", move on. A one-line `// @unsafe - function-local static, not
+DSL-expressible` on each would have made all four classifiable at a
+glance.
+
+**Workaround, where the semantics allow it:** hoist the static to
+namespace scope, which is what §7.25 found for *class* statics
+(`g_rpc_id_missing` was hoisted out of `ServerConnection` for exactly this
+reason). It is not free — it changes linkage and lifetime, and for a
+`thread_local` used as a per-thread cache it changes sharing — so it is a
+deliberate redesign, not a mechanical fix. None of the four above was
+worth it.
+
+**The general point, which is the same as §7.30's:** a kernel that states
+its cause is classified in seconds; a kernel that does not is re-derived
+by every person who passes. `rand.cpp` is the model — every kernel there
+says `rdtsc asm`, `pthread_key_create`, `malloc`, `pthread_once`, and the
+whole file triages in one pass.
+
+### 7.34 Inlining a kernel can relocate the call across the export boundary — a LINK error
+
+§7.20 says a DSL block cannot *read* a static defined in the impl
+namespace. This is the same boundary breaking a *function call*, and it
+is worse in one respect: **the compile is clean and only the link fails.**
+
+`frame_codec.cpp` is laid out as
+
+    export namespace rrr {   // lines 26-524   <- DSL blocks + their GEN
+    }
+    namespace rrr {          // after 547      <- hand-written kernels
+        void fsr_compact_if_needed(FrameStreamReader&) { … }   // 654
+    }
+
+`fsr_consume_frame` used to live down with the kernels, so its call to
+`fsr_compact_if_needed` was an ordinary same-block call. Inlining it into
+the DSL method `FrameStreamReader::consume_frame` moved the call site up
+into the *exported* block, where the callee is neither declared nor
+visible.
+
+Adding a forward declaration inside the export block fixes the compile
+and then fails at link:
+
+    undefined reference to `rrr::fsr_compact_if_needed@rrr.frame_codec(...)'
+
+because an **exported declaration** and a **non-exported definition** are
+not the same entity. Everything inside `export namespace rrr { }` is
+exported; you cannot write a non-exported declaration there.
+
+The two real fixes are both bigger than the conversion:
+ - export the kernel — changes the module's public surface for the sake
+   of an internal helper;
+ - restructure the namespace blocks so the kernel is declared before the
+   DSL block in a non-exported `namespace rrr`.
+
+For the old inline-carrier layout, the conversion was initially reverted. The
+later canonical-source promotion removed that declaration-order boundary:
+`fsr_consume_frame` and its compaction logic now live in the same Rust module,
+and rusty-cpp emits one complete provider with no hand-authored carrier.
+
+**Check before inlining a kernel into a DSL method:** does the body call
+anything defined in the impl namespace? If so, the call is about to cross
+the export boundary and you are choosing between a module API change and
+a file restructure. A clean compile does not settle it — build far enough
+to link.
+
+This was one of three distinct failures from that single 15-line
+function, each caught by a different mechanism and none visible in the
+DSL source: a `self`-named parameter becoming a receiver (caught by
+reading GEN), the call emitted above its callee's declaration (caught by
+compile), and this (caught only by link).
+
+### 7.35 Compile ONE TU against the existing BMIs — a 1-minute check, not a 30-minute build
+
+Some claims are about code the normal build never compiles: an
+`#ifdef`-disabled block, a platform arm, a file you are about to delete.
+The reflex is either to assert from reading ("this would obviously
+fail") or to run the full gate. There is a much cheaper third option:
+ask ninja for the exact command it would use, and run just that.
+
+```
+# 1. get the real command (last line = the compile)
+ninja -t commands src/rrr/CMakeFiles/rrr.dir/rpc/server.cpp.o | tail -1
+
+# 2. rewrite it: drop the depfile flags, redirect the outputs,
+#    add whatever you are testing
+#    -MD, -MT <val>, -MF <val>   -> DROP (no depfile wanted)
+#    -o <val>                    -> scratch path
+#    -c <val>                    -> your probe copy of the source
+#    @....modmap                 -> ***KEEP***  (see below)
+```
+
+**Keep the `@...modmap` argument.** It is the file that maps every
+`import` in the TU to a concrete built BMI. Without it the compile dies
+on the first import and you learn nothing. This is also why the check is
+fast: every module the TU imports is *already built* in the tree, so you
+pay for one TU, not the module graph.
+
+Two ways to get it wrong, both of which I hit:
+
+ - **Stripping an option's VALUE but not its flag.** `-MT` and `-MF` each
+   take a separate following token. Filtering out the token that merely
+   *looks* like an output path (`…/server.cpp.o`) leaves a dangling
+   `-MT`, which then swallows the next flag. Symptom is a nonsense error
+   naming the depfile as a missing input. Drop flag and value together.
+ - **Compiling the tree's real file in place.** Don't. Write the variant
+   to a scratch path and point `-c` at that, with `-o` to scratch too.
+   A module *implementation* unit (no `-fmodule-output` in its command)
+   produces no BMI, so nothing in the build tree is disturbed and no
+   rebuild is triggered. Check for `-fmodule-output` first — if it IS an
+   interface unit, it emits a BMI and you must redirect that as well or
+   you will poison the tree.
+
+Worked example: the `#ifdef RPC_STATISTICS` block in `server.cpp` was
+deleted on the argument that it "had rotted." That argument came from a
+subagent and I published it in a commit message before checking it.
+Extracting the command, adding `-DRPC_STATISTICS`, and compiling one TU
+took about a minute and produced exactly 4 errors — confirming the claim
+but refuting my own guesses about its *cause*. I had assumed the rot was
+in the rusty container APIs (`HashMap::operator[]`, the `Counter`
+methods); those were all fine. The real breakage was unqualified names
+that lost namespace reachability in the module migration: `base::rdtsc`
+(the `base` namespace is gone — it survives as `rrr::rdtsc`),
+`numeric_limits`, and `pair`.
+
+Which is the general lesson: **"does it compile" is cheap to answer
+exactly and expensive to answer by reasoning.** Reading the code told me
+the right verdict for the wrong reason, and a wrong reason is a bad thing
+to write into a commit message. If a claim is decidable by the compiler,
+decide it with the compiler.
+
+### 7.36 `--check` verifies the SOURCE hash, not the generated C++
+
+`scripts/rrr_dsl_check.sh` reporting "checked 41 files, 0 with drift" is
+a weaker statement than it looks, and I over-trusted it for a long time.
+
+`inline-rust --check` compares the recorded `rust_sha256` in each
+`GEN-BEGIN` marker against the hash of the `#if RUSTYCPP_RUST` source
+block. It does **not** re-run codegen and byte-compare the emitted C++.
+
+Demonstrated, not inferred — take any file with a GEN block, edit the
+GENERATED side only, leave the DSL source untouched:
+
+```
+-    int32_t e = errno;
++    int32_t e = 12345;
+```
+
+`--check` reports the file clean. The generated code now says something
+the DSL source never said, and the guard is structurally incapable of
+noticing.
+
+So the guard answers exactly one question: *did someone edit a DSL block
+and forget to regenerate?* It is blind to two others that matter just as
+much:
+
+ - **Hand-edited GEN.** Someone patching generated C++ directly (to fix
+   a transpiler bug in place) leaves no trace the guard can find. The
+   file keeps passing forever.
+ - **Transpiler-version drift.** The same source through a different
+   transpiler build can emit different C++. The guard compares nothing
+   about the transpiler, so a pin bump that changes output silently
+   passes on every file.
+
+Worked example, and the reason this section exists.
+`reactor/epoll_platform_linux.cc` reads libc `errno`. Its checked-in GEN
+contains a bare `errno`, but the transpiler at the time renamed it to
+`errno_` (§7.18). Both facts were true at once and `--check` reported
+CLEAN, because the source hash matched. I briefly read that CLEAN as
+evidence the errno bug was already fixed — it was evidence of nothing.
+The bug was real, and the probe that actually settled it ran the old and
+new binaries over the same input and diffed the OUTPUT:
+
+```
+OLD:  int32_t e = errno_;
+NEW:  int32_t e = errno;
+```
+
+**Rule.** To claim the tree round-trips through a given transpiler, you
+must regenerate with that binary and diff — `--check` cannot support the
+claim. Reserve `--check` for what it does do: a cheap pre-commit guard
+against editing a DSL block and forgetting to regenerate. And when a
+green check is load-bearing for a conclusion, ask what a red one would
+have required: if no realistic breakage produces red, the green is not
+evidence.
+
+### 7.37 Minimal repro: two-step `unwrap()` of `Option<&mut T>` drops the reference
+
+§7.21 recorded that `let x = opt.unwrap()` can silently emit a BY-VALUE
+binding, so writes land on a copy. This narrows it to a minimal repro and
+identifies which half is actually broken — the two forms differ.
+
+**One-step (chained) — CORRECT:**
+
+```rust
+let slot: &mut Vec<i32> = m.get_mut(1).unwrap();   // -> Vec<int32_t>& slot
+let slot = m.get_mut(1).unwrap();                  // -> auto& slot
+```
+
+Both bind a reference, annotated or not. Nothing to fix here.
+
+**Two-step — BROKEN:**
+
+```rust
+let slot_opt = m.get_mut(1);
+let slot = slot_opt.unwrap();
+slot.push(7);
+```
+
+emits
+
+```cpp
+auto& slot_opt = m.get_mut(1);        // reference bound to a TEMPORARY Option
+const auto slot = slot_opt.unwrap();  // BY VALUE and const
+slot.push(7);                         // mutates the copy
+```
+
+Two defects, both §7.21's: the intermediate binds `auto&` to a
+by-value temporary, and the unwrap drops the reference AND adds `const`.
+
+So the bug is NOT in `unwrap()` — the chained form proves `unwrap()`
+lowers fine when the receiver's type is known at the call. It is in the
+INTERMEDIATE binding: `slot_opt`'s payload is not recorded as a
+reference, so by the time `.unwrap()` is emitted the reference-ness is
+already lost. That is the thing to fix, and it is a much narrower target
+than "unwrap copies".
+
+Verified identical on the transpiler before AND after the §7.35 errno
+fix, so it is long-standing, not a regression.
+
+**Why this class matters more than a loud bug:** the emitted code
+compiles and the tests pass. §7.21 hit exactly this — `test_rpc_client_pool`
+passed 20/20 while `remove_all_unhealthy`'s write-back updated a copy,
+because the only test of that path asserted the all-healthy case
+(`removed == 0`) and never exercised the mutation. A wrong-code bug that
+compiles is found by READING the GEN, not by running the suite.
+
+**Workaround until fixed:** annotate both bindings, as §7.21 records —
+`let slot_opt: Option<&mut Vec<T>> = ...` and
+`let slot: &mut Vec<T> = ...` — or collapse to the one-step chained form,
+which needs no annotation.
+
+**Located (transpiler).** `transpiler/src/codegen/emit_stmt.rs:3507`, in
+the predicate deciding whether a `let` binding stays a non-const
+reference:
+
+```rust
+if matches!(method.as_str(), "unwrap" | "unwrap_unchecked" | "expect")
+    && let syn::Expr::MethodCall(inner) = self.peel_paren_group_expr(&mc.receiver)
+    && mut_ref_yielding_method_shape(&inner.method.to_string())
+{
+    return true;
+}
+```
+
+It requires `unwrap()`'s receiver to be a **MethodCall**. That is
+satisfied by the chained form (`m.get_mut(1).unwrap()`, receiver =
+`get_mut(..)`) and NOT by the two-step form, where the receiver is a
+`syn::Expr::Path` naming the local. The match fails, the predicate
+returns false, and the binding falls through to by-value + const. This
+single condition explains the whole one-step/two-step split.
+
+**Shape of the fix** (not yet implemented): also accept a `Path`
+receiver that names a local whose own initializer satisfied
+`mut_ref_yielding_method_shape`. That needs the locals carrying a
+mut-ref payload to be tracked (a set populated where `let` bindings are
+emitted) and the condition widened to consult it. Note the sibling
+defect in the same repro — `auto& slot_opt = m.get_mut(1);` binds a
+reference to a by-value temporary `Option` — which should be `auto`;
+fix both together, since annotating only one still leaves wrong code.
+
+**CORRECTION — this bug is LOUD, not silent.** I rated it the
+highest-value transpiler fix on the belief that it emitted quietly-wrong
+code. It does not, on the current transpiler. Three probes:
+
+| form | emitted | verdict |
+|---|---|---|
+| `let s = m.get_mut(1).unwrap()` | `auto& s` | correct |
+| `let o: Option<&mut Vec<i32>> = m.get_mut(1); let s = o.unwrap()` | `Option<Vec<int32_t>&> o` / `Vec<int32_t>& s` | correct |
+| `let o = m.get_mut(1); let s = o.unwrap()` | `auto& o = <temporary>` | **does not compile** |
+
+The third emits `auto& o = m.get_mut(1);`, and binding a non-const lvalue
+reference to a by-value temporary is ill-formed — confirmed by compiling
+the reduced case, not by reasoning about it:
+
+```
+error: non-const lvalue reference to type 'optional<...>' cannot bind to
+a temporary of type 'optional<...>'
+```
+
+So the `const auto s = o.unwrap()` defect on the next line is never
+reached: the TU fails first. Whoever hits this gets a diagnostic
+immediately.
+
+That changes the priority. §7.21's silent 20/20-passing incident was
+real, but it came from an intermediate whose type was already known —
+and that path is now correct. What remains is an ERGONOMIC gap (the bare
+two-step needs an annotation the chained form does not), not a
+correctness landmine. Fix it for polish, not for safety, and do not let
+it displace work that is genuinely silent.
+
+**Method note.** Both corrections in this section came from probing three
+variants instead of one. The first probe (bare two-step) looked like a
+silent by-value bug; only adding the annotated variant showed the
+compiler already covers the case, and only compiling the reduced binding
+showed the remaining form is loud. One probe would have left a wrong
+priority in place — and I had already written that wrong priority into a
+commit message.
+
+**CORRECTION (2026-08-01) — the destruction no longer reproduces; 4c is moot.**
+§7.32 says `--rewrite` deletes a function body *before* erroring on a
+block-id collision, and prescribes committing first. That hazard could
+not be reproduced on either the current transpiler or the older
+reference binary, under both triggers:
+
+ - **Live, unplanned.** Adding a `use` block to
+   `reactor/connection_metrics.cpp` auto-numbered to
+   `connection_metrics.1`, colliding with the struct block already
+   holding that id. `--rewrite` aborted with
+   `duplicate inline block id=…` and the file was byte-unchanged — the
+   struct body and every GEN marker intact (checked immediately, not
+   assumed).
+ - **Deliberate.** A synthetic file with two GEN blocks sharing an id:
+   both binaries exit 1 and leave the file byte-identical.
+
+So the "commit before regenerating" rule is no longer load-bearing for
+*this* failure. Committing first is still good practice — regeneration
+touches blocks you did not edit (§7.18) — but it is hygiene now, not a
+guard against losing work, and the planned upstream bug report has
+nothing left to report.
+
+Stated narrowly on purpose: two triggers were tested. If the original
+observation had a third (a partially-written block, an interrupted run),
+that path is unverified. What is settled is that the two collisions you
+actually hit in practice are safe.
+
+**The pattern, for the ninth time this session.** A documented blocker's
+stated cause had expired and nobody re-checked, so the workaround
+outlived it. Re-testing a stated cause costs one command; carrying a
+phantom constraint costs every future decision that routes around it.
+Before honouring a workaround, re-run its repro.
+
+### 7.38 `mod X { … }` lowers to `namespace X { … }` — nested namespaces are convertible
+
+Undocumented and unused anywhere in the tree, which reads like
+"unsupported". It is not. Probed directly:
+
+```rust
+mod this_fiber {
+    fn yield_probe() -> i32 { 7 }
+}
+```
+
+emits
+
+```cpp
+namespace this_fiber {
+    int32_t yield_probe();
+}
+
+// mod this_fiber
+namespace this_fiber {
+    int32_t yield_probe();
+    int32_t yield_probe() { return static_cast<int32_t>(7); }
+}
+```
+
+(The declaration appears twice — redundant but well-formed.)
+
+So code inside a nested namespace is not floored on the namespace. The
+worked candidate is `reactor/fiber.cpp`'s `this_fiber::yield()`, whose
+four lines are the file's entire remaining hand-written body.
+
+**Two hazards before converting one, neither about namespaces:**
+
+ - **`yield` is a Rust KEYWORD.** `fn yield()` will not parse; it needs
+   the raw identifier `r#yield`, and the escape strips the `r#` prefix so
+   the emitted name is still `yield`. Any C++ name that collides with a
+   Rust keyword (`match`, `type`, `move`, `become`, `yield`) hits this.
+ - **`inline` and `noexcept` are dropped.** The DSL emits neither. For a
+   free function in a module INTERFACE unit that is a linkage question,
+   not a cosmetic one — check the consumers before trading a working
+   `inline` for a DSL block.
+
+Recorded rather than executed: `this_fiber::yield()` sits in the fiber
+core, and four lines is not worth a linkage change made without a reason
+to touch that file. The point of the entry is that the NAMESPACE is not
+the blocker, so nobody re-derives that.
+
+### 7.39 The const-callable-callback floor: exactly where it stands
+
+§7.19 and the Goal-0(b) measurement both land on the same cluster —
+`OnFrameCallback` / `OnClosedCallback` / `OnErrorCallback` /
+`ConnectionCallback`, ~50 unresolved names — floored because the DSL
+emits every `move` closure as `[=, x = std::move(x)]() mutable`, and a
+mutable lambda's `operator()` is non-const, so it will not convert to
+`CallbackWrapper<void(..) const>`.
+
+`369c6897` ("emit `mutable` only when a move closure can modify a
+capture") looked like it retired that. **It does not.** Probed:
+
+```rust
+fn pure_read(n: i32) -> rusty::Function<dyn Fn() -> i32> {
+    let captured: i32 = n;
+    move || { captured + 1i32 }        // reads only
+}
+```
+
+still emits `[=, captured = std::move(captured)]() mutable`. The
+predicate is narrower than its commit title:
+
+```rust
+let needs_mutable =
+    is_move_closure && !(all_captures_are_raw_pointers && !body_reassigns_a_capture);
+```
+
+`mutable` is dropped only when **every capture is a raw pointer** (or
+there are none). Any value capture — including one that is merely read
+— keeps it. mako's channel closures capture `Weak`/`Arc` values, so
+they are unaffected.
+
+**What would lift it**, and why it is not a one-liner (§7.19 records an
+attempt that was reverted): the sound rule must keep `mutable` for a
+method call on a capture UNLESS the capture is pointer-like
+(`Arc`/`Box`/`Rc`/`Weak`, where mutation goes through a const-correct
+deref). The predicate for that exists
+(`type_is_pointer_like_owner_type`) but matches the type's LAST PATH
+SEGMENT BY NAME and does not resolve aliases — and mako's captures are
+spelled `WeakClientConnection`, a C++ `using` alias for
+`rusty::sync::Weak<…>`. So a naively-sound fix stays inert on exactly
+the code that needs it.
+
+Scoped as three changes, in dependency order:
+
+ 1. widen the mutability analysis from "all captures are raw pointers"
+    to "no capture is mutated", with pointer-like receivers treated as
+    non-mutating;
+ 2. teach the pointer-like predicate to resolve C++ `using` aliases
+    (today it only knows DSL `type X =` decls);
+ 3. Box-receiver method-call autoderef (§7.19's third blocker).
+
+Worth the effort for a reason that is now measurable rather than
+aesthetic: this single floor accounts for ~50 of the names Goal 0(b)
+would otherwise have to declare across an FFI boundary, and it blocks
+the whole channel-binding cluster in Goal 0(a). One fix, both goals.
+
+### 7.40 Overload families ARE expressible — as trait impls
+
+§7.24a records "no function overloading" as a structural floor: the DSL
+rejects two `fn` of the same name, so a C++ overload family looked
+unportable. That is true of *direct* declarations and false of the
+shape that matters.
+
+`impl Trait for X`, one impl per type, lowers to **overloaded free
+functions**:
+
+```rust
+pub trait Ser { fn ser(&self, ar: &mut Sink); }
+impl<T> Ser for rusty::Vec<T> { fn ser(&self, ar: &mut Sink) { … } }
+impl Ser for i32             { fn ser(&self, ar: &mut Sink) { … } }
+```
+
+emits
+
+```cpp
+namespace Ser_ {
+    template<typename T> void ser(const rusty::Vec<T>& self_, Sink& ar);
+    void ser(const int32_t& self_, Sink& ar);
+}
+using namespace Ser_;
+```
+
+Same name, different parameter types, brought into scope by the
+`using namespace` — an overload set, generated. The receiver becomes
+the first parameter, so `x.ser(ar)` in DSL and `ser(x, ar)` in C++ are
+the same call.
+
+**Why this matters more than it looks.** `misc/serializable.cpp` is 64
+template sites — the densest pocket of hand-written C++ in the tree —
+and they are not ordinary class templates at all. They are the serde
+overload family: `serialize`/`deserialize` repeated for `rusty::Vec`,
+`std::vector`, `std::list`, `BTreeSet`, `set`, `HashSet`,
+`unordered_set`, `BTreeMap`, `map`, … The Rust name for that pattern is
+a trait with one impl per type, and it round-trips back to exactly the
+free-function overload set the file already has, so the ~496 existing
+`serialize(x, ar)` call sites keep working untouched.
+
+**Correction to the A1 worklist.** Those 64 sites were counted as
+"plain class templates". They are not — they are an overload family,
+which a signature-window classifier cannot see, because overloading is
+a relationship *between* declarations rather than a construct *within*
+one. The A6 remedy recorded for overloading ("rename the call sites")
+would have been actively wrong here: renaming per-type destroys the
+uniform call syntax the whole wire layer depends on. Trait impls keep
+it.
+
+**Lesson for the remaining floor audit:** a per-declaration classifier
+cannot see relational properties. Overloading, ODR collisions, and
+specialisation-vs-base relationships all need a cross-declaration pass.
+Expect other "plain" counts to hide the same thing.
+
+### 7.40a serializable.cpp's overload family is also an ADL machine — a fork
+
+§7.40 proves `impl Trait for X` generates an overload set, which is the
+shape `misc/serializable.cpp` has. Reading the actual file before
+converting shows it is more than that. The family is a deliberately
+engineered ADL dispatch:
+
+```cpp
+namespace adl_detail_ {
+void serialize() = delete;              // lookup poison: stops ascent
+template<typename T>
+inline void dispatch_serialize(const T& v, BinaryWriteArchive& ar) {
+  serialize(v, ar);                     // ADL-only by construction
+}
+}
+```
+
+plus forward declarations emitted *before* the definitions "so nested
+containers resolve regardless of definition order", and unqualified
+element calls that fall back to a generic catch-all. The deleted decoy
+is load-bearing: it blocks self-selection and turns a missing overload
+into a diagnostic that names the type.
+
+All of that exists **because C++ has no traits**. In Rust the trait
+system *is* the dispatch. So this is not a 56-declaration port; it is a
+replacement of the wire layer's dispatch mechanism — in the one
+subsystem guarded by golden corpora, where a wrong answer is a
+wire-format bug rather than a compile error.
+
+**The fork:**
+
+ 1. *Leaf-only.* Convert the ~56 per-type impls to trait impls and KEEP
+    the hand-written catch-all + poison as a small remaining kernel.
+    Incremental, reversible, leaves ~8 lines of dispatch machinery
+    hand-written. The generated forward-declaration block (the probe
+    emits one) should satisfy the nested-container ordering
+    requirement, but that must be verified, not assumed.
+ 2. *Full.* Replace ADL dispatch with trait dispatch outright. More
+    idiomatic and removes the poison entirely, but changes how every
+    element call resolves, and the failure mode of getting it wrong is
+    silent: a different overload selected still compiles and still
+    produces bytes.
+
+Recommend (1) first: it converts the bulk, is independently verifiable
+against the golden corpus, and leaves (2) as a later, separately-gated
+decision. Do not start (2) without deciding the diagnostic story — the
+poison exists because someone was bitten by the absence of one.
+
+**Slice-readiness probe (2026-08-01).** Two things had to be true before
+starting the leaf-only conversion; both are:
+
+ - *Coexistence.* A DSL trait block placed inside an existing
+   `namespace Serialize_ { … }` emits its impls into a nested `Ser_`
+   namespace plus `using namespace Ser_;`, so generated overloads and
+   surviving hand-written ones form ONE overload set in the enclosing
+   namespace. A partial conversion is therefore possible — convert some
+   types, leave others hand-written.
+ - *Bodies, not declarations, are the real work.* The 56 impls are not
+   uniform. `rusty::` containers iterate Rust-style (`v.iter()` /
+   `next()` / `is_some()`) and map onto DSL `for_in`. The `std::` ones
+   (`set`, `unordered_set`, `map`, `unordered_map`, `vector`, `list`)
+   use the raw C++ iterator protocol, which has NO DSL spelling. So the
+   natural first slice is the `rusty::` containers only — it is
+   independent of how the `std::` question is resolved.
+
+Cost to accept: a trait emits an abstract base class and three adapter
+templates for dyn dispatch that a pure static-dispatch family never
+uses. Generated, so it does not count against the hand-written census,
+but it is real output.
+
+Open fork for the `std::` half: (a) a small C++ kernel adapting any
+`std::` container to a Rust-style iterator, called from DSL impls —
+contained, and the same "convert at the edge, isolate, annotate
+`@unsafe`" pattern the project already sanctions for `std::` boundary
+types; or (b) drop `std::` container support from the wire layer so
+every impl is `rusty::` — cleaner but changes the public RPC surface.
+
+**CORRECTION to the slice split (same day).** The readiness note above
+says the `rusty::` containers iterate Rust-style and the `std::` ones do
+not, so "`rusty::` only" is a clean first slice. **That split does not
+hold.** Reading the bodies:
+
+```cpp
+inline void serialize(const rusty::Vec<T>& v, BinaryWriteArchive& ar) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};    // .size(), not .len()
+  for (auto it = v.begin(); it != v.end(); ++it) ...  // C++ iterators
+}
+```
+
+`rusty::Vec` is an ALIAS for `std::vector` (see the collections
+migration note), so it iterates with `begin()/end()` exactly like the
+`std::` containers. The namespace a type is spelled in says nothing
+about how its body iterates.
+
+Actual grouping, by iteration mechanism rather than by name:
+
+ - `begin()/end()`: `rusty::Vec` (= `std::vector`), `std::vector`,
+   `std::list`, `std::set`, `std::unordered_set`, `std::map`,
+   `std::unordered_map`
+ - Rust-style `iter()`/`next()`/`is_some()`: `rusty::BTreeSet`,
+   `rusty::BTreeMap`
+ - hashbrown, with a documented crash hazard: `rusty::HashSet`,
+   `rusty::HashMap` — their comments warn that ANY enumeration
+   (`iter()`/`begin()`/`drain()`) routes through the `rusty::iter(table)`
+   lambda in slice.hpp, and one of them records that nothing currently
+   serializes a `rusty::HashSet` at all
+
+So the honest first slice is the **two BTree containers** (4 impls with
+serialize+deserialize), not "all `rusty::`". The rest need the `std::`
+iteration decision, and the hashbrown pair needs its own hazard review
+before anyone touches it.
+
+Lesson: this is the second time in one file that a plan derived from
+DECLARATIONS was wrong once the BODIES were read — first the overload
+family hiding behind "plain templates", now the iteration split hiding
+behind namespace names. In a file this dense, read bodies before
+slicing.
+
+**RETRACTION — the `std::` fork does not exist.** The note above poses
+(a) an adapter kernel vs (b) dropping `std::` container support, on the
+premise that `begin()/end()` iteration "has NO DSL spelling". Probed:
+it does.
+
+DSL `for e in v` lowers to `for (auto&& e : rusty::for_in(rusty::iter(v)))`
+— identically for `rusty::Vec` and `std::set` — and `rusty::iter` has an
+explicit STL arm (slice.hpp ~1960):
+
+```cpp
+} else if constexpr (requires { std::begin(range); std::end(range); }) {
+    return std::forward<Range>(range);
+}
+```
+
+So any `std::begin`/`std::end` container passes straight through to a
+C++ range-for. `std::vector`, `std::list`, `std::set`,
+`std::unordered_set`, `std::map`, `std::unordered_map` and
+`rusty::Vec` are all directly DSL-expressible. No adapter kernel, no
+RPC-surface change, no decision required.
+
+That makes the slice **7 of the 12 container types**, not the two
+BTree ones. Only `rusty::HashSet` / `rusty::HashMap` still need their
+own review — for the documented hashbrown enumeration hazard recorded
+in their own comments, not for anything about the DSL.
+
+Three "blockers" in this one file have now evaporated on contact with a
+probe: "plain class templates" (an overload family), "`rusty::` vs
+`std::` iteration" (`rusty::Vec` IS `std::vector`), and now "`std::`
+containers have no DSL iteration". Each was stated confidently in a
+comment or a plan and each cost one command to disprove. In this
+codebase, probe before believing — including before believing yourself.
+
+### 7.40b Partial conversion of a MUTUALLY RECURSIVE overload family fails
+
+Attempted (and reverted) the second slice of `serializable.cpp`: six
+more containers (`rusty::Vec`, `std::vector`, `set`, `unordered_set`,
+`map`, `unordered_map`) as trait impls alongside the already-converted
+`std::list`. It does not work, and the reason is structural rather than
+a missing feature.
+
+The serde family is **mutually recursive**: `serialize(vector<T>)`
+calls `serialize(T)`, which for `vector<vector<int>>` calls
+`serialize(vector<int>)` again. The hand-written code makes that work
+with a block of forward declarations emitted *before* every definition
+— that is exactly what those declarations are for.
+
+A converted impl cannot participate:
+
+```
+test_marshal.cc   rrr::Serialize_::serialize(nested_vec, war)   // vector<vector<int>>
+  -> WireSerialize_::serialize<vector<int>>       (converted impl, via the using) OK
+    -> body: Serialize_::serialize(e, ar)         // e is vector<int>
+      -> resolves to the CATCH-ALL, not the converted overload
+        -> adl_detail_ -> ADL-only -> hard error
+```
+
+The generated bodies sit *before* the `using ::rrr::WireSerialize_::serialize;`
+bridge, and the bridge cannot be hoisted above them because it names
+`WireSerialize_`, which the GEN block itself introduces. Circular.
+
+**Why the first slice passed anyway:** nothing nests `std::list`. The
+recursion never re-entered a converted overload, so the gap never
+showed. A green gate on one type says nothing about the next.
+
+**Routes, for whoever picks this up:**
+ 1. *Whole-family conversion.* One trait block containing every impl —
+    the transpiler emits all forward declarations before all
+    definitions *within a block*, so the recursion closes. Big-bang on
+    the wire layer, gated by the golden corpus.
+ 2. *Hand-written forward declarations* for converted types, kept
+    alongside the trait. Small, incremental, but leaves hand-written
+    C++ behind — it trades a body for a declaration rather than
+    removing one.
+ 3. Leave the family alone; spend Phase A effort where conversions are
+    independent.
+
+**Resolution:** route 1 later landed. All 12 container/pair impls now live
+in the original `Serialize` trait block; its GEN declares the complete
+`Serialize_` overload set before the first body. The temporary
+`WireSerialize_` namespace, its forwarding overloads, and their declaration
+walls are gone.
+
+### 7.41 Default-init helpers: half of them are no longer needed
+
+`tcp_channel.cpp` carries nine one-line helpers whose comment explains
+them: *"the DSL struct literal can't spell a default-constructed
+std::vector / FrameStreamReader / On*Callback inline, so the ctor field
+inits call these."* Probed — the claim is **half true**, and the half
+that is false is free to reclaim:
+
+| DSL spelling | emits | verdict |
+|---|---|---|
+| `FrameStreamReader::new()` | `FrameStreamReader::new_()` | ✅ works — the type has that factory |
+| `OnFrameCallback {}` | `OnFrameCallback{}` | ✅ works — empty-callback literal |
+| `std::vector::<u8>::new()` | `std::vector<uint8_t>::new_()` | ❌ `std::vector` has no `new_` static |
+| `std::string::new()` | `std::string::new_()` | ❌ same |
+
+So the DSL-typed defaults (`FrameStreamReader`, the four `On*Callback`
+fields, `AcceptStep{}`, `FrameView{}`) can be written inline and their
+helpers deleted. The `std::`-typed ones (`tcpconn_empty_buf`,
+`tcplistener_empty_addr`) genuinely cannot be, because the DSL lowers
+`T::new()` to `T::new_()` and the std types have no such static.
+
+> **Superseded (§7.53).** The `std::`-typed conclusion was right about
+> `T::new()` and wrong overall: `Default::default()` reaches them, and
+> `tcplistener_empty_addr` is now deleted. `T::new()` was simply not the
+> spelling to try.
+
+Untested alternative worth one compile: `rusty::Vec::<u8>::new()` emits
+`rusty::Vec<uint8_t>::new_()`, and `rusty::Vec` IS `std::vector`, so if
+that factory exists the vector helper is reclaimable too. Likewise
+`String::new()` → `rusty::String::new_()`, though assigning that to a
+`std::string` field needs checking. Both are compile questions, not
+probe questions.
+
+Not executed: it removes roughly nine lines and costs a full gate cycle,
+so it is worth batching with other `tcp_channel.cpp` work rather than
+doing alone. Recorded so nobody re-derives the split.
+
+**The pattern, again.** A code comment stated a limitation as fact; the
+limitation had partly expired; one probe separated the live half from
+the dead half. That is now twelve for this session. Comments age badly
+in a codebase whose toolchain is under active development — treat every
+"the DSL can't X" as a dated observation, not a property.
+
+### 7.42 The `Function<..>` alias workarounds are now unnecessary (16 sites)
+
+A sweep for stated DSL limitations across `src/rrr` turned up ~24
+"the DSL can't X" comments. One family is already dead as of today's
+gap-1 fix (§7.40 / the `rusty::Function` bare-signature change):
+
+```
+base/misc.cpp:143   // Callback alias (the DSL can't parse a Function<..> field type inline).
+                    using OneTimeJobFn = rusty::Function<void()>;
+rpc/client.cpp:553  // the DSL can't parse `Function<void()>` as a generic type argument,
+                    // so alias it (mirrors OnFrameCallback / QueuedRequestCallback).
+                    using CompletionFn = rusty::Function<void()>;
+```
+
+Probed — all three positions now work inline:
+
+| DSL | emits |
+|---|---|
+| field `cb_: rusty::Function<dyn FnMut()>` | `rusty::Function<void()> cb_;` |
+| field `ccb_: rusty::Function<dyn Fn(i32)>` | `rusty::Function<void(int32_t) const> ccb_;` |
+| param `fn f(c: rusty::Function<dyn FnMut()>)` | `int32_t take_cb(rusty::Function<void()> f)` |
+
+`grep -c 'using \w*Callback\w* = rusty::Function'` over `src/rrr`
+reports **16 such aliases**. Each exists only to give the type a name
+the DSL could parse; each can now be spelled inline at its use.
+
+Two cautions before a sweep:
+
+ - Some aliases are **public API** (`OnFrameCallback`,
+   `StateChangeCallback`, `QueuedRequestCallback` appear in headers and
+   call sites). Deleting those renames the surface. The win is removing
+   aliases that exist ONLY as a parse workaround — check each for
+   external users first.
+ - `dyn Fn` vs `dyn FnMut` decides the `const` qualifier, and the
+   existing aliases encode that choice in their spelling
+   (`Function<void(..) const>` vs `Function<void(..)>`). Match it
+   exactly; getting it backwards changes callable constness and fails
+   at the call site, not the declaration.
+
+Worth doing as one batched pass rather than per-file, since the pattern
+is uniform and each gate cycle is ~40 minutes.
+
+### 7.43 Batch re-test of stated limitations: 2 of 3 expired
+
+Continuing the sweep (§7.42). Three more claims probed in one pass:
+
+| claim (and where it is stated) | result |
+|---|---|
+| `client.cpp:1097` — "the DSL cannot emit `nullptr`" | **STILL TRUE.** `std::ptr::null()` lowers verbatim to `std::ptr::null()`, which is not C++. The `null_reply_bytes()` kernel stays. |
+| `client.cpp:1481` — "the DSL can't deref a Box for a method" | **EXPIRED.** `(*b).close()` on a `rusty::Box` emits `rusty::detail::deref_if_pointer_like(b).close()` — the deref happens. |
+| `epoll_platform_linux.cc:22` — "struct-fill / memset has no DSL spelling" | **EXPIRED.** A struct literal emits designated initialisers (`epoll_event{.events = …, .data = …}`). |
+
+**The Box result shrinks §7.39.** That entry scopes the
+closure-mutability fix as three changes that must land together, the
+third being "Box-receiver method-call autoderef". That third step is
+already done — `deref_if_pointer_like` covers Box. So the remaining
+work is two changes, not three:
+
+ 1. widen the mutability analysis from "all captures are raw pointers"
+    to "no capture is mutated", pointer-like receivers non-mutating;
+ 2. teach the pointer-like predicate to resolve C++ `using` aliases
+    (it matches the last path segment by name, so it cannot see
+    `WeakClientConnection` = `rusty::sync::Weak<…>`).
+
+Still both-or-nothing — step 1 alone stays inert on mako's closures —
+but a third smaller than it was.
+
+Running tally for the session: **fourteen** stated limitations tested,
+twelve expired wholly or partly. The two that held (`nullptr`,
+variadic generics) are both cases where Rust genuinely has no
+equivalent — which is the shape of a real floor. Everything else has
+been a dated observation about a toolchain that kept moving.
+
+### 7.44 ⚠ `#[cfg(...)]` is SILENTLY DROPPED — and the fn-local-static floor is gone
+
+Third batch of the limitation sweep. Two expiries and one hazard.
+
+**`#[cfg(target_os = "linux")]` is silently discarded.** Probed:
+
+```rust
+#[cfg(target_os = "linux")]
+fn plat() -> i32 { 1i32 }
+```
+
+emits
+
+```cpp
+int32_t plat() { return static_cast<int32_t>(1); }
+```
+
+No `#if defined(__linux__)`, no diagnostic, no TODO comment. The
+function is emitted **unconditionally**. Anyone porting
+platform-conditional code by writing `#[cfg]` and trusting the output
+gets code compiled on every platform — a wrong-code failure that
+compiles, which is the worst category. This is the same shape as the
+`use rusty::…` silent drop fixed earlier today (§7.42 lineage), and it
+deserves the same treatment upstream: either lower `cfg` to `#if`, or
+refuse to transpile it. Silently ignoring it is the one unacceptable
+option.
+
+Practical consequence for inline carriers: a remaining `#ifdef` platform split
+such as `threading.cpp:229` must stay outside the Rust block or be split into
+per-platform files (the `fiber_context_*.S` arrangement). The former basetypes
+split is no longer a C++ floor: canonical `basetypes.rs` calls the audited
+plain-C `srpc_timing.c` seam. Do NOT write `#[cfg]` expecting it to work.
+
+**Two floors expired.**
+
+| claim | result |
+|---|---|
+| `any_message.cpp:384` — "returns a reference to it, which the DSL cannot spell" | **EXPIRED**: `fn get_ref(v: &Vec<i32>) -> &i32` emits `const int32_t& get_ref(const rusty::Vec<int32_t>&)` |
+| `any_message.cpp:383` / §7.24b — "FUNCTION-LOCAL STATIC, not DSL-expressible" | **EXPIRED**: `static mut N: i64 = 0;` inside a fn emits `static int64_t N = static_cast<int64_t>(0);` in the body |
+
+The second retires one of the **three structural floors** §7.24 names
+(class templates, overloading, function-local statics). All three are
+now disproved: class templates in §7.40's probe, overloading via trait
+impls (§7.40), and function-local statics here. §7.24's framing should
+be read as historical.
+
+That also removes **A4** from the Goal 0 Phase-A plan — it was never a
+reshape task, the construct simply works now.
+
+### 7.45 The heuristic that predicts which limitations are stale
+
+Twenty stated limitations have now been re-tested. A rule emerged that
+has predicted **every** outcome so far, and it is cheaper to apply than
+a probe:
+
+> **Does the limitation trace to a gap in RUST's own expressiveness, or
+> to "the transpiler doesn't do it yet"?** The first is a real floor.
+> The second is a dated observation and is almost certainly stale.
+
+Scoreboard:
+
+| limitation | Rust has the construct? | verdict |
+|---|---|---|
+| `nullptr` | no (`std::ptr::null()` has no C++ lowering) | **REAL** |
+| variadic generics | no | **REAL** |
+| per-field in-class default initialisers | no — Rust uses `Default`, not field inits | **REAL** (parse error, confirmed) |
+| default arguments | no | **REAL** (untested, but same shape) |
+| class templates | yes (generics) | stale |
+| function overloading | yes (trait impls) | stale |
+| function-local statics | yes | stale |
+| returning a reference | yes | stale |
+| Box deref for a method call | yes (auto-deref) | stale |
+| struct fill | yes (struct literal) | stale |
+| move-out-of-deque | yes (`pop_front`) | stale — `q.pop_front()` lowers verbatim |
+| `Function<..>` as a field/param type | yes | stale |
+| `use rusty::…` imports | yes | stale (fixed today) |
+
+Sixteen tested stale, four real — and the four real ones are exactly the
+four where Rust itself lacks the feature. That is not a coincidence: the
+transpiler's job is to lower Rust, so anything Rust can say it will
+eventually say, while anything Rust cannot say has nowhere to come from.
+
+**Use it to triage, not to conclude.** The heuristic says where to spend
+a probe, and the probe still decides — but it has turned a 24-item list
+into a ranked one, and it explains why the "floor" framing in §7.24 kept
+dissolving: those were all transpiler-maturity claims wearing the
+language of language limits.
+
+### 7.46 Sweep complete — and two ways the grep lies
+
+All ~24 "the DSL can't X" comments in `src/rrr` are now accounted for.
+The last two resolved without a probe, and both were **false positives
+of the search itself**:
+
+ - `server.cpp:580` — "the transpiler cannot see the element type
+   THROUGH the Mutex guard, so it emitted `.close()` on the Box instead
+   of `->close()`. Naming the type restores it." That is a comment
+   documenting a **working idiom** (annotate the binding, §7.21), on
+   code that is *already DSL*. Not a limitation; a recipe.
+ - `circuit_breaker.cpp:22` — "Previously called
+   `clock_gettime(CLOCK_MONOTONIC)` directly — a raw libc syscall the
+   DSL doesn't model. **Now delegates to**
+   `rusty::sys::time::clock_monotonic_us`." A **historical note** about
+   something already fixed, again on code that is already DSL.
+
+So when grepping for stated limitations, expect three kinds of hit and
+only one of them is a target:
+
+| kind | example | action |
+|---|---|---|
+| active limitation | "the DSL can't spell a default `std::vector`" | probe it |
+| working idiom, explained | "…so naming the type restores it" | none — it already works |
+| historical note | "previously called X… now delegates to Y" | none — already fixed |
+
+Both non-targets are *good* comments: they explain why code looks the
+way it does. But they inflate any count derived from the grep, and a
+plan built on that count inherits the inflation. Read the sentence to
+the end before believing the phrase — "the DSL doesn't model" and "now
+delegates to" were in the same sentence.
+
+**Final tally for the sweep:** ~24 comments → 9 disproved constructs,
+4 blocked on one fixable transpiler bug (`#[cfg]`), 8 genuinely real
+across 5 constructs, 2 false positives. Zero unknowns remaining.
+
+### 7.47 `bind_channel_direct` is now unblocked — the closure fix's payoff case
+
+§7.19 floored the channel-binding cluster because the DSL emitted every
+`move` closure as `[=] mutable`, and a mutable lambda's `operator()` is
+non-const, so it would not convert to the const-callable
+`CallbackWrapper<void(..) const>` slots the channel layer uses. That is
+fixed (rusty-cpp `92c6544a` + `0bf1d3d6` + `000f14a9`), verified on the
+exact shape:
+
+```
+let weak: WeakClientConnection = make_weak();
+move || { weak.upgrade(); }     ->  [=, weak = std::move(weak)]()   // no mutable
+```
+
+`clientconn_bind_channel_direct` (client.cpp ~4684, 36 lines) is the
+worked target. Its three callback installations capture `weak_self` and
+call `.upgrade()` — precisely the pattern above:
+
+```cpp
+channel->set_on_frame([weak_self](const ChannelFrame& f) { … upgrade() … });
+channel->set_on_closed([weak_self](ChannelError) { … upgrade() … });
+channel->set_on_error([](ChannelError, std::string_view) {});
+```
+
+**Remaining pieces, all with known routes** — none is the old blocker:
+
+| piece | route |
+|---|---|
+| `channel->set_on_frame(..)` on a `Box` proxy | Box deref works (§7.43) |
+| `if (!channel) return;` | `Box::is_valid()` (§7.19 precedent) |
+| lambda params `const ChannelFrame&`, `std::string_view` | reference params lower (§7.44) |
+| `f.payload`, `f.size` | plain field access |
+| scoped guard + `*guard = Some(..)` | the guard-then-deref idiom (§7.33) |
+
+Not attempted here: `client.cpp` is the RPC client core, and this is a
+36-line conversion touching callback installation, a Box proxy, and a
+lock scope at once. It wants a dedicated run with a full gate, not the
+tail of a long session. But the reason it was *floored* is gone, and
+that was the point of the transpiler work.
+
+### 7.48 The drift guard is blind to transpiler changes
+
+`scripts/rrr_dsl_check.sh` compares each block's `rust_sha256` against a
+hash of the Rust source. That catches the failure it was built for --
+Rust edited without regenerating -- and nothing else. In particular it
+**cannot see a GEN region that is stale with respect to the transpiler
+itself**, because changing the transpiler does not change the Rust.
+
+Measured, not reasoned: the check reported `checked 41 files, 0 with
+drift` at a moment when five blocks in `client.cpp` still carried
+`mutable` on closures that the current transpiler no longer emits (the
+`000f14a9` closure-mutability fix). Regenerating one file for an
+unrelated reason is what surfaced them.
+
+So there are two independent staleness axes, and only one is guarded:
+
+| stale thing | detected by | guard exists |
+|---|---|---|
+| GEN vs the Rust above it | `rust_sha256` | yes |
+| GEN vs the transpiler that made it | nothing | **no** |
+
+Two practical consequences:
+
+1. **After bumping the rusty-cpp pin, regenerate everything and diff.**
+   A green drift check does not mean the tree reflects the new
+   transpiler. Treat the pin bump as a regen event, not just a submodule
+   move.
+2. **Expect unrelated hunks when regenerating a file.** They are not
+   corruption; they are backlog from earlier transpiler fixes. Read them
+   -- they are also the only proof those fixes reach real code.
+
+The obvious fix (mix a transpiler version/hash into the stamp) would
+make every pin bump dirty every block at once, which is why it has not
+been done. The cheap version is a periodic regen-and-diff sweep, which
+is what caught this.
+
+#### The stale-binary trap that produced the false reading first
+
+Before the above, a probe of `Vec<rusty::Function<dyn FnMut()>>`
+reported the *wrong* lowering -- a double wrapper
+`Function<std::function<void()>>` -- which contradicted a landed commit
+that had produced clean `Function<void()>` from identical input. The
+probe was run against `target/release/rusty-cpp-transpiler`, a binary
+predating the `4d48363e` bare-signature fix that was already in HEAD.
+
+The tell was the contradiction with a commit, not anything in the
+output; the wrong output is perfectly plausible on its own. Check
+`stat -c %y` on the binary against `find src -name '*.rs' -newer` before
+believing any probe result. This is the same family as the stale test
+binaries in §7.31 -- a green or red reading from a binary that is not
+the thing you think you are measuring.
+
+### 7.49 Sweep of the remaining "stated causes" in src/rrr
+
+§7.45 predicts that comments claiming "the DSL can't do X" go stale
+faster than anyone updates them, and that re-reading them is the
+highest-yield move available. Grepping src/rrr for the phrasings
+(`DSL can't`, `cannot spell`, `no spelling`, `wouldn't parse`, ...)
+returns ~24 sites. Three probed this round; **all three stale**:
+
+**1. `CompletionFn` / `OnConnectedFn` / `OnErrorFn` / `OnReconnectedFn` /
+`ServerRunAsyncFn`** -- "the DSL can't parse `Function<void()>` as a
+generic type argument" and "Rust syntax has no spelling for a C++
+function template like `rusty::Function<void() const>`". Both false.
+`dyn Fn` produces the `const` form, `dyn FnMut` the non-const one, and
+`&std::string` produces `const std::string&`, in every position tried
+(field, `Vec<..>`, `RefCell<..>`, parameter, local, return).
+
+**2. `QuorumFinalizeFn`** (reactor.cpp) -- "the DSL cannot parse a bare
+fn-type template argument as a field/param signature". False:
+
+    rusty::Function<dyn FnMut(&mut rusty::Vec<std::pair<u16, rrr::i64>>) -> bool>
+
+lowers to exactly the alias's expansion,
+`rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64>>&)>`,
+including the `&mut` -> trailing-`&` and the nested `std::pair`.
+
+**3. `null_reply_bytes()`** (client.cpp) -- "The DSL cannot emit
+`nullptr`: it lowers to a non-existent `nullptr_`". The conclusion is
+stale even though the observation was real. The working spelling is
+**`core::ptr::null()`**, which lowers to `rusty::ptr::null()` -- a
+function that exists, and whose own header comment documents
+`core::ptr::null::<T>()` as the intended DSL form:
+
+| DSL spelling | lowers to | usable |
+|---|---|---|
+| `std::ptr::null()` | `std::ptr::null()` | **no** -- passed through verbatim, does not compile |
+| `core::ptr::null()` | `rusty::ptr::null()` | yes |
+| `core::ptr::null_mut()` | `rusty::ptr::null_mut()` | yes |
+| `0 as *const u8` | `rusty::detail::ptr_cast<const uint8_t*>(0)` | yes |
+
+The trap is that `std::` is passed through untouched while `core::` is
+remapped to `rusty::`. A `std::`-prefixed path that has no C++ equivalent
+therefore fails *silently at the DSL level* and only errors much later in
+the C++ compile. When a `std::foo::bar()` call looks wrong in GEN, try
+`core::` before concluding the construct is unsupported.
+
+Not yet re-checked (still carrying stated causes): the `#[cpp_ctor]`
+default-init helpers (reconnect_policy, tcp_channel, fiber_channel,
+server), the variadic `add_event(Args...)` in reactor, the `*_to_string`
+varargs, and the RefCell-temporary bind at reactor.cpp:3762. The
+default-field-initializer one is a *documented* limit in CLAUDE.md, so
+that family is the most likely to be a genuine floor.
+
+#### 7.49.1 The negative result that makes the heuristic trustworthy
+
+Eight stated causes have now been probed and found stale, which invites
+the wrong conclusion -- that every such comment is stale and the floor is
+zero. It is not. Probed directly:
+
+    struct V { a: i32 = 5, b: bool = true }
+    -> inline-rust error: Parse error: expected `,`
+
+Default field initializers are a **real floor**, and the reason is the
+one §7.45 names: Rust itself has no field-default syntax (you write
+`impl Default`), so there is nothing for the DSL to lower. No transpiler
+change fixes this -- it is a language-expressiveness gap, not a
+missing feature.
+
+That legitimises the remaining `#[cpp_ctor]` default-init family
+(tcp_channel.cpp, fiber_channel.cpp, server.cpp)
+and matches CLAUDE.md, which already documents it as a known limit to
+design around via `fn new`/factory functions.
+
+`rrr.reconnect_policy` has since taken that design-around: canonical Rust owns
+an explicit `ReconnectPolicy::new()` factory, and its former carrier is gone.
+
+So the scoreboard is 8 stale / 1 confirmed-real, and the split falls
+exactly where §7.45 predicts:
+
+ - claims of the form *"the transpiler doesn't do X yet"* -> presume stale,
+   re-measure (8 for 8 so far)
+ - claims of the form *"Rust has no way to say X"* -> presume real floor
+
+Use the phrasing of the comment as the triage signal, and always probe
+against a freshly built binary (§7.48).
+
+### 7.50 Box method deref: real floor, and a probe that lied
+
+`client.cpp` carries two kernels (`box_close`, `fiberchannel_bind_callbacks`)
+whose stated cause is "the inline-rust grammar emits a Box method call as
+`box.method()` (dot) rather than `box->method()`". Under the §7.45
+heuristic this reads like a transpiler gap, so it should be stale. **It is
+not.** Both kernels are legitimate today.
+
+The near-miss is worth recording because the probe *appeared* to disprove
+it. Probing a plain field:
+
+    (*self.b).close()
+    -> ((rusty::detail::deref_if_pointer_like(this->b))).close()   // correct
+
+so the claim looked false and both kernels were deleted. But the actual
+call sites deref a **method-call chain**, not a field:
+
+    (*(*guard).as_ref().unwrap()).close()
+    -> ((((*guard)).as_ref().unwrap())).close()                    // deref DROPPED
+
+which fails to compile exactly as the comment predicted:
+
+    error: no member named 'close' in 'rusty::Box<Chan>';
+           did you mean to use '->' instead of '.'?
+
+The first characterisation of this -- "field operand works, *chained*
+operand loses the deref" -- was **wrong**, and narrowing it mattered. A
+chain rooted at a field is fine; the trigger is a **guard** in the chain:
+
+| operand | emitted | ok |
+|---|---|---|
+| `(*self.b)` (field) | `deref_if_pointer_like(this->b)` | yes |
+| `(*self.o.as_ref().unwrap())` (chain from a field) | `deref_if_pointer_like(this->o.as_ref().unwrap())` | yes |
+| `(*(*guard).as_ref().unwrap())` (chain from a guard) | `((*guard).as_ref().unwrap())` -- deref **dropped** | **no** |
+
+Minimal reproducer: `docs/repro/box_guard_deref_repro.cpp` -- two methods on one
+struct, `no_guard` and `via_guard`, differing only in whether the Option
+is reached through a `MutexGuard`. The guard-deref branch in
+`transpiler/src/codegen/emit_expr.rs` (the arm that emits `*{operand}`
+directly for guard-like receivers, ~line 22085) consumes the outer `*`
+and never re-emits it as the helper.
+
+That is a genuine transpiler bug, and the proper fix under the decision
+rule is to make the paths agree rather than keep the kernels -- but until
+it is fixed, the kernels stay and the change was reverted.
+
+**The lesson is about probe fidelity, not about Box.** A probe is only
+evidence for the shape it actually tested. `self.b` and
+`(*guard).as_ref().unwrap()` are both "a Box" to a reader and different
+operands to the compiler. When re-checking a stated cause, copy the real
+call site's shape -- receiver form included -- rather than writing the
+simplest expression of the same idea.
+
+And compile the *emitted* C++, not a hand-written equivalent of it. The
+`deref_if_pointer_like` form compiles fine; the form the transpiler
+actually produced does not. Checking the first one is what let a broken
+change get as far as regeneration.
+
+By contrast the nullptr kernel in the same file (§7.49) *was* stale, and
+its replacement was verified by compiling the emitted
+`cb(ENOTCONN, rusty::ptr::null(), 0)` rather than assuming the conversion.
+
+#### 7.50.1 Root cause, and a call-site route that does not need the fix
+
+Tracing the guard case to its origin: the collapse predicate
+`unary_deref_should_collapse_reference_like_operand` (codegen/mod.rs
+~13248) is **already correct** for this shape -- it explicitly preserves
+the deref for pointer-like referents:
+
+    // preserve deref for pointer-like owners (e.g. `&Box<T>`)
+    !self.type_is_pointer_like_owner_type(&reference.elem)
+
+The failure is upstream of it. When `infer_simple_expr_type` cannot type
+the operand, the function takes an early return:
+
+    let Some(inferred) = inferred else {
+        return !matches!(self.peel_paren_group_expr(expr), syn::Expr::Path(_));
+    };
+
+i.e. *collapse anything that is not a bare path*. Inference succeeds for
+`self.o.as_ref().unwrap()` (yields `&Box<Chan>` -> no collapse, correct)
+and **fails through a `MutexGuard`**, so `(*guard).as_ref().unwrap()`
+falls into the fallback and is collapsed. The bug is that the
+inference-failure fallback defaults to the *unsound* answer for
+pointer-like referents.
+
+The real fix is to make inference see through guards (`*guard` where
+`guard: MutexGuard<T>` yields `T`), which would let the existing correct
+predicate do its job. That is transpiler work and wants the full suite.
+
+**But the call site has a route today** (decision rule #2), and it is the
+spelling Rust would want anyway -- bind the referent to a typed local:
+
+    let mut guard = self.m.lock().unwrap();
+    if (*guard).is_some() {
+        let ch: &mut rusty::Box<Chan> = (*guard).as_mut().unwrap();
+        (*ch).close();
+    }
+
+    -> rusty::Box<Chan>& ch = ((*guard)).as_mut().unwrap();
+       ((rusty::detail::deref_if_pointer_like(ch))).close();      // compiles
+
+Two details that are easy to get wrong:
+
+ - It must be **`as_mut()`, not `as_ref()`**. `as_ref()` yields
+   `Option<&T>`, so binding it to `&mut T` is a Rust type error -- it
+   happens to lower to working C++, but Goal 0 requires the DSL to be
+   real Rust, so the C++-only spelling is not acceptable.
+ - The binding must be `&mut`. A `&` binding lowers to
+   `const Box<T>&`, and both `close()` and `bind_callbacks()` are
+   `&mut self`, so the const form fails at the call.
+
+Verified by compiling the emitted C++ in both shapes, not by inspection.
+
+#### 7.50.2 The precise transpiler fix (for whoever does it)
+
+Tracing one level further than §7.50.1. `infer_simple_expr_type`'s
+`UnOp::Deref` arm (codegen/inference.rs ~6901) ends in
+
+    self.infer_deref_result_type_from_type(&base_ty)
+
+and that function (~9455) only knows how to deref these owners:
+
+    "Box" | "NonNull" | "ConstNonNull" | "Ptr" | "MutPtr" | "Unique"
+        | "reference_wrapper"  => first_type_arg(),
+    _ => None,
+
+**The RAII guards are absent.** So `*guard` types as `None` even when
+`guard`'s own type is known, the collapse predicate hits its
+inference-failure fallback, and the deref is dropped (§7.50).
+
+The telling detail: `emit_expr.rs` already carries the exact set that is
+missing here --
+
+    "Ref" | "RefMut" | "MutexGuard" | "SpinMutexGuard"
+        | "RwLockReadGuard" | "RwLockWriteGuard"
+
+-- in its guard-deref arm. Two places encode "what is a guard" and only
+one of them was taught to type the deref. Adding those six idents to
+`infer_deref_result_type_from_type` is general and simply true
+(`MutexGuard<T>` derefs to `T`), not an srpc special case.
+
+Two things to check when doing it, rather than assuming:
+
+ 1. Whether `let guard = self.m.lock().unwrap();` gives `guard` an
+    inferable type at all. If `lock()`/`unwrap()` are not modelled, the
+    deref arm never gets a `base_ty` and part 1 alone changes nothing --
+    the repro in `docs/repro/` is the check.
+ 2. Whether making these deref *stops* the intended
+    `format!("*{}", operand)` guard branch from firing. That branch
+    exists so `*guard = expr` lowers as a real assignment through the
+    guard; it is gated on the same idents, so a naive change could
+    reroute assignments into `deref_if_pointer_like` and break SFINAE --
+    which is precisely the behaviour its comment says to preserve.
+
+That second point is why this is a dedicated run with the full suite
+(1955 tests) and not a drive-by edit. Deliberately not applied here: an
+untested transpiler change sitting in the submodule is worse than a
+documented one, because the next regen would silently bake it in.
+
+#### 7.50.3 The fix was attempted and REVERTED — and the suite did not notice
+
+§7.50.2 said the fix was "add the six RAII guard idents to
+`infer_deref_result_type_from_type`". That was tried. It works for the
+bug it targets and is **still wrong**, for a reason worth recording
+before anyone tries it again.
+
+Applied, rebuilt, and measured:
+
+ - the reproducer is fixed: the guard-rooted chain emits
+   `deref_if_pointer_like(((*guard)).as_ref().unwrap())`.
+ - the transpiler suite: **428 passed / 16 failed, a failing set
+   byte-identical to baseline.** No signal at all.
+ - regenerating src/rrr and compiling it: **broken.**
+
+       server.cpp:1164:9: error: no matching function for call to
+                                 'server_invoke_shutdown_hook_safely'
+
+**Why it breaks.** Teaching inference to type `*guard` makes a whole
+chain of previously-unknown expressions knowable, and other emitters
+change behaviour when they stop guessing. Here `for hook in ...` over a
+`Vec<ShutdownHook>` behind a guard: `&mut hook` used to emit `hook`
+(inference failed, so "assume it is already a reference" — right, because
+the C++ range-for binds a reference). With the fix, `hook` types as a
+*value*, so `&mut hook` emits `&hook` — a pointer, which will not bind to
+the `ShutdownHook&` parameter.
+
+So the change is not self-contained. A correct version must also make
+`&mut x` aware that a C++ loop binding is *already* a reference. Both
+halves have to land together.
+
+**The methodological point is bigger than the bug.** The transpiler suite
+could not see a change that breaks the build of the codebase the
+transpiler exists to serve. A green suite means "no known case changed",
+not "no case changed". Regenerating a real consumer and compiling it is a
+*different* check, and it is the one that found this.
+
+Concretely, for any transpiler change: regenerate src/rrr and build it,
+and separate the two populations first, because they are easily confused:
+
+ - **backlog** — files whose checked-in GEN predates the current pin, which
+   regenerate differently for reasons unrelated to your change (§7.48).
+ - **your change** — the incremental diff on top of that.
+
+Isolate by regenerating twice, once with each binary, and diffing the
+outputs. Here that separated 9 changed files into 6 backlog and 3 real,
+and only one of the 3 was the bug.
+
+**A second finding fell out of the backlog half, and my first reading of
+it was wrong.** Regenerating the former `rpc/utils.cpp` carrier at that time emitted
+`rusty::detail::mark_forgotten_if_supported`, and the build says:
+
+    utils.cpp:102:90: error: no member named 'mark_forgotten_if_supported'
+                             in namespace 'rusty::detail'
+
+I first recorded this as "the pin is internally inconsistent -- transpiler
+and headers disagree at the same SHA". **That is false.** The helper is
+right there in `include/rusty/slice.hpp:414`. The true statement is
+narrower, and is a rule already on the books:
+
+ - the helper is **header-only** -- it is absent from the transpiled
+   `rusty` module, so `import rusty;` does not bring it in; and
+ - that carrier was a module TU whose global module fragment included
+   `cell.hpp`, `result.hpp`, `sys/env.hpp` -- but not `slice.hpp`.
+
+That is the module-partition reachability rule: **a GMF must include what
+its own GEN names.** The historical fix was a one-line
+`#include <rusty/slice.hpp>`. Today canonical
+`src/rrr/src/utils.rs` owns the module, and its remaining GMF dependency is
+declared through structured preamble metadata.
+
+Check whether a missing symbol is *absent* or merely *unreachable* before
+concluding anything about the toolchain. One `grep` in `include/`
+separates the two, and the difference between them is "add one include"
+versus "the pin is broken".
+
+#### 7.50.4 Scoping the second half (`&mut x` on a loop binding)
+
+Where the two halves live, so the next attempt does not re-derive it:
+
+**Half 1** — `infer_deref_result_type_from_type`
+(codegen/inference.rs ~9455): add `Ref | RefMut | MutexGuard |
+SpinMutexGuard | RwLockReadGuard | RwLockWriteGuard` to the arm that
+currently lists `Box | NonNull | ConstNonNull | Ptr | MutPtr | Unique |
+reference_wrapper`. One line. Verified to fix the reproducer.
+
+**Half 2** — the `syn::Expr::Reference` arm of `emit_expr_to_string`
+(codegen/emit_expr.rs ~22118). Its fallthrough is
+
+    format!("&{}", inner)
+
+and that is what turns `&mut hook` into `&hook`. It is only correct when
+`inner` names a C++ *value*; for a binding that already lowers to a
+reference it must emit `inner` unchanged.
+
+The information needed is already collected: `pending_loop_var_bindings`
+and `pending_loop_var_binding_types` (codegen/mod.rs ~1318) record loop
+variables and their types as the loop is emitted. What is missing is a
+record of which of those lower to a C++ *reference* (a range-for over a
+container binds one), and a consultation of it in the arm above.
+
+Note the ordering trap: today half 2 is not needed, because inference
+fails and an earlier branch collapses the borrow. Landing half 1 alone
+removes that accident and exposes the gap. **The halves are not
+independent and must not be committed separately.**
+
+Verification for the pair cannot be the transpiler suite -- §7.50.3
+showed it reports an identical failing set while the tree is broken.
+It has to be: regenerate src/rrr, build `rrr`, and run a full gate,
+with backlog separated from the change's own effect (§7.48).
+
+### 7.51 Where the remaining kernels are, and which claims to re-check
+
+**Count kernels outside GEN regions.** A naive
+`grep -c '^inline\|^static'` counts *generated* code and is badly
+misleading: it ranked `rpc/errors.cpp` at 34, but every one of those is a
+transpiler-emitted `RpcError_XXX()` enum accessor inside a GEN block. The
+file has zero hand-written kernels. Excluding GEN regions:
+
+| file | hand-written kernels |
+|---|---|
+| misc/serializable.cpp | 104 |
+| reactor/reactor.cpp | 30 |
+| rpc/client.cpp | 21 |
+| rpc/server.cpp | 19 |
+| rpc/tcp_channel.cpp | 14 |
+| misc/any_message.cpp | 9 |
+
+`client.cpp` is at its floor after this pass: what remains is
+variadic/SFINAE templates, `reinterpret_cast` helpers (`str_as_i8`,
+`client_dsl_addr_to_cstr`), the single `std::chrono` interop point
+(`fut_secs`), and default-ctor factories (`reply_buffer_empty`,
+`make_pending_queue`) -- the last being the confirmed real floor (§7.49.1).
+
+**Triage of the stated causes in the next two targets**, by the §7.45
+phrasing rule:
+
+| site | claim | verdict |
+|---|---|---|
+| reactor 1294 | variadic ctor / `add_event(Args...)` | **real** — Rust has no variadics |
+| server 497 | `#[cpp_ctor]` default-init | **real** — §7.49.1 |
+| server 1080 | `*_to_string` varargs | **real** — varargs UB |
+| reactor 2607 | `QuorumFinalizeFn` fn-type arg | **stale** (§7.49) — kept only as kernel vocabulary |
+| reactor 3762 | "RefCell borrow returns a temporary Ref the DSL can't bind as a named guard" | **stale** — probed |
+| reactor 739, 2269 | "aliased so the DSL can spell" | unprobed |
+| server 480, 932 | "cannot spell" / "does not parse" | unprobed |
+
+The 3762 probe, for the record:
+
+    let guard = slot_.borrow();          -> auto&& guard = rusty::borrow(slot_);
+    let mut guard = slot_.borrow_mut();  -> auto&& guard = slot_.borrow_mut();
+
+with `deref_if_pointer_like(guard)` for the access, so both
+`reactor_tls_save_running_impl` and `reactor_tls_restore_running_impl`
+are convertible. (Note the asymmetry: the shared borrow lowers to the free
+function `rusty::borrow(x)`, the mutable one stays a method.)
+
+That makes **11 stale against 3 real** so far, and the phrasing rule has
+predicted every one.
+
+#### 7.51.1 Latent transpiler bug: `default_value` vs `default_like`
+
+Probing server.cpp:480's claim ("rusty::Function's default ctor is a `{}`
+the DSL cannot spell") turned up a transpiler bug rather than a floor.
+
+Both DSL spellings of "default-construct" lower to something, and
+**neither compiles**:
+
+    rusty::Function::<dyn FnMut(&mut BinaryWriteArchive)>::new()
+      -> rusty::Function<void(BinaryWriteArchive&)>::new_()
+      error: no member named 'new_' in 'rusty::Function<...>'
+
+    Default::default()
+      -> rusty::default_value<rusty::Function<void(BinaryWriteArchive&)>>()
+      error: no template named 'default_value' in namespace 'rusty';
+             did you mean 'default_like'?
+
+The second is the interesting one. `rusty::default_value<T>()` **does not
+exist anywhere** -- the only matches in `include/` are parameter names in
+`unwrap_or(T default_value)`. The helper that does exist is
+`rusty::default_like<T>()` (dispatch.hpp:280), with its own tiered
+member -> ADL-marker -> value-init dispatch.
+
+The transpiler emits both names:
+
+| emitted | sites | exists |
+|---|---|---|
+| `rusty::default_value<T>()` | 14 | **no** |
+| `rusty::default_like<T>()` | 1 (+ tests assert it) | yes |
+
+So `Default::default()` in an expression position emits a call to a
+function that was never defined. It is latent only because no current DSL
+in src/rrr takes that path -- the moment one does, it is a compile error
+with no DSL-level warning. Same family as `std::ptr::null()` (§7.49):
+plausible output, no such symbol.
+
+**Do not "fix" this by renaming all 14 blindly.** The two names may not be
+interchangeable at every site (`default_like` is the type-param dispatcher;
+some `default_value` sites are inside lambdas over deduced `_rusty_inner_t`
+types), and §7.50.3 established that the transpiler suite will not tell you
+if a change breaks real code. It needs the regenerate-and-build check.
+
+Meanwhile server.cpp:480's `empty_server_reply_fn()` kernel stays: the
+claim is **real** as written, since neither spelling works today.
+
+> **Superseded (§7.53).** True only *before* the `default_value` ->
+> `default_like` fix in the same section. Once that landed,
+> `Default::default()` worked and the kernel was deleted. Note the shape:
+> this claim was accurate when written and falsified by a fix recorded
+> four paragraphs above it.
+
+#### 7.51.2 tcp_channel triage, and a claim that is only half true
+
+Three stated causes in `rpc/tcp_channel.cpp`:
+
+**`#[cpp_ctor]` default-init helpers (644)** — real, the confirmed
+default-field-initializer floor (§7.49.1).
+
+**`TcpOutBuf` alias (1238)** — "so the DSL can spell the parameter type".
+The alias itself is unnecessary (`Vec<u8>` lowers to the same
+`std::vector<uint8_t>`), but it is named by **four kernel signatures**
+(`drain_outbound_locked`, `send_bytes`, `trim_sent`, `drop_after_error`),
+so it stays under the rule the sweep settled on: an alias goes only if it
+is DSL+GEN-local. Same class as EventTestFn / QuorumFinalizeFn.
+
+**"POD builders the DSL grammar cannot spell (braced init)" (1607)** —
+**half stale**, and the halves differ by who owns the type:
+
+    FrameView tcpconn_frame_view_empty() { return FrameView{}; }      // real
+    ChannelFrame tcpconn_frame_of(FrameView* v) {                     // stale
+        return ChannelFrame{v->payload, v->payload_size};
+    }
+
+> **Superseded (§7.53/§7.53.1).** Both are gone. `FrameView` is
+> DSL-defined too -- calling it "a hand-written C++ POD" below was simply
+> wrong -- and `Default::default()` covers it.
+
+`ChannelFrame` is **DSL-defined** (channel.cpp, `payload: *const u8`,
+`size: usize`), so a DSL struct literal expresses it directly — the
+grammar can spell that one. `FrameView{}` is value-init of a
+hand-written C++ POD, which is the default-ctor floor again.
+
+The general rule this suggests: *"the DSL cannot construct type X"* is
+worth splitting by **whether X is DSL-defined**. For a DSL struct the
+literal is available; for a hand-written C++ aggregate you are back at
+the `{}` floor. A comment covering several builders at once can be right
+about some and wrong about others, so check each type rather than the
+sentence.
+
+Not converted: `frame_of` is two lines and needs an `unsafe` raw-pointer
+deref in the DSL, so the win does not pay for a full gate cycle on its
+own. Worth folding into the next tcp_channel change.
+
+### 7.52 Where the src/rrr sweep stands
+
+After this pass, the four files worked are at or near their floor, and
+the remaining kernels are genuine rather than stale:
+
+| file | state |
+|---|---|
+| rpc/client.cpp | **at floor** — variadic/SFINAE templates, `reinterpret_cast`, one `std::chrono` interop point, default-ctor factories |
+| reactor/reactor.cpp | identified conversions done (TLS trio, two aliases); rest is variadic `add_event(Args...)`, fiber-context asm, `sprintf` |
+| rpc/server.cpp | **at floor** — `try/catch` (Rust has no exceptions), clock/RNG syscalls, `reinterpret_cast`, default-ctor factories |
+| rpc/tcp_channel.cpp | one small item left (`frame_of`, §7.51.2); rest is `#[cpp_ctor]` defaults + kernel vocabulary |
+| misc/serializable.cpp | 104 kernels, deliberately untouched (mutual recursion — a partial serde conversion does not compile) |
+
+Two things in server.cpp are worth not re-litigating:
+
+ - `server_parse_port` wraps `std::stoi` in `try/catch`. The comment is
+   right that the catch is the irreducible part; it also makes a real
+   design point — returning `Option` keeps a throw distinct from a
+   legitimately parsed negative, which the old `-1` folded together.
+ - `pending_guard_release` takes a **pointer** where `acquire` takes a
+   reference. That asymmetry is not a defect: `&self.field` lowers to an
+   address-of while a `&T` parameter lowers to a reference, which is the
+   documented rule. The kernel is shaped to match it.
+
+**The remaining high-value work is the two-half guard-deref fix
+(§7.50.4)**, which is transpiler work needing regenerate-and-build
+verification (§7.50.3 showed the suite cannot see this class of
+breakage), and the `default_value`/`default_like` bug (§7.51.1). Both
+want a session where intermediate results can be inspected, not an
+unattended one.
+
+#### 7.50.5 Both triggers fixed — and §7.50.2/§7.50.4 prescribed the wrong fix
+
+Superseding the plan in §7.50.2 and §7.50.4. Both are now known to be
+wrong, in two separate ways, and the working fixes are elsewhere.
+
+**What §7.50.2 got wrong.** It said the fix was to add the six RAII guard
+idents to `infer_deref_result_type_from_type`, and that this one change
+would fix the bug. Neither half held:
+
+ - it *breaks the build* (§7.50.3 — teaching inference more makes other
+   emitters stop guessing, and `&mut hook` over a loop binding flips from
+   `hook` to `&hook`); and
+ - it would not have fixed the alias case anyway, because that path never
+   reaches the inference-failure fallback at all.
+
+**The two triggers are separate defects that present identically.**
+
+| trigger | mechanism | fix |
+|---|---|---|
+| guard-rooted chain `(*(*guard).as_ref().unwrap())` | inference **fails**, and the fallback defaults to collapsing | default to *not* collapsing |
+| alias-typed local `let ch: &mut Proxy` | inference **succeeds**; the deref-owner test cannot see through `using Proxy = Box<T>` | resolve one alias hop |
+
+Neither touches inference, so neither starts the cascade that broke
+`server.cpp`.
+
+**Fix 1 — the failure default was unsound.**
+
+    let Some(inferred) = inferred else {
+        return !matches!(peel(expr), syn::Expr::Path(_));   // collapse
+    };
+
+Collapsing when you do not know is unsound; *not* collapsing is safe
+either way, because the fallthrough wraps the operand in
+`deref_if_pointer_like`, which is the identity for anything not
+pointer-like. So a plain `&T` lowers exactly as it did before.
+
+**Fix 2 — a third pointer-likeness test, also alias-blind.**
+`collapse_local_nonpointer_path` (emit_expr.rs) matched a local's type by
+name against a hardcoded `Box|Rc|Arc|Lazy|Ref|RefMut|MutexGuard|...`
+list. Factored into `is_deref_owner_or_guard_name` /
+`type_is_deref_owner_or_guard_type`, which mirrors
+`type_is_pointer_like_owner_type` including its one alias hop.
+
+**Why two lists, not one.** The wider set must **deref**; the pointer-like
+set drives **autoderef**, and a guard must not autoderef (Rust makes you
+`.upgrade()`/`.borrow()` first). Merging them would be the same mistake as
+putting `Weak` in the autoderef list (§7.47).
+
+**The standing lesson.** Three separate places now answer "is this
+pointer-like", each with its own list, and two of the three could not see
+through a `using`. When a lowering looks wrong for a type behind an alias,
+suspect a *by-name* test that nobody taught about aliases — and check
+whether the site you are looking at is the only one.
+
+### 7.53 The `default_like` fix unlocks the "can't spell a default ctor" family
+
+A payoff of `44e1d3f8` that was not the point of the fix. Now that
+`Default::default()` lowers to a call that exists, the DSL *can* spell a
+default-constructed value:
+
+    fn fv_empty() -> FV      { Default::default() }  -> rusty::default_like<FV>()
+    fn rf_empty() -> ReplyFn { Default::default() }  -> rusty::default_like<ReplyFn>()
+
+Both compile. `default_like`'s bottom tier is `V{}`, so for a DSL-emitted
+aggregate it is *exactly* the value-init the kernels were written to
+provide — and it works for `rusty::Function` too, which is what
+server.cpp:480 said could not be expressed.
+
+**This corrects §7.49.1, which was too broad.** Two different things were
+filed under one "real floor":
+
+| construct | status |
+|---|---|
+| default **field** initializers — `struct V { a: i32 = 5 }` | **still a real floor** — a parse error; Rust has no such syntax |
+| spelling a default-constructed **value** — `FrameView{}`, `Function<..>{}` | **no longer a floor** — `Default::default()` |
+
+Only the first is a Rust-expressiveness gap. The second was a missing
+lowering all along, and its "we tried, it doesn't work" evidence was the
+`default_value` bug: `Default::default()` *did* emit something, it just
+emitted a call to a function that did not exist (§7.51.1). A tool that
+fails by emitting a plausible-looking symbol teaches the wrong lesson.
+
+Ten sites still carry a "cannot spell" comment; most are this family:
+
+    rpc/server.cpp:480,497   rpc/channel.cpp:137
+    rpc/tcp_channel.cpp:644  rpc/fiber_channel.cpp:131,262,500
+    rpc/inmemory_channel.cpp:69   misc/any_message.cpp:384,411
+
+Also relevant: `tcpconn_frame_view_empty` returns `FrameView`, which
+§7.51.2 called "a hand-written C++ POD". **That was wrong** — `FrameView`
+is DSL-defined (frame_codec.cpp), so both it and `ChannelFrame` are
+expressible, and that kernel pair can go entirely.
+
+Each conversion still needs its own gate, and a few of the ten are not
+this family (fiber_channel:500 is a Mutex + move-out-of-deque, and
+any_message:384 returns a reference to a local static). Check the type
+before assuming, per §7.51.2.
+
+#### 7.53.1 The family is done; the two survivors are real
+
+The default-construction sweep finished at **16 kernels across five
+files**. Every one traced to `Default::default()` emitting
+`rusty::default_value<T>()`, a function that never existed (§7.51.1).
+
+Two "cannot spell" comments remain in src/rrr, and neither is this
+family. Checked on their own terms rather than assumed to follow the
+pattern:
+
+**`fiberchannel_try_pop`** (fiber_channel.cpp) --
+
+    OwnedFrame f = std::move((*guard).front());
+    (*guard).pop_front();
+
+moves out of a container element *through a reference*. Safe Rust cannot
+do that: you would need `pop_front()` to return the value, and
+`std::deque::pop_front` returns `void`. **Real.**
+
+**`registry()`** (any_message.cpp) -- a function-local `static` with
+runtime initialisation, returning a reference to it. Rust has no
+lazily-initialised mutable static short of `OnceLock`, and `&'static mut`
+is not safely expressible. **Real.**
+
+Both are "Rust has no way to say X", which §7.45 predicts is a genuine
+floor — and both survived a sweep that disproved thirteen claims of the
+other kind. That is the heuristic working in both directions, which is
+what makes it worth trusting: it is not simply "everything is stale".
+
+#### 7.53.2 The alias-deref fix is SINGLE-FILE — cross-module aliases still need the concrete type
+
+Tried to simplify client.cpp's workaround now that `5a8e8754` resolves a
+`using` when testing for deref-ownership, replacing
+
+    let ch: &mut Box<ChannelConnectionBase> = ...
+
+with the alias `ChannelConnectionProxy`. **It regressed** — back to a dot
+on a Box:
+
+    ChannelConnectionProxy& ch = channel;
+    ch.set_on_frame(...);          // dot: ill-formed
+    ((ch)).close();                // deref dropped
+
+The reason is a limit I did not state when landing the fix.
+`collect_cpp_type_aliases` scans **the file being transpiled**
+(inline_rust.rs), so it only sees `using X = Y;` in that TU. In mako the
+aliases live in the module that owns the type —
+`using ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;` is in
+`channel.cpp`, and `client.cpp` imports it. From client.cpp's transpile
+the alias simply does not exist.
+
+So the rule for DSL authors is:
+
+ - alias declared **in the same file** -> either spelling works;
+ - alias **imported from another module** -> spell the concrete type.
+
+Since cross-module is the normal case here, the practical guidance is
+unchanged: **spell the concrete type**. The workaround comments in
+client.cpp stay, and stay accurate.
+
+Fixing this properly means feeding the transpiler aliases from imported
+modules, which is a different and much larger change than one alias hop
+within a TU — it needs the module graph, not a line scan.
+
+### 7.54 Goal 0 census (2026-08-02) — and why (b) does not close on this track
+
+Measured, not recalled. Goal 0 has two halves:
+
+  (a) reduce hand-written C++ in src/rrr to zero via the DSL;
+  (b) compile that DSL with **both** rustc and the C++ compiler.
+
+**(a) — ~234 hand-written kernels remain** in the DSL files:
+
+| file | kernels |
+|---|---|
+| misc/serializable.cpp | **104** (untouched: mutual recursion, partial conversion does not compile) |
+| reactor/reactor.cpp | 30 |
+| rpc/client.cpp | 21 (at floor) |
+| rpc/server.cpp | 16 (at floor) |
+| rpc/tcp_channel.cpp | 10 |
+| misc/any_message.cpp | 9 |
+| others | ~44 |
+
+Plus four non-test files with no DSL at all (`base/callback_wrapper.cpp`,
+`base/strop.cpp`, `misc/serializable_envelope.cpp`,
+`reactor/epoll_platform_kqueue.cc`), two `.S` files that are permanently
+assembly, and 79 test files. `serializable.cpp` alone is 44% of the
+remainder.
+
+**(b) — not wired yet.** The `#if RUSTYCPP_RUST` blocks in src/rrr name
+cross-file and foreign types (`CallbackWrapper`, `ChannelFrame`, rrr module
+types), so they need a crate-level extraction and explicit boundary modules
+before rustc can compile them. No parallel hand-written port counts as dual
+compilation.
+
+**So finishing (a) does not deliver (b).** It yields a codebase whose DSL
+is *shaped* like Rust and checked only by the C++ compiler — which is
+exactly how three Rust-side errors got through in one session: `as_ref`
+where `as_mut` was required, a missing `let mut` on a guard, and a `let`
+binding that made a move-only type copy. Every one lowered to correct C++
+and would have been a rustc error.
+
+That is worth stating plainly because it defines the remaining work: the
+inline DSL must become the crate mechanically. The same extracted source must
+be accepted by rustc and rusty-cpp; hand-moving or rewriting the logic into a
+second source tree does not satisfy Goal 0.
+
+### 7.55 The transpiler suite was reading a degraded sample (NFS + SIGBUS)
+
+Every "the suite is 428 passed / 16 failed, failing set identical to
+baseline" claim in §§7.50-7.53 was measured against a **broken test run**.
+
+`cargo test` in the rusty-cpp submodule puts `target/` on the NFS home.
+`rustc` mmaps its inputs, and mmap-on-NFS gives **SIGBUS** — 60 to 110
+crashes per run. Crashed compilations mean test binaries that never link,
+so only **3 to 5 of 80** ever ran.
+
+Same tree, same commit, four consecutive runs:
+
+| run | passed | failed | failing tests |
+|---|---|---|---|
+| A | 428 | 16 | borrow/lifetime analyzer set |
+| B | 429 | 15 | borrow/lifetime analyzer set |
+| C | 491 | 6 | char_ptr / string_literal set |
+| D | 493 | 4 | char_ptr / string_literal set |
+
+**On local disk** (`CARGO_TARGET_DIR=/var/tmp/rustycpp-target`):
+0 SIGBUS, 80 suites, **1131 passed, 2 failed** — and the 2 are stable
+(`test_option_hpp_passes`, `test_result_hpp_passes`).
+
+**The tell was not the failures, it was the totals.** Pass/fail flipping
+is ordinary flakiness. The *number of tests executed* changing by 53
+between runs is not — it means binaries are not building. Watch the run
+count, not just the failure list.
+
+What this does and does not invalidate:
+
+ - **Does not** invalidate the three landed transpiler fixes. Each was
+   verified by compiling its emitted output and by regenerating all of
+   src/rrr — checks that never touched the suite (and §7.50.3's point was
+   precisely that the suite cannot see consumer breakage anyway).
+ - **Does** invalidate the suite half of those write-ups. "Failing set
+   identical to baseline" compared two differently-degraded samples.
+
+Always run rusty-cpp's tests with `CARGO_TARGET_DIR` on local disk. mako's
+own gates were never affected — `build_crate.sh` builds in `/var/tmp`
+on local btrfs, which is why they stayed consistent all campaign.
+
+### 7.56 `core::mem::take` DOES lower and DOES exist — a truncated grep said otherwise
+
+First recorded here as "third nonexistent-symbol emission: rusty::mem::take
+does not exist." **That was false.** `mem.hpp:341` defines exactly the free
+function needed:
+
+    template<typename T>
+    requires std::is_default_constructible_v<T>
+    inline T take(T& destination) { return replace(destination, T{}); }
+
+The error was mine: the check was `grep -n take mem.hpp | head -3`, and the
+first three hits are comments about `ManuallyDrop::take` — the real
+definition was cut off by the `head`. Fifth self-inflicted measurement
+error of the campaign, same lesson as the others: an absence conclusion
+needs a check that can actually see presence (here: drop the `head`, or
+compile the emitted call, which was never done).
+
+Consequence: the move-out-of-a-reference floor (§7.53.1's
+`fiberchannel_try_pop`, and `process_stackless_tasks`) is NOT a floor —
+`core::mem::take` is the Rust-legal spelling and it lowers to a real
+function. `rusty::Function` satisfies the `default_constructible`
+requirement (value-init is exactly what `default_like`'s tier 3 uses).
+
+Also probed: `rusty::Waker { f: closure }` struct-literals work, but
+**reference arguments mangle** — `waker: &waker` emits `.waker = waker`
+(the `&` dropped) and a `&mut ctx` call argument emits `&ctx` (address-of
+instead of by-ref). Until that is fixed, waker-wiring bodies
+(`process_stackless_tasks`, `spawn_stackless_task`) stay kernels.
+
+And a genuine floor pair, recorded from reading rather than probing:
+`get_or_create_fiber` / `create_run_fiber_at` keep their `const char*`
+file/line debug parameters (no DSL spelling for `char*` — `*const i8` is
+`int8_t*`, a distinct type) and `Fiber::global_id++` mutates a class
+static. They stay kernels behind the 1-arg DSL `create_run_fiber`.
+
+### 7.57 Closure captures of const-PROPAGATING handles need `mutable` (fixed in the transpiler)
+
+The closure-mutability analysis exempted every "non-mutating handle"
+(Box/Rc/Arc/guards/Weak) from forcing `mutable`, reasoning that a method
+call reaches the pointee, not the handle. That reasoning is Rust-true but
+C++-incomplete: in a non-`mutable` lambda every by-value capture is
+const, and the handles differ in what a CONST handle hands back:
+
+  * **const-only shared handles** — `Arc`, `Rc`, `Weak`, `Ref`,
+    `RwLockReadGuard` expose exactly one (const) `operator->`; lambda
+    constness cannot change what compiles. Exemption sound.
+  * **const-transparent** — `RefMut::operator*() const` returns `T&`;
+    a const capture still reaches the mutable pointee. Exemption sound.
+  * **const-propagating** — `Box`, `MutexGuard`, `SpinMutexGuard`,
+    `RwLockWriteGuard` pair a const overload returning `const T*` with a
+    non-const one. A const capture downgrades the pointee, and a
+    `&mut self` method (`ChannelListenerBase::close`) stops compiling.
+
+Hit converting `Server`'s Drop body: the OneTimeJob closure that moves
+the listener `Box` in and calls `close()` emitted a non-mutable lambda →
+`'this' argument ... but function is not marked const`. Fixed in
+`is_non_mutating_handle_name` (the predicate now lists only the sound
+exemptions); `mutable` returns for Box-and-guard captures with method
+calls. Two codegen tests pin it (Box keeps mutable / Arc stays
+const-callable). Emission after the fix:
+`[=, listener_box = std::move(listener_box)]() mutable { listener_box->close(); }`.
+
+### 7.58 Expired causes, batch 2 — lb generics, inmemory bodies
+
+Re-checking recorded "not DSL-expressible" causes (the §7.52 habit)
+closed two more families this session:
+
+  * **`load_balancer` selector templates** ("generic arrow-deref …
+    neither is DSL-expressible"): `fn f<ClientVec>(clients: &ClientVec)`
+    lowers to the same `template<typename ClientVec>` free fn, and the
+    element's method chain works once the DSL spells the deref
+    explicitly — `(*clients[i]).metrics()` emits
+    `deref_if_pointer_like(clients[i]).metrics()`, which covers
+    `Arc<Client>` and the tests' `shared_ptr<Mock>` alike. A BARE
+    `clients[i].metrics()` does NOT dispatch (dot on the handle);
+    the explicit `*` is what recruits the helper.
+  * **the four inmemory bodies** (const_cast bootstrap / raw byte copy /
+    static counter / get_mut mint): all four causes expired.
+    `rusty::Mutex::lock()`'s const overload replaced every const_cast;
+    the byte copy is `extend_from_slice(from_raw_parts(p, n))` (the
+    transpiler knows `core::slice::from_raw_parts`); the client-address
+    counter is a DSL fn-local `static CLIENT_COUNTER: AtomicU64` (add
+    the `using rusty::sync::atomic::{AtomicU64, Ordering}` name bridges
+    the connection_metrics module already models); the mint window is
+    client.cpp's proven `let opt = arc.get_mut(); let m: &mut T =
+    opt.unwrap();` shape — remember `let mut` on the Arc binding, since
+    `get_mut()` is a non-const member of the HANDLE.
+  * Wrapper copies out of a locked guard must be spelled `.clone()`
+    (`rusty::clone` falls back to copy-construction for C++-copyable
+    types like CallbackWrapper); a bare field read would MOVE out of the
+    guard.
+  * A DSL fn returning a Rust tuple lowers to `std::tuple`, not
+    `std::pair` — update `.first/.second` callers to `std::get<>`.
+
+### 7.59 Variadic factories ARE callable from the DSL (turbofish probe)
+
+`reactor_create_sp_event::<IntEvent>()` lowers to
+`reactor_create_sp_event<IntEvent>()` — an explicit template argument
+on a hand-written VARIADIC factory template works from a DSL body. The
+factories themselves stay C++ (variadic parameter packs remain a
+floor), but "this body calls create_sp_event" is no longer a reason to
+keep the BODY a kernel. The SharedIntEvent trio converted on this:
+set (guard-indexed waiter sweep), wait (borrow_mut Function install),
+wait_until_gte (park + retain-by-identity, with a 2-line
+`int_event_raw_ptr` kernel because `.get()` on the Arc HANDLE would be
+autoderef-misrouted to the pointee — same family as Box::get /
+sconn_proxy_ptr, §7.58). `retain(move |item: &Arc<IntEvent>| ...)`
+passes a typed-param closure straight through.
+
+### 7.60 Inline-argument closures can mis-infer a return type — bind to a let first
+
+An `Arc::<OneTimeJob>::new_(OneTimeJob::new_(move || { ... }))` closure
+in argument position emitted `[...]() -> bool { ... }` regardless of
+body shape (early-return removed, single-call body — still `-> bool`;
+the same family as the `::new_` spurious-return note at
+ClientProxy::close). The INLINE-ARGUMENT emission path infers the
+lambda's return type from surrounding context and gets it wrong; the
+LET-BOUND path does not:
+
+    let job_fn = move || { clientconn_recv_job_entry(weak_self); };
+    let recv_job: Arc<OneTimeJob> = Arc::<OneTimeJob>::new_(OneTimeJob::new_(job_fn));
+
+Also recorded from the same body: a cross-file `#[cpp_ctor]` type has
+NO DSL construction spelling from another file (the ctor lives in the
+defining file's GEN; `Type::new_` does not exist) — keep a small
+make_box kernel at the boundary (clientconn_make_fiber_channel).
+
+### 7.61 Three call-shape rules from converting connect_via_factory
+
+  * **Nested calls inside `format!` can emit an unresolvable
+    `rusty::to_string` wrap** (`format!("{}", channel_error_to_string(e))`
+    → `std::format(..., rusty::to_string(...))` with no declaration in
+    module scope). Bind the value to a `let` first and format the
+    binding.
+  * **Moving an Option FIELD out of a struct local** is
+    `let mut result` + `result.field.take().unwrap()` — a bare
+    `result.field.unwrap()` copies (deleted for Box payloads).
+  * **The RECEIVING binding of a move-only value must be `let mut`** —
+    a const binding plus the emitter's `std::move` at the next use
+    selects the deleted copy constructor (same rule as §7.53's
+    move-only locals, restated because it also applies to bindings that
+    are only ever moved FROM once).

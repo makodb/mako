@@ -29,7 +29,7 @@ TEST_F(ExtendedReactorTest, EventTimeout) {
     auto reactor = Reactor::get_reactor();
     
     // Create an event that will timeout (TimeoutEvent takes microseconds)
-    auto sp_event = Reactor::create_sp_event<TimeoutEvent>(100000); // 100ms = 100,000 microseconds
+    auto sp_event = create_sp_timeout_event(100000); // 100ms = 100,000 microseconds
     
     EXPECT_FALSE(sp_event->is_ready());
     
@@ -42,7 +42,7 @@ TEST_F(ExtendedReactorTest, EventTimeout) {
     
     // Give enough time for timeout
     std::this_thread::sleep_for(milliseconds(150));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_TRUE(completed);
 }
@@ -51,7 +51,7 @@ TEST_F(ExtendedReactorTest, EventTimeout) {
 TEST_F(ExtendedReactorTest, SingleFiberEvent) {
     auto reactor = Reactor::get_reactor();
     
-    auto sp_event = Reactor::create_sp_event<IntEvent>();
+    auto sp_event = create_sp_int_event(1);
     std::atomic<int> completed_count{0};
     
     // Set the event BEFORE creating the fiber (use default target=1)
@@ -113,9 +113,9 @@ TEST_F(ExtendedReactorTest, FiberException) {
 TEST_F(ExtendedReactorTest, EventChain) {
     auto reactor = Reactor::get_reactor();
     
-    auto sp_event1 = Reactor::create_sp_event<IntEvent>();
-    auto sp_event2 = Reactor::create_sp_event<IntEvent>();
-    auto sp_event3 = Reactor::create_sp_event<IntEvent>();
+    auto sp_event1 = create_sp_int_event(1);
+    auto sp_event2 = create_sp_int_event(1);
+    auto sp_event3 = create_sp_int_event(1);
     
     sp_event1->target_.set(10);
     sp_event2->target_.set(20);
@@ -145,7 +145,7 @@ TEST_F(ExtendedReactorTest, EventChain) {
     sp_event1->set(10);
     
     // Process events - with our fix, one Loop() should process the whole chain!
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     std::cout << "Event1 value: " << sp_event1->value_.get() << " (expected 10)" << std::endl;
     std::cout << "Event2 value: " << sp_event2->value_.get() << " (expected 20)" << std::endl;
@@ -193,7 +193,7 @@ TEST_F(ExtendedReactorTest, ManyIndependentEvents) {
     
     // Create and trigger all events first (all use default target=1)
     for (int i = 0; i < num_events; i++) {
-        auto event = Reactor::create_sp_event<IntEvent>();
+        auto event = create_sp_int_event(1);
         event->set(1);  // Set to target value
         events.push_back(event);
     }
@@ -283,7 +283,7 @@ TEST_F(ExtendedReactorTest, EventRecycling) {
         
         // Create batch
         for (int i = 0; i < 100; i++) {
-            auto event = Reactor::create_sp_event<IntEvent>();
+            auto event = create_sp_int_event(1);
             events.push_back(event);
             
             reactor->create_run_fiber([event]() {
@@ -297,7 +297,7 @@ TEST_F(ExtendedReactorTest, EventRecycling) {
         }
         
         // Process
-        reactor->loop(false);
+        reactor->run_loop(false, true);
         
         // Clear for next iteration (test cleanup)
         events.clear();
@@ -312,13 +312,13 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     auto reactor = Reactor::get_reactor();
     
     // Test WaitAny - waits for any event
-    auto event1 = Reactor::create_sp_event<IntEvent>();
-    auto event2 = Reactor::create_sp_event<IntEvent>();
+    auto event1 = create_sp_int_event(1);
+    auto event2 = create_sp_int_event(1);
     
     // Trigger one event before creating WaitAny
     event1->set(1);
     
-    auto sp_or_event = Reactor::create_sp_event<WaitAny>(event1, event2);
+    auto sp_or_event = create_sp_waitany(event1, event2);
     
     std::atomic<bool> or_triggered{false};
     reactor->create_run_fiber([sp_or_event, &or_triggered]() {
@@ -329,13 +329,13 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     EXPECT_TRUE(or_triggered);
     
     // Test with triggering second event
-    auto event3 = Reactor::create_sp_event<IntEvent>();
-    auto event4 = Reactor::create_sp_event<IntEvent>();
+    auto event3 = create_sp_int_event(1);
+    auto event4 = create_sp_int_event(1);
     
     // Trigger second event (use default target=1)
     event4->set(1);
     
-    auto sp_or_event2 = Reactor::create_sp_event<WaitAny>(event3, event4);
+    auto sp_or_event2 = create_sp_waitany(event3, event4);
     
     std::atomic<bool> or_triggered2{false};
     reactor->create_run_fiber([sp_or_event2, &or_triggered2]() {

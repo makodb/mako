@@ -7,15 +7,15 @@
 
 namespace janus {
 
-class CopilotFastAcceptQuorumEvent : public QuorumEventWrapper {
+class CopilotFastAcceptQuorumEvent : public QuorumEventBase {
   // TODO: use WaitAny to express fastpath vs. slowpath?
   vector<uint64_t> ret_deps_;
   int32_t n_fastac_ok_{0};
   int32_t n_fastac_reply_{0};
  public:
-  // using QuorumEventWrapper::QuorumEventWrapper;
+  // using QuorumEventBase::QuorumEventBase;
   CopilotFastAcceptQuorumEvent(int n_total, int quorum)
-      : QuorumEventWrapper(n_total, quorum) {
+      : QuorumEventBase(n_total, quorum) {
     ret_deps_.reserve(n_total);
   }
 
@@ -27,9 +27,9 @@ class CopilotFastAcceptQuorumEvent : public QuorumEventWrapper {
   bool FastNo();
 };
 
-class CopilotAcceptQuorumEvent : public QuorumEventWrapper {
+class CopilotAcceptQuorumEvent : public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
 
   void FeedResponse(bool y) {
     if (y)
@@ -39,14 +39,14 @@ class CopilotAcceptQuorumEvent : public QuorumEventWrapper {
   }
 };
 
-class CopilotPrepareQuorumEvent : public QuorumEventWrapper {
+class CopilotPrepareQuorumEvent : public QuorumEventBase {
   vector<vector<CopilotData> > ret_cmds_by_status_;
 
  public:
   // committed_seen_ + the readiness short-circuit now live on QuorumEvent
   // as QuorumPolicy::COMMITTED_SHORT (S3).
   CopilotPrepareQuorumEvent(int n_total, int quorum)
-      : QuorumEventWrapper(n_total, quorum), ret_cmds_by_status_(n_status) {
+      : QuorumEventBase(n_total, quorum), ret_cmds_by_status_(n_status) {
     q().policy_.set(QuorumPolicy::COMMITTED_SHORT);
   }
 
@@ -73,11 +73,11 @@ class CopilotPrepareQuorumEvent : public QuorumEventWrapper {
  * A "Quorum Event" which has no quorum
  * Used for those who don't need quorum reply
  */
-class CopilotFakeQuorumEvent : public QuorumEventWrapper {
+class CopilotFakeQuorumEvent : public QuorumEventBase {
  public:
   // Readiness now lives on QuorumEvent as QuorumPolicy::ALWAYS_READY (S3).
   CopilotFakeQuorumEvent(int n_total)
-    : QuorumEventWrapper(n_total, 0) {
+    : QuorumEventBase(n_total, 0) {
     q().policy_.set(QuorumPolicy::ALWAYS_READY);
   }
 

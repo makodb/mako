@@ -7,6 +7,8 @@
 #include "../rrr.hpp"
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 import std;
 
@@ -280,7 +282,7 @@ TEST_F(RPCTest, DifferentMethods) {
 
         EXPECT_EQ(fu_prime->get_error_code(), 0);
         i8 prime_result;
-        fu_prime->get_reply() >> prime_result;
+        rrr::deserialize_from(fu_prime->get_reply(), prime_result);
         EXPECT_EQ(prime_result, (i8)1);
         // Arc auto-released
     }
@@ -297,7 +299,7 @@ TEST_F(RPCTest, DifferentMethods) {
         fu_composite->wait();
 
         i8 composite_result;
-        fu_composite->get_reply() >> composite_result;
+        rrr::deserialize_from(fu_composite->get_reply(), composite_result);
         EXPECT_EQ(composite_result, (i8)0);
         // Arc auto-released
     }
@@ -328,9 +330,9 @@ TEST_F(RPCTest, TimeoutHandling) {
 TEST_F(RPCTest, CallbackMechanism) {
     std::atomic<bool> callback_called{false};
 
-    FutureAttr attr([&](rusty::Arc<Future> f) {
+    FutureAttr attr{FutureCallback::from_callable([&](rusty::Arc<Future> f) {
         callback_called = true;
-    });
+    })};
 
     std::string input = "callback_test";
     auto fu_result = client.as_ref().unwrap()->request(

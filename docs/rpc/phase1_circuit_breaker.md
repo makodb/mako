@@ -1,5 +1,11 @@
 # Phase 1.4: Circuit Breaker Pattern Plan
 
+> Current status (2026-08-12): implemented by canonical
+> `src/rrr/src/circuit_breaker.rs`; rusty-cpp generates the
+> `rrr.circuit_breaker` C++ module. The original header/file sketches below
+> are historical design notes. The production state is Cell-backed, Send,
+> and deliberately not Sync; callers must serialize mutation.
+
 ## Overview
 
 Implement circuit breaker pattern to prevent cascading failures by failing fast when a service is unhealthy.
@@ -81,11 +87,11 @@ The circuit breaker is checked before making requests:
 
 ## Implementation Details
 
-### Thread Safety
+### Mutation model
 
 - Uses `rusty::Cell<T>` for all mutable state
-- State transitions are atomic via Cell::set()
-- Time-based checks use `Time::now()` utility
+- State transitions are single-threaded; `Cell` is not atomic or Sync
+- Time-based checks use the terminal plain-C monotonic-clock kernel
 
 ### Timeout Handling
 
@@ -101,7 +107,8 @@ The circuit breaker is checked before making requests:
 
 ## File Structure
 
-New file: `src/rrr/rpc/circuit_breaker.hpp`
+Canonical source: `src/rrr/src/circuit_breaker.rs`; generated provider:
+`rrr.circuit_breaker`.
 
 ## Estimated LOC
 

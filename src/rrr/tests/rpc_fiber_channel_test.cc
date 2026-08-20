@@ -54,16 +54,16 @@ class FakeChannelStub {
     // Test helpers — synchronous; both this and the recv fiber run
     // on the reactor thread.
     void deliver(const std::vector<std::uint8_t>& bytes) {
-        if (on_frame_) {
+        if (on_frame_.has_value()) {
             ChannelFrame f{bytes.data(), bytes.size()};
-            on_frame_(f);
+            on_frame_.callable()(f);
         }
     }
     void deliver_closed(ChannelError reason = ChannelError::None) {
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
     void deliver_error(ChannelError e, std::string_view m) {
-        if (on_error_) on_error_(e, m);
+        if (on_error_.has_value()) on_error_.callable()(e, m);
     }
     void set_send_result(ChannelError e) { next_send_result_ = e; }
     const std::vector<std::vector<std::uint8_t>>& sent() const { return sent_; }
@@ -105,7 +105,7 @@ inline ChannelConnectionProxy make_fake_proxy(
 template <typename F>
 void run_in_fiber(F&& body) {
     auto reactor = Reactor::get_reactor();
-    auto done = Reactor::create_sp_event<IntEvent>();
+    auto done = create_sp_int_event(1);
     reactor->create_run_fiber([done, body = std::forward<F>(body)]() mutable {
         body();
         done->set(1);
@@ -116,7 +116,7 @@ void run_in_fiber(F&& body) {
     // `loop()` runs ready fibers; once the body's fiber completes,
     // `done` is set and we exit.
     while (done->value_.get() < 1) {
-        reactor->loop();
+        reactor->run_loop(false, true);
     }
 }
 
@@ -183,7 +183,7 @@ TEST(FiberChannelTest, RecvFrameSuspendsThenWakesOnDelivery) {
 
     run_in_fiber([&]() {
         auto reactor = Reactor::get_reactor();
-        auto recv_done = Reactor::create_sp_event<IntEvent>();
+        auto recv_done = create_sp_int_event(1);
 
         // Spawn the recv fiber. `create_run_fiber` runs the fiber
         // synchronously up to its first yield (the wait() inside
@@ -279,7 +279,7 @@ TEST(FiberChannelTest, ParkedRecvWakesOnClose) {
     bool got_none = false;
     run_in_fiber([&]() {
         auto reactor = Reactor::get_reactor();
-        auto done = Reactor::create_sp_event<IntEvent>();
+        auto done = create_sp_int_event(1);
 
         // Spawn recv fiber — it parks on IntEvent inside recv_frame.
         reactor->create_run_fiber([&, done]() {

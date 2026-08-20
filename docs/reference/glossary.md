@@ -64,9 +64,6 @@ The ACID property guaranteeing that committed transactions survive system failur
 ### Epoch
 A period of time during which certain system properties hold. In Mako, epochs are used for garbage collection and failure recovery.
 
-### eRPC
-A high-performance RPC library used for datacenter communication. Mako can use eRPC for low-latency watermark exchange.
-
 ---
 
 ## F

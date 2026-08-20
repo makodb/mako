@@ -53,7 +53,13 @@
 #include <string.h>
 #include <ctype.h>
 #include <inttypes.h>
-#include <rusty/vec.hpp>
+// NOTE (merge of PR #78 onto the a1f8fef8 rusty-cpp pin): this legacy
+// masstree corpus is compiled as plain non-module TUs, and since
+// rusty-cpp #185 rusty::Vec / rusty::HashMap exist only as C++20 modules
+// (<rusty/vec.hpp> and <rusty/hashmap.hpp> are gone/empty). A header
+// cannot `import`, and importing before the textual includes clashes with
+// libc++ under `import std`, so these stay std:: containers.
+
 import std;
 namespace lcdf {
 
@@ -430,8 +436,8 @@ bool String_generic::glob_match(const char* sbegin, int slen,
         else
             return false;
 
-    rusty::Vec<const char*> state, nextstate;
-    state.push(pbegin);
+    std::vector<const char*> state, nextstate;
+    state.push_back(pbegin);
 
     for (const char* s = sbegin; s != send && state.size(); ++s) {
         nextstate.clear();
@@ -440,13 +446,13 @@ bool String_generic::glob_match(const char* sbegin, int slen,
               reswitch:
                 switch (**pp) {
                   case '?':
-                    nextstate.push(*pp + 1);
+                    nextstate.push_back(*pp + 1);
                     break;
                   case '*':
                     if (*pp + 1 == pend)
                         return true;
-                    if (nextstate.is_empty() || nextstate.back() != *pp)
-                        nextstate.push(*pp);
+                    if (nextstate.empty() || nextstate.back() != *pp)
+                        nextstate.push_back(*pp);
                     ++*pp;
                     goto reswitch;
                   case '\\':
@@ -473,17 +479,17 @@ bool String_generic::glob_match(const char* sbegin, int slen,
                           goto normal_char;
 
                       if (found == !negated)
-                          nextstate.push(ec + 1);
+                          nextstate.push_back(ec + 1);
                       break;
                   }
                   normal_char:
                   default:
                     if (**pp == *s)
-                        nextstate.push(*pp + 1);
+                        nextstate.push_back(*pp + 1);
                     break;
                 }
             }
-        state = std::move(nextstate);
+        state.swap(nextstate);
     }
 
     for (const char** pp = state.data(); pp != state.data() + state.size(); ++pp) {

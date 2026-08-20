@@ -8,10 +8,7 @@
 
 namespace janus {
 
-// registrations switched to no-arg
-// `SerializableRegistry::reg<T>(T::static_kind())` — kind auto-derived from each
-// type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
-// base returns the type's 1-indexed position in `MakoCommands`).
+// Registry keys come from each payload's explicit MakoCommands membership.
 static int volatile x1 = rrr::SerializableRegistry::reg<VecPieceData>(VecPieceData::static_kind());
 static int volatile x2 = rrr::SerializableRegistry::reg<VecRecData>(VecRecData::static_kind());
 static int volatile x3 = rrr::SerializableRegistry::reg<ViewData>(ViewData::static_kind());

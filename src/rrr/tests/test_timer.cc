@@ -1,51 +1,37 @@
+#include <gtest/gtest.h>
 
-#include "../rrr.hpp"
+import rrr.basetypes;
 
-#include "deptran/all.h"
-#include "time.h"
-
-using namespace rococo;
 using namespace rrr;
 
-TEST(Time, perf) {
+TEST(Time, ClocksAndSleepAreLive) {
+    const auto monotonic_before = Time::now(true);
+    Time::sleep(1'000);
+    const auto monotonic_after = Time::now(true);
 
-    int n = 1000000;
-
-    auto t = Timer::new_();
-
-    uint64_t tmp = 0;
-    t.start();
-
-    for (int i = 0; i < n; i++) {
-	tmp += rrr::Time::now(true);
-    }
-
-    t.stop();
-    Log_info("time now rate: {:f} per sec, tmp: {}", n / t.elapsed(), tmp);
+    EXPECT_GE(monotonic_after, monotonic_before);
+    EXPECT_GT(Time::now(false), 0u);
 }
 
-TEST(Timer, loop) {
-    int k = 0;
-    unsigned long t = time(NULL);
-    TIMER_LOOP(3) {
-        k++;
-    }
-    t = time(NULL) - t;
-    EXPECT_EQ(t, 3);
-}
+TEST(Timer, StartStopAndReset) {
+    auto timer = Timer::new_();
+    EXPECT_EQ(timer.begin_us, 0u);
+    EXPECT_EQ(timer.end_us, 0u);
 
-TEST(Timer, IF) {
-    int k = 0;
-    unsigned long t = time(NULL);
-    TIMER_SET(3);
-    while (1) {
-        TIMER_IF_NOT_END {
-        }
-        else
-            break;
-        k++;
-    }
+    timer.start();
+    EXPECT_GT(timer.begin_us, 0u);
+    EXPECT_EQ(timer.end_us, 0u);
 
-    t = time(NULL) - t;
-    EXPECT_EQ(t, 3);
+    Time::sleep(1'000);
+    EXPECT_GE(timer.elapsed(), 0.0);
+
+    timer.stop();
+    EXPECT_GT(timer.end_us, 0u);
+    const double stopped_elapsed = timer.elapsed();
+    EXPECT_GE(stopped_elapsed, 0.0);
+    EXPECT_EQ(timer.elapsed(), stopped_elapsed);
+
+    timer.reset();
+    EXPECT_EQ(timer.begin_us, 0u);
+    EXPECT_EQ(timer.end_us, 0u);
 }

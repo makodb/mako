@@ -27,10 +27,20 @@ class TxLogServer;
 typedef std::pair<siteid_t, ClassicProxy*> SiteProxyPair;
 typedef std::pair<siteid_t, ClientControlProxy*> ClientSiteProxyPair;
 
-
-class PaxosPrepareQuorumEvent: public QuorumEventWrapper {
+// Construction shim for the inline-Rust DSL `janus::QuorumEventWrapper`
+// (src/rrr/reactor/reactor.cpp): a DSL struct emits a `static new_` factory
+// rather than a real 2-arg constructor, so the per-protocol quorum events
+// derive from this adapter instead of the wrapper directly.
+class QuorumEventBase : public QuorumEventWrapper {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  QuorumEventBase(int n_total, int quorum)
+      : QuorumEventWrapper(QuorumEventWrapper::new_(n_total, quorum)) {}
+};
+
+
+class PaxosPrepareQuorumEvent: public QuorumEventBase {
+ public:
+  using QuorumEventBase::QuorumEventBase;
 //  ballot_t max_ballot_{0};
   bool HasAcceptedValue() {
     // TODO implement this
@@ -49,9 +59,9 @@ class PaxosPrepareQuorumEvent: public QuorumEventWrapper {
 
 };
 
-class PaxosAcceptQuorumEvent: public QuorumEventWrapper {
+class PaxosAcceptQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   void FeedResponse(bool y) {
     if (y) {
       q().n_voted_yes_.set(q().n_voted_yes_.get() + 1);
@@ -63,12 +73,12 @@ class PaxosAcceptQuorumEvent: public QuorumEventWrapper {
   }
 };
 
-class GetLeaderQuorumEvent : public QuorumEventWrapper {
+class GetLeaderQuorumEvent : public QuorumEventBase {
  public:
   // Quorum math now lives on QuorumEvent as QuorumPolicy::ALL_NO (S3):
   // no() == every voter said no; is_ready() == yes()||no().
   GetLeaderQuorumEvent(int n_total, int quorum)
-      : QuorumEventWrapper(n_total, quorum) {
+      : QuorumEventBase(n_total, quorum) {
     q().policy_.set(QuorumPolicy::ALL_NO);
   }
   void FeedResponse(bool y, locid_t leader_id) {
@@ -83,7 +93,7 @@ class GetLeaderQuorumEvent : public QuorumEventWrapper {
 
 /************************RULE begin*********************************/
 
-class RuleSpeculativeExecuteQuorumEvent: public QuorumEventWrapper {
+class RuleSpeculativeExecuteQuorumEvent: public QuorumEventBase {
   bool has_result_ = false;
   value_t result_;
  public:
@@ -92,7 +102,7 @@ class RuleSpeculativeExecuteQuorumEvent: public QuorumEventWrapper {
   // additionally trips on any leader-no. The leader counters are hoisted
   // onto QuorumEvent so the policy only reads its own fields.
   RuleSpeculativeExecuteQuorumEvent(int n_total, int quorum, int num_leader)
-    : QuorumEventWrapper(n_total, quorum) {
+    : QuorumEventBase(n_total, quorum) {
       q().policy_.set(QuorumPolicy::LEADER_AND);
       q().num_leader_.set(num_leader);
   }
@@ -100,9 +110,9 @@ class RuleSpeculativeExecuteQuorumEvent: public QuorumEventWrapper {
   value_t GetResult();
 };
 
-class JetpackPullIdSetQuorumEvent: public QuorumEventWrapper {
+class JetpackPullIdSetQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   std::vector<rusty::Arc<VecRecData>> id_sets_;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
@@ -147,10 +157,10 @@ class JetpackPullIdSetQuorumEvent: public QuorumEventWrapper {
   }
 };
 
-class JetpackPullCmdQuorumEvent: public QuorumEventWrapper {
+class JetpackPullCmdQuorumEvent: public QuorumEventBase {
  public:
   JetpackPullCmdQuorumEvent(int n_total, int quorum, const std::vector<key_t>& keys)
-      : QuorumEventWrapper(n_total, quorum), ordered_keys_(keys) {
+      : QuorumEventBase(n_total, quorum), ordered_keys_(keys) {
     key_states_.reserve(keys.size());
     for (size_t i = 0; i < keys.size(); i++) {
       key_index_[keys[i]] = i;
@@ -228,9 +238,9 @@ class JetpackPullCmdQuorumEvent: public QuorumEventWrapper {
   int majority_threshold_{0};
 };
 
-class JetpackPrepareQuorumEvent: public QuorumEventWrapper {
+class JetpackPrepareQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   ballot_t max_accepted_ballot_ = -1;
@@ -277,9 +287,9 @@ class JetpackPrepareQuorumEvent: public QuorumEventWrapper {
   }
 };
 
-class JetpackAcceptQuorumEvent: public QuorumEventWrapper {
+class JetpackAcceptQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   ballot_t max_seen_ballot_ = -1;
@@ -303,9 +313,9 @@ class JetpackAcceptQuorumEvent: public QuorumEventWrapper {
   }
 };
 
-class JetpackPullRecSetInsQuorumEvent: public QuorumEventWrapper {
+class JetpackPullRecSetInsQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   // recovered_cmd_ migrated
@@ -395,7 +405,7 @@ class Communicator {
 	//   non-null (Arc has no null state); only read on the dead `paused`
 	//   debug path in client_worker.cc / classic/coordinator.cc, both of
 	//   which deref it via `->`. Was a default-null shared_ptr before. }
-	rusty::Arc<QuorumEvent> qe{Reactor::create_sp_event<QuorumEvent>(1, 1)};
+	rusty::Arc<QuorumEvent> qe{create_sp_quorum_event(1, 1)};
   vector<ClientSiteProxyPair> client_leaders_;
   std::atomic_bool client_leaders_connected_;
   std::vector<std::thread> threads;

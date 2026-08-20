@@ -307,7 +307,7 @@ void ServerWorker::SetupCommo() {
 // dead loop this thread for coroutine scheduling 
 // TODO, figure out a better approach
   if (rep_sched_->site_id_ == 0) {
-    Reactor::get_reactor()->loop(true, true);
+    Reactor::get_reactor()->run_loop(true, true);
   }
 #endif
 }

@@ -51,7 +51,7 @@ inline uint64_t FromValue(TestTree::value_type v) {
 // "set stop, then let destruction join" without an explicit join call.
 struct Watchdog {
   rusty::sync::atomic::Atomic<bool>* stop;
-  rusty::Option<rusty::thread::JoinHandle<void>> t;
+  rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>> t;
   Watchdog(rusty::sync::atomic::Atomic<bool>* s, std::chrono::milliseconds deadline)
       : stop(s) {
     t = rusty::thread::spawn([s, deadline]() {
@@ -82,7 +82,7 @@ TEST(MasstreeConcurrent, InsertersDisjointRanges) {
   constexpr int kThreads = 4;
   constexpr size_t kPerThread = 5000;
 
-  auto writers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kThreads);
+  auto writers = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(kThreads);
   for (int t = 0; t < kThreads; ++t) {
     writers.push(rusty::thread::spawn([&tree, t]() {
       const uint64_t base = static_cast<uint64_t>(t) * kPerThread;
@@ -119,7 +119,7 @@ TEST(MasstreeConcurrent, RemoversDisjointRanges) {
   }
   ASSERT_EQ(tree.size(), kTotal);
 
-  auto removers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kThreads);
+  auto removers = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(kThreads);
   for (int t = 0; t < kThreads; ++t) {
     removers.push(rusty::thread::spawn([&tree, t]() {
       const uint64_t base = static_cast<uint64_t>(t) * kPerThread;
@@ -159,7 +159,7 @@ TEST(MasstreeConcurrent, StableKeysVisibleUnderChurn) {
   rusty::sync::atomic::Atomic<bool> stop{false};
   Watchdog wd(&stop, std::chrono::milliseconds(2000));
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(
       kWriters + kReaders);
   for (int t = 0; t < kWriters; ++t) {
     threads.push(rusty::thread::spawn([&tree, &stop, t]() {
@@ -219,7 +219,7 @@ TEST(MasstreeConcurrent, ScannersSeeSortedOutputUnderInserters) {
   constexpr uint64_t kWriterBase = 1u << 20;
   constexpr uint64_t kWriterStride = 1024;
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(
       kWriters + kScanners);
   for (int t = 0; t < kWriters; ++t) {
     threads.push(rusty::thread::spawn([&tree, &stop, t]() {
@@ -308,7 +308,7 @@ TEST(MasstreeConcurrent, LongRunningReadersAcrossEpochs) {
   constexpr uint64_t kChurnBase = 1u << 20;
   constexpr uint64_t kPerWriter = 4096;
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(
       kReaders + kWriters);
   rusty::sync::atomic::Atomic<uint64_t> reader_failures{0};
   rusty::sync::atomic::Atomic<uint64_t> reader_iters{0};

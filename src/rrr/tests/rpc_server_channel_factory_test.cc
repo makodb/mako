@@ -194,7 +194,7 @@ TEST_F(ServerChannelFactoryTest, StartCallsFactoryMakeListenerAndListen) {
     ASSERT_TRUE(static_cast<bool>(factory_stub->last_listener_));
     EXPECT_EQ(factory_stub->last_listener_->listen_calls_, 1);
     EXPECT_EQ(factory_stub->last_listener_->listen_addr_, "0.0.0.0:0");
-    EXPECT_TRUE(static_cast<bool>(factory_stub->last_listener_->on_accept_));
+    EXPECT_TRUE(factory_stub->last_listener_->on_accept_.has_value());
 }
 
 // ---------------------------------------------------------------------------
@@ -233,8 +233,8 @@ TEST_F(ServerChannelFactoryTest, OnAcceptParksBoundServerConnection) {
     // Fire on_accept manually.
     auto conn_stub = std::make_shared<ConnStub>();
     auto& on_accept = factory_stub->last_listener_->on_accept_;
-    ASSERT_TRUE(static_cast<bool>(on_accept));
-    on_accept(make_conn_proxy(conn_stub));
+    ASSERT_TRUE(on_accept.has_value());
+    on_accept.callable()(make_conn_proxy(conn_stub));
 
     // The accepted connection survives across the on_accept call.
     // We can't reach into Server::channel_sconns_ directly, but the
@@ -245,7 +245,7 @@ TEST_F(ServerChannelFactoryTest, OnAcceptParksBoundServerConnection) {
 
     // Verify the parked connection survives a second accept too.
     auto conn_stub2 = std::make_shared<ConnStub>();
-    on_accept(make_conn_proxy(conn_stub2));
+    on_accept.callable()(make_conn_proxy(conn_stub2));
     EXPECT_FALSE(conn_stub2->is_closed());
 }
 
@@ -289,7 +289,7 @@ TEST_F(ServerChannelFactoryTest, StopAcceptingClosesListenerOnly) {
 
     // Accept one conn first.
     auto conn_stub = std::make_shared<ConnStub>();
-    listener_stub->on_accept_(make_conn_proxy(conn_stub));
+    listener_stub->on_accept_.callable()(make_conn_proxy(conn_stub));
     EXPECT_FALSE(conn_stub->is_closed());
 
     // Now stop_accepting → listener closed, conn untouched.

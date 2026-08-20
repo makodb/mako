@@ -15,12 +15,12 @@ using namespace rrr;
 // ============================================================================
 
 TEST(RpcErrorCategoryTest, CategoryToString) {
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::NONE), "NONE");
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::CONNECTION), "CONNECTION");
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::PROTOCOL), "PROTOCOL");
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::APPLICATION), "APPLICATION");
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::TIMEOUT), "TIMEOUT");
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::INTERNAL), "INTERNAL");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::NONE), "NONE");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::CONNECTION), "CONNECTION");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::PROTOCOL), "PROTOCOL");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::APPLICATION), "APPLICATION");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::TIMEOUT), "TIMEOUT");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::INTERNAL), "INTERNAL");
 }
 
 // ============================================================================
@@ -28,49 +28,49 @@ TEST(RpcErrorCategoryTest, CategoryToString) {
 // ============================================================================
 
 TEST(RpcErrorTest, ErrorToStringNoError) {
-    EXPECT_STREQ(rpc_error_to_string(RpcError::OK), "OK");
+    EXPECT_EQ(rpc_error_to_string(RpcError::OK), "OK");
 }
 
 TEST(RpcErrorTest, ErrorToStringConnection) {
-    EXPECT_STREQ(rpc_error_to_string(RpcError::NOT_CONNECTED), "NOT_CONNECTED");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::CONNECTION_REFUSED), "CONNECTION_REFUSED");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::CONNECTION_RESET), "CONNECTION_RESET");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::NETWORK_UNREACHABLE), "NETWORK_UNREACHABLE");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::HOST_UNREACHABLE), "HOST_UNREACHABLE");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::CONNECTION_CLOSED), "CONNECTION_CLOSED");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::CIRCUIT_OPEN), "CIRCUIT_OPEN");
+    EXPECT_EQ(rpc_error_to_string(RpcError::NOT_CONNECTED), "NOT_CONNECTED");
+    EXPECT_EQ(rpc_error_to_string(RpcError::CONNECTION_REFUSED), "CONNECTION_REFUSED");
+    EXPECT_EQ(rpc_error_to_string(RpcError::CONNECTION_RESET), "CONNECTION_RESET");
+    EXPECT_EQ(rpc_error_to_string(RpcError::NETWORK_UNREACHABLE), "NETWORK_UNREACHABLE");
+    EXPECT_EQ(rpc_error_to_string(RpcError::HOST_UNREACHABLE), "HOST_UNREACHABLE");
+    EXPECT_EQ(rpc_error_to_string(RpcError::CONNECTION_CLOSED), "CONNECTION_CLOSED");
+    EXPECT_EQ(rpc_error_to_string(RpcError::CIRCUIT_OPEN), "CIRCUIT_OPEN");
 }
 
 TEST(RpcErrorTest, ErrorToStringProtocol) {
-    EXPECT_STREQ(rpc_error_to_string(RpcError::INVALID_MESSAGE), "INVALID_MESSAGE");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::UNKNOWN_RPC_ID), "UNKNOWN_RPC_ID");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::MARSHALLING_ERROR), "MARSHALLING_ERROR");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::VERSION_MISMATCH), "VERSION_MISMATCH");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::CHECKSUM_ERROR), "CHECKSUM_ERROR");
+    EXPECT_EQ(rpc_error_to_string(RpcError::INVALID_MESSAGE), "INVALID_MESSAGE");
+    EXPECT_EQ(rpc_error_to_string(RpcError::UNKNOWN_RPC_ID), "UNKNOWN_RPC_ID");
+    EXPECT_EQ(rpc_error_to_string(RpcError::MARSHALLING_ERROR), "MARSHALLING_ERROR");
+    EXPECT_EQ(rpc_error_to_string(RpcError::VERSION_MISMATCH), "VERSION_MISMATCH");
+    EXPECT_EQ(rpc_error_to_string(RpcError::CHECKSUM_ERROR), "CHECKSUM_ERROR");
 }
 
 TEST(RpcErrorTest, ErrorToStringApplication) {
-    EXPECT_STREQ(rpc_error_to_string(RpcError::RPC_FAILED), "RPC_FAILED");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::SERVICE_UNAVAILABLE), "SERVICE_UNAVAILABLE");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::PERMISSION_DENIED), "PERMISSION_DENIED");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::INVALID_ARGUMENT), "INVALID_ARGUMENT");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::NOT_FOUND), "NOT_FOUND");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::ALREADY_EXISTS), "ALREADY_EXISTS");
+    EXPECT_EQ(rpc_error_to_string(RpcError::RPC_FAILED), "RPC_FAILED");
+    EXPECT_EQ(rpc_error_to_string(RpcError::SERVICE_UNAVAILABLE), "SERVICE_UNAVAILABLE");
+    EXPECT_EQ(rpc_error_to_string(RpcError::PERMISSION_DENIED), "PERMISSION_DENIED");
+    EXPECT_EQ(rpc_error_to_string(RpcError::INVALID_ARGUMENT), "INVALID_ARGUMENT");
+    EXPECT_EQ(rpc_error_to_string(RpcError::NOT_FOUND), "NOT_FOUND");
+    EXPECT_EQ(rpc_error_to_string(RpcError::ALREADY_EXISTS), "ALREADY_EXISTS");
 }
 
 TEST(RpcErrorTest, ErrorToStringTimeout) {
-    EXPECT_STREQ(rpc_error_to_string(RpcError::CONNECT_TIMEOUT), "CONNECT_TIMEOUT");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::REQUEST_TIMEOUT), "REQUEST_TIMEOUT");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::RESPONSE_TIMEOUT), "RESPONSE_TIMEOUT");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::IDLE_TIMEOUT), "IDLE_TIMEOUT");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::HEARTBEAT_TIMEOUT), "HEARTBEAT_TIMEOUT");
+    EXPECT_EQ(rpc_error_to_string(RpcError::CONNECT_TIMEOUT), "CONNECT_TIMEOUT");
+    EXPECT_EQ(rpc_error_to_string(RpcError::REQUEST_TIMEOUT), "REQUEST_TIMEOUT");
+    EXPECT_EQ(rpc_error_to_string(RpcError::RESPONSE_TIMEOUT), "RESPONSE_TIMEOUT");
+    EXPECT_EQ(rpc_error_to_string(RpcError::IDLE_TIMEOUT), "IDLE_TIMEOUT");
+    EXPECT_EQ(rpc_error_to_string(RpcError::HEARTBEAT_TIMEOUT), "HEARTBEAT_TIMEOUT");
 }
 
 TEST(RpcErrorTest, ErrorToStringInternal) {
-    EXPECT_STREQ(rpc_error_to_string(RpcError::UNKNOWN_ERROR), "UNKNOWN_ERROR");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::OUT_OF_MEMORY), "OUT_OF_MEMORY");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::INVALID_STATE), "INVALID_STATE");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::INTERNAL_ERROR), "INTERNAL_ERROR");
+    EXPECT_EQ(rpc_error_to_string(RpcError::UNKNOWN_ERROR), "UNKNOWN_ERROR");
+    EXPECT_EQ(rpc_error_to_string(RpcError::OUT_OF_MEMORY), "OUT_OF_MEMORY");
+    EXPECT_EQ(rpc_error_to_string(RpcError::INVALID_STATE), "INVALID_STATE");
+    EXPECT_EQ(rpc_error_to_string(RpcError::INTERNAL_ERROR), "INTERNAL_ERROR");
 }
 
 // ============================================================================
@@ -156,12 +156,12 @@ TEST(RpcErrorTest, IsRetryableError) {
 
 TEST(RpcErrorTest, UnknownCategoryStringFallsBackToUnknown) {
     auto unknown = static_cast<RpcErrorCategory>(999);
-    EXPECT_STREQ(rpc_error_category_to_string(unknown), "UNKNOWN");
+    EXPECT_EQ(rpc_error_category_to_string(unknown), "UNKNOWN");
 }
 
 TEST(RpcErrorTest, UnknownErrorStringFallsBackToUnknown) {
     auto unknown = static_cast<RpcError>(999999);
-    EXPECT_STREQ(rpc_error_to_string(unknown), "UNKNOWN");
+    EXPECT_EQ(rpc_error_to_string(unknown), "UNKNOWN");
 }
 
 // ============================================================================

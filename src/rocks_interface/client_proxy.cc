@@ -18,7 +18,8 @@ rrr::i32 MakoClientProxy::BeginTxn(rrr::i64 client_id, rrr::i64* txn_id) {
     rrr::i32 ret = fu->get_error_code();
     if (ret == 0) {
         rrr::i32 status;
-        rrr::deserialize_from(fu->get_reply(), *txn_id, status);
+        rrr::deserialize_from(fu->get_reply(), *txn_id);
+        rrr::deserialize_from(fu->get_reply(), status);
     }
     return ret;
 }
@@ -80,7 +81,8 @@ rrr::i32 MakoClientProxy::Get(rrr::i64 txn_id, rrr::i32 table_id,
     rrr::i32 ret = fu->get_error_code();
     if (ret == 0) {
         rrr::i32 status;
-        rrr::deserialize_from(fu->get_reply(), status, *value);
+        rrr::deserialize_from(fu->get_reply(), status);
+        rrr::deserialize_from(fu->get_reply(), *value);
     }
     return ret;
 }

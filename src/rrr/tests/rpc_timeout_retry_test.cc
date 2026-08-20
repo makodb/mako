@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/traits.hpp>
 #include "../rrr.hpp"
 
 // Trimmed from the consumer umbrella (08b68144) — import directly.
@@ -108,17 +109,17 @@ TEST(TimeoutTypeTest, DefaultIsNone) {
 }
 
 TEST(TimeoutTypeTest, StringConversions) {
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::NONE), "NONE");
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::CONNECT_TIMEOUT), "CONNECT_TIMEOUT");
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::REQUEST_TIMEOUT), "REQUEST_TIMEOUT");
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::RESPONSE_TIMEOUT), "RESPONSE_TIMEOUT");
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::TOTAL_TIMEOUT), "TOTAL_TIMEOUT");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::NONE), "NONE");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::CONNECT_TIMEOUT), "CONNECT_TIMEOUT");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::REQUEST_TIMEOUT), "REQUEST_TIMEOUT");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::RESPONSE_TIMEOUT), "RESPONSE_TIMEOUT");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::TOTAL_TIMEOUT), "TOTAL_TIMEOUT");
 }
 
 TEST(TimeoutTypeTest, UnknownTypeReturnsUnknown) {
     // Cast invalid value
     auto invalid = static_cast<TimeoutType>(255);
-    EXPECT_STREQ(timeout_type_to_string(invalid), "UNKNOWN");
+    EXPECT_EQ(timeout_type_to_string(invalid), "UNKNOWN");
 }
 
 // ============================================================================
@@ -283,10 +284,11 @@ TEST(RequestOptionsTest, CalculateDelayWithJitter) {
     }
     EXPECT_FALSE(all_same) << "Jitter should cause variation in delays";
 
-    // Check delays are within expected range: 100 +/- 10% (jitter_factor/2 * delay)
+    // The f32 jitter factor promotes slightly above 0.2; at the minimum draw,
+    // truncation therefore permits 89.  The maximum still truncates to 110.
     for (uint64_t delay : delays) {
-        EXPECT_GE(delay, 90u);   // 100 - 10
-        EXPECT_LE(delay, 110u);  // 100 + 10
+        EXPECT_GE(delay, 89u);
+        EXPECT_LE(delay, 110u);
     }
 }
 
@@ -467,7 +469,7 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
     EXPECT_GE(elapsed_ms, 100);  // Timeout + configured deterministic backoff.
 
     v32 reply_value;
-    fu->get_reply() >> reply_value;
+    rrr::deserialize_from(fu->get_reply(), reply_value);
     EXPECT_EQ(reply_value.get(), 123);
     EXPECT_EQ(service->call_count.load(), 2);
     EXPECT_EQ(marshal_calls.load(), 1);  // Request payload serialized once.
@@ -675,7 +677,9 @@ TEST_F(TimeoutRetryIntegrationTest, TotalTimeoutBudgetCutsOffRetriesBeforeNextAt
 // Integration with rusty::Cell
 // ============================================================================
 
-TEST(RequestOptionsTest, CellStorage) {
+TEST(RequestOptionsTest, CellStorageIsExplicitlySingleThreaded) {
+    static_assert(!rusty::is_sync<rusty::Cell<RequestOptions>>::value);
+
     rusty::Cell<RequestOptions> cell{RequestOptions::defaults()};
 
     auto opts = cell.get();
@@ -687,42 +691,4 @@ TEST(RequestOptionsTest, CellStorage) {
     auto retrieved = cell.get();
     EXPECT_EQ(retrieved.timeout_ms, 10000u);
     EXPECT_EQ(retrieved.max_retries, 5u);
-}
-
-TEST(RequestOptionsTest, CellConcurrentAccess) {
-    rusty::Cell<RequestOptions> cell{RequestOptions::defaults()};
-    std::atomic<int> error_count{0};
-    std::vector<std::thread> threads;
-
-    // Writers
-    for (int i = 0; i < 4; i++) {
-        threads.emplace_back([&cell, i]() {
-            for (int j = 0; j < 100; j++) {
-                auto opts = RequestOptions::defaults();
-                opts.timeout_ms = static_cast<uint64_t>(i * 1000 + j);
-                cell.set(opts);
-            }
-        });
-    }
-
-    // Readers
-    for (int i = 0; i < 4; i++) {
-        threads.emplace_back([&cell, &error_count]() {
-            for (int j = 0; j < 100; j++) {
-                auto opts = cell.get();
-                // Should always be a valid value
-                if (opts.base_delay_ms == 0 && opts.max_delay_ms == 0) {
-                    // Only if both are 0 something is wrong
-                    // (they have defaults)
-                    error_count++;
-                }
-            }
-        });
-    }
-
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    EXPECT_EQ(error_count.load(), 0);
 }

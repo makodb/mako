@@ -1,5 +1,9 @@
 # Fiber API Refactoring Plan
 
+> **Historical design proposal.** This is not a current build or ownership
+> guide. Current Rust/C++ module ownership is tracked in
+> `docs/dev/goal0_completion_plan.md` and `src/rrr/RUST_CANARY.md`.
+
 ## Overview
 
 This document describes the plan to refactor the rrr reactor/coroutine API to follow Boost.Fiber conventions for better clarity and industry alignment.
@@ -53,7 +57,8 @@ All new code MUST follow rusty-safe patterns:
 
 ### Time Interface
 
-The codebase uses `rrr::Time` (from `base/basetypes.hpp`):
+The codebase uses `rrr::Time`, exported by the `rrr.basetypes` named module
+from canonical `src/rrr/src/basetypes.rs`:
 
 ```cpp
 class Time {
@@ -78,7 +83,7 @@ Create a new header `src/rrr/reactor/fiber.h` that provides the modern API:
 #pragma once
 
 #include "coroutine.h"
-#include "../base/basetypes.hpp"  // For rrr::Time
+import rrr.basetypes;  // For rrr::Time
 #include <rusty/option.hpp>
 #include <rusty/cell.hpp>
 
@@ -433,5 +438,5 @@ auto wait_all = std::make_shared<WaitAll>();   // New (preferred)
 
 - [Boost.Fiber Documentation](https://www.boost.org/doc/libs/1_87_0/libs/fiber/doc/html/fiber/overview.html)
 - [this_fiber Namespace](https://www.boost.org/doc/libs/1_87_0/libs/fiber/doc/html/fiber/fiber_mgmt/this_fiber.html)
-- `src/rrr/base/basetypes.hpp` - rrr::Time interface
+- `src/rrr/src/basetypes.rs` - canonical rrr::Time source
 - `CLAUDE.md` - RustyCpp safety requirements

@@ -294,9 +294,9 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
     int r = rand() % 100 + 1; // [1, 100]
     if (r<=100) {  // communicator.cc
         FutureAttr fuattr;  // fuattr
-        fuattr.callback = [&done] (rusty::Arc<Future> fu) {
+        fuattr.callback = rrr::FutureCallback::from_callable([&done] (rusty::Arc<Future> fu) {
           done.fetch_add(1);
-        };  // Arc auto-released
+        });  // Arc auto-released
         // t.lap_nano();
         vector<int64_t> _req = nc_generate_read(par_id);
         // Future::safe_release(nc_clients[par_id]->async_txn_read(_req, fuattr));
@@ -308,9 +308,9 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
         usleep(1000*1);
     } else {
         FutureAttr fuattr;  // fuattr
-        fuattr.callback = [&done] (rusty::Arc<Future> fu) {
+        fuattr.callback = rrr::FutureCallback::from_callable([&done] (rusty::Arc<Future> fu) {
           done.fetch_add(1);
-        };  // Arc auto-released
+        });  // Arc auto-released
         
         vector<int64_t> _req = nc_generate_rmw(par_id);
         

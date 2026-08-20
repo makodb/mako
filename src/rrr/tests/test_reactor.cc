@@ -381,8 +381,12 @@ TEST_F(ReactorTest, ReactorCreation) {
 TEST_F(ReactorTest, EventCreation) {
     auto reactor = Reactor::get_reactor();
     
-    // Use IntEvent which has the set method
-    auto& event = Reactor::create_event<IntEvent>();
+    // Use IntEvent which has the set method. (Typed factory + explicit
+    // non-prunable pin — the old reactor_create_event<Ev>& helper died
+    // with the event_make dispatcher; this was its only call site.)
+    auto sp_event_pin = create_sp_int_event(1);
+    sp_event_pin->set_prunable(false);
+    auto& event = *sp_event_pin;
     EXPECT_FALSE(event.is_ready());
 
     // Trigger the event
@@ -448,7 +452,7 @@ TEST_F(ReactorTest, QuorumEvent) {
     auto reactor = Reactor::get_reactor();
     
     // QuorumEvent needs total count and quorum
-    auto sp_event = Reactor::create_sp_event<janus::QuorumEvent>(3, 2);  // 3 total, need 2 votes
+    auto sp_event = janus::create_sp_quorum_event(3, 2);  // 3 total, need 2 votes
     
     EXPECT_FALSE(sp_event->is_ready());
     
@@ -543,7 +547,7 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
 
     // Reset the global remove counter (was Epoll::remove_count_ static member;
     // hoisted to rrr::epoll_remove_count when Epoll moved to the DSL).
-    rrr::epoll_remove_count = 0;
+    rrr::epoll_remove_count.store(0);
 
     {
         auto test_poll_worker = PollThread::create();

@@ -1014,17 +1014,19 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] *high* 1.1 Implement Connection State Machine [Plan: doc/rpc/phase1_connection_state.md] [DONE]
         - Created `src/rrr/rpc/connection_state.hpp` with ConnectionState enum and ConnectionStateMachine class
         - ConnectionState enum: NEW, CONNECTING, CONNECTED, DISCONNECTING, DISCONNECTED, FAILED
-        - ConnectionStateMachine: state transitions with validation, callbacks, thread-safe via rusty::Cell
+        - ConnectionStateMachine: state transitions with validation and callbacks;
+          Cell-backed mutation is single-threaded (Send, not Sync)
         - Integrated with ClientConnection: replaced old status_ enum with state_machine_
         - Updated connect(), close(), handle_error() to use proper state transitions
         - Fixed pre-existing AddrInfo::release() raw pointer violation in utils.hpp
         - ~170 LOC (connection_state.hpp) + ~50 LOC integration changes
       - [x] *high* 1.2 Add Reconnection Policy Configuration [Plan: doc/rpc/phase1_reconnect_policy.md] [DONE]
-        - Created `src/rrr/rpc/reconnect_policy.hpp` (~200 LOC)
+        - Canonical source is now `src/rrr/src/reconnect_policy.rs`; rusty-cpp
+          generates the `rrr.reconnect_policy` C++ module
         - ReconnectPolicy struct with all config fields
-        - Policy presets: AGGRESSIVE (fast retries), CONSERVATIVE (slower), NO_RETRY
+        - Policy presets: aggressive (fast/unlimited), conservative (default), no_retry
         - ReconnectCalculator class with exponential backoff and jitter
-        - Thread-safe via rusty::Cell for retry_count_
+        - Interior-mutable retry counter via Cell (Send, not Sync)
       - [x] *medium* 1.3 Implement Automatic Reconnection Logic [deps: 1.1, 1.2] [Plan: doc/rpc/phase1_auto_reconnect.md] [DONE]
         - Added reconnect() method to ClientConnection and Client classes
         - Added set_reconnect_policy() and reconnect_policy() methods
@@ -1033,12 +1035,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Callback support for async completion notification
         - ~100 LOC in headers + ~60 LOC in implementation
       - [x] *medium* 1.4 Circuit Breaker Pattern [deps: 1.1] [Plan: doc/rpc/phase1_circuit_breaker.md] [DONE]
-        - Created `src/rrr/rpc/circuit_breaker.hpp` (~280 LOC)
+        - Canonical source is now `src/rrr/src/circuit_breaker.rs`; rusty-cpp
+          generates the `rrr.circuit_breaker` C++ module
         - CircuitState enum: CLOSED, OPEN, HALF_OPEN
         - CircuitBreakerConfig with presets: sensitive(), relaxed(), disabled()
         - CircuitBreaker class with allow_request(), record_success/failure()
         - Timeout-based transition from OPEN to HALF_OPEN for probing
-        - Thread-safe via rusty::Cell for all mutable state
+        - Cell-backed mutable state is Send but not Sync; callers serialize mutation
     - [x] **Phase 2: Message Durability and Request Management** [DONE]
       - [x] *medium* 2.1 Request Queue with Persistence Option [Plan: doc/rpc/phase2_request_queue.md] [DONE]
         - Created `src/rrr/rpc/request_queue.hpp` (~280 LOC)
@@ -1066,7 +1069,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Marshal operators for IdempotencyKey serialization
         - Created test/test_idempotency.cc with 32 tests (all passing)
       - [x] *medium* 2.4 Request Timeout and Retry Logic [deps: 1.2] [Plan: doc/rpc/phase2_timeout_retry.md] [DONE 2026-01-10]
-        - Created `src/rrr/rpc/request_options.hpp` (~230 LOC)
+        - Created the `rrr.request_options` module; its canonical source is now `src/rrr/src/request_options.rs`
         - TimeoutType enum: NONE, CONNECT_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_TIMEOUT, TOTAL_TIMEOUT
         - RequestOptions struct: timeout_ms, total_timeout_ms, max_retries, base/max_delay_ms, jitter_factor, idempotent
         - Presets: defaults(), with_retry(), idempotent_retry(), no_timeout(), fast(), patient()
@@ -1081,10 +1084,10 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - HeartbeatManager class for tracking heartbeat state
         - Caller-driven design: should_send_heartbeat(), on_heartbeat_sent(), on_pong_received()
         - Timeout detection with callback support: check_timeout(), set_on_timeout()
-        - Thread-safe via rusty::Cell for all mutable state
+        - Cell-backed mutable state is single-threaded (Send, not Sync)
       - [x] *low* 3.2 Connection Health Metrics [Plan: doc/rpc/phase3_metrics.md] [DONE 2026-01-09]
         - Created `src/rrr/rpc/connection_metrics.hpp` (~180 LOC)
-        - `ConnectionMetrics` class with Cell-based thread-safe counters
+        - `ConnectionMetrics` class with atomic thread-safe counters
         - Tracks requests_sent/completed/failed/timed_out, bytes_sent/received
         - Tracks reconnect_count, connect_time, latency (min/max/avg)
         - Integrated with ClientConnection: connect(), reconnect(), handle_read(), handle_write(), request()

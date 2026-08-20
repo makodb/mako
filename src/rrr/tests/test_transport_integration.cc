@@ -10,7 +10,7 @@
 /***********************************************************************
  *
  * test_transport_integration.cc:
- *   Integration tests for transport backends (RrrRpcBackend, ErpcBackend)
+ *   Integration tests for the rrr/rpc transport backend (RrrRpcBackend)
  *   Tests actual network I/O and request/response cycles
  *
  *   This test uses the underlying rrr/rpc library directly to test
@@ -43,37 +43,6 @@ constexpr int32_t TEST_PORT_BASE = static_cast<int32_t>(19000);
 constexpr int32_t TEST_REQ_TYPE_START = static_cast<int32_t>(1);
 constexpr int32_t TEST_REQ_TYPE_END = static_cast<int32_t>(10);
 /*RUSTYCPP:GEN-END id=test_transport_integration.1*/
-
-// ============= Inline Transport Type Definitions =============
-// (Matching mako/lib/transport_backend.h to avoid header dependencies)
-
-namespace mako {
-
-enum class TransportType {
-    ERPC = 0,
-    RRR_RPC = 1
-};
-
-inline TransportType ParseTransportType(const std::string& type_str) {
-    if (type_str == "erpc" || type_str == "ERPC") {
-        return TransportType::ERPC;
-    } else if (type_str == "rrr" || type_str == "RRR" || type_str == "rrr_rpc") {
-        return TransportType::RRR_RPC;
-    } else {
-        throw std::runtime_error("Invalid transport type: " + type_str +
-                                " (valid: erpc, rrr)");
-    }
-}
-
-inline const char* TransportTypeToString(TransportType type) {
-    switch (type) {
-        case TransportType::ERPC: return "erpc";
-        case TransportType::RRR_RPC: return "rrr";
-        default: return "unknown";
-    }
-}
-
-} // namespace mako
 
 // ============= Test Service Classes =============
 
@@ -136,34 +105,6 @@ private:
     rrr::i32 rpc_id_;
     Handler handler_;
 };
-
-// ============= Transport Type Utility Tests (Integration) =============
-
-class TransportTypeIntegrationTest : public ::testing::Test {};
-
-TEST_F(TransportTypeIntegrationTest, ParseAndConvertRrrRpc) {
-    auto type = mako::ParseTransportType("rrr");
-    EXPECT_EQ(type, mako::TransportType::RRR_RPC);
-    EXPECT_STREQ(mako::TransportTypeToString(type), "rrr");
-}
-
-TEST_F(TransportTypeIntegrationTest, ParseAndConvertErpc) {
-    auto type = mako::ParseTransportType("erpc");
-    EXPECT_EQ(type, mako::TransportType::ERPC);
-    EXPECT_STREQ(mako::TransportTypeToString(type), "erpc");
-}
-
-TEST_F(TransportTypeIntegrationTest, CaseInsensitiveParsing) {
-    EXPECT_EQ(mako::ParseTransportType("RRR"), mako::TransportType::RRR_RPC);
-    EXPECT_EQ(mako::ParseTransportType("ERPC"), mako::TransportType::ERPC);
-    EXPECT_EQ(mako::ParseTransportType("rrr_rpc"), mako::TransportType::RRR_RPC);
-}
-
-TEST_F(TransportTypeIntegrationTest, InvalidTypeThrows) {
-    EXPECT_THROW(mako::ParseTransportType("invalid"), std::runtime_error);
-    EXPECT_THROW(mako::ParseTransportType("tcp"), std::runtime_error);
-    EXPECT_THROW(mako::ParseTransportType(""), std::runtime_error);
-}
 
 // ============= RRR/RPC Direct Integration Tests =============
 // These tests use the underlying rrr/rpc library directly,

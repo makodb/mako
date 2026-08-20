@@ -21,7 +21,6 @@
 //                    uint64_t t1 = rrr::Time::now();
 //                    rrr::Log_info("time: {}", t1 - t0);
 //                    t0 = t1;
-//                    rrr::Log_info("cpu utilization: {:f}", rrr::CPUInfo::cpu_stat());
 //                }
 //                int ret = write(fd, buf, 100);
 //                verify(ret == 100);
@@ -42,9 +41,6 @@
 //                while (true) {
 //                    volatile int j = 1;
 //                    i = i + j;
-//                    //if (i % 10000000 == 0) {
-//                    //    rrr::Log_info("cpu utilization: {:f}", rrr::CPUInfo::cpu_stat());
-//                    //}
 //                }
 //                });
 //    }

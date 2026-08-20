@@ -217,7 +217,7 @@ int RaftTestConfig::Wait(uint64_t index, int n, uint64_t term) {
     } else if (nc >= n) {
       break;
     }
-    Reactor::create_sp_event<TimeoutEvent>(to)->wait();
+    create_sp_timeout_event(to)->wait();
     if (to < 1000000) {
       to *= 2;
     }

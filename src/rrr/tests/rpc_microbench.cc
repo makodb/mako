@@ -12,6 +12,8 @@
 
 #include "../rrr.hpp"
 #include "benchmark_service.h"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 import std;
 

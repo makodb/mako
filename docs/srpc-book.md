@@ -111,17 +111,33 @@ src/rrr/
     client.hpp          # Client, Future, and connection APIs
     server.hpp          # Server, listener, dispatch (684 lines)
     callbacks.hpp       # Connection lifecycle callbacks
-    circuit_breaker.hpp # Fail-fast fault tolerance
     connection_state.hpp# Connection state machine
     connection_metrics.hpp # Performance metrics
     heartbeat.hpp       # Keep-alive probes
+    frame_codec.hpp     # Frame-codec import compatibility shim
     load_balancer.hpp   # Pool load-balancing strategies
-    reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
-    request_options.hpp # Per-request configuration
     pollable_proxy.h    # Pollable proxy facade + typed Arc adapter helpers
     errors.hpp          # Error code definitions
-    utils.hpp/cpp       # RPC utilities
+
+  src/                # Canonical Rust module sources
+    basetypes.rs       # Primitive aliases, SparseInt, counters, and clocks
+    callback_wrapper.rs # Callback ownership adapter module
+    circuit_breaker.rs # Circuit-breaker state machine module
+    completion_tracker.rs # Request completion tracking module
+    connection_metrics.rs # Connection metrics module
+    connection_state.rs # Connection state machine module
+    errors.rs          # RPC error definitions
+    frame_codec.rs     # Wire framing and stream reader module
+    heartbeat.rs       # Keep-alive manager module
+    internal_protocol.rs # Internal protocol definitions
+    load_balancer.rs   # Pool load-balancing strategies
+    rand.rs            # Random generator module
+    request_options.rs # Per-request configuration module
+    request_queue.rs   # Pending-request buffering module
+    reconnect_policy.rs # Reconnect policy and backoff calculator module
+    stat.rs            # Statistics module
+    utils.rs           # RPC utility ownership, port, and hostname module
 
   reactor/            # Event loop and fiber system
     reactor.h           # Core event loop scheduler (482 lines)
@@ -135,7 +151,6 @@ src/rrr/
 
   base/               # Core utilities
     threading.hpp       # SpinLock, SpinMutex
-    basetypes.hpp       # Type aliases, NoCopy, SparseInt
     logging.hpp         # Log framework (FATAL/ERROR/WARN/INFO/DEBUG)
     misc.hpp            # General utilities
 
@@ -788,7 +803,7 @@ if (client_opt.is_some()) {
 Per-request configuration:
 
 ```cpp srpc-no-compile
-RequestOptions opts;
+auto opts = RequestOptions::defaults();
 opts.timeout_ms = 5000;       // 5 second timeout
 opts.max_retries = 3;         // Retry up to 3 times
 opts.idempotent = true;       // Safe to retry
@@ -948,7 +963,7 @@ rrr::Deserialize_::deserialize(d, m);
 | `i32` | `int32_t` | 4 bytes |
 | `i64` | `int64_t` | 8 bytes |
 | `v32` | variable-length 32-bit | 1-5 bytes |
-| `v64` | variable-length 64-bit | 1-10 bytes |
+| `v64` | variable-length 64-bit | 1-9 bytes |
 | `double` | `double` | 8 bytes |
 | `string` | `std::string` | length-prefixed |
 | containers | `vector`, `map`, `set`, `pair` | element-wise |
@@ -1419,12 +1434,13 @@ NEW --> CONNECTING --> CONNECTED --> DISCONNECTING --> DISCONNECTED
                     +-- (reconnect) -----+
 ```
 
-States tracked via `rusty::Cell<ConnectionState>` for thread-safe interior mutability.
+States are tracked via `rusty::Cell<ConnectionState>` for single-threaded
+interior mutability; `Cell` is not a thread-safety primitive.
 
 ### Automatic Reconnection
 
 ```cpp srpc-compile
-ReconnectPolicy policy;
+auto policy = ReconnectPolicy::new_();
 policy.max_retries = 10;            // 0 for unlimited
 policy.initial_delay_ms = 100;      // Initial delay
 policy.max_delay_ms = 30000;        // Max delay (30s)
@@ -1437,10 +1453,10 @@ policy.jitter_enabled = true;       // Randomize delay to avoid herd effects
 Prevents cascade failures using the CLOSED/OPEN/HALF_OPEN pattern:
 
 ```cpp srpc-compile
-CircuitBreakerConfig cb;
-cb.failure_threshold = 5;       // Open after 5 consecutive failures
-cb.success_threshold = 2;       // Close after 2 successes in half-open
-cb.timeout_ms = 5000;           // Try again after 5 seconds
+auto cb = CircuitBreakerConfig::defaults();
+cb.failure_threshold = 5;           // Open after 5 consecutive failures
+cb.success_threshold = 2;           // Close after 2 successes in half-open
+cb.timeout_ms = 5000;               // Try again after 5 seconds
 ```
 
 ### Request Buffering
@@ -1519,7 +1535,8 @@ enum class RpcError {
 };
 ```
 
-`TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in `request_options.hpp`.
+`TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in the
+`rrr.request_options` module.
 SRPC handles failures through `RpcError` values and helper predicates rather
 than an RPC-specific exception class.
 
@@ -1635,7 +1652,8 @@ Current codegen is typed-only for non-raw RPC methods:
 - Generated proxy sync/async methods use typed request/response objects end-to-end.
 - `raw` handlers remain raw (`void Method(Box<Request>, WeakServerConnection)`).
 - Generated service classes do not inherit `rrr::Service`. They register via
-  `Server::reg_service(Box<T>)` using the `ServiceLike` concept.
+  `Server::reg_service_typed(Box<T>)`, which wraps their concrete dispatch
+  methods in the server's internal type-erasure shim.
 - All in-tree generated headers (`rcc_rpc.h`, `network.h`, `helloworld.h`) use
   typed-only mode and all callsites use typed APIs.
 

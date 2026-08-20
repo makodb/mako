@@ -29,11 +29,11 @@
 #include <ctype.h>
 namespace lcdf {
 
-static void assign_vec(rusty::Vec<int>& v, size_t n, int value) {
+static void assign_vec(std::vector<int>& v, size_t n, int value) {
     v.clear();
     v.reserve(n);
     for (size_t i = 0; i != n; ++i)
-        v.push(value);
+        v.push_back(value);
 }
 
 /** @class Json
@@ -161,7 +161,7 @@ void Json::ObjectJson::rehash()
 // @unsafe - uses raw char* data() and placement new for ObjectItem construction
 int Json::ObjectJson::find_insert(const String &key, const Json &value)
 {
-    if (hash_.is_empty())
+    if (hash_.empty())
         assign_vec(hash_, 8, -1);
     int *b = &hash_[bucket(key.data(), key.length())], chain = 0;
     while (*b >= 0 && os_[*b].v_.first != key) {
@@ -186,7 +186,7 @@ int Json::ObjectJson::find_insert(const String &key, const Json &value)
 
 Json &Json::ObjectJson::get_insert(Str key)
 {
-    if (hash_.is_empty())
+    if (hash_.empty())
         assign_vec(hash_, 8, -1);
     int *b = &hash_[bucket(key.data(), key.length())], chain = 0;
     while (*b >= 0 && os_[*b].v_.first != key) {
@@ -727,7 +727,7 @@ inline const uint8_t* Json::streaming_parser::error_at(const uint8_t* here) {
 }
 
 inline Json* Json::streaming_parser::current() {
-    return stack_.is_empty() ? &json_ : stack_.back();
+    return stack_.empty() ? &json_ : stack_.back();
 }
 
 const uint8_t*
@@ -838,7 +838,7 @@ Json::streaming_parser::consume(const uint8_t* first,
             string_object_key:
                 first = consume_string(first, last, str);
                 if (state_ >= 0 && !(state_ & st_stringpart)) {
-                    stack_.push(&current()->get_insert(std::move(str_)));
+                    stack_.push_back(&current()->get_insert(std::move(str_)));
                     continue;
                 }
             } else
@@ -890,10 +890,10 @@ Json::streaming_parser::consume(const uint8_t* first,
                 swap(*jp, j);
 
             if (state_ == st_object_value)
-                stack_.pop();
+                stack_.pop_back();
             if (jp->is_a() || jp->is_o()) {
                 if (state_ != st_initial)
-                    stack_.push(jp);
+                    stack_.push_back(jp);
                 state_ = jp->is_a() ? st_array_initial : st_object_initial;
             } else if (state_ == st_object_value)
                 state_ = st_object_delim;
@@ -907,11 +907,11 @@ Json::streaming_parser::consume(const uint8_t* first,
         }
 
         close_value:
-            if (stack_.is_empty()) {
+            if (stack_.empty()) {
                 state_ = st_final;
                 return first;
             } else {
-                stack_.pop();
+                stack_.pop_back();
                 state_ = current()->is_a() ? st_array_delim : st_object_delim;
             }
             break;

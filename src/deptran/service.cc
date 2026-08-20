@@ -60,11 +60,11 @@ void ClassicServiceImpl::Prepare(const ClassicService::RpcPrepareRequest& req, C
 }
 
 void ClassicServiceImpl::Commit(const ClassicService::RpcCommitRequest& req, ClassicService::RpcCommitResponse& resp, rrr::DeferredReply defer) {
-  this->Commit(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.profile, &resp.view_data, std::move(defer));
+  this->Commit(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.view_data, std::move(defer));
 }
 
 void ClassicServiceImpl::Abort(const ClassicService::RpcAbortRequest& req, ClassicService::RpcAbortResponse& resp, rrr::DeferredReply defer) {
-  this->Abort(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.profile, &resp.view_data, std::move(defer));
+  this->Abort(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.view_data, std::move(defer));
 }
 
 void ClassicServiceImpl::EarlyAbort(const ClassicService::RpcEarlyAbortRequest& req, ClassicService::RpcEarlyAbortResponse& resp, rrr::DeferredReply defer) {
@@ -318,7 +318,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   defer.reply();
   // }, __FILE__, cmd_id);
@@ -330,7 +330,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   //   }
   //   auto coro_opt = Fiber::current_fiber();
   //   if (coro_opt.is_some()) {
-  //     *coro_id = coro_opt.unwrap()->id;
+  //     *coro_id = coro_opt.unwrap()->id.get();
   //   }
   //   defer.reply();
   // };
@@ -362,12 +362,12 @@ void ClassicServiceImpl::FailoverPauseSocketOut(
     // TODO: yidawu need to test with multi clients in diff machines
     int wait_int = 50 * 1000; // 50ms
     while (clt_cnt_.load() == 0) {
-      auto e = Reactor::create_sp_event<NeverEvent>();
+      auto e = create_sp_never_event();
       e->wait_timeout(wait_int);
     }
     clt_cnt_--;
     while (clt_cnt_.load() != 0) {
-      auto e = Reactor::create_sp_event<NeverEvent>();
+      auto e = create_sp_never_event();
       e->wait_timeout(wait_int);
     }
     dtxn_sched_->rep_sched_->Pause();
@@ -446,7 +446,7 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
   if(null_cmd) *res = REPEAT;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   defer.reply();
   //auto coro = Fiber::create_run(func);
@@ -475,21 +475,17 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
                                 rrr::i32* res,
 																bool_t* slow,
                                 uint64_t* coro_id,
-																Profiling* profile,
                                 janus::Command* view_data,
                                 rrr::DeferredReply defer) {
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   int ret = sched->OnCommit(tid, dep_id, SUCCESS);
 
-  auto result = rrr::CPUInfo::cpu_stat();  // cpu_stat() returns rusty::Vec<double>
-  *profile = {result[0], result[1], result[2], result[3]};
-  //*profile = {0.0, 0.0, 0.0, 0.0};
   //Log_info("slow2: {}", sched->slow_);
   *slow = sched->slow_;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
 
   if (ret == WRONG_LEADER) {
@@ -521,21 +517,18 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
                                rrr::i32* res,
 															 bool_t* slow,
                                uint64_t* coro_id,
-															 Profiling* profile,
                                janus::Command* view_data,
                                rrr::DeferredReply defer) {
   Log_debug("get abort_txn: tid: {}", tid);
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   sched->OnCommit(tid, dep_id, REJECT);
-  auto result = rrr::CPUInfo::cpu_stat();  // cpu_stat() returns rusty::Vec<double>
-  *profile = {result[0], result[1], result[2]};
   Log_info("slow3: {}", sched->slow_);
   *slow = sched->slow_;
   *res = SUCCESS;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   // Set view data from replication scheduler if available
   if (sched->rep_sched_ != nullptr) {
@@ -873,7 +866,7 @@ void ClassicServiceImpl::JetpackPullCmd(const epoch_t& jepoch,
   // Fill-then-wrap: handler fills a local, packed after completion.
   KeyCmdBatchData batch_result;
   dtxn_sched()->OnJetpackPullCmd(jepoch, oepoch, keys, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, batch_result);
-  *cmd_batch = rusty::Arc<KeyCmdBatchData>::make(std::move(batch_result));
+  *cmd_batch = janus::Command::pack_aliased(rusty::Arc<KeyCmdBatchData>::make(std::move(batch_result)));
   defer.reply();
 
 }
@@ -945,7 +938,7 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
                                               janus::Command* reply_new_view,
                                               janus::Command* cmd, 
                                               rrr::DeferredReply defer) {
-  *cmd = rusty::Arc<TpcCommitCommand>::make();
+  *cmd = janus::Command::pack_aliased(rusty::Arc<TpcCommitCommand>::make());
   dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view);
   defer.reply();
 }

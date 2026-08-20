@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <time.h>
 #include "../rrr.hpp"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 
 import std;

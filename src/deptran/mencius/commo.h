@@ -10,9 +10,9 @@ namespace janus {
 
 class TxData;
 
-class MenciusPrepareQuorumEvent: public QuorumEventWrapper {
+class MenciusPrepareQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
 //  ballot_t max_ballot_{0};
   bool HasSuggestedValue() {
     // TODO implement this
@@ -29,9 +29,9 @@ class MenciusPrepareQuorumEvent: public QuorumEventWrapper {
 
 };
 
-class MenciusSuggestQuorumEvent: public QuorumEventWrapper {
+class MenciusSuggestQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventWrapper::QuorumEventWrapper;
+  using QuorumEventBase::QuorumEventBase;
   void FeedResponse(bool y) {
     if (y) {
       vote_yes();

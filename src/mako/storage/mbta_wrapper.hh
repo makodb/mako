@@ -1639,7 +1639,7 @@ public:
     static std::atomic<size_t> partition_seq[kMaxLocalShards];
     TThread::set_id(__sync_fetch_and_add(&tidcounter, 1));
     TThread::set_mode(0); // checking in-progress
-    TThread::set_num_eprc_server(BenchmarkConfig::getInstance().getNumErpcServer());
+    TThread::set_num_rpc_server(BenchmarkConfig::getInstance().getNumRpcServer());
     TThread::set_is_micro(BenchmarkConfig::getInstance().getIsMicro());
 #if defined(DISABLE_MULTI_VERSION)
     TThread::disable_multiversion();

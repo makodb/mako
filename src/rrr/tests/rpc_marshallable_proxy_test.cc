@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include "../rrr.hpp"
 #include "../misc/serializable.hpp"  // wrap_serializable, serializable_cast
+#include "deptran/RW_command.h"
 #include "deptran/classic/tpc_command.h"
 #include "deptran/procedure.h"
 #include "deptran/raft/replicated_db.h"
@@ -26,6 +27,64 @@ using namespace rrr;
 // migrated to Serializable) and is now deleted.
 
 namespace {
+
+struct UnregisteredMakoPayload {};
+
+template <typename T>
+concept MakoPackable = requires(const T& value) {
+  janus::Command::Base::template pack<T>(value);
+};
+
+static_assert(static_cast<int32_t>(janus::MakoCommandKind::Unknown) == 0);
+
+#define ASSERT_MAKO_PAYLOAD_KIND(TypeName, KindValue)                         \
+  static_assert(rrr::PayloadMember<janus::MakoCommands,                      \
+                                   janus::TypeName>::value);                 \
+  static_assert(rrr::PayloadMember<janus::MakoCommands,                      \
+                                   janus::TypeName>::KIND == KindValue);     \
+  static_assert(static_cast<int32_t>(janus::MakoCommandKind::TypeName) ==    \
+                KindValue);                                                  \
+  static_assert(janus::TypeName::static_kind() == KindValue);                \
+  static_assert(MakoPackable<janus::TypeName>)
+
+ASSERT_MAKO_PAYLOAD_KIND(LogEntry, 1);
+ASSERT_MAKO_PAYLOAD_KIND(TpcPrepareCommand, 2);
+ASSERT_MAKO_PAYLOAD_KIND(TpcCommitCommand, 3);
+ASSERT_MAKO_PAYLOAD_KIND(VecPieceData, 4);
+ASSERT_MAKO_PAYLOAD_KIND(BulkPaxosCmd, 5);
+ASSERT_MAKO_PAYLOAD_KIND(BulkPrepareLog, 6);
+ASSERT_MAKO_PAYLOAD_KIND(HeartBeatLog, 7);
+ASSERT_MAKO_PAYLOAD_KIND(SyncLogRequest, 8);
+ASSERT_MAKO_PAYLOAD_KIND(SyncLogResponse, 9);
+ASSERT_MAKO_PAYLOAD_KIND(SyncNoOpRequest, 10);
+ASSERT_MAKO_PAYLOAD_KIND(PaxosPrepCmd, 11);
+ASSERT_MAKO_PAYLOAD_KIND(TpcEmptyCommand, 12);
+ASSERT_MAKO_PAYLOAD_KIND(TpcNoopCommand, 13);
+ASSERT_MAKO_PAYLOAD_KIND(TpcBatchCommand, 14);
+ASSERT_MAKO_PAYLOAD_KIND(VecRecData, 15);
+ASSERT_MAKO_PAYLOAD_KIND(ViewData, 16);
+ASSERT_MAKO_PAYLOAD_KIND(SimpleRWCommand, 17);
+ASSERT_MAKO_PAYLOAD_KIND(KeyCmdBatchData, 18);
+ASSERT_MAKO_PAYLOAD_KIND(ReplicatedDBCommand, 19);
+
+#undef ASSERT_MAKO_PAYLOAD_KIND
+
+static_assert(!rrr::PayloadMember<janus::MakoCommands,
+                                  UnregisteredMakoPayload>::value);
+static_assert(!MakoPackable<UnregisteredMakoPayload>);
+
+template <typename T>
+void ExpectMakoKindWireByte(int32_t expected) {
+  ASSERT_EQ(T::static_kind(), expected);
+
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive writer(rrr::make_sink_proxy(&sink));
+  const rrr::v32 tag(expected);
+  rrr::Serialize_::serialize(tag, writer);
+
+  ASSERT_EQ(sink.bytes.len(), 1u);
+  EXPECT_EQ(sink.bytes[0], static_cast<uint8_t>(expected));
+}
 
 // 2 step 5 (2026-05-05): retired the
 // `static_assert(!std::is_base_of_v<Marshallable, ...>)` block — the
@@ -67,7 +126,7 @@ rusty::Arc<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
   vec_piece.sp_vec_piece_data_ =
       std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
   vec_piece.is_recovery_command_ = recovery;
-  commit.cmd_ = rusty::Arc<janus::VecPieceData>::make(std::move(vec_piece));
+  commit.cmd_ = janus::Command::pack_aliased(rusty::Arc<janus::VecPieceData>::make(std::move(vec_piece)));
 
   janus::ViewData view_data;
   view_data.view_.n_ = 3;
@@ -82,6 +141,43 @@ rusty::Arc<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
 }
 
 }  // namespace
+
+TEST(MakoCommandKindTest, AllExplicitDiscriminantsAreOneByteV32) {
+  ExpectMakoKindWireByte<janus::LogEntry>(1);
+  ExpectMakoKindWireByte<janus::TpcPrepareCommand>(2);
+  ExpectMakoKindWireByte<janus::TpcCommitCommand>(3);
+  ExpectMakoKindWireByte<janus::VecPieceData>(4);
+  ExpectMakoKindWireByte<janus::BulkPaxosCmd>(5);
+  ExpectMakoKindWireByte<janus::BulkPrepareLog>(6);
+  ExpectMakoKindWireByte<janus::HeartBeatLog>(7);
+  ExpectMakoKindWireByte<janus::SyncLogRequest>(8);
+  ExpectMakoKindWireByte<janus::SyncLogResponse>(9);
+  ExpectMakoKindWireByte<janus::SyncNoOpRequest>(10);
+  ExpectMakoKindWireByte<janus::PaxosPrepCmd>(11);
+  ExpectMakoKindWireByte<janus::TpcEmptyCommand>(12);
+  ExpectMakoKindWireByte<janus::TpcNoopCommand>(13);
+  ExpectMakoKindWireByte<janus::TpcBatchCommand>(14);
+  ExpectMakoKindWireByte<janus::VecRecData>(15);
+  ExpectMakoKindWireByte<janus::ViewData>(16);
+  ExpectMakoKindWireByte<janus::SimpleRWCommand>(17);
+  ExpectMakoKindWireByte<janus::KeyCmdBatchData>(18);
+  ExpectMakoKindWireByte<janus::ReplicatedDBCommand>(19);
+}
+
+TEST(MakoCommandKindTest, ExplicitMappingControlsExactEnvelopeWireBytes) {
+  janus::TpcNoopCommand payload;
+  auto envelope = janus::Command::pack(payload);
+
+  EXPECT_EQ(payload.kind(), 13);
+  EXPECT_EQ(envelope.kind(), 13);
+
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive writer(rrr::make_sink_proxy(&sink));
+  rrr::Serialize_::serialize(envelope, writer);
+
+  ASSERT_EQ(sink.bytes.len(), 1u);
+  EXPECT_EQ(sink.bytes[0], 13u);
+}
 
 // removed eight tests
 // (`DeputyDefaultsToNoMarshallable`,
@@ -251,11 +347,11 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
   janus::HeartBeatLog nested;
   nested.leader_id = 77;
   nested.epoch = 0;
-  batch.AddEntry(1001, janus::Command{rusty::Arc<janus::HeartBeatLog>::make(
-                           std::move(nested))});
+  batch.AddEntry(1001, janus::Command::pack_aliased(rusty::Arc<janus::HeartBeatLog>::make(
+                           std::move(nested))));
 
-  janus::Command batch_envelope{
-      rusty::Arc<janus::KeyCmdBatchData>::make(std::move(batch))};
+  janus::Command batch_envelope = janus::Command::pack_aliased(
+      rusty::Arc<janus::KeyCmdBatchData>::make(std::move(batch)));
   EXPECT_EQ(batch_envelope.kind_, janus::KeyCmdBatchData::static_kind());
   const auto decoded_batch =
       marshallable_cast<janus::KeyCmdBatchData>(batch_envelope);
@@ -436,8 +532,7 @@ TEST(MarshallableProxyFacadeTest,
   auto sync_noop = rusty::Arc<janus::SyncNoOpRequest>::make();
 
   // 2 step 5 (2026-05-05): construction path verifies that
-  // wrapping in `Command` produces the kind-tag the TypeList
-  // position dictates.
+  // Wrapping in `Command` produces the explicitly registered kind tag.
   EXPECT_EQ(janus::Command{bulk_prepare}.kind_,
             janus::BulkPrepareLog::static_kind());
   EXPECT_EQ(janus::Command{prep_cmd}.kind_,

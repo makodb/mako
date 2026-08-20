@@ -62,14 +62,7 @@ void CoordinatorRule::GotoNextPhase() {
         // fixed percentage
         go_to_fastpath_ = RandomGenerator::rand(0, 99) < Config::GetConfig()->jetpack_fastpath_attempt_rate_;
       } else if (Config::GetConfig()->jetpack_fastpath_attempt_rate_ == 101) {
-        // static int printed_times = 0;
-        // std::vector<double> cpu_info = rrr::CPUInfo::per_cpu_stat();
-        // if (dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000) {
-        //   Log_info("cpu_info {} {:.6f} {:.6f} {:.6f} {:.6f}", cpu_info.size(), cpu_info[0], cpu_info[1], cpu_info[2], cpu_info[3]);
-        //   // printed_times++;
-        // }
         // go_to_fastpath_ = true;
-        // go_to_fastpath_ = Config::GetConfig()->replica_proto_ != MODE_MENCIUS || cpu_info[1] < 0.9;
         // go_to_fastpath_ = client_worker_->one_armed_bandit_.ConsultAttempt();
         go_to_fastpath_ = client_worker_->go_to_jetpack_fastpath_cnt_ < 10 || (client_worker_->cli2cli_[6+cmd_is_write_].count() > 0 && client_worker_->cli2cli_[6+cmd_is_write_].recent_100_ave() < std::min(client_worker_->cli2cli_[8+cmd_is_write_].recent_100_ave(), 500.0)) || client_worker_->one_armed_bandit_.ConsultAttempt();
         // Log_info("client_worker_->go_to_jetpack_fastpath_cnt_ {} {} {:.2f} {:.2f} {}", client_worker_->go_to_jetpack_fastpath_cnt_, client_worker_->cli2cli_[6+cmd_is_write_].count(), client_worker_->cli2cli_[6+cmd_is_write_].recent_100_ave(), client_worker_->cli2cli_[8+cmd_is_write_].recent_100_ave(), client_worker_->one_armed_bandit_.ConsultAttempt());

@@ -10,6 +10,8 @@
 #include <signal.h>
 
 #include "benchmark_service.h"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 import std;
 
@@ -21,7 +23,6 @@ const char *svr_addr = "127.0.0.1:8848";
 int byte_size = 10;
 int epoll_instances = 2;
 bool fast_requests = false;
-bool await_mode = false;
 int seconds = 10;
 int outgoing_requests = 1000;
 int client_threads = 8;
@@ -137,71 +138,7 @@ struct ClientThreadArg {
     int thread_idx;
 };
 
-static rusty::Task<void> await_worker(BenchmarkProxy* proxy, int thread_idx, i32 rpc_id) {
-    BenchmarkProxy::RpcFastNopRequest fast_nop_req;
-    fast_nop_req.in_0 = request_str;
-
-    BenchmarkProxy::RpcAsyncNopRequest async_nop_req;
-    async_nop_req.in_0 = request_str;
-
-    BenchmarkProxy::RpcNopRequest nop_req;
-    nop_req.in_0 = request_str;
-
-    BenchmarkProxy::RpcDeferredEchoRequest deferred_echo_req;
-    deferred_echo_req.val = 1;
-
-    BenchmarkProxy::RpcFastVecRequest fast_vec_req;
-    fast_vec_req.n = rpc_bench_vector_size;
-
-    while (!should_stop) {
-        bool ok = false;
-        if (rpc_id == BenchmarkService::FAST_NOP) {
-            auto resp = co_await proxy->await_fast_nop(fast_nop_req);
-            ok = resp.is_ok();
-        } else if (rpc_id == BenchmarkService::FAST_VEC) {
-            auto resp = co_await proxy->await_fast_vec(fast_vec_req);
-            ok = resp.is_ok();
-        } else if (rpc_id == BenchmarkService::ASYNC_NOP) {
-            auto resp = co_await proxy->await_async_nop(async_nop_req);
-            ok = resp.is_ok();
-        } else if (rpc_id == BenchmarkService::DEFERRED_ECHO) {
-            auto resp = co_await proxy->await_deferred_echo(deferred_echo_req);
-            ok = resp.is_ok();
-        } else {
-            auto resp = co_await proxy->await_nop(nop_req);
-            ok = resp.is_ok();
-        }
-
-        if (ok) {
-            g_client_req_counters[thread_idx].fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    co_return;
-}
-
-// Self-referencing waker: when the awaited Future completes, re-poll
-// the task to drive the coroutine forward.  Returns the heap-allocated
-// waker so the caller can keep it alive for the lifetime of the task.
-//
-// Without this, the prior implementation installed a no-op waker —
-// rusty-cpp's `Task::poll` sets `current_context_tls` to the passed
-// context, so `TypedFutureResultAwaiter::await_suspend` registered the
-// no-op as the Future's completion callback.  When the reply arrived,
-// the no-op fired and the coroutine never resumed.
-static std::shared_ptr<rusty::Waker> prime_task(rusty::Task<void>& task) {
-    auto waker = std::make_shared<rusty::Waker>();
-    rusty::Task<void>* task_ptr = &task;
-    std::weak_ptr<rusty::Waker> waker_weak{waker};
-    waker->wake_fn = [task_ptr, waker_weak]() {
-        auto wk = waker_weak.lock();
-        if (!wk) return;
-        rusty::Context ctx{wk.get()};
-        (void)task_ptr->poll(ctx);
-    };
-    rusty::Context ctx{waker.get()};
-    (void)task.poll(ctx);
-    return waker;
-}
+// (the co_await benchmark path is gone with the RPC coroutine feature)
 
 static void* client_proc(void* arg_ptr) {
     auto* arg = static_cast<ClientThreadArg*>(arg_ptr);
@@ -233,20 +170,6 @@ static void* client_proc(void* arg_ptr) {
         break;
     }
 
-    BenchmarkProxy proxy(const_cast<Client*>(cl.get()));
-    std::vector<rusty::Task<void>> await_tasks;
-
-    std::vector<std::shared_ptr<rusty::Waker>> await_wakers;
-    if (await_mode) {
-        await_tasks.reserve(outgoing_requests);
-        await_wakers.reserve(outgoing_requests);
-        for (int i = 0; i < outgoing_requests; ++i) {
-            await_tasks.emplace_back(await_worker(&proxy, thread_idx, rpc_id));
-        }
-        for (auto& task : await_tasks) {
-            await_wakers.push_back(prime_task(task));
-        }
-    }
 
     // Slim async-callback path: bench callers don't inspect the
     // returned Future (no `fu->wait()`, no `fu->get_reply()`), so use
@@ -281,10 +204,8 @@ static void* client_proc(void* arg_ptr) {
             1, std::memory_order_relaxed);
     };
     do_work_holder = do_work;
-    if (!await_mode) {
-        for (int i = 0; i < outgoing_requests; i++) {
-            do_work();
-        }
+    for (int i = 0; i < outgoing_requests; i++) {
+        do_work();
     }
     while (!should_stop) {
         sleep(1);
@@ -320,7 +241,7 @@ int main(int argc, char **argv) {
     }
 
     char ch = 0;
-    while ((ch = getopt(argc, argv, "c:s:b:e:fan:o:t:w:v:m:"))!= -1) {
+    while ((ch = getopt(argc, argv, "c:s:b:e:fn:o:t:w:v:m:"))!= -1) {
         switch (ch) {
         case 'c':
             is_client = true;
@@ -349,9 +270,6 @@ int main(int argc, char **argv) {
             rpc_mode_explicit = true;
             break;
         }
-        case 'a':
-            await_mode = true;
-            break;
         case 'n':
             seconds = atoi(optarg);
             break;
@@ -397,7 +315,6 @@ int main(int argc, char **argv) {
     Log_info("epoll instances:         {}", epoll_instances);
     Log_info("fast reqeust:            {}", fast_requests ? "true" : "false");
     Log_info("rpc mode:                {}", rpc_mode_name(rpc_mode));
-    Log_info("await mode:              {}", await_mode ? "true" : "false");
     Log_info("running seconds:         {}", seconds);
     Log_info("outgoing requests:       {}", outgoing_requests);
     Log_info("client threads:          {}", client_threads);
@@ -436,7 +353,7 @@ int main(int argc, char **argv) {
             g_client_req_counters[i].store(0, std::memory_order_relaxed);
         }
 
-        std::vector<rusty::thread::JoinHandle<void>> client_th;
+        std::vector<rusty::thread::JoinHandle<rusty::thread::Unit>> client_th;
         client_th.reserve(client_threads);
         ClientThreadArg* client_args = new ClientThreadArg[client_threads];
         for (int i = 0; i < client_threads; i++) {

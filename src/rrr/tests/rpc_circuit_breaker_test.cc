@@ -48,9 +48,9 @@ TEST(CircuitBreakerConfigTest, DisabledPreset) {
 }
 
 TEST(CircuitBreakerStateTest, StateToString) {
-    EXPECT_STREQ(circuit_state_to_string(CircuitState::CLOSED), "CLOSED");
-    EXPECT_STREQ(circuit_state_to_string(CircuitState::OPEN), "OPEN");
-    EXPECT_STREQ(circuit_state_to_string(CircuitState::HALF_OPEN), "HALF_OPEN");
+    EXPECT_EQ(circuit_state_to_string(CircuitState::CLOSED), "CLOSED");
+    EXPECT_EQ(circuit_state_to_string(CircuitState::OPEN), "OPEN");
+    EXPECT_EQ(circuit_state_to_string(CircuitState::HALF_OPEN), "HALF_OPEN");
 }
 
 // ============================================================================
@@ -276,56 +276,31 @@ TEST(CircuitBreakerTest, SuccessInClosedState) {
 }
 
 // ============================================================================
-// Concurrent Access Tests
+// Repeated Access Tests
 // ============================================================================
 
-TEST(CircuitBreakerTest, ConcurrentFailures) {
+TEST(CircuitBreakerTest, RepeatedFailuresRemainSingleThreaded) {
     auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 100;
     auto cb = CircuitBreaker::new_(config);
 
-    std::vector<std::thread> threads;
-    for (int i = 0; i < 10; i++) {
-        threads.emplace_back([&cb]() {
-            for (int j = 0; j < 5; j++) {
-                cb.record_failure();
-            }
-        });
+    // CircuitBreaker is Cell-backed (Send, not Sync). Exercise repeated
+    // mutation on its supported single-threaded path instead of racing Cell.
+    for (int i = 0; i < 50; ++i) {
+        cb.record_failure();
     }
 
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    // Should have up to 50 failures (10 threads * 5 failures)
-    // Due to race conditions, actual count may vary but should be <= 50
-    EXPECT_LE(cb.failure_count(), 50u);
+    EXPECT_EQ(cb.failure_count(), 50u);
     EXPECT_EQ(cb.state(), CircuitState::CLOSED);  // Below threshold
 }
 
-TEST(CircuitBreakerTest, ConcurrentStateQueries) {
+TEST(CircuitBreakerTest, RepeatedStateQueries) {
     auto cb = CircuitBreaker::new_(CircuitBreakerConfig{});
 
-    std::atomic<bool> all_ok{true};
-    std::vector<std::thread> threads;
-
-    for (int i = 0; i < 10; i++) {
-        threads.emplace_back([&]() {
-            for (int j = 0; j < 100; j++) {
-                auto state = cb.state();
-                if (state != CircuitState::CLOSED) {
-                    all_ok = false;
-                }
-                cb.allow_request();
-            }
-        });
+    for (int i = 0; i < 1000; ++i) {
+        EXPECT_EQ(cb.state(), CircuitState::CLOSED);
+        EXPECT_TRUE(cb.allow_request());
     }
-
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    EXPECT_TRUE(all_ok.load());
 }
 
 // ============================================================================

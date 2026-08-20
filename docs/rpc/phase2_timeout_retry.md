@@ -17,7 +17,7 @@ This phase adds configurable timeout handling and automatic retry support for RP
 ### TimeoutType Enum
 
 ```cpp
-enum class TimeoutType : uint8_t {
+enum class TimeoutType {
     NONE = 0,           // No timeout occurred
     CONNECT_TIMEOUT,    // Failed to establish connection
     REQUEST_TIMEOUT,    // Request send timed out
@@ -26,26 +26,29 @@ enum class TimeoutType : uint8_t {
 };
 ```
 
+The production ABI uses the default signed 32-bit enum backing.
+
 ### RequestOptions Struct
 
 ```cpp
 struct RequestOptions {
     // Timeout configuration
-    uint64_t timeout_ms = 1000;           // Per-attempt timeout (default 1 second)
-    uint64_t total_timeout_ms = 0;        // Total operation timeout (0 = no limit)
+    uint64_t timeout_ms;                   // Per-attempt timeout
+    uint64_t total_timeout_ms;             // Total operation timeout (0 = no limit)
 
     // Retry configuration
-    uint16_t max_retries = 0;             // Max retry attempts (0 = no retry)
-    uint16_t base_delay_ms = 50;          // Base delay for exponential backoff
-    uint16_t max_delay_ms = 5000;         // Maximum delay between retries
-    float jitter_factor = 0.1f;           // Jitter factor for backoff
+    uint16_t max_retries;                  // Max retry attempts (0 = no retry)
+    uint16_t base_delay_ms;                // Base delay for exponential backoff
+    uint16_t max_delay_ms;                 // Maximum delay between retries
+    float jitter_factor;                   // Jitter factor for backoff
 
     // Idempotency
-    bool idempotent = false;              // If true, safe to retry on timeout
+    bool idempotent;                       // If true, safe to retry on timeout
 
     // Presets
-    static RequestOptions defaults();     // 1s timeout, no retry
-    static RequestOptions with_retry(uint16_t max_retries, uint64_t timeout_ms = 1000);
+    static RequestOptions new_();          // 1s timeout, no retry
+    static RequestOptions defaults();      // Same as new_()
+    static RequestOptions with_retry(uint16_t max_retries, uint64_t timeout_ms);
     static RequestOptions idempotent_retry(uint16_t max_retries);
     static RequestOptions no_timeout();   // Infinite wait
 };
@@ -268,7 +271,7 @@ Integration tests:
 
 | File | Change |
 |------|--------|
-| `src/rrr/rpc/request_options.hpp` | New file - TimeoutType, RequestOptions (~100 LOC) |
+| `src/rrr/src/request_options.rs` | Canonical Rust source for TimeoutType and RequestOptions; rusty-cpp generates the production C++ module |
 | `src/rrr/rpc/client.hpp` | Add Future members, request_with_options (~50 LOC) |
 | `src/rrr/rpc/client.cpp` | Implement retry logic (~50 LOC) |
 | `test/rpc_timeout_retry_test.cc` | New test file (~200 LOC) |

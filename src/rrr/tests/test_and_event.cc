@@ -14,12 +14,12 @@ TEST(AndEventTest, BasicAndEvent) {
     auto reactor = Reactor::get_reactor();
     
     // Create two events that must both be ready
-    auto event1 = Reactor::create_sp_event<IntEvent>();
-    auto event2 = Reactor::create_sp_event<IntEvent>();
+    auto event1 = create_sp_int_event(1);
+    auto event2 = create_sp_int_event(1);
     
     // Create WaitAll that waits for both
     rusty::Vec<rusty::Arc<EventPollable>> events = {event1, event2};
-    auto and_event = Reactor::create_sp_event<WaitAll>(events);
+    auto and_event = create_sp_waitall_from(events);
     
     std::atomic<bool> and_triggered{false};
     
@@ -30,24 +30,24 @@ TEST(AndEventTest, BasicAndEvent) {
     
     // Set only first event - WaitAll should NOT trigger
     event1->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_FALSE(and_triggered);
     
     // Set second event - now WaitAll should trigger (use target value)
     event2->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_TRUE(and_triggered);
 }
 
 TEST(AndEventTest, ThreeEventAnd) {
     auto reactor = Reactor::get_reactor();
     
-    auto event1 = Reactor::create_sp_event<IntEvent>();
-    auto event2 = Reactor::create_sp_event<IntEvent>();
-    auto event3 = Reactor::create_sp_event<IntEvent>();
+    auto event1 = create_sp_int_event(1);
+    auto event2 = create_sp_int_event(1);
+    auto event3 = create_sp_int_event(1);
     
     rusty::Vec<rusty::Arc<EventPollable>> events = {event1, event2, event3};
-    auto and_event = Reactor::create_sp_event<WaitAll>(events);
+    auto and_event = create_sp_waitall_from(events);
     
     std::atomic<int> completion_value{0};
     
@@ -59,26 +59,26 @@ TEST(AndEventTest, ThreeEventAnd) {
     
     // Set events in different order
     event2->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_EQ(completion_value, 0); // Not ready yet
     
     event3->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_EQ(completion_value, 0); // Still not ready
     
     event1->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_EQ(completion_value, 3); // Now all are ready: 1+1+1
 }
 
 TEST(AndEventTest, AndWithTimeout) {
     auto reactor = Reactor::get_reactor();
     
-    auto event1 = Reactor::create_sp_event<IntEvent>();
-    auto event2 = Reactor::create_sp_event<IntEvent>();
+    auto event1 = create_sp_int_event(1);
+    auto event2 = create_sp_int_event(1);
     
     rusty::Vec<rusty::Arc<EventPollable>> events = {event1, event2};
-    auto and_event = Reactor::create_sp_event<WaitAll>(events);
+    auto and_event = create_sp_waitall_from(events);
     
     std::atomic<bool> timed_out{false};
     std::atomic<bool> completed{false};
@@ -97,7 +97,7 @@ TEST(AndEventTest, AndWithTimeout) {
 
     // Wait for timeout
     std::this_thread::sleep_for(milliseconds(100));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
 
     EXPECT_TRUE(completed);
     // Should have timed out since event2 was never set
@@ -107,14 +107,14 @@ TEST(AndEventTest, AndWithTimeout) {
 TEST(AndEventTest, VariadicConstructor) {
     auto reactor = Reactor::get_reactor();
     
-    auto event1 = Reactor::create_sp_event<IntEvent>();
-    auto event2 = Reactor::create_sp_event<IntEvent>();
-    auto event3 = Reactor::create_sp_event<IntEvent>();
+    auto event1 = create_sp_int_event(1);
+    auto event2 = create_sp_int_event(1);
+    auto event3 = create_sp_int_event(1);
     
     // Test vector constructor (the 3-arg variadic ctor was dropped when WaitAll
     // was flattened to a DSL struct)
     rusty::Vec<rusty::Arc<EventPollable>> events = {event1, event2, event3};
-    auto and_event = Reactor::create_sp_event<WaitAll>(events);
+    auto and_event = create_sp_waitall_from(events);
     
     std::atomic<bool> completed{false};
     
@@ -128,7 +128,7 @@ TEST(AndEventTest, VariadicConstructor) {
     event2->set(1);
     event3->set(1);
     
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_TRUE(completed);
 }
 
@@ -136,11 +136,11 @@ TEST(AndEventTest, MixedEventTypes) {
     auto reactor = Reactor::get_reactor();
     
     // Mix different event types
-    auto int_event = Reactor::create_sp_event<IntEvent>();
-    auto timeout_event = Reactor::create_sp_event<TimeoutEvent>(100000); // 100ms
+    auto int_event = create_sp_int_event(1);
+    auto timeout_event = create_sp_timeout_event(100000); // 100ms
     
     rusty::Vec<rusty::Arc<EventPollable>> events = {int_event, timeout_event};
-    auto and_event = Reactor::create_sp_event<WaitAll>(events);
+    auto and_event = create_sp_waitall_from(events);
     
     std::atomic<bool> completed{false};
     
@@ -154,7 +154,7 @@ TEST(AndEventTest, MixedEventTypes) {
     
     // Wait for timeout event to become ready
     std::this_thread::sleep_for(milliseconds(150));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_TRUE(completed);
 }

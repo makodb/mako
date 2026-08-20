@@ -2,6 +2,8 @@
 #include "client_service.h"
 #include "mako/lib/common.h"
 #include "rrr/rrr.hpp"
+// the variadic Log_* wrappers live outside src/rrr now
+#include "rrr_log.h"
 
 namespace mako {
 
@@ -66,7 +68,7 @@ void MakoClientService::HandleBeginTxn(rusty::Box<rrr::Request> req,
                                        rrr::WeakServerConnection sconn) {
     // Unmarshal request
     rrr::i64 client_id;
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy_buffer(&req->src));
     rrr::Deserialize_::deserialize(client_id, ar);
 
     // Generate unique transaction ID and register with ShardReceiver for tracking
@@ -95,7 +97,7 @@ void MakoClientService::HandleCommit(rusty::Box<rrr::Request> req,
                                      rrr::WeakServerConnection sconn) {
     // Unmarshal request
     rrr::i64 txn_id;
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy_buffer(&req->src));
     rrr::Deserialize_::deserialize(txn_id, ar);
 
     // Commit transaction through ShardReceiver (removes from tracking)
@@ -117,7 +119,7 @@ void MakoClientService::HandleRollback(rusty::Box<rrr::Request> req,
                                        rrr::WeakServerConnection sconn) {
     // Unmarshal request
     rrr::i64 txn_id;
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy_buffer(&req->src));
     rrr::Deserialize_::deserialize(txn_id, ar);
 
     // Rollback transaction through ShardReceiver (aborts and removes from tracking)
@@ -143,7 +145,7 @@ void MakoClientService::HandlePut(rusty::Box<rrr::Request> req,
     std::string key;
     std::string value;
 
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy_buffer(&req->src));
     rrr::Deserialize_::deserialize(txn_id, ar);
     rrr::Deserialize_::deserialize(table_id, ar);
     rrr::Deserialize_::deserialize(key, ar);
@@ -181,7 +183,7 @@ void MakoClientService::HandleGet(rusty::Box<rrr::Request> req,
     rrr::i32 table_id;
     std::string key;
 
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy_buffer(&req->src));
     rrr::Deserialize_::deserialize(txn_id, ar);
     rrr::Deserialize_::deserialize(table_id, ar);
     rrr::Deserialize_::deserialize(key, ar);
@@ -218,7 +220,7 @@ void MakoClientService::HandleDelete(rusty::Box<rrr::Request> req,
     rrr::i32 table_id;
     std::string key;
 
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy_buffer(&req->src));
     rrr::Deserialize_::deserialize(txn_id, ar);
     rrr::Deserialize_::deserialize(table_id, ar);
     rrr::Deserialize_::deserialize(key, ar);

@@ -292,7 +292,7 @@ bool Txn2PL::read_column(Row *row, colid_t col_id, Value *value) {
   }
 
   *value = row->get_column(col_id);
-  insert_into_map(reads_, row, col_id);
+  reads_.emplace(row, col_id);
 
   return true;
 }
@@ -316,7 +316,7 @@ bool Txn2PL::write_column(Row *row, colid_t col_id, const Value &value) {
     }
   }
 
-  insert_into_map(updates_, row, std::make_pair(col_id, value));
+  updates_.emplace(row, std::make_pair(col_id, value));
 
   return true;
 }

@@ -62,14 +62,14 @@ class RecvDriverChannelStub {
     // Test helpers — synchronous; both this and the recv fiber run
     // on the test thread.
     void deliver(const std::vector<std::uint8_t>& bytes) {
-        if (on_frame_) {
+        if (on_frame_.has_value()) {
             ChannelFrame f{bytes.data(), bytes.size()};
-            on_frame_(f);
+            on_frame_.callable()(f);
         }
     }
     void deliver_closed(ChannelError reason = ChannelError::None) {
         closed_ = true;
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
 
     std::vector<std::vector<std::uint8_t>> sent() {
@@ -159,7 +159,7 @@ void pump_until(Pred&& pred, int max_iterations = 1000) {
     auto reactor = Reactor::get_reactor();
     for (int i = 0; i < max_iterations; ++i) {
         if (pred()) return;
-        reactor->loop();
+        reactor->run_loop(false, true);
     }
     FAIL() << "pump_until: predicate never satisfied (recv-loop fiber wedged?)";
 }
@@ -198,7 +198,7 @@ class ClientChannelRecvTest : public ::testing::Test {
         // the reactor so the close propagates through the fiber.
         if (stub_) {
             stub_->deliver_closed();
-            (void)Reactor::get_reactor()->loop();
+            (void)Reactor::get_reactor()->run_loop(false, true);
         }
         conn_ = rusty::None;
         if (poll_thread_.is_some()) {
@@ -258,7 +258,7 @@ TEST_F(ClientChannelRecvTest, ResponseFrameResolvesPendingFuture) {
     // Check the reply payload survived.
     auto reply_guard = fu->get_reply();
     i32 got = 0;
-    reply_guard >> got;
+    rrr::deserialize_from(std::move(reply_guard), got);
     EXPECT_EQ(static_cast<std::uint32_t>(got), 0x12345678u);
 }
 
@@ -325,7 +325,7 @@ TEST_F(ClientChannelRecvTest, MultipleResponsesResolveFuturesInOrder) {
         EXPECT_EQ(futures[i]->get_error_code(), 0);
         auto reply = futures[i]->get_reply();
         i32 got = 0;
-        reply >> got;
+        rrr::deserialize_from(std::move(reply), got);
         EXPECT_EQ(static_cast<std::uint32_t>(got),
                   static_cast<std::uint32_t>(0xA000 + i)) << "future " << i;
     }
@@ -341,7 +341,7 @@ TEST_F(ClientChannelRecvTest, ResponseForUnknownXidIsDroppedSilently) {
 
     // Pump a few iterations so the recv-loop has a chance to drain.
     auto reactor = Reactor::get_reactor();
-    for (int i = 0; i < 10; ++i) reactor->loop();
+    for (int i = 0; i < 10; ++i) reactor->run_loop(false, true);
 
     // No crash, no future to verify — just make sure the recv-loop is
     // still parked and ready for more (we exercise the "drain payload"
@@ -363,7 +363,7 @@ TEST_F(ClientChannelRecvTest, RecvLoopExitsCleanlyOnChannelClose) {
     // latch is still set.
     stub_->deliver_closed();
     auto reactor = Reactor::get_reactor();
-    for (int i = 0; i < 10; ++i) reactor->loop();
+    for (int i = 0; i < 10; ++i) reactor->run_loop(false, true);
 
     EXPECT_TRUE(mut_conn().is_channel_mode());
     // A subsequent request fails with ENOTCONN because the

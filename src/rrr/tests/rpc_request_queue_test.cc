@@ -19,14 +19,31 @@ using namespace std::chrono;
 // ============================================================================
 
 TEST(RequestQueueTest, InitiallyEmpty) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
     EXPECT_TRUE(queue.empty());
     EXPECT_EQ(queue.size(), 0u);
     EXPECT_FALSE(queue.full());
 }
 
+// update_config had NO coverage, which is how a conversion that wrote the
+// new config to a temporary (`config_.get().set(cfg)`) shipped, compiled,
+// and passed all 30 tests. Assert the swap is actually observable.
+TEST(RequestQueueTest, UpdateConfigIsObservable) {
+    auto queue = RequestQueue::new_();
+    const size_t original_max = queue.max_size();
+
+    auto cfg = queue.config();
+    cfg.max_size = original_max + 7;
+    cfg.enabled = !queue.enabled();
+    queue.update_config(cfg);
+
+    EXPECT_EQ(queue.max_size(), original_max + 7);
+    EXPECT_EQ(queue.enabled(), cfg.enabled);
+    EXPECT_EQ(queue.config().max_size, original_max + 7);
+}
+
 TEST(RequestQueueTest, EnqueueSingleRequest) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
 
     auto req = QueuedRequest::new_();
     req.xid = 12345;
@@ -38,7 +55,7 @@ TEST(RequestQueueTest, EnqueueSingleRequest) {
 }
 
 TEST(RequestQueueTest, DequeueRequest) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
 
     auto req = QueuedRequest::new_();
     req.xid = 12345;
@@ -56,13 +73,13 @@ TEST(RequestQueueTest, DequeueRequest) {
 }
 
 TEST(RequestQueueTest, DequeueFromEmptyReturnsNone) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
     auto result = queue.dequeue();
     EXPECT_TRUE(result.is_none());
 }
 
 TEST(RequestQueueTest, FifoOrder) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
 
     for (int i = 0; i < 5; i++) {
         auto req = QueuedRequest::new_();
@@ -86,7 +103,7 @@ TEST(RequestQueueTest, FifoOrder) {
 // `size()` / `empty()` and via dequeue (which moves out).
 
 TEST(RequestQueueTest, EnqueueIncreasesSize) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
     EXPECT_EQ(queue.size(), 0u);
     EXPECT_TRUE(queue.empty());
 
@@ -99,7 +116,7 @@ TEST(RequestQueueTest, EnqueueIncreasesSize) {
 }
 
 TEST(RequestQueueTest, EmptyQueueDequeueReturnsNone) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
     auto result = queue.dequeue();
     EXPECT_TRUE(result.is_none());
 }
@@ -112,7 +129,7 @@ TEST(RequestQueueTest, RespectMaxSize) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 5;
     config.overflow_strategy = OverflowStrategy::DROP_NEWEST;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     for (int i = 0; i < 10; i++) {
         auto req = QueuedRequest::new_();
@@ -128,7 +145,7 @@ TEST(RequestQueueTest, RespectMaxSize) {
 TEST(RequestQueueTest, FullCheck) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 3;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     EXPECT_FALSE(queue.full());
 
@@ -143,7 +160,7 @@ TEST(RequestQueueTest, FullCheck) {
 TEST(RequestQueueTest, RemainingCapacity) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 10;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     EXPECT_EQ(queue.remaining_capacity(), 10u);
 
@@ -163,7 +180,7 @@ TEST(RequestQueueTest, OverflowDropOldest) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 3;
     config.overflow_strategy = OverflowStrategy::DROP_OLDEST;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     for (int i = 0; i < 5; i++) {
         auto req = QueuedRequest::new_();
@@ -191,7 +208,7 @@ TEST(RequestQueueTest, OverflowDropNewest) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 3;
     config.overflow_strategy = OverflowStrategy::DROP_NEWEST;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     for (int i = 0; i < 5; i++) {
         auto req = QueuedRequest::new_();
@@ -218,7 +235,7 @@ TEST(RequestQueueTest, OverflowDropNewestCallsCallback) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 2;
     config.overflow_strategy = OverflowStrategy::DROP_NEWEST;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     // Fill queue
     for (int i = 0; i < 2; i++) {
@@ -244,7 +261,7 @@ TEST(RequestQueueTest, OverflowFailFastCallsCallback) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 2;
     config.overflow_strategy = OverflowStrategy::FAIL_FAST;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     // Fill queue
     for (int i = 0; i < 2; i++) {
@@ -265,7 +282,7 @@ TEST(RequestQueueTest, DropOldestCallsCallback) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 2;
     config.overflow_strategy = OverflowStrategy::DROP_OLDEST;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     int dropped_count = 0;
 
@@ -313,7 +330,7 @@ TEST(RequestQueueTest, RequestAgeMs) {
 }
 
 TEST(RequestQueueTest, ExpireStaleRequests) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
 
     for (int i = 0; i < 5; i++) {
         auto req = QueuedRequest::new_();
@@ -333,7 +350,7 @@ TEST(RequestQueueTest, ExpireStaleRequests) {
 }
 
 TEST(RequestQueueTest, ExpireCallsCallbacks) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
 
     int expired_count = 0;
 
@@ -351,7 +368,7 @@ TEST(RequestQueueTest, ExpireCallsCallbacks) {
 }
 
 TEST(RequestQueueTest, MixedExpirationTimes) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
 
     // Add request with short TTL
     auto short_req = QueuedRequest::new_();
@@ -383,7 +400,7 @@ TEST(RequestQueueTest, MixedExpirationTimes) {
 // ============================================================================
 
 TEST(RequestQueueTest, ClearAll) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
 
     for (int i = 0; i < 5; i++) {
         auto req = QueuedRequest::new_();
@@ -399,7 +416,7 @@ TEST(RequestQueueTest, ClearAll) {
 }
 
 TEST(RequestQueueTest, ClearAllCallsCallbacks) {
-    RequestQueue queue;
+    auto queue = RequestQueue::new_();
     int callback_count = 0;
     int error_code_received = 0;
 
@@ -424,7 +441,7 @@ TEST(RequestQueueTest, ClearAllCallsCallbacks) {
 
 TEST(RequestQueueTest, DisabledQueueRejectsAll) {
     auto config = RequestQueueConfig::disabled();
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     auto req = QueuedRequest::new_();
     req.xid = 1;
@@ -436,7 +453,7 @@ TEST(RequestQueueTest, DisabledQueueRejectsAll) {
 
 TEST(RequestQueueTest, DisabledQueueRejectCallsCallback) {
     auto config = RequestQueueConfig::disabled();
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     int callback_count = 0;
     int callback_error = 0;
@@ -475,7 +492,7 @@ TEST(RequestQueueTest, LargePreset) {
 TEST(RequestQueueTest, ConcurrentEnqueue) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 10000;  // Large enough to not overflow
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     std::vector<std::thread> threads;
     int requests_per_thread = 100;
@@ -501,7 +518,7 @@ TEST(RequestQueueTest, ConcurrentEnqueue) {
 TEST(RequestQueueTest, ConcurrentDequeue) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 1000;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     // Pre-fill queue
     for (int i = 0; i < 1000; i++) {
@@ -534,7 +551,7 @@ TEST(RequestQueueTest, ConcurrentDequeue) {
 TEST(RequestQueueTest, ConcurrentEnqueueDequeue) {
     auto config = RequestQueueConfig::new_();
     config.max_size = 100;
-    RequestQueue queue(config);
+    auto queue = RequestQueue::with_config(config);
 
     std::atomic<bool> stop{false};
     std::atomic<int> enqueued{0};
@@ -586,9 +603,9 @@ TEST(RequestQueueTest, ConcurrentEnqueueDequeue) {
 // ============================================================================
 
 TEST(RequestQueueTest, OverflowStrategyToString) {
-    EXPECT_STREQ(overflow_strategy_to_string(OverflowStrategy::DROP_OLDEST), "DROP_OLDEST");
-    EXPECT_STREQ(overflow_strategy_to_string(OverflowStrategy::DROP_NEWEST), "DROP_NEWEST");
-    EXPECT_STREQ(overflow_strategy_to_string(OverflowStrategy::FAIL_FAST), "FAIL_FAST");
+    EXPECT_EQ(overflow_strategy_to_string(OverflowStrategy::DROP_OLDEST), "DROP_OLDEST");
+    EXPECT_EQ(overflow_strategy_to_string(OverflowStrategy::DROP_NEWEST), "DROP_NEWEST");
+    EXPECT_EQ(overflow_strategy_to_string(OverflowStrategy::FAIL_FAST), "FAIL_FAST");
 }
 
 int main(int argc, char** argv) {

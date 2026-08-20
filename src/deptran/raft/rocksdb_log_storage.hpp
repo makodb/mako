@@ -23,6 +23,8 @@
 
 #include "log_storage.hpp"
 #include "rrr/rrr.hpp"
+// the variadic Log_* wrappers live outside src/rrr now
+#include "rrr_log.h"
 
 namespace janus {
 namespace raft {
@@ -95,7 +97,7 @@ private:
     // Marshal + MarshalSink scratch pair is gone).
     bool serialize_entry(const LogEntry& entry, std::string* out) const {
         rrr::BufferSink sink;
-        BinaryWriteArchive writer(rrr::make_sink_proxy(&sink));
+        BinaryWriteArchive writer(rrr::make_sink_proxy_buffer(&sink));
         entry.save(writer);
         out->assign(reinterpret_cast<const char*>(sink.bytes.data()),
                     sink.bytes.len());
@@ -111,7 +113,7 @@ private:
     bool deserialize_entry(const std::string& data, LogEntry* out) const {
         rrr::BufferSource src(reinterpret_cast<const std::uint8_t*>(data.data()),
                               data.size());
-        BinaryReadArchive reader(rrr::make_source_proxy(&src));
+        BinaryReadArchive reader(rrr::make_source_proxy_buffer(&src));
         out->load(reader);
         return true;
     }

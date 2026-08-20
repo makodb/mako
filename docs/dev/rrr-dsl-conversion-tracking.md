@@ -1,9 +1,15 @@
 # rrr → Inline-Rust DSL: Conversion Progress Tracker
 
-*Living tracker for driving the remaining hand-written C++ in `src/rrr/` toward the
-inline-Rust DSL. Methodology (measure hand-written LOC, then classify by reason) is
-documented in [`docs/porting-cpp-to-rust-dsl.md`](../porting-cpp-to-rust-dsl.md) §7.5.
-Update the progress log as conversions land.*
+> Historical inline-carrier tracker, superseded by
+> [`goal0_completion_plan.md`](goal0_completion_plan.md). Its dated baselines and
+> per-file floors describe the earlier conversion campaign, not current source
+> ownership. In particular, `base/basetypes.cpp` is deleted: canonical
+> `src/rrr/src/basetypes.rs` owns SparseInt, including its four explicit unsafe
+> raw-pointer codecs, and the platform timing calls use the terminal plain-C
+> `srpc_timing.c` seam.
+
+Methodology (measure hand-written LOC, then classify by reason) is documented in
+[`docs/porting-cpp-to-rust-dsl.md`](../porting-cpp-to-rust-dsl.md) §7.5.
 
 ## Baseline (measured 2026-07-15)
 
@@ -27,7 +33,7 @@ Prior context: the event hierarchy was flattened + the `Event` class deleted thi
 | **A+B+C+D** | **Genuine unsafe substrate** | **1,680** | **~20%** | |
 | E | C++ template + operator-overload metaprogramming | 1,812 | metaprogramming | wire Marshal/BinaryArchive `<<`/`>>` families (1,028), reactor event/async templates (377), client (240) |
 | F | Stored `Function` / closure callback state | 874 | function-state | reactor async/Quorum engine (596), stored `On*Callback`s (152) |
-| G | Static / global mutable state (thread_local, Meyers singletons) | 157 | boilerplate | reactor.cpp (88), server RPC_STATISTICS (49) |
+| G | Static / global mutable state (thread_local, Meyers singletons) | 157 → **108** | boilerplate | reactor.cpp (88); ~~server RPC_STATISTICS (49)~~ **deleted 2026-08-01** |
 | H | Logging / printf-va_list / backtrace plumbing | 428 | boilerplate | logging.cpp (134), debugging.cpp (104), reactor (103) |
 | I | Module / namespace / fwd-decl / using-alias / proxy-factory glue | 1,291 | boilerplate | spread everywhere — reactor (375), wire (200), rpc-mid (156) |
 | **E+F+G+H+I** | **C++ machinery (not "unsafe", no DSL spelling / pure glue)** | **4,562** | **~56%** | |
@@ -217,7 +223,9 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
   returns (string_view) all lower in the pinned transpiler (verified by compiled probes).
   SWEEP LESSONS: cross-module DSL enum variants = generated factory calls (ChannelError_None()
   not ChannelError::None in return position); hand-bridges for C++-ctor-only types
-  (empty_on_*_callback in channel.cpp, empty_listener_weak); prefer &self + interior mutability.
+  (empty_on_*_callback in channel.cpp, empty_listener_weak -- SUPERSEDED 2026-08-02: both deleted,
+  `Default::default()` reaches them once the transpiler stopped emitting a nonexistent
+  `default_value`, playbook 7.53); prefer &self + interior mutability.
   GATE UPGRADED: full-target build + full ctest (was dbtest-only — that gap had hidden ~280 raw
   test streams, 23 umbrella-trim import breaks, and years of never-built-target rot, all now
   repaired; srpc-book.md snippets updated to the current serde/request/Server API and
@@ -591,9 +599,13 @@ BEFORE any append of that element (the transpiler inserts `std::move` on whole-l
   `Log_info` calls. The varargs render is already centralized in the reshaped Log facade; per-call-site
   format strings are the irreducible C varargs surface (same class as the `*_to_string` varargs-UB
   defer). Also inside the Event-flattening blast radius.
-- **G globals (157)**: RPC_STATISTICS block is `#ifdef`-DEAD in all default builds — reshape would be
-  unverifiable by the gate (flag never defined; candidate for deletion or a flag-enabled CI lane
-  first). Reactor thread_locals are Event-flattening territory. Closed pending those two.
+- **G globals (157 → 108)**: RPC_STATISTICS **RESOLVED by deletion, 2026-08-01**. The block was
+  `#ifdef`-DEAD in all default builds, so a reshape would have been unverifiable by the gate. Deleting
+  it was the right call and not merely the cheap one: an adversarial audit found the macro is defined
+  nowhere in the tree, in any CMakeLists, or in any CI script, and that the code had *rotted* — turning
+  the flag on yields 4 hard compile errors, so the "or a flag-enabled CI lane first" alternative would
+  have meant repairing dead code to then convert it. Removes 49 category-G lines outright. Reactor
+  thread_locals (88) remain Event-flattening territory; G stays closed pending that project.
 - **F callback state (874)**: tcp `On*Callback` residue already converted in the J+K sweeps; the
   Quorum/async engine (596) belongs to the Event-flattening project (staged plan exists) — do NOT
   reshape it here.

@@ -129,7 +129,7 @@ start_prepare:
        * There are < [f+1]/2 replies r 2 S with fast-accepted as their
        * progress. Then pick no-op with an empty dependency.
        */
-      cmd_now_ = rusty::Arc<TpcNoopCommand>::make();  // no-op
+      cmd_now_ = janus::Command::pack_aliased(rusty::Arc<TpcNoopCommand>::make());  // no-op
       dep_ = 0;
     } else if (n_fastac >= maxFail()) {
       /**
@@ -150,7 +150,7 @@ start_prepare:
       dep_ = curr_ins->dep_id;
     }
   } else if (sq_quorum->GetCmds(Status::NOT_ACCEPTED).size() >= maxFail() + 1) {
-    cmd_now_ = rusty::Arc<TpcNoopCommand>::make();  // no-op
+    cmd_now_ = janus::Command::pack_aliased(rusty::Arc<TpcNoopCommand>::make());  // no-op
     dep_ = 0;
   } else {
     // retry with higher ballot number

@@ -244,14 +244,10 @@ def emit_typed_proxy_future_wrapper(func, f):
             # — `__reply_src__` and `__reply_ar__` reference into it.
             if len(output_fields) > 0:
                 f.writeln("auto __reply_guard__ = __fu__->get_reply();")
-                f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));")
+                f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));")
                 for _, field_name in output_fields:
                     f.writeln("rrr::Deserialize_::deserialize(__typed_resp__.%s, __reply_ar__);" % field_name)
             f.writeln("return %s::Ok(__typed_resp__);" % result_type)
-        f.writeln("}")
-        f.writeln("auto operator co_await() const {")
-        with f.indent():
-            f.writeln("return rrr::make_typed_future_awaitable(*this);")
         f.writeln("}")
     f.writeln("};")
 
@@ -282,15 +278,6 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
         if len(typed_async_call_params) == 0:
             f.writeln("(void)req;")
         f.writeln("return %s::Ok(%s(__fu_result__.unwrap()));" % (result_type, wrapper_name))
-    f.writeln("}")
-
-def emit_typed_proxy_await_signature(func, f):
-    request_struct_name = typed_request_struct_name(func)
-    wrapper_name = typed_proxy_future_wrapper_name(func)
-
-    f.writeln("rrr::TypedFutureResultAwaiter<%s> await_%s(const %s& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (wrapper_name, func.name, request_struct_name))
-    with f.indent():
-        f.writeln("return rrr::make_typed_future_result_awaitable(this->async_%s(req, __fu_attr__));" % func.name)
     f.writeln("}")
 
 def emit_service_and_proxy(service, f, rpc_table, archive=False):
@@ -377,7 +364,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # RefMut BufferSource proxy over the request body cursor
                         # to the archive's read API.
                         if len(input_fields) > 0:
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));")
                             for _, field_name in input_fields:
                                 f.writeln("rrr::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
                         f.writeln("auto __typed_resp__ = std::make_shared<%s>();" % response_struct_name)
@@ -400,7 +387,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # see comment under
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));")
                             for _, field_name in input_fields:
                                 f.writeln("rrr::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
                         f.writeln("auto __fiber_req__ = std::move(req);")
@@ -440,13 +427,13 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # see comment under
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));")
                             for _, field_name in input_fields:
                                 f.writeln("rrr::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
                         f.writeln("auto __async_req__ = std::move(req);")
                         f.writeln("auto __async_weak_sconn__ = weak_sconn;")
                         f.writeln("auto __async_task__ = this->%s(__typed_req__);" % func.name)
-                        f.writeln("rrr::Reactor::get_reactor()->spawn_stackless_task_with_result(std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {")
+                        f.writeln("rrr::reactor_spawn_stackless_task_with_result(*rrr::Reactor::get_reactor(), std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {")
                         with f.indent():
                             f.writeln("auto sconn_opt = __async_weak_sconn__.upgrade();")
                             f.writeln("if (sconn_opt.is_some()) {")
@@ -479,7 +466,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # see comment under
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));")
                             for _, field_name in input_fields:
                                 f.writeln("rrr::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
                         f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
@@ -536,7 +523,6 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                     typed_async_call_params += "req.%s" % field_name,
                 emit_typed_proxy_future_wrapper(func, f)
                 emit_typed_proxy_async_signature(service, func, typed_async_call_params, f)
-                emit_typed_proxy_await_signature(func, f)
                 emit_typed_proxy_sync_signature(func, f)
             else:
                 async_func_params = []
@@ -583,7 +569,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                             # through BinaryReadArchive — see the matching
                             # comment in `emit_typed_proxy_future_wrapper`.
                             f.writeln("auto __reply_guard__ = __fu__->get_reply();")
-                            f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));")
+                            f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));")
                             for param in sync_out_params:
                                 f.writeln("rrr::Deserialize_::deserialize(*%s, __reply_ar__);" % param)
                         f.writeln("}")

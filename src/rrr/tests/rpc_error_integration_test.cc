@@ -172,19 +172,19 @@ TEST_F(ErrorIntegrationTest, IsRetryableError) {
 // ============================================================================
 
 TEST_F(ErrorIntegrationTest, ErrorToString) {
-    EXPECT_STREQ(rpc_error_to_string(RpcError::OK), "OK");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::NOT_CONNECTED), "NOT_CONNECTED");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::REQUEST_TIMEOUT), "REQUEST_TIMEOUT");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::INVALID_ARGUMENT), "INVALID_ARGUMENT");
-    EXPECT_STREQ(rpc_error_to_string(RpcError::SERVICE_UNAVAILABLE), "SERVICE_UNAVAILABLE");
+    EXPECT_EQ(rpc_error_to_string(RpcError::OK), "OK");
+    EXPECT_EQ(rpc_error_to_string(RpcError::NOT_CONNECTED), "NOT_CONNECTED");
+    EXPECT_EQ(rpc_error_to_string(RpcError::REQUEST_TIMEOUT), "REQUEST_TIMEOUT");
+    EXPECT_EQ(rpc_error_to_string(RpcError::INVALID_ARGUMENT), "INVALID_ARGUMENT");
+    EXPECT_EQ(rpc_error_to_string(RpcError::SERVICE_UNAVAILABLE), "SERVICE_UNAVAILABLE");
 }
 
 TEST_F(ErrorIntegrationTest, CategoryToString) {
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::NONE), "NONE");
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::CONNECTION), "CONNECTION");
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::TIMEOUT), "TIMEOUT");
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::PROTOCOL), "PROTOCOL");
-    EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::APPLICATION), "APPLICATION");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::NONE), "NONE");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::CONNECTION), "CONNECTION");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::TIMEOUT), "TIMEOUT");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::PROTOCOL), "PROTOCOL");
+    EXPECT_EQ(rpc_error_category_to_string(RpcErrorCategory::APPLICATION), "APPLICATION");
 }
 
 // ============================================================================

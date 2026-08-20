@@ -19,7 +19,7 @@
  * Rusty-safety:
  *  - All public methods are `@safe` modulo the `rrr::IntEvent` boundary,
  *    which is annotated `@unsafe` (rrr is a header-as-module library and
- *    its `Reactor::create_sp_event<…>` returns `std::shared_ptr<Ev>` —
+ *    its `reactor_create_sp_event<…>` returns `std::shared_ptr<Ev>` —
  *    `rusty::Arc<T>` cannot be substituted because the reactor itself
  *    must hold a strong reference, see docs/dev/raft_quorum.md for the
  *    full rationale).
@@ -52,7 +52,7 @@ class RaftQuorum {
         n_needed_(n_needed),
         // rrr::Reactor::create_sp_event returns rusty::Arc; the reactor
         // owns the event via its all_events_ list.
-        ready_(::rrr::Reactor::create_sp_event<::rrr::IntEvent>(n_needed)),
+        ready_(::rrr::create_sp_int_event(n_needed)),
         replies_(std::vector<std::pair<siteid_t, Reply>>{}) {}
 
   // Non-copyable, non-movable: holds an event registered with the reactor.

@@ -13,15 +13,8 @@ import std;
 
 using namespace janus;
 
-// ReplicatedDBCommand migrated from
-// TypedMarshallableAdapter to Serializable. Registration switched
-// to `rrr::reg_serializable_in_deputy<T>` (replaces
-// `MarshallDeputy::reg_initializer<T>`). Wire format byte-for-byte
-// identical, and
-// bridge-dispatched `wrap_typed_marshallable` / `marshallable_cast<T>`
-// keep the legacy call sites working unchanged.
-// registration switched to no-arg form — kind
-// auto-derived from `Serializable<T, MakoCommands>` CRTP base.
+// ReplicatedDBCommand's registry key comes from its explicit MakoCommands
+// membership. Wire format remains byte-for-byte identical.
 static int volatile x_replicated_db =
     rrr::SerializableRegistry::reg<ReplicatedDBCommand>(ReplicatedDBCommand::static_kind());
 

@@ -110,6 +110,19 @@ TEST(AnyMessageTest, UnpackWrongTypeReturnsNullptr) {
   EXPECT_TRUE(wrong.is_none());
 }
 
+TEST(AnyMessageTest, RegisteredNameSpoofStillRejectsWrongHolderType) {
+  EnsureRegistered();
+
+  auto val = rusty::Arc<GraphPayload>::make();
+
+  // The carried name makes is_a<OtherPayload>() succeed, so unpack must
+  // still validate the erased holder's exact payload type before casting.
+  // This is the adversarial case that the old dynamic_cast protected.
+  auto am = AnyMessage::pack_as<GraphPayload>(kOtherName, val);
+  EXPECT_TRUE(am.is_a<OtherPayload>());
+  EXPECT_TRUE(am.unpack<OtherPayload>().is_none());
+}
+
 TEST(AnyMessageTest, IsAByName) {
   EnsureRegistered();
 

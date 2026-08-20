@@ -114,9 +114,9 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
       for (uint64_t k = 0; k < kStable; ++k) {
         TestTree::value_type out = nullptr;
         if (!tree.search(K(k), out) || FromValue(out) != k) {
-          ++reader_failures;
+          reader_failures.fetch_add(1);
         }
-        ++reader_ops;
+        reader_ops.fetch_add(1);
       }
     }
   };
@@ -146,12 +146,12 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
       u64_varkey lo(0);
       u64_varkey hi(kStable);
       tree.search_range_call_bounded(lo, hi, cb);
-      if (cb.bad_order) ++reader_failures;
-      ++scanner_ops;
+      if (cb.bad_order) reader_failures.fetch_add(1);
+      scanner_ops.fetch_add(1);
     }
   };
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(
       kWriters + kRemovers + kReaders + kScanners);
   for (int w = 0; w < kWriters; ++w) threads.push(rusty::thread::spawn(writer_body, w));
   for (int r = 0; r < kRemovers; ++r) threads.push(rusty::thread::spawn(remover_body, r));

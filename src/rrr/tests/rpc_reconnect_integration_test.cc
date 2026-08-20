@@ -141,7 +141,7 @@ TEST_F(ReconnectIntegrationTest, IsReconnectingInitiallyFalse) {
 }
 
 TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFast) {
-    auto server = start_server();
+    auto server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -183,7 +183,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFa
 }
 
 TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
-    auto server = start_server();
+    auto server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -227,7 +227,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
 
 TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectAfterDisconnect) {
     // Start server
-    auto server = start_server();
+    auto server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
 
     // Connect client
@@ -266,7 +266,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectAfterDisconnect) {
 
 TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
     // Start server
-    auto server = start_server();
+    auto server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
 
     // Connect client
@@ -296,7 +296,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
     std::this_thread::sleep_for(milliseconds(50));
 
     // Restart server
-    server = start_server();
+    server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
     std::this_thread::sleep_for(milliseconds(100));
 
@@ -332,7 +332,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
 }
 
 TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionFailure) {
-    auto server = start_server();
+    auto server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -409,7 +409,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
 }
 
 TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectCallbackMatchesEachCallResult) {
-    auto server = start_server();
+    auto server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -490,7 +490,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectCallbackMatchesEachCallResult
 }
 
 TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerReturns) {
-    auto server = start_server();
+    auto server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -667,7 +667,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectWithoutPreviousConnection) {
 }
 
 TEST_F(ReconnectIntegrationTest, ReconnectWhileConnected) {
-    auto server = start_server();
+    auto server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -686,7 +686,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectWhileConnected) {
 }
 
 TEST_F(ReconnectIntegrationTest, MultipleReconnectAttempts) {
-    auto server = start_server();
+    auto server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());

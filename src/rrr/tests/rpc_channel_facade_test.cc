@@ -13,6 +13,7 @@
 
 #include <rusty/box.hpp>
 #include <rusty/option.hpp>
+#include <rusty/traits.hpp>
 
 #include "../rrr.hpp"
 
@@ -42,9 +43,15 @@ class FakeConnection {
     void set_on_error(OnErrorCallback cb)   { on_error_ = std::move(cb); }
 
     // Test helpers to drive callbacks as a real backend would.
-    void deliver(const ChannelFrame& f)               { if (on_frame_) on_frame_(f); }
-    void deliver_closed(ChannelError reason)          { if (on_closed_) on_closed_(reason); }
-    void deliver_error(ChannelError e, std::string_view m) { if (on_error_) on_error_(e, m); }
+    void deliver(const ChannelFrame& f) {
+        if (on_frame_.has_value()) on_frame_.callable()(f);
+    }
+    void deliver_closed(ChannelError reason) {
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
+    }
+    void deliver_error(ChannelError e, std::string_view m) {
+        if (on_error_.has_value()) on_error_.callable()(e, m);
+    }
 
     void set_send_result(ChannelError e) { send_result_ = e; }
     int  send_calls() const  { return send_calls_; }
@@ -108,7 +115,9 @@ class FakeListener {
     void set_on_accept(OnAcceptCallback cb) { on_accept_ = std::move(cb); }
     void set_on_error(OnErrorCallback cb)   { on_error_ = std::move(cb); }
 
-    void deliver_accept(ChannelConnectionProxy c) { if (on_accept_) on_accept_(std::move(c)); }
+    void deliver_accept(ChannelConnectionProxy c) {
+        if (on_accept_.has_value()) on_accept_.callable()(std::move(c));
+    }
     void set_listen_result(ChannelError e) { listen_result_ = e; }
 
  private:
@@ -184,17 +193,143 @@ inline ChannelFactoryProxy make_fake_factory_proxy(std::shared_ptr<FakeFactory> 
     return rusty::make_box<FakeFactoryAdapter>(std::move(f));
 }
 
+struct StatefulClosedCallable {
+    std::vector<int>* observations;
+    mutable int calls = 0;
+
+    void operator()(ChannelError) const {
+        observations->push_back(++calls);
+    }
+};
+
+template <typename T>
+inline constexpr bool kExpectedCallbackWrapperTraits =
+    std::is_default_constructible_v<T> &&
+    std::is_copy_constructible_v<T> &&
+    std::is_copy_assignable_v<T> &&
+    std::is_move_constructible_v<T> &&
+    std::is_move_assignable_v<T> &&
+    std::is_nothrow_move_constructible_v<T> &&
+    std::is_nothrow_move_assignable_v<T> &&
+    !std::is_trivially_destructible_v<T> &&
+    !rusty::is_send<T>::value &&
+    !rusty::is_sync<T>::value;
+
+static_assert(kExpectedCallbackWrapperTraits<OnFrameCallback>);
+static_assert(kExpectedCallbackWrapperTraits<OnClosedCallback>);
+static_assert(kExpectedCallbackWrapperTraits<OnErrorCallback>);
+static_assert(kExpectedCallbackWrapperTraits<OnAcceptCallback>);
+static_assert(kExpectedCallbackWrapperTraits<FutureCallback>);
+
 // ===========================================================================
 // Tests
 // ===========================================================================
 
+// EXPECT_EQ, not EXPECT_STREQ: channel_error_to_string is now DSL, and
+// `&'static str` lowers to std::string_view rather than const char*.
+// Per docs/dev/rrr_migration_policy.md that is a rule-2 call-site
+// rewrite, not a reason to bend the DSL into returning a raw pointer.
 TEST(RpcChannelFacadeTest, ErrorEnumStringification) {
-    EXPECT_STREQ("None",              channel_error_to_string(ChannelError::None));
-    EXPECT_STREQ("WouldBlock",        channel_error_to_string(ChannelError::WouldBlock));
-    EXPECT_STREQ("ConnectionRefused", channel_error_to_string(ChannelError::ConnectionRefused));
-    EXPECT_STREQ("ConnectionReset",   channel_error_to_string(ChannelError::ConnectionReset));
-    EXPECT_STREQ("Timeout",           channel_error_to_string(ChannelError::Timeout));
-    EXPECT_STREQ("Internal",          channel_error_to_string(ChannelError::Internal));
+    EXPECT_EQ("None",              channel_error_to_string(ChannelError::None));
+    EXPECT_EQ("WouldBlock",        channel_error_to_string(ChannelError::WouldBlock));
+    EXPECT_EQ("ConnectionRefused", channel_error_to_string(ChannelError::ConnectionRefused));
+    EXPECT_EQ("ConnectionReset",   channel_error_to_string(ChannelError::ConnectionReset));
+    EXPECT_EQ("Timeout",           channel_error_to_string(ChannelError::Timeout));
+    EXPECT_EQ("Internal",          channel_error_to_string(ChannelError::Internal));
+}
+
+TEST(RpcChannelFacadeTest, CallbackWrappersDefaultEmptyAndDefaultAssignmentDetaches) {
+    EXPECT_FALSE(OnFrameCallback{}.has_value());
+    EXPECT_FALSE(OnClosedCallback{}.has_value());
+    EXPECT_FALSE(OnErrorCallback{}.has_value());
+    EXPECT_FALSE(OnAcceptCallback{}.has_value());
+    EXPECT_FALSE(FutureCallback{}.has_value());
+
+    FakeConnection fake;
+    int closes_seen = 0;
+    fake.set_on_closed(OnClosedCallback::from_callable(
+        [&](ChannelError) { ++closes_seen; }));
+    fake.deliver_closed(ChannelError::None);
+    EXPECT_EQ(closes_seen, 1);
+
+    fake.set_on_closed(OnClosedCallback{});
+    fake.deliver_closed(ChannelError::ConnectionReset);
+    EXPECT_EQ(closes_seen, 1);
+}
+
+TEST(RpcChannelFacadeTest, CallbackWrapperCopiesShareTheCallable) {
+    std::vector<int> observations;
+    auto original = OnClosedCallback::from_callable(
+        StatefulClosedCallable{&observations});
+    auto copy = original;
+
+    original.callable()(ChannelError::None);
+    copy.callable()(ChannelError::Timeout);
+
+    EXPECT_EQ(observations, (std::vector<int>{1, 2}));
+}
+
+TEST(RpcChannelFacadeTest, CallbackWrappersSupportMoveOnlyNamedAndStdFunctionCallables) {
+    auto owned = std::make_unique<int>(41);
+    int move_only_result = 0;
+    auto move_only = OnClosedCallback::from_callable(
+        [payload = std::move(owned), &move_only_result](ChannelError) {
+            move_only_result = *payload + 1;
+        });
+    EXPECT_EQ(owned, nullptr);
+    move_only.callable()(ChannelError::None);
+    EXPECT_EQ(move_only_result, 42);
+
+    ChannelError named_error = ChannelError::None;
+    std::string named_message;
+    std::function<void(ChannelError, std::string_view)> named =
+        [&](ChannelError error, std::string_view message) {
+            named_error = error;
+            named_message = message;
+        };
+    auto wrapped_named = OnErrorCallback::from_callable(std::move(named));
+    wrapped_named.callable()(ChannelError::Timeout, "late");
+    EXPECT_EQ(named_error, ChannelError::Timeout);
+    EXPECT_EQ(named_message, "late");
+}
+
+TEST(RpcChannelFacadeTest, CallbackWrappersDispatchEveryLiveArity) {
+    std::uint8_t byte = 0xAB;
+    ChannelFrame frame{&byte, 1};
+    int frame_size = 0;
+    auto frame_cb = OnFrameCallback::from_callable(
+        [&](const ChannelFrame& received) {
+            frame_size = static_cast<int>(received.size);
+        });
+    frame_cb.callable()(frame);
+    EXPECT_EQ(frame_size, 1);
+
+    int closes_seen = 0;
+    auto closed_cb = OnClosedCallback::from_callable(
+        [&](ChannelError) { ++closes_seen; });
+    closed_cb.callable()(ChannelError::ConnectionReset);
+    EXPECT_EQ(closes_seen, 1);
+
+    int errors_seen = 0;
+    auto error_cb = OnErrorCallback::from_callable(
+        [&](ChannelError, std::string_view) { ++errors_seen; });
+    error_cb.callable()(ChannelError::Internal, "boom");
+    EXPECT_EQ(errors_seen, 1);
+
+    auto accepted_fake = std::make_shared<FakeConnection>();
+    bool accepted = false;
+    auto accept_cb = OnAcceptCallback::from_callable(
+        [&](ChannelConnectionProxy connection) {
+            accepted = connection->peer_address() == "127.0.0.1:9000";
+        });
+    accept_cb.callable()(make_fake_conn_proxy(accepted_fake));
+    EXPECT_TRUE(accepted);
+
+    int futures_seen = 0;
+    auto future_cb = FutureCallback::from_callable(
+        [&](rusty::Arc<Future>) { ++futures_seen; });
+    future_cb.callable()(Future::create(17, FutureAttr{}));
+    EXPECT_EQ(futures_seen, 1);
 }
 
 TEST(RpcChannelFacadeTest, ConnectionDispatchForwardsAllOps) {
@@ -233,19 +368,19 @@ TEST(RpcChannelFacadeTest, ConnectionCallbacksReceiveDeliveredEvents) {
     ChannelError last_error = ChannelError::None;
     std::string  last_error_msg;
 
-    proxy->set_on_frame ([&](const ChannelFrame& f) {
+    proxy->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
         ++frames_seen;
         EXPECT_NE(f.payload, nullptr);
-    });
-    proxy->set_on_closed([&](ChannelError r) {
+    }));
+    proxy->set_on_closed(OnClosedCallback::from_callable([&](ChannelError r) {
         ++closes_seen;
         last_close_reason = r;
-    });
-    proxy->set_on_error ([&](ChannelError e, std::string_view m) {
+    }));
+    proxy->set_on_error(OnErrorCallback::from_callable([&](ChannelError e, std::string_view m) {
         ++errors_seen;
         last_error = e;
         last_error_msg = std::string(m);
-    });
+    }));
 
     std::uint8_t b[2] = {0xAA, 0xBB};
     ChannelFrame f{b, 2};
@@ -285,11 +420,11 @@ TEST(RpcChannelFacadeTest, ListenerDeliversAcceptedConnection) {
     auto conn_proxy = make_fake_conn_proxy(fake_conn);
 
     int accepted = 0;
-    listener_proxy->set_on_accept([&](ChannelConnectionProxy c) {
+    listener_proxy->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy c) {
         ++accepted;
         EXPECT_TRUE(static_cast<bool>(c));
         c->flush();
-    });
+    }));
     fake_listener->deliver_accept(std::move(conn_proxy));
 
     EXPECT_EQ(accepted, 1);

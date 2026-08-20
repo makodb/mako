@@ -4,17 +4,15 @@ Date: 2026-04-10
 
 ## Scope Reviewed
 - `docs/srpc-book.md`
-- `src/rrr/rpc/client.hpp`
 - `src/rrr/rpc/client.cpp`
-- `src/rrr/rpc/server.hpp`
 - `src/rrr/rpc/server.cpp`
-- `src/rrr/rpc/request_queue.hpp`
-- `src/rrr/rpc/reconnect_policy.hpp`
-- `src/rrr/rpc/circuit_breaker.hpp`
-- `src/rrr/rpc/heartbeat.hpp`
-- `src/rrr/rpc/callbacks.hpp`
-- `src/rrr/rpc/connection_metrics.hpp`
-- `src/rrr/rpc/load_balancer.hpp`
+- `src/rrr/rpc/request_queue.cpp`
+- `src/rrr/src/reconnect_policy.rs` (`rrr.reconnect_policy`)
+- `src/rrr/src/circuit_breaker.rs` (`rrr.circuit_breaker`)
+- `src/rrr/src/heartbeat.rs` (`rrr.heartbeat`)
+- `src/rrr/rpc/callbacks.cpp`
+- `src/rrr/src/connection_metrics.rs` (`rrr.connection_metrics`)
+- `src/rrr/rpc/load_balancer.cpp`
 
 ## Issues To Fix
 
@@ -90,15 +88,17 @@ Suggested fix
 - Add optional `server_instance_id` field to response header (version-gated).
 - Call `check_server_instance()` directly in response decode path.
 
-### P2: Reliability primitives exist but are not integrated into main client/server pipeline
+### RESOLVED (2026-08-12): Reliability primitives are integrated into the client pipeline
 Evidence
-- Book claims integrated reliability features (`docs/srpc-book.md:54`, `docs/srpc-book.md:808-883`).
-- Core client path includes reconnect/request queue/metrics/options only: `src/rrr/rpc/client.hpp:14-19`.
-- Circuit breaker, heartbeat, and callback managers are implemented as standalone headers: `src/rrr/rpc/circuit_breaker.hpp`, `src/rrr/rpc/heartbeat.hpp`, `src/rrr/rpc/callbacks.hpp`.
-Impact
-- Reliability behavior is fragmented; integration tests mostly validate helper classes in isolation.
-Suggested fix
-- Add these components as first-class members in `ClientConnection` and invoke them from connect/read/write/error transitions.
+- `ClientConnection` owns the heartbeat manager, circuit breaker, and callback
+  manager, while `Client` carries pending configurations into new connections.
+- Every request path calls the circuit gate, response/error paths record the
+  result, and a rejection maps to `RpcError::CIRCUIT_OPEN`.
+- The maintenance path sends heartbeat probes and checks timeouts; connection
+  transitions invoke the registered lifecycle callbacks.
+Resolution
+- The former standalone-component finding is obsolete. Unit and integration
+  tests now exercise the helpers both directly and through client behavior.
 
 ### P2: `LEAST_CONNECTIONS` load balancing uses inaccurate proxy metric
 Evidence
@@ -133,9 +133,6 @@ These examples likely fail for users as written.
 - ReconnectPolicy field names mismatch:
   - Doc uses `base_delay_ms`, `jitter_factor` (`docs/srpc-book.md:813-817`)
   - Code uses `initial_delay_ms`, `jitter_enabled` (`src/rrr/rpc/reconnect_policy.hpp:19-22`).
-- Circuit breaker config name mismatch:
-  - Doc uses `half_open_timeout_ms` (`docs/srpc-book.md:827`)
-  - Code uses `timeout_ms` (`src/rrr/rpc/circuit_breaker.hpp:51`).
 - Buffering config names mismatch:
   - Doc uses `max_queue_size`, `ttl_ms` (`docs/srpc-book.md:837-838`)
   - Code uses `max_pending`, `default_ttl_ms` (`src/rrr/rpc/client.hpp:117-119`).
@@ -170,5 +167,5 @@ These examples likely fail for users as written.
 1. Fix socket close leak and queue/future orphan bug.
 2. Wire pending request tracking into dispatch and drain.
 3. Implement real retry + reconnect policy behavior.
-4. Integrate heartbeat/circuit breaker/callback manager into client lifecycle.
+4. Add wire-level restart awareness and reliability observability.
 5. Update `docs/srpc-book.md` to match shipped API and behavior.

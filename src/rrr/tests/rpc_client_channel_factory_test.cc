@@ -62,7 +62,7 @@ class FakeChannelStub {
 
     void deliver_closed(ChannelError reason = ChannelError::ConnectionReset) {
         closed_ = true;
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
     std::size_t send_count() {
         std::lock_guard<std::mutex> g(mu_);
@@ -283,7 +283,7 @@ TEST_F(ClientChannelFactoryTest,
            factory_->connect_count() < 2u) {
         // Drive the test-thread reactor too so the recv-loop fiber's
         // close-side fan-out runs.
-        reactor->loop();
+        reactor->run_loop(false, true);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
@@ -306,7 +306,7 @@ TEST_F(ClientChannelFactoryTest,
     auto last_stub = factory_->last_stub();
     if (last_stub && !last_stub->is_closed()) {
         last_stub->deliver_closed(ChannelError::None);
-        for (int i = 0; i < 5; ++i) reactor->loop();
+        for (int i = 0; i < 5; ++i) reactor->run_loop(false, true);
     }
 }
 

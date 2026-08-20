@@ -67,20 +67,20 @@ if (state == ConnectionState::CONNECTED) {
 Reconnection is configured via `ReconnectPolicy`:
 
 ```cpp
-#include "rpc/reconnect_policy.hpp"
+import rrr.reconnect_policy;
 
 // Preset policies
-auto aggressive = ReconnectPolicy::AGGRESSIVE();  // Fast retries, more attempts
-auto conservative = ReconnectPolicy::CONSERVATIVE();  // Slower, fewer attempts
-auto no_retry = ReconnectPolicy::NO_RETRY();  // No automatic reconnection
+auto aggressive = ReconnectPolicy::aggressive();  // Fast retries, unlimited attempts
+auto conservative = ReconnectPolicy::conservative();  // Default bounded retries
+auto no_retry = ReconnectPolicy::no_retry();  // No automatic reconnection
 
 // Custom policy
-ReconnectPolicy custom;
+auto custom = ReconnectPolicy::new_();
 custom.max_retries = 5;
-custom.base_delay_ms = 100;
+custom.initial_delay_ms = 100;
 custom.max_delay_ms = 10000;
 custom.backoff_multiplier = 2.0;
-custom.jitter_factor = 0.1;
+custom.jitter_enabled = true;
 
 // Apply to client
 client->set_reconnect_policy(custom);
@@ -106,7 +106,7 @@ delay = min(base_delay * multiplier^attempt, max_delay) + jitter
 The circuit breaker prevents cascade failures by tracking error rates:
 
 ```cpp
-#include "rpc/circuit_breaker.hpp"
+import rrr.circuit_breaker;
 
 // States: CLOSED (allowing requests), OPEN (failing fast), HALF_OPEN (testing)
 
@@ -116,13 +116,14 @@ auto relaxed = CircuitBreakerConfig::relaxed();      // Opens after 10 failures
 auto disabled = CircuitBreakerConfig::disabled();    // Never opens
 
 // Custom configuration
-CircuitBreakerConfig config;
+auto config = CircuitBreakerConfig::defaults();
 config.failure_threshold = 5;      // Open after 5 consecutive failures
 config.success_threshold = 3;      // Close after 3 consecutive successes
-config.half_open_timeout_ms = 5000; // Try again after 5 seconds
+config.timeout_ms = 5000;          // Try again after 5 seconds
 
-// Usage is automatic within ClientConnection
-// After N failures, requests fail fast with RpcError::CIRCUIT_OPEN
+client.set_circuit_breaker(config);
+// Once enabled, ClientConnection gates request paths and records response
+// outcomes automatically. A rejected request maps to RpcError::CIRCUIT_OPEN.
 ```
 
 ## Request Buffering
@@ -161,7 +162,7 @@ client->reconnect();
 Requests can be configured with timeout and retry options:
 
 ```cpp
-#include "rpc/request_options.hpp"
+import rrr.request_options;
 
 // Preset options
 auto fast = RequestOptions::fast();            // 100ms timeout, 2 retries
@@ -169,7 +170,7 @@ auto patient = RequestOptions::patient();      // 10s timeout, 5 retries
 auto no_timeout = RequestOptions::no_timeout(); // Wait indefinitely
 
 // Custom options
-RequestOptions opts;
+auto opts = RequestOptions::defaults();
 opts.timeout_ms = 1000;          // 1 second per-attempt timeout
 opts.total_timeout_ms = 5000;    // 5 seconds total (across all retries)
 opts.max_retries = 3;            // Up to 3 retry attempts
@@ -323,7 +324,7 @@ uint64_t server_id = server->instance_id();
 
 // Clients can detect restarts
 client->set_on_server_restart([](uint64_t old_id, uint64_t new_id) {
-    Log_warn("Server restarted: %lu -> %lu", old_id, new_id);
+    Log_warn("Server restarted: {} -> {}", old_id, new_id);
     // Clear any cached state, re-establish session, etc.
 });
 ```
@@ -390,7 +391,7 @@ Reconnect multiple clients efficiently:
 ```cpp
 // Reconnect all clients for an address
 auto result = pool.reconnect_all("127.0.0.1:8080");
-Log_info("Reconnected %zu/%zu clients", result.succeeded, result.total);
+Log_info("Reconnected {}/{} clients", result.succeeded, result.total);
 
 // Reconnect all clients in pool
 auto result = pool.reconnect_all();
@@ -432,10 +433,10 @@ auto result = pool.reconnect_all(config);
 | File | Description |
 |------|-------------|
 | `connection_state.hpp` | Connection state machine |
-| `reconnect_policy.hpp` | Reconnection policy and backoff |
-| `circuit_breaker.hpp` | Circuit breaker pattern |
+| `rrr.reconnect_policy` | Reconnection policy and backoff (canonical Rust) |
+| `rrr.circuit_breaker` | Circuit breaker pattern (canonical Rust) |
 | `request_queue.hpp` | Request queue for buffering |
-| `request_options.hpp` | Timeout and retry configuration |
+| `rrr.request_options` | Timeout and retry configuration C++ module |
 | `heartbeat.hpp` | Heartbeat/keep-alive mechanism |
 | `connection_metrics.hpp` | Connection metrics tracking |
 | `errors.hpp` | Structured error types |

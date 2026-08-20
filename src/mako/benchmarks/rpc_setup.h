@@ -12,7 +12,7 @@
 #include "bench.h"
 #include <unordered_map>
 
-// Decoupled setup helpers for RPC benchmark: eRPC server and helper threads.
+// Decoupled setup helpers for RPC benchmark: RPC server and helper threads.
 // These functions mirror the original logic in tpcc.cc but are now reusable.
 
 namespace mako {
@@ -28,11 +28,11 @@ void setup_update_table(int table_id, abstract_ordered_index *table);
 // Signal helper threads to stop processing requests.
 void stop_helper();
 
-// Launch eRPC server threads and wire up per-warehouse queues.
-void setup_erpc_server();
+// Launch RPC server threads and wire up per-warehouse queues.
+void setup_rpc_server();
 
-// Stop all eRPC servers previously started by setup_erpc_server().
-void stop_erpc_server();
+// Stop all RPC servers previously started by setup_rpc_server().
+void stop_rpc_server();
 
 // Initialize per thread
 void initialize_per_thread(abstract_db *db) ;

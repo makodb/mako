@@ -89,7 +89,7 @@ bool CopilotServer::allCmdComitted(const janus::Command& batch_cmd) {
   const auto cmds = marshallable_cast<TpcBatchCommand>(batch_cmd);
   verify(cmds.is_some());
   for (auto& c : cmds.unwrap()->cmds_) {
-    if (!tx_sched_->CheckCommitted(janus::Command{c.clone()}))
+    if (!tx_sched_->CheckCommitted(janus::Command::pack_aliased(c.clone())))
       return false;
   }
   return true;
@@ -212,7 +212,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
   log_infos_[is_pilot].current_slot = std::max(slot, log_infos_[is_pilot].current_slot);
   if (!ins) {
     // this entry is too old that it's already freed
-    *ret_cmd = rusty::Arc<TpcNoopCommand>::make();
+    *ret_cmd = janus::Command::pack_aliased(rusty::Arc<TpcNoopCommand>::make());
     *dep = 0;
     *status = Status::EXECUTED;
     *max_ballot = ballot;
@@ -242,7 +242,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
   if (ins->cmd.has_value())
     *ret_cmd = ins->cmd;
   else
-    *ret_cmd = rusty::Arc<TpcNoopCommand>::make();
+    *ret_cmd = janus::Command::pack_aliased(rusty::Arc<TpcNoopCommand>::make());
   *dep = ins->dep_id;
   *status = ins->status;
 

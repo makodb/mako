@@ -21,10 +21,7 @@ moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
-// registrations switched to no-arg
-// `SerializableRegistry::reg<T>(T::static_kind())` — kind auto-derived from each
-// type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
-// base returns the type's 1-indexed position in `MakoCommands`).
+// Registry keys come from each payload's explicit MakoCommands membership.
 static int volatile xx  = rrr::SerializableRegistry::reg<LogEntry>(LogEntry::static_kind());
 static int volatile xxx = rrr::SerializableRegistry::reg<BulkPaxosCmd>(BulkPaxosCmd::static_kind());
 static int volatile x4  = rrr::SerializableRegistry::reg<BulkPrepareLog>(BulkPrepareLog::static_kind());
@@ -320,7 +317,10 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       es_pww->step_down(ballot);
     else{
       if(!done){
-        auto x = marshallable_cast<SyncLogResponse>(md.get());
+        rusty::Option<rusty::Arc<SyncLogResponse>> x{rusty::None};
+        if (md != nullptr) {
+          x = marshallable_cast<SyncLogResponse>(*md);
+        }
         // last use — unwrap() intentionally moves the Arc out.
         responses.emplace_back(x.unwrap());
       } else{

@@ -82,7 +82,6 @@ void ServerControlServiceImpl::server_heart_beat_with_data(
     rrr::DeferredReply defer) {
   (void)rpc_req;
   ServerResponse *res = &rpc_resp.res;
-  res->cpu_util = rrr::CPUInfo::cpu_stat()[0];
 
   // collapsed `if (recorder) { ... } else
   // {res->r_cnt_sum = 0; ... }` to just the else branch — recorder

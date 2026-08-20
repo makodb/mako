@@ -30,8 +30,8 @@ class TThread {
     static __thread int the_role;
     // counter for reclaim 
     static __thread int the_counter;
-    // number of erpc servers
-    static __thread int the_num_erpc_server;
+    // number of rpc servers
+    static __thread int the_num_rpc_server;
     // if run micro-based benchmark
     static __thread int the_is_micro;
 
@@ -42,7 +42,7 @@ public:
     static __thread bool isRemoteShard;
     static __thread int skipBeforeRemotePayment;
     static __thread Transaction* txn;
-    // for each worker thread, it has a erpc client to issue erpc request
+    // for each worker thread, it has an rpc client to issue rpc requests
     static __thread mako::ShardClient* sclient;
     // for each worker thread, we set a global variable to ease programming
     // this structure is relatively slow, please avoid visiting it frequently
@@ -69,11 +69,11 @@ public:
         the_mode = mode;
     }
 
-    static int get_num_erpc_server() { 
-        if (the_num_erpc_server)
-            return the_num_erpc_server;
+    static int get_num_rpc_server() { 
+        if (the_num_rpc_server)
+            return the_num_rpc_server;
         else{
-            Warning("using default erpc_num, please ensure it is expected");
+            Warning("using default rpc server count, please ensure it is expected");
             return 2;
         }
     }
@@ -82,7 +82,7 @@ public:
         return is_worker_leader;
     }
 
-    static void set_num_eprc_server(int nn) { the_num_erpc_server = nn; }
+    static void set_num_rpc_server(int nn) { the_num_rpc_server = nn; }
 
     static void set_is_micro(int is_micro) { the_is_micro = is_micro; }
 

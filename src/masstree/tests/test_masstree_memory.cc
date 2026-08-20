@@ -116,7 +116,7 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
   rusty::sync::atomic::Atomic<uint64_t> reader_failures{0};
   rusty::sync::atomic::Atomic<uint64_t> reader_ops{0};
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(
       kWriters + kReaders);
   for (int w = 0; w < kWriters; ++w) {
     threads.push(rusty::thread::spawn([&, w]() {
@@ -138,9 +138,9 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
           TestTree::value_type out = nullptr;
           if (!tree.search(K(k), out) ||
               static_cast<uint64_t>(reinterpret_cast<uintptr_t>(out)) != k) {
-            ++reader_failures;
+            reader_failures.fetch_add(1);
           }
-          ++reader_ops;
+          reader_ops.fetch_add(1);
         }
       }
     }));

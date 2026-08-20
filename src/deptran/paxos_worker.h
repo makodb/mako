@@ -33,9 +33,10 @@ namespace janus {
 	// pthread-based job-queue thread pool; nothing in the rest of the
 	// codebase referenced it.
 
-// TypeList-derived kind.
-class BulkPrepareLog : public rrr::Serializable<BulkPrepareLog,
-                                                MakoCommands> {
+// Explicit kind from the `PayloadMember<MakoCommands>` registration.
+class BulkPrepareLog
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, BulkPrepareLog>::KIND> {
   public:
   vector<pair<uint32_t,slotid_t>> min_prepared_slots;
   uint32_t leader_id;
@@ -63,8 +64,10 @@ class BulkPrepareLog : public rrr::Serializable<BulkPrepareLog,
   }
 };
 
-// TypeList-derived kind.
-class PaxosPrepCmd : public rrr::Serializable<PaxosPrepCmd, MakoCommands> {
+// Explicit kind from the `PayloadMember<MakoCommands>` registration.
+class PaxosPrepCmd
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, PaxosPrepCmd>::KIND> {
   public:
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
@@ -101,8 +104,10 @@ class PaxosPrepCmd : public rrr::Serializable<PaxosPrepCmd, MakoCommands> {
   }
 };
 
-// TypeList-derived kind.
-class HeartBeatLog : public rrr::Serializable<HeartBeatLog, MakoCommands> {
+// Explicit kind from the `PayloadMember<MakoCommands>` registration.
+class HeartBeatLog
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, HeartBeatLog>::KIND> {
   public:
   uint32_t leader_id;
   int epoch;
@@ -120,9 +125,10 @@ class HeartBeatLog : public rrr::Serializable<HeartBeatLog, MakoCommands> {
   }
 };
 
-// TypeList-derived kind.
-class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
-                                                MakoCommands> {
+// Explicit kind from the `PayloadMember<MakoCommands>` registration.
+class SyncLogRequest
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, SyncLogRequest>::KIND> {
   public:
     int leader_id;
     ballot_t epoch;
@@ -160,8 +166,9 @@ class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
 // prep `operator<<` / `operator>>` overloads for
 // MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
 // layout as the legacy `m << *sync_data[i]` / `m >> *x`.
-class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
-                                                 MakoCommands> {
+class SyncLogResponse
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, SyncLogResponse>::KIND> {
   public:
     vector<rusty::Arc<janus::Command>> sync_data;
     vector<vector<slotid_t>> missing_slots;
@@ -205,9 +212,10 @@ class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
     }
 };
 
-// TypeList-derived kind.
-class SyncNoOpRequest : public rrr::Serializable<SyncNoOpRequest,
-                                                 MakoCommands> {
+// Explicit kind from the `PayloadMember<MakoCommands>` registration.
+class SyncNoOpRequest
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, SyncNoOpRequest>::KIND> {
   public:
   int leader_id;
   ballot_t epoch;
@@ -249,7 +257,9 @@ class SyncNoOpRequest : public rrr::Serializable<SyncNoOpRequest,
 // `len_v64` members. They were a zero-copy fast path that no caller
 // ever enabled; only `length`, `log_entry`, and `operation_test` are
 // actually used by save/load.
-class LogEntry : public rrr::Serializable<LogEntry, MakoCommands> {
+class LogEntry
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, LogEntry>::KIND> {
 public:
   int length = 0;
   std::string log_entry;  // for the serialization over the network, syncLog using shared_ptr as well
@@ -277,7 +287,9 @@ public:
 // `entity_size` / `serialize_slots_ballots` / `write_to_fd` /
 // `serialized_slots` members. They were a zero-copy fast path that
 // no caller ever enabled.
-class BulkPaxosCmd : public rrr::Serializable<BulkPaxosCmd, MakoCommands> {
+class BulkPaxosCmd
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, BulkPaxosCmd>::KIND> {
 public:
   int32_t leader_id;
   vector<slotid_t> slots{};
