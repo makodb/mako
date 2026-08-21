@@ -455,8 +455,7 @@ class TxData: public CmdData {
   //   subclass override (`IsFinished`, `GetNextReadySubCmd`) or a
   //   helper whose only call sites were already commented-out
   //   (`read_only_reset`, `Merge(TxnOutput&)` were referenced only by
-  //   commented-out code in `snow/ro6_coord.cc`, `rcc/coord.cc`,
-  //   `janus/coordinator.cc`).
+  //   commented-out code in `snow/ro6_coord.cc` and `rcc/coord.cc`).
   virtual int GetNPieceAll() {
     return n_pieces_all_;
   }

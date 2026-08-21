@@ -25,8 +25,6 @@ class RccCoord : public CoordinatorClassic {
 
   bool fast_commit_{false};
   map<parid_t, int> n_commit_oks_{};
-  bool mocking_janus_{false};
-
   set<parid_t> par_i_{};
   set<parid_t> par_d_{};
 

@@ -39,7 +39,6 @@ void CoordinatorTapir::DispatchAsync() {
       sp_vec_pieces->push_back(c);
     }
     commo()->BroadcastDispatch(sp_vec_pieces,
-                               this,
                                std::bind(&CoordinatorClassic::DispatchAck,
                                          this,
                                          phase_,

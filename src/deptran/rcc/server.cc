@@ -761,17 +761,8 @@ void RccServer::Execute(RccScc& scc, int rank) {
     v_end->subtx(rank).log_apply_finished_.wait_until_gte(1, /*timeout=*/0);
   } else {
     v_begin->subtx(rank).log_apply_started_ = true;
-    if (v_begin->mocking_janus_) {
-      auto x = &scc;
-      Fiber::create_run([x, rank, this](){
-        for (auto& v : *x) {
-          Execute(*v, rank);
-        }
-      });
-    } else {
-      for (auto& v : scc) {
-        Execute(*v, rank);
-      }
+    for (auto& v : scc) {
+      Execute(*v, rank);
     }
   }
 }
@@ -783,36 +774,15 @@ void RccServer::Execute(RccTx& tx, int rank) {
   Log_debug("executing dtxn id {:x}", tx.id());
   verify(tx.subtx(rank).IsDecided());
 
-  if (tx.mocking_janus_) {
-    if (tx.subtx(rank).Involve(partition_id_)) {
-      tx.subtx(rank).commit_received_.wait_until_gte(1, /*timeout=*/0);
-//    Fiber::create_run([sp_tx, this]() {
-      verify(rank == RANK_D);
-      tx.CommitValidate(rank);
-//      commo()->BroadcastValidation(sp_tx->id(), sp_tx->partition_,
-//          sp_tx->local_validation_result_);
-      tx.subtx(rank).sp_ev_commit_->set(1);
-      // TODO recover this?
-//      tx.subtx(rank).global_validated_->wait_timeout(40*1000*1000);
-//      verify(tx.subtx(rank).global_validated_->status_ != EventStatus::TIMEOUT);
-      tx.CommitExecute(rank);
-//    });
-    } else {
-      // a tmp solution
-      tx.subtx(rank).__debug_local_validated_foreign_ = true;
-      tx.subtx(rank).local_validated_->set(SUCCESS);
-    }
+  if (tx.subtx(rank).Involve(partition_id_)) {
+    tx.subtx(rank).commit_received_.wait_until_gte(1, /*timeout=*/0);
+    tx.subtx(rank).local_validated_->set(SUCCESS);
+    tx.subtx(rank).sp_ev_commit_->set(1);
+    tx.CommitExecute(rank);
   } else {
-    if (tx.subtx(rank).Involve(partition_id_)) {
-      tx.subtx(rank).commit_received_.wait_until_gte(1, /*timeout=*/0);
-      tx.subtx(rank).local_validated_->set(SUCCESS);
-      tx.subtx(rank).sp_ev_commit_->set(1);
-      tx.CommitExecute(rank);
-    } else {
-      // a tmp solution
-      tx.subtx(rank).__debug_local_validated_foreign_ = true;
-      tx.subtx(rank).local_validated_->set(SUCCESS);
-    }
+    // a tmp solution
+    tx.subtx(rank).__debug_local_validated_foreign_ = true;
+    tx.subtx(rank).local_validated_->set(SUCCESS);
   }
 //  tx.phase_ = PHASE_RCC_COMMIT;
   tx.subtx(rank).log_apply_finished_.set(1);
@@ -933,7 +903,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
   int ret = SUCCESS;
   // union the graph into dep graph
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id));
-  dtxn->fully_dispatched_->set(1); // TODO make this and janus the same.
+  dtxn->fully_dispatched_->set(1); // TODO make this consistent.
   verify(dtxn->p_output_reply_ == nullptr);
   dtxn->p_output_reply_ = output;
   verify(!dtxn->IsAborted());

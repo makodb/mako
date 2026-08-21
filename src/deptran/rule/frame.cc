@@ -28,24 +28,4 @@ Coordinator *RuleFrame::CreateCoordinator(cooid_t coo_id,
   return coord;
 }
 
-// Executor *JanusFrame::CreateExecutor(uint64_t, TxLogServer *sched) {
-//   verify(0);
-//   return nullptr;
-// }
-
-// TxLogServer *JanusFrame::CreateScheduler() {
-//   TxLogServer *sched = new SchedulerJanus();
-//   sched->frame_ = this;
-//   return sched;
-// }
-
-// vector<rrr::Service *>
-// JanusFrame::CreateRpcServices(uint32_t site_id,
-//                               TxLogServer *sched,
-//                               rusty::Arc<rrr::PollThreadWorker> poll_thread_worker,
-//                               ServerControlServiceImpl *scsi) {
-//   return Frame::CreateRpcServices(site_id, sched, poll_thread_worker, scsi);
-// }
-
-
 } // namespace janus

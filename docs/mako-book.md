@@ -44,7 +44,7 @@ A comprehensive developer guide for the Mako distributed transactional datastore
 
 **Authors**: Weihai Shen, Yang Cui, Siddhartha Sen, Sebastian Angel, Shuai Mu
 
-The codebase also contains **Janus**, a related protocol from OSDI'16 (*Consolidating Concurrency Control and Consensus for Commits under Conflicts*).
+Mako descends from the **Janus** codebase associated with the OSDI'16 paper *Consolidating Concurrency Control and Consensus for Commits under Conflicts*. The standalone Janus protocol implementation has since been retired.
 
 ### When to Use Mako
 
@@ -155,7 +155,6 @@ mako/
     deptran/          # Transaction protocol implementations
       paxos/          # Paxos consensus
       raft/           # Raft consensus
-      janus/          # Janus protocol (OSDI'16)
       2pl/            # Two-phase locking
       occ/            # Optimistic concurrency control
       rcc/            # Rococo protocol
@@ -1305,7 +1304,7 @@ perf report
 | **Fiber** | Lightweight cooperative thread used by Mako |
 | **Follower** | Replica that accepts proposals from the leader |
 | **Frame** | Protocol-specific transaction processing module |
-| **Janus** | OSDI'16 distributed transaction protocol in this codebase |
+| **Janus** | OSDI'16 protocol that influenced Mako; its standalone implementation is retired |
 | **Leader** | Replica that proposes values and coordinates consensus |
 | **Local Timestamp** | Per-partition timestamp of most recently committed transaction |
 | **Mako** | Speculative distributed transaction system (named for the fast mako shark) |

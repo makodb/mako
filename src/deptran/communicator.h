@@ -432,7 +432,7 @@ class Communicator {
   }
 
   SiteProxyPair RandomProxyForPartition(parid_t partition_id) const;
-  SiteProxyPair LeaderProxyForPartition(parid_t, int idx=-1) const;
+  SiteProxyPair LeaderProxyForPartition(parid_t) const;
 
   SiteProxyPair NearestProxyForPartition(parid_t) const;
   void SetLeaderCache(parid_t par_id, SiteProxyPair& proxy) {
@@ -479,7 +479,6 @@ class Communicator {
                  int32_t output_size,
                  std::function<void(rusty::Arc<Future> fu)> &callback);
   virtual void BroadcastDispatch(shared_ptr<vector<shared_ptr<SimpleCommand>>> vec_piece_data,
-                         Coordinator *coo,
                          const std::function<void(int res, TxnOutput &)> &) ;
   // removed `SyncBroadcastDispatch(...)`
   // declaration — only call site was the now-deleted

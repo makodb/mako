@@ -45,9 +45,9 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
   Log_debug("dispatch to {}", cmd[0].PartitionId());
 //  verify(cmd.type_ > 0);
 //  verify(cmd.root_type_ > 0);
-  ClassicProxy::RpcJanusDispatchRequest req;
+  ClassicProxy::RpcRccDispatchRequest req;
   req.cmd = cmd;
-  auto fu_result = proxy->async_JanusDispatch(req, fuattr);
+  auto fu_result = proxy->async_RccDispatch(req, fuattr);
   // Arc auto-released
 }
 
@@ -109,87 +109,6 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
 //  verify(ev->status_ != EventStatus::TIMEOUT);
   ev->wait();
   return ret;
-}
-
-void RccCommo::SendInquire(parid_t pid,
-                           epoch_t epoch,
-                           txnid_t tid,
-                           const function<void(const RccGraph& graph)>& callback) {
-  FutureAttr fuattr;
-  function<void(rusty::Arc<Future>)> cb = [callback] (rusty::Arc<Future> fu) {
-    if (fu->get_error_code() != 0) {
-      Log_info("Get a error message in reply");
-      return;
-    }
-    rrr::AnyMessage am;
-    rrr::deserialize_from(fu->get_reply(), am);
-    const auto sp_graph = am.unpack<RccGraph>();
-    verify(sp_graph.is_some());
-    callback(*sp_graph.unwrap());
-  };
-  fuattr.callback = rrr::FutureCallback::from_callable(cb);
-  auto proxy = (ClassicProxy*)NearestProxyForPartition(pid).second;
-  ClassicProxy::RpcJanusInquireRequest req;
-  req.epoch = epoch;
-  req.txn_id = tid;
-  auto fu_result = proxy->async_JanusInquire(req, fuattr);
-  // Arc auto-released
-}
-
-void RccCommo::BroadcastCommit(parid_t par_id,
-                               txnid_t cmd_id,
-                               rank_t rank,
-                               bool need_validation,
-                               shared_ptr<RccGraph> graph,
-                               const function<void(int32_t, TxnOutput&)>& callback) {
-  verify(0);
-  bool skip_graph = IsGraphOrphan(*graph, cmd_id);
-  verify(rpc_par_proxies_.find(par_id) != rpc_par_proxies_.end());
-  for (auto& p : rpc_par_proxies_[par_id]) {
-    auto proxy = (p.second);
-    verify(proxy != nullptr);
-    FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future> fu) {
-                        if (fu->get_error_code() != 0) {
-                          Log_info("Get a error message in reply");
-                          return;
-                        }
-                        int32_t res;
-                        TxnOutput output;
-                        rrr::deserialize_from(fu->get_reply(), res);
-                        rrr::deserialize_from(fu->get_reply(), output);
-                        callback(res, output);
-                      });
-    verify(cmd_id > 0);
-    if (skip_graph) {
-      ClassicProxy::RpcJanusCommitWoGraphRequest req;
-      req.id = cmd_id;
-      req.rank = RANK_UNDEFINED;
-      req.need_validation = need_validation;
-      auto fu_result = proxy->async_JanusCommitWoGraph(req, fuattr);
-      // Arc auto-released
-    } else {
-      // graph field is `AnyMessage` directly.
-      auto sp_graph = rusty::Arc<RccGraph>::make(*graph);
-      ClassicProxy::RpcJanusCommitRequest req;
-      req.id = cmd_id;
-      req.rank = RANK_UNDEFINED;
-      req.need_validation = need_validation;
-      req.graph = rrr::AnyMessage::pack(std::move(sp_graph));
-      auto fu_result = proxy->async_JanusCommit(req, fuattr);
-      // Arc auto-released
-    }
-  }
-}
-
-bool RccCommo::IsGraphOrphan(RccGraph& graph, txnid_t cmd_id) {
-  if (graph.size() == 1) {
-    auto v = graph.FindV(cmd_id);
-    verify(v);
-    return true;
-  } else {
-    return false;
-  }
 }
 
 void RccCommo::BroadcastValidation(txid_t id, set<parid_t> pars, int result) {

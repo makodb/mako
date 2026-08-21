@@ -230,8 +230,8 @@ bool TxData::OutputReady() {
 }
 
 // removed `void TxData::Merge(TxnOutput&)`
-// — the only call sites (`janus/coordinator.cc:228`,
-// `rcc/coord.cc:214`) were already commented out.  The live overloads
+// — the only remaining call site (`rcc/coord.cc:214`) was already
+// commented out. The live overloads
 // `Merge(CmdData&)` and `Merge(innid_t, map<int32_t, Value>&)` cover
 // the per-piece merge path.
 

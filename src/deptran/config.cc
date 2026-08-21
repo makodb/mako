@@ -972,9 +972,6 @@ int32_t Config::get_num_leaders(parid_t partition_id) {
     case MODE_COPILOT:
       return 2;
       break;
-    case MODE_MENCIUS:
-      return GetPartitionSize(partition_id);
-      break;
     default:
       Log_fatal("Rule mode do not support for this replica protocol now");
       return 0;

@@ -58,28 +58,6 @@ abstract service MultiPaxos {
 }
 
 
-abstract service Mencius {
-
-  defer Prepare(uint64_t slot,
-                ballot_t ballot |
-                ballot_t max_ballot,
-                uint64_t coro_id);
-
-  defer Suggest(uint64_t slot,
-               uint64_t time,
-               ballot_t ballot,
-               uint64_t sender,
-               vector<uint64_t> skip_commits,
-               vector<uint64_t> skip_potentials,
-               Command cmd |
-               ballot_t max_ballot,
-               uint64_t coro_id);
-
-  defer Decide(uint64_t slot,
-               ballot_t ballot,
-               Command cmd);
-}
-
 abstract service FpgaRaft {
 	defer Heartbeat(uint64_t leaderPrevLogIndex,
 									DepId dep_id |
@@ -334,11 +312,6 @@ abstract service Classic {
 
   defer RccNotifyGlobalValidation(txid_t tx_id, int32_t rank, int32_t res |);
 
-  defer JanusDispatch(vector<SimpleCommand> cmd |
-                      i32 res,
-                      TxnOutput output,
-                      AnyMessage ret_graph);
-
   defer RccCommit(cmdid_t id,
                   rank_t rank,
                   int32_t need_validation,
@@ -346,53 +319,17 @@ abstract service Classic {
                   int32_t res,
                   TxnOutput output);
 
-  defer JanusCommit(cmdid_t id,
-                    rank_t rank,
-                    int32_t need_validation,
-                    AnyMessage graph |
-                    int32_t res,
-                    TxnOutput output);
-
-  defer JanusCommitWoGraph(cmdid_t id,
-                           rank_t rank,
-                           int32_t need_validation |
-                           int32_t res,
-                           TxnOutput output);
-
-  defer JanusInquire(epoch_t epoch,
-                     txnid_t txn_id |
-                     AnyMessage ret_graph);
-
   defer RccPreAccept(cmdid_t txn_id,
                      rank_t rank,
                      vector<SimpleCommand> cmd |
                      i32 res,
                      parent_set_t x );
 
-  defer JanusPreAccept(cmdid_t txn_id,
-                       rank_t rank,
-                       vector<SimpleCommand> cmd,
-                       AnyMessage graph |
-                       i32 res,
-                       AnyMessage ret_graph);
-
-  defer JanusPreAcceptWoGraph(cmdid_t txn_id,
-                              rank_t rank,
-                              vector<SimpleCommand> cmd |
-                              i32 res,
-                              AnyMessage ret_graph);
-
   defer RccAccept(cmdid_t txn_id,
                   i32 rank,
                   ballot_t ballot,
                   parent_set_t p  |
                   i32 res);
-
-  defer JanusAccept(cmdid_t txn_id,
-                    i32 rank,
-                    ballot_t ballot,
-                    AnyMessage graph |
-                    i32 res);
 
   defer JetpackBeginRecovery(Command old_view,
                              Command new_view, 

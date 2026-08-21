@@ -19,8 +19,6 @@ CoordinatorRule::CoordinatorRule(uint32_t coo_id,
   //   margin_success_rate_ = 0.724;
   // } else if (Config::GetConfig()->replica_proto_ == MODE_COPILOT) {
   //   margin_success_rate_ = 0.713;
-  // } else if (Config::GetConfig()->replica_proto_ == MODE_MENCIUS) {
-  //   margin_success_rate_ = 0.930;
   // } else {
   //   verify(0);
   // }
@@ -226,7 +224,6 @@ void CoordinatorRule::DispatchAsync(bool fastpath_broadcast_mode) {
     auto sp_vec_piece = sp_vec_piece_by_par_[par_id];
     ((CommunicatorRule *)commo())->BroadcastDispatch(fastpath_broadcast_mode,
                                                       sp_vec_piece,
-                                                      this,
                                                       std::bind(&CoordinatorClassic::DispatchAck,
                                                                 this,
                                                                 phase_,

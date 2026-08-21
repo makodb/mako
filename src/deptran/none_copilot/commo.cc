@@ -38,14 +38,13 @@ CommunicatorNoneCopilot::PilotProxyForPartition(parid_t par_id) const {
 }
 
 void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece,
-                                                Coordinator *coo,
                                                 const std::function<void(int res, TxnOutput &)> &callback) {
   WAN_WAIT
   cmdid_t cmd_id = sp_vec_piece->at(0)->root_id_;
   verify(!sp_vec_piece->empty());
   auto par_id = sp_vec_piece->at(0)->PartitionId();
   rrr::FutureAttr fuattr;
-  fuattr.callback = rrr::FutureCallback::from_callable([coo, this, callback, par_id](rusty::Arc<Future> fu) {
+  fuattr.callback = rrr::FutureCallback::from_callable([this, callback, par_id](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;
@@ -108,7 +107,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
   }
 
   rrr::FutureAttr fu2;
-  fu2.callback = rrr::FutureCallback::from_callable([coo, this, callback, par_id](rusty::Arc<Future> fu) {
+  fu2.callback = rrr::FutureCallback::from_callable([this, callback, par_id](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;

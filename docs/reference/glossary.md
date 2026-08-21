@@ -103,7 +103,7 @@ Storing and accessing data entirely in RAM rather than disk. Mako uses Masstree 
 ## J
 
 ### Janus
-A distributed transaction protocol (from OSDI'16) that influenced Mako's design. The codebase contains both Janus and Mako implementations.
+A distributed transaction protocol from OSDI'16 that influenced Mako's design. Mako retains this lineage and the project-wide `janus::` namespace, but the standalone Janus protocol implementation is retired.
 
 ---
 

@@ -52,7 +52,7 @@ class Coordinator {
   ballot_t curr_ballot_ = 1;
 
 	std::vector<rusty::Arc<QuorumEvent>> quorum_events_;
-  // Unused live (only a commented reference in mencius/commo.cc); nullable,
+  // Currently unused; nullable,
   // was a default-null shared_ptr — Option<Arc> keeps the empty state without
   // eagerly constructing a placeholder QuorumEvent.
   rusty::Option<rusty::Arc<QuorumEvent>> sp_quorum_event;
@@ -97,9 +97,7 @@ class Coordinator {
   // — only assignment was `recorder_ = NULL;` in the constructor;
   // no surviving `recorder_ = new Recorder(...)` call site, so the
   // field was always nullptr.  The `if (recorder_) delete recorder_;`
-  // destructor cleanup was dead-after-null-check-only.  The
-  // `JanusCoordinator::recorder_` shadow declaration is also removed
-  // in this phase.
+  // destructor cleanup was dead-after-null-check-only.
   CmdData *cmd_{nullptr};
   phase_t phase_ = 0;
   map<innid_t, bool> dispatch_acks_ = {};

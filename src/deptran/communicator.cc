@@ -195,20 +195,8 @@ Communicator::RandomProxyForPartition(parid_t par_id) const {
   return par_proxies[index];
 }
 
-// for most protocol, e.g., Paxos or Raft, the client always 
-//      tries to issue the request to the fixed leader (the first one) (idx is -1 by default)
-// but, for Mencius, it uses round robin to rotate the leader (idx > -1)
-// @param idx: get the index of servers as the leader
 std::pair<siteid_t, ClassicProxy*>
-Communicator::LeaderProxyForPartition(parid_t par_id, int idx) const {
-  
-  if (idx > -1) { // Mencius
-    auto it = rpc_par_proxies_.find(par_id);
-    auto& partition_proxies = it->second;
-    verify(partition_proxies.size()>idx);
-    return it->second.at(idx);
-  }
-  
+Communicator::LeaderProxyForPartition(parid_t par_id) const {
   // Check if we have a dynamic leader callback
   if (leader_callback_) {
     locid_t dynamic_leader = leader_callback_(par_id);
@@ -503,7 +491,6 @@ rusty::Arc<QuorumEvent> Communicator::SendReelect(){
 
 void Communicator::BroadcastDispatch(
     shared_ptr<vector<shared_ptr<TxPieceData>>> sp_vec_piece,
-    Coordinator* coo,
     const function<void(int, TxnOutput&)> & callback) {
 
   Log_debug("Do a dispatch on client worker");
@@ -513,7 +500,7 @@ void Communicator::BroadcastDispatch(
   
   rrr::FutureAttr fuattr;
   fuattr.callback = rrr::FutureCallback::from_callable(
-      [coo, this, callback, par_id](rusty::Arc<Future> fu) {
+      [this, callback, par_id](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
@@ -537,21 +524,7 @@ void Communicator::BroadcastDispatch(
         callback(ret, outputs);
       });
   
-  std::pair<siteid_t, ClassicProxy*> pair_leader_proxy;
-  if (Config::GetConfig()->replica_proto_==MODE_MENCIUS) {
-    // The logic here is: Mencius have multiple proposor, if the client is co-locate with a proposer, it give all commands to this proposor.
-    // If not, round-robin with all proposors.
-    auto server_infos = Config::GetConfig()->GetMyServers();
-    if (server_infos.size() == 1) {
-      int n = rpc_par_proxies_.find(par_id)->second.size();
-      pair_leader_proxy = LeaderProxyForPartition(par_id, server_infos[0].id);
-    } else {
-      int n = rpc_par_proxies_.find(par_id)->second.size();
-      pair_leader_proxy = LeaderProxyForPartition(par_id, coo->coo_id_ % n);
-    }
-  } else {
-    pair_leader_proxy = LeaderProxyForPartition(par_id);
-  }
+  auto pair_leader_proxy = LeaderProxyForPartition(par_id);
   
   SetLeaderCache(par_id, pair_leader_proxy);
   Log_debug("send dispatch to site {}, par {}",

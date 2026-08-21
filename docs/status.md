@@ -167,9 +167,11 @@ Proven, high-performance in-memory index. The critical missing piece is crash re
 |----------|-------------|--------|
 | 2PL | 70% | Core works, no deadlock detection |
 | OCC | 65% | Lazy versioning, ad-hoc design |
-| Janus | 50% | 10+ TODOs in coordinator, incomplete phase transitions |
 | RCC/Rococo | 55% | Complex dependency graphs, 24 `verify(0)` stubs |
 | TROAD, Carousel, Februus, SNOW | <30% | Proof-of-concept only |
+
+The former standalone Janus and Mencius protocol implementations are retired
+and are not supported configuration options.
 
 ### Critical Issues
 

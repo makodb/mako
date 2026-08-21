@@ -18,8 +18,6 @@ class RccTx: public Tx, public Vertex<RccTx> {
   // (StatusBox removed — it was a dead-convenience subclass of BoxEvent<int>;
   //  every call site uses BoxEvent<int>'s own set/get/wait/status_/is_set_
   //  directly, so local_validated_/global_validated_ are now Arc<BoxEvent<int>>.)
-  bool mocking_janus_{false};
-
   void __DebugCheckParents(rank_t rank);
   void __DebugCheckScc(rank_t rank);
   enum TraverseStatus {ERROR=0, TRAVERSING=1, WAITING_NO_DEADLOCK=2, WAITING_POSSIBLE_DEADLOCK=3, DONE=4};

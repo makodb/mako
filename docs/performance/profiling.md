@@ -11,7 +11,7 @@ Compile with google perf tools.
 
 Run
 ```
-./build/deptran_server -f config/3c3s3r1p.yml -f config/brq.yml -f config/tpca.yml -P localhost -d 60
+./build/deptran_server -f config/3c3s3r1p.yml -f config/tpl_ww_paxos.yml -f config/tpca.yml -P localhost -d 60
 ```
 
 The profiling result will be stored in a file named process-{process_name}.prof

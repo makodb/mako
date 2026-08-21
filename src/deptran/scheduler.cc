@@ -15,7 +15,6 @@
 #include "benchmark_registry.h"
 #include "executor.h"
 #include "coordinator.h"
-#include "classic/coordinator.h"
 #include "raft/server.h"
 #include "config.h"
 
@@ -1050,15 +1049,6 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, rusty::Opt
       // Log_info("[JETPACK-RECOVERY] Resubmit dispatch partition {} targeting leader locale {} view={}", 
       //          par_id, current_leader, view_snapshot.ToString().c_str());
       
-      // Create a temporary coordinator for dispatching
-      // Using a special coordinator ID for recovery operations
-      auto coo = std::make_unique<CoordinatorClassic>(999999, // special ID for recovery
-                                                       Config::GetConfig()->benchmark_,
-                                                       rusty::None,
-                                                       0);
-      coo->loc_id_ = site_id_;
-      coo->par_id_ = partition_id_;
-      
       // Set up callback to handle dispatch response
       auto callback = [this, par_id, recovery_event, cmd_id](int res, TxnOutput& output) {
 #ifdef JETPACK_RECOVERY_DEBUG
@@ -1096,7 +1086,7 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, rusty::Opt
       // Use BroadcastDispatch to send to the leader
       // Log_info("[JETPACK-RECOVERY] DispatchRecoveredCommand sending cmd_id=0x{:x} to partition {} (leader locale {}, sched={}, target={})",
       //          (unsigned long long)cmd_id, par_id, current_leader, sched_type, recovery_event ? recovery_event->target_.get() : -1);
-      comm->BroadcastDispatch(vec_piece_data.unwrap()->sp_vec_piece_data_, coo.get(), callback);
+      comm->BroadcastDispatch(vec_piece_data.unwrap()->sp_vec_piece_data_, callback);
       
 #ifdef JETPACK_RECOVERY_DEBUG
       Log_info("[JETPACK-RECOVERY] Command dispatched through communicator to leader");

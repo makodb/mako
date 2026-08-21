@@ -40,9 +40,6 @@ void RccCoord::DispatchAsync() {
     cnt += cmds.size();
     vector<SimpleCommand> cc;
     for (auto c: cmds) {
-      if (mocking_janus_) {
-        c->rank_ = RANK_D;
-      }
       if (c->rank_ == RANK_I) {
         par_i_.insert(c->PartitionId());
       } else {

@@ -9,7 +9,6 @@
 #include "communicator.h"
 #include "config.h"
 #include "coordinator.h"
-#include "janus/scheduler.h"
 #include "procedure.h"
 #include "rcc/dep_graph.h"
 #include "rrr/misc/serializable.hpp"  // wrap_serializable_aliased
@@ -125,44 +124,16 @@ void ClassicServiceImpl::RccNotifyGlobalValidation(const ClassicService::RpcRccN
   this->RccNotifyGlobalValidation(req.tx_id, req.rank, req.res, std::move(defer));
 }
 
-void ClassicServiceImpl::JanusDispatch(const ClassicService::RpcJanusDispatchRequest& req, ClassicService::RpcJanusDispatchResponse& resp, rrr::DeferredReply defer) {
-  this->JanusDispatch(req.cmd, &resp.res, &resp.output, &resp.ret_graph, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusCommit(const ClassicService::RpcJanusCommitRequest& req, ClassicService::RpcJanusCommitResponse& resp, rrr::DeferredReply defer) {
-  this->JanusCommit(req.id, req.rank, req.need_validation, req.graph, &resp.res, &resp.output, std::move(defer));
-}
-
 void ClassicServiceImpl::RccCommit(const ClassicService::RpcRccCommitRequest& req, ClassicService::RpcRccCommitResponse& resp, rrr::DeferredReply defer) {
   this->RccCommit(req.id, req.rank, req.need_validation, req.parents, &resp.res, &resp.output, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusCommitWoGraph(const ClassicService::RpcJanusCommitWoGraphRequest& req, ClassicService::RpcJanusCommitWoGraphResponse& resp, rrr::DeferredReply defer) {
-  this->JanusCommitWoGraph(req.id, req.rank, req.need_validation, &resp.res, &resp.output, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusInquire(const ClassicService::RpcJanusInquireRequest& req, ClassicService::RpcJanusInquireResponse& resp, rrr::DeferredReply defer) {
-  this->JanusInquire(req.epoch, req.txn_id, &resp.ret_graph, std::move(defer));
 }
 
 void ClassicServiceImpl::RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req, ClassicService::RpcRccPreAcceptResponse& resp, rrr::DeferredReply defer) {
   this->RccPreAccept(req.txn_id, req.rank, req.cmd, &resp.res, &resp.x, std::move(defer));
 }
 
-void ClassicServiceImpl::JanusPreAccept(const ClassicService::RpcJanusPreAcceptRequest& req, ClassicService::RpcJanusPreAcceptResponse& resp, rrr::DeferredReply defer) {
-  this->JanusPreAccept(req.txn_id, req.rank, req.cmd, req.graph, &resp.res, &resp.ret_graph, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusPreAcceptWoGraph(const ClassicService::RpcJanusPreAcceptWoGraphRequest& req, ClassicService::RpcJanusPreAcceptWoGraphResponse& resp, rrr::DeferredReply defer) {
-  this->JanusPreAcceptWoGraph(req.txn_id, req.rank, req.cmd, &resp.res, &resp.ret_graph, std::move(defer));
-}
-
 void ClassicServiceImpl::RccAccept(const ClassicService::RpcRccAcceptRequest& req, ClassicService::RpcRccAcceptResponse& resp, rrr::DeferredReply defer) {
   this->RccAccept(req.txn_id, req.rank, req.ballot, req.p, &resp.res, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusAccept(const ClassicService::RpcJanusAcceptRequest& req, ClassicService::RpcJanusAcceptResponse& resp, rrr::DeferredReply defer) {
-  this->JanusAccept(req.txn_id, req.rank, req.ballot, req.graph, &resp.res, std::move(defer));
 }
 
 void ClassicServiceImpl::JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) {
@@ -668,42 +639,6 @@ void ClassicServiceImpl::RccNotifyGlobalValidation(
   defer.reply();
 }
 
-void ClassicServiceImpl::JanusDispatch(const vector<SimpleCommand>& cmd,
-                                       int32_t* p_res,
-                                       TxnOutput* p_output,
-                                       rrr::AnyMessage* p_md_res_graph,
-                                       rrr::DeferredReply defer) {
-//    std::lock_guard<std::mutex> guard(this->mtx_); // TODO remove the lock.
-    auto sp_graph = rusty::Arc<RccGraph>::make();
-    auto* sched = (SchedulerJanus*) dtxn_sched_;
-    *p_res = sched->OnDispatch(cmd, p_output, sp_graph.clone());
-    if (sp_graph->size() <= 1) {
-      // graph reply rides directly as AnyMessage.
-      *p_md_res_graph =
-          rrr::AnyMessage::pack(rusty::Arc<EmptyGraph>::make());
-    } else {
-      *p_md_res_graph = rrr::AnyMessage::pack(std::move(sp_graph));
-    }
-    verify(!p_md_res_graph->type_name_.empty());
-    defer.reply();
-}
-
-void ClassicServiceImpl::JanusCommit(const cmdid_t& cmd_id,
-                                     const rank_t& rank,
-                                     const int32_t& need_validation,
-                                     const rrr::AnyMessage& graph,
-                                     int32_t* res,
-                                     TxnOutput* output,
-                                     rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  verify(0);
-  auto sp_graph = graph.unpack<RccGraph>();
-  auto p_sched = (RccServer*) dtxn_sched_;
-  // last use — unwrap() intentionally moves the Arc out.
-  *res = p_sched->OnCommit(cmd_id, rank, need_validation, sp_graph.unwrap(), output);
-  defer.reply();
-}
-
 void ClassicServiceImpl::RccCommit(const cmdid_t& cmd_id,
                                    const rank_t& rank,
                                    const int32_t& need_validation,
@@ -715,34 +650,6 @@ void ClassicServiceImpl::RccCommit(const cmdid_t& cmd_id,
   auto p_sched = (RccServer*) dtxn_sched_;
   *res = p_sched->OnCommit(cmd_id, rank, need_validation, parents, output);
   defer.reply();
-}
-
-void ClassicServiceImpl::JanusCommitWoGraph(const cmdid_t& cmd_id,
-                                            const rank_t& rank,
-                                            const int32_t& need_validation,
-                                            int32_t* res,
-                                            TxnOutput* output,
-                                            rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  verify(0);
-  auto sched = (SchedulerJanus*) dtxn_sched_;
-  *res = sched->OnCommit(cmd_id, rank, need_validation,
-                         rusty::Arc<RccGraph>::make(), output);
-  defer.reply();
-}
-
-void ClassicServiceImpl::JanusInquire(const epoch_t& epoch,
-                                      const cmdid_t& tid,
-                                      rrr::AnyMessage* p_md_graph,
-                                      rrr::DeferredReply defer) {
-  verify(0);
-//  std::lock_guard<std::mutex> guard(mtx_);
-//  *p_md_graph = std::make_shared<RccGraph>();
-//  auto p_sched = (SchedulerJanus*) dtxn_sched_;
-//  p_sched->OnInquire(epoch,
-//                     tid,
-//                     dynamic_pointer_cast<RccGraph>(p_md_graph->sp_data_));
-//  defer.reply();
 }
 
 void ClassicServiceImpl::RccPreAccept(const cmdid_t& txnid,
@@ -757,45 +664,6 @@ void ClassicServiceImpl::RccPreAccept(const cmdid_t& txnid,
   defer.reply();
 }
 
-void ClassicServiceImpl::JanusPreAccept(const cmdid_t& txnid,
-                                        const rank_t& rank,
-                                        const vector<SimpleCommand>& cmds,
-                                        const rrr::AnyMessage& md_graph,
-                                        int32_t* res,
-                                        rrr::AnyMessage* p_md_res_graph,
-                                        rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  auto ret_sp_graph = rusty::Arc<RccGraph>::make();
-  // aliased: OnPreAccept's fills through the shared payload stay
-  // visible to the packed reply.
-  *p_md_res_graph = rrr::AnyMessage::pack(ret_sp_graph.clone());
-  auto sp_graph = md_graph.unpack<RccGraph>();
-  verify(sp_graph.is_some());
-  auto sched = (SchedulerJanus*) dtxn_sched_;
-  // last use — unwrap() intentionally moves the Arc out.
-  *res = sched->OnPreAccept(txnid, rank, cmds, sp_graph.unwrap(),
-                            std::move(ret_sp_graph));
-  defer.reply();
-}
-
-void ClassicServiceImpl::JanusPreAcceptWoGraph(const cmdid_t& txnid,
-                                               const rank_t& rank,
-                                               const vector<SimpleCommand>& cmds,
-                                               int32_t* res,
-                                               rrr::AnyMessage* res_graph,
-                                               rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  auto sp_ret_graph = rusty::Arc<RccGraph>::make();
-  // aliased: OnPreAccept's fills through the shared payload stay
-  // visible to the packed reply.
-  *res_graph = rrr::AnyMessage::pack(sp_ret_graph.clone());
-  auto* p_sched = (SchedulerJanus*) dtxn_sched_;
-  *res = p_sched->OnPreAccept(txnid, rank, cmds,
-                              rusty::Arc<RccGraph>::make(),
-                              std::move(sp_ret_graph));
-  defer.reply();
-}
-
 void ClassicServiceImpl::RccAccept(const cmdid_t& txnid,
                                    const rank_t& rank,
                                    const ballot_t& ballot,
@@ -804,21 +672,6 @@ void ClassicServiceImpl::RccAccept(const cmdid_t& txnid,
                                    rrr::DeferredReply defer) {
   auto sched = (RccServer*) dtxn_sched_;
   *res = sched->OnAccept(txnid, rank, ballot, parents);
-  defer.reply();
-}
-
-void ClassicServiceImpl::JanusAccept(const cmdid_t& txnid,
-                                     const int32_t& rank,
-                                     const ballot_t& ballot,
-                                     const rrr::AnyMessage& md_graph,
-                                     int32_t* res,
-                                     rrr::DeferredReply defer) {
-  // graph rides directly as AnyMessage.
-  auto graph = md_graph.unpack<RccGraph>();
-  verify(graph.is_some());
-  auto sched = (SchedulerJanus*) dtxn_sched_;
-  // last use — unwrap() intentionally moves the Arc out.
-  sched->OnAccept(txnid, rank, ballot, graph.unwrap(), res);
   defer.reply();
 }
 

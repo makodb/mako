@@ -877,7 +877,7 @@ set(BENCH_LDFLAGS
   -lcrypto
 )
 
-# Add rpc defined in Janus
+# Generate deptran RPC bindings.
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
          ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py

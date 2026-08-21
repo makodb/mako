@@ -237,7 +237,6 @@ void CoordinatorClassic::DispatchAsync() {
     }
 
     commo()->BroadcastDispatch(sp_vec_piece,
-                               this,
                                std::bind(&CoordinatorClassic::DispatchAck,
                                          this,
                                          phase_,

@@ -653,7 +653,7 @@ class RaftServer : public TxLogServer {
         verify(vec_piece_data.is_some());
         auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
 
-        // Check if this is Mako data (STR values) vs Janus data (I32 values)
+        // Check if this is Mako data (STR values) versus legacy I32 data.
         bool is_mako_data = false;
         if (sp_vec_piece && !sp_vec_piece->empty()) {
           auto first_cmd = (*sp_vec_piece)[0];

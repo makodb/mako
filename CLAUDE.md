@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains two related distributed transaction systems:
-- **Janus**: Implementation of the OSDI'16 paper "Consolidating Concurrency Control and Consensus for Commits under Conflicts"
-- **Mako**: A speculative distributed transaction system with geo-replication (OSDI'25)
+This repository contains **Mako**, a speculative distributed transaction system
+with geo-replication (OSDI'25). Mako descends from the original Janus codebase
+(OSDI'16), but the standalone Janus and Mencius protocol implementations have
+been retired.
 
 The codebase is primarily C++17 with multiple build systems (CMake, Makefile, WAF).
 
@@ -90,7 +91,7 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 ## Code Architecture
 
 ### Core Directory Structure
-- `src/deptran/`: Transaction protocol implementations (Janus, 2PL, OCC, RCC, Paxos, TAPIR, Snow)
+- `src/deptran/`: Transaction and replication protocol implementations (2PL, OCC, RCC, Paxos, TAPIR, Snow, Raft)
 - `src/mako/`: Mako system with Masstree storage engine and speculative execution
 - `src/bench/`: Benchmark implementations (TPC-C, TPC-A, RW, Micro)
 - `src/rrr/`: Custom RPC framework and networking layer
@@ -106,8 +107,9 @@ successful Cargo build proves only the current seventeen-module coverage, not fu
 Goal 0. Never recreate a top-level `crates/srpc` hand port.
 
 ### Key Protocol Implementations
-The system implements multiple distributed transaction protocols:
-- **Janus** (`src/deptran/janus/`): Main protocol with graph-based dependency tracking
+The system implements multiple distributed transaction protocols. The former
+standalone Janus and Mencius implementations are retired; the project-wide
+`janus::` C++ namespace remains for compatibility.
 - **2PL** (`src/deptran/2pl/`): Traditional two-phase locking
 - **OCC** (`src/deptran/occ/`): Optimistic concurrency control
 - **RCC/Rococo** (`src/deptran/rcc/`): Distributed consensus protocol

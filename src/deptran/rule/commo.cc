@@ -4,16 +4,7 @@ namespace janus
 {
 
 vector<std::pair<siteid_t, ClassicProxy*>>
-CommunicatorRule::LeaderProxyForPartition(parid_t par_id, int idx) const {
-  if (idx > -1) { // Mencius
-    auto it = rpc_par_proxies_.find(par_id);
-    auto& partition_proxies = it->second;
-    verify(partition_proxies.size()>idx);
-    vector<std::pair<siteid_t, ClassicProxy*>> ret;
-    ret.push_back(it->second.at(idx));
-    return ret;
-  }
-
+CommunicatorRule::LeaderProxyForPartition(parid_t par_id) const {
   // First check if we have updated view information
   locid_t view_leader = GetLeaderForPartition(par_id);
   if (view_leader > 0) {
@@ -109,10 +100,6 @@ std::vector<int> CommunicatorRule::LeadersForPartition(parid_t par_id) const {
       leaders.push_back(0);
       leaders.push_back(1);
       break;
-    case MODE_MENCIUS:
-      for (int replica_id = 0; replica_id < config->GetPartitionSize(par_id); replica_id++)
-        leaders.push_back(replica_id);
-      break;
     default:
       Log_fatal("Rule mode do not support for this replica protocol now");
       break;
@@ -191,7 +178,6 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
 void CommunicatorRule::BroadcastDispatch(
     bool fastpath_broadcast_mode,
     shared_ptr<vector<shared_ptr<TxPieceData>>> sp_vec_piece,
-    Coordinator* coo,
     const function<void(int, TxnOutput&)> & callback) {
 
   Log_debug("Do a dispatch on client worker");
@@ -201,7 +187,7 @@ void CommunicatorRule::BroadcastDispatch(
 
   rrr::FutureAttr fuattr;
   fuattr.callback = rrr::FutureCallback::from_callable(
-      [coo, this, callback, par_id](rusty::Arc<Future> fu) {
+      [this, callback, par_id](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
@@ -246,21 +232,7 @@ void CommunicatorRule::BroadcastDispatch(
   if (fastpath_broadcast_mode) {
     pair_leader_proxies = LeaderProxyForPartition(par_id);
   } else {
-    std::pair<siteid_t, ClassicProxy*> pair_leader_proxy;
-    if (Config::GetConfig()->replica_proto_==MODE_MENCIUS) {
-      // The logic here is: Mencius have multiple proposor, if the client is co-locate with a proposer, it give all commands to this proposor.
-      // If not, round-robin with all proposors.
-      auto server_infos = Config::GetConfig()->GetMyServers();
-      if (server_infos.size() == 1) {
-        int n = rpc_par_proxies_.find(par_id)->second.size();
-        pair_leader_proxy = Communicator::LeaderProxyForPartition(par_id, server_infos[0].id);
-      } else {
-        int n = rpc_par_proxies_.find(par_id)->second.size();
-        pair_leader_proxy = Communicator::LeaderProxyForPartition(par_id, rand() % n);
-      }
-    } else {
-      pair_leader_proxy = Communicator::LeaderProxyForPartition(par_id);
-    }
+    auto pair_leader_proxy = Communicator::LeaderProxyForPartition(par_id);
     pair_leader_proxies.push_back(pair_leader_proxy);
   }
 
