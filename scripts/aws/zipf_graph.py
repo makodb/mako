@@ -10,10 +10,9 @@ default_zipfs = [ '0.0', '0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7', '0.8',
 default_configs = [ 
     'config/concurrent_50.yml',
     'config/tpca_zipf.yml',
-    'config/tapir.yml'
+    'config/occ_paxos.yml'
 ]
 default_modes = [ 'occ:multi_paxos', 'troad:troad' ]
-#default_modes = [ 'tapir:tapir' ]
 default_benchmark = [ 'tpca' ]
 default_options = ['-r', '3']
 

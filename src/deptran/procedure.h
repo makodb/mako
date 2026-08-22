@@ -477,7 +477,6 @@ class TxData: public CmdData {
     return sharding_[inn_id];
   }
   virtual bool IsOneRound();
-  vector<SimpleCommand> GetCmdsByPartition(parid_t par_id);
   // removed
   // `vector<SimpleCommand> GetCmdsByPartitionAndRank(parid_t, rank_t)`
   // — declared and defined but never called anywhere.

@@ -305,7 +305,6 @@ vector<rrr::ServiceProxy> Frame::CreateRpcServices(uint32_t site_id,
     case MODE_MDCC:
     case MODE_OCC:
     case MODE_NONE:
-    case MODE_TAPIR:
     case MODE_RCC:
     case MODE_NOTX:
     default:

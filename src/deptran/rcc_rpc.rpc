@@ -273,18 +273,6 @@ abstract service Classic {
   // below is for what?
 
   defer rpc_null( | );
-  //  defer Prepare();
-  defer TapirAccept(uint64_t cmd_id,
-                    int64_t ballot,
-	                int32_t decision);
-  // works as 2PC prepare on a paxos fast-accept
-  defer TapirFastAccept(uint64_t cmd_id,
-                        vector<SimpleCommand> txn_cmds |
-                        i32 res);
-  // works as a 2PC commit/abort with a paxos decision
-  defer TapirDecide(uint64_t cmd_id, i32 commit);
-  
-
   defer RccDispatch(vector<SimpleCommand> cmd |
                     i32 res,
                     TxnOutput output,

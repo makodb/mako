@@ -687,12 +687,6 @@ void CoordinatorClassic::Report(TxReply& txn_reply,
   }
 }
 
-// removed `___TestPhaseOne(txnid_t)` and
-// `___TestPhaseThree(txnid_t)` test helpers + companion
-// `___phase_one_tids_` / `___phase_three_tids_` set fields — only
-// references were commented-out call sites in
-// `tapir/coordinator.cc:23` and `classic/coordinator.cc:520`.
-
 void CoordinatorClassic::SetNewLeader(parid_t par_id, volatile locid_t* cur_pause) {
   locid_t prev_pause_srv = *cur_pause;
 retry:

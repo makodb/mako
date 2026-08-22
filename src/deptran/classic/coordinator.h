@@ -118,10 +118,5 @@ class CoordinatorClassic : public Coordinator {
 
   void ForwardTxnRequest(TxRequest& req);
   void ForwardTxRequestAck(const TxReply&);
-  // removed `___phase_one_tids_` /
-  // `___phase_three_tids_` debug sets and `___TestPhaseOne` /
-  // `___TestPhaseThree` test helpers — only references were
-  // commented-out call sites in tapir/coordinator.cc and
-  // classic/coordinator.cc.
 };
 } // namespace janus

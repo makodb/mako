@@ -71,8 +71,6 @@ namespace janus {
 #define FAILURE     (-1)
 #define CONTENTION  (-1)
 #define REJECT      (-10)
-#define ABSTAIN     (-10)
-#define RETRY       (-10)
 #define REPEAT      (-15)  // Jetpack: null_cmd retry indicator
 #define DELAYED     (1)
 #define WRONG_LEADER (-20)
@@ -96,6 +94,7 @@ namespace janus {
 #define MODE_MULTI_PAXOS   (0x40)
 #define MODE_MULTI_PAXOS_PLUS   (0x41)
 #define MODE_EPAXOS        (0x80)
+// 0x100 is reserved for compatibility with the retired TAPIR protocol.
 #define MODE_TAPIR         (0x100)
 #define MODE_RAFT (0x400)
 #define MODE_FPGA_RAFT (0x401)

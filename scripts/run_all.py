@@ -29,8 +29,7 @@ signal.signal(signal.SIGINT, signal_handler)
 
 archive_dir = "./archive/"
 
-DEFAULT_MODES = ["occ:multi_paxos",
-                 "tapir:tapir"]
+DEFAULT_MODES = ["occ:multi_paxos"]
 
 DEFAULT_CLIENTS = ["1:2"]
 DEFAULT_SERVERS = ["1:2"]

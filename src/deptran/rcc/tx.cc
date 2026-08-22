@@ -170,8 +170,6 @@ void RccTx::CommitValidate(rank_t rank) {
       auto col_id = pair2.first;
       auto ver_read = pair2.second;
       auto ver_now = row->get_column_ver(col_id);
-      verify(col_id < row->prepared_rver_.size());
-      verify(col_id < row->prepared_wver_.size());
       if (ver_read < ver_now) {
         subtx(rank).local_validated_->set(REJECT);
         return;

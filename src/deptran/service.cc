@@ -15,7 +15,6 @@
 #include "service.h"
 #include "rcc/server.h"
 #include "scheduler.h"
-#include "tapir/scheduler.h"
 #include "../bench/rw/workload.h" //<copilot+ kv debug>
 
 namespace janus {
@@ -79,20 +78,6 @@ void ClassicServiceImpl::UpgradeEpoch(const ClassicService::RpcUpgradeEpochReque
 void ClassicServiceImpl::TruncateEpoch(const ClassicService::RpcTruncateEpochRequest& req, ClassicService::RpcTruncateEpochResponse& resp, rrr::DeferredReply defer) {
   (void)resp;
   this->TruncateEpoch(req.old_epoch, std::move(defer));
-}
-
-void ClassicServiceImpl::TapirAccept(const ClassicService::RpcTapirAcceptRequest& req, ClassicService::RpcTapirAcceptResponse& resp, rrr::DeferredReply defer) {
-  (void)resp;
-  this->TapirAccept(req.cmd_id, req.ballot, req.decision, std::move(defer));
-}
-
-void ClassicServiceImpl::TapirFastAccept(const ClassicService::RpcTapirFastAcceptRequest& req, ClassicService::RpcTapirFastAcceptResponse& resp, rrr::DeferredReply defer) {
-  this->TapirFastAccept(req.cmd_id, req.txn_cmds, &resp.res, std::move(defer));
-}
-
-void ClassicServiceImpl::TapirDecide(const ClassicService::RpcTapirDecideRequest& req, ClassicService::RpcTapirDecideResponse& resp, rrr::DeferredReply defer) {
-  (void)resp;
-  this->TapirDecide(req.cmd_id, req.commit, std::move(defer));
 }
 
 void ClassicServiceImpl::RccDispatch(const ClassicService::RpcRccDispatchRequest& req, ClassicService::RpcRccDispatchResponse& resp, rrr::DeferredReply defer) {
@@ -526,29 +511,6 @@ void ClassicServiceImpl::UpgradeEpoch(const uint32_t& curr_epoch,
 void ClassicServiceImpl::TruncateEpoch(const uint32_t& old_epoch,
                                        rrr::DeferredReply defer) {
   verify(0);
-}
-
-void ClassicServiceImpl::TapirAccept(const cmdid_t& cmd_id,
-                                     const ballot_t& ballot,
-                                     const int32_t& decision,
-                                     rrr::DeferredReply defer) {
-  verify(0);
-}
-
-void ClassicServiceImpl::TapirFastAccept(const txid_t& tx_id,
-                                         const vector<SimpleCommand>& txn_cmds,
-                                         rrr::i32* res,
-                                         rrr::DeferredReply defer) {
-  SchedulerTapir* sched = (SchedulerTapir*) dtxn_sched_;
-  *res = sched->OnFastAccept(tx_id, txn_cmds);
-  defer.reply();
-}
-
-void ClassicServiceImpl::TapirDecide(const cmdid_t& cmd_id,
-                                     const rrr::i32& decision,
-                                     rrr::DeferredReply defer) {
-  SchedulerTapir* sched = (SchedulerTapir*) dtxn_sched_;
-  sched->OnDecide(cmd_id, decision, [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void ClassicServiceImpl::RccDispatch(const vector<SimpleCommand>& cmd,

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <map>
-#include <list>
 #include <unordered_map>
 #include <vector>
 #include <string>
@@ -14,8 +13,6 @@
 
 #include "rrr/rrr.hpp"
 #include <rusty/arc.hpp>
-
-using std::list;
 
 namespace mdb {
 
@@ -347,64 +344,15 @@ class CoarseLockedRow: public Row {
 // inherit from CoarseLockedRow since we need locking on commit phase, when doing 2 phase commit
 class VersionedRow: public CoarseLockedRow {
  public:
-//  version_t *ver_ = nullptr;
   std::vector<version_t> ver_{};
-  // only for tapir. TODO: extract
-  std::vector<list<version_t>> prepared_rver_{};
-  // only for tapir. TODO: extract
-  std::vector<list<version_t>> prepared_wver_{};
   void init_ver(int n_columns) {
-//    ver_ = new version_t[n_columns];
-//    memset(ver_, 0, sizeof(version_t) * n_columns);
     ver_.resize(n_columns, 0);
-    prepared_rver_.resize(n_columns, {});
-    prepared_wver_.resize(n_columns, {});
-  }
-
-  version_t max_prepared_rver(colid_t column_id) {
-    if (prepared_wver_[column_id].size() > 0) {
-      return prepared_wver_[column_id].back();
-    } else {
-      return 0;
-    }
-  }
-
-  version_t min_prepared_wver(colid_t column_id) {
-    if (prepared_rver_[column_id].size() > 0) {
-      return prepared_rver_[column_id].front();
-    } else {
-      return 0;
-    }
-  }
-
-  void insert_prepared_wver(colid_t column_id, version_t ver) {
-    prepared_wver_[column_id].push_back(ver);
-    prepared_rver_[column_id].sort(); // TODO optimize
-  }
-
-  void remove_prepared_wver(colid_t column_id, version_t ver) {
-    prepared_wver_[column_id].remove(ver);
-  }
-
-  void insert_prepared_rver(colid_t column_id, version_t ver) {
-    prepared_rver_[column_id].push_back(ver);
-    prepared_rver_[column_id].sort(); // TODO optimize
-  }
-
-  void remove_prepared_rver(colid_t column_id, version_t ver) {
-    prepared_rver_[column_id].remove(ver);
-  }
-
- public:
-  ~VersionedRow() {
-//    delete[] ver_;
   }
 
   void copy_into(VersionedRow *row) const {
     this->CoarseLockedRow::copy_into((CoarseLockedRow *) row);
     int n_columns = schema_->columns_count();
     row->init_ver(n_columns);
-//    memcpy(row->ver_, this->ver_, n_columns * sizeof(version_t));
     row->ver_ = this->ver_;
     verify(row->ver_.size() > 0);
   }

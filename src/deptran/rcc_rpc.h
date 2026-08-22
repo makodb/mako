@@ -4072,84 +4072,6 @@ public:
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRpcNullResponse& o) { deserialize(o, ar); return ar; }
 
-    struct RpcTapirAcceptRequest {
-        uint64_t cmd_id;
-        int64_t ballot;
-        int32_t decision;
-    };
-    friend inline void serialize(const RpcTapirAcceptRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.cmd_id, ar);
-        rrr::Serialize_::serialize(o.ballot, ar);
-        rrr::Serialize_::serialize(o.decision, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirAcceptRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTapirAcceptRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.cmd_id, ar);
-        rrr::Deserialize_::deserialize(o.ballot, ar);
-        rrr::Deserialize_::deserialize(o.decision, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTapirAcceptRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcTapirAcceptResponse {
-    };
-    friend inline void serialize(const RpcTapirAcceptResponse& o, rrr::BinaryWriteArchive& ar) {
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirAcceptResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTapirAcceptResponse& o, rrr::BinaryReadArchive& ar) {
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTapirAcceptResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcTapirFastAcceptRequest {
-        uint64_t cmd_id;
-        std::vector<SimpleCommand> txn_cmds;
-    };
-    friend inline void serialize(const RpcTapirFastAcceptRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.cmd_id, ar);
-        rrr::Serialize_::serialize(o.txn_cmds, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirFastAcceptRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTapirFastAcceptRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.cmd_id, ar);
-        rrr::Deserialize_::deserialize(o.txn_cmds, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTapirFastAcceptRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcTapirFastAcceptResponse {
-        rrr::i32 res;
-    };
-    friend inline void serialize(const RpcTapirFastAcceptResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.res, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirFastAcceptResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTapirFastAcceptResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.res, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTapirFastAcceptResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcTapirDecideRequest {
-        uint64_t cmd_id;
-        rrr::i32 commit;
-    };
-    friend inline void serialize(const RpcTapirDecideRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.cmd_id, ar);
-        rrr::Serialize_::serialize(o.commit, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirDecideRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTapirDecideRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.cmd_id, ar);
-        rrr::Deserialize_::deserialize(o.commit, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTapirDecideRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcTapirDecideResponse {
-    };
-    friend inline void serialize(const RpcTapirDecideResponse& o, rrr::BinaryWriteArchive& ar) {
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirDecideResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTapirDecideResponse& o, rrr::BinaryReadArchive& ar) {
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTapirDecideResponse& o) { deserialize(o, ar); return ar; }
-
     struct RpcRccDispatchRequest {
         std::vector<SimpleCommand> cmd;
     };
@@ -4782,9 +4704,6 @@ public:
         FAILOVERPAUSESOCKETOUT = 0x566789af,
         FAILOVERRESUMESOCKETOUT = 0x61f54de5,
         RPC_NULL = 0x6315d00c,
-        TAPIRACCEPT = 0x6afb4b6c,
-        TAPIRFASTACCEPT = 0x3942ae5a,
-        TAPIRDECIDE = 0x53c67705,
         RCCDISPATCH = 0x55256154,
         RCCFINISH = 0x644485ff,
         RCCINQUIRE = 0x48ef4f11,
@@ -4854,15 +4773,6 @@ public:
             goto err;
         }
         if ((ret = svr.reg_rpc(RPC_NULL, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(TAPIRACCEPT, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(TAPIRFASTACCEPT, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(TAPIRDECIDE, svc_index)) != 0) {
             goto err;
         }
         if ((ret = svr.reg_rpc(RCCDISPATCH, svc_index)) != 0) {
@@ -4937,9 +4847,6 @@ public:
         svr.unreg(FAILOVERPAUSESOCKETOUT);
         svr.unreg(FAILOVERRESUMESOCKETOUT);
         svr.unreg(RPC_NULL);
-        svr.unreg(TAPIRACCEPT);
-        svr.unreg(TAPIRFASTACCEPT);
-        svr.unreg(TAPIRDECIDE);
         svr.unreg(RCCDISPATCH);
         svr.unreg(RCCFINISH);
         svr.unreg(RCCINQUIRE);
@@ -4979,9 +4886,6 @@ public:
         case FAILOVERPAUSESOCKETOUT: __FailoverPauseSocketOut__wrapper__(std::move(req), weak_sconn); break;
         case FAILOVERRESUMESOCKETOUT: __FailoverResumeSocketOut__wrapper__(std::move(req), weak_sconn); break;
         case RPC_NULL: __rpc_null__wrapper__(std::move(req), weak_sconn); break;
-        case TAPIRACCEPT: __TapirAccept__wrapper__(std::move(req), weak_sconn); break;
-        case TAPIRFASTACCEPT: __TapirFastAccept__wrapper__(std::move(req), weak_sconn); break;
-        case TAPIRDECIDE: __TapirDecide__wrapper__(std::move(req), weak_sconn); break;
         case RCCDISPATCH: __RccDispatch__wrapper__(std::move(req), weak_sconn); break;
         case RCCFINISH: __RccFinish__wrapper__(std::move(req), weak_sconn); break;
         case RCCINQUIRE: __RccInquire__wrapper__(std::move(req), weak_sconn); break;
@@ -5036,12 +4940,6 @@ public:
     virtual void FailoverResumeSocketOut(const RpcFailoverResumeSocketOutRequest& req, RpcFailoverResumeSocketOutResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void rpc_null(const RpcRpcNullRequest& req, RpcRpcNullResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void TapirAccept(const RpcTapirAcceptRequest& req, RpcTapirAcceptResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void TapirFastAccept(const RpcTapirFastAcceptRequest& req, RpcTapirFastAcceptResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void TapirDecide(const RpcTapirDecideRequest& req, RpcTapirDecideResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void RccDispatch(const RpcRccDispatchRequest& req, RpcRccDispatchResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
@@ -5374,62 +5272,6 @@ private:
                 },
                 []() {});
             this->rpc_null(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __TapirAccept__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcTapirAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.cmd_id, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.decision, __req_ar__);
-            auto __typed_resp__ = std::make_shared<RpcTapirAcceptResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                },
-                []() {});
-            this->TapirAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __TapirFastAccept__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcTapirFastAcceptRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.cmd_id, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.txn_cmds, __req_ar__);
-            auto __typed_resp__ = std::make_shared<RpcTapirFastAcceptResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    rrr::Serialize_::serialize(__typed_resp__->res, m);
-                },
-                []() {});
-            this->TapirFastAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __TapirDecide__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcTapirDecideRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.cmd_id, __req_ar__);
-            rrr::Deserialize_::deserialize(__typed_req__.commit, __req_ar__);
-            auto __typed_resp__ = std::make_shared<RpcTapirDecideResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                },
-                []() {});
-            this->TapirDecide(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
@@ -5857,12 +5699,6 @@ public:
     using RpcFailoverResumeSocketOutResponse = ClassicService::RpcFailoverResumeSocketOutResponse;
     using RpcRpcNullRequest = ClassicService::RpcRpcNullRequest;
     using RpcRpcNullResponse = ClassicService::RpcRpcNullResponse;
-    using RpcTapirAcceptRequest = ClassicService::RpcTapirAcceptRequest;
-    using RpcTapirAcceptResponse = ClassicService::RpcTapirAcceptResponse;
-    using RpcTapirFastAcceptRequest = ClassicService::RpcTapirFastAcceptRequest;
-    using RpcTapirFastAcceptResponse = ClassicService::RpcTapirFastAcceptResponse;
-    using RpcTapirDecideRequest = ClassicService::RpcTapirDecideRequest;
-    using RpcTapirDecideResponse = ClassicService::RpcTapirDecideResponse;
     using RpcRccDispatchRequest = ClassicService::RpcRccDispatchRequest;
     using RpcRccDispatchResponse = ClassicService::RpcRccDispatchResponse;
     using RpcRccFinishRequest = ClassicService::RpcRccFinishRequest;
@@ -6623,139 +6459,6 @@ public:
         auto __typed_fu_result__ = this->async_rpc_null(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcRpcNullResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class TapirAcceptTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit TapirAcceptTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcTapirAcceptResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcTapirAcceptResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcTapirAcceptResponse __typed_resp__;
-            return rusty::Result<RpcTapirAcceptResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<TapirAcceptTypedFuture, rrr::i32> async_TapirAccept(const RpcTapirAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::TAPIRACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.cmd_id, __m__);
-            rrr::Serialize_::serialize(req.ballot, __m__);
-            rrr::Serialize_::serialize(req.decision, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<TapirAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<TapirAcceptTypedFuture, rrr::i32>::Ok(TapirAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcTapirAcceptResponse, rrr::i32> TapirAccept(const RpcTapirAcceptRequest& req) {
-        auto __typed_fu_result__ = this->async_TapirAccept(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTapirAcceptResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class TapirFastAcceptTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit TapirFastAcceptTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcTapirFastAcceptResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcTapirFastAcceptResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcTapirFastAcceptResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
-            return rusty::Result<RpcTapirFastAcceptResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<TapirFastAcceptTypedFuture, rrr::i32> async_TapirFastAccept(const RpcTapirFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::TAPIRFASTACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.cmd_id, __m__);
-            rrr::Serialize_::serialize(req.txn_cmds, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<TapirFastAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<TapirFastAcceptTypedFuture, rrr::i32>::Ok(TapirFastAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcTapirFastAcceptResponse, rrr::i32> TapirFastAccept(const RpcTapirFastAcceptRequest& req) {
-        auto __typed_fu_result__ = this->async_TapirFastAccept(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTapirFastAcceptResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class TapirDecideTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit TapirDecideTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcTapirDecideResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcTapirDecideResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcTapirDecideResponse __typed_resp__;
-            return rusty::Result<RpcTapirDecideResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<TapirDecideTypedFuture, rrr::i32> async_TapirDecide(const RpcTapirDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::TAPIRDECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.cmd_id, __m__);
-            rrr::Serialize_::serialize(req.commit, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<TapirDecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<TapirDecideTypedFuture, rrr::i32>::Ok(TapirDecideTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcTapirDecideResponse, rrr::i32> TapirDecide(const RpcTapirDecideRequest& req) {
-        auto __typed_fu_result__ = this->async_TapirDecide(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTapirDecideResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }

@@ -15,7 +15,6 @@ REG_FRAME(MODE_RCC, vector<string>({"rococo","rcc"}), FrameRococo);
 Executor *FrameRococo::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
   verify(0);
   Executor *exec = nullptr;
-//  Executor* exec = new TapirExecutor(cmd_id, sched);
   return exec;
 }
 

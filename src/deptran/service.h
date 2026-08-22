@@ -109,18 +109,6 @@ class ClassicServiceImpl : public ClassicService {
   void TruncateEpoch(const uint32_t& old_epoch,
                      rrr::DeferredReply done);
 
-  void TapirAccept(const txid_t& cmd_id,
-                   const ballot_t& ballot,
-                   const int32_t& decision,
-                   rrr::DeferredReply done);
-  void TapirFastAccept(const txid_t& cmd_id,
-                       const vector<SimpleCommand>& txn_cmds,
-                       rrr::i32* res,
-                       rrr::DeferredReply done);
-  void TapirDecide(const txid_t& cmd_id,
-                   const rrr::i32& decision,
-                   rrr::DeferredReply done);
-
   void MsgString(const string& arg,
                  string* ret,
                  rrr::DeferredReply done);
@@ -303,9 +291,6 @@ class ClassicServiceImpl : public ClassicService {
   void rpc_null(const ClassicService::RpcRpcNullRequest& req, ClassicService::RpcRpcNullResponse& resp, rrr::DeferredReply defer) override;
   void UpgradeEpoch(const ClassicService::RpcUpgradeEpochRequest& req, ClassicService::RpcUpgradeEpochResponse& resp, rrr::DeferredReply defer) override;
   void TruncateEpoch(const ClassicService::RpcTruncateEpochRequest& req, ClassicService::RpcTruncateEpochResponse& resp, rrr::DeferredReply defer) override;
-  void TapirAccept(const ClassicService::RpcTapirAcceptRequest& req, ClassicService::RpcTapirAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void TapirFastAccept(const ClassicService::RpcTapirFastAcceptRequest& req, ClassicService::RpcTapirFastAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void TapirDecide(const ClassicService::RpcTapirDecideRequest& req, ClassicService::RpcTapirDecideResponse& resp, rrr::DeferredReply defer) override;
   void RccDispatch(const ClassicService::RpcRccDispatchRequest& req, ClassicService::RpcRccDispatchResponse& resp, rrr::DeferredReply defer) override;
   void RccFinish(const ClassicService::RpcRccFinishRequest& req, ClassicService::RpcRccFinishResponse& resp, rrr::DeferredReply defer) override;
   void RccInquire(const ClassicService::RpcRccInquireRequest& req, ClassicService::RpcRccInquireResponse& resp, rrr::DeferredReply defer) override;

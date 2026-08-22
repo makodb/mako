@@ -150,21 +150,6 @@ bool TxData::IsOneRound() {
   return false;
 }
 
-// removed `vector<TxPieceData>
-// TxData::GetCmdsByPartitionAndRank(parid_t, rank_t)` — declared and
-// defined but never called anywhere in the codebase.
-
-vector<TxPieceData> TxData::GetCmdsByPartition(parid_t par_id) {
-  vector<TxPieceData> cmds;
-  for (auto& pair: map_piece_data_) {
-    auto d = pair.second;
-    if (d->partition_id_ == par_id) {
-      cmds.push_back(*d);
-    }
-  }
-  return cmds;
-}
-
 ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
   // Log_info("n_pieces_dispatched_ {} n_pieces_dispatchable_ {} n_pieces_all_ {}", n_pieces_dispatched_, n_pieces_dispatchable_, n_pieces_all_);
   // n_pieces_dispatched_ = 0; // [JetPack TODO] remove this

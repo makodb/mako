@@ -419,9 +419,6 @@ class Communicator {
   void SetLeaderCache(parid_t par_id, SiteProxyPair& proxy) {
     leader_cache_[par_id] = proxy;
   }
-  virtual SiteProxyPair DispatchProxyForPartition(parid_t par_id) const {
-    return LeaderProxyForPartition(par_id);
-  };
   locid_t GenerateNewLeaderId(parid_t par_id) {
     return leader_cache_[par_id].first = leader_cache_[par_id].first + 1;
   };
