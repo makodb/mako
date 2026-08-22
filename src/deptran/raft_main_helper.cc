@@ -941,20 +941,6 @@ void set_preferred_leader(int site_id) {
   }
 }
 
-// nc_setup_server stub kept for linkage parity (the Paxos-side
-// implementation IS live — `nc_main.cc` calls it).
-void nc_setup_server(int /*port*/, std::string /*ip*/) {
-  Log_warn("nc_setup_server not implemented for Raft helper (unused).");
-}
-
-// removed seven `nc_get_*_requests`
-// `Log_warn`-only stubs (~35 lines).  The Paxos-side `nc_get_*`
-// getters they paralleled returned `&nc_services[par_id]->...`
-// against an unpopulated `nc_services` global (UB), and the only
-// external caller in `nc_main.cc` was a single-line `//` comment.
-// Both implementations + the matching dispatchers in
-// `replication_helper.{cc,h}` were dropped together.
-
 }  // namespace raft_impl
 
 // ============================================================================

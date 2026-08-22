@@ -340,26 +340,14 @@ std::function<int(const char*& data, int len, int par_id, int epoch,
 | `upgrade_p1_to_leader()` | `() -> void` | Force leader callback invocation |
 | `get_outstanding_logs()` | `(uint32_t) -> int` | Unreplicated log count: `n_tot - commitIndex` |
 
-### 4.5 Network Client and Benchmark Functions
+### 4.5 Benchmark and Diagnostic Functions
 
 | Function | Purpose |
 |----------|---------|
-| `nc_setup_server()` | Setup network client (stubs in Raft) |
-| `nc_get_new_order_requests()` | TPC-C new-order replay (stubs in Raft) |
-| `nc_get_payment_requests()` | TPC-C payment replay (stubs in Raft) |
-| `nc_get_delivery_requests()` | TPC-C delivery replay (stubs in Raft) |
-| `nc_get_order_status_requests()` | TPC-C order-status replay (stubs in Raft) |
-| `nc_get_stock_level_requests()` | TPC-C stock-level replay (stubs in Raft) |
-| `nc_get_read_requests()` | Read replay (stubs in Raft) |
-| `nc_get_rmw_requests()` | Read-modify-write replay (stubs in Raft) |
 | `microbench_paxos()` | Microbenchmark (stubs in Raft) |
 | `microbench_paxos_queue()` | Queue microbenchmark (stubs in Raft) |
 | `worker_info_stats()` | Per-partition counter dump |
 | `getHosts()` | YAML host bindings parser |
-
-The `nc_*` functions are stubs in the Raft implementation because the
-network-client subsystem is tightly coupled to Paxos internals and is not
-needed for Raft's use cases.
 
 ## 5. Namespace Symmetry: `paxos_impl` vs `raft_impl`
 
@@ -397,7 +385,6 @@ crash.
 | Leader model | Fixed leader (machine 0) | Preferred leader (election bias) |
 | `setup2()` | Sets `ElectionState`, calls `server_launch_worker` | Configures per-partition preferred leader, then launches |
 | `add_log_to_nc()` | Immediate enqueue | Checks `IsLeader()` per-partition |
-| `nc_*` functions | Full network-client integration | Stubs returning `nullptr` |
 | `shutdown_paxos()` | Drains queues, destroys config | Same pattern via `WaitForShutdown()` + `ShutDown()` |
 | Callback storage | `leader_replay_cb` map only | Both `leader_replay_cb` and `follower_replay_cb` maps |
 | `set_preferred_leader()` | (not present) | Iterates workers, calls `RaftServer::SetPreferredLeader()` |

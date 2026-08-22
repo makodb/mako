@@ -30,8 +30,7 @@ you can reason about Raft ↔︎ Mako wiring at a glance.
 
 1. `microbench_paxos()` / `microbench_paxos_queue()` parity (currently warn).
 2. Paxos-style heartbeat / failover monitors (Jetpack demo tooling).
-3. Network-client helpers (`nc_*`) – presently no-ops with log warnings.
-4. Rust checker build guard (update rustc or pin `indexmap`).
+3. Rust checker build guard (update rustc or pin `indexmap`).
 
 ---
 
@@ -121,23 +120,7 @@ Implemented implementations:
 
 ---
 
-## 6. Client/Server Helpers
-
-> Files: `src/deptran/raft_main_helper.cc`
-
-These functions power auxiliary scripts/tests (e.g., `nc_main`):
-
-| Function | Action |
-| -------- | ------ |
-| `nc_setup_server`, `nc_get_*` helpers | Either re-use Paxos implementations (copy/paste with Raft naming) or no-op if not needed immediately.|
-
-Presently they log a warning and return `nullptr`.  Porting would require
-recreating the Paxos `ServerControlServiceImpl` helpers for Raft; tracked in
-TODO list.
-
----
-
-## 7. Testing & Verification
+## 6. Testing & Verification
 
 Suggested test matrix (all already exercised manually):
 
@@ -154,8 +137,7 @@ Outstanding:
 
 1. `microbench_paxos()` / `_queue()` parity.
 2. Paxos-style heartbeat/failover monitors (Jetpack demo tooling).
-3. Network-client (`nc_*`) helper implementation.
-4. Rust checker build fix (upgrade toolchain or pin dependency).
+3. Rust checker build fix (upgrade toolchain or pin dependency).
 
 ---
 

@@ -571,20 +571,8 @@ The following functions exist solely for link-time compatibility with
 |----------|-------|----------|
 | `microbench_paxos()` | 439-441 | Log warning, return |
 | `microbench_paxos_queue()` | 567-569 | Log warning, return |
-| `nc_setup_server()` | 682-684 | Log warning, return |
-| `nc_get_new_order_requests()` | 686-689 | Return `nullptr` |
-| `nc_get_payment_requests()` | 691-694 | Return `nullptr` |
-| `nc_get_delivery_requests()` | 696-699 | Return `nullptr` |
-| `nc_get_order_status_requests()` | 701-704 | Return `nullptr` |
-| `nc_get_stock_level_requests()` | 706-709 | Return `nullptr` |
-| `nc_get_read_requests()` | 711-714 | Return `nullptr` |
-| `nc_get_rmw_requests()` | 716-719 | Return `nullptr` |
 | `worker_info_stats()` | 616-626 | Dumps partition counters (not a stub) |
 | `getHosts()` | 377-397 | Fully implemented YAML parser |
-
-The `nc_*` functions (network client) are stubs because the network client
-subsystem is specific to Paxos's multi-master architecture and has no
-equivalent in Raft.
 
 ## 12. Function Reference Table
 
@@ -635,7 +623,6 @@ equivalent in Raft.
 | Leader selection | Fixed (`action` parameter in `setup2()`) | Raft election with preferred bias |
 | NO-OP format | Paxos-native NO-OP slots | `"no-ops:<epoch>"` string entries |
 | `setup2()` | Creates submit pool, starts bulk coordinators | Configures preferred leader, launches workers |
-| Network client | Full `nc_*` implementation | Stubs returning `nullptr` |
 | Jetpack | Respects environment | Forces `MAKO_DISABLE_JETPACK=1` |
 | Submit mechanism | `_BulkSubmit()` via coordinator | `EnqueueLog()` → `SubmitLoop()` → `Start()` |
 | Shutdown | Similar 2-phase pattern | Similar 2-phase pattern |
