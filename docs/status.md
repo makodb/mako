@@ -170,8 +170,8 @@ Proven, high-performance in-memory index. The critical missing piece is crash re
 | RCC/Rococo | 55% | Complex dependency graphs, 24 `verify(0)` stubs |
 | TROAD, Carousel, Februus | <30% | Proof-of-concept only |
 
-The former standalone Janus, Mencius, and SNOW/RO6 protocol implementations
-are retired and are not supported configuration options.
+The former standalone Janus, Mencius, SNOW/RO6, and Extern-C protocol
+implementations are retired and are not supported configuration options.
 
 ### Critical Issues
 

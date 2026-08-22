@@ -26,7 +26,6 @@
 
 #include "paxos/frame.h"
 
-#include "extern_c/frame.h"
 
 namespace janus {
 
@@ -67,9 +66,6 @@ Frame* Frame::GetFrame(int mode, int replica_mode) {
       break;
     case MODE_FPGA_RAFT:
       frame = CreateFpgaRaftFrameBuiltin(mode);
-      break;
-    case MODE_EXTERNC:
-      frame = new ExternCFrame();
       break;
     default:
       auto& mode_to_frame = Frame::ModeToFrame();
@@ -370,8 +366,6 @@ map<string, int> &Frame::FrameNameToMode() {
       {"2pl_wd",        MODE_2PL},
       {"2pl_ww",        MODE_2PL},
       {"2pl_wound_die", MODE_2PL},
-      {"externc",       MODE_EXTERNC},
-      {"extern_c",      MODE_EXTERNC},
       {"mdcc",          MODE_MDCC},
       {"multi_paxos",   MODE_MULTI_PAXOS},
       {"raft",          MODE_RAFT},

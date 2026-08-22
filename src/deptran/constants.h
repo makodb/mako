@@ -85,7 +85,6 @@ namespace janus {
 #define MODE_RULE    (0x15)
 #define MODE_MDCC   (0x12)
 #define MODE_TROAD    (0x03)
-#define MODE_EXTERNC   (0x14)
 #define MODE_RPC_NULL   (0x800)
 #define MODE_NOTX   (0x1000)
 #define MODE_NONE_COPILOT (0x18)
