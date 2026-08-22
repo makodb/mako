@@ -731,19 +731,16 @@ RaftCommo maintains `rpc_par_proxies_[partition_id][replica_id]` for each peer. 
 **Base Raft config** (`config/none_raft.yml`):
 ```yaml
 mode:
-  cc: none       # Concurrency control: none, occ, rule
+  cc: none       # Concurrency control: none or occ
   ab: raft       # Atomic broadcast: raft
   batch: false
   retry: 20
   ongoing: 1     # Per-client concurrent transactions
 ```
 
-**With Jetpack recovery** (`config/rule_raft.yml`):
-```yaml
-mode:
-  cc: rule       # Enables witness tracking for Jetpack
-  ab: raft
-```
+The former Rule concurrency-control mode and its Jetpack configuration are
+retired. Generic Jetpack recovery machinery remains legacy code under a
+separate audit and is not a supported configuration.
 
 **Cluster topology** (separate file):
 ```yaml
@@ -767,7 +764,6 @@ host:
 | File | CC Mode | Use Case |
 |------|---------|----------|
 | `none_raft.yml` | None | Basic Raft testing |
-| `rule_raft.yml` | Rule | With Jetpack recovery |
 | `occ_raft.yml` | OCC | Optimistic CC |
 | `raft_lab_test.yml` | None | Lab test harness (5 servers) |
 
@@ -902,7 +898,7 @@ make -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 
 # Higher concurrency: 12 clients
 ./build/deptran_server \
@@ -911,7 +907,7 @@ make -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
 
 ---
@@ -1021,8 +1017,11 @@ MAKO_RAFT_PERSISTENCE_PATH=/tmp  # Storage path
 MAKO_RAFT_SNAPSHOTS=1            # Enable snapshots
 MAKO_RAFT_SNAPSHOT_PATH=/tmp     # Snapshot storage path
 MAKO_RAFT_SNAPSHOT_INTERVAL=10000 # Entries between snapshots
-MAKO_DISABLE_JETPACK=1           # Disable Jetpack recovery
+MAKO_DISABLE_JETPACK=1           # Keep legacy Jetpack recovery disabled
 ```
+
+There is no supported setting that enables the legacy recovery subsystem while
+its separate audit is pending.
 
 ### Checking Test Results
 

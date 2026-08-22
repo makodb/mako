@@ -59,8 +59,6 @@ class SimpleRWCommand
   static double GetCommandMsTimeElaps(const Command& cmd);
   static key_t GetKey(const Command& cmd);
   static bool NeedRecordConflictInOriginalPath(const Command& cmd);
-  static bool Conflict(const Command& cmd1, const Command& cmd2);
-
   // removed the
   // `shared_ptr<rrr::Marshallable>` overloads of every static
   // helper above.  After Marshallable retires, no caller can
@@ -77,13 +75,6 @@ class SimpleRWCommand
     return make_pair(a >> 31, a & ((1ll << 31) - 1));
     // return make_pair(a / 1000000000, a % 1000000000);
   }
-  static int MaxFailure(int n) {
-    return (n - 1) / 2;
-  }
-  static int RuleSuperMajority(int n) {
-    int f = MaxFailure(n);
-    return f + (f + 1) / 2 + 1;
-  }
 };
 
 class KeyDistribution {
@@ -92,25 +83,6 @@ class KeyDistribution {
  public:
   void Insert(key_t key);
   void Print();
-};
-
-class OneArmedBandit {
-  static const int prediction_granularity = 100;
-  bool records[100];
-  int attempt_cnt = 0;
-  int success_cnt = 0;
-  int ptr = 0;
- public:
-  // Record an attempt
-  void Record(bool success);
-  // Record a success attempt
-  void RecordSuccess();
-  // Record a fail attempt
-  void RecordFail();
-  // Consult attempt rate (0~1) --- Success rate +5% (maximum 100%), addition 5% is for recovery from pessimism
-  double ConsultAttemptRate();
-  // Consult attempt or not --- Success rate +5% (maximum 100%), addition 5% is for recovery from pessimism
-  bool ConsultAttempt();
 };
 
 }

@@ -64,11 +64,9 @@ class ClientWorker {
   volatile locid_t* failover_server_idx_;
   volatile double* total_throughput_;
 
-  // Jetpack: Latency statistics
-  Distribution cli2cli_[10];
-  int go_to_jetpack_fastpath_cnt_ = 0;
+  // Latency statistics
+  Distribution request_latency_;
   vector<std::pair<double, double>> commit_time_;
-  Frequency frequency_;
 #ifdef LATENCY_DEBUG
   Distribution client2leader_, client2test_point_, client2leader_send_;
 #endif
@@ -78,8 +76,6 @@ class ClientWorker {
   bool failover_wait_leader_{false};
   bool failover_trigger_loc{false};
   bool failover_pause_start{false};
-
-  OneArmedBandit one_armed_bandit_;  // Jetpack: fast path prediction
 
  public:
   // Merged constructor: Jetpack failover params + mako-dev PollThread type

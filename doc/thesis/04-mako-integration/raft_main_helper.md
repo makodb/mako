@@ -90,7 +90,9 @@ where the last worker's locale determines the machine ID.
 
 **Jetpack disabling**: `MAKO_DISABLE_JETPACK=1` is forced because Raft's
 own batching pipeline replaces Jetpack's optimistic log aggregation.  If
-the environment variable is already set, it is respected.
+the environment variable is already set, it is respected. The Rule witness
+producer is retired, and enabling the remaining generic recovery code is not a
+supported configuration while its separate audit is pending.
 
 **Source**: `raft_main_helper.cc:239-285`
 
@@ -623,7 +625,7 @@ The following functions exist solely for link-time compatibility with
 | Leader selection | Fixed (`action` parameter in `setup2()`) | Raft election with preferred bias |
 | NO-OP format | Paxos-native NO-OP slots | `"no-ops:<epoch>"` string entries |
 | `setup2()` | Creates submit pool, starts bulk coordinators | Configures preferred leader, launches workers |
-| Jetpack | Respects environment | Forces `MAKO_DISABLE_JETPACK=1` |
+| Legacy Jetpack recovery | Unsupported; separate audit pending | Forces `MAKO_DISABLE_JETPACK=1` |
 | Submit mechanism | `_BulkSubmit()` via coordinator | `EnqueueLog()` → `SubmitLoop()` → `Start()` |
 | Shutdown | Similar 2-phase pattern | Similar 2-phase pattern |
 | Leader change | Via `ElectionState` singleton | Via `RegisterLeaderChangeCallback` + `NotifyRaftLeaderChange` |

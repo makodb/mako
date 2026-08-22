@@ -668,7 +668,7 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 
 # Run Raft with higher concurrency (stress test):
 ./build/deptran_server \
@@ -677,7 +677,7 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
 
 **Important**:
@@ -1845,7 +1845,7 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 
 # Run high concurrency test (stress test)
 ./build/deptran_server \
@@ -1854,18 +1854,12 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
-
-# Run Raft with Jetpack failover
-./build/deptran_server \
-  -f config/rule_raft.yml \
-  -f config/1c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_1.yml \
-  -f config/failover.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
+
+The former Rule/Jetpack configuration has been retired. Generic Jetpack
+recovery code remains a legacy subsystem under a separate audit and is not part
+of this migration's supported test matrix.
 
 **Success Criteria**:
 - ✅ Lab tests complete without crashes
@@ -1905,7 +1899,7 @@ ASAN_OPTIONS=detect_leaks=1 ./build/raft_test
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost > baseline.txt 2>&1
+  -d 30 -P localhost > baseline.txt 2>&1
 
 # Extract throughput from output
 grep -i "throughput\|tps\|latency" baseline.txt
@@ -1919,7 +1913,7 @@ grep -i "throughput\|tps\|latency" baseline.txt
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost > migrated.txt 2>&1
+  -d 30 -P localhost > migrated.txt 2>&1
 
 # Compare metrics
 grep -i "throughput\|tps\|latency" migrated.txt
@@ -1968,7 +1962,7 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 
 # High concurrency test (stress test)
 ./build/deptran_server \
@@ -1977,22 +1971,17 @@ cmake --build build -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
 **Success**: Tests complete, check throughput/latency in output
 
-#### Level 4: Raft with Jetpack (Failure Recovery)
-```bash
-./build/deptran_server \
-  -f config/rule_raft.yml \
-  -f config/1c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_1.yml \
-  -f config/failover.yml \
-  -d 30 -m 100 -P localhost
-```
-**Success**: Failover scenarios handled correctly
+#### Level 4: Failure Recovery
+
+Exercise normal Raft leader failover with supported configurations. The former
+Rule/Jetpack scenario is retired; the remaining generic recovery stack is under
+a separate audit and has no supported test command.
+
+**Success**: Raft failover scenarios complete without relying on legacy Jetpack behavior
 
 ### Test Frequency
 - **After each field change**: Level 1 + Level 2

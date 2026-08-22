@@ -320,7 +320,7 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
   WAN_WAIT
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
   if (dispatch_time > 0 && dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000 && dispatch_duration_3_times_ < Config::GetConfig()->duration_ * 2 * 1000) {
-    client_worker_->cli2cli_[3].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time);
+    client_worker_->request_latency_.append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time);
   }
   if (phase != phase_) return;
   auto* txn = (TxData*) cmd_;
@@ -368,8 +368,6 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
   } else if (AllDispatchAcked()) {
     Log_debug("receive all start acks, txn_id: {:x}; START PREPARE",
               txn->id_);
-    dispatch_ack_ = true;
-    // Log_info("CoordinatorRule coo_id={} thread_id={} cmd_ver_={} cmd_ver={} current_phase={} [End of DispatchAck]", coo_id_, thread_id_, cmd_ver_, cmd_ver, phase % 3);
     if (phase != phase_) {
       // Log_info("AllDispatchAcked Failed CoroutineID {} {}", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
       return;

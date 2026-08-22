@@ -21,7 +21,7 @@ RaftServer (Raft consensus state machine)
 ```
 
 - `Scheduler` — Base class for transaction scheduling (`src/deptran/scheduler.h`)
-- `TxLogServer` — Extends `Scheduler` with log application infrastructure (`app_next_` callback), epoch management, and Jetpack recovery support (`src/deptran/scheduler.h:332`)
+- `TxLogServer` — Extends `Scheduler` with log application infrastructure (`app_next_` callback), epoch management, and legacy Jetpack recovery code pending a separate audit (`src/deptran/scheduler.h:332`)
 - `RaftServer` — Implements the Raft consensus protocol on top of `TxLogServer`
 
 The key integration point is `app_next_`: a callback registered by Mako's transaction layer. When Raft commits a log entry, `applyLogs()` invokes `app_next_(slot_id, cmd)` to feed the committed command back into the transaction pipeline.
@@ -297,6 +297,10 @@ applyLogs()
   +-- [6] GC: remove old commands where slot + 60000 < executeIndex
 ```
 
+`RuleWitnessGC()` remains as a mode-gated compatibility hook. It is inert in
+supported configurations now that the Rule alias and configs are retired, and
+stays with the generic Jetpack recovery stack pending its separate audit.
+
 ### Concurrency Design
 
 The `do-while` loop with `apply_pending_` is a lock-free work notification pattern:
@@ -485,7 +489,7 @@ This function handles all leader/follower transitions:
 1. Initialize `match_index_` = 0, `next_index_` = `lastLogIndex + 1` for all peers (lines 460-468)
 2. Clear `transferring_leadership_` flag (line 499)
 3. Update `new_view_` with self as leader, notify communicator (lines 504-519)
-4. Trigger Jetpack recovery if enabled (line 522-524)
+4. Reach the legacy Jetpack recovery entry point (unsupported; separate audit pending)
 5. If non-preferred leader: start `StartLeadershipTransferMonitoring()` (lines 534-538)
 6. Fire `leader_change_cb_(true)` (lines 570-572)
 

@@ -601,40 +601,12 @@ class TxLogServer {
   // This used for garbage collection / evaluation data structure grows over time
   void PrintStructureSize();
 
-  // below are about rule
-
   Witness witness_;
 
-  // For Rule usage
-  // take janus::Command;
-  // shared_ptr<Marshallable> callers auto-convert via Command's
-  // implicit ctor.
-  void OnRuleSpeculativeExecute(const janus::Command& cmd,
-                                bool_t* accepted,
-                                value_t* result,
-                                bool_t* is_leader);
-
-  // take janus::Command;
-  // shared_ptr<Marshallable> callers auto-convert via Command's
-  // implicit ctor.
+  // Compatibility hooks for the retired Rule mode. Keep these with the
+  // generic Jetpack recovery stack until that subsystem is audited.
   void OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd);
-
-  // @unsafe
-  // takes janus::Command;
-  // shared_ptr<Marshallable> callers auto-convert via Command's
-  // implicit ctor.
   void RuleWitnessGC(const janus::Command& cmd);
-
-#ifdef ZERO_OVERHEAD
-  // takes janus::Command;
-  // shared_ptr<Marshallable> callers auto-convert via Command's
-  // implicit ctor.
-  virtual bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) {
-    // This function should be overrided by the deriviated class (replica server)
-    assert(0);
-    return false;
-  }
-#endif
 
   // @unsafe
   void JetpackRecoveryEntry();

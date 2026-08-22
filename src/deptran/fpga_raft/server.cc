@@ -574,19 +574,4 @@ void FpgaRaftServer::StartTimer()
     raft_logs_.erase(slot);
   }
 
-#ifdef ZERO_OVERHEAD
-  bool FpgaRaftServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
-    for (slotid_t id = executeIndex + 1; id <= maxIndex; id++) {
-      auto next_instance = GetFpgaRaftInstance(id);
-      // Conflict has Command overload now; both args
-      // are Command so dispatch directly.
-      if (next_instance->log_.has_value() &&
-          SimpleRWCommand::Conflict(next_instance->log_, cmd))
-        return true;
-    }
-    return false;
-  }
-#endif
-
 } // namespace janus

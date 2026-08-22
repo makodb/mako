@@ -3724,36 +3724,6 @@ public:
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcReElectResponse& o) { deserialize(o, ar); return ar; }
 
-    struct RpcRuleSpeculativeExecuteRequest {
-        Command md;
-    };
-    friend inline void serialize(const RpcRuleSpeculativeExecuteRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.md, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRuleSpeculativeExecuteRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcRuleSpeculativeExecuteRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.md, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRuleSpeculativeExecuteRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcRuleSpeculativeExecuteResponse {
-        bool_t accepted;
-        int32_t result;
-        bool_t is_leader;
-    };
-    friend inline void serialize(const RpcRuleSpeculativeExecuteResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.accepted, ar);
-        rrr::Serialize_::serialize(o.result, ar);
-        rrr::Serialize_::serialize(o.is_leader, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRuleSpeculativeExecuteResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcRuleSpeculativeExecuteResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.accepted, ar);
-        rrr::Deserialize_::deserialize(o.result, ar);
-        rrr::Deserialize_::deserialize(o.is_leader, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRuleSpeculativeExecuteResponse& o) { deserialize(o, ar); return ar; }
-
     struct RpcDispatchRequest {
         rrr::i64 tid;
         DepId dep_id;
@@ -4799,7 +4769,6 @@ public:
         MSGSTRING = 0x4075aa22,
         MSGMARSHALL = 0x6602ec53,
         REELECT = 0x2bcd0e52,
-        RULESPECULATIVEEXECUTE = 0x15bd499e,
         DISPATCH = 0x63b62f50,
         PREPARE = 0x5ef5071b,
         COMMIT = 0x1b3bdc7d,
@@ -4846,9 +4815,6 @@ public:
             goto err;
         }
         if ((ret = svr.reg_rpc(REELECT, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(RULESPECULATIVEEXECUTE, svc_index)) != 0) {
             goto err;
         }
         if ((ret = svr.reg_rpc(DISPATCH, svc_index)) != 0) {
@@ -4958,7 +4924,6 @@ public:
         svr.unreg(MSGSTRING);
         svr.unreg(MSGMARSHALL);
         svr.unreg(REELECT);
-        svr.unreg(RULESPECULATIVEEXECUTE);
         svr.unreg(DISPATCH);
         svr.unreg(PREPARE);
         svr.unreg(COMMIT);
@@ -5001,7 +4966,6 @@ public:
         case MSGSTRING: __MsgString__wrapper__(std::move(req), weak_sconn); break;
         case MSGMARSHALL: __MsgMarshall__wrapper__(std::move(req), weak_sconn); break;
         case REELECT: __ReElect__wrapper__(std::move(req), weak_sconn); break;
-        case RULESPECULATIVEEXECUTE: __RuleSpeculativeExecute__wrapper__(std::move(req), weak_sconn); break;
         case DISPATCH: __Dispatch__wrapper__(std::move(req), weak_sconn); break;
         case PREPARE: __Prepare__wrapper__(std::move(req), weak_sconn); break;
         case COMMIT: __Commit__wrapper__(std::move(req), weak_sconn); break;
@@ -5046,8 +5010,6 @@ public:
     virtual void MsgMarshall(const RpcMsgMarshallRequest& req, RpcMsgMarshallResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void ReElect(const RpcReElectRequest& req, RpcReElectResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest& req, RpcRuleSpeculativeExecuteResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void Dispatch(const RpcDispatchRequest& req, RpcDispatchResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
@@ -5169,26 +5131,6 @@ private:
                 },
                 []() {});
             this->ReElect(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __RuleSpeculativeExecute__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcRuleSpeculativeExecuteRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.md, __req_ar__);
-            auto __typed_resp__ = std::make_shared<RpcRuleSpeculativeExecuteResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    rrr::Serialize_::serialize(__typed_resp__->accepted, m);
-                    rrr::Serialize_::serialize(__typed_resp__->result, m);
-                    rrr::Serialize_::serialize(__typed_resp__->is_leader, m);
-                },
-                []() {});
-            this->RuleSpeculativeExecute(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
@@ -5889,8 +5831,6 @@ public:
     using RpcMsgMarshallResponse = ClassicService::RpcMsgMarshallResponse;
     using RpcReElectRequest = ClassicService::RpcReElectRequest;
     using RpcReElectResponse = ClassicService::RpcReElectResponse;
-    using RpcRuleSpeculativeExecuteRequest = ClassicService::RpcRuleSpeculativeExecuteRequest;
-    using RpcRuleSpeculativeExecuteResponse = ClassicService::RpcRuleSpeculativeExecuteResponse;
     using RpcDispatchRequest = ClassicService::RpcDispatchRequest;
     using RpcDispatchResponse = ClassicService::RpcDispatchResponse;
     using RpcPrepareRequest = ClassicService::RpcPrepareRequest;
@@ -6090,53 +6030,6 @@ public:
         auto __typed_fu_result__ = this->async_ReElect(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcReElectResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class RuleSpeculativeExecuteTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit RuleSpeculativeExecuteTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcRuleSpeculativeExecuteResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcRuleSpeculativeExecuteResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcRuleSpeculativeExecuteResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy_buffer(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.accepted, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.result, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
-            return rusty::Result<RpcRuleSpeculativeExecuteResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<RuleSpeculativeExecuteTypedFuture, rrr::i32> async_RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RULESPECULATIVEEXECUTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.md, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<RuleSpeculativeExecuteTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<RuleSpeculativeExecuteTypedFuture, rrr::i32>::Ok(RuleSpeculativeExecuteTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcRuleSpeculativeExecuteResponse, rrr::i32> RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest& req) {
-        auto __typed_fu_result__ = this->async_RuleSpeculativeExecute(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcRuleSpeculativeExecuteResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }

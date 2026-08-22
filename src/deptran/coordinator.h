@@ -159,8 +159,6 @@ class Coordinator {
   Distribution client2leader_, client2test_point_, client2leader_send_;
 #endif
 
-  bool go_to_fastpath_;
-
 #ifdef TXN_STAT
   typedef struct txn_stat_t {
     uint64_t                             n_serv_tch;

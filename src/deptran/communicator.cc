@@ -25,32 +25,6 @@ namespace janus {
 std::map<parid_t, View> Communicator::partition_views_;
 std::mutex Communicator::partition_views_mutex_;
 
-/************************RULE begin*********************************/
-
-void RuleSpeculativeExecuteQuorumEvent::FeedResponse(bool y, value_t result, bool is_leader) {
-  if (y) {
-    if (has_result_) {
-      verify(result == result_);
-    } else {
-      has_result_ = true;
-      result_ = result;
-    }
-    if (is_leader)
-      q().n_leader_yes_.set(q().n_leader_yes_.get() + 1);
-    vote_yes();
-  } else {
-    if (is_leader)
-      q().n_leader_no_.set(q().n_leader_no_.get() + 1);
-    vote_no();
-  }
-}
-
-value_t RuleSpeculativeExecuteQuorumEvent::GetResult() {
-  return result_;
-}
-
-/************************RULE end*********************************/
-
 uint64_t Communicator::global_id = 0;
 
 // Use mako-dev's PollThread type (correct architecture)

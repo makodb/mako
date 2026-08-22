@@ -332,6 +332,10 @@ for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
 }
 ```
 
+The Rule witness-GC call remains as a mode-gated compatibility hook. It is
+inert in supported configurations now that the Rule alias and configs are
+retired, and stays with the generic Jetpack recovery stack pending its audit.
+
 ### 5.3 `Next()` — The Core Callback
 
 ```

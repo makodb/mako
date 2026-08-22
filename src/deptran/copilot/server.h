@@ -192,9 +192,6 @@ class CopilotServer : public TxLogServer {
   // implicit ctor.
   bool allCmdComitted(const janus::Command& batch_cmd);
 
-#ifdef ZERO_OVERHEAD
-  bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) override;
-#endif
 };
 
 } //namespace janus

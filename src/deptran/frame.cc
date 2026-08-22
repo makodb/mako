@@ -15,8 +15,6 @@
 #include "none_copilot/commo.h"
 #include "none_copilot/scheduler.h"
 
-#include "rule/commo.h"
-#include "rule/coordinator.h"
 #include "benchmark_registry.h"
 
 #include "occ/scheduler.h"
@@ -51,7 +49,6 @@ Frame* Frame::GetFrame(int mode, int replica_mode) {
     case MODE_NOTX:
     case MODE_MDCC:
     case MODE_OCC:
-    case MODE_RULE:
       frame = new Frame(mode, replica_mode);
       break;
     case MODE_MULTI_PAXOS:
@@ -158,13 +155,6 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
       break;
     case MODE_MDCC:
 //      coo = (Coordinator*)new mdcc::MdccCoordinator(coo_id, id, config, ccsi);
-      break;
-    case MODE_RULE:
-      coo = new CoordinatorRule(coo_id,
-                         benchmark,
-                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
-                         id);
-      ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
     case MODE_NONE:
     case MODE_NONE_COPILOT:
@@ -275,7 +265,6 @@ TxLogServer* Frame::CreateScheduler() {
         break;
       case MODE_NOTX:
       case MODE_NONE:
-      case MODE_RULE:
         sch = new SchedulerNone();
         break;
       case MODE_NONE_COPILOT:
@@ -340,7 +329,6 @@ map<string, int> &Frame::FrameNameToMode() {
       {"fpga_raft",     MODE_FPGA_RAFT},
       {"epaxos",        MODE_NOT_READY},
       {"rep_commit",    MODE_NOT_READY},
-      {"rule",          MODE_RULE},
   };
   return frame_name_mode_s;
 }

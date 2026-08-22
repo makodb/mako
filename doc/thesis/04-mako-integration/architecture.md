@@ -238,14 +238,18 @@ std::vector<std::string> ret = setup(argc_paxos, argv_paxos);
 The `ab` field in the YAML mode section selects the atomic broadcast protocol:
 
 ```yaml
-# config/rule_raft.yml
+# config/none_raft.yml
 mode:
-  cc: rule          # concurrency control protocol
+  cc: none          # no transaction-level concurrency control
   ab: raft          # atomic broadcast → MODE_RAFT (0x400)
   batch: false
   retry: 20
   ongoing: 1
 ```
+
+The former Rule concurrency-control mode and its Rule/Raft configuration were
+retired. Generic Jetpack recovery machinery still exists in the replication
+stack, but it is unsupported and is being evaluated in a separate audit.
 
 The YAML parser in `Config::InitMode()` converts the `ab` string to a mode
 constant via `Frame::Name2Mode()`:
@@ -388,7 +392,7 @@ crash.
 | `shutdown_paxos()` | Drains queues, destroys config | Same pattern via `WaitForShutdown()` + `ShutDown()` |
 | Callback storage | `leader_replay_cb` map only | Both `leader_replay_cb` and `follower_replay_cb` maps |
 | `set_preferred_leader()` | (not present) | Iterates workers, calls `RaftServer::SetPreferredLeader()` |
-| Jetpack | Enabled by default | Disabled (`MAKO_DISABLE_JETPACK=1`) |
+| Legacy Jetpack recovery | Enabled unless `MAKO_DISABLE_JETPACK` is set; unsupported and under audit | Forced disabled (`MAKO_DISABLE_JETPACK=1`) |
 
 ### 5.2 Callback Handling Difference
 

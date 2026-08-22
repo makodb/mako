@@ -239,10 +239,6 @@ abstract service Classic {
 //                 TxnOutput output);
 
 	defer ReElect(| bool_t success);
-  defer RuleSpeculativeExecute(Command md |
-                               bool_t accepted,
-                               int32_t result,
-                               bool_t is_leader);
   defer Dispatch(i64 tid, DepId dep_id, Command cmd |
                  i32 res, TxnOutput output, uint64_t coro_id, Command view_data);
   defer Prepare(i64 tid, 

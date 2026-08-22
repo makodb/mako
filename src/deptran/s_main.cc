@@ -32,18 +32,10 @@ bool* volatile failover_triggers;
 volatile bool failover_server_quit = false;
 volatile locid_t failover_server_idx;
 volatile double total_throughput = 0;
-// All the following statistics only count mid 1/3 duration
-// 2 \subseteq 1 \subseteq 0, 4 \subseteq 3, 5 = 2 \cup 4, 2 \cap 4 = \emptyset
-// 0: all fast path attempts (even fail or slower than original path), 1 RTT
-// 1: success fast path attempts (success only, may slower than original path), 1 RTT
-// 2: efficient fast path attempts (only success and faster than original path), 1 RTT
-// 3: all original path attempts (even slower than fast path), 2 RTTs
-// 4: efficient original path attempts (only faster than fast path, or fast path failed), 2 RTTs
-// 5: all efficient attempts (count all faster one) (should equals to category 2 merge category 4)
-Distribution cli2cli[6];
+// Request latency statistics count only the middle third of a run.
+Distribution request_latency;
 // commit_time for all (default 30s) duration
 vector<std::pair<double, double>> commit_time; // <dispatch_time, duration>
-Frequency frequency;
 #ifdef LATENCY_DEBUG
   Distribution client2leader, client2leader_send, client2test_point;
 #endif
@@ -241,9 +233,7 @@ void client_shutdown() {
   for (const unique_ptr<ClientWorker>& client: client_workers_g) {
     // removed commented-out
     // `// client->retrive_statistic();` — method deleted.
-    for (int i = 0; i < 6; i++)
-      cli2cli[i].merge(client->cli2cli_[i]);
-    frequency.merge(client->frequency_);
+    request_latency.merge(client->request_latency_);
     commit_time.insert(commit_time.end(), client->commit_time_.begin(), client->commit_time_.end());
 #ifdef LATENCY_DEBUG
     client2leader.merge(client->client2leader_);
@@ -693,46 +683,25 @@ int main(int argc, char *argv[]) {
   client_shutdown();
   Log_info("After client_shutdown");
   
-  Log_info("All-fast-path-attempts           statistics {}", cli2cli[0].statistics().c_str());
-  Log_info("Success-fast-path-attempts       statistics {}", cli2cli[1].statistics().c_str());
-  Log_info("Efficient-fast-path-attempts     statistics {}", cli2cli[2].statistics().c_str());
-  Log_info("All-original-path-attempts       statistics {}", cli2cli[3].statistics().c_str());
-  Log_info("Efficient-original-path-attempts statistics {}", cli2cli[4].statistics().c_str());
-  Log_info("All-efficient-attempts           statistics {}", cli2cli[5].statistics().c_str());
-
-  Log_info("All-fast-path-attempts           distribution {}", cli2cli[0].distribution().c_str());
-  Log_info("Success-fast-path-attempts       distribution {}", cli2cli[1].distribution().c_str());
-  Log_info("Efficient-fast-path-attempts     distribution {}", cli2cli[2].distribution().c_str());
-  Log_info("All-original-path-attempts       distribution {}", cli2cli[3].distribution().c_str());
-  Log_info("Efficient-original-path-attempts distribution {}", cli2cli[4].distribution().c_str());
-  Log_info("All-efficient-attempts           distribution {}", cli2cli[5].distribution().c_str());
-  
-  Log_info("Mid throughput is {:.2f}", cli2cli[5].count() / (Config::GetConfig()->duration_ / 3.0));
-  Log_info("Fastpath statistics attempted {} successed {} rate(pct) {:.2f} efficient_successed {} efficient_rate(pct) {:.2f}", 
-    cli2cli[0].count(), cli2cli[1].count(), cli2cli[1].count() * 100.0 / cli2cli[0].count(), cli2cli[2].count(), cli2cli[2].count() * 100.0 / cli2cli[0].count());
-  Log_info("Frequency: {}", frequency.top_keys_pcts().c_str());
-
+  Log_info("Request-latency statistics {}", request_latency.statistics().c_str());
+  Log_info("Request-latency distribution {}", request_latency.distribution().c_str());
+  Log_info("Mid throughput is {:.2f}", request_latency.count() / (Config::GetConfig()->duration_ / 3.0));
   string dump_file_name = "results/recent_csv/" + Config::GetConfig()->exp_setting_name_ + ".csv";
   std::ofstream file(dump_file_name);
   if (!file.is_open()) {
     Log_info("Failed to open file for writing {}", dump_file_name.c_str());
   } else {
-    file << "All-fast-path-attempts" << "," << "Success-fast-path-attempts" << "," << "Efficient-fast-path-attempts" << "," << "All-original-path-attempts" << ","  << "Efficient-original-path-attempts" << ","  << "All-efficient-attempts" << "," << "Start-Time" << "," << "End2End-Latency" << "\n";
-    size_t max_size = commit_time.size();
+    file << "Request-Latency,Start-Time,End2End-Latency\n";
+    size_t max_size = std::max(request_latency.count(), commit_time.size());
     std::sort(commit_time.begin(),
               commit_time.end(),
               [](auto const& a, auto const& b) {
                   return a.first < b.first;
               });
-    for (int i = 0; i < 6; i++)
-      if (cli2cli[i].count() > max_size)
-        max_size = cli2cli[i].count();
     for (size_t i = 0; i < max_size; ++i) {
-        for (int k = 0; k < 6; k++) {
-          if (i < cli2cli[k].count())
-            file << cli2cli[k].data_[i];
-          file << ",";
-        }
+        if (i < request_latency.count())
+          file << request_latency.data_[i];
+        file << ",";
         if (i < commit_time.size()) {
           file << commit_time[i].first;
           file << ",";
@@ -750,7 +719,6 @@ int main(int argc, char *argv[]) {
   Log_info("client2test_point 50pct {:.2f} 90pct {:.2f} 99pct {:.2f}", client2test_point.pct50(), client2test_point.pct90(), client2test_point.pct99());
   Log_info("client2leader_send 50pct {:.2f} 90pct {:.2f} 99pct {:.2f}", client2leader_send.pct50(), client2leader_send.pct90(), client2leader_send.pct99());
 #endif
-  // Log_info("FastPath-count = {} CoordinatorAccept-count = {} OriginalProtocol-count = {}", fastpath_count, coordinatoraccept_count, original_protocol_count);
   server_shutdown();
   // TODO, FIXME pending_future in rpc cause error.
   fflush(stderr);

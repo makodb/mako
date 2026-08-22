@@ -275,7 +275,10 @@ The implementation optionally persists Raft state to RocksDB:
 
 ### 6.6 Jetpack Recovery
 
-On leader election, the new leader can optionally run `JetpackRecoveryEntry()` to recover state. This is controlled by the `MAKO_DISABLE_JETPACK` environment variable and is specific to Mako's speculative execution model.
+On leader election, the new leader reaches the generic `JetpackRecoveryEntry()`
+path unless it is disabled by `MAKO_DISABLE_JETPACK`. The Rule protocol that
+supplied witness data is retired, so this remaining recovery machinery is
+legacy, unsupported, and under a separate audit.
 
 ---
 

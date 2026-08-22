@@ -172,7 +172,8 @@ The scheduler runs on each replica and manages:
 - **Transaction execution**: Processes pieces against local storage
 - **Log application**: `app_next_` callback (line 354) — invoked by the replication layer when a log entry is committed
 - **Epoch management**: `epoch_mgr_`, `jepoch_`, `oepoch_` (lines 370-375)
-- **Jetpack recovery**: State machine recovery after failures (lines 335-344, 379-390)
+- **Legacy Jetpack recovery**: Generic recovery machinery pending a separate
+  audit; unsupported after retirement of its Rule witness producer
 - **Database interface**: `kv_table_` for application data, `database_` for checksums (lines 534-548)
 
 The `app_next_` callback is the critical integration point: both Paxos and Raft call this callback when entries are committed, making the rest of the system agnostic to the replication protocol.

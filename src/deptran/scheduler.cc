@@ -365,56 +365,16 @@ int32_t TxLogServer::OnUpgradeEpoch(uint32_t old_epoch) {
 // `GetUniqueCmdID(shared_ptr<Marshallable>)`, `DBGet(...)`, and
 // `DBPut(...)`.  None had callers anywhere in the tree.
 
-// below are about rule
-
-void TxLogServer::OnRuleSpeculativeExecute(const janus::Command& cmd,
-                    bool_t* accepted,
-                    value_t* result,
-                    bool_t* is_leader) {
-#ifdef ZERO_OVERHEAD
-  // if (rep_sched_->ConflictWithOriginalUnexecutedLog(cmd))
-  //   Log_info("Conflict!");
-  if (rep_sched_->witness_.push_back(cmd) && !rep_sched_->ConflictWithOriginalUnexecutedLog(cmd)) {
-#else
-#ifdef JETPACK_RECOVERY_DEBUG
-  Log_info("[JETPACK-DEBUG] OnRuleSpeculativeExecute about to push_back loc_id {} ", loc_id_);
-#endif
-  if (rep_sched_->witness_.push_back(cmd)) {
-#endif
-    // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
-    // Log_info("Server {} OnRuleSpeculativeExecute <{}, {}> key {}", rep_sched_->loc_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, parsed_cmd.key_);
-    // Log_info("witness_.push_back server {} push cmd_id <{}, {}> {} key {} success 1", loc_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second,
-      // (long long)SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second), parsed_cmd.key_);
-    // verify(witness_.remove(cmd));
-    *accepted = true;
-    // [RULE] TODO: return speculative result
-    *result = 0;
-  } else {
-    *accepted = false;
-  }
-  *is_leader = IsLeader();
-}
-
 void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd) {
   if (Config::GetConfig()->tx_proto_ == MODE_RULE && SimpleRWCommand::NeedRecordConflictInOriginalPath(cmd)) {
-    // Log_info("[JETPACK-Witness] loc_id {} about to push_back", loc_id_);
     rep_sched_->witness_.push_back(cmd);
   }
 }
 
-
 void TxLogServer::RuleWitnessGC(const janus::Command& cmd) {
-  // Witness::remove now takes Command directly.
   if (Config::GetConfig()->tx_proto_ == MODE_RULE)
     witness_.remove(cmd);
-  // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
-  // uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
-  // Log_info("witness_.remove server {} remove cmd_id <{}, {}> {} key {} success {}", loc_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second,
-  //     (long long)SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second), parsed_cmd.key_, witness_.remove(cmd));
-  // Log_info("witness_.remove(cmd) {}", witness_.remove(cmd));
-  // witness_.remove(cmd);
 }
-
 
 void RevoveryCandidates::push_back(uint64_t cmd_id, const janus::Command& cmd, bool is_write) {
   candidates_[cmd_id] = cmd;

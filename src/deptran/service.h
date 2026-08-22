@@ -48,13 +48,6 @@ class ClassicServiceImpl : public ClassicService {
 
 	void ReElect(bool_t* success,
 							 rrr::DeferredReply done);
-
-  void RuleSpeculativeExecute(const janus::Command& md,
-                              bool_t* accepted,
-                              int32_t* result,
-                              bool_t* is_leader,
-                              rrr::DeferredReply done);
-
   void Dispatch(const i64& cmd_id,
 								const DepId& dep_id,
                 const janus::Command& cmd,
@@ -297,7 +290,6 @@ class ClassicServiceImpl : public ClassicService {
   // BEGIN typed-rpc-decls (ClassicServiceImpl)
   // Typed RPC interface overrides (new API).
   void ReElect(const ClassicService::RpcReElectRequest& req, ClassicService::RpcReElectResponse& resp, rrr::DeferredReply defer) override;
-  void RuleSpeculativeExecute(const ClassicService::RpcRuleSpeculativeExecuteRequest& req, ClassicService::RpcRuleSpeculativeExecuteResponse& resp, rrr::DeferredReply defer) override;
   void Dispatch(const ClassicService::RpcDispatchRequest& req, ClassicService::RpcDispatchResponse& resp, rrr::DeferredReply defer) override;
   void FailoverPauseSocketOut(const ClassicService::RpcFailoverPauseSocketOutRequest& req, ClassicService::RpcFailoverPauseSocketOutResponse& resp, rrr::DeferredReply defer) override;
   void FailoverResumeSocketOut(const ClassicService::RpcFailoverResumeSocketOutRequest& req, ClassicService::RpcFailoverResumeSocketOutResponse& resp, rrr::DeferredReply defer) override;

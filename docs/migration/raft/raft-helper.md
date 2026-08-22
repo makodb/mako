@@ -393,8 +393,10 @@ Raft-specific configuration files in `config/`:
 
 - `none_raft.yml` - Base Raft configuration
 - `occ_raft.yml` - OCC with Raft replication
-- `rule_raft.yml` - Rule-based with Raft
 - `config/1leader_2followers/raft*_shardidx*.yml` - Per-shard Raft configs
+
+The former Rule configuration is retired. Generic Jetpack recovery code is a
+separate legacy subsystem under audit and is not a supported Raft mode.
 
 ### Preferred Replica System
 

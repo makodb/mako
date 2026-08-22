@@ -27,7 +27,7 @@ namespace janus {
 // archive operators for SimpleCommand.
 // Wire format byte-for-byte identical to the Marshal-based pair
 // above: the 8 inherited CmdData fields (id, type, inn_id, root_id,
-// root_type, client_id, cmd_id_in_client, rule_mode flag), followed
+// root_type, client_id, cmd_id_in_client, reserved Rule bit), followed
 // by SimpleCommand's own fields (input, output, output_size,
 // partition_id_, timestamp_, rank_). The map<int32_t, Value>'s Value
 // elements use the Phase 4d-6 archive operators in marshal-value.cc,

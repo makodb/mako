@@ -24,10 +24,6 @@ void ClassicServiceImpl::ReElect(const ClassicService::RpcReElectRequest& req, C
   this->ReElect(&resp.success, std::move(defer));
 }
 
-void ClassicServiceImpl::RuleSpeculativeExecute(const ClassicService::RpcRuleSpeculativeExecuteRequest& req, ClassicService::RpcRuleSpeculativeExecuteResponse& resp, rrr::DeferredReply defer) {
-  this->RuleSpeculativeExecute(req.md, &resp.accepted, &resp.result, &resp.is_leader, std::move(defer));
-}
-
 void ClassicServiceImpl::Dispatch(const ClassicService::RpcDispatchRequest& req, ClassicService::RpcDispatchResponse& resp, rrr::DeferredReply defer) {
   this->Dispatch(req.tid, req.dep_id, req.cmd, &resp.res, &resp.output, &resp.coro_id, &resp.view_data, std::move(defer));
 }
@@ -207,15 +203,6 @@ void ClassicServiceImpl::ReElect(bool_t* success,
 	for(int i = 0; i < 100000; i++) Log_info("loop loop loop");
 	*success = dtxn_sched()->RequestVote();
 	defer.reply();
-}
-
-void ClassicServiceImpl::RuleSpeculativeExecute(const janus::Command& md,
-                                                bool_t* accepted,
-                                                int32_t* result,
-                                                bool_t* is_leader,
-                                                rrr::DeferredReply defer) {
-  dtxn_sched()->OnRuleSpeculativeExecute(md, accepted, result, is_leader);
-  defer.reply();
 }
 
 void ClassicServiceImpl::Dispatch(const i64& cmd_id,

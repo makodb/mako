@@ -26,11 +26,6 @@ void CoordinatorNone::GotoNextPhase() {
       // Log_info("Enter switch CoroutineID {} {} phase_ = {}", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id, phase_);
       committed_ = true;
       verify(phase_ % n_phase == Phase::INIT_END);
-      if (dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000 && dispatch_duration_3_times_ < Config::GetConfig()->duration_ * 2 * 1000) {
-        client_worker_->cli2cli_[3].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time_);
-        client_worker_->cli2cli_[4].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time_);
-        client_worker_->cli2cli_[5].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time_);
-      }
       // Log_info("End");
       client_worker_->commit_time_.push_back(std::make_pair(dispatch_time_ - created_time_, SimpleRWCommand::GetCurrentMsTime() - dispatch_time_));
       End();

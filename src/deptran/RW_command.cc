@@ -220,17 +220,6 @@ bool SimpleRWCommand::NeedRecordConflictInOriginalPath(const Command& cmd) {
   return vector0->rule_mode_on_and_is_original_path_only_command_;
 }
 
-bool SimpleRWCommand::Conflict(const Command& cmd1, const Command& cmd2) {
-  SimpleRWCommand parsed_cmd1 = SimpleRWCommand(cmd1);
-  SimpleRWCommand parsed_cmd2 = SimpleRWCommand(cmd2);
-  if (parsed_cmd1.key_ != parsed_cmd2.key_) {
-    // Log_info("Not Conflict {} with {}", parsed_cmd1.key_, parsed_cmd2.key_);
-    return false;
-  }
-  // Log_info("Conflict if {} or {}", parsed_cmd1.IsWrite(), parsed_cmd2.IsWrite());
-  return parsed_cmd1.IsWrite() || parsed_cmd2.IsWrite();
-}
-
 void KeyDistribution::Insert(key_t key) {
   key_count_[key]++;
 }
@@ -248,45 +237,5 @@ void KeyDistribution::Print() {
     Log_info("[KeyDistribution] key = {} occur = {} pct= {:.2f}", it->second, -it->first, -it->first * 100.0 / sum);
   }
 }
-
-
-
-void OneArmedBandit::Record(bool success) {
-  if (attempt_cnt == 100) {
-    // overwrite old records
-    success_cnt = success_cnt - records[ptr] + success;
-    records[ptr++] = success;
-    if (ptr == 100) ptr = 0;
-  } else {
-    // write new records
-    attempt_cnt ++;
-    success_cnt += success;
-    records[ptr++] = success;
-    if (ptr == 100) ptr = 0;
-  }
-}
-
-void OneArmedBandit::RecordSuccess() {
-  Record(1);
-}
-
-void OneArmedBandit::RecordFail() {
-  Record(0);
-}
-
-double OneArmedBandit::ConsultAttemptRate() {
-  if (attempt_cnt == 0)
-    return 1.0;
-  else
-    return std::min((success_cnt + 5.0) / attempt_cnt, 1.0);
-}
-
-bool OneArmedBandit::ConsultAttempt() {
-  if (attempt_cnt == 0)
-    return true;
-  else
-    return RandomGenerator::rand(0, attempt_cnt - 1) < success_cnt + 5; // success_cnt + 5 > attempt_cnt is fine, still 100%
-}
-
 
 }

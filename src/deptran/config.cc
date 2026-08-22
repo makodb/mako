@@ -68,8 +68,6 @@ int Config::CreateConfig(int argc, char **argv) {
   int16_t n_concurrent          = 1;
   bulkBatchCount = 10000;
 
-  int jetpack_fastpath_attempt_rate = 101; // [0, 100]   101: adaptive
-
   string timeouts;
   size_t pos;
 
@@ -78,7 +76,7 @@ int Config::CreateConfig(int argc, char **argv) {
   string filename;
   // dropped `r:` from getopt string —
   // `case 'r':` (logging path) handler was the only consumer.
-  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:s:S:t:H:T:n:A:F:O:m:a:N:")) != -1) {
+  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:s:S:t:H:T:n:A:F:O:a:N:")) != -1) {
     switch (c) {
       case 'b': // heartbeat to controller
         heart_beat = true;
@@ -149,9 +147,6 @@ int Config::CreateConfig(int argc, char **argv) {
         if (server_or_client != -1) return -4;
         server_or_client = 0;
         break;
-      case 'm': // fastpath possibility mode
-        jetpack_fastpath_attempt_rate = strtoul(optarg, &end_ptr, 10);
-        break;
       case 'S': // client touch only single server
       {
         // TODO remove
@@ -218,10 +213,7 @@ int Config::CreateConfig(int argc, char **argv) {
     // ctrl_run,
     duration,
     heart_beat,
-    single_server,
-    // dropped `logging_path,` arg — Config
-    // ctor parameter and `logging_path_` field both gone.
-    jetpack_fastpath_attempt_rate);
+    single_server);
   config_s->proc_name_ = proc_name;
   config_s->exp_setting_name_ = exp_setting_name;
   config_s->config_paths_ = config_paths;
@@ -247,10 +239,7 @@ Config::Config(char           *ctrl_hostname,
                int16_t         n_concurrent,
                uint32_t        duration,
                bool            heart_beat,
-               single_server_t single_server,
-               // removed `string logging_path,`
-               // ctor parameter — field gone.
-               int              jetpack_fastpath_attempt_rate) :
+               single_server_t single_server) :
   heart_beat_(heart_beat),
   ctrl_hostname_(ctrl_hostname),
   ctrl_port_(ctrl_port),
@@ -285,8 +274,7 @@ Config::Config(char           *ctrl_hostname,
   cid_(1),
   next_site_id_(0),
   proc_host_map_(map<string, string>()),
-  sharding_(nullptr),
-  jetpack_fastpath_attempt_rate_(jetpack_fastpath_attempt_rate)
+  sharding_(nullptr)
 
 {
 }
@@ -953,22 +941,6 @@ int Config::GetPartitionSize(parid_t partition_id) {
     return it->replicas.size(); 
   }
   verify(0);
-}
-
-int32_t Config::get_num_leaders(parid_t partition_id) {
-  switch (replica_proto_) {
-    case MODE_RAFT:
-    case MODE_FPGA_RAFT:
-      return 1;
-      break;
-    case MODE_COPILOT:
-      return 2;
-      break;
-    default:
-      Log_fatal("Rule mode do not support for this replica protocol now");
-      return 0;
-      break;
-  }
 }
 
 std::vector<Config::SiteInfo>

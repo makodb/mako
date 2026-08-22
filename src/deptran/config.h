@@ -94,8 +94,6 @@ class Config {
   uint32_t cid_;
 
 
-  // Jetpack fast path mode
-  int jetpack_fastpath_attempt_rate_ = 0;
   int jetpack_recovery_batch_size_ = 1000;
 
   // Transaction timeout configuration
@@ -175,10 +173,7 @@ class Config {
          int16_t n_concurrent,
          uint32_t duration,
          bool heart_beat,
-         single_server_t single_server,
-         // removed `string logging_path,`
-         // ctor parameter — field gone.
-         int jetpack_fastpath_attempt_rate
+         single_server_t single_server
   );
   int GetClientPort(std::string site_name);
 
@@ -260,7 +255,6 @@ class Config {
   uint32_t get_start_coordinator_id();
   int32_t benchmark();
   uint32_t GetNumPartition();
-  int32_t get_num_leaders(parid_t partition_id);
   uint32_t get_scale_factor();
   int32_t get_max_retry();
   single_server_t get_single_server();

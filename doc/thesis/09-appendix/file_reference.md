@@ -122,8 +122,10 @@ Total: ~2,957 lines across 13 files.
 |------|-------------|
 | `occ_raft.yml` | OCC concurrency control + Raft atomic broadcast |
 | `none_raft.yml` | No CC + Raft |
-| `rule_raft.yml` | Rule-based CC + Raft |
 | `raft_lab_test.yml` | 5-server standalone test config (cc:none, ab:raft) |
+
+Rule-based configuration is retired. The remaining generic Jetpack recovery
+code is legacy and is being audited separately.
 
 ### 8.2 Raft Cluster Topologies (`config/1leader_2followers/`)
 

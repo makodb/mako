@@ -977,31 +977,4 @@ bool CopilotServer::strongConnect(shared_ptr<CopilotData>& ins, int* index) {
 
 #endif
 
-#ifdef ZERO_OVERHEAD
-bool CopilotServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_env) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  if (!(isPilot_ || isCopilot_)) return false;
-  // Log_info("[Begin] isPilot_ {} isCopilot_ {} from {} to {}", isPilot_, isCopilot_, log_infos_[isPilot_].max_executed_slot + 1, log_infos_[isPilot_].max_active_slot);
-  for (slotid_t id = log_infos_[isPilot_].max_executed_slot + 1; id <= log_infos_[isPilot_].max_active_slot; id++) {
-    // Log_info("id={}", id);
-    shared_ptr<CopilotData> ins = GetInstance(id, isPilot_);
-    if (ins && ins->cmd.has_value()) {
-      // Copilots use batch cmds in copilot instance
-      verify(ins->cmd.kind_ == TpcBatchCommand::static_kind());
-      const auto batch_cmd = marshallable_cast<TpcBatchCommand>(ins->cmd);
-      for (int i = 0; i < batch_cmd.unwrap()->Size(); i++)
-        // passing Command to second arg forces
-        // Conflict's (Command, Command) overload — first arg
-        // (rusty::Arc<TpcCommitCommand>, cloned) auto-converts via
-        // Command's templated ctor, second arg is already Command.
-        if (SimpleRWCommand::Conflict(batch_cmd.unwrap()->cmds_[i].clone(), cmd_env))
-          return true;
-    }
-      
-  }
-  // Log_info("[End] isPilot_ {} isCopilot_ {} from {} to {}", isPilot_, isCopilot_, log_infos_[isPilot_].max_executed_slot + 1, log_infos_[isPilot_].max_active_slot);
-  return false;
-}
-#endif
-
 } // namespace janus

@@ -2205,7 +2205,6 @@ impl Drop for PollThread {
 pub enum QuorumPolicy {
     DEFAULT = 0,
     ALL_NO = 1,
-    LEADER_AND = 2,
     COMMITTED_SHORT = 3,
     ALWAYS_READY = 4,
 }
@@ -2225,9 +2224,6 @@ pub struct QuorumEvent {
     pub quorum_: i32,
     pub policy_: Cell<QuorumPolicy>,
     pub committed_seen_: Cell<bool>,
-    pub num_leader_: Cell<i32>,
-    pub n_leader_yes_: Cell<i32>,
-    pub n_leader_no_: Cell<i32>,
     pub highest_term_: Cell<i64>,
     pub timeouted_: Cell<bool>,
     pub leader_id_: Cell<u32>,
@@ -2247,22 +2243,14 @@ impl QuorumEvent {
         quorum_event_finalize(self, timeout, finalize_func)
     }
     pub fn yes(&self) -> bool {
-        let base = self.n_voted_yes_.get() >= self.quorum_;
-        if self.policy_.get() == QuorumPolicy::LEADER_AND {
-            return base && self.n_leader_yes_.get() >= self.num_leader_.get();
-        }
-        base
+        self.n_voted_yes_.get() >= self.quorum_
     }
     pub fn no(&self) -> bool {
         if self.policy_.get() == QuorumPolicy::ALL_NO {
             return self.n_voted_no_.get() == self.n_total_;
         }
         reactor_verify(self.n_total_ >= self.quorum_);
-        let base = self.n_voted_no_.get() > (self.n_total_ - self.quorum_);
-        if self.policy_.get() == QuorumPolicy::LEADER_AND {
-            return base || self.n_leader_no_.get() > 0;
-        }
-        base
+        self.n_voted_no_.get() > (self.n_total_ - self.quorum_)
     }
     pub fn vote_yes(&self) {
         self.n_voted_yes_.set(self.n_voted_yes_.get() + 1);
@@ -3690,9 +3678,6 @@ pub fn quorum_event_make(n_total: i32, quorum: i32) -> Arc<QuorumEvent> {
         quorum_: quorum,
         policy_: Cell::new(QuorumPolicy::DEFAULT),
         committed_seen_: Cell::new(false),
-        num_leader_: Cell::new(0),
-        n_leader_yes_: Cell::new(0),
-        n_leader_no_: Cell::new(0),
         highest_term_: Cell::new(0),
         timeouted_: Cell::new(false),
         leader_id_: Cell::new(0),

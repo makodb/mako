@@ -136,7 +136,7 @@ make -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 
 # Higher concurrency (12 clients, ~25k TPS)
 ./build/deptran_server \
@@ -145,7 +145,7 @@ make -j32
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
 
 #### Raft Lab Tests (use raft-test build)
@@ -284,7 +284,7 @@ Key configuration directories:
 | `config/hosts*.yml` | Host topology |
 | `config/rw.yml`, `config/concurrent_*.yml` | Workload settings |
 | `config/occ_paxos.yml`, `config/1leader_2followers/` | Paxos protocol |
-| `config/none_raft.yml`, `config/rule_raft.yml` | Raft protocol |
+| `config/none_raft.yml`, `config/occ_raft.yml` | Raft protocol |
 
 ---
 

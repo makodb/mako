@@ -108,7 +108,7 @@ Goal 0. Never recreate a top-level `crates/srpc` hand port.
 
 ### Key Protocol Implementations
 The system implements multiple distributed transaction protocols. The former
-standalone Janus, Mencius, SNOW/RO6, Extern-C, and 2PL implementations are
+standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, and Rule implementations are
 retired; the project-wide `janus::` C++ namespace remains for compatibility.
 - **OCC** (`src/deptran/occ/`): Optimistic concurrency control
 - **RCC/Rococo** (`src/deptran/rcc/`): Distributed consensus protocol

@@ -32,14 +32,17 @@ ongoing: 1
 | File | `cc` | `ab` | Use Case |
 |------|------|------|----------|
 | `none_raft.yml` | `none` | `raft` | Testing without CC |
-| `rule_raft.yml` | `rule` | `raft` | Rule-based CC |
 | `notx_raft.yml` | `notx` | `fpga_raft` | No transactions |
+
+The former Rule mode and its Raft configuration are retired. The generic
+Jetpack recovery subsystem remains legacy code pending a separate audit and is
+not a supported configuration.
 
 ### 1.4 Mode Config Fields
 
 | Field | Type | Values | Description |
 |-------|------|--------|-------------|
-| `cc` | string | `occ`, `none`, `rule`, `notx` | Concurrency control protocol |
+| `cc` | string | `occ`, `none`, `notx` | Concurrency control protocol |
 | `ab` | string | `multi_paxos`, `raft`, `fpga_raft` | Atomic broadcast protocol |
 | `read_only` | bool | `true`/`false` | Enable read-only optimisation |
 | `batch` | bool | `true`/`false` | Enable transaction batching |

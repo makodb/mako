@@ -82,6 +82,7 @@ namespace janus {
 // 0x01 is retired with the former standalone 2PL protocol; do not reuse it.
 #define MODE_OCC    (0x02)
 #define MODE_RCC    (0x04)
+// 0x15 is reserved for compatibility with the retired Rule protocol.
 #define MODE_RULE    (0x15)
 #define MODE_MDCC   (0x12)
 #define MODE_TROAD    (0x03)

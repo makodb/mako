@@ -91,25 +91,6 @@ class GetLeaderQuorumEvent : public QuorumEventBase {
   }
 };
 
-/************************RULE begin*********************************/
-
-class RuleSpeculativeExecuteQuorumEvent: public QuorumEventBase {
-  bool has_result_ = false;
-  value_t result_;
- public:
-  // Quorum math now lives on QuorumEvent as QuorumPolicy::LEADER_AND (S3):
-  // yes() additionally requires n_leader_yes_ >= num_leader_; no()
-  // additionally trips on any leader-no. The leader counters are hoisted
-  // onto QuorumEvent so the policy only reads its own fields.
-  RuleSpeculativeExecuteQuorumEvent(int n_total, int quorum, int num_leader)
-    : QuorumEventBase(n_total, quorum) {
-      q().policy_.set(QuorumPolicy::LEADER_AND);
-      q().num_leader_.set(num_leader);
-  }
-  void FeedResponse(bool y, value_t result, bool is_leader);
-  value_t GetResult();
-};
-
 class JetpackPullIdSetQuorumEvent: public QuorumEventBase {
  public:
   using QuorumEventBase::QuorumEventBase;

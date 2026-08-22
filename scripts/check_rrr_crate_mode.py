@@ -5588,7 +5588,6 @@ ABI_SPECS = {
                 "export enum class QuorumPolicy : int32_t;",
                 "export constexpr QuorumPolicy QuorumPolicy_DEFAULT();",
                 "export constexpr QuorumPolicy QuorumPolicy_ALL_NO();",
-                "export constexpr QuorumPolicy QuorumPolicy_LEADER_AND();",
                 "export constexpr QuorumPolicy QuorumPolicy_COMMITTED_SHORT();",
                 "export constexpr QuorumPolicy QuorumPolicy_ALWAYS_READY();",
                 "export class EventPollable;",
