@@ -7,6 +7,7 @@
 #include "TRcu.hh"
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <type_traits>
 #include <unistd.h>
@@ -382,7 +383,7 @@ public:
     // first write is installed. It may enter a bounded in-memory critical
     // section, but must not perform I/O, capacity waits, heap allocation, or
     // unwind because the transaction still holds its complete write set.
-    using post_validation_hook = bool (*)(void*, tid_type) noexcept;
+    using post_validation_hook = bool (*)(void*, uint32_t) noexcept;
 
     enum class preinstall_failure : uint8_t {
         none = 0,
@@ -800,31 +801,49 @@ public:
         return commit_tid_;
     }
 
-    // Assign the transaction's real STO commit TID without allowing the
-    // process-wide counter to wrap. This is used by the durability hook path;
-    // legacy commit_tid() deliberately retains its historical behavior.
-    bool try_commit_tid(tid_type& result) const noexcept;
+    // Mako later encodes this base timestamp as base * 10 + term. The legacy
+    // u32 log/MVCC format reserves one decimal digit for term, so larger base
+    // values cannot be represented without wrapping. Enforcing that term
+    // contract belongs to the distributed protocol, not this local allocator.
+    static constexpr uint32_t max_mako_timestamp =
+        (std::numeric_limits<uint32_t>::max() - 9) / 10;
 
-    // Ensure every TID minted after this call is greater than `observed`.
-    // `observed` must be a raw TID previously returned by commit_tid(), not a
-    // normalized sequence number. Returns false unless advancing leaves at
-    // least one representable, nonzero TID for a subsequent checked commit.
-    static bool advance_tid_past(tid_type observed) noexcept;
+    // Allocate from Mako's process-wide logical clock without permitting its
+    // encoded u32 domain to wrap. Zero is the unassigned sentinel and
+    // max_mako_timestamp + 1 is the exhausted next-to-return clock value.
+    static bool try_allocate_mako_timestamp(uint32_t& result) noexcept;
 
-    void updateSingleTimestamp() const {
+    // Advance Mako's next-to-return clock past `observed`. This is the
+    // install-side catch-up operation and may exhaust the clock when the
+    // observed timestamp is the largest encodable base value.
+    static void observe_mako_timestamp(uint32_t observed) noexcept;
+
+    // Ensure every Mako timestamp minted after this call is greater than
+    // `observed`. Returns false unless at least one subsequent checked,
+    // nonzero timestamp remains representable.
+    static bool advance_mako_timestamp_past(uint32_t observed) noexcept;
+
+    bool try_assign_mako_timestamp(uint32_t& result) const noexcept;
+
+    bool updateSingleTimestamp() const {
         assert(state_ == s_committing_locked || state_ == s_committing);
-	    if(!tid_unique_)
-            tid_unique_ = __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, 1);
+	    if(!tid_unique_ && !try_allocate_mako_timestamp(tid_unique_))
+            return false;
 
         if (TThread::writeset_shard_bits>0/*||TThread::readset_shard_bits>0*/) {
             // Get single timestamp from remote shards
             uint32_t remote_timestamp = 0;
-            TThread::sclient->remoteGetTimestamp(remote_timestamp);
+            if (TThread::sclient == nullptr ||
+                TThread::sclient->remoteGetTimestamp(remote_timestamp) != 0 ||
+                remote_timestamp == 0 ||
+                remote_timestamp > max_mako_timestamp)
+                return false;
             // Use the max timestamp
             if (remote_timestamp > tid_unique_) {
                 tid_unique_ = remote_timestamp;
             }
         }
+        return true;
     }
 
     void set_version(TVersion& vers, TVersion::type flags = 0) const {
@@ -878,8 +897,8 @@ public:
       return item->has_flag (TransItem::minsert_bit);
     }
 
-    // Single timestamp system: tid_unique_ now serves as the single timestamp
-    mutable uint32_t tid_unique_; // Single timestamp using fetch_and_add instruction
+    // Base value chosen by Mako's single-timestamp protocol.
+    mutable uint32_t tid_unique_;
     mutable uint8_t current_term_;
     // The maximal timestamp received for this transaction in its readSet
     mutable uint32_t maxTimestampReadSet;

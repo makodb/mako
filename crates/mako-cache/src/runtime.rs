@@ -157,7 +157,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::{mpsc, Arc};
 
-    use mako_local::SiloTimestamp;
+    use mako_local::MakoTimestamp;
     use mrx_core::fakes::MemBlobs;
     use mrx_core::{BlobError, BlobOp};
 
@@ -182,8 +182,8 @@ mod tests {
         }
     }
 
-    fn timestamp(raw: u64) -> SiloTimestamp {
-        SiloTimestamp::new(raw).expect("test timestamps are nonzero")
+    fn timestamp(raw: u32) -> MakoTimestamp {
+        MakoTimestamp::new(raw).expect("test timestamps are nonzero")
     }
 
     #[test]

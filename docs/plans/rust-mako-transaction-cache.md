@@ -51,11 +51,11 @@ behavior is captured by an executable compatibility suite.
 5. **Durability is transaction-granular.** The later cache must persist and
    recover one committed transaction atomically. Per-key dirty tickets or
    replaying each logged write as its own transaction are insufficient.
-6. **Silo commit TIDs, cache sequence numbers, and Mako distributed
-   timestamps remain separate types and number spaces.** `SiloTimestamp`
-   wraps the raw 64-bit STO `commit_tid`; `CacheSeq` orders local durability
-   obligations; and Mako's existing `tid_unique_` belongs to the distributed
-   protocol. Accidental comparison or conversion between them should be
+6. **MassTrans OCC versions, cache sequence numbers, and Mako timestamps
+   remain separate types and number spaces.** `MakoTimestamp` wraps the
+   checked, nonzero 32-bit `tid_unique_`; `CacheSeq` orders local durability
+   obligations; and MassTrans row versions remain engine-private validation
+   state. Accidental comparison or conversion between them should be
    impossible in Rust.
 7. **Process-lifetime native resources are honest in the API.** STO has 460
    process-lifetime thread slots, and current MassTrans teardown lacks a
@@ -94,29 +94,36 @@ The local transaction API is the compatibility boundary. During the final
 native-Rust port, the implementation behind that API changes while callers,
 transaction scripts, and correctness oracles stay fixed.
 
-### Three clocks, three purposes
+### Ordering values and versions
 
 The local cache protocol must not call every ordering value a "timestamp":
 
-- **`SiloTimestamp`** is the raw, nonzero, 64-bit value allocated by STO's
-  process-wide `commit_tid` clock. For a cache-backed write transaction it is
-  allocated after all of that transaction's Silo write locks are held and
-  before read-set validation. It is the transaction-wide local serialization
-  timestamp and is carried verbatim in the durable commit record. The current
-  `MassTrans<Opacity=false>` profile still maintains per-record nonopaque OCC
-  versions separately; carrying `commit_tid` does not silently replace those
-  row versions. Validation may abort after allocation, so gaps in this clock
-  are expected.
+- **`MakoTimestamp`** is the exact, nonzero, 32-bit base value stored in
+  Mako's `tid_unique_`. Its checked domain ends at
+  `(UINT32_MAX - 9) / 10`, preserving the existing one-decimal-digit term
+  encoding. For a cache-backed write transaction it is allocated from Mako's
+  checked local logical counter after all Silo write locks are held and before
+  read-set validation, then carried verbatim in the durable commit record.
+  Validation may abort after allocation, so gaps are expected. The
+  single-machine path has no remote participant timestamps to merge. The
+  current distributed path also takes maxima from remote participants and the
+  read set, but permits ties and therefore must not yet treat this scalar as a
+  globally unique history key.
 - **`CacheSeq`** is the local, nonzero durability-queue sequence. It is
   allocated only when a validated transaction binds its prepared record in
   the preinstall hook. It orders publication, RocksDB application, replay, and
   the durable watermark; it is not an OCC version or a distributed timestamp.
-- **Mako's distributed timestamp (`tid_unique_`)** is the separate value used
-  by the existing distributed/Paxos path for participant and watermark
-  coordination. The local `try_commit_no_paxos` cache path does not synthesize
-  `SiloTimestamp` from `tid_unique_`, or vice versa. A later distributed record
-  may carry both as explicitly typed fields, but Phase 1E records carry the
-  Silo timestamp and cache sequence only.
+- **MassTrans row versions** remain the current nonopaque profile's per-record
+  OCC counters. Carrying `tid_unique_` does not replace them. An opaque STO
+  profile may separately use the 64-bit `commit_tid_` clock for row versions,
+  but Phase 1E does not persist that value.
+- **Mako's term-stamped commit ID** is `tid_unique_ * 10 + term` in the
+  existing Paxos log and multiversion trailer. Phase 1E is single-machine,
+  term zero, and stores the base `MakoTimestamp`; the distributed record format
+  must model the term explicitly rather than confusing the encoded commit ID
+  with either `MakoTimestamp` or `CacheSeq`. The legacy representation reserves
+  one decimal digit but does not currently reject larger epochs; explicit term
+  validation or a wider tuple is a Milestone 2 requirement.
 
 ## Milestone 1: C++ Silo as the single-machine transaction cache
 
@@ -344,8 +351,8 @@ Create a new `mako-cache` layer rather than adding transaction semantics to
 - RocksDB is the recoverable system of record.
 - Start unbounded: every live value remains in Silo. Eviction is a later
   subphase so it cannot obscure transaction/durability correctness.
-- Assign a cache commit sequence distinct from Silo's 64-bit commit TID and
-  Mako's distributed timestamp.
+- Assign a cache commit sequence distinct from Mako's logical timestamp and
+  MassTrans's per-record OCC versions.
 - Before entering native commit, acquire bounded durability capacity and
   fully prepare the owned commit-record body, RocksDB keys, and publication
   slot. The permit is still detached: it has no `CacheSeq` and is not visible
@@ -374,19 +381,24 @@ process-crash injection remain open.
    bounded queue capacity and own every mutation byte, encoded-record buffer,
    tagged RocksDB key, and publication cell needed by the transaction. Record
    preparation performs all size checks and fallible allocation while Silo
-   holds no commit locks. Fixed-width `CacheSeq`/`SiloTimestamp` fields and the
+   holds no commit locks. Fixed-width `CacheSeq`/`MakoTimestamp` fields and the
    final checksum remain to be filled. The detached permit occupies capacity
    but no ordered queue position.
-2. **Let Silo choose its timestamp and validate.** Native commit acquires the
-   complete write set. While those locks are held, it allocates the real
-   64-bit STO `commit_tid`, then validates the read set and predicates. A
-   lock or validation conflict drops the detached permit. It consumes no
-   `CacheSeq`, creates no queue slot, and therefore needs no cancellation
-   marker; only the already allocated Silo timestamp may contain a harmless
-   gap.
+2. **Allocate Mako's timestamp under Silo's locks, then validate.** Native
+   commit performs its existing phase-1 predicate checks while collecting and
+   locking the write set. Once the complete write set is locked, it allocates a
+   checked, nonzero base `tid_unique_` from Mako's local logical counter, then
+   performs the remaining read-set and participant validation. The clock stores
+   the next value to return and uses one value beyond the valid base range as
+   its exhausted sentinel. Silo's lock order
+   supplies the serialization constraints; allocating while the locks are held
+   assigns Mako's transaction-history timestamp consistently with them. A lock
+   or validation conflict drops the detached permit. It consumes no `CacheSeq`,
+   creates no queue slot, and therefore needs no cancellation marker; only the
+   already allocated Mako timestamp may contain a harmless gap.
 3. **Bind after validation and before install.** After every validation has
    succeeded, but before phase 3 can make any write visible, native code calls
-   a narrow preinstall hook with `SiloTimestamp`. Under only the queue's short
+   a narrow preinstall hook with `MakoTimestamp`. Under only the queue's short
    metadata lock, the hook checks fail-stop health, assigns the next
    `CacheSeq`, fills the two fixed-width fields, and moves the preallocated
    cell into a Prepared queue slot. This bind is allocation-free and performs
@@ -396,7 +408,7 @@ process-crash injection remain open.
    code must remain non-panicking and a violated invariant fail-stops the
    process before unwinding can cross C.
 4. **Install, finalize, and acknowledge.** Silo installs the write set and
-   returns success. The transaction-wide TID is retained as serialization
+   returns success. The transaction-wide Mako timestamp is retained as history
    metadata even though the current nonopaque MassTrans profile advances its
    per-record versions separately. Outside the native lock critical section,
    Rust computes/fills the record checksum and atomically changes the bound
@@ -418,28 +430,43 @@ process-crash injection remain open.
    durable watermark. A backend failure retains the same Ready record and
    retries without letting a later sequence pass it. Ordinary conflicts never
    appear in this queue.
-7. **Recover both state and the Silo clock.** Durable commit records are
-   retained. Reopen validates record version, checksum, `CacheSeq`, and
-   nonzero `SiloTimestamp`, then replays records in cache-sequence order and
-   idempotently materializes their mutations. Before accepting any new user
-   transaction, recovery advances the process-wide native STO clock so its
-   next `commit_tid` is strictly greater than the maximum recovered Silo
+7. **Recover both state and Mako's clock.** Durable commit records are
+   retained. Reopen validates record version, checksum, `CacheSeq`, and the
+   checked `MakoTimestamp` range, then replays records in cache-sequence order
+   and idempotently materializes their mutations. Before accepting any new user
+   transaction, recovery advances Mako's process-wide local logical counter so
+   its next `tid_unique_` is strictly greater than the maximum recovered Mako
    timestamp. Clock overflow or inability to establish that floor makes open
-   fail; recovery must never manufacture a Silo timestamp from `CacheSeq`.
+   fail; recovery must never manufacture a Mako timestamp from `CacheSeq`.
    The first slice exposes one default logical table and uses a tagged RocksDB
    key format separating user data, commit records, and future internal
    namespaces; compatibility or migration from `mrx`'s raw-key layout remains
    a separate task.
 
+The timestamp switch bumps the draft commit-record value format from v2 to v3:
+v2 carried a 64-bit Silo TID, while v3 carries the exact 32-bit base
+`MakoTimestamp`. Recovery rejects v2 rather than guessing or truncating a
+timestamp. This is allowed while both the C ABI and durable format remain
+pre-v1; a production format must ship an explicit migration policy.
+
 There is deliberately no per-database/global commit gate in this protocol.
 Disjoint native transactions may lock, validate, bind, and install
-concurrently. Silo's commit TID remains the transaction-history timestamp; it
-is neither the current nonopaque row version nor Mako's distributed timestamp.
-The much shorter queue metadata lock exists only to allocate `CacheSeq` and
-append an already prepared slot.
+concurrently. For this single-machine protocol, `MakoTimestamp` is the
+transaction-history timestamp and remains separate from the current nonopaque
+row version. The much shorter queue metadata lock exists only to allocate
+`CacheSeq` and append an already prepared slot.
+
+Concurrent disjoint transactions may bind in a different `CacheSeq` order than
+their Mako timestamps. That is safe in this slice because their mutations
+commute; neither number space is derived from the other.
 
 - This slice is unbounded and local: it has no value eviction, distributed
   routing, 2PC, replication, or distributed-finality semantics.
+- Phase 1 admits one recovered durable cache namespace per process. Native
+  tables and the timestamp authority are process-wide, so independently
+  opening a second pre-existing backend after work begins cannot retroactively
+  preserve history. Supporting multiple caches requires a supervisor that
+  scans and floors every backend before admitting any transaction.
 
 The RocksDB durability mode qualifies what the durable watermark means; the
 API and tests must not collapse these modes into one promise:
@@ -469,7 +496,7 @@ not establish atomic recovery of a multi-key commit.
 - Mutation-test stale writeback, early detached-capacity discharge,
   hook-time allocation, conflict cancellation slots, missing/premature Ready
   publication, unpinned unknown outcomes, partial replay, reordered commits,
-  duplicate replay, omitted Silo timestamps, and a recovered native clock not
+  duplicate replay, omitted Mako timestamps, and a recovered native clock not
   advanced past the durable maximum.
 - Run differential histories through the same full-history, real-time-aware
   oracle used at the native boundary, extended with durability observations.
@@ -497,7 +524,7 @@ not a release blocker.
 
 - Every Phase 1A-1D boundary gate is green.
 - Atomic multi-key recovery under exhaustive crash injection.
-- Reopen advances the native Silo commit-TID clock past every recovered record
+- Reopen advances Mako's native logical counter past every recovered record
   before admitting work, including near-exhaustion and corrupt-timestamp tests.
 - An honest commit watermark and `flush()` barrier under concurrent writers,
   write failures, and sustained overload.
@@ -521,12 +548,21 @@ Port the distributed control plane while retaining the local C++ engine:
 3. Reproduce the current commit order: lock remote writes, lock local writes,
    choose/merge a distributed timestamp, validate local predicates, validate
    participants, install, log/replicate, and release. Encode the state machine
-   so invalid phase transitions are typed errors.
+   so invalid phase transitions are typed errors. Before calling that timestamp
+   a history order, make every read dependency advance strictly rather than
+   merge by equality, define a shard/coordinator tie-break for independent
+   transactions, propagate remote timestamp-allocation failures, and floor
+   every participant's next-to-return clock at the chosen value plus one.
 4. Give every RPC an idempotence key, deadline, cancellation rule, and
    duplicate-response behavior. Unknown commit outcome is distinct from an
    OCC conflict.
 5. Differential-test a Rust coordinator against the existing C++ coordinator
    using deterministic schedules before switching any default.
+
+Milestone 2 must also replace or validate the legacy one-digit term packing,
+restore every timestamp authority during replay/promotion, and cover remote
+read-only participants during validation. Those are pre-existing distributed
+gaps; Phase 1E's local clock does not claim to repair them.
 
 The gate requires single-node and multi-node agreement, participant crash at
 every 2PC phase, coordinator crash/restart, duplicate/reordered messages,
@@ -585,8 +621,8 @@ recovery.
    full-history real-time/opacity oracle.
 6. Run sanitizer, concurrency, and wrapper-overhead gates.
 7. Finish the detached-permit/preinstall-hook protocol in Phase 1E, including
-   carrying `SiloTimestamp`, removing the global commit gate and conflict
-   cancellation slots, advancing the native TID floor on recovery, and
+   carrying `MakoTimestamp`, removing the global commit gate and conflict
+   cancellation slots, advancing Mako's timestamp floor on recovery, and
    proving the publish-gap/crash properties without eviction.
 8. Do not begin distributed porting until atomic local crash recovery is
    demonstrated by fault injection.

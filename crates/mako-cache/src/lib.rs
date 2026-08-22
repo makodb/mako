@@ -3,11 +3,12 @@
 //! Native C++ Silo is the authoritative live state while this process runs.
 //! A write transaction first prepares a complete owned record and claims
 //! bounded capacity. After Silo locks and validates it, a native hook binds
-//! that storage to an ordered cache sequence and records Silo's serialization
-//! timestamp immediately before installation. Native success then publishes
-//! the record into the volatile queue. Publication is the acknowledgement
-//! boundary; one background writer later stores the checksummed record and
-//! all of its data mutations in a single atomic RocksDB `WriteBatch`.
+//! that storage to an ordered cache sequence and records Mako's logical
+//! transaction timestamp immediately before installation. Native success then
+//! publishes the record into the volatile queue. Publication is the
+//! acknowledgement boundary; one background writer later stores the
+//! checksummed record and all of its data mutations in a single atomic RocksDB
+//! `WriteBatch`.
 //!
 //! Consequently, [`Cache::flush`] and [`Cache::close`] are real durability
 //! barriers, but an unflushed process crash may lose an acknowledged tail.
@@ -43,7 +44,7 @@ mod record;
 mod runtime;
 mod writeback;
 
-pub use mako_local::{Error as LocalError, SiloTimestamp};
+pub use mako_local::{Error as LocalError, MakoTimestamp};
 pub use mrx_rocks::Durability;
 pub use record::{CommitSeq, RecordError};
 pub use writeback::{
@@ -299,6 +300,12 @@ impl From<RuntimeError> for Error {
 ///
 /// Production uses [`Db`], while tests use `Cache<Arc<MemBlobs>>` to inject
 /// failures and inspect the durable ground truth.
+///
+/// This local milestone supports one recovered durable cache namespace per
+/// process. Native tables and the Mako timestamp authority are process-wide;
+/// independently reopening another pre-existing backend after transactions
+/// have begun cannot retroactively establish one timestamp history. A future
+/// multi-cache supervisor must preflight every backend before admitting work.
 pub struct Cache<B: Blobs + 'static> {
     local: LocalDb,
     writeback: Arc<Writeback<B>>,
@@ -324,7 +331,8 @@ impl<B: Blobs + 'static> Cache<B> {
     /// Open over an already constructed atomic backend.
     ///
     /// Recovery and validation complete before the background writer starts
-    /// or this cache becomes accessible to callers.
+    /// or this cache becomes accessible to callers. The Phase 1 process model
+    /// permits only one pre-existing durable cache namespace; see [`Cache`].
     pub fn from_backend(backend: B, options: CacheOptions) -> Result<Self, Error> {
         let features = mako_local::features()?;
         if options.require_read_my_writes && !features.read_my_writes() {
@@ -727,7 +735,7 @@ fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u
         }
         let value = backend.get(&key)?.ok_or(Error::DurableStateMismatch)?;
         let record = CommitRecord::decode(&key, &value, max_bytes)?;
-        if !timestamps.insert(record.timestamp()) {
+        if !timestamps.insert(record.mako_timestamp()) {
             return Err(Error::DurableStateMismatch);
         }
         for mutation in record.mutations() {
@@ -744,11 +752,11 @@ fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u
 
     validate_materialized_data(backend, &records, data_keys)?;
 
-    // Silo's `_TID` clock is process-local. Raise it above every durable
+    // Mako's logical counter is process-local. Raise it above every durable
     // timestamp before replay completes and the recovered cache is exposed,
-    // otherwise a process restart could reuse serialization timestamps.
-    if let Some(timestamp) = records.iter().map(CommitRecord::timestamp).max() {
-        mako_local::advance_commit_tid_past(timestamp)?;
+    // otherwise a process restart could reuse transaction timestamps.
+    if let Some(timestamp) = records.iter().map(CommitRecord::mako_timestamp).max() {
+        mako_local::advance_mako_timestamp_past(timestamp)?;
     }
     replay_records(local, &records)?;
     Ok(previous)
@@ -832,7 +840,7 @@ mod tests {
     use super::*;
 
     #[cfg(have_mako)]
-    fn test_record(sequence: u64, timestamp: u64, key: &[u8]) -> CommitRecord {
+    fn test_record(sequence: u64, timestamp: u32, key: &[u8]) -> CommitRecord {
         crate::record::PreparedCommitRecord::prepare(
             vec![Mutation::Put {
                 table_id: DEFAULT_TABLE_ID,
@@ -844,7 +852,7 @@ mod tests {
         .unwrap()
         .bind(
             CommitSeq::new(sequence).expect("test sequence is nonzero"),
-            SiloTimestamp::new(timestamp).expect("test timestamp is nonzero"),
+            MakoTimestamp::new(timestamp).expect("test timestamp is nonzero"),
         )
         .finalize()
     }
@@ -870,7 +878,7 @@ mod tests {
 
     #[cfg(have_mako)]
     #[test]
-    fn native_silo_timestamp_is_carried_into_the_durable_record() {
+    fn native_mako_timestamp_is_carried_into_the_durable_record() {
         use std::sync::Arc;
 
         use mrx_core::fakes::MemBlobs;
@@ -892,7 +900,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(record.sequence().get(), sequence);
-        assert_ne!(record.timestamp().get(), 0);
+        assert_ne!(record.mako_timestamp().get(), 0);
 
         cache.close().unwrap();
     }
@@ -916,7 +924,7 @@ mod tests {
 
     #[cfg(have_mako)]
     #[test]
-    fn recovery_rejects_duplicate_silo_timestamps() {
+    fn recovery_rejects_duplicate_mako_timestamps() {
         use std::sync::Arc;
 
         use mrx_core::fakes::MemBlobs;
@@ -930,6 +938,61 @@ mod tests {
         assert!(matches!(
             Cache::from_backend(backend, CacheOptions::default()),
             Err(Error::DurableStateMismatch)
+        ));
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn recovery_advances_mako_timestamp_past_the_durable_maximum() {
+        use std::sync::Arc;
+
+        use mrx_core::fakes::MemBlobs;
+
+        const RECOVERED_TIMESTAMP: u32 = 1 << 24;
+        let backend = Arc::new(MemBlobs::new());
+        let recovered = test_record(1, RECOVERED_TIMESTAMP, b"recovered");
+        backend.write_batch(&recovered.backend_ops()).unwrap();
+
+        let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default()).unwrap();
+        cache.put(b"after-recovery", b"new").unwrap();
+        cache.flush().unwrap();
+
+        let (log_key, encoded) = backend
+            .snapshot()
+            .into_iter()
+            .find(|(key, _)| {
+                matches!(
+                    classify_backend_key(key),
+                    BackendKey::Log(sequence) if sequence.get() == 2
+                )
+            })
+            .expect("post-recovery transaction record");
+        let record = CommitRecord::decode(
+            &log_key,
+            &encoded,
+            CacheOptions::default().writeback.max_record_bytes,
+        )
+        .unwrap();
+        assert!(record.mako_timestamp().get() > RECOVERED_TIMESTAMP);
+
+        cache.close().unwrap();
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn recovery_rejects_an_exhausted_durable_mako_timestamp() {
+        use std::sync::Arc;
+
+        use mako_local::MAX_MAKO_TIMESTAMP;
+        use mrx_core::fakes::MemBlobs;
+
+        let backend = Arc::new(MemBlobs::new());
+        let final_record = test_record(1, MAX_MAKO_TIMESTAMP, b"final-timestamp");
+        backend.write_batch(&final_record.backend_ops()).unwrap();
+
+        assert!(matches!(
+            Cache::from_backend(backend, CacheOptions::default()),
+            Err(Error::Native(LocalError::TimestampExhausted))
         ));
     }
 
@@ -952,7 +1015,7 @@ mod tests {
                 value: b"value".to_vec(),
             }])
             .unwrap()
-            .bind(SiloTimestamp::new(1).unwrap())
+            .bind(MakoTimestamp::new(1).unwrap())
             .unwrap()
             .pin_unknown()
             .unwrap();

@@ -64,62 +64,68 @@ TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 2 * Trans
 #endif
    // reserve TransactionTid::increment_value for prepopulated
 
-// @unsafe: atomically allocates from the process-wide STO version clock
-bool Transaction::try_commit_tid(tid_type& result) const noexcept {
-    assert(state_ == s_committing_locked || state_ == s_committing);
-    if (commit_tid_) {
-        result = commit_tid_;
-        return true;
-    }
-
-    constexpr tid_type increment = TransactionTid::increment_value;
-    constexpr tid_type maximum = std::numeric_limits<tid_type>::max();
-    tid_type current = __atomic_load_n(&_TID, __ATOMIC_ACQUIRE);
-    while (current != 0 && current <= maximum - increment) {
-        const tid_type next = current + increment;
-        if (__atomic_compare_exchange_n(&_TID, &current, next, false,
-                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-            commit_tid_ = current;
+// @safe: atomically allocates from the process-wide Mako logical clock
+bool Transaction::try_allocate_mako_timestamp(uint32_t& result) noexcept {
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    uint32_t current = clock.load(std::memory_order_acquire);
+    while (current != 0 && current <= max_mako_timestamp) {
+        const uint32_t next = current + 1;
+        if (clock.compare_exchange_weak(current, next,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
             result = current;
             return true;
         }
-        // A failed compare-exchange updates current; retry after rechecking
-        // both the zero sentinel and overflow boundary.
     }
     result = 0;
     return false;
 }
 
-// @unsafe: atomically advances the process-wide STO version clock
-bool Transaction::advance_tid_past(tid_type observed) noexcept {
-    constexpr tid_type increment = TransactionTid::increment_value;
-    constexpr tid_type maximum = std::numeric_limits<tid_type>::max();
-    // Advancing stores observed + increment in _TID, and try_commit_tid must
-    // still be able to mint that value and advance the clock once more. Reject
-    // the recovery boundary before touching the global clock if either
-    // addition would overflow.
-    static_assert(increment <= maximum / 2);
-    if (observed == 0 || observed > maximum - 2 * increment)
+// @safe: assigns one checked nonzero Mako timestamp to this transaction
+bool Transaction::try_assign_mako_timestamp(uint32_t& result) const noexcept {
+    assert(state_ == s_committing_locked || state_ == s_committing);
+    if (tid_unique_) {
+        result = tid_unique_;
+        return true;
+    }
+    if (!try_allocate_mako_timestamp(result))
+        return false;
+    tid_unique_ = result;
+    return true;
+}
+
+// @safe: atomically catches the process-wide Mako clock up to an observation
+void Transaction::observe_mako_timestamp(uint32_t observed) noexcept {
+    const uint32_t desired = observed < max_mako_timestamp
+        ? observed + 1
+        : max_mako_timestamp + 1;
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    uint32_t current = clock.load(std::memory_order_acquire);
+    while (current != 0 && current < desired &&
+           !clock.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+    }
+}
+
+// @safe: atomically advances the process-wide Mako logical clock
+bool Transaction::advance_mako_timestamp_past(uint32_t observed) noexcept {
+    // Store observed + 1, then leave room for that value to be minted while
+    // advancing the counter once more. Zero and max_mako_timestamp + 1 are
+    // permanent sentinels, so recovery cannot revive an exhausted clock.
+    if (observed == 0 || observed >= max_mako_timestamp)
         return false;
 
-    // Preserve the exact congruence of the raw durable TID. In particular, do
-    // not divide by increment: SIMPLE_WORKLOAD historically starts at one,
-    // whereas normal builds start on an increment-aligned value.
-    const tid_type desired = observed + increment;
-    tid_type current = __atomic_load_n(&_TID, __ATOMIC_ACQUIRE);
-    // Zero is the unassigned sentinel and can only appear here if a legacy
-    // unchecked allocator wrapped. Never revive that clock: doing so could
-    // reuse timestamps that were issued before exhaustion.
+    const uint32_t desired = observed + 1;
+    auto& clock = sync_util::sync_logger::local_replica_id;
+    uint32_t current = clock.load(std::memory_order_acquire);
     while (current != 0 && current < desired) {
-        if (__atomic_compare_exchange_n(&_TID, &current, desired, false,
-                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        if (clock.compare_exchange_weak(current, desired,
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
             return true;
-        // current was refreshed by the failed compare-exchange.
     }
-    // A prior caller may already have consumed the final mintable TID. During
-    // recovery this API is called before admitting transaction workers, so a
-    // mintable value observed here remains available to the next commit.
-    return current != 0 && current <= maximum - increment;
+    return current != 0 && current <= max_mako_timestamp;
 }
 
 static void __attribute__((used)) check_static_assertions() {
@@ -397,7 +403,7 @@ uint8_t Transaction::get_current_term() const {
     return current_term_;
 }
 
-// @unsafe: uses __sync_fetch_and_add and TObject::install
+// @unsafe: invokes TObject::install on transaction-owned items
 void Transaction::shard_install(uint32_t timestamp) {
     assert(TThread::id() == threadid_);
 
@@ -405,11 +411,8 @@ void Transaction::shard_install(uint32_t timestamp) {
     TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, timestamp);
     tid_unique_ = timestamp;
 
-    // Update local_id to catch up with single timestamp
-    int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
-    if (delta > 0) {
-        __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
-    }
+    // Floor the process-wide Mako clock past the chosen timestamp.
+    observe_mako_timestamp(tid_unique_);
 
     TransItem* it = nullptr;
     if (tset_size_ == 0) return;
@@ -584,13 +587,13 @@ bool Transaction::try_commit(bool no_paxos,
 #endif
 
 
-    // The hook's timestamp must reflect Silo's serialization order, so mint it
-    // after the entire write set is locked but before validating the read set.
-    // A failed transaction may consume a harmless gap. No cache log position
+    // Allocate the cache record's Mako logical timestamp after the entire
+    // write set is locked but before validating the read set. A failed
+    // transaction may consume a harmless timestamp gap. No cache log position
     // has been assigned yet, so validation failure needs no cancellation slot.
     if (hook != nullptr && nwriteset != 0) {
-        tid_type timestamp = 0;
-        if (!try_commit_tid(timestamp)) {
+        uint32_t timestamp = 0;
+        if (!try_assign_mako_timestamp(timestamp)) {
             if (failure)
                 *failure = preinstall_failure::timestamp_exhausted;
             goto abort;
@@ -598,9 +601,8 @@ bool Transaction::try_commit(bool no_paxos,
     }
 
 #if CONSISTENCY_CHECK
-    // A hooked transaction was assigned above through the overflow-checked CAS
-    // path. Preserve the legacy consistency-check behavior only when no hook
-    // has already cached a TID.
+    // The cache hook now carries Mako's logical timestamp; Silo's independent
+    // version clock retains its legacy consistency-check behavior.
     fence();
     if (!commit_tid_)
         commit_tid();
@@ -609,8 +611,18 @@ bool Transaction::try_commit(bool no_paxos,
 
     if (!no_paxos){
         // Update single timestamp system
-        updateSingleTimestamp(); // Updates tid_unique_ internally
-        // Merge with max timestamp from read set
+        if (!updateSingleTimestamp()) {
+            if (failure)
+                *failure = preinstall_failure::timestamp_exhausted;
+            goto abort;
+        }
+        // Merge with max timestamp from read set. Legacy or corrupt values
+        // outside the checked base domain must not reach u32 term encoding.
+        if (maxTimestampReadSet > max_mako_timestamp) {
+            if (failure)
+                *failure = preinstall_failure::timestamp_exhausted;
+            goto abort;
+        }
         if (maxTimestampReadSet > tid_unique_) {
             tid_unique_ = maxTimestampReadSet;
         }
@@ -660,11 +672,17 @@ bool Transaction::try_commit(bool no_paxos,
     // attaches preallocated storage to the ordered cache log. Rejection is a
     // definite abort because phase3 has not begun.
     if (hook != nullptr && nwriteset != 0 &&
-        !hook(hook_context, commit_tid_)) {
+        !hook(hook_context, tid_unique_)) {
         if (failure)
             *failure = preinstall_failure::hook_rejected;
         goto abort;
     }
+
+    // A remote/read-set maximum may have raised the chosen timestamp above
+    // this coordinator's local ticket. Floor the next-to-return clock before
+    // either phase-3 layout installs the write set.
+    if (nwriteset)
+        observe_mako_timestamp(tid_unique_);
 
     //phase3
 #if STO_SORT_WRITESET
@@ -678,12 +696,6 @@ bool Transaction::try_commit(bool no_paxos,
 #else
     if (nwriteset) {
         auto writeset_end = writeset + nwriteset;
-
-        // Update local_id to catch up with single timestamp
-        int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
-        if (delta > 0) {
-            __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
-        }
 
         for (auto idxit = writeset; idxit != writeset_end; ++idxit) {
             if (likely(*idxit < tset_initial_capacity))

@@ -52,6 +52,11 @@ extern "C" {
 #define MAKO_LOCAL_MAX_KEY_BYTES 1024u
 #define MAKO_LOCAL_MAX_VALUE_BYTES 1048576u
 #define MAKO_LOCAL_TXN_ITEM_BUDGET 512u
+/* Mako's legacy u32 `timestamp * 10 + term` format reserves one decimal digit
+ * for term. This is therefore the largest representable base timestamp when
+ * that distributed-format contract is honored. */
+#define MAKO_LOCAL_MAX_MAKO_TIMESTAMP \
+  ((UINT32_MAX - UINT32_C(9)) / UINT32_C(10))
 
 /* Draft status numbers. Assigned numbers are never renumbered within this
  * revision. A missing key is OK with found_out == 0; it is not a conflict. */
@@ -78,12 +83,13 @@ typedef struct mako_local_table mako_local_table;
 typedef struct mako_local_txn mako_local_txn;
 
 /* Called synchronously after native validation succeeds and before any write
- * is installed. `silo_timestamp` is the raw, nonzero 64-bit STO commit TID.
- * Return nonzero to proceed or zero to abort definitely. The callback runs
- * while Silo write locks are held. It may enter a bounded in-memory critical
- * section, but must not perform I/O, wait for capacity, allocate, or unwind. */
+ * is installed. `mako_timestamp` is the nonzero 32-bit Mako logical timestamp
+ * (`Transaction::tid_unique_`). Return nonzero to proceed or zero to abort
+ * definitely. The callback runs while Silo write locks are held. It may enter
+ * a bounded in-memory critical section, but must not perform I/O, wait for
+ * capacity, allocate, or unwind. */
 typedef int (*mako_local_post_validate_hook)(void *context,
-                                             uint64_t silo_timestamp);
+                                             uint32_t mako_timestamp);
 
 /* Identity and diagnostics. The returned status string is static. */
 uint32_t mako_local_abi_version(void) MAKO_LOCAL_NOEXCEPT;
@@ -94,12 +100,13 @@ const char *mako_local_status_string(int status) MAKO_LOCAL_NOEXCEPT;
  * Idempotent on a thread; returns BUSY if another adapter owns the worker. */
 int mako_local_thread_attach(void) MAKO_LOCAL_NOEXCEPT;
 
-/* Atomically ensure every subsequently minted STO commit TID is greater than
- * `observed`. The argument must be a nonzero raw TID previously supplied to a
- * post-validation hook. This is a monotonic recovery operation: smaller calls
- * never move the clock backward. TIMESTAMP_EXHAUSTED means advancing would not
- * leave at least one representable TID for a subsequent checked commit. */
-int mako_local_advance_commit_tid_past(uint64_t observed)
+/* Atomically ensure every subsequently minted Mako logical timestamp is
+ * greater than `observed`. The argument must be a nonzero timestamp previously
+ * supplied to a post-validation hook. This is a monotonic recovery operation:
+ * smaller calls never move the clock backward. TIMESTAMP_EXHAUSTED means
+ * advancing would not leave at least one representable timestamp for a
+ * subsequent checked commit. Call during recovery before admitting workers. */
+int mako_local_advance_mako_timestamp_past(uint32_t observed)
     MAKO_LOCAL_NOEXCEPT;
 
 /* One local in-memory database facade. Multiple facades share the process STO
@@ -157,8 +164,9 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
  * every later operation returns INTERNAL and nothing retries partial cleanup. */
 int mako_local_txn_commit(mako_local_txn *txn) MAKO_LOCAL_NOEXCEPT;
 /* The hook variant preserves the old commit lifecycle but provides the exact
- * Silo serialization seam needed by a transactional write-back cache. The hook
- * is called exactly once for a validated transaction with writes, and is not
+ * Mako timestamp seam needed by a transactional write-back cache. Native code
+ * assigns the timestamp after locking the complete write set and invokes the
+ * hook exactly once after validation for a transaction with writes. It is not
  * called for a conflict or read-only transaction. A zero return (or a C++
  * exception contained by the bridge) returns COMMIT_HOOK_REJECTED after a
  * definite abort. */

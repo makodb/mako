@@ -26,7 +26,7 @@
 use std::ffi::c_void;
 use std::fmt;
 use std::marker::PhantomData;
-use std::num::NonZeroU64;
+use std::num::NonZeroU32;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
 use std::rc::Rc;
@@ -66,7 +66,7 @@ pub enum Error {
     ValueTooLarge,
     /// The post-validation durability hook rejected the transaction before install.
     CommitHookRejected,
-    /// Silo's process-wide 64-bit commit timestamp space is exhausted.
+    /// Mako's process-wide representable base timestamp space is exhausted.
     TimestampExhausted,
     /// Rust declarations and the linked C++ ABI have different versions.
     AbiMismatch {
@@ -112,7 +112,7 @@ impl fmt::Display for Error {
             Self::CommitHookRejected => {
                 write!(f, "post-validation commit hook rejected the transaction")
             }
-            Self::TimestampExhausted => write!(f, "Silo commit timestamp exhausted"),
+            Self::TimestampExhausted => write!(f, "Mako logical timestamp exhausted"),
             Self::AbiMismatch { expected, found } => write!(
                 f,
                 "mako-local ABI mismatch: Rust expects {expected}, linked C++ reports {found}"
@@ -129,26 +129,32 @@ impl std::error::Error for Error {}
 /// This crate's result type.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// A raw, nonzero 64-bit Silo/STO transaction serialization timestamp.
+/// Largest Mako base timestamp representable by its `timestamp * 10 + term`
+/// encoding when `term` is a decimal digit.
+pub const MAX_MAKO_TIMESTAMP: u32 = sys::MAKO_LOCAL_MAX_MAKO_TIMESTAMP;
+
+/// A nonzero 32-bit Mako logical transaction timestamp.
 ///
-/// This is the exact `Transaction::commit_tid_` value, including its native
-/// spacing. It is distinct from both the cache commit sequence and Mako's
-/// distributed `tid_unique_` timestamp.
+/// This is the exact `Transaction::tid_unique_` value used by Mako's
+/// distributed transaction and replication paths. It is distinct from both
+/// the cache commit sequence and Silo's internal record-version clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct SiloTimestamp(NonZeroU64);
+pub struct MakoTimestamp(NonZeroU32);
 
-impl SiloTimestamp {
-    /// Construct a timestamp, returning `None` for Silo's unassigned sentinel.
-    pub const fn new(raw: u64) -> Option<Self> {
-        match NonZeroU64::new(raw) {
-            Some(raw) => Some(Self(raw)),
+impl MakoTimestamp {
+    /// Construct a timestamp, rejecting Mako's zero sentinel and values outside
+    /// the legacy one-digit-term encoding's base range.
+    pub const fn new(raw: u32) -> Option<Self> {
+        match NonZeroU32::new(raw) {
+            Some(raw) if raw.get() <= MAX_MAKO_TIMESTAMP => Some(Self(raw)),
             None => None,
+            Some(_) => None,
         }
     }
 
-    /// Return the exact raw native TID.
-    pub const fn get(self) -> u64 {
+    /// Return the exact raw native logical timestamp.
+    pub const fn get(self) -> u32 {
         self.0.get()
     }
 }
@@ -284,18 +290,18 @@ fn commit_disposition(code: i32) -> CommitDisposition {
     }
 }
 
-/// Advance Silo's process-wide commit clock past a recovered durable timestamp.
+/// Advance Mako's process-wide logical clock past a durable timestamp.
 ///
 /// This operation is atomic and monotonic and does not require attaching the
 /// calling thread. `observed` must be an exact timestamp previously returned by
-/// a Silo post-validation hook. Calling this before admitting new transactions
+/// a Mako post-validation hook. Calling this before admitting new transactions
 /// prevents timestamp reuse after process recovery. [`Error::TimestampExhausted`]
 /// means advancing would leave no timestamp that a subsequent checked commit
 /// could mint.
-pub fn advance_commit_tid_past(observed: SiloTimestamp) -> Result<()> {
+pub fn advance_mako_timestamp_past(observed: MakoTimestamp) -> Result<()> {
     verify_abi()?;
     // SAFETY: scalar-only process-global monotonic operation.
-    status(unsafe { sys::mako_local_advance_commit_tid_past(observed.get()) })
+    status(unsafe { sys::mako_local_advance_mako_timestamp_past(observed.get()) })
 }
 
 fn attach_current_thread() -> Result<()> {
@@ -596,13 +602,15 @@ impl<'db> Transaction<'db> {
 
     /// Commit with an allocation-free post-validation, pre-install hook.
     ///
-    /// Native Silo assigns the timestamp after locking the full write set and
-    /// before validation. `hook` runs only after validation succeeds, while all
-    /// write locks remain held and before any write becomes visible. It should
-    /// therefore only bind already-owned storage to an already-reserved queue
-    /// slot. It may enter a bounded in-memory critical section, but must not do
-    /// I/O, wait for capacity, allocate, or unwind. Returning `false` definitely
-    /// aborts the transaction with [`Error::CommitHookRejected`].
+    /// Native Mako assigns its logical timestamp after Silo locks the full write
+    /// set and before the remaining read-set validation. `hook` runs only after
+    /// all validation succeeds, while all write locks remain held and before
+    /// any write becomes visible.
+    /// It should therefore only bind already-owned storage to an
+    /// already-reserved queue slot. It may enter a bounded in-memory critical
+    /// section, but must not do I/O, wait for capacity, allocate, or unwind.
+    /// Returning `false` definitely aborts the transaction with
+    /// [`Error::CommitHookRejected`].
     ///
     /// In builds with panic unwinding, a panic is contained inside the Rust
     /// trampoline and treated exactly like `false`. In a `panic = "abort"`
@@ -611,7 +619,7 @@ impl<'db> Transaction<'db> {
     /// Read-only and conflicting transactions do not invoke the hook.
     pub fn commit_report_with_hook<F>(self, hook: F) -> CommitReport
     where
-        F: FnOnce(SiloTimestamp) -> bool,
+        F: FnOnce(MakoTimestamp) -> bool,
     {
         let mut state = PostValidateHook { hook: Some(hook) };
         self.finish_commit(|raw| {
@@ -676,9 +684,9 @@ struct PostValidateHook<F> {
     hook: Option<F>,
 }
 
-unsafe extern "C" fn post_validate_trampoline<F>(context: *mut c_void, raw_timestamp: u64) -> i32
+unsafe extern "C" fn post_validate_trampoline<F>(context: *mut c_void, raw_timestamp: u32) -> i32
 where
-    F: FnOnce(SiloTimestamp) -> bool,
+    F: FnOnce(MakoTimestamp) -> bool,
 {
     if context.is_null() {
         return 0;
@@ -689,7 +697,7 @@ where
     let Some(hook) = state.hook.take() else {
         return 0;
     };
-    let Some(timestamp) = SiloTimestamp::new(raw_timestamp) else {
+    let Some(timestamp) = MakoTimestamp::new(raw_timestamp) else {
         return 0;
     };
     if catch_unwind(AssertUnwindSafe(|| hook(timestamp))).unwrap_or(false) {
@@ -728,9 +736,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn silo_timestamp_reserves_zero_as_unassigned() {
-        assert_eq!(SiloTimestamp::new(0), None);
-        assert_eq!(SiloTimestamp::new(1).map(SiloTimestamp::get), Some(1));
+    fn mako_timestamp_reserves_zero_as_unassigned() {
+        assert_eq!(MakoTimestamp::new(0), None);
+        assert_eq!(MakoTimestamp::new(1).map(MakoTimestamp::get), Some(1));
+        assert_eq!(
+            MakoTimestamp::new(MAX_MAKO_TIMESTAMP).map(MakoTimestamp::get),
+            Some(MAX_MAKO_TIMESTAMP)
+        );
+        assert_eq!(MakoTimestamp::new(MAX_MAKO_TIMESTAMP + 1), None);
+        assert_eq!(MakoTimestamp::new(u32::MAX), None);
     }
 
     #[test]

@@ -4,7 +4,8 @@ use std::sync::{mpsc, Arc, Barrier};
 use std::time::Duration;
 
 use mako_local::{
-    advance_commit_tid_past, features, CommitDisposition, Error, LocalDb, SiloTimestamp,
+    advance_mako_timestamp_past, features, CommitDisposition, Error, LocalDb, MakoTimestamp,
+    MAX_MAKO_TIMESTAMP,
 };
 
 #[test]
@@ -37,15 +38,15 @@ fn detailed_commit_reports_visibility_before_cleanup() {
 }
 
 #[test]
-fn post_validation_hook_carries_timestamp_and_can_reject_safely() {
+fn post_validation_hook_carries_mako_timestamp_and_can_reject_safely() {
     let db = LocalDb::open().unwrap();
     let table = db.open_table("rust_commit_hook", 20_011).unwrap();
     assert_eq!(
-        advance_commit_tid_past(SiloTimestamp::new(u64::MAX).unwrap()),
+        advance_mako_timestamp_past(MakoTimestamp::new(MAX_MAKO_TIMESTAMP).unwrap()),
         Err(Error::TimestampExhausted)
     );
-    let recovered_max = SiloTimestamp::new(1_u64 << 48).unwrap();
-    advance_commit_tid_past(recovered_max).unwrap();
+    let recovered_max = MakoTimestamp::new(1_u32 << 24).unwrap();
+    advance_mako_timestamp_past(recovered_max).unwrap();
 
     let mut seen = None;
     let mut tx = db.transaction().unwrap();

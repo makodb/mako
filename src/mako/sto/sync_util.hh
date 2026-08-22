@@ -31,7 +31,10 @@ namespace sync_util {
         static bool is_leader;
         static string cluster;
         static transport::Configuration *config;
-        static int local_replica_id; // local server incremental id
+        // Process-wide next-to-return Mako logical clock. Zero is invalid and
+        // max_mako_timestamp + 1 denotes exhaustion; allocation is centralized
+        // in Transaction.
+        static std::atomic<uint32_t> local_replica_id;
 
         // https://en.cppreference.com/w/cpp/thread/condition_variable
         static bool toLeader;

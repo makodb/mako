@@ -2,10 +2,11 @@
 //!
 //! Before entering native commit, a transaction prepares its complete record
 //! and claims bounded queue capacity, but it does not yet receive a cache
-//! sequence or occupy an ordered slot. After Silo has locked and validated the
-//! transaction, [`DetachedPermit::bind`] attaches that preallocated record to
-//! the ordered queue and records Silo's native serialization timestamp. The
-//! hook-time operation is allocation-free and never performs backend IO.
+//! sequence or occupy an ordered slot. After Mako has chosen the transaction's
+//! logical timestamp and native validation has succeeded,
+//! [`DetachedPermit::bind`] attaches that preallocated record to the ordered
+//! queue and records that Mako timestamp. The hook-time operation is
+//! allocation-free and never performs backend IO.
 //!
 //! A bound slot remains Prepared until native commit returns successfully.
 //! Publishing then finalizes the checksum outside Silo's lock critical section
@@ -18,7 +19,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
-use mako_local::SiloTimestamp;
+use mako_local::MakoTimestamp;
 use mrx_core::{BlobError, Blobs};
 
 use crate::record::{
@@ -696,7 +697,7 @@ pub struct DetachedPermit<'a, B: Blobs> {
 impl<'a, B: Blobs> DetachedPermit<'a, B> {
     /// Bind this record in Silo's post-validation, pre-install hook.
     ///
-    /// This assigns the next cache sequence, embeds Silo's native serialization
+    /// This assigns the next cache sequence, embeds Mako's transaction
     /// timestamp, and appends one Prepared slot. The method performs no heap
     /// allocation, capacity wait, backend IO, or record-length work. It can
     /// reject the transaction if an earlier commit became ambiguous after this
@@ -708,7 +709,7 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
     #[must_use = "a bound native commit must be published or pinned unknown"]
     pub fn bind(
         &mut self,
-        timestamp: SiloTimestamp,
+        mako_timestamp: MakoTimestamp,
     ) -> Result<BoundReservation<'a, B>, ReserveError> {
         let mut state = lock_recover(&self.owner.state);
         if let Some(sequence) = state.first_unknown {
@@ -731,7 +732,7 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
             .record
             .take()
             .expect("a detached permit owns one preallocated record cell");
-        let bound = prepared.bind(sequence, timestamp);
+        let bound = prepared.bind(sequence, mako_timestamp);
 
         // Queue storage and the record cell were both preallocated before
         // native commit. Since detached claims count against capacity, this
@@ -940,13 +941,13 @@ mod tests {
 
     fn bind<'a, B: Blobs>(
         mut permit: DetachedPermit<'a, B>,
-        timestamp: u64,
+        mako_timestamp: u32,
     ) -> BoundReservation<'a, B> {
-        permit.bind(timestamp_of(timestamp)).unwrap()
+        permit.bind(mako_timestamp_of(mako_timestamp)).unwrap()
     }
 
-    fn timestamp_of(raw: u64) -> SiloTimestamp {
-        SiloTimestamp::new(raw).expect("test timestamps are nonzero")
+    fn mako_timestamp_of(raw: u32) -> MakoTimestamp {
+        MakoTimestamp::new(raw).expect("test Mako timestamps are nonzero")
     }
 
     #[test]
@@ -957,7 +958,7 @@ mod tests {
         writeback
             .reserve(vec![put(b"a", b"one"), delete(b"b")])
             .unwrap()
-            .bind(timestamp_of(11))
+            .bind(mako_timestamp_of(11))
             .unwrap()
             .publish()
             .unwrap();
@@ -978,7 +979,7 @@ mod tests {
         writeback
             .reserve(vec![put(b"a", b"one"), put(b"b", b"two")])
             .unwrap()
-            .bind(timestamp_of(12))
+            .bind(mako_timestamp_of(12))
             .unwrap()
             .publish()
             .unwrap();
@@ -1167,7 +1168,7 @@ mod tests {
             .record
             .get()
             .expect("Drop finalized and retained the ambiguous write set");
-        assert_eq!(record.timestamp(), timestamp_of(43));
+        assert_eq!(record.mako_timestamp(), mako_timestamp_of(43));
     }
 
     #[test]
@@ -1179,7 +1180,7 @@ mod tests {
         bind(first, 45).pin_unknown().unwrap();
 
         assert!(matches!(
-            detached_before_unknown.bind(timestamp_of(46)),
+            detached_before_unknown.bind(mako_timestamp_of(46)),
             Err(ReserveError::UnknownOutcome { sequence }) if sequence.get() == 1
         ));
         assert!(
@@ -1257,7 +1258,7 @@ mod tests {
         writeback
             .reserve(vec![put(b"a", b"one")])
             .unwrap()
-            .bind(timestamp_of(71))
+            .bind(mako_timestamp_of(71))
             .unwrap()
             .publish()
             .unwrap();
@@ -1304,7 +1305,7 @@ mod tests {
         writeback
             .reserve(vec![put(b"a", b"one")])
             .unwrap()
-            .bind(timestamp_of(81))
+            .bind(mako_timestamp_of(81))
             .unwrap()
             .publish()
             .unwrap();
@@ -1470,7 +1471,7 @@ mod tests {
         writeback
             .reserve(vec![put(b"a", b"one")])
             .unwrap()
-            .bind(timestamp_of(101))
+            .bind(mako_timestamp_of(101))
             .unwrap()
             .publish()
             .unwrap();

@@ -19,6 +19,8 @@ pub const MAKO_LOCAL_MAX_TABLE_NAME_BYTES: usize = 1024;
 pub const MAKO_LOCAL_MAX_KEY_BYTES: usize = 1024;
 pub const MAKO_LOCAL_MAX_VALUE_BYTES: usize = 1_048_576;
 pub const MAKO_LOCAL_TXN_ITEM_BUDGET: usize = 512;
+/// Largest base timestamp in Mako's legacy one-digit-term u32 encoding.
+pub const MAKO_LOCAL_MAX_MAKO_TIMESTAMP: u32 = (u32::MAX - 9) / 10;
 
 pub const MAKO_LOCAL_OK: c_int = 0;
 pub const MAKO_LOCAL_CONFLICT: c_int = 1;
@@ -41,12 +43,12 @@ pub const MAKO_LOCAL_TIMESTAMP_EXHAUSTED: c_int = 16;
 /// Synchronous post-validation, pre-install callback.
 ///
 /// Returning zero definitely aborts the transaction; a nonzero result permits
-/// native installation to proceed. The timestamp is a raw nonzero STO TID. The
-/// callback runs while Silo write locks are held: it may enter a bounded
-/// in-memory critical section, but must not perform I/O, wait for capacity,
-/// allocate, or unwind.
+/// native installation to proceed. The timestamp is Mako's nonzero 32-bit
+/// logical timestamp. The callback runs while Silo write locks are held: it may
+/// enter a bounded in-memory critical section, but must not perform I/O, wait
+/// for capacity, allocate, or unwind.
 pub type mako_local_post_validate_hook =
-    Option<unsafe extern "C" fn(context: *mut c_void, silo_timestamp: u64) -> c_int>;
+    Option<unsafe extern "C" fn(context: *mut c_void, mako_timestamp: u32) -> c_int>;
 
 /// Opaque local database handle.
 #[repr(C)]
@@ -71,7 +73,7 @@ extern "C" {
     pub fn mako_local_feature_bits() -> u64;
     pub fn mako_local_status_string(status: c_int) -> *const c_char;
     pub fn mako_local_thread_attach() -> c_int;
-    pub fn mako_local_advance_commit_tid_past(observed: u64) -> c_int;
+    pub fn mako_local_advance_mako_timestamp_past(observed: u32) -> c_int;
 
     pub fn mako_local_db_open(out: *mut *mut mako_local_db) -> c_int;
     pub fn mako_local_db_close(db: *mut mako_local_db) -> c_int;

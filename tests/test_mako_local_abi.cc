@@ -21,22 +21,22 @@ std::atomic<uint64_t> next_table_id{10000};
 
 struct HookObservation {
   int calls = 0;
-  uint64_t timestamp = 0;
+  uint32_t timestamp = 0;
 };
 
-int accept_hook(void *context, uint64_t timestamp) {
+int accept_hook(void *context, uint32_t timestamp) {
   auto *observation = static_cast<HookObservation *>(context);
   observation->calls++;
   observation->timestamp = timestamp;
   return 1;
 }
 
-int reject_hook(void *context, uint64_t timestamp) {
+int reject_hook(void *context, uint32_t timestamp) {
   accept_hook(context, timestamp);
   return 0;
 }
 
-int throwing_hook(void *, uint64_t) {
+int throwing_hook(void *, uint32_t) {
   throw 7;
 }
 
@@ -140,15 +140,18 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_COMMIT_HOOK_REJECTED),
                "post-validation commit hook rejected transaction");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_TIMESTAMP_EXHAUSTED),
-               "STO commit timestamp exhausted");
-  EXPECT_EQ(mako_local_advance_commit_tid_past(0),
+               "Mako logical timestamp exhausted");
+  EXPECT_EQ(mako_local_advance_mako_timestamp_past(0),
             MAKO_LOCAL_INVALID_ARGUMENT);
-  EXPECT_EQ(mako_local_advance_commit_tid_past(UINT64_MAX),
+  EXPECT_EQ(mako_local_advance_mako_timestamp_past(UINT32_MAX),
             MAKO_LOCAL_TIMESTAMP_EXHAUSTED);
-  constexpr uint64_t first_unrecoverable =
-      std::numeric_limits<uint64_t>::max() -
-      2 * TransactionTid::increment_value + 1;
-  EXPECT_EQ(mako_local_advance_commit_tid_past(first_unrecoverable),
+  static_assert(MAKO_LOCAL_MAX_MAKO_TIMESTAMP ==
+                (std::numeric_limits<uint32_t>::max() - 9) / 10);
+  EXPECT_EQ(mako_local_advance_mako_timestamp_past(
+                MAKO_LOCAL_MAX_MAKO_TIMESTAMP),
+            MAKO_LOCAL_TIMESTAMP_EXHAUSTED);
+  EXPECT_EQ(mako_local_advance_mako_timestamp_past(
+                MAKO_LOCAL_MAX_MAKO_TIMESTAMP + 1),
             MAKO_LOCAL_TIMESTAMP_EXHAUSTED);
   EXPECT_EQ(mako_local_db_open(nullptr), MAKO_LOCAL_INVALID_ARGUMENT);
 
@@ -165,6 +168,23 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
                                &result),
             MAKO_LOCAL_INVALID_ARGUMENT);
   EXPECT_EQ(result, 0);
+}
+
+TEST(MakoLocalAbiIdentity, RecoveryLeavesTheFinalTimestampMintable) {
+  auto &clock = sync_util::sync_logger::local_replica_id;
+  const uint32_t saved = clock.exchange(1, std::memory_order_acq_rel);
+
+  EXPECT_EQ(mako_local_advance_mako_timestamp_past(
+                MAKO_LOCAL_MAX_MAKO_TIMESTAMP - 1),
+            MAKO_LOCAL_OK);
+  uint32_t timestamp = 0;
+  EXPECT_TRUE(Transaction::try_allocate_mako_timestamp(timestamp));
+  EXPECT_EQ(timestamp, MAKO_LOCAL_MAX_MAKO_TIMESTAMP);
+  EXPECT_FALSE(Transaction::try_allocate_mako_timestamp(timestamp));
+  EXPECT_EQ(timestamp, 0U);
+
+  // This test owns the clock exclusively; restore the suite's real progress.
+  clock.store(saved, std::memory_order_release);
 }
 
 TEST_F(LocalAbiTest, MultiKeyMultiTableCommitIsVisibleTogether) {
@@ -190,9 +210,10 @@ TEST_F(LocalAbiTest, MultiKeyMultiTableCommitIsVisibleTogether) {
   commit_and_destroy(txn);
 }
 
-TEST_F(LocalAbiTest, PostValidationHookCarriesRealMonotonicSiloTid) {
-  constexpr uint64_t recovered_max = UINT64_C(1) << 48;
-  ASSERT_EQ(mako_local_advance_commit_tid_past(recovered_max), MAKO_LOCAL_OK);
+TEST_F(LocalAbiTest, PostValidationHookCarriesMonotonicMakoTimestamp) {
+  constexpr uint32_t recovered_max = UINT32_C(1) << 24;
+  ASSERT_EQ(mako_local_advance_mako_timestamp_past(recovered_max),
+            MAKO_LOCAL_OK);
 
   HookObservation first;
   auto *txn = begin();
@@ -202,6 +223,7 @@ TEST_F(LocalAbiTest, PostValidationHookCarriesRealMonotonicSiloTid) {
   destroy_tracked(txn);
   EXPECT_EQ(first.calls, 1);
   EXPECT_GT(first.timestamp, recovered_max);
+  EXPECT_LE(first.timestamp, MAKO_LOCAL_MAX_MAKO_TIMESTAMP);
 
   HookObservation second;
   txn = begin();
@@ -213,7 +235,8 @@ TEST_F(LocalAbiTest, PostValidationHookCarriesRealMonotonicSiloTid) {
   EXPECT_GT(second.timestamp, first.timestamp);
 
   // Advancing to a smaller observed value is monotonic and harmless.
-  EXPECT_EQ(mako_local_advance_commit_tid_past(first.timestamp), MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_local_advance_mako_timestamp_past(first.timestamp),
+            MAKO_LOCAL_OK);
 
   HookObservation read_only;
   txn = begin();

@@ -57,6 +57,9 @@ struct mako_local_txn {
 
 namespace {
 
+static_assert(MAKO_LOCAL_MAX_MAKO_TIMESTAMP ==
+              Transaction::max_mako_timestamp);
+
 thread_local bool local_attached = false;
 thread_local mako_local_txn *local_active_txn = nullptr;
 
@@ -142,7 +145,7 @@ struct post_validate_bridge {
 };
 
 bool invoke_post_validate_hook(void *opaque,
-                               Transaction::tid_type timestamp) noexcept {
+                               uint32_t timestamp) noexcept {
   auto *bridge = static_cast<post_validate_bridge *>(opaque);
   try {
     return bridge->hook(bridge->context, timestamp) != 0;
@@ -197,14 +200,14 @@ const char *mako_local_status_string(int status) noexcept {
     case MAKO_LOCAL_COMMIT_HOOK_REJECTED:
       return "post-validation commit hook rejected transaction";
     case MAKO_LOCAL_TIMESTAMP_EXHAUSTED:
-      return "STO commit timestamp exhausted";
+      return "Mako logical timestamp exhausted";
     default: return "unknown mako-local status";
   }
 }
 
-int mako_local_advance_commit_tid_past(uint64_t observed) noexcept {
+int mako_local_advance_mako_timestamp_past(uint32_t observed) noexcept {
   if (observed == 0) return MAKO_LOCAL_INVALID_ARGUMENT;
-  return Transaction::advance_tid_past(observed)
+  return Transaction::advance_mako_timestamp_past(observed)
              ? MAKO_LOCAL_OK
              : MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
 }
