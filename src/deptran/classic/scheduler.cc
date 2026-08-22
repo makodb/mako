@@ -327,10 +327,8 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
   auto tx_id = tpc_commit_cmd.tx_id_;
   // Log_info("[EXECUTION] CommitReplicated called for tx_id: {} (This is actual execution)", tx_id);
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
-  /**
-   * In Copilot, the same cmd commits twice, one in pilot log, another
-   * in copilot log. Must omit the second attempt to commit
-   */
+  // Replicated logs can deliver a command more than once. Keep commit
+  // application idempotent after the first result becomes visible.
   if (sp_tx->commit_result->is_ready())
     return 0;
   int commit_or_abort = tpc_commit_cmd.ret_;

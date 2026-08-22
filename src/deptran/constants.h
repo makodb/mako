@@ -86,7 +86,7 @@ namespace janus {
 #define MODE_TROAD    (0x03)
 #define MODE_RPC_NULL   (0x800)
 #define MODE_NOTX   (0x1000)
-#define MODE_NONE_COPILOT (0x18)
+// 0x18 is reserved for compatibility with the retired None-Copilot adapter.
 
     // deprecated.
 #define MODE_DEPTRAN (4)
@@ -98,7 +98,7 @@ namespace janus {
 #define MODE_TAPIR         (0x100)
 #define MODE_RAFT (0x400)
 // 0x401 is reserved for compatibility with the retired FPGA-Raft protocol.
-#define MODE_COPILOT        (0x4000)
+// 0x4000 is reserved for compatibility with the retired Copilot protocol.
 #define MODE_NOT_READY     (0x00)
 
 #define OP_IR   (0x1)
@@ -131,8 +131,6 @@ namespace janus {
 #define YES (1)
 #define NO  (0)
 
-// #define COPILOT_DEBUG
-// #define COPILOT_TIME_DEBUG
 // #define FINISH_COUNTDOWN_MAX (1)
 // #define TC
 

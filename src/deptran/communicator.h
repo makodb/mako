@@ -338,7 +338,6 @@ class Communicator {
   const int CONNECT_SLEEP_MS = 1000;
   rusty::Option<rusty::Arc<rrr::PollThread>> rpc_poll_;
   bool owns_poll_thread_ = false;  // True if we created the poll thread, false if passed in
-  TxLogServer *rep_sched_ = nullptr;  // Jetpack protocols (Copilot) need direct scheduler access
   locid_t loc_id_ = -1;
   map<siteid_t, rusty::Arc<rrr::Client>> rpc_clients_{};
   map<siteid_t, ClassicProxy *> rpc_proxies_{};

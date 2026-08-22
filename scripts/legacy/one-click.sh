@@ -33,11 +33,9 @@ if [ $is_rw -eq 1 ]
 then  # for rw
   echo "using rw..."
   SLOW_CONCURRENT_RAFT=340
-  SLOW_CONCURRENT_COPILOT=40
 else
   echo "using tpca"
   SLOW_CONCURRENT_RAFT=200
-  SLOW_CONCURRENT_COPILOT=12
 fi
 
 
@@ -45,8 +43,6 @@ fi
 # please keep same as the variable in ./data_processing/processing.py
 FIGURE5a_TARIALS=3
 FIGURE5b_TARIALS=3
-FIGURE6a_TARIALS=3
-FIGURE6b_TARIALS=3
 ulimit -n 10000
 LOG_FILE="${REPO_ROOT}/log.txt"
 echo "" > $LOG_FILE
@@ -219,110 +215,6 @@ experiment5b() {
     done
 }
 
-# figure6a:
-#  1. 3 replica setting on copilot
-#  2. no slowdown
-#  3. fix # of client and then vary # of concurrent
-experiment6a() {
-  suffix=_$1
-  mkdir -p ./figure6a$suffix
-  rm -rf ./figure6a$suffix/*
-
-  rm -rf ./results
-  if [ $is_rw -eq 1 ]
-  then
-    conc=( 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 ) # for rw
-  else
-    conc=( 1 2 4 6 8 10 12 14 16 18 20 )
-  fi
-
-  for i in "${conc[@]}"
-  do
-    mkdir results
-    cmd="${SCRIPT_DIR}/start-exp.sh testname $TUPT_DUR 0 3 follower 10 $i copilot nonlocal &"
-    if [ $ONLY_CMD -eq 1 ]
-    then
-      echo $cmd
-    else
-      setup
-      eval $cmd
-      timeout_process "$cmd" $TUPT_DUR_EXP 1
-      # if error detected, re-run it
-      if ! ag $TPS ./log; then
-	echo "[$(date)]not TPS\n " >> $LOG_FILE
-	setup
-        eval $cmd
-        timeout_process "$cmd" $TUPT_DUR_EXP 0
-      fi
-      ag $TPS ./log >> $LOG_FILE
-    fi
-    mv results ./figure6a$suffix/results_$i
-    cp -r log ./figure6a$suffix/log_$i
-  done
-}
-
-# figure6b:
-#  1. 3-replica setting on copilot
-#  2. slowdown type: 1, 2, 5, 6
-#  3. on follower and leader
-experiment6b() {
-  suffix=_$1
-  mkdir -p ./figure6b$suffix
-  rm -rf ./figure6b$suffix/*
-
-  rm -rf ./results
-  exp=( 1 2 5 6 )
-  # on the leader
-  for i in "${exp[@]}"
-  do
-    mkdir results
-    cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 3 leader 10 4 copilot nonlocal &"
-    if [ $ONLY_CMD -eq 1 ]
-    then
-      echo $cmd
-    else
-      setup
-      eval $cmd
-      timeout_process "$cmd" $SLOWDOWN_DUR_EXP 1
-      # if error detected, re-run it
-      if ! ag $TPS ./log; then
-        echo "[$(date)]not TPS\n " >> $LOG_FILE
-        setup
-        eval $cmd
-        timeout_process "$cmd" $SLOWDOWN_DUR_EXP 0
-      fi
-      ag $TPS ./log >> $LOG_FILE
-    fi
-    mv results ./figure6b$suffix/results_leader_$i
-    cp -r log ./figure6b$suffix/log_leader_$i
-  done
-
-  # on the follower
-  for i in "${exp[@]}"
-  do
-    mkdir results
-    cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 3 follower 10 4 copilot nonlocal &"
-    if [ $ONLY_CMD -eq 1 ]
-    then
-      echo $cmd
-    else
-      setup
-      eval $cmd
-      timeout_process "$cmd" $SLOWDOWN_DUR_EXP 1
-      # if error detected, re-run it
-      if ! ag $TPS ./log; then
-	echo "[$(date)]not TPS\n " >> $LOG_FILE
-	setup
-        eval $cmd
-        timeout_process "$cmd" $SLOWDOWN_DUR_EXP 0
-      fi
-      ag $TPS ./log >> $LOG_FILE
-    fi
-    mv results ./figure6b$suffix/results_follower_$i
-    cp -r log ./figure6b$suffix/log_follower_$i
-  done
-}
-
 setup
 if [ $ONLY_CMD -eq 0 ]
 then
@@ -337,16 +229,6 @@ done
 for (( c=1; c<=$FIGURE5b_TARIALS; c++ )); do
   experiment5b $c
   echo -e "experiment-5b\n"
-done
-
-for (( c=1; c<=$FIGURE6a_TARIALS; c++ )); do
-  experiment6a $c
-  echo -e "experiment-6a\n"
-done
-
-for (( c=1; c<=$FIGURE6b_TARIALS; c++ )); do
-  experiment6b $c
-  echo -e "experiment-6b\n"
 done
 
 # draw figures

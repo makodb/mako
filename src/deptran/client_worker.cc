@@ -270,9 +270,6 @@ void ClientWorker::Work() {
 #ifdef DB_CHECKSUM
       auto read_end_time = end_time + 20 * pow(10, 6);
 #endif
-#ifdef COPILOT_DEBUG
-      end_time = beg_time + duration * 5 * pow(10, 2);
-#endif
       while (true) {
         auto cur_time = Time::now(false);
 #ifndef DB_CHECKSUM

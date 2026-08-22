@@ -12,9 +12,6 @@
 #include "rcc/coord.h"
 #include "occ/tx.h"
 #include "occ/coordinator.h"
-#include "none_copilot/commo.h"
-#include "none_copilot/scheduler.h"
-
 #include "benchmark_registry.h"
 
 #include "occ/scheduler.h"
@@ -44,7 +41,6 @@ Frame* Frame::GetFrame(int mode, int replica_mode) {
   // some built-in mode
   switch (mode) {
     case MODE_NONE:
-    case MODE_NONE_COPILOT:
     case MODE_NOTX:
     case MODE_MDCC:
     case MODE_OCC:
@@ -153,7 +149,6 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
 //      coo = (Coordinator*)new mdcc::MdccCoordinator(coo_id, id, config, ccsi);
       break;
     case MODE_NONE:
-    case MODE_NONE_COPILOT:
     default:
       coo = new CoordinatorNone(coo_id,
                           benchmark,
@@ -248,31 +243,24 @@ TxLogServer* Frame::CreateScheduler() {
   Log_info("enter CreateScheduler, mode={}", Config::GetConfig()->tx_proto_);
   auto mode = Config::GetConfig()->tx_proto_;
   TxLogServer *sch = nullptr;
-  if (Config::GetConfig()->replica_proto_ == MODE_COPILOT) {
-    sch = new SchedulerNoneCopilot();
-  } else {
-    switch(mode) {
-      case MODE_OCC:
-        sch = new SchedulerOcc();
-        break;
-      case MODE_MDCC:
-  //      sch = new mdcc::MdccScheduler();
-        break;
-      case MODE_NOTX:
-      case MODE_NONE:
-        sch = new SchedulerNone();
-        break;
-      case MODE_NONE_COPILOT:
-        sch = new SchedulerNoneCopilot();
-        break;
-      case MODE_RPC_NULL:
-      case MODE_RCC:
-        verify(0);
-        break;
-      default:
-        verify(0);
-  //      sch = new CustomSched();
-    }
+  switch(mode) {
+    case MODE_OCC:
+      sch = new SchedulerOcc();
+      break;
+    case MODE_MDCC:
+//      sch = new mdcc::MdccScheduler();
+      break;
+    case MODE_NOTX:
+    case MODE_NONE:
+      sch = new SchedulerNone();
+      break;
+    case MODE_RPC_NULL:
+    case MODE_RCC:
+      verify(0);
+      break;
+    default:
+      verify(0);
+//      sch = new CustomSched();
   }
   
   verify(sch);
@@ -311,7 +299,6 @@ vector<rrr::ServiceProxy> Frame::CreateRpcServices(uint32_t site_id,
 map<string, int> &Frame::FrameNameToMode() {
   static map<string, int> frame_name_mode_s = {
       {"none",          MODE_NONE},
-      {"none_copilot",  MODE_NONE_COPILOT},
       {"occ",           MODE_OCC},
       {"notx",          MODE_NOTX},
       {"rpc_null",      MODE_RPC_NULL},

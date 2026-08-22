@@ -15,7 +15,6 @@
 #include "service.h"
 #include "rcc/server.h"
 #include "scheduler.h"
-#include "../bench/rw/workload.h" //<copilot+ kv debug>
 
 namespace janus {
 void ClassicServiceImpl::ReElect(const ClassicService::RpcReElectRequest& req, ClassicService::RpcReElectResponse& resp, rrr::DeferredReply defer) {
@@ -204,14 +203,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   Log_info("[Jetpack] cmd<{}, {}> entered ClassicServiceImpl::Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);
 #endif
 
-#ifdef COPILOT_TIME_DEBUG
-  struct timeval tp;
-  gettimeofday(&tp, NULL);
-  Log_info("[Jetpack] [C+] Received Dispatch {:.3f}", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
-#endif
-
   Log_debug("The server side receives a message from the client worker");
-  // Log_info("[copilot+] [1+] enter ClassicServiceImpl::Dispatch");
 
 #ifdef PIECE_COUNT
   piece_count_key_t piece_count_key =
@@ -277,7 +269,6 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   // auto sched = (SchedulerClassic*) dtxn_sched_;
   // auto tx = dynamic_pointer_cast<TxClassic>(sched->GetOrCreateTx(cmd_id));
 	// func();
-  // Log_info("[copilot+] [1-] exit ClassicServiceImpl::Dispatch");
 }
 
 

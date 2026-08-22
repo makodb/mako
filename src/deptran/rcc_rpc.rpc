@@ -135,45 +135,6 @@ abstract service Raft {
 
 }
 
-abstract service Copilot {
-  // removed `Forward(Command cmd);`
-  // RPC declaration — no sender anywhere in the tree (no
-  // `CopilotCommo::SendForward`, no `async_Forward(...)` call site).
-  // The matching `CopilotServiceImpl::Forward` and
-  // `CopilotServer::OnForward` handlers were therefore unreachable.
-
-  defer Prepare(uint8_t is_pilot,
-                uint64_t slot,
-                ballot_t ballot,
-                DepId dep_id |
-                Command ret_cmd,
-                ballot_t max_ballot,
-                uint64_t dep,
-                status_t status);
-
-  defer FastAccept(uint8_t is_pilot,
-                   uint64_t slot,
-                   ballot_t ballot,
-                   uint64_t dep,
-                   Command cmd,
-                   DepId dep_id |
-                   ballot_t max_ballot,
-                   uint64_t ret_dep);
-
-  defer Accept(uint8_t is_pilot,
-               uint64_t slot,
-               ballot_t ballot,
-               uint64_t dep,
-               Command cmd,
-               DepId dep_id |
-               ballot_t max_ballot);
-
-  defer Commit(uint8_t is_pilot,
-               uint64_t slot,
-               uint64_t dep,
-               Command cmd);
-}
-
 // Classic prepare/commit RPCs.
 abstract service Classic {
   defer MsgString(string arg | string ret);

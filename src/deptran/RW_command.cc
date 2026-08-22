@@ -12,7 +12,6 @@ namespace janus {
 static int volatile x = rrr::SerializableRegistry::reg<SimpleRWCommand>(SimpleRWCommand::static_kind());
 
 SimpleRWCommand::SimpleRWCommand() {
-  //Log_info("[copilot+] SimpleRWCommand Empty created");
   type_ = RW_BENCHMARK_NOOP;
   key_ = 0;
   value_ = 0;
@@ -89,8 +88,6 @@ SimpleRWCommand::SimpleRWCommand(const SimpleCommand& cmd) {
 
 
 string SimpleRWCommand::cmd_to_string() {
-  //Log_info("[copilot+] enter cmd_to_string of {}", (void*)(this));
-  //Log_info("[copilot+] cmd_type={}", type_);
   if (RW_BENCHMARK_NOOP == type_)
     return string("NoOp k=" + to_string(key_));
   else if (RW_BENCHMARK_R_TXN == type_)

@@ -613,7 +613,7 @@ int main(int argc, char *argv[]) {
   if (!client_infos.empty()) {
     //client_setup_heartbeat(client_infos.size());
 #ifdef AWS
-    sleep(15); // [JetPack] This is add for aws server test, otherwise client may start when server not ready (like *** verify failed: commo_ != nullptr at ../src/deptran/copilot/frame.cc, line 82)
+    sleep(15); // Give remote servers time to initialize before starting clients.
 #endif
     Log_info("!!!!!!!!!!!!! before client_launch_workers(client_infos);");
     client_launch_workers(client_infos);

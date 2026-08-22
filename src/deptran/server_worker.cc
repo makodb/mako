@@ -287,7 +287,6 @@ void ServerWorker::SetupCommo() {
     verify(rep_commo_ != nullptr);
     rep_sched_->commo_ = rep_commo_;
     verify(rep_sched_->commo_ != nullptr);
-    rep_commo_->rep_sched_ = rep_sched_;
   }
 
   Reactor::get_reactor()->server_id_.set(site_info_->id);

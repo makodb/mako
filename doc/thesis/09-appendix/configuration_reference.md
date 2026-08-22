@@ -34,9 +34,10 @@ ongoing: 1
 | `none_raft.yml` | `none` | `raft` | Testing without CC |
 | `notx_raft.yml` | `notx` | `raft` | No transactions |
 
-The former Rule mode and FPGA-Raft variant are retired. The generic Jetpack
-recovery subsystem remains legacy code pending a separate audit and is not a
-supported configuration.
+The former Rule mode, FPGA-Raft variant, Copilot protocol, and its
+`none_copilot` adapter are retired. The generic Jetpack recovery subsystem
+remains legacy code pending a separate audit and is not a supported
+configuration.
 
 ### 1.4 Mode Config Fields
 

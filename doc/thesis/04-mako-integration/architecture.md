@@ -68,7 +68,7 @@ layer** (`replication_helper.{h,cc}`) sits between Mako and two parallel
          v                                 v
 +----------------------------+  +----------------------------+
 |   Paxos Protocol Layer     |  |   Raft Protocol Layer      |
-|   (Multi-Paxos/copilot)    |  |   (RaftServer, RaftCommo)  |
+|      (Multi-Paxos)         |  |   (RaftServer, RaftCommo)  |
 +----------------------------+  +----------------------------+
 ```
 

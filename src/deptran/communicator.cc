@@ -517,12 +517,6 @@ void Communicator::BroadcastDispatch(
   di.str = "dep";
   di.id = Communicator::global_id++;
 
-#ifdef COPILOT_TIME_DEBUG
-  struct timeval tp;
-  gettimeofday(&tp, NULL);
-  Log_info("[Jetpack] [C-] BroadcastDispatch at Communicator {:.3f}", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
-#endif
-
   WAN_WAIT;
 #ifdef FULL_LOG_DEBUG
   Log_info("[Jetpack] cmd<{}, {}> before async_Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);

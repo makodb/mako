@@ -11,7 +11,6 @@ run_app_     = "build/deptran_server"
 config_path_ = "config/"
 
 modes_ = [
-    "none_copilot",
     "none_raft"
 ]
 sites_ = [
