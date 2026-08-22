@@ -1121,7 +1121,7 @@ void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
                new_leader, site_id_, should_be_leader);
       
       // Demote immediately if the recovery view picked a different leader
-      if ((config->replica_proto_ == MODE_RAFT || config->replica_proto_ == MODE_FPGA_RAFT) && rep_sched_) {
+      if (config->replica_proto_ == MODE_RAFT && rep_sched_) {
         if (auto* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
           if (new_leader != raft_server->site_id_ && raft_server->IsLeader()) {
             Log_info("[JETPACK-VIEW-UPDATE] Stepping down due to BeginRecovery view update; new leader={}", new_leader);

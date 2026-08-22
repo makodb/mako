@@ -25,7 +25,6 @@
 namespace janus {
 
 Frame* CreateRaftFrameBuiltin(int mode);
-Frame* CreateFpgaRaftFrameBuiltin(int mode);
 
 Frame* Frame::RegFrame(int mode,
                        function<Frame*()> frame_init) {
@@ -56,9 +55,6 @@ Frame* Frame::GetFrame(int mode, int replica_mode) {
       break;
     case MODE_RAFT:
       frame = CreateRaftFrameBuiltin(mode);
-      break;
-    case MODE_FPGA_RAFT:
-      frame = CreateFpgaRaftFrameBuiltin(mode);
       break;
     default:
       auto& mode_to_frame = Frame::ModeToFrame();
@@ -220,7 +216,6 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
       break;
     case MODE_MULTI_PAXOS:
     case MODE_RAFT:
-    case MODE_FPGA_RAFT:
       break;
     case MODE_NONE:
     case MODE_NOTX:
@@ -325,7 +320,6 @@ map<string, int> &Frame::FrameNameToMode() {
       {"mdcc",          MODE_MDCC},
       {"multi_paxos",   MODE_MULTI_PAXOS},
       {"raft",          MODE_RAFT},
-      {"fpga_raft",     MODE_FPGA_RAFT},
       {"epaxos",        MODE_NOT_READY},
       {"rep_commit",    MODE_NOT_READY},
   };

@@ -597,10 +597,9 @@ ClientWorker::ClientWorker(
     return leader;
   });
 
-  // Jetpack: MODE_RAFT and MODE_FPGA_RAFT for leader forwarding
+  // Raft clients send requests through the leader replica.
   forward_requests_to_leader_ =
-      ((config->replica_proto_ == MODE_RAFT || config->replica_proto_ == MODE_FPGA_RAFT) && site_info.locale_id != 0) ? true :
-                                                                               false;
+      config->replica_proto_ == MODE_RAFT && site_info.locale_id != 0;
   Log_debug("client {} created; forward {}",
             cli_id_,
             forward_requests_to_leader_);

@@ -43,14 +43,6 @@ bool CoordinatorRaft::IsLeader() {
    }
 }
 
-// @safe - raw pointer svr_ is bounded (set in constructor, outlives this object)
-bool CoordinatorRaft::IsFPGALeader() {
-   // @unsafe
-   {
-   return this->svr_->IsFPGALeader() ;
-   }
-}
-
 // @unsafe - external calls marked @external [safe], pointer ops in @unsafe blocks
 void CoordinatorRaft::Submit(const janus::Command& cmd_env,
                                    rusty::Function<void()> func,

@@ -1215,9 +1215,9 @@ shared_ptr<GetLeaderQuorumEvent> Communicator::BroadcastGetLeader(
       rrr::deserialize_from(fu->get_reply(), is_leader);
       e->FeedResponse(is_leader, p.first);
     });
-    ClassicProxy::RpcIsFPGALeaderRequest req;
+    ClassicProxy::RpcIsLeaderRequest req;
     req.cur_pause = par_id;
-    auto is_leader_result = proxy->async_IsFPGALeader(req, fuattr);
+    auto is_leader_result = proxy->async_IsLeader(req, fuattr);
     if (is_leader_result.is_ok()) {
       Future::safe_release(is_leader_result.unwrap().raw_future());
     }

@@ -1,9 +1,8 @@
 
 mode:
   cc: notx # concurrency control
-  ab: fpga_raft # atomic broadcast
+  ab: raft # atomic broadcast
   read_only: occ
   batch: false
   retry: 20
   ongoing: 1 # per client
-

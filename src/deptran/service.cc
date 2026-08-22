@@ -45,10 +45,6 @@ void ClassicServiceImpl::IsLeader(const ClassicService::RpcIsLeaderRequest& req,
   this->IsLeader(req.cur_pause, &resp.is_leader, std::move(defer));
 }
 
-void ClassicServiceImpl::IsFPGALeader(const ClassicService::RpcIsFPGALeaderRequest& req, ClassicService::RpcIsFPGALeaderResponse& resp, rrr::DeferredReply defer) {
-  this->IsFPGALeader(req.cur_pause, &resp.is_leader, std::move(defer));
-}
-
 void ClassicServiceImpl::Prepare(const ClassicService::RpcPrepareRequest& req, ClassicService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
   this->Prepare(req.tid, req.sids, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, std::move(defer));
 }
@@ -366,12 +362,6 @@ void ClassicServiceImpl::IsLeader(
   defer.reply();
 }
 
-void ClassicServiceImpl::IsFPGALeader(
-    const locid_t& can_id, bool_t* is_leader, rrr::DeferredReply defer) {
-  auto sched = (SchedulerClassic*)dtxn_sched_;
-  *is_leader = sched->IsFPGALeader();
-  defer.reply();
-}
 void ClassicServiceImpl::Prepare(const rrr::i64& tid,
                                  const std::vector<i32>& sids,
                                  const DepId& dep_id,

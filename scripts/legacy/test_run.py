@@ -12,7 +12,7 @@ config_path_ = "config/"
 
 modes_ = [
     "none_copilot",
-    "none_fpga_raft"
+    "none_raft"
 ]
 sites_ = [
     "1c1s3r1p"

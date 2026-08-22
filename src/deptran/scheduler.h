@@ -206,12 +206,8 @@ class Witness {
       }
     }
   };
-  // removed `bool belongs_to_leader_{false};`
-  // and `void set_belongs_to_leader(bool);` — the field was already
-  // commented `// discard`; it was set in 3 callers
-  // (`fpga_raft/server.h:75` and `copilot/server.cc:26`) but never read
-  // by anything. The calls
-  // to the setter were removed alongside the field.
+  // The former `belongs_to_leader_` bookkeeping was write-only and has been
+  // removed; leader ownership is obtained from the replication scheduler.
   int witness_size_ = 0;
   Distribution witness_size_distribution_;
 
@@ -557,8 +553,6 @@ class TxLogServer {
     }
     return false;
   }
-  // @unsafe
-  virtual bool IsFPGALeader() { verify(0); } ;
 	virtual bool RequestVote() { verify(0); return false;};
   virtual void Pause();
   virtual void Resume();

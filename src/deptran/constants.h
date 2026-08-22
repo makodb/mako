@@ -97,7 +97,7 @@ namespace janus {
 // 0x100 is reserved for compatibility with the retired TAPIR protocol.
 #define MODE_TAPIR         (0x100)
 #define MODE_RAFT (0x400)
-#define MODE_FPGA_RAFT (0x401)
+// 0x401 is reserved for compatibility with the retired FPGA-Raft protocol.
 #define MODE_COPILOT        (0x4000)
 #define MODE_NOT_READY     (0x00)
 

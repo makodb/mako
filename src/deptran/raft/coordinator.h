@@ -57,10 +57,7 @@ class CoordinatorRaft : public Coordinator {
   slotid_t slot_id_ = 0;
   // Safe shared mutable counter - shares ownership with RaftFrame
   rusty::Arc<rusty::Cell<slotid_t>> slot_hint_;
-  // removed `uint64_t cmt_idx_ = 0;` —
-  // declared but never written or read on CoordinatorRaft (the
-  // sibling field on CoordinatorFpgaRaft IS live; this one was a
-  // copy-paste that never got wired up).
+  // The former `cmt_idx_` field was never written or read.
 
   // @safe
   uint32_t n_replica() {
@@ -70,8 +67,6 @@ class CoordinatorRaft : public Coordinator {
 
   // @unsafe - raw pointer dereference svr_->
   bool IsLeader() ;
-  // @unsafe - raw pointer dereference svr_->
-  bool IsFPGALeader() ;
 
   // @unsafe - calls Log_warn (non-borrow-checked I/O), Uses Arc<Cell<T>> for safe shared mutable access
   slotid_t GetNextSlot() {

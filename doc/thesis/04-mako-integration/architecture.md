@@ -213,7 +213,7 @@ static void detect_replication_type_from_config(const vector<string>& config_fil
     for (const auto& file_path : config_files) {
         std::ifstream ifs(file_path);
         // ... scan for "ab:" line ...
-        if (value == "raft" || value == "fpga_raft") {
+        if (value == "raft") {
             janus::set_replication_type(janus::ReplicationType::RAFT);
             return;
         }
@@ -263,8 +263,10 @@ The name-to-mode mapping is defined in `frame.cc:487`:
 
 ```cpp
 {"raft",       MODE_RAFT},       // 0x400
-{"fpga_raft",  MODE_FPGA_RAFT},  // 0x401
 ```
+
+The former FPGA-Raft variant is retired; `0x401` remains reserved for wire
+compatibility and is not a selectable mode.
 
 `raft_main_helper.cc` verifies consistency at startup (`raft_main_helper.cc:258`):
 

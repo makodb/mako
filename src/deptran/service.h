@@ -67,10 +67,6 @@ class ClassicServiceImpl : public ClassicService {
                  bool_t* is_leader,
                  rrr::DeferredReply done);
 
-  void IsFPGALeader(const locid_t& can_id,
-                 bool_t* is_leader,
-                 rrr::DeferredReply done);
-
   void SimpleCmd (const SimpleCommand& cmd, 
                       i32* res, rrr::DeferredReply done);
 
@@ -283,7 +279,6 @@ class ClassicServiceImpl : public ClassicService {
   void FailoverResumeSocketOut(const ClassicService::RpcFailoverResumeSocketOutRequest& req, ClassicService::RpcFailoverResumeSocketOutResponse& resp, rrr::DeferredReply defer) override;
   void SimpleCmd(const ClassicService::RpcSimpleCmdRequest& req, ClassicService::RpcSimpleCmdResponse& resp, rrr::DeferredReply defer) override;
   void IsLeader(const ClassicService::RpcIsLeaderRequest& req, ClassicService::RpcIsLeaderResponse& resp, rrr::DeferredReply defer) override;
-  void IsFPGALeader(const ClassicService::RpcIsFPGALeaderRequest& req, ClassicService::RpcIsFPGALeaderResponse& resp, rrr::DeferredReply defer) override;
   void Prepare(const ClassicService::RpcPrepareRequest& req, ClassicService::RpcPrepareResponse& resp, rrr::DeferredReply defer) override;
   void Commit(const ClassicService::RpcCommitRequest& req, ClassicService::RpcCommitResponse& resp, rrr::DeferredReply defer) override;
   void Abort(const ClassicService::RpcAbortRequest& req, ClassicService::RpcAbortResponse& resp, rrr::DeferredReply defer) override;

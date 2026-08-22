@@ -77,8 +77,6 @@ class SchedulerClassic: public TxLogServer {
   virtual int Next(int, janus::Command) override;
 
   virtual bool IsLeader() override { return rep_sched_->IsLeader(); }
-
-  virtual bool IsFPGALeader() override { return rep_sched_->IsFPGALeader(); }
 	
 	virtual bool RequestVote() override {
 		return rep_sched_->RequestVote();

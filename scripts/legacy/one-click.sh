@@ -89,7 +89,7 @@ timeout_process() {
 }
 
 # figure5a:
-#  1. fail-slow on followers with fpga_raft
+#  1. fail-slow on followers with raft
 #  2. no slowdown
 #  3. replicas: 3, 5
 #  4. fix # of client and then vary # of concurrent
@@ -110,7 +110,7 @@ experiment5a() {
     for i in "${conc[@]}"
     do
       mkdir results
-      cmd="${SCRIPT_DIR}/start-exp.sh testname $TUPT_DUR 0 3 follower 1 $i fpga_raft nonlocal &"
+      cmd="${SCRIPT_DIR}/start-exp.sh testname $TUPT_DUR 0 3 follower 1 $i raft nonlocal &"
       if [ $ONLY_CMD -eq 1 ]
       then
         echo $cmd
@@ -135,7 +135,7 @@ experiment5a() {
     for i in "${conc[@]}"
     do
       mkdir results
-      cmd="${SCRIPT_DIR}/start-exp.sh testname $TUPT_DUR 0 5 follower 1 $i fpga_raft nonlocal &"
+      cmd="${SCRIPT_DIR}/start-exp.sh testname $TUPT_DUR 0 5 follower 1 $i raft nonlocal &"
       if [ $ONLY_CMD -eq 1 ]
       then
         echo $cmd
@@ -158,7 +158,7 @@ experiment5a() {
 }
 
 # figure5b:
-#  1. fail-slow on followers with fpga_raft
+#  1. fail-slow on followers with raft
 #  2. with 6 slowdown types
 #  3. replicas: 3, 5
 experiment5b() {
@@ -172,7 +172,7 @@ experiment5b() {
     for i in "${exp[@]}"
     do
       mkdir results
-      cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 3 follower 1 $SLOW_CONCURRENT_RAFT fpga_raft nonlocal &"
+      cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 3 follower 1 $SLOW_CONCURRENT_RAFT raft nonlocal &"
       if [ $ONLY_CMD -eq 1 ]
       then
         echo $cmd
@@ -197,7 +197,7 @@ experiment5b() {
     for i in "${exp[@]}"
     do
       mkdir results
-      cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 5 follower 1 $SLOW_CONCURRENT_RAFT fpga_raft nonlocal &"
+      cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 5 follower 1 $SLOW_CONCURRENT_RAFT raft nonlocal &"
       if [ $ONLY_CMD -eq 1 ]
       then
         echo $cmd

@@ -190,7 +190,6 @@ The **only difference** between Paxos and Raft mode configs is the `ab:` field. 
 **Available `ab:` values**:
 - `multi_paxos` — Multi-Paxos replication
 - `raft` — Raft replication
-- `fpga_raft` — FPGA-optimized Raft variant
 
 **Available `cc:` values**:
 - `occ` — Optimistic Concurrency Control
@@ -382,7 +381,7 @@ There are three ways to select Raft replication:
 ```
 
 **2. Auto-detection from config** (implicit):
-The `detect_replication_type_from_config()` function (`src/mako/mako.hh:779-816`) scans the YAML config files for `ab: raft` or `ab: fpga_raft` and sets the replication type automatically. This is called during `init_env()` before the replication layer is initialized.
+The `detect_replication_type_from_config()` function (`src/mako/mako.hh:779-816`) scans the YAML config files for `ab: raft` and sets the replication type automatically. This is called during `init_env()` before the replication layer is initialized.
 
 **3. Programmatic** (in test code):
 ```cpp
