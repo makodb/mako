@@ -126,12 +126,6 @@ mdb::Row* Tx::CreateRow(const mdb::Schema *schema,
                           const std::vector<mdb::Value> &row_data) {
   Row* r;
   switch (Config::config_s->tx_proto_) {
-    case MODE_2PL:
-      // FineLockedRow/ALock were removed as dead code; 2PL fine-grained
-      // locking is no longer available.
-      verify(0);
-      r = nullptr;
-      break;
     case MODE_OCC:
     case MODE_NONE:
     case MODE_NOTX:

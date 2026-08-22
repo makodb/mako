@@ -222,7 +222,7 @@ void CoordinatorClassic::DispatchAsync() {
   auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
   n_pd = 100;
   ReadyPiecesData cmds_by_par;
-  cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
+  cmds_by_par = txn->GetReadyPiecesData(n_pd);
   Log_debug("Dispatch for tx_id: {:x}", txn->root_id_);
   for (auto& pair: cmds_by_par) {
     const parid_t& par_id = pair.first;
@@ -261,7 +261,7 @@ void CoordinatorClassic::DispatchAsync(bool last) {
   int cnt = 0;
   auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
   n_pd = 100;
-  auto cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
+  auto cmds_by_par = txn->GetReadyPiecesData(n_pd);
   Log_debug("Dispatch for tx_id: {:x}", txn->root_id_);
   
   for (auto& pair: cmds_by_par){
@@ -383,7 +383,7 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
 void CoordinatorClassic::Prepare() {
   TxData* cmd = (TxData*) cmd_;
   auto mode = Config::GetConfig()->tx_proto_;
-  verify(mode == MODE_OCC || mode == MODE_2PL);
+  verify(mode == MODE_OCC);
    
   std::vector<i32> sids;
   for (auto& site : cmd->partition_ids_) {
@@ -451,12 +451,11 @@ void CoordinatorClassic::PrepareAck(phase_t phase, int res) {
   if (res == REJECT) {
     cmd->commit_.store(false);
     aborted_ = true;
-//    Log_fatal("2PL prepare failed due to error {}", e);
   }
   Log_debug("tid {:x}; prepare result {}", (int64_t) cmd_->root_id_, res);
 
   if (n_prepare_ack_ == cmd->partition_ids_.size()) {
-    Log_debug("2PL prepare finished for {}", cmd->root_id_);
+    Log_debug("prepare finished for {}", cmd->root_id_);
     if (!aborted_) {
       cmd->commit_.store(true);
       committed_ = true;
@@ -486,7 +485,7 @@ void CoordinatorClassic::Commit() {
   // removed commented-out
   // `// ___TestPhaseThree(cmd_->id_);` — method deleted.
   auto mode = Config::GetConfig()->tx_proto_;
-  verify(mode == MODE_OCC || mode == MODE_2PL);
+  verify(mode == MODE_OCC);
   Log_debug("send out finish request, cmd_id: {:x}, {}", tx_data().id_, n_finish_req_);
 
   verify(tx_data().commit_.load() == committed_);

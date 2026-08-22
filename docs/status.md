@@ -165,13 +165,14 @@ Proven, high-performance in-memory index. The critical missing piece is crash re
 
 | Protocol | Completeness | Status |
 |----------|-------------|--------|
-| 2PL | 70% | Core works, no deadlock detection |
 | OCC | 65% | Lazy versioning, ad-hoc design |
 | RCC/Rococo | 55% | Complex dependency graphs, 24 `verify(0)` stubs |
 | TROAD, Carousel, Februus | <30% | Proof-of-concept only |
 
-The former standalone Janus, Mencius, SNOW/RO6, and Extern-C protocol
-implementations are retired and are not supported configuration options.
+The former standalone Janus, Mencius, SNOW/RO6, Extern-C, and 2PL protocol
+implementations are retired and are not supported configuration options. The
+internal memdb `Txn2PL` base remains because OCC and nested transactions share
+its storage and query machinery.
 
 ### Critical Issues
 

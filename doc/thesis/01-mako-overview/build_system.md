@@ -194,7 +194,6 @@ The **only difference** between Paxos and Raft mode configs is the `ab:` field. 
 
 **Available `cc:` values**:
 - `occ` — Optimistic Concurrency Control
-- `2pl_ww` — Two-Phase Locking (wound-wait)
 - `none` — No concurrency control
 
 ### 4.2 Shard/Host Configuration

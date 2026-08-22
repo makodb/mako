@@ -36,7 +36,6 @@ Coordinator::Coordinator(uint32_t coo_id,
   this->next_pie_id_.store(k);
   this->next_txn_id_.store(k);
   // removed `recorder_ = NULL;` — field gone.
-  retry_wait_ = Config::GetConfig()->retry_wait();
   txn_timeout_ = Config::GetConfig()->get_txn_timeout();
 
 	struct timespec begin, end;

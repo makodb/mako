@@ -79,10 +79,6 @@ class Txn2PL: public Txn {
 //            const std::function<void(void)> &succ_callback,
 //            const std::function<void(void)> &fail_callback);
 //
-//    void reg_lock_group(const std::vector<column_lock_t> &col_locks,
-//            const std::function<void(void)> &succ_callback,
-//            const std::function<void(void)> &fail_callback);
-//
   void reg_read_column(Row *row,
                        colid_t col_id,
                        std::function<void(void)> succ_callback,
@@ -192,18 +188,6 @@ class Txn2PL: public Txn {
 };
 
 
-
-
-class TxnMgr2PL: public TxnMgr {
-  std::multimap<Row *, std::pair<colid_t, version_t>> vers_;
- public:
-  virtual Txn *start(txn_id_t txnid) {
-    return new Txn2PL(this, txnid);
-  }
-  virtual symbol_t rtti() const {
-    return symbol_t::TXN_2PL;
-  }
-};
 
 
 struct row_column_pair {

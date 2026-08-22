@@ -320,20 +320,6 @@ struct table_row_pair {
   static Row *ROW_MAX; // Multi thread safe? TODO
 };
 
-// Lock-type hint carried in piece metadata. Was rrr::ALock::type_t;
-// the ALock family was removed as dead code (nothing acquires these
-// locks anymore).
-enum lock_type_t : int { RLOCK = 0, WLOCK = 1 };
-
-struct column_lock_t {
-  Row *row;
-  colid_t column_id;
-  lock_type_t type;
-  column_lock_t(Row *_row, colid_t _column_id,
-                lock_type_t _type) :
-      row(_row), column_id(_column_id), type(_type) { }
-};
-
 struct query_buf_t {
   int retrieve_index;
   std::vector<ResultSet> buf;

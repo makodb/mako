@@ -12,7 +12,7 @@ default_configs = [
     'config/tpca_zipf.yml',
     'config/tapir.yml'
 ]
-default_modes = [ '2pl_ww:multi_paxos', 'occ:multi_paxos', 'troad:troad' ]
+default_modes = [ 'occ:multi_paxos', 'troad:troad' ]
 #default_modes = [ 'tapir:tapir' ]
 default_benchmark = [ 'tpca' ]
 default_options = ['-r', '3']

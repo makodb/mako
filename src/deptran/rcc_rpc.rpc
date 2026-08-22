@@ -228,7 +228,7 @@ abstract service Copilot {
                Command cmd);
 }
 
-// below is for 2PL and OCC
+// Classic prepare/commit RPCs.
 abstract service Classic {
   defer MsgString(string arg | string ret);
 

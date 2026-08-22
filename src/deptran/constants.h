@@ -79,7 +79,7 @@ namespace janus {
 #define TXN_TIMEOUT (-30)  // Transaction timed out waiting for shard response
 
 #define MODE_NONE   (0x00)
-#define MODE_2PL    (0x01)
+// 0x01 is retired with the former standalone 2PL protocol; do not reuse it.
 #define MODE_OCC    (0x02)
 #define MODE_RCC    (0x04)
 #define MODE_RULE    (0x15)

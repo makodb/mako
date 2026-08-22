@@ -75,12 +75,10 @@ void TpccRdWorkload::RegDelivery() {
                                            cmd.id_);
          if (rs.has_next()) {
            r = rs.next();
-//      TPL_KISS_ROW(r);
            tx.ReadColumn(r, TPCC_COL_NEW_ORDER_NO_W_ID, &buf);
            output[TPCC_VAR_O_ID] = buf;
          } else {
 //      verify(0);
-//      TPL_KISS_NONE;
            output[TPCC_VAR_O_ID] = Value((i32) -1);
          }
          // TODO FIXME
@@ -165,9 +163,6 @@ void TpccRdWorkload::RegDelivery() {
          while (rs.has_next()) {
            row_list.push_back(rs.next());
          }
-
-         std::vector<mdb::column_lock_t> column_locks;
-         column_locks.reserve(2 * row_list.size());
 
          int i = 0;
          double ol_amount_buf = 0.0;

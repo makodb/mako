@@ -10,7 +10,7 @@ clients  = doc.at_css "clients"
 
 client_elements = clients.elements
 
-modes = ["rcc", "2pl", "occ", "none"]
+modes = ["rcc", "occ", "none"]
 
 array = 1.step(20).to_a + 30.step(100, 10).to_a
 

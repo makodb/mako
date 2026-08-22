@@ -2,7 +2,6 @@
 #include "../tx.h"
 #include "../procedure.h"
 #include "../coordinator.h"
-#include "../2pl/tx.h"
 #include "../tx.h"
 #include "../classic/tpc_command.h"
 #include "scheduler.h"

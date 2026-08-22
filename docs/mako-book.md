@@ -155,7 +155,6 @@ mako/
     deptran/          # Transaction protocol implementations
       paxos/          # Paxos consensus
       raft/           # Raft consensus
-      2pl/            # Two-phase locking
       occ/            # Optimistic concurrency control
       rcc/            # Rococo protocol
     mako/             # Mako core

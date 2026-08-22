@@ -731,7 +731,7 @@ RaftCommo maintains `rpc_par_proxies_[partition_id][replica_id]` for each peer. 
 **Base Raft config** (`config/none_raft.yml`):
 ```yaml
 mode:
-  cc: none       # Concurrency control: none, occ, rule, tpl_ww, 2pl_ww
+  cc: none       # Concurrency control: none, occ, rule
   ab: raft       # Atomic broadcast: raft
   batch: false
   retry: 20
@@ -769,7 +769,6 @@ host:
 | `none_raft.yml` | None | Basic Raft testing |
 | `rule_raft.yml` | Rule | With Jetpack recovery |
 | `occ_raft.yml` | OCC | Optimistic CC |
-| `tpl_ww_raft.yml` | TPL-WW | Two-phase locking |
 | `raft_lab_test.yml` | None | Lab test harness (5 servers) |
 
 ### Per-Shard Configs

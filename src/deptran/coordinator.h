@@ -82,7 +82,6 @@ class Coordinator {
   // — its only reference was in already-disabled coordinator code; it was
   // never written or read in production paths.
 	bool slow_ = false;
-  bool retry_wait_;
   // Nullable: client_worker.cc creates these lazily (rusty::Some(...)) and
   // resets them to rusty::None after each transaction, so they must be Option.
   rusty::Option<rusty::Arc<IntEvent>> sp_ev_commit_{};

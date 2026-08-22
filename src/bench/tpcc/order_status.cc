@@ -301,9 +301,6 @@ void TpccWorkload::RegOrderStatus() {
 
          verify(row_list.size() != 0);
 
-         std::vector<mdb::column_lock_t> column_locks;
-         column_locks.reserve(5 * row_list.size());
-
          int i = 0;
          Log_debug("row_list size: {}", row_list.size());
 

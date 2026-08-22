@@ -46,7 +46,7 @@ void CoordinatorRule::GotoNextPhase() {
       dispatch_ack_ = false;
 
       // [Ze] Get cmds_by_par_ and sp_vec_piece_by_par_ in advance here since both original path and fastpath need this
-      cmds_by_par_ = ((TxData*) cmd_)->GetReadyPiecesData(100); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
+      cmds_by_par_ = ((TxData*) cmd_)->GetReadyPiecesData(100);
       for (auto& pair: cmds_by_par_) {
         auto& cmds = pair.second;
         if (cmds.size() > 0)
@@ -152,7 +152,6 @@ void CoordinatorRule::BroadcastRuleSpeculativeExecute(int phase) {
   auto txn = (TxData*) cmd_;
   auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
   n_pd = 100;
-  // auto cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
   auto cmds_by_par = cmds_by_par_;
   Log_debug("Dispatch for tx_id: {:x}", txn->root_id_);
   // [Jetpack] TODO: only support partition = 1 now
@@ -214,9 +213,6 @@ void CoordinatorRule::DispatchAsync(bool fastpath_broadcast_mode) {
 
   auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
   n_pd = 100;
-  // ReadyPiecesData cmds_by_par;
-  // cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
-  // cmds_by_par_ = cmds_by_par;
   auto cmds_by_par = cmds_by_par_;
   Log_debug("Dispatch for tx_id: {:x}", txn->root_id_);
   for (auto& pair: cmds_by_par) {

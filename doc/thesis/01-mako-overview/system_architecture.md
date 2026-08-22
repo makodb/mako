@@ -136,14 +136,13 @@ Client (dbtest)
 
 ### 4.1 Frame (`src/deptran/frame.h`)
 
-The **factory pattern** hub for creating protocol-specific components. Each protocol (OCC, 2PL, Paxos, Raft) registers a `Frame` subclass that creates the right coordinator, scheduler, communicator, and RPC services.
+The **factory pattern** hub for creating protocol-specific components. Each protocol (OCC, RCC, Paxos, Raft) registers a `Frame` subclass that creates the right coordinator, scheduler, communicator, and RPC services.
 
 ```
 Frame (base class)
  ├── MultiPaxosFrame    (src/deptran/paxos/frame.h)
  ├── RaftFrame          (src/deptran/raft/frame.h)
  ├── OccFrame           (src/deptran/occ/)
- ├── TwoPLFrame         (src/deptran/2pl/)
  └── ...other protocols
 ```
 

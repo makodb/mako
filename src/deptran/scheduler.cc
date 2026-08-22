@@ -144,12 +144,6 @@ mdb::Txn *TxLogServer::GetOrCreateMTxn(const i64 tid) {
     txn = it->second;
   }
 
-  if (IS_MODE_2PL) {
-    verify(mdb_txn_mgr_->rtti() == mdb::symbol_t::TXN_2PL);
-    verify(txn->rtti() == mdb::symbol_t::TXN_2PL);
-  } else {
-
-  }
   verify(txn != nullptr);
   return txn;
 }

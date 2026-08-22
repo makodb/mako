@@ -116,9 +116,6 @@ void TpccWorkload::RegStockLevel() {
 
 //    verify(row_list.size() != 0);
 
-         std::vector<mdb::column_lock_t> column_locks;
-         column_locks.reserve(row_list.size());
-
          for (int i = 0; i < row_list.size(); i++) {
            tx.ReadColumn(row_list[i],
                             TPCC_COL_ORDER_LINE_OL_I_ID,

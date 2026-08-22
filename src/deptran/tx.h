@@ -24,7 +24,6 @@ using mdb::Table;
 using mdb::colid_t;
 
 #define IS_MODE_RCC (Config::GetConfig()->get_mode() == MODE_RCC)
-#define IS_MODE_2PL (Config::GetConfig()->get_mode() == MODE_2PL)
 #define IS_MODE_OCC (Config::GetConfig()->get_mode() == MODE_OCC)
 #define IS_MODE_NONE (Config::GetConfig()->get_mode() == MODE_NONE)
 

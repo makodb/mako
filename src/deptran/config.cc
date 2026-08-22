@@ -271,7 +271,6 @@ Config::Config(char           *ctrl_hostname,
   exp_setting_name_(string()),
   batch_start_(false),
   early_return_(false),
-  retry_wait_(false),
   // removed `logging_path_(logging_path),`
   // initializer — field gone.
   single_server_(single_server),
@@ -485,13 +484,6 @@ void Config::InitMode(string &cc_name, string& ab_name) {
   } else if (cc_name == "deptran_er") {
     // deprecated
     early_return_ = true;
-  } else if (cc_name == "2pl_w") {
-    retry_wait_ = true;
-  } else if (cc_name == "2pl_wait_die" || cc_name == "2pl_wd") {
-    // FineLockedRow/ALock removed (dead code); no per-row lock mode to set.
-  } else if ((cc_name == "2pl_ww") || (cc_name == "2pl_wound_die")) {
-    // FineLockedRow/ALock removed (dead code); no per-row lock mode to set.
-    n_parallel_dispatch_ = 1;
   }
 
   replica_proto_ = Frame::Name2Mode(ab_name);
@@ -1126,10 +1118,6 @@ bool Config::IsReplicated() {
   // TODO
   return (replica_proto_ != MODE_NONE);
   return true;
-}
-
-bool Config::retry_wait() {
-  return retry_wait_;
 }
 
 int32_t Config::get_tot_req() {

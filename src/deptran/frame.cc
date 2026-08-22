@@ -9,9 +9,7 @@
 #include "scheduler.h"
 #include "none/coordinator.h"
 #include "none/scheduler.h"
-#include "2pl/tx.h"
 #include "rcc/coord.h"
-#include "2pl/coordinator.h"
 #include "occ/tx.h"
 #include "occ/coordinator.h"
 #include "none_copilot/commo.h"
@@ -21,7 +19,6 @@
 #include "rule/coordinator.h"
 #include "benchmark_registry.h"
 
-#include "deptran/2pl/scheduler.h"
 #include "occ/scheduler.h"
 
 #include "paxos/frame.h"
@@ -53,7 +50,6 @@ Frame* Frame::GetFrame(int mode, int replica_mode) {
     case MODE_NONE_COPILOT:
     case MODE_NOTX:
     case MODE_MDCC:
-    case MODE_2PL:
     case MODE_OCC:
     case MODE_RULE:
       frame = new Frame(mode, replica_mode);
@@ -123,11 +119,6 @@ mdb::Row* Frame::CreateRow(const mdb::Schema *schema,
   auto mode = mode_;
   mdb::Row* r = nullptr;
   switch (mode) {
-    case MODE_2PL:
-      // FineLockedRow/ALock were removed as dead code; 2PL fine-grained
-      // locking is no longer available.
-      verify(0);
-      break;
     case MODE_NONE: // FIXME
     case MODE_MDCC:
     case MODE_OCC:
@@ -150,13 +141,6 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
 //  auto mode = Config::GetConfig()->cc_mode_;
   auto mode = mode_;
   switch (mode) {
-    case MODE_2PL:
-      coo = new Coordinator2pl(coo_id,
-                         benchmark,
-                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
-                         id);
-      ((Coordinator*)coo)->txn_reg_ = txn_reg;
-      break;
     case MODE_OCC:
     case MODE_RPC_NULL:
       coo = new CoordinatorOcc(coo_id,
@@ -238,9 +222,6 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
 	clock_gettime(CLOCK_MONOTONIC, &begin);*/
   Log_debug("enter CreateTx");
 	switch (mode_) {
-    case MODE_2PL:
-      sp_tx.reset(new Tx2pl(epoch, tid, mgr));
-      break;
     case MODE_OCC:
       sp_tx.reset(new TxOcc(epoch, tid, mgr));
       break;
@@ -269,9 +250,6 @@ Executor* Frame::CreateExecutor(cmdid_t cmd_id, TxLogServer* sched) {
 //  switch (mode) {
 //    case MODE_NONE:
 //      verify(0);
-//    case MODE_2PL:
-//      exec = new TplExecutor(cmd_id, sched);
-//      break;
 //    case MODE_OCC:
 //      exec = new OCCExecutor(cmd_id, sched);
 //      break;
@@ -289,9 +267,6 @@ TxLogServer* Frame::CreateScheduler() {
     sch = new SchedulerNoneCopilot();
   } else {
     switch(mode) {
-      case MODE_2PL:
-        sch = new Scheduler2pl();
-        break;
       case MODE_OCC:
         sch = new SchedulerOcc();
         break;
@@ -339,7 +314,6 @@ vector<rrr::ServiceProxy> Frame::CreateRpcServices(uint32_t site_id,
   auto result = std::vector<rrr::ServiceProxy>();
   switch(mode_) {
     case MODE_MDCC:
-    case MODE_2PL:
     case MODE_OCC:
     case MODE_NONE:
     case MODE_TAPIR:
@@ -355,17 +329,11 @@ map<string, int> &Frame::FrameNameToMode() {
   static map<string, int> frame_name_mode_s = {
       {"none",          MODE_NONE},
       {"none_copilot",  MODE_NONE_COPILOT},
-      {"2pl",           MODE_2PL},
       {"occ",           MODE_OCC},
       {"notx",          MODE_NOTX},
       {"rpc_null",      MODE_RPC_NULL},
       {"deptran",       MODE_DEPTRAN},
       {"deptran_er",    MODE_DEPTRAN},
-      {"2pl_w",         MODE_2PL},
-      {"2pl_wait_die",  MODE_2PL},
-      {"2pl_wd",        MODE_2PL},
-      {"2pl_ww",        MODE_2PL},
-      {"2pl_wound_die", MODE_2PL},
       {"mdcc",          MODE_MDCC},
       {"multi_paxos",   MODE_MULTI_PAXOS},
       {"raft",          MODE_RAFT},

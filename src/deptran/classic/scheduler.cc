@@ -2,7 +2,6 @@
 #include "../tx.h"
 #include "../procedure.h"
 #include "../coordinator.h"
-#include "../2pl/tx.h"
 #include "rrr/misc/serializable.hpp"  // serializable_cast
 #include "scheduler.h"
 #include "tpc_command.h"

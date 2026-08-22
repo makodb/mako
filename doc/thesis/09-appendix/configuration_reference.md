@@ -33,15 +33,14 @@ ongoing: 1
 |------|------|------|----------|
 | `none_raft.yml` | `none` | `raft` | Testing without CC |
 | `rule_raft.yml` | `rule` | `raft` | Rule-based CC |
-| `tpl_ww_raft.yml` | `tpl_ww` | `fpga_raft` | FPGA-accelerated Raft |
 | `notx_raft.yml` | `notx` | `fpga_raft` | No transactions |
 
 ### 1.4 Mode Config Fields
 
 | Field | Type | Values | Description |
 |-------|------|--------|-------------|
-| `cc` | string | `occ`, `none`, `rule`, `tpl_ww`, `notx` | Concurrency control protocol |
-| `ab` | string | `paxos`, `raft`, `fpga_raft` | Atomic broadcast protocol |
+| `cc` | string | `occ`, `none`, `rule`, `notx` | Concurrency control protocol |
+| `ab` | string | `multi_paxos`, `raft`, `fpga_raft` | Atomic broadcast protocol |
 | `read_only` | bool | `true`/`false` | Enable read-only optimisation |
 | `batch` | bool | `true`/`false` | Enable transaction batching |
 | `retry` | bool | `true`/`false` | Auto-retry aborted transactions |

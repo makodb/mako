@@ -424,7 +424,6 @@ mode:
 
 **Protocols** *(To be implemented - most under development)*:
 - `mako` - Speculative 2PC (default)
-- `2pl` - Two-phase locking
 - `occ` - Optimistic concurrency control
 - `paxos` - Paxos-based replication
 

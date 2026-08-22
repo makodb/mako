@@ -4,7 +4,7 @@
 #include "constants.h"
 #include "config.h"
 #include "txn_reg.h"
-#include "2pl/tx.h"
+#include "tx.h"
 
 namespace janus {
 
@@ -126,51 +126,6 @@ txn_reg_->regs_[txn][pie].sharder_ \
 = std::make_pair(tb, vector<int32_t>({__VA_ARGS__}));
 
 
-//std::vector<mdb::column_lock_t>(__VA_ARGS__),
-//verify(((TplTxBox*)dtxn)->locking_ == (output_size == nullptr));
-//#define TPL_KISS(...) \
-//  if (IS_MODE_2PL && ((TplTxBox*)dtxn)->locking_) { \
-//    PieceStatus *ps \
-//        = ((TPLExecutor*)exec)->get_piece_status(header.pid); \
-//    std::function<void(void)> succ_callback = \
-//        ((TPLExecutor*)exec)->get_2pl_succ_callback(header, input, res, ps); \
-//    std::function<void(void)> fail_callback = \
-//        ((TPLExecutor*)exec)->get_2pl_fail_callback(header, res, ps); \
-//    ps->reg_rw_lock( \
-//    std::vector<mdb::column_lock_t>({__VA_ARGS__}),\
-//        succ_callback, fail_callback); \
-//    return; \
-//  }
-//#define TPL_KISS_ROW(r) \
-//  if (IS_MODE_2PL && ((TplTxBox*)dtxn)->locking_) { \
-//    PieceStatus *ps = ((TPLExecutor*)exec)->get_piece_status(header.pid); \
-//    std::function<void(void)> succ_callback = \
-//      ((TPLExecutor*) exec)->get_2pl_succ_callback( \
-//        header, input, res, ps); \
-//    std::function<void(void)> fail_callback = \
-//      ((TPLExecutor*) exec)->get_2pl_fail_callback( \
-//        header, res, ps); \
-//    ps->reg_rm_lock(r, succ_callback, fail_callback); \
-//    return; \
-//}
-
-//#define TPL_KISS_NONE \
-//  if (IS_MODE_2PL && ((TplTxBox*)dtxn)->locking_) { \
-//    PieceStatus *ps = ((TPLExecutor*)exec)->get_piece_status(header.pid); \
-//    ((TPLExecutor*)exec)->get_2pl_succ_callback(header, input, res, ps)(); \
-//    return; \
-//  }
-
-#define TPL_KISS(...) (0)
-#define TPL_KISS_NONE (0)
-#define TPL_KISS_ROW  (0)
-//#define TPL_KISS_ROW(r) \
-//  if (IS_MODE_2PL && ((TplTxBox*)dtxn)->locking_) { \
-//    ((TplTxBox*)dtxn)->row_lock_ = r; \
-//    return; \
-//}
-
-
 #define RCC_KISS(row, col, imdt) \
     if (IS_MODE_RCC && IN_PHASE_1) { \
         verify(row != nullptr); \
@@ -204,12 +159,7 @@ txn_reg_->regs_[txn][pie].sharder_ \
 
 #define CREATE_ROW(schema, row_data) \
     switch (Config::config_s->tx_proto_) { \
-    case MODE_2PL: \
-        /* FineLockedRow/ALock removed (dead code) */ \
-        verify(0); \
-        r = nullptr; \
-        break; \
-        case MODE_OCC: \
+    case MODE_OCC: \
     case MODE_NONE: \
         r = mdb::VersionedRow::create(schema, row_data); \
         break; \
@@ -223,7 +173,6 @@ txn_reg_->regs_[txn][pie].sharder_ \
 
 
 #define IN_PHASE_1 (dtxn->phase_ == 1)
-#define TPL_PHASE_1 (output_size == nullptr)
 
 
 } // namespace janus

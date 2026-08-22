@@ -189,7 +189,7 @@ Mako's architecture consists of several major components that work together to p
 
 **Sharding.** Data is horizontally partitioned across shards. Each shard holds a subset of the keyspace (for example, a range of TPC-C warehouses), has its own independent replication group of leader and follower replicas, runs its own consensus instance per partition, and can be placed on a different set of machines. Cross-shard transactions use Two-Phase Commit (2PC) coordinated by the transaction coordinator.
 
-**Protocol Factory.** Mako uses a factory pattern to create protocol-specific components. Each protocol (OCC, 2PL, Paxos, Raft, and others) registers a factory subclass that creates the appropriate coordinator, scheduler, communicator, and RPC services. This architecture enables protocol polymorphism — the upper layers of the system need not know which consensus protocol is in use.
+**Protocol Factory.** Mako uses a factory pattern to create protocol-specific components. Each protocol (OCC, RCC, Paxos, Raft, and others) registers a factory subclass that creates the appropriate coordinator, scheduler, communicator, and RPC services. This architecture enables protocol polymorphism — the upper layers of the system need not know which consensus protocol is in use.
 
 ### Speculative Execution and the Replication Layer
 

@@ -60,7 +60,6 @@ class Config {
   std::string exp_setting_name_;
   bool batch_start_;
   bool early_return_;
-  bool retry_wait_;
   // removed `string logging_path_;` field
   // — only readers (`do_logging` and `log_path`) were already
   // deleted in Phase 4e-41; only writer was the `-r` CLI flag (also
@@ -284,8 +283,6 @@ class Config {
 
   // removed `const char *log_path();`
   // declaration — no callers anywhere.
-
-  bool retry_wait();
 
   std::vector<double> &get_txn_weight();
 
