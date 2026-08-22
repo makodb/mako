@@ -597,3 +597,212 @@ fn sustained_overload_pins_the_watermark_rather_than_lying() {
     }
     rt.abort();
 }
+
+// ===================================================================
+// Property 4: the guarantees hold for a thread that touches more than
+// one store, and for a drain that runs beside the flusher
+// ===================================================================
+//
+// These were live bugs. They are grouped because they share a
+// shape: an invariant the C++ implementation gets structurally, which
+// the port lost while reorganising the code around it.
+
+#[test]
+fn a_thread_writing_to_two_stores_gets_a_sound_watermark_on_both() {
+    // mako opens one index per table, so a worker thread writes to many
+    // stores. The writer-slot cache used to be a single unkeyed
+    // `Option<usize>`: the FIRST store a thread wrote to captured it, and
+    // every other store then handed back that index without incrementing
+    // its own `next_writer`. `live_writers()` stayed empty, so
+    // `Floors::min_over` saw no floors at all, `recompute_watermark` fell
+    // back to `m = counter`, and W jumped over the thread's announce
+    // floor and its never-stolen partial batch.
+    //
+    // The symptom is the worst one this system has: `sync()` returning
+    // TRUE over writes the durable store never received. Store A -- the
+    // thread's first -- was always clean, which is what made it easy to
+    // miss.
+    let blobs_a = Arc::new(MemBlobs::new());
+    let blobs_b = Arc::new(MemBlobs::new());
+    let a = open(Config::default(), &blobs_a);
+    let b = open(Config::default(), &blobs_b);
+    let mut rt_a = Runtime::start(Arc::clone(&a));
+    let mut rt_b = Runtime::start(Arc::clone(&b));
+
+    // Interleaved, as a transaction touching two tables does.
+    for k in 0..2000u32 {
+        a.put(format!("a{k:05}").as_bytes(), b"value-a");
+        b.put(format!("b{k:05}").as_bytes(), b"value-b");
+    }
+
+    assert!(a.sync(), "A sync");
+    assert!(b.sync(), "B sync");
+    let (da, db) = (blobs_a.snapshot().len(), blobs_b.snapshot().len());
+    rt_a.shutdown();
+    rt_b.shutdown();
+
+    assert_eq!(da, 2000, "store A lost acked writes across sync()");
+    assert_eq!(db, 2000, "store B lost acked writes across sync()");
+}
+
+#[test]
+fn rotating_across_more_than_eight_stores_reuses_writer_slots() {
+    // The eight-way array in `writer_index` is a hot cache, not the
+    // registry. If eviction forgets the authoritative mapping, a cyclic
+    // nine-store workload misses on every access and permanently burns a
+    // slot in each store until the process aborts. TPC-C touches more than
+    // eight tables, so this is a production-shaped working set.
+    let stores: Vec<(Arc<S>, Arc<MemBlobs>)> = (0..9)
+        .map(|_| {
+            let blobs = Arc::new(MemBlobs::new());
+            (open(Config::tiny(), &blobs), blobs)
+        })
+        .collect();
+
+    for round in 0..600u32 {
+        for (store, _) in &stores {
+            store.put(format!("k{round:04}").as_bytes(), b"value");
+            // Keep each tiny log moving without adding nine background
+            // threads; the registry behavior is entirely on this writer.
+            store.flush_cycle();
+        }
+    }
+
+    for (store, blobs) in &stores {
+        assert_eq!(
+            store.registered_writer_slots(),
+            1,
+            "one thread must own exactly one slot in each store"
+        );
+        assert!(store.drain_fully(), "drain");
+        assert_eq!(blobs.snapshot().len(), 600, "lost durable rows");
+    }
+}
+
+#[test]
+fn writer_registry_covers_production_masstree_thread_limit() {
+    // Production Masstree provides 512 process-wide, non-recycled thread
+    // attachments. Exercise the same number of distinct thread lifetimes
+    // here rather than merely 512 simultaneous calls.
+    const MASSTREE_MAX_THREADS: usize = 512;
+    let blobs = Arc::new(MemBlobs::new());
+    let store = open(
+        Config {
+            log_slots: 512,
+            writeback_chunk: 512,
+            ..Config::default()
+        },
+        &blobs,
+    );
+
+    for i in 0..MASSTREE_MAX_THREADS {
+        let s = Arc::clone(&store);
+        std::thread::spawn(move || {
+            s.put(format!("k{i:04}").as_bytes(), b"value");
+        })
+        .join()
+        .expect("writer");
+    }
+
+    assert_eq!(store.registered_writer_slots(), MASSTREE_MAX_THREADS);
+    assert!(store.drain_fully(), "drain");
+    assert_eq!(blobs.snapshot().len(), MASSTREE_MAX_THREADS);
+}
+
+#[test]
+fn draining_beside_the_flusher_does_not_write_back_stale_bytes() {
+    // `drain_fully` runs `flush_cycle` on the CALLER's thread, and both
+    // `clear()` and `Runtime::shutdown()` call it while the flusher
+    // thread is still live -- shutdown deliberately drains BEFORE it
+    // stops. So two cycles ran at once.
+    //
+    // Two cycles can select the same entry, read different published
+    // versions of it, and have the OLDER batch land last: the durable
+    // store then holds stale bytes while W says the newer version is
+    // durable. Both then erase the entry unconditionally, so nothing is
+    // left owing it and the flusher never revisits it.
+    //
+    // C++ gets this for free -- `mrx_flusher_cycle` is only ever reached
+    // from `mrx_flusher_loop`, and its barrier waits on a condvar rather
+    // than running a cycle. The port made `flush_cycle` public.
+    for round in 0..40 {
+        let blobs = Arc::new(MemBlobs::new());
+        blobs.set_write_delay_us(300);
+        let store = open(Config { writeback_chunk: 8, ..Config::default() }, &blobs);
+
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut flushers = Vec::new();
+        for _ in 0..2 {
+            let s = Arc::clone(&store);
+            let stop = Arc::clone(&stop);
+            flushers.push(std::thread::spawn(move || {
+                while !stop.load(Ordering::Acquire) {
+                    s.flush_cycle();
+                }
+            }));
+        }
+        {
+            let s = Arc::clone(&store);
+            std::thread::spawn(move || {
+                for gen in 0..60u32 {
+                    for k in 0..8u32 {
+                        s.put(
+                            format!("k{k}").as_bytes(),
+                            format!("v{k}-{gen:04}").as_bytes(),
+                        );
+                    }
+                    std::thread::sleep(Duration::from_micros(50));
+                }
+            })
+            .join()
+            .expect("writer");
+        }
+        assert!(store.drain_fully(), "drain");
+        stop.store(true, Ordering::Release);
+        for f in flushers {
+            f.join().expect("flusher");
+        }
+
+        for k in 0..8u32 {
+            let key = format!("k{k}");
+            let cached = store.get(key.as_bytes()).expect("get").expect("present");
+            assert_eq!(
+                blobs.peek(key.as_bytes()).as_deref(),
+                Some(&cached[..]),
+                "round {round}: {key} is durable at bytes that are not the \
+                 last acked write"
+            );
+        }
+    }
+}
+
+#[test]
+fn clear_leaves_nothing_in_the_durable_store() {
+    // `clear()` is the end-to-end version of both bugs above: it deletes
+    // every key through the ordinary write path and then drains on its
+    // own thread while the flusher runs, so it races itself. It reported
+    // success while rows survived -- and since the cache refills from the
+    // durable store, those rows come back on reopen.
+    for round in 0..40 {
+        let blobs = Arc::new(MemBlobs::new());
+        let store = open(Config { writeback_chunk: 8, ..Config::default() }, &blobs);
+        let mut rt = Runtime::start(Arc::clone(&store));
+
+        for k in 0..400u32 {
+            store.put(format!("k{k:04}").as_bytes(), b"payload-payload-payload");
+        }
+        blobs.set_write_delay_us(200);
+        assert!(store.clear(), "round {round}: clear reported not-durable");
+        blobs.set_write_delay_us(0);
+        rt.shutdown();
+
+        let left = blobs.snapshot();
+        assert!(
+            left.is_empty(),
+            "round {round}: clear() succeeded but {} rows are still durable, \
+             e.g. {:?}",
+            left.len(),
+            left.keys().next()
+        );
+    }
+}

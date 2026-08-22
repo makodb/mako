@@ -7,6 +7,7 @@
 #include "abstract_db.h"
 #include "abstract_ordered_index.h"
 #include "sto/Transaction.hh"
+#include "sto/thread_registration.hh"
 #include "sto/MassTrans.hh"
 #include "sto/Hashtable.hh"
 #include "sto/simple_str.hh"
@@ -1608,7 +1609,6 @@ public:
   void
   thread_init(bool loader, int source)
   {
-    static int tidcounter = 0;
     // Per-SHARD worker sequence. A single process can run several
     // shards (dbtest -L 0,1): pid = seq % warehouses is only correct
     // if each shard's workers draw a contiguous block, but concurrent
@@ -1617,7 +1617,16 @@ public:
     // and EADDRINUSE-panic (shard2SingleProcess CI flake).
     static constexpr size_t kMaxLocalShards = 64;
     static std::atomic<size_t> partition_seq[kMaxLocalShards];
-    TThread::set_id(__sync_fetch_and_add(&tidcounter, 1));
+    if (!mako::silo::claim_thread_runtime(
+            mako::silo::thread_runtime::native_mako)) {
+      Panic("OS thread cannot switch from the local C ABI to native Mako");
+    }
+    const int thread_id = mako::silo::try_allocate_thread_id();
+    if (thread_id < 0) {
+      Panic("STO thread-ID space exhausted (%d process-lifetime slots)",
+            MAX_THREADS);
+    }
+    TThread::set_id(thread_id);
     TThread::set_mode(0); // checking in-progress
     TThread::set_num_eprc_server(BenchmarkConfig::getInstance().getNumErpcServer());
     TThread::set_is_micro(BenchmarkConfig::getInstance().getIsMicro());
@@ -1689,14 +1698,9 @@ public:
       //Notice("ParID[load-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getGlobalPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
     }
     
-    if (TThread::id() == 0) {
-      // someone has to do this (they don't provide us with a general init callback)
-      mbta_table::static_init();
-      // need this too
-      pthread_t advancer;
-      pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-      pthread_detach(advancer);
-    }
+    // Shared with the Rust-facing local ABI. Starting two epoch advancers is
+    // both wasteful and a data race on the process-global epoch callback.
+    ALWAYS_ASSERT(mako::silo::ensure_epoch_runtime());
     mbta_table::thread_init();
   }
 

@@ -37,6 +37,7 @@ mod sys {
         rocksdb_options_t,
         rocksdb_readoptions_t,
         rocksdb_writeoptions_t,
+        rocksdb_flushoptions_t,
         rocksdb_writebatch_t,
         rocksdb_iterator_t,
     );
@@ -54,6 +55,10 @@ mod sys {
         pub fn rocksdb_writeoptions_set_sync(o: *mut rocksdb_writeoptions_t, v: c_uchar);
         pub fn rocksdb_writeoptions_disable_WAL(o: *mut rocksdb_writeoptions_t, v: c_int);
 
+        pub fn rocksdb_flushoptions_create() -> *mut rocksdb_flushoptions_t;
+        pub fn rocksdb_flushoptions_destroy(o: *mut rocksdb_flushoptions_t);
+        pub fn rocksdb_flushoptions_set_wait(o: *mut rocksdb_flushoptions_t, v: c_uchar);
+
         pub fn rocksdb_open(
             o: *const rocksdb_options_t,
             name: *const c_char,
@@ -62,7 +67,7 @@ mod sys {
         pub fn rocksdb_close(db: *mut rocksdb_t);
         pub fn rocksdb_flush(
             db: *mut rocksdb_t,
-            o: *const rocksdb_options_t,
+            o: *const rocksdb_flushoptions_t,
             err: *mut *mut c_char,
         );
 
@@ -105,10 +110,7 @@ mod sys {
         pub fn rocksdb_iter_seek_to_first(it: *mut rocksdb_iterator_t);
         pub fn rocksdb_iter_valid(it: *const rocksdb_iterator_t) -> c_uchar;
         pub fn rocksdb_iter_next(it: *mut rocksdb_iterator_t);
-        pub fn rocksdb_iter_key(
-            it: *const rocksdb_iterator_t,
-            klen: *mut usize,
-        ) -> *const c_char;
+        pub fn rocksdb_iter_key(it: *const rocksdb_iterator_t, klen: *mut usize) -> *const c_char;
         pub fn rocksdb_iter_get_error(it: *const rocksdb_iterator_t, err: *mut *mut c_char);
 
         pub fn rocksdb_free(p: *mut std::ffi::c_void);
@@ -249,9 +251,20 @@ impl RocksBlobs {
 
     /// Force a memtable flush. Only meaningful for tests and shutdown.
     pub fn flush(&self) -> Result<(), BlobError> {
+        // RocksDB's flush entry point takes a dedicated flush-options
+        // handle, not the database options used at open. Waiting makes this
+        // method's shutdown/testing contract literal: the memtable flush has
+        // completed before it returns.
+        // SAFETY: created here and destroyed exactly once below.
+        let flush = unsafe { sys::rocksdb_flushoptions_create() };
+        // SAFETY: `flush` is live for both calls and `db` remains live for
+        // the duration of `self`.
+        unsafe { sys::rocksdb_flushoptions_set_wait(flush, 1) };
         let mut e = Err0::new();
-        // SAFETY: `db` and `opts` are live for the life of `self`.
-        unsafe { sys::rocksdb_flush(self.db, self.opts, e.as_mut()) };
+        // SAFETY: `db` and `flush` are live for this call.
+        unsafe { sys::rocksdb_flush(self.db, flush, e.as_mut()) };
+        // SAFETY: the call above has returned and this is the unique handle.
+        unsafe { sys::rocksdb_flushoptions_destroy(flush) };
         e.check("rocksdb_flush")
     }
 }

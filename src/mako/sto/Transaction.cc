@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits>
 
 #include "Transaction.hh"
 #include "MassTrans.hh"
@@ -62,6 +63,64 @@ TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 1;
 TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 2 * TransactionTid::increment_value;
 #endif
    // reserve TransactionTid::increment_value for prepopulated
+
+// @unsafe: atomically allocates from the process-wide STO version clock
+bool Transaction::try_commit_tid(tid_type& result) const noexcept {
+    assert(state_ == s_committing_locked || state_ == s_committing);
+    if (commit_tid_) {
+        result = commit_tid_;
+        return true;
+    }
+
+    constexpr tid_type increment = TransactionTid::increment_value;
+    constexpr tid_type maximum = std::numeric_limits<tid_type>::max();
+    tid_type current = __atomic_load_n(&_TID, __ATOMIC_ACQUIRE);
+    while (current != 0 && current <= maximum - increment) {
+        const tid_type next = current + increment;
+        if (__atomic_compare_exchange_n(&_TID, &current, next, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            commit_tid_ = current;
+            result = current;
+            return true;
+        }
+        // A failed compare-exchange updates current; retry after rechecking
+        // both the zero sentinel and overflow boundary.
+    }
+    result = 0;
+    return false;
+}
+
+// @unsafe: atomically advances the process-wide STO version clock
+bool Transaction::advance_tid_past(tid_type observed) noexcept {
+    constexpr tid_type increment = TransactionTid::increment_value;
+    constexpr tid_type maximum = std::numeric_limits<tid_type>::max();
+    // Advancing stores observed + increment in _TID, and try_commit_tid must
+    // still be able to mint that value and advance the clock once more. Reject
+    // the recovery boundary before touching the global clock if either
+    // addition would overflow.
+    static_assert(increment <= maximum / 2);
+    if (observed == 0 || observed > maximum - 2 * increment)
+        return false;
+
+    // Preserve the exact congruence of the raw durable TID. In particular, do
+    // not divide by increment: SIMPLE_WORKLOAD historically starts at one,
+    // whereas normal builds start on an increment-aligned value.
+    const tid_type desired = observed + increment;
+    tid_type current = __atomic_load_n(&_TID, __ATOMIC_ACQUIRE);
+    // Zero is the unassigned sentinel and can only appear here if a legacy
+    // unchecked allocator wrapped. Never revive that clock: doing so could
+    // reuse timestamps that were issued before exhaustion.
+    while (current != 0 && current < desired) {
+        if (__atomic_compare_exchange_n(&_TID, &current, desired, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            return true;
+        // current was refreshed by the failed compare-exchange.
+    }
+    // A prior caller may already have consumed the final mintable TID. During
+    // recovery this API is called before admitting transaction workers, so a
+    // mintable value observed here remains available to the next commit.
+    return current != 0 && current <= maximum - increment;
+}
 
 static void __attribute__((used)) check_static_assertions() {
     static_assert(sizeof(threadinfo_t) % 128 == 0, "threadinfo is 2-cache-line aligned");
@@ -243,16 +302,22 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
         // and no good way to set state_ = s_committing_locked; as try_commit do
         // so, we skip it blindly for participant
         if ((TThread::mode() == 1 && nwriteset>0) || state_ == s_committing_locked) {
-            it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
-            for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-                it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+            for (unsigned tidx = tset_size_; tidx != first_write_; ) {
+                --tidx;
+                if (likely(tidx < tset_initial_capacity))
+                    it = &tset0_[tidx];
+                else
+                    it = &tset_[tidx / tset_chunk][tidx % tset_chunk];
                 if (it->needs_unlock())
                     it->owner()->unlock(*it);
             }
         }
-        it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
-        for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-            it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+        for (unsigned tidx = tset_size_; tidx != first_write_; ) {
+            --tidx;
+            if (likely(tidx < tset_initial_capacity))
+                it = &tset0_[tidx];
+            else
+                it = &tset_[tidx / tset_chunk][tidx % tset_chunk];
             if (it->has_write())
                 it->owner()->cleanup(*it, committed);
         }
@@ -383,8 +448,13 @@ void Transaction::shard_unlock(bool committed) {
 }
 
 // @unsafe: complex commit protocol with remote operations, locking, and validation
-bool Transaction::try_commit(bool no_paxos) {
+bool Transaction::try_commit(bool no_paxos,
+                             post_validation_hook hook,
+                             void* hook_context,
+                             preinstall_failure* failure) {
     assert(TThread::id() == threadid_);
+    if (failure)
+        *failure = preinstall_failure::none;
 #if ASSERT_TX_SIZE
     if (tset_size_ > TX_SIZE_LIMIT) {
         std::cerr << "transSet_ size at " << tset_size_
@@ -514,9 +584,26 @@ bool Transaction::try_commit(bool no_paxos) {
 #endif
 
 
+    // The hook's timestamp must reflect Silo's serialization order, so mint it
+    // after the entire write set is locked but before validating the read set.
+    // A failed transaction may consume a harmless gap. No cache log position
+    // has been assigned yet, so validation failure needs no cancellation slot.
+    if (hook != nullptr && nwriteset != 0) {
+        tid_type timestamp = 0;
+        if (!try_commit_tid(timestamp)) {
+            if (failure)
+                *failure = preinstall_failure::timestamp_exhausted;
+            goto abort;
+        }
+    }
+
 #if CONSISTENCY_CHECK
+    // A hooked transaction was assigned above through the overflow-checked CAS
+    // path. Preserve the legacy consistency-check behavior only when no hook
+    // has already cached a TID.
     fence();
-    commit_tid();
+    if (!commit_tid_)
+        commit_tid();
     fence();
 #endif
 
@@ -567,6 +654,16 @@ bool Transaction::try_commit(bool no_paxos) {
                 goto abort;
             }
         }
+    }
+
+    // Every validation has succeeded and no write is visible yet. The hook
+    // attaches preallocated storage to the ordered cache log. Rejection is a
+    // definite abort because phase3 has not begun.
+    if (hook != nullptr && nwriteset != 0 &&
+        !hook(hook_context, commit_tid_)) {
+        if (failure)
+            *failure = preinstall_failure::hook_rejected;
+        goto abort;
     }
 
     //phase3

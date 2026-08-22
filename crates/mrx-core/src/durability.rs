@@ -222,8 +222,8 @@ impl Floors {
     /// bakes in whatever field order was typed — and never parallelise
     /// it.
     /// `slots` must be only the **registered** prefix, not the whole
-    /// array. The flusher runs this every cycle; walking 64 slots to
-    /// read 16 live ones costs four times the cache-line traffic and
+    /// array. The flusher runs this every cycle; walking the full registry
+    /// to read only a small live prefix multiplies cache-line traffic and
     /// pulls lines the producers own into shared state for nothing.
     pub fn min_over(slots: &[WriterSlot], counter: Version) -> u64 {
         let mut m = counter;

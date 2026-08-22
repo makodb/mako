@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <sys/file.h>
 #ifdef MAKO_ENABLE_ERPC
@@ -143,6 +145,29 @@ namespace mako
     const int BITS_OF_NODE = sizeof(struct Node);
     const int BITS_OF_TT = sizeof(uint32_t);
 
+    // Stored metadata follows arbitrary-length user bytes and is therefore not
+    // naturally aligned. Keep all accesses in byte/memcpy form rather than
+    // forming misaligned uint32_t* or Node* pointers.
+    inline void ResetEncodedNodeState(char* encoded_value, size_t encoded_size) {
+        uint32_t timestamp = 0;
+        int16_t data_size = 0;
+        char* node_bytes = encoded_value + encoded_size - BITS_OF_NODE;
+        std::memcpy(node_bytes + offsetof(Node, timestamp), &timestamp,
+                    sizeof(timestamp));
+        std::memcpy(node_bytes + offsetof(Node, data_size), &data_size,
+                    sizeof(data_size));
+    }
+
+    inline void ResetEncodedMetadata(char* encoded_value, size_t encoded_size) {
+        uint32_t time_term = 0;
+        char* data = nullptr;
+        std::memcpy(encoded_value + encoded_size - EXTRA_BITS_FOR_VALUE,
+                    &time_term, sizeof(time_term));
+        ResetEncodedNodeState(encoded_value, encoded_size);
+        char* node_bytes = encoded_value + encoded_size - BITS_OF_NODE;
+        std::memcpy(node_bytes + offsetof(Node, data), &data, sizeof(data));
+    }
+
     // Helper function to encode values with required metadata padding
     inline std::string Encode(const std::string& value) {
         // Create string with exact size needed - single allocation
@@ -152,17 +177,7 @@ namespace mako
         // Copy the value to the beginning - single memory copy
         std::memcpy(encoded_value.data(), value.data(), value.size());
 
-        // Initialize timestamp/term to 0 (already zeroed by resize)
-        uint32_t* time_term = reinterpret_cast<uint32_t*>(
-            encoded_value.data() + encoded_value.size() - EXTRA_BITS_FOR_VALUE);
-        *time_term = 0;  // Redundant but explicit
-
-        // Initialize Node structure
-        Node* node = reinterpret_cast<Node*>(
-            encoded_value.data() + encoded_value.size() - BITS_OF_NODE);
-        node->timestamp = 0;
-        node->data_size = 0;
-        node->data = nullptr;
+        ResetEncodedMetadata(encoded_value.data(), encoded_value.size());
 
         return encoded_value;
     }

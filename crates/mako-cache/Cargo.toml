@@ -1,0 +1,13 @@
+[package]
+name = "mako-cache"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Transactional Mako write-back cache over RocksDB"
+license = "MIT"
+publish = false
+
+[dependencies]
+mako-local = { path = "../mako-local" }
+mrx-core = { path = "../mrx-core" }
+mrx-rocks = { path = "../mrx-rocks" }

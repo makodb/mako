@@ -106,7 +106,8 @@ public:
     mythreadinfo.ti = new threadinfo;
     return;
 #else
-    if (!mythreadinfo.ti) {
+    auto current_context = MasstreeContext::Current();
+    if (!mythreadinfo.ti || mythreadinfo.ti->context() != current_context) {
       auto* ti = threadinfo::make(threadinfo::TI_PROCESS, TThread::id());
       mythreadinfo.ti = ti;
     }
@@ -249,7 +250,16 @@ private:
       return handlePutFound<INSERT, SET>(e, key, value);
     } else {
       //      auto p = ti.ti->allocate(sizeof(versioned_value), memtag_value);
-      versioned_value* val = (versioned_value*)versioned_value::make(value, invalid_bit);  // malloc customer::value 
+      versioned_value* val;
+      try {
+        val = (versioned_value*)versioned_value::make(value, invalid_bit);  // malloc customer::value
+      } catch (...) {
+        // find_insert holds the cursor lock and may have assigned an unpublished
+        // slot. Cancel that candidate before propagating allocation failure;
+        // otherwise the ABI catch would leave the Masstree node locked forever.
+        lp.finish(0, *ti.ti);
+        throw;
+      }
       lp.value() = val;
 #if ABORT_ON_WRITE_READ_CONFLICT
       auto orig_node = lp.node();
@@ -601,9 +611,7 @@ public:
   #define RESET_NODE_BY_E(e) \
     char *oldval_str=(char*)e->data();\
     int oldval_len=e->length();\
-    mako::Node* header = reinterpret_cast<mako::Node*>(oldval_str+oldval_len-mako::BITS_OF_NODE);\
-    header->timestamp = 0; \
-    header->data_size = 0; 
+    mako::ResetEncodedNodeState(oldval_str, static_cast<size_t>(oldval_len));
 
   void install(TransItem& item, Transaction& t) override {
     assert(!is_inter(item));
@@ -708,7 +716,10 @@ protected:
     bool needsResize = e->needsResize(value);
     if (needsResize) {
       if (!has_insert(item)) {  // update
-        // TODO: might be faster to do this part at commit time but easiest to just do it now
+        // Allocate/copy while holding the old value lock, but do not invalidate
+        // the published value until allocation has succeeded. In particular,
+        // StandardMalloc now throws on OOM; invalidating first would leave a
+        // permanently poisoned tree entry when that exception reached the ABI.
         lock(e);
         // we had a weird race condition and now this element is gone. just abort at this point
         if (e->version() & invalid_bit) {
@@ -716,20 +727,24 @@ protected:
           Sto::abort();
           return;
         }
+        try {
+          // Copies the old value into a larger, still-unpublished allocation.
+          new_location = e->resizeIfNeeded(value);
+        } catch (...) {
+          unlock(e);
+          throw;
+        }
         e->version() |= invalid_bit;
         // should be ok to unlock now because any attempted writes will be forced to abort
         unlock(e);
+        // The copy was made while e carried its lock bit. Derive the replacement
+        // version from the now-unlocked old entry and clear only invalid_bit.
+        new_location->version() = e->version() & ~invalid_bit;
+      } else {
+        new_location = e->resizeIfNeeded(value);
       }
-      // does the actual realloc. at this point e is marked invalid so we don't have to worry about
-      // other threads changing e's value
-      // copied original value
-      new_location = e->resizeIfNeeded(value);
       // e can't get bigger so this should always be true
       assert(new_location != e);
-      if (!has_insert(item)) {
-        // copied version is going to be invalid because we just had to mark e invalid
-        new_location->version() &= ~invalid_bit;
-      }
       cursor_type lp(table_, key);
       // TODO: not even trying to pass around threadinfo here
       bool found = lp.find_locked(*mythreadinfo.ti);
@@ -957,4 +972,3 @@ __thread typename MassTrans<V, Box, Opacity>::threadinfo_type MassTrans<V, Box, 
 
 template <typename V, typename Box, bool Opacity>
 constexpr typename MassTrans<V, Box, Opacity>::Version MassTrans<V, Box, Opacity>::invalid_bit;
-

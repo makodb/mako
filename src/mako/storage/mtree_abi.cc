@@ -23,6 +23,7 @@
 #include "mako/varkey.h"
 #include "mako/core.h"
 #include "mako/silo_runtime.h"
+#include "mako/sto/thread_registration.hh"
 
 #include <string.h>
 
@@ -107,6 +108,10 @@ size_t mtx_kv_size(void) { return sizeof(mtx_kv); }
 int mtx_thread_attach(void) {
   try {
     if (tl_attached) return MTX_OK;
+    if (!mako::silo::claim_thread_runtime(
+            mako::silo::thread_runtime::plain_masstree)) {
+      return MTX_ERR_WRONG_RUNTIME;
+    }
     // masstree's threadinfo hardcodes rcu::s_instance / ticker::s_instance
     // regardless of which SiloRuntime allocated this thread's core ID, so
     // a thread bound elsewhere would index another runtime's per-core RCU

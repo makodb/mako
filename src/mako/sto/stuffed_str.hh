@@ -1,5 +1,6 @@
 #pragma once
 #include "string_base.hh"
+#include <new>
 
 template <typename Stuff> 
 // Stuff -> uint64_t
@@ -10,7 +11,10 @@ public:
 
   struct StandardMalloc {
     void *operator()(size_t s) {
-      return malloc(s);  // deallocate_rcu in versioned_str_struct
+      void* p = malloc(s);  // deallocate_rcu in versioned_str_struct
+      if (!p)
+        throw std::bad_alloc();
+      return p;
     }
   };
 

@@ -3,6 +3,26 @@
 version = 4
 
 [[package]]
+name = "mako-cache"
+version = "0.1.0"
+dependencies = [
+ "mako-local",
+ "mrx-core",
+ "mrx-rocks",
+]
+
+[[package]]
+name = "mako-local"
+version = "0.1.0"
+dependencies = [
+ "mako-local-sys",
+]
+
+[[package]]
+name = "mako-local-sys"
+version = "0.1.0"
+
+[[package]]
 name = "mrx"
 version = "0.1.0"
 dependencies = [

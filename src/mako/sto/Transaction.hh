@@ -376,6 +376,19 @@ public:
         bool run;
     } global_epochs;
     typedef TransactionTid::type tid_type;
+
+    // Optional durability seam for local transactional caches. The callback
+    // runs after every read/predicate validation has succeeded, but before the
+    // first write is installed. It may enter a bounded in-memory critical
+    // section, but must not perform I/O, capacity waits, heap allocation, or
+    // unwind because the transaction still holds its complete write set.
+    using post_validation_hook = bool (*)(void*, tid_type) noexcept;
+
+    enum class preinstall_failure : uint8_t {
+        none = 0,
+        hook_rejected,
+        timestamp_exhausted,
+    };
 private:
     static TransactionTid::type _TID;
 public:
@@ -670,7 +683,10 @@ public:
         throw Abort();
     }
 
-    bool try_commit(bool no_paxos= false);
+    bool try_commit(bool no_paxos = false,
+                    post_validation_hook hook = nullptr,
+                    void* hook_context = nullptr,
+                    preinstall_failure* failure = nullptr);
     bool shard_try_lock_last_writeset();
     int shard_validate();
     void shard_install(uint32_t timestamp);
@@ -783,6 +799,17 @@ public:
             commit_tid_ = fetch_and_add(&_TID, TransactionTid::increment_value);
         return commit_tid_;
     }
+
+    // Assign the transaction's real STO commit TID without allowing the
+    // process-wide counter to wrap. This is used by the durability hook path;
+    // legacy commit_tid() deliberately retains its historical behavior.
+    bool try_commit_tid(tid_type& result) const noexcept;
+
+    // Ensure every TID minted after this call is greater than `observed`.
+    // `observed` must be a raw TID previously returned by commit_tid(), not a
+    // normalized sequence number. Returns false unless advancing leaves at
+    // least one representable, nonzero TID for a subsequent checked commit.
+    static bool advance_tid_past(tid_type observed) noexcept;
 
     void updateSingleTimestamp() const {
         assert(state_ == s_committing_locked || state_ == s_committing);
@@ -1017,6 +1044,15 @@ public:
         // Be defensive during shutdown - return false if no transaction
         if (!in_progress()) return false;
         return TThread::txn->try_commit(true);
+    }
+
+    static bool try_commit_no_paxos(
+        Transaction::post_validation_hook hook,
+        void* hook_context,
+        Transaction::preinstall_failure* failure) {
+        // Be defensive during shutdown - return false if no transaction.
+        if (!in_progress()) return false;
+        return TThread::txn->try_commit(true, hook, hook_context, failure);
     }
 
     static bool shard_try_lock_last_writeset() {

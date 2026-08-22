@@ -9,6 +9,9 @@
 [workspace]
 resolver = "2"
 members = [
+    "mako-cache",
+    "mako-local",
+    "mako-local-sys",
     "mrx",
     "mrx-ffi",
     "mrx-core",

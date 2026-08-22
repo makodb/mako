@@ -88,7 +88,7 @@ extern "C" {
 #define MTX_OK 0
 #define MTX_ERR_NO_CORE_ID 1     /* core-ID space exhausted (512/runtime)   */
 #define MTX_ERR_NOT_ATTACHED 2   /* mtx_thread_attach() not called here     */
-#define MTX_ERR_WRONG_RUNTIME 3  /* thread is bound to a non-global runtime */
+#define MTX_ERR_WRONG_RUNTIME 3  /* wrong runtime or another adapter owns it */
 #define MTX_ERR_INVALID 4        /* bad argument                            */
 #define MTX_ERR_NO_SPACE 5       /* caller buffer or arena too small        */
 #define MTX_ERR_INTERNAL 6       /* a C++ exception was contained here      */

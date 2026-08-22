@@ -3,6 +3,7 @@
 //! Ported from `src/mako/storage/masstree_rocks_index.hh`, which is
 //! mutation-verified 5/5 and serves as the oracle for this code.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
@@ -67,6 +68,30 @@ impl Drop for WaiterGuard<'_> {
 /// defect the C++ original shipped and had to fix.
 const ENTRY_OVERHEAD: u64 = 64;
 
+/// Production Masstree has the same 512-entry, non-recycled lifetime
+/// thread space (`NMAXCORES`): thread 513 fails while attaching to the
+/// index, before it can reach this registry. Mako's own DB-thread id cap
+/// is narrower at 460. Slots here likewise cannot be recycled because a
+/// dead thread may leave a partial batch for the flusher to steal.
+const MAX_WRITERS: usize = 512;
+
+/// The fast path remembers the hottest stores without hashing. The full
+/// registry behind it is authoritative: evicting a hot entry must never
+/// make a later access allocate a second slot for the same (thread, store).
+const WRITER_CACHE_WAYS: usize = 8;
+
+thread_local! {
+    static WRITER_CACHE: Cell<[(u64, u32); WRITER_CACHE_WAYS]> =
+        const { Cell::new([(u64::MAX, 0); WRITER_CACHE_WAYS]) };
+    static WRITER_REGISTRY: RefCell<HashMap<u64, u32>> =
+        RefCell::new(HashMap::new());
+    static WRITER_CACHE_VICTIM: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Process-unique, so cached writer mappings cannot alias a later store
+/// even if its allocation reuses the same address.
+static NEXT_STORE_ID: AtomicU64 = AtomicU64::new(0);
+
 /// A Masstree-over-blob-store write-back cache.
 pub struct Store<K: KeyIndex, B: Blobs> {
     cfg: Config,
@@ -93,9 +118,30 @@ pub struct Store<K: KeyIndex, B: Blobs> {
     ///
     /// Everything the flusher does per cycle — the floor scan and the
     /// batch steal — is proportional to this rather than to the array
-    /// size, so a process with four writer threads does not pay for
-    /// sixty-four.
+    /// size, so a process with four writer threads does not pay for the
+    /// full registry.
     next_writer: AtomicU64,
+
+    /// Process-unique identity used by the thread-local writer registry.
+    id: u64,
+
+    /// Serialises the whole flusher cycle.
+    ///
+    /// The C++ implementation states this as an invariant in prose
+    /// ("Flusher. ONE thread") and gets it structurally: its
+    /// `mrx_flusher_cycle` is only ever called from `mrx_flusher_loop`,
+    /// and its barrier waits on a condvar rather than running a cycle.
+    /// This port made `flush_cycle` public and let `drain_fully` run it
+    /// on the CALLER's thread, so `clear()` and `shutdown()` -- both of
+    /// which drain while the flusher thread is still live -- ran two
+    /// cycles at once.
+    ///
+    /// That is not merely a lost wakeup. Two cycles can select the same
+    /// entry, read DIFFERENT published versions of it, and have the
+    /// older batch land last: RocksDB then holds stale bytes while the
+    /// watermark says the newer version is durable. Both then erase the
+    /// entry unconditionally, so nothing is left owing it.
+    flusher: Mutex<()>,
 
     /// Flusher-only: entry index → **oldest** undischarged version.
     ///
@@ -148,10 +194,9 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// the durable store gets an entry with its value evicted. Until that
     /// completes, an index miss cannot be trusted as absence.
     pub fn open(cfg: Config, index: K, blobs: B) -> Result<Self, crate::BlobError> {
-        let n_writers = 64;
         let s = Self {
             log: TicketLog::new(cfg.log_slots),
-            writers: (0..n_writers).map(|_| WriterSlot::new()).collect(),
+            writers: (0..MAX_WRITERS).map(|_| WriterSlot::new()).collect(),
             next_writer: AtomicU64::new(0),
             cfg,
             index,
@@ -159,6 +204,8 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             entries: EntryTable::new(),
             counter: CacheLine(VersionCounter::new()),
             watermark: CacheLine(Watermark::new()),
+            id: NEXT_STORE_ID.fetch_add(1, Ordering::Relaxed),
+            flusher: Mutex::new(()),
             dirty: Mutex::new(HashMap::new()),
             stash: Mutex::new(Vec::new()),
             stash_min: AtomicU64::new(NO_FLOOR),
@@ -253,20 +300,89 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// `thread_local!` that dropped its slot would destroy a dying
     /// thread's partial batch *and* release its floors, which is dropped
     /// obligations and watermark overshoot in one move.
-    fn writer(&self) -> &WriterSlot {
-        thread_local! {
-            static SLOT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-        }
+    /// The cache is a SET keyed by store id, not a single slot.
+    ///
+    /// With one unkeyed entry, the first store a thread writes to
+    /// captures the cache forever: every OTHER store hands back that
+    /// index without ever incrementing its own `next_writer`, so its
+    /// `live_writers()` stays empty. An empty writer list makes
+    /// `Floors::min_over` return `NO_FLOOR`, `recompute_watermark` falls
+    /// back to `m = c`, and the watermark jumps to the version counter
+    /// while that thread's announce floor and partial batch are still
+    /// outstanding. `sync()` then returns true over undelivered writes,
+    /// and the batch is never stolen because the steal loop walks the
+    /// same empty list. mako opens one index per table, so every table
+    /// after a worker's first was affected.
+    ///
+    /// The C++ side has always keyed by `(store, generation)` for
+    /// exactly this reason -- see the comment on `mrx_writer_for`. The
+    /// missing store key was a port regression. C++ still forgets a
+    /// mapping evicted from its fixed eight-way set; the full registry
+    /// below avoids inheriting that separate exhaustion bug. Keying on a
+    /// process-unique id rather than an address also removes the
+    /// address-reuse hazard C++ needs its generation counter for.
+    fn allocate_writer_index(&self) -> usize {
         let n = self.writers.len();
-        let idx = SLOT.with(|s| match s.get() {
-            Some(i) => i,
-            None => {
-                let i = (self.next_writer.fetch_add(1, Ordering::AcqRel) as usize) % n;
-                s.set(Some(i));
-                i
+        let i = self.next_writer.fetch_add(1, Ordering::AcqRel) as usize;
+        // FAIL-STOP, not wraparound. `% n` looks like graceful
+        // degradation and is not: two threads sharing a WriterSlot
+        // share one `announce` word, so the second one's arm clobbers
+        // the first one's floor and its `disarm` clears a floor it
+        // does not own -- the watermark then advances over a version
+        // still in flight, which is the same silent data loss the
+        // whole floors protocol exists to prevent. C++ has always
+        // aborted here (`if (i >= MRX_MAX_WRITERS) ::abort()`).
+        if i >= n {
+            eprintln!(
+                "mrx: writer registry exhausted ({n} slots). Slots are \
+                 never recycled because a dead thread may leave a \
+                 partial batch; reduce distinct writer-thread \
+                 lifetimes or raise MAX_WRITERS."
+            );
+            ::std::process::abort();
+        }
+        i
+    }
+
+    fn writer_index(&self) -> usize {
+        if let Some(idx) = WRITER_CACHE.with(|c| {
+            c.get()
+                .iter()
+                .find_map(|(id, slot)| (*id == self.id).then_some(*slot as usize))
+        }) {
+            return idx;
+        }
+
+        // The fixed array above is only an L1. This map retains every
+        // mapping for the life of the thread, so rotating through more
+        // than WRITER_CACHE_WAYS stores reloads the original slot rather
+        // than permanently burning a fresh one on every access.
+        let idx = WRITER_REGISTRY.with(|r| {
+            let mut registry = r.borrow_mut();
+            if let Some(slot) = registry.get(&self.id) {
+                return *slot as usize;
             }
+
+            let i = self.allocate_writer_index();
+            registry.insert(self.id, i as u32);
+            i
         });
-        &self.writers[idx]
+
+        WRITER_CACHE.with(|c| {
+            let mut ways = c.get();
+            let v = WRITER_CACHE_VICTIM.with(|v| {
+                let cur = v.get();
+                v.set((cur + 1) % WRITER_CACHE_WAYS);
+                cur
+            });
+            ways[v] = (self.id, idx as u32);
+            c.set(ways);
+        });
+        idx
+    }
+
+    fn writer(&self) -> &WriterSlot {
+        &self.writers[self.writer_index()]
     }
 
     // ---------------------------------------------------------------
@@ -603,6 +719,8 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// immediately, so producers essentially never hit backpressure;
     /// writeback then discharges a bounded chunk of that map.
     pub fn flush_cycle(&self) -> usize {
+        // One cycle at a time; see the `flusher` field.
+        let _only = self.flusher.lock().expect("flusher lock poisoned");
         let mut progressed = 0;
 
         // --- drain ---------------------------------------------------
@@ -1014,15 +1132,26 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         self.dirty.lock().expect("dirty lock poisoned").len()
     }
 
+    /// Writer slots permanently allocated in this store.
+    ///
+    /// Exposed for diagnostics and invariant tests. This normally counts
+    /// distinct writer-thread lifetimes, not currently live threads;
+    /// synthetic announce holds also reserve a slot. Slots are not
+    /// recycled because a dead thread may leave a partial batch behind.
+    pub fn registered_writer_slots(&self) -> usize {
+        (self.next_writer.load(Ordering::Acquire) as usize).min(self.writers.len())
+    }
+
     /// Arm a writer floor by hand, as a stuck in-flight write would.
     ///
     /// Returns the slot index to release with
     /// [`Store::release_announce_hold`]. Only meaningful in tests: it is
     /// how the announce-floor properties are made deterministic instead of
-    /// depending on catching a real few-instruction window.
+    /// depending on catching a real few-instruction window. It permanently
+    /// reserves a distinct slot so ordinary writes cannot clear the
+    /// synthetic floor.
     pub fn hold_announce(&self, at: Version) -> usize {
-        let idx = (self.next_writer.fetch_add(1, Ordering::Relaxed) as usize)
-            % self.writers.len();
+        let idx = self.allocate_writer_index();
         self.writers[idx].arm(at);
         idx
     }

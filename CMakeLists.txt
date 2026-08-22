@@ -946,6 +946,7 @@ set(MAKO_SRCFILES
   "${W}/sto/Packer.cc"
   "${W}/sto/ReplayDB.cc"
   "${W}/sto/ThreadPool.cc"
+  "${W}/sto/thread_registration.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/kv_store.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
@@ -970,6 +971,8 @@ set(MAKO_SRCFILES
   # ticker::tick_us (40ms vs 1ms) and the percore/percore_lazy layouts.
   # That is silent ODR corruption, not a compile error.
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mtree_abi.cc"
+  # Local STO/MassTrans transaction facade used by the Rust Mako port.
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
@@ -1614,6 +1617,22 @@ if (TARGET mrxffi)
   target_include_directories(masstree_rocks_bench PRIVATE
       ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
   add_dependencies(masstree_rocks_bench mrx_ffi_build)
+endif()
+# Peels the same write path one layer at a time (masstree -> entry CAS ->
+# byte accounting -> version draw -> announce floor -> ticket log ->
+# flusher), so the C++ and Rust ladders can be subtracted from each other
+# instead of compared as whole stacks.
+add_apps(mrx_write_ablation src/mako/benchmarks/mrx_write_ablation.cc)
+# Single-threaded, under callgrind: instructions and simulated D1/LL
+# misses for ONE write on each arm. valgrind serialises threads, so this
+# prices WORK PER OP, never contention -- which is exactly the datum the
+# throughput ladders cannot supply.
+add_apps(mrx_callgrind src/mako/benchmarks/mrx_callgrind.cc)
+if (TARGET mrxffi)
+  target_link_libraries(mrx_callgrind mrxffi)
+  target_include_directories(mrx_callgrind PRIVATE
+      ${CMAKE_SOURCE_DIR}/crates/mrx-ffi/include)
+  add_dependencies(mrx_callgrind mrx_ffi_build)
 endif()
 add_apps(test_callback_demo examples/test_callback_demo.cc)
 add_apps(test_ordered_callbacks examples/test_ordered_callbacks.cc)
@@ -2843,6 +2862,29 @@ if(BUILD_TESTS)
     )
     add_test(NAME MtreeAbiTests COMMAND test_mtree_abi)
 
+    # Stable local STO/MassTrans C boundary for the Rust Mako migration.
+    add_executable(test_mako_local_abi tests/test_mako_local_abi.cc)
+    target_link_libraries(test_mako_local_abi
+        mako
+        rrr
+        erpc
+        ${TXLOG_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(test_mako_local_abi PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+        ${GTEST_INCLUDE_DIRS}
+    )
+    add_test(NAME MakoLocalAbiTests COMMAND test_mako_local_abi)
+
     if (TARGET mrxffi)
         # Differential: drive the C++ cache and the Rust cache with the
         # same operation stream and require identical observable
@@ -3031,13 +3073,56 @@ if(BUILD_TESTS)
     )
     add_test(NAME STOTransactionRealTests COMMAND test_sto_transaction_real)
 
+    if(CARGO_EXECUTABLE)
+        add_custom_target(run_mako_local_rust_tests
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${CARGO_EXECUTABLE} test
+                    -p mako-local -p mako-local-sys --all-targets
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${CARGO_EXECUTABLE} test -p mako-local --doc
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+            DEPENDS mako
+            COMMENT "Running safe Rust transaction-wrapper tests"
+            VERBATIM
+        )
+
+        add_custom_target(run_mako_cache_rust_tests
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${CARGO_EXECUTABLE} test -p mako-cache --all-targets
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${CARGO_EXECUTABLE} test -p mako-cache --doc
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+            DEPENDS mako
+            COMMENT "Running Rust transaction-cache tests"
+            VERBATIM
+        )
+    endif()
+
     # Custom target to run all SILO/STO tests
     add_custom_target(run_silo_sto_tests
-        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "Silo|STO"
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+                -R "Silo|STO|silo|MakoLocal|kv_backends"
         DEPENDS test_silo_varint test_silo_rcu_thread test_silo_allocator_tuple 
+                test_silo_runtime test_silo_multi_site_stress
+                test_silo_nontxn_api test_kv_backends test_mako_local_abi
                 test_sto_transaction test_sto_transaction_real
         COMMENT "Running all Silo/STO tests"
+        VERBATIM
     )
+    if(TARGET run_mako_local_rust_tests)
+        add_dependencies(run_silo_sto_tests run_mako_local_rust_tests)
+    endif()
+    if(TARGET run_mako_cache_rust_tests)
+        add_dependencies(run_silo_sto_tests run_mako_cache_rust_tests)
+    endif()
 
     message(STATUS "Test targets configured:")
     message(STATUS "  RRR Framework Tests:")
