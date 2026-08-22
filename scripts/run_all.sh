@@ -71,7 +71,7 @@ BENCH_INTEREST_TXN=( "STOCK LEVEL" "STOCK LEVEL" )
 MAX_RETRY=5
 
 # available modes
-MODES=( deptran occ 2pl_wound_die ro6 )
+MODES=( deptran occ 2pl_wound_die )
 #MODES=( deptran occ 2pl_wound_die )
 #MODES=( 2pl )
 

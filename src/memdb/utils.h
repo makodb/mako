@@ -28,9 +28,8 @@ typedef enum {
     ROW_COARSE,
     ROW_FINE,
     ROW_VERSIONED,
-    ROW_MULTIVER,
 
-    TBL_SORTED,
+    TBL_SORTED = 6,  // Preserve the existing symbol_t values.
     TBL_UNSORTED,
     TBL_SNAPSHOT,
 

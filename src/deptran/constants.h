@@ -82,7 +82,6 @@ namespace janus {
 #define MODE_2PL    (0x01)
 #define MODE_OCC    (0x02)
 #define MODE_RCC    (0x04)
-#define MODE_RO6    (0x08)
 #define MODE_RULE    (0x15)
 #define MODE_MDCC   (0x12)
 #define MODE_TROAD    (0x03)

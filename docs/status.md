@@ -158,7 +158,7 @@ Proven, high-performance in-memory index. The critical missing piece is crash re
 - **OCC (Optimistic Concurrency Control)**: Mature implementation with MVCC, thread-local transaction state, read/write set tracking.
 - **Transaction API**: Clean `abstract_db` interface with `new_txn`, `commit_txn`, `abort_txn`.
 - **Speculative 2PC**: Core Mako innovation — watermark-based validation with background replication.
-- **Protocol plugin system (Frame)**: Well-designed factory pattern supporting 15+ protocols. Easy to add new protocols.
+- **Protocol plugin system (Frame)**: Factory pattern for the remaining transaction and replication protocols.
 - **Coordinator framework**: Phase-based execution (DISPATCH → PREPARE → COMMIT) with pluggable backends.
 
 ### What's Research-Only (Not Production-Ready)
@@ -168,10 +168,10 @@ Proven, high-performance in-memory index. The critical missing piece is crash re
 | 2PL | 70% | Core works, no deadlock detection |
 | OCC | 65% | Lazy versioning, ad-hoc design |
 | RCC/Rococo | 55% | Complex dependency graphs, 24 `verify(0)` stubs |
-| TROAD, Carousel, Februus, SNOW | <30% | Proof-of-concept only |
+| TROAD, Carousel, Februus | <30% | Proof-of-concept only |
 
-The former standalone Janus and Mencius protocol implementations are retired
-and are not supported configuration options.
+The former standalone Janus, Mencius, and SNOW/RO6 protocol implementations
+are retired and are not supported configuration options.
 
 ### Critical Issues
 

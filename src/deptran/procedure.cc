@@ -217,8 +217,7 @@ ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
 // removed `shared_ptr<TxPieceData>
 // TxData::GetNextReadySubCmd()`.  The function body started with
 // `verify(0)` (intentionally disabled) and the only call sites were
-// commented-out code in `snow/ro6_coord.cc:22, 179` and
-// `rcc/coord.cc:231`.  The live dispatch path is
+// commented-out legacy coordinator code.  The live dispatch path is
 // `TxData::GetReadyPiecesData(int32_t max)`.
 
 bool TxData::OutputReady() {
@@ -278,8 +277,8 @@ void TxData::Reset() {
 }
 
 // removed `void TxData::read_only_reset()`
-// — the only call sites (`snow/ro6_coord.cc:216`, `rcc/coord.cc:272`)
-// were already commented out, and the `read_only_failed_` field it
+// — its only call sites were already commented out, and the
+// `read_only_failed_` field it
 // reset went away in the same commit.  Callers needing a reset use
 // `TxData::Reset()` directly.
 //
@@ -332,8 +331,8 @@ TxReply &TxData::get_reply() {
 
 // removed `void TxRequest::get_log(i64,
 // std::string&)` — both call sites were already commented-out code
-// (`snow/ro6_coord.cc:247`, `rcc/coord.cc:27`).  The method was a
-// 14-line bookkeeping helper for an old logging path that is no
+// in legacy coordinators.  The method was a 14-line bookkeeping helper
+// for an old logging path that is no
 // longer invoked.
 
 //` defaults will trigger

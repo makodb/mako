@@ -43,9 +43,6 @@
 //            row = FineLockedRow::create(schema, row_data);
 //        } else if (row_type == ROW_VERSIONED) {
 //            row = VersionedRow::create(schema, row_data);
-//        } else {
-//            row = MultiVersionedRow::create(schema, row_data);
-//        }
 //        table->insert(row);
 //    }
 //    timer.stop();
@@ -102,16 +99,6 @@
 //TEST(benchmark, kv_unsafe_sorted) {
 //    TxnMgrUnsafe mgr;
 //    benchmark_kv(&mgr, TBL_SORTED, ROW_BASIC);
-//}
-//
-//TEST(benchmark, kv_multiver_sorted) {
-//    TxnMgrUnsafe mgr;
-//    benchmark_kv(&mgr, TBL_SORTED, ROW_MULTIVER);
-//}
-//
-//TEST(benchmark, kv_multiver_unsorted) {
-//    TxnMgrUnsafe mgr;
-//    benchmark_kv(&mgr, TBL_UNSORTED, ROW_MULTIVER);
 //}
 //
 ////TEST(benchmark, kv_2pl_sorted_coarse) {

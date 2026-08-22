@@ -20,7 +20,6 @@ class ClassicServiceImpl : public ClassicService {
   AvgStat stat_sz_gra_ask_{AvgStat::new_()};
   AvgStat stat_sz_scc_{AvgStat::new_()};
   AvgStat stat_n_ask_{AvgStat::new_()};
-  AvgStat stat_ro6_sz_vector_{AvgStat::new_()};
   uint64_t n_asking_ = 0;
 
 //  std::mutex mtx_;

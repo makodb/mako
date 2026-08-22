@@ -600,7 +600,6 @@ void ClassicServiceImpl::RccInquire(const txnid_t& tid,
                                     const int32_t& rank,
                                     map<txid_t, parent_set_t>* ret,
                                     rrr::DeferredReply defer) {
-//  verify(IS_MODE_RCC || IS_MODE_RO6);
 //  std::lock_guard<std::mutex> guard(mtx_);
   RccServer* p_sched = (RccServer*) dtxn_sched_;
 //  *p_md_graph = std::make_shared<RccGraph>();
@@ -813,7 +812,6 @@ void ClassicServiceImpl::RegisterStats() {
   registry.set_stat(StatsRegistry::STAT_SZ_GRAPH_COMMIT, &stat_sz_gra_commit_);
   registry.set_stat(StatsRegistry::STAT_SZ_GRAPH_ASK, &stat_sz_gra_ask_);
   registry.set_stat(StatsRegistry::STAT_N_ASK, &stat_n_ask_);
-  registry.set_stat(StatsRegistry::STAT_RO6_SZ_VECTOR, &stat_ro6_sz_vector_);
 }
 
 void ClassicServiceImpl::MsgString(const string& arg,

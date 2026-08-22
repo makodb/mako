@@ -209,7 +209,6 @@ TxLogServer::TxLogServer(int mode) : TxLogServer() {
     case MODE_NONE:
     case MODE_RPC_NULL:
     case MODE_RCC:
-    case MODE_RO6:
       mdb_txn_mgr_ = make_shared<mdb::TxnMgrUnsafe>();
       break;
     default:verify(0);

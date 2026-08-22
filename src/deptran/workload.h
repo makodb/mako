@@ -5,7 +5,6 @@
 #include "config.h"
 #include "txn_reg.h"
 #include "2pl/tx.h"
-#include "snow/ro6.h"
 
 namespace janus {
 
@@ -173,21 +172,21 @@ txn_reg_->regs_[txn][pie].sharder_ \
 
 
 #define RCC_KISS(row, col, imdt) \
-    if ((IS_MODE_RCC || IS_MODE_RO6) && IN_PHASE_1) { \
+    if (IS_MODE_RCC && IN_PHASE_1) { \
         verify(row != nullptr); \
         ((RCCDTxn*)dtxn)->kiss(row, col, imdt); \
     }
 
 #define RCC_PHASE1_RET \
     { \
-        if ((IS_MODE_RCC || IS_MODE_RO6) && IN_PHASE_1) { \
-            Log_debug("RETURN mode is RCC or RO6 and in phase 1\n"); \
+        if (IS_MODE_RCC && IN_PHASE_1) { \
+            Log_debug("RETURN mode is RCC and in phase 1\n"); \
             return; \
         } \
     } while(0);
 
 #define RCC_SAVE_ROW(row, index) \
-  if ((IS_MODE_RCC || IS_MODE_RO6) && IN_PHASE_1) { \
+  if (IS_MODE_RCC && IN_PHASE_1) { \
     auto &row_map = ((RCCDTxn*)dtxn)->dreqs_.back().row_map; \
     auto ret = row_map.insert(std::pair<int, mdb::Row*>(index, row)); \
     verify(ret.second); \
@@ -195,7 +194,7 @@ txn_reg_->regs_[txn][pie].sharder_ \
   }
 
 #define RCC_LOAD_ROW(row, index) \
-  if ((IS_MODE_RCC || IS_MODE_RO6) && !(IN_PHASE_1)) { \
+  if (IS_MODE_RCC && !(IN_PHASE_1)) { \
     auto &row_map = ((RCCDTxn*)dtxn)->dreqs_.back().row_map; \
     auto it = row_map.find(index); \
     verify(it != row_map.end()); \
@@ -217,9 +216,6 @@ txn_reg_->regs_[txn][pie].sharder_ \
     case MODE_RCC: \
         r = tx.CreateRow(schema, row_data); \
         break; \
-    case MODE_RO6: \
-        r = tx.CreateRow(schema, row_data); \
-        break; \
     default: \
         r = tx.CreateRow(schema, row_data); \
         break; \
@@ -228,7 +224,6 @@ txn_reg_->regs_[txn][pie].sharder_ \
 
 #define IN_PHASE_1 (dtxn->phase_ == 1)
 #define TPL_PHASE_1 (output_size == nullptr)
-#define RO6_RO_PHASE_1 ((Config::GetConfig()->get_mode() == MODE_RO6) && ((RO6DTxn*)dtxn)->read_only_ && dtxn->phase_ == 1)
 
 
 } // namespace janus

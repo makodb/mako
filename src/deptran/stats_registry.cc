@@ -11,7 +11,6 @@ const std::string StatsRegistry::STAT_N_ASK = "n_ask";
 const std::string StatsRegistry::STAT_SZ_GRAPH_START = "graph_start";
 const std::string StatsRegistry::STAT_SZ_GRAPH_COMMIT = "graph_commit";
 const std::string StatsRegistry::STAT_SZ_GRAPH_ASK = "graph_ask";
-const std::string StatsRegistry::STAT_RO6_SZ_VECTOR = "ro6_sz_vector";
 
 // Stats struct definition (hidden in .cc)
 struct StatsRegistry::Stats {

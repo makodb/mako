@@ -115,8 +115,7 @@ class TxRequest {
   // and `void get_log(i64 tid, std::string &log);` — neither was
   // referenced outside the definitions themselves.  `fail_callback_`
   // was never set or invoked anywhere.  `get_log` had only two call
-  // sites and both were already commented-out
-  // (`snow/ro6_coord.cc:247`, `rcc/coord.cc:27`).
+  // sites and both were already commented-out coordinator code.
 };
 
 // Phase 8 batch 4 / Marshal-deprecation slice A: the archive serde free
@@ -455,7 +454,7 @@ class TxData: public CmdData {
   //   subclass override (`IsFinished`, `GetNextReadySubCmd`) or a
   //   helper whose only call sites were already commented-out
   //   (`read_only_reset`, `Merge(TxnOutput&)` were referenced only by
-  //   commented-out code in `snow/ro6_coord.cc` and `rcc/coord.cc`).
+  //   disabled legacy coordinator code).
   virtual int GetNPieceAll() {
     return n_pieces_all_;
   }
@@ -491,7 +490,7 @@ class TxData: public CmdData {
   // removed `inline bool can_retry()` —
   // defined but never called.  Removed `inline void
   // disable_early_return()` — only call sites were commented-out
-  // code in `snow/ro6_coord.cc:57` and `rcc/coord.cc:105`.
+  // legacy coordinator code.
 
   inline bool do_early_return() {
     return early_return_;

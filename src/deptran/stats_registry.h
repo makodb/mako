@@ -23,7 +23,6 @@ public:
     static const std::string STAT_SZ_GRAPH_START;
     static const std::string STAT_SZ_GRAPH_COMMIT;
     static const std::string STAT_SZ_GRAPH_ASK;
-    static const std::string STAT_RO6_SZ_VECTOR;
 
     // Get the singleton instance
     static StatsRegistry& instance();

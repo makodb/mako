@@ -2,7 +2,6 @@
 #include "frame.h"
 #include "config.h"
 #include "rcc/row.h"
-#include "snow/ro6_row.h"
 #include "marshal-value.h"
 #include "coordinator.h"
 #include "tx.h"
@@ -12,8 +11,6 @@
 #include "none/scheduler.h"
 #include "2pl/tx.h"
 #include "rcc/coord.h"
-#include "snow/ro6.h"
-#include "snow/ro6_coord.h"
 #include "2pl/coordinator.h"
 #include "occ/tx.h"
 #include "occ/coordinator.h"
@@ -135,9 +132,6 @@ mdb::Row* Frame::CreateRow(const mdb::Schema *schema,
       // locking is no longer available.
       verify(0);
       break;
-    case MODE_RO6:
-      r = RO6Row::create(schema, row_data);
-      break;
     case MODE_NONE: // FIXME
     case MODE_MDCC:
     case MODE_OCC:
@@ -177,13 +171,6 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
       break;
     case MODE_RCC:
       coo = new RccCoord(coo_id,
-                         benchmark,
-                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
-                         id);
-      ((Coordinator*)coo)->txn_reg_ = txn_reg;
-      break;
-    case MODE_RO6:
-      coo = new RO6Coord(coo_id,
                          benchmark,
                          client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
@@ -264,9 +251,6 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
     case MODE_RCC:
       sp_tx.reset(new RccTx(epoch, tid, mgr, ro));
       break;
-    case MODE_RO6:
-      sp_tx.reset(new TxSnow(tid, mgr, ro));
-      break;
     case MODE_MULTI_PAXOS:
     case MODE_RAFT:
     case MODE_FPGA_RAFT:
@@ -328,7 +312,6 @@ TxLogServer* Frame::CreateScheduler() {
         break;
       case MODE_RPC_NULL:
       case MODE_RCC:
-      case MODE_RO6:
         verify(0);
         break;
       default:
@@ -378,7 +361,6 @@ map<string, int> &Frame::FrameNameToMode() {
       {"none_copilot",  MODE_NONE_COPILOT},
       {"2pl",           MODE_2PL},
       {"occ",           MODE_OCC},
-      {"snow",          MODE_RO6},
       {"notx",          MODE_NOTX},
       {"rpc_null",      MODE_RPC_NULL},
       {"deptran",       MODE_DEPTRAN},

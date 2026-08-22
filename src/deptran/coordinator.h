@@ -79,9 +79,8 @@ class Coordinator {
   uint64_t txn_timeout_{30000000};
   uint32_t thread_id_;
   // removed `bool batch_optimal_ = false;`
-  // — declared but the only reference was a commented-out
-  // `verify(!batch_optimal_)` in `snow/ro6_coord.cc:243`; never
-  // written or read in production paths.
+  // — its only reference was in already-disabled coordinator code; it was
+  // never written or read in production paths.
 	bool slow_ = false;
   bool retry_wait_;
   // Nullable: client_worker.cc creates these lazily (rusty::Some(...)) and

@@ -2,7 +2,7 @@
 
 array = 1.step(20).to_a + 30.step(100, 10).to_a
 
-mode = ["rcc", "ro6"]
+mode = ["rcc"]
 
 for m in mode
   for i in array
