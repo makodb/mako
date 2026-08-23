@@ -5,6 +5,7 @@
 #include "coordinator.h"
 #include "tx.h"
 #include "scheduler.h"
+#include "sharding.h"
 #include "benchmark_registry.h"
 
 #include "paxos/frame.h"
@@ -112,7 +113,6 @@ TxData* Frame::CreateTxnCommand(TxRequest& req, shared_ptr<TxnRegistry> reg) {
   TxData *cmd = registry.CreateTxn(benchmark);
   verify(cmd != NULL);
   cmd->txn_reg_ = reg;
-  cmd->sss_ = Config::GetConfig()->sharding_;
   cmd->Init(req);
   verify(cmd->n_pieces_dispatchable_ > 0);
   return cmd;

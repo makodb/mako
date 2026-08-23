@@ -43,7 +43,6 @@ class Workload {
   int fix_id_ = -1;
   std::vector<double>& txn_weight_;
   std::map<string, double>& txn_weights_;
-  Sharding* sharding_;
   Sharding* sss_ = nullptr;
   shared_ptr<TxnRegistry> txn_reg_{nullptr};
 

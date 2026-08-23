@@ -1,13 +1,25 @@
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
-#include "__dep__.h"
-#include "constants.h"
-#include "sharding.h"
+#include <cstddef>
+#include <cstdint>
 #include <deque>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "constants.h"
+
+namespace YAML {
+class Node;
+}
 
 namespace janus {
-extern size_t bulkBatchCount;
+using std::map;
+using std::string;
+using std::vector;
+
+extern std::size_t bulkBatchCount;
 
 class Config {
  public:
@@ -17,12 +29,6 @@ class Config {
     SS_THREAD_SINGLE,
     SS_PROCESS_SINGLE
   } single_server_t;
-
-  std::map<string, mdb::symbol_t> tbl_types_map_ = {
-      {"sorted", mdb::TBL_SORTED},
-      {"unsorted", mdb::TBL_UNSORTED},
-      {"snapshot", mdb::TBL_SNAPSHOT}
-  };
 
   enum ClientType { Open, Closed };
   enum TimestampType {CLOCK=0, COUNTER=1};
@@ -116,14 +122,7 @@ class Config {
 
     SiteInfo() = delete;
     SiteInfo(uint32_t id) : id(id) {}
-    SiteInfo(uint32_t id, std::string &site_addr) :
-      id(id) {
-      auto pos = site_addr.find(':');
-      verify(pos != std::string::npos);
-      name = site_addr.substr(0, pos);
-      std::string port_str = site_addr.substr(pos + 1);
-      port = std::stoi(port_str);
-    }
+    SiteInfo(uint32_t id, std::string &site_addr);
 
     string GetBindAddress() {
       string ret("0.0.0.0:");
@@ -155,11 +154,6 @@ class Config {
   vector<SiteInfo> par_clients_;
   map<string, string> proc_host_map_;
   map<string, string> site_proc_map_;
-
-  Sharding* sharding_;
-  
-  // Store the raw YAML configuration
-  YAML::Node yaml_config_;
 
  protected:
 
@@ -193,16 +187,8 @@ class Config {
   void LoadProcYML(YAML::Node config);
   void LoadHostYML(YAML::Node config);
   void LoadModeYML(YAML::Node config);
-  void LoadBenchYML(YAML::Node config);
-  void LoadShardingYML(YAML::Node config);
   void LoadClientYML(YAML::Node client);
-  void LoadSchemaYML(YAML::Node config);
   void LoadFailoverYML(YAML::Node config);
-  void LoadSchemaTableColumnYML(Sharding::tb_info_t &tb_info,
-                                YAML::Node column);
-  void UpdateWeights(YAML::Node config);
-
-  void InitBench(std::string &);
 
   uint32_t get_site_id();
   uint32_t get_client_id();

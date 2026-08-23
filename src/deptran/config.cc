@@ -1,23 +1,30 @@
-//#include "all.h"
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <ctype.h>
+#include <std_compat.hpp>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <sstream>
+#include <string>
+#include <vector>
 
-#include "__dep__.h"
-#include "constants.h"
+#include <unistd.h>
+#include <yaml-cpp/yaml.h>
+
 #include "config.h"
-#include "sharding.h"
-#include "frame.h"
-#include "sharding.h"
-#include "benchmark_registry.h"
-#include "workload.h"
+#include "rrr_log.h"
 
-import std;
+using namespace std;
+using namespace rrr;
 
+/*
+ * Config owns only process/topology and replication settings. The retired
+ * DepTran benchmark/schema/sharding path used to pull MemDB into every Config
+ * consumer through __dep__.h; keep those dependencies out of this translation
+ * unit as well as out of config.h.
+ */
 
 namespace janus {
 namespace {
@@ -30,6 +37,14 @@ void to_lower_in_place(std::string& s) {
 
 Config *Config::config_s = nullptr;
 size_t bulkBatchCount=10000;
+
+Config::SiteInfo::SiteInfo(uint32_t id, std::string& site_addr) : id(id) {
+  const auto pos = site_addr.find(':');
+  verify(pos != std::string::npos);
+  name = site_addr.substr(0, pos);
+  const std::string port_str = site_addr.substr(pos + 1);
+  port = std::stoi(port_str);
+}
 
 
 Config * Config::GetConfig() {
@@ -267,8 +282,7 @@ Config::Config(char           *ctrl_hostname,
   sid_(1),
   cid_(1),
   next_site_id_(0),
-  proc_host_map_(map<string, string>()),
-  sharding_(nullptr)
+  proc_host_map_(map<string, string>())
 
 {
 }
@@ -286,47 +300,35 @@ void Config::Load() {
 
 void Config::LoadYML(std::string &filename) {
   Log_info("{}: {}", __FUNCTION__, filename.c_str());
-  yaml_config_ = YAML::LoadFile(filename);
+  const YAML::Node yaml_config = YAML::LoadFile(filename);
 
-  if (yaml_config_["process"]) {
-    BuildSiteProcMap(yaml_config_["process"]);
+  if (yaml_config["process"]) {
+    BuildSiteProcMap(yaml_config["process"]);
   }
-  if (yaml_config_["site"]) {
-    LoadSiteYML(yaml_config_["site"]);
+  if (yaml_config["site"]) {
+    LoadSiteYML(yaml_config["site"]);
   }
-  if (yaml_config_["process"]) {
-    LoadProcYML(yaml_config_["process"]);
+  if (yaml_config["process"]) {
+    LoadProcYML(yaml_config["process"]);
   }
-  if (yaml_config_["host"]) {
-    LoadHostYML(yaml_config_["host"]);
+  if (yaml_config["host"]) {
+    LoadHostYML(yaml_config["host"]);
   }
-  if (yaml_config_["mode"]) {
-    LoadModeYML(yaml_config_["mode"]);
+  if (yaml_config["mode"]) {
+    LoadModeYML(yaml_config["mode"]);
   }
-  if (yaml_config_["bench"]) {
-    LoadBenchYML(yaml_config_["bench"]);
+  if (yaml_config["client"]) {
+    LoadClientYML(yaml_config["client"]);
   }
-  if (yaml_config_["bench_update_weight"]){
-    UpdateWeights(yaml_config_["bench_update_weight"]);
+  if (yaml_config["failover"]) {
+    LoadFailoverYML(yaml_config["failover"]);
   }
-  if (yaml_config_["schema"]) {
-    LoadSchemaYML(yaml_config_["schema"]);
-  }
-  if (yaml_config_["sharding"]) {
-    LoadShardingYML(yaml_config_["sharding"]);
-  }
-  if (yaml_config_["client"]) {
-    LoadClientYML(yaml_config_["client"]);
-  }
-  if (yaml_config_["failover"]) {
-    LoadFailoverYML(yaml_config_["failover"]);
-  }
-  if (yaml_config_["n_concurrent"]) {
-    n_concurrent_ = yaml_config_["n_concurrent"].as<uint16_t>();
+  if (yaml_config["n_concurrent"]) {
+    n_concurrent_ = yaml_config["n_concurrent"].as<uint16_t>();
     Log_info("# of concurrent requests: {}", n_concurrent_);
   }
-  if (yaml_config_["n_parallel_dispatch"]) {
-    n_parallel_dispatch_ = yaml_config_["n_parallel_dispatch"].as<int32_t>();
+  if (yaml_config["n_parallel_dispatch"]) {
+    n_parallel_dispatch_ = yaml_config["n_parallel_dispatch"].as<int32_t>();
   }
 }
 
@@ -455,28 +457,6 @@ void Config::LoadHostYML(YAML::Node config) {
   }
 }
 
-void Config::InitBench(std::string &bench_str) {
-  if (bench_str == "tpca") {
-    benchmark_ = TPCA;
-  } else if (bench_str == "tpcc") {
-    benchmark_ = TPCC;
-    n_parallel_dispatch_ = 0;
-  } else if (bench_str == "tpcc_dist_part") {
-    benchmark_ = TPCC_DIST_PART;
-  } else if (bench_str == "tpccd") {
-    benchmark_ = TPCC_REAL_DIST_PART;
-  } else if (bench_str == "tpcc_real_dist_part") {
-    benchmark_ = TPCC_REAL_DIST_PART;
-  } else if (bench_str == "rw") {
-    benchmark_ = RW_BENCHMARK;
-  } else if (bench_str == "micro_bench") {
-    benchmark_ = MICRO_BENCH;
-  } else {
-    Log_error("No implementation for benchmark: {}", bench_str.c_str());
-    verify(0);
-  }
-}
-
 std::string Config::site2host_addr(std::string& siteaddr) {
   auto pos = siteaddr.find_first_of(':');
 
@@ -506,8 +486,16 @@ void Config::LoadModeYML(YAML::Node config) {
   }
   auto ab_str = config["ab"].as<string>();
   to_lower_in_place(ab_str);
-  replica_proto_ =
-      ab_str == "none" ? MODE_NONE : Frame::Name2Mode(ab_str);
+  if (ab_str == "none") {
+    replica_proto_ = MODE_NONE;
+  } else if (ab_str == "multi_paxos" || ab_str == "paxos") {
+    replica_proto_ = MODE_MULTI_PAXOS;
+  } else if (ab_str == "raft") {
+    replica_proto_ = MODE_RAFT;
+  } else {
+    Log_error("Unsupported replication mode: {}", ab_str.c_str());
+    verify(0);
+  }
   max_retry_ = config["retry"].as<int32_t>();
   batch_start_ = config["batch"].as<bool>();
   if (config["timestamp"]) {
@@ -527,157 +515,6 @@ void Config::LoadModeYML(YAML::Node config) {
   if (config["txn_timeout_ms"]) {
     // Convert milliseconds to microseconds
     txn_timeout_us_ = static_cast<uint64_t>(config["txn_timeout_ms"].as<int>()) * 1000;
-  }
-}
-
-void Config::UpdateWeights(YAML::Node config) {
-  auto weights = config["weight"];
-  for (auto it = weights.begin(); it != weights.end(); ++it) {
-      auto txn_name = it->first.as<std::string>();
-      auto weight = it->second.as<double>();
-      // Update the txn_weights_ map with the new weight
-      txn_weights_[txn_name] = weight;
-  }  
-  for (std::map<std::string, double>::iterator it = txn_weights_.begin(); it != txn_weights_.end(); ++it) {
-    Log_info("key: {} value: {:.2f}", it->first.c_str(), it->second);
-  }
-}
-
-void Config::LoadBenchYML(YAML::Node config) {
-  std::string bench_str = config["workload"].as<string>();
-  this->InitBench(bench_str);
-  scale_factor_ = config["scale"].as<uint32_t>();
-  auto weights = config["weight"];
-  for (auto it = weights.begin(); it != weights.end(); it++) {
-    auto txn_name = it->first.as<string>();
-    auto weight = it->second.as<double>();
-    txn_weights_[txn_name] = weight;
-  }
-
-  txn_weight_.push_back(txn_weights_["new_order"]);
-  txn_weight_.push_back(txn_weights_["payment"]);
-  txn_weight_.push_back(txn_weights_["order_status"]);
-  txn_weight_.push_back(txn_weights_["delivery"]);
-  txn_weight_.push_back(txn_weights_["stock_level"]);
-
-  EnsureBenchmarkRegistryInitialized();
-  sharding_ = BenchmarkRegistry::Instance().CreateSharding(benchmark_);
-  verify(sharding_ != nullptr);
-  auto populations = config["population"];
-  auto &tb_infos = sharding_->tb_infos_;
-  for (auto it = populations.begin(); it != populations.end(); it++) {
-    auto tbl_name = it->first.as<string>();
-    auto info_it = tb_infos.find(tbl_name);
-    if(info_it == tb_infos.end()) {
-      tb_infos[tbl_name] = Sharding::tb_info_t();
-      info_it = tb_infos.find(tbl_name);
-    }
-    auto &tbl_info = info_it->second;
-    int pop = it->second.as<int>();
-    tbl_info.num_records = scale_factor_ * pop;
-    verify(tbl_info.num_records > 0);
-  }
-  if (config["dist"])
-    dist_ = config["dist"].as<string>();
-  if (config["range"])
-    range_ = config["range"].as<int32_t>();
-  if (config["coefficient"])
-    coeffcient_ = config["coefficient"].as<float>();
-  if (config["rotate"])
-    rotate_ = config["rotate"].as<int32_t>();
-}
-
-void Config::LoadSchemaYML(YAML::Node config) {
-  verify(sharding_);
-  auto &tb_infos = sharding_->tb_infos_;
-  for (auto it = config.begin(); it != config.end(); it++) {
-    auto table_node = *it;
-    std::string tbl_name = table_node["name"].as<string>();
-
-    auto info_it = tb_infos.find(tbl_name);
-    if(info_it == tb_infos.end()) {
-      tb_infos[tbl_name] = Sharding::tb_info_t();
-      info_it = tb_infos.find(tbl_name);
-    }
-    auto &tbl_info = info_it->second;
-    auto columns = table_node["column"];
-    for (auto iitt = columns.begin(); iitt != columns.end(); iitt++) {
-      auto column = *iitt;
-      LoadSchemaTableColumnYML(tbl_info, column);
-    }
-
-    tbl_info.tb_name = tbl_name;
-    sharding_->tb_infos_[tbl_name] = tbl_info;
-  }
-  sharding_->BuildTableInfoPtr();
-}
-
-void Config::LoadSchemaTableColumnYML(Sharding::tb_info_t &tb_info,
-                                      YAML::Node column) {
-  std::string c_type = column["type"].as<string>();
-  verify(c_type.size() > 0);
-  Value::kind c_v_type;
-
-  if (c_type == "i32" || c_type == "integer") {
-    c_v_type = Value::I32;
-  } else if (c_type == "i64") {
-    c_v_type = Value::I64;
-  } else if (c_type == "double") {
-    c_v_type = Value::DOUBLE;
-  } else if (c_type == "str" || c_type == "string") {
-    c_v_type = Value::STR;
-  } else {
-    c_v_type = Value::UNKNOWN;
-    verify(0);
-  }
-
-  std::string c_name = column["name"].as<string>();
-  verify(c_name.size() > 0);
-
-  bool c_primary = column["primary"].as<bool>(false);
-
-  std::string c_foreign = column["foreign"].as<string>("");
-  Sharding::column_t  *foreign_key_column = NULL;
-  Sharding::tb_info_t *foreign_key_tb     = NULL;
-  std::string ftbl_name;
-  std::string fcol_name;
-  bool is_foreign = (c_foreign.size() > 0);
-  if (is_foreign) {
-    size_t pos = c_foreign.find('.');
-    verify(pos != std::string::npos);
-
-    ftbl_name = c_foreign.substr(0, pos);
-    fcol_name = c_foreign.substr(pos + 1);
-    verify(c_foreign.size() > pos + 1);
-  }
-  tb_info.columns.push_back(Sharding::column_t(c_v_type,
-                                               c_name,
-                                               c_primary,
-                                               is_foreign,
-                                               ftbl_name,
-                                               fcol_name));
-}
-
-void Config::LoadShardingYML(YAML::Node config) {
-  verify(sharding_);
-  auto &tb_infos = sharding_->tb_infos_;
-  for (auto it = config.begin(); it != config.end(); it++) {
-    auto tbl_name = it->first.as<string>();
-    auto info_it = tb_infos.find(tbl_name);
-    verify(info_it != tb_infos.end());
-    auto &tbl_info = info_it->second;
-    string method = it->second.as<string>();
-
-    Log_info("group size: {}", replica_groups_.size());
-    for (auto replica_group_it = this->replica_groups_.begin();
-         replica_group_it != this->replica_groups_.end();
-         replica_group_it++) {
-      auto &replica_group = *replica_group_it;
-      tbl_info.par_ids.push_back(replica_group.partition_id);
-      tbl_info.symbol = tbl_types_map_["sorted"];
-    }
-  
-    verify(tbl_info.par_ids.size() > 0);
   }
 }
 
@@ -722,11 +559,6 @@ void Config::LoadFailoverYML(YAML::Node config) {
 }
 
 Config::~Config() {
-  if (sharding_) {
-    delete sharding_;
-    sharding_ = NULL;
-  }
-
   if (ctrl_hostname_) {
     free(ctrl_hostname_);
     ctrl_hostname_ = NULL;

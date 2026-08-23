@@ -4,6 +4,8 @@
 #include "sharding.h"
 #include "benchmark_registry.h"
 
+#include <memory>
+
 namespace janus {
 
 Workload* Workload::CreateWorkload(Config *config) {
@@ -16,19 +18,21 @@ Workload* Workload::CreateWorkload(Config *config) {
 
 Workload::Workload(Config* config)
     : txn_weight_(config->get_txn_weight()),
-      txn_weights_(config->get_txn_weights()),
-      sharding_(config->sharding_) {
+      txn_weights_(config->get_txn_weights()) {
   benchmark_ = Config::GetConfig()->benchmark();
   n_try_ = Config::GetConfig()->get_max_retry();
   single_server_ = Config::GetConfig()->get_single_server();
 
+  EnsureBenchmarkRegistryInitialized();
+  auto sharding = std::unique_ptr<Sharding>(
+      BenchmarkRegistry::Instance().CreateSharding(benchmark_));
+  verify(sharding != nullptr);
   std::map<std::string, uint64_t> table_num_rows;
-  sharding_->get_number_rows(table_num_rows);
+  sharding->get_number_rows(table_num_rows);
 
   if (Config::GetConfig()->dist_ == "fixed") {
     single_server_ = Config::SS_PROCESS_SINGLE;
   }
-  EnsureBenchmarkRegistryInitialized();
   auto table_names = BenchmarkRegistry::Instance().GetTableNames();
 
   switch (benchmark_) {
