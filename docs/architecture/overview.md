@@ -97,7 +97,7 @@ Each **Shard** manages a partition of data:
 - Handle shard-local concurrency
 
 **Key classes**:
-- `SchedulerClassic` / `TxLogServer`: Schedule transaction execution on shard
+- `TxLogServer`: Shared replication scheduler base for each shard
 - `CoordinatorMultiPaxos`: Paxos consensus implementation
 
 ### RRR Communication Layer

@@ -1,9 +1,9 @@
 #pragma once
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
-#include "../__dep__.h"
-#include "../command.h"
-#include "../mako_commands.h"
+#include "__dep__.h"
+#include "command.h"
+#include "mako_commands.h"
 #include "deptran/procedure.h"
 
 namespace janus {

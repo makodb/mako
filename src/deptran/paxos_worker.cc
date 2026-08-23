@@ -5,7 +5,6 @@
 #include "paxos/server.h"
 #include "paxos/commo.h"
 #include "rrr/misc/serializable.hpp"
-#include "service.h"
 
 import std;
 

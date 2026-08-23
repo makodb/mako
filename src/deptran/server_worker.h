@@ -7,7 +7,6 @@
 #include "procedure.h"
 #include "command_marshaler.h"
 #include "rcc_rpc.h"
-#include "service.h"
 #include "sharding.h"
 #include "tx.h"
 #include "workload.h"

@@ -10,7 +10,7 @@
 #include "../config.h"
 #include "../paxos_worker.h"  // Reuse LogEntry marshalling for raw log payloads
 #include "../paxos/commo.h"   // PaxosStatus enum reused by Mako watermark callbacks
-#include "../classic/tpc_command.h"  // TpcCommitCommand for batch optimization
+#include "../tpc_command.h"  // TpcCommitCommand for batch optimization
 #include "../procedure.h"            // VecPieceData and SimpleCommand
 
 import std;

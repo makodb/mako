@@ -2,7 +2,7 @@
 
 #include "bench/rw/procedure.h"
 #include "bench/rw/workload.h"
-#include "classic/tpc_command.h"
+#include "tpc_command.h"
 
 #include "rrr/rrr.hpp"
 

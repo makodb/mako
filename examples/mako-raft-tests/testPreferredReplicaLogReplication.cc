@@ -24,8 +24,8 @@
 
 #include <mako.hh>
 #include <examples/common.h>
-#include "../src/deptran/classic/tpc_command.h"  // TpcCommitCommand
-#include "../src/deptran/procedure.h"            // VecPieceData, SimpleCommand
+#include <deptran/tpc_command.h>  // TpcCommitCommand
+#include <deptran/procedure.h>    // VecPieceData, SimpleCommand
 
 import std;
 
@@ -63,14 +63,12 @@ void safe_print(const string& msg) {
 // =============================================================================
 // Helper: Create TpcCommitCommand wrapping raw log bytes
 // =============================================================================
-shared_ptr<TpcCommitCommand> create_log_command(const char* log_data, int length, txnid_t tx_id) {
-    // Create TpcCommitCommand (outer wrapper for batch optimization)
-    auto tpc_cmd = make_shared<TpcCommitCommand>();
-    tpc_cmd->tx_id_ = tx_id;
-
+rusty::Arc<TpcCommitCommand> create_log_command(
+        const char* log_data, int length, txnid_t tx_id) {
     // Create VecPieceData (inner container)
-    auto vpd = make_shared<VecPieceData>();
-    vpd->sp_vec_piece_data_ = make_shared<vector<shared_ptr<SimpleCommand>>>();
+    auto vpd = rusty::Arc<VecPieceData>::make();
+    vpd.get_mut().unwrap().sp_vec_piece_data_ =
+        make_shared<vector<shared_ptr<SimpleCommand>>>();
 
     // Create SimpleCommand to hold the raw payload
     auto simple_cmd = make_shared<SimpleCommand>();
@@ -83,7 +81,12 @@ shared_ptr<TpcCommitCommand> create_log_command(const char* log_data, int length
 
     // Assemble: TpcCommitCommand → VecPieceData → SimpleCommand
     vpd->sp_vec_piece_data_->push_back(simple_cmd);
-    tpc_cmd->cmd_ = vpd;
+    auto tpc_cmd = rusty::Arc<TpcCommitCommand>::make();
+    {
+        auto& mut_cmd = tpc_cmd.get_mut().unwrap();
+        mut_cmd.tx_id_ = tx_id;
+        mut_cmd.cmd_ = std::move(vpd);
+    }
 
     return tpc_cmd;
 }
@@ -91,7 +94,7 @@ shared_ptr<TpcCommitCommand> create_log_command(const char* log_data, int length
 // =============================================================================
 // Helper: Serialize TpcCommitCommand to bytes
 // =============================================================================
-string serialize_tpc_command(shared_ptr<TpcCommitCommand> cmd) {
+string serialize_tpc_command(rusty::Arc<TpcCommitCommand> cmd) {
     // For this test, we'll use a simple format:
     // [tx_id(8 bytes)][log_data_length(4 bytes)][log_data]
 
@@ -103,8 +106,9 @@ string serialize_tpc_command(shared_ptr<TpcCommitCommand> cmd) {
 
     // Extract log data from SimpleCommand
     auto vpd = rrr::marshallable_cast<VecPieceData>(cmd->cmd_);
-    if (vpd && vpd->sp_vec_piece_data_ && !vpd->sp_vec_piece_data_->empty()) {
-        auto simple_cmd = (*vpd->sp_vec_piece_data_)[0];
+    if (vpd.is_some() && vpd.unwrap()->sp_vec_piece_data_ &&
+        !vpd.unwrap()->sp_vec_piece_data_->empty()) {
+        auto simple_cmd = (*vpd.unwrap()->sp_vec_piece_data_)[0];
         if (simple_cmd->input.values_) {
             auto it = simple_cmd->input.values_->find(0);
             if (it != simple_cmd->input.values_->end()) {
@@ -296,7 +300,7 @@ int main(int argc, char **argv) {
             auto tpc_cmd = create_log_command(log_content.c_str(), log_content.length(), tx_id);
 
             // Serialize to bytes
-            string serialized = serialize_tpc_command(tpc_cmd);
+            string serialized = serialize_tpc_command(std::move(tpc_cmd));
 
             // Submit to Raft with batching
             add_log_to_nc(serialized.c_str(), serialized.length(), 0, BATCH_SIZE);

@@ -1,5 +1,4 @@
 #include "server_worker.h"
-#include "service.h"
 #include "benchmark_control_rpc.h"
 #include "sharding.h"
 #include "scheduler.h"

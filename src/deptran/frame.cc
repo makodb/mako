@@ -4,7 +4,6 @@
 #include "marshal-value.h"
 #include "coordinator.h"
 #include "tx.h"
-#include "classic/tx.h"
 #include "scheduler.h"
 #include "benchmark_registry.h"
 
@@ -130,22 +129,13 @@ Communicator* Frame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thre
 
 shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
                                bool ro, TxLogServer *mgr) {
-  shared_ptr<Tx> sp_tx;
-	/*struct timespec begin, end;
-	clock_gettime(CLOCK_MONOTONIC, &begin);*/
-  Log_debug("enter CreateTx");
-	switch (mode_) {
-    case MODE_MULTI_PAXOS:
-    case MODE_RAFT:
-      break;
-    default:
-      sp_tx.reset(new TxClassic(epoch, tid, mgr));
-      break;
-  }
-	/*clock_gettime(CLOCK_MONOTONIC, &end);
-	Log_info("time of CreateTx on server: {}", end.tv_nsec-begin.tv_nsec);*/
-  Log_debug("exit CreateTx, Tx address={}", (void*)sp_tx.get());
-  return sp_tx;
+  (void)epoch;
+  (void)tid;
+  (void)ro;
+  (void)mgr;
+  Log_error("transaction-engine Tx creation is not supported by replication-only frames");
+  verify(0);
+  return nullptr;
 }
 
 Workload * Frame::CreateTxGenerator() {

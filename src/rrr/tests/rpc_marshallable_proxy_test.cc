@@ -5,7 +5,7 @@
 #include "../rrr.hpp"
 #include "../misc/serializable.hpp"  // wrap_serializable, serializable_cast
 #include "deptran/RW_command.h"
-#include "deptran/classic/tpc_command.h"
+#include "deptran/tpc_command.h"
 #include "deptran/procedure.h"
 #include "deptran/raft/replicated_db.h"
 #include "deptran/paxos_worker.h"

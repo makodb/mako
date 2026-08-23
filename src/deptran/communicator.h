@@ -461,10 +461,6 @@ class Communicator {
 
 	rusty::Arc<QuorumEvent> SendReelect();
 
-  rusty::Arc<IntEvent> BroadcastDispatch(ReadyPiecesData cmds_by_par,
-                        Coordinator* coo,
-                        TxData* txn);
-
   rusty::Arc<WaitAll> SendPrepare(Coordinator* coo,
                                          txnid_t tid,
                                          std::vector<int32_t>& sids);

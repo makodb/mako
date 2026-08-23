@@ -7,7 +7,7 @@
 #include "procedure.h"
 #include "view.h"
 #include "tx.h"
-#include "classic/tpc_command.h"
+#include "tpc_command.h"
 #include "RW_command.h"
 #include "config.h"
 #include <chrono>

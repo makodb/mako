@@ -3,7 +3,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../scheduler.h"
-#include "../classic/tpc_command.h"
+#include "../tpc_command.h"
 #include "commo.h"
 #include <deque>
 #include <rusty/box.hpp>

@@ -17,7 +17,6 @@ class TxData;
 class TxRequest;
 class Tx;
 class TxLogServer;
-class ServerControlServiceImpl;
 class TxnRegistry;
 class Communicator;
 class Workload;

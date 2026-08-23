@@ -3,7 +3,7 @@
 #include "../constants.h"
 #include "coordinator.h"
 #include "commo.h"
-#include "../classic/tpc_command.h"
+#include "../tpc_command.h"
 #include "../procedure.h"
 #include "../config.h"
 #include "server.h"

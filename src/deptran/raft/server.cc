@@ -8,7 +8,7 @@
 // #include "paxos_worker.h"
 #include "frame.h"
 #include "coordinator.h"
-#include "../classic/tpc_command.h"
+#include "../tpc_command.h"
 #include "file_snapshot_manager.hpp"
 #include "replicated_db.h"
 
