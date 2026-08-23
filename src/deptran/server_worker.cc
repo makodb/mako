@@ -111,7 +111,7 @@ void ServerWorker::SetupCommo() {
   auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(
     [this]() {
       if (rep_sched_) {
-        rep_sched_->Setup();
+        rep_sched_->EnsureSetup();
       }
     }
   ));
