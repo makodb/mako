@@ -7,7 +7,6 @@
 #include "server.h"
 // #include "paxos_worker.h"
 #include "frame.h"
-#include "coordinator.h"
 #include "../legacy_raft_log_payload.h"
 #include "../tpc_command.h"
 #include "file_snapshot_manager.hpp"

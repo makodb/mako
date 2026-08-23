@@ -255,11 +255,12 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
 }
 
 inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
-    auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator());
-    coord.get()->par_id_ = site_info_->partition_id_;
-    coord.get()->loc_id_ = site_info_->locale_id;
+    auto coord = shared_ptr<BulkCoordinatorMultiPaxos>(
+        rep_frame_->CreateBulkCoordinator());
+    coord->par_id_ = site_info_->partition_id_;
+    coord->loc_id_ = site_info_->locale_id;
 
-    coord.get()->BulkSubmit(sp_m, [this, cnt]() {
+    coord->BulkSubmit(sp_m, [this, cnt]() {
       this->n_current += cnt;
       if(this->n_current >= this->n_tot)this->finish_cond.notify_all();
     });
@@ -497,16 +498,15 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { /
 }
 
 inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
-  static cooid_t cid{1};
   verify(rep_frame_ != nullptr);
-  auto coord = rep_frame_->CreateCoordinator(cid++);
+  auto coord = rep_frame_->CreateCoordinator();
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
   slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
-  coord->set_slot(x);
-  coord->assignCmd(sp_m);
+  coord->SetSlot(x);
   if(stop_flag != true) {
+    coord->SetCommand(sp_m);
     auto sp_coo = shared_ptr<Coordinator>(coord);
     vector<shared_ptr<Coordinator>> curr2;
     curr2.push_back(sp_coo);

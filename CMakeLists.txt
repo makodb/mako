@@ -938,13 +938,9 @@ set(MEMDB_SRC
 set(DEPTRAN_CORE_SRC
     src/deptran/RW_command.cc
     src/deptran/benchmark_control_rpc.cc
-    src/deptran/benchmark_registry.cc
-    src/deptran/client_status.cc
-    src/deptran/client_worker.cc
     src/deptran/command_marshaler.cc
     src/deptran/communicator.cc
     src/deptran/config.cc
-    src/deptran/coordinator.cc
     src/deptran/frame.cc
     src/deptran/legacy_raft_log_payload.cc
     src/deptran/marshal-value.cc
@@ -968,7 +964,6 @@ set(DEPTRAN_CORE_SRC
     src/deptran/tpc_command.cc
     src/deptran/tpcc_sharding.cc
     src/deptran/view_data.cc
-    src/deptran/workload.cc
 )
 
 if(RAFT_TEST)
@@ -1116,6 +1111,9 @@ file(GLOB RAFT_BORROW_SRC
 #     false positive violations from header code.
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
+# The legacy Raft coordinator is outside the replication runtime and still
+# implements the retired transaction-facing Coordinator API.
+list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*/coordinator\\.cc$")
 # Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
 # src/cluster/ and are no longer part of RAFT_BORROW_SRC.
 
@@ -1187,15 +1185,13 @@ endif()
 # - Cell/Condvar const propagation fixed (skips @safe callees with internal @unsafe)
 # - Unannotated third-party headers skipped (yaml-cpp, STL, etc.)
 #
-# NOTE: server_worker.cc and client_worker.cc excluded - rusty-cpp flags rrr header functions
+# NOTE: server_worker.cc is excluded - rusty-cpp flags rrr header functions
 #       (RefCell::borrow, Option::unwrap, etc.) as violations when they appear in return
 #       statements from headers included by these files. This is a false positive (the files
 #       themselves are safe). TODO: Report to rusty-cpp - header functions shouldn't be checked.
 set(DEPTRAN_BORROW_SRC
     src/deptran/communicator.cc
-    src/deptran/workload.cc
     # src/deptran/server_worker.cc  # Excluded: false positives from rrr header functions
-    # src/deptran/client_worker.cc  # Excluded: false positives from rrr header functions
     src/deptran/paxos_worker.cc
     src/deptran/replication_helper.cc
     src/deptran/scheduler.cc

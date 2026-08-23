@@ -2,7 +2,6 @@
 
 #include <rusty/arc.hpp>
 #include "../__dep__.h"
-#include "../coordinator.h"
 #include "../benchmark_control_rpc.h"
 #include "../server_status.h"
 #include "../frame.h"

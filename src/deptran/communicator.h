@@ -19,7 +19,6 @@ namespace janus {
 #define WAN_WAIT ;
 #define WAN_WAIT_TIME(m) ;
 
-class Coordinator;
 class ClassicProxy;
 class ClientControlProxy;
 class TxLogServer;
@@ -460,14 +459,6 @@ class Communicator {
   // `CoordinatorClassic::DispatchSync`.
 
 	rusty::Arc<QuorumEvent> SendReelect();
-
-  rusty::Arc<WaitAll> SendPrepare(Coordinator* coo,
-                                         txnid_t tid,
-                                         std::vector<int32_t>& sids);
-  rusty::Arc<WaitAll> SendCommit(Coordinator* coo,
-                                     txnid_t tid);
-  rusty::Arc<WaitAll> SendAbort(Coordinator* coo,
-                                    txnid_t tid);
   /*void SendPrepare(parid_t gid,
                    txnid_t tid,
                    std::vector<int32_t> &sids,
@@ -492,8 +483,6 @@ class Communicator {
                                             int32_t& graph)>& callback);
 
   void SendTruncateEpoch(epoch_t old_epoch);
-  void SendForwardTxnRequest(TxRequest& req, Coordinator* coo, std::function<void(const TxReply&)> callback);
-
   /**
    *
    * @param shard_id 0 means broadcast to all shards.

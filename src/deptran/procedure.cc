@@ -1,6 +1,5 @@
 #include "__dep__.h"
 #include "marshal-value.h"
-#include "coordinator.h"
 #include "legacy_raft_log_payload.h"
 #include "procedure.h"
 #include "rrr/misc/serializable.hpp"

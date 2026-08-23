@@ -9,14 +9,15 @@
 
 namespace janus {
 
+class BulkCoordinatorMultiPaxos;
+class CoordinatorMultiPaxos;
+
 class MultiPaxosFrame : public Frame {
- private:
-  slotid_t slot_hint_ = 1;
  public:
   MultiPaxosFrame() = default;
   MultiPaxosCommo *commo_ = nullptr;
-  Coordinator *CreateCoordinator(cooid_t coo_id);
-  Coordinator *CreateBulkCoordinator();
+  CoordinatorMultiPaxos *CreateCoordinator();
+  BulkCoordinatorMultiPaxos *CreateBulkCoordinator();
   TxLogServer *CreateScheduler() override;
   Communicator *CreateCommo(
       rusty::Option<rusty::Arc<rrr::PollThread>> poll = rusty::None) override;

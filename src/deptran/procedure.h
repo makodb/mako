@@ -14,7 +14,6 @@
 
 namespace janus {
 
-class Coordinator;
 class Sharding;
 //class ChopStartResponse;
 
