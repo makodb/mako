@@ -1330,10 +1330,10 @@ the former graph payloads via Phase 3e), so the additive emission compiles
 cleanly.  Use `--no-archive` to opt out (e.g. when generating against
 a custom `.rpc` that uses user types without archive overloads).
 
-The three tracked in-tree generated headers (`rcc_rpc.h`, `network.h`, and
-`benchmark_service.h`) all carry archive operators. `rpcgen_compile_test.py`
-regenerates every schema, including the HelloWorld fixture, in a temporary
-directory and exercises both modes.
+The two tracked in-tree generated headers (`rcc_rpc.h` and
+`benchmark_service.h`) both carry archive operators. `rpcgen_compile_test.py`
+regenerates every schema, including the HelloWorld and network fixtures, in a
+temporary directory and exercises both modes.
 
 Status: the archive layer landed in five broad strokes.
 
@@ -1651,9 +1651,9 @@ Current codegen is typed-only for non-raw RPC methods:
 - Generated service classes do not inherit `rrr::Service`. They register via
   `Server::reg_service_typed(Box<T>)`, which wraps their concrete dispatch
   methods in the server's internal type-erasure shim.
-- All tracked deptran generated headers (`rcc_rpc.h`, `network.h`) use
-  typed-only mode and all live callsites use typed APIs. `helloworld.rpc`
-  remains as an rpcgen compile fixture whose output is generated temporarily.
+- The tracked deptran generated header (`rcc_rpc.h`) uses typed-only mode and
+  all live callsites use typed APIs. `helloworld.rpc` and `network.rpc` remain
+  as rpcgen compile fixtures whose outputs are generated temporarily.
 
 ### Generated Client Usage
 
