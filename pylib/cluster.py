@@ -278,18 +278,6 @@ def load_security_grp_ips():
 
 @task
 @roles('leaders')
-def build_and_deploy():
-    exe_dir='/export/janus/build'
-    run('mkdir -p ' + exe_dir) 
-    local('./waf')
-    local('echo `git rev-parse HEAD` > ' + '/tmp/revision.txt')
-    Xput('/tmp/revision.txt', exe_dir + '/revision.txt')
-    Xput('./build/deptran_server', exe_dir + '/deptran_server')
-    run('chmod +x ' + exe_dir + '/deptran_server')
-    Xput('deptran/rcc_rpc.py', '/export/janus/deptran/rcc_rpc.py')
-
-@task
-@roles('leaders')
 def download(p,target=None):
     leader_ip = env.roledefs['leaders'][0]
     if target is not None:
