@@ -185,16 +185,6 @@ Coordinator *TxLogServer::CreateRepCoord(const i64& dep_id) {
 }
 
 
-TxLogServer::TxLogServer(int mode) : TxLogServer() {
-  mode_ = mode;
-  switch (mode) {
-    case MODE_NONE:
-      mdb_txn_mgr_ = make_shared<mdb::TxnMgrUnsafe>();
-      break;
-    default:verify(0);
-  }
-}
-
 TxLogServer::~TxLogServer() {
   auto it = mdb_txns_.begin();
   for (; it != mdb_txns_.end(); it++)

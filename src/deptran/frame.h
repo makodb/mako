@@ -52,11 +52,11 @@ class Frame {
                                          int benchmark,
                                          rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                          uint32_t id,
-                                         shared_ptr<TxnRegistry> txn_reg);
+                                         shared_ptr<TxnRegistry> txn_reg) = 0;
 
   virtual Coordinator *CreateBulkCoordinator(Config *config, int benchmark);
 
-  virtual TxLogServer *CreateScheduler();
+  virtual TxLogServer *CreateScheduler() = 0;
   virtual Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
   // for only dtxn
   Sharding *CreateSharding();
@@ -74,7 +74,7 @@ class Frame {
   Workload *CreateTxGenerator();
   virtual vector<rrr::ServiceProxy> CreateRpcServices(uint32_t site_id,
                                                    TxLogServer *dtxn_sched,
-                                                   rusty::Arc<rrr::PollThread> poll_thread_worker);
+                                                   rusty::Arc<rrr::PollThread> poll_thread_worker) = 0;
 };
 
 #define RANDOM_VAR_NAME(var, file, line) \

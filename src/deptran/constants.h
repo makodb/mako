@@ -86,7 +86,8 @@ namespace janus {
 // 0x12 is reserved for compatibility with the retired MDCC protocol.
 // 0x03 is reserved for compatibility with the retired TROAD protocol.
 // 0x800 is reserved for compatibility with the retired rpc-null benchmark mode.
-#define MODE_NOTX   (0x1000)
+// 0x1000 is reserved for compatibility with the retired no-transaction
+// selector; do not reuse it.
 // 0x18 is reserved for compatibility with the retired None-Copilot adapter.
 
 #define MODE_MULTI_PAXOS   (0x40)

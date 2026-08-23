@@ -114,12 +114,5 @@ txn_reg_->regs_[txn][pie].sharder_ \
 
 
 #define CREATE_ROW(schema, row_data) \
-    switch (Config::config_s->tx_proto_) { \
-    case MODE_NONE: \
-        r = mdb::VersionedRow::create(schema, row_data); \
-        break; \
-    default: \
-        r = tx.CreateRow(schema, row_data); \
-        break; \
-    }
+    r = mdb::VersionedRow::create(schema, row_data)
 } // namespace janus

@@ -565,7 +565,6 @@ ClientWorker::ClientWorker(
     config_(config),
     cli_id_(site_info.id),
     benchmark(config->benchmark()),
-    mode(config->get_mode()),
     duration(config->get_duration()),
     client_status_(std::move(client_status)),
     n_concurrent_(config->get_concurrent_txn()),

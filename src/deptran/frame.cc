@@ -4,10 +4,8 @@
 #include "marshal-value.h"
 #include "coordinator.h"
 #include "tx.h"
-#include "service.h"
+#include "classic/tx.h"
 #include "scheduler.h"
-#include "none/coordinator.h"
-#include "none/scheduler.h"
 #include "benchmark_registry.h"
 
 #include "paxos/frame.h"
@@ -34,10 +32,6 @@ Frame* Frame::GetFrame(int mode, int replica_mode) {
   Frame *frame = nullptr;
   // some built-in mode
   switch (mode) {
-    case MODE_NONE:
-    case MODE_NOTX:
-      frame = new Frame(mode, replica_mode);
-      break;
     case MODE_MULTI_PAXOS:
       frame = new MultiPaxosFrame(mode);
       break;
@@ -99,25 +93,6 @@ mdb::Row* Frame::CreateRow(const mdb::Schema *schema,
   return mdb::VersionedRow::create(schema, row_data);
 }
 
-Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
-                                      Config *config,
-                                      int benchmark,
-                                      rusty::Option<rusty::Arc<ClientStatus>> client_status,
-                                      uint32_t id,
-                                      shared_ptr<TxnRegistry> txn_reg) {
-  // TODO: clean this up; make Coordinator subclasses assign txn_reg_
-  Coordinator *coo = new CoordinatorNone(
-      coo_id,
-      benchmark,
-      client_status.is_some()
-          ? rusty::Some(client_status.as_ref().unwrap().clone())
-          : rusty::None,
-      id);
-  coo->txn_reg_ = txn_reg;
-  coo->frame_ = this;
-  return coo;
-}
-
 Coordinator* Frame::CreateBulkCoordinator(Config *config, int benchmark) {
   verify(0);
   Coordinator *coo;
@@ -163,8 +138,6 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
     case MODE_MULTI_PAXOS:
     case MODE_RAFT:
       break;
-    case MODE_NONE:
-    case MODE_NOTX:
     default:
       sp_tx.reset(new TxClassic(epoch, tid, mgr));
       break;
@@ -173,27 +146,6 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
 	Log_info("time of CreateTx on server: {}", end.tv_nsec-begin.tv_nsec);*/
   Log_debug("exit CreateTx, Tx address={}", (void*)sp_tx.get());
   return sp_tx;
-}
-
-TxLogServer* Frame::CreateScheduler() {
-  Log_info("enter CreateScheduler, mode={}", Config::GetConfig()->tx_proto_);
-  auto mode = Config::GetConfig()->tx_proto_;
-  TxLogServer *sch = nullptr;
-  switch(mode) {
-    case MODE_NOTX:
-    case MODE_NONE:
-      sch = new SchedulerNone();
-      break;
-    default:
-      verify(0);
-//      sch = new CustomSched();
-  }
-  
-  verify(sch);
-  sch->frame_ = this;
-  verify(svr_ == nullptr);
-  svr_ = sch;
-  return sch;
 }
 
 Workload * Frame::CreateTxGenerator() {
@@ -205,24 +157,8 @@ Workload * Frame::CreateTxGenerator() {
   return gen;
 }
 
-vector<rrr::ServiceProxy> Frame::CreateRpcServices(uint32_t site_id,
-                                                TxLogServer *dtxn_sched,
-                                                rusty::Arc<rrr::PollThread> poll_thread_worker) {
-  auto config = Config::GetConfig();
-  auto result = std::vector<rrr::ServiceProxy>();
-  switch(mode_) {
-    case MODE_NONE:
-    case MODE_NOTX:
-    default:
-      result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<ClassicServiceImpl>(dtxn_sched, poll_thread_worker)));
-      break;
-  }
-  return result;
-}
 map<string, int> &Frame::FrameNameToMode() {
   static map<string, int> frame_name_mode_s = {
-      {"none",          MODE_NONE},
-      {"notx",          MODE_NOTX},
       {"multi_paxos",   MODE_MULTI_PAXOS},
       {"raft",          MODE_RAFT},
   };

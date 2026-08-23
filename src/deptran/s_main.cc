@@ -328,7 +328,8 @@ void server_failover_co(bool random, bool leader, int srv_idx)
         }
     }    
 #ifdef FAILOVER_DEBUG
-    Log_info("!!!!!!!!!!!!!!!!! failover_server_quit {}", failover_server_quit);
+    Log_info("!!!!!!!!!!!!!!!!! failover_server_quit {}",
+             static_cast<bool>(failover_server_quit));
 #endif
     while(!failover_server_quit)
     {
@@ -590,6 +591,12 @@ int main(int argc, char *argv[]) {
 
   auto client_infos = Config::GetConfig()->GetMyClients();
   Log_info("!!!!!!!!!!!! client_infos size {}", client_infos.size());
+#ifdef RAFT_TEST_CORO
+  if (!client_infos.empty()) {
+    Log_error("The Raft lab harness is server-only; client sites are unsupported");
+    return FAILURE;
+  }
+#endif
   if (client_infos.size() > 0) {
     client_setup_heartbeat(client_infos.size());
   }
@@ -637,7 +644,8 @@ int main(int argc, char *argv[]) {
     failover_server_quit = true;
     Log_info("all clients have shut down.");
   }
-  Log_info("Total throughtput is {:.2f}", total_throughput);
+  Log_info("Total throughtput is {:.2f}",
+           static_cast<double>(total_throughput));
 #ifdef DB_CHECKSUM
   sleep(90); // hopefully servers can finish hanging RPCs in 90 seconds.
 #endif

@@ -49,8 +49,10 @@ class Config {
   ClientType client_type_ = Closed;
   int client_rate_ = -1;
   int32_t client_max_undone_ = -1;
-  int32_t tx_proto_ = 0; // transaction protocol
-  int32_t replica_proto_ = 0; // replication protocol
+  // Temporary bridge for the legacy standalone transaction path. Production
+  // Mako selects only a replication protocol.
+  int32_t tx_proto_ = -1;
+  int32_t replica_proto_ = MODE_NONE; // MODE_NONE means no replication
   uint32_t proc_id_;
   int32_t benchmark_; // workload
   uint32_t scale_factor_ = 1; // currently disabled
@@ -248,7 +250,6 @@ class Config {
   }
 
   int32_t get_threads(uint32_t &threads);
-  int32_t get_mode();
   uint32_t get_num_threads();
   uint32_t get_start_coordinator_id();
   int32_t benchmark();

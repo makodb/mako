@@ -247,7 +247,7 @@ Config::Config(char           *ctrl_hostname,
   tot_req_num_(tot_req_num),
   duration_(duration),
   config_paths_(vector<string>()),
-  tx_proto_(0),
+  tx_proto_(-1),
   proc_id_(0),
   benchmark_(0),
   scale_factor_(1),
@@ -504,19 +504,15 @@ std::string Config::site2host_name(std::string& sitename) {
 
 
 void Config::LoadModeYML(YAML::Node config) {
-  // Production Mako supplies transaction execution through mbta/STO and only
-  // needs DepTran's replication mode.  If cc is omitted, preserve the default
-  // MODE_NONE instead of requiring a dummy transaction-protocol selection.
   if (config["cc"]) {
-    auto mode_str = config["cc"].as<string>();
-    to_lower_in_place(mode_str);
-    tx_proto_ = Frame::Name2Mode(mode_str);
+    Log_error("mode.cc is no longer supported; Mako selects only mode.ab");
+    verify(0);
   }
   auto ab_str = config["ab"].as<string>();
   to_lower_in_place(ab_str);
-  replica_proto_ = Frame::Name2Mode(ab_str);
+  replica_proto_ =
+      ab_str == "none" ? MODE_NONE : Frame::Name2Mode(ab_str);
   max_retry_ = config["retry"].as<int32_t>();
-//  concurrent_txn_ = config["ongoing"].as<uint32_t>();
   batch_start_ = config["batch"].as<bool>();
   if (config["timestamp"]) {
     string ts_str = config["timestamp"].as<string>();
@@ -568,7 +564,9 @@ void Config::LoadBenchYML(YAML::Node config) {
   txn_weight_.push_back(txn_weights_["delivery"]);
   txn_weight_.push_back(txn_weights_["stock_level"]);
 
-  sharding_ = Frame(MODE_NONE).CreateSharding();
+  EnsureBenchmarkRegistryInitialized();
+  sharding_ = BenchmarkRegistry::Instance().CreateSharding(benchmark_);
+  verify(sharding_ != nullptr);
   auto populations = config["population"];
   auto &tb_infos = sharding_->tb_infos_;
   for (auto it = populations.begin(); it != populations.end(); it++) {
@@ -1006,10 +1004,6 @@ bool Config::do_heart_beat() {
   return heart_beat_;
 }
 
-int Config::get_mode() {
-  return tx_proto_;
-}
-
 unsigned int Config::get_num_threads() {
   verify(num_coordinator_threads_ > 0);
   return num_coordinator_threads_;
@@ -1071,9 +1065,7 @@ int Config::GetProfilePath(char *prof_file) {
 // getopt loop).
 
 bool Config::IsReplicated() {
-  // TODO
   return (replica_proto_ != MODE_NONE);
-  return true;
 }
 
 int32_t Config::get_tot_req() {

@@ -1035,7 +1035,7 @@ Port assignment: Shard N uses base_port + N*100 (e.g., 31000, 31100, 31200).
 | Binary | Description |
 |--------|-------------|
 | `build/dbtest` | Main Mako binary (Paxos or Raft) |
-| `build/deptran_server` | Standalone Raft server |
+| `build/deptran_server` | Raft lab harness (`make raft-test` only) |
 | `build/simpleRaft` | Simple Raft replication test |
 | `build/test_rocksdb_persistence` | RocksDB persistence test |
 
@@ -1268,7 +1268,7 @@ jemalloc for optimized allocation; per-CPU memory allocators for reduced content
 | Submodule not found | `git submodule update --init --recursive` |
 | Out of memory during build | `make -j2` (reduce parallelism) |
 | Borrow checker parse errors | Ensure LIBCLANG_PATH matches system clang version |
-| Raft leader churn | Increase heartbeat interval in `config/none_raft.yml` |
+| Raft leader churn | Increase `MAKO_RAFT_HEARTBEAT_INTERVAL_US` |
 | Hanging test processes | `./ci/ci_mako_raft.sh cleanup` |
 
 ### Debugging

@@ -27,7 +27,6 @@ class ClientWorker {
   Communicator* commo_{nullptr};
   cliid_t cli_id_;
   int32_t benchmark;
-  int32_t mode;
   bool batch_start;
   uint32_t id;
   uint32_t duration;

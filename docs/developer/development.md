@@ -22,11 +22,11 @@ Mako supports **two replication backends** that can be selected at build time:
 | **Paxos** (default) | `make -j32` | `dbtest` | Production Mako with Paxos consensus |
 | **Raft** | `make mako-raft -j64` | `dbtest` | Mako with Raft as replication layer |
 
-Additionally, **Raft can run standalone** (without Mako) via `deptran_server`:
+The Raft lab harness runs without Mako transactions through a dedicated
+`deptran_server` build:
 
 | Mode | Build Command | Binary | Use Case |
 |------|---------------|--------|----------|
-| **Standalone Raft** | `make -j32` or `make mako-raft -j64` | `deptran_server` | Raft consensus without Mako transactions |
 | **Raft Lab Tests** | `make raft-test -j32` | `deptran_server` | Raft coroutine-based lab test suite only |
 
 > **Note**: `make raft-test` enables `RAFT_TEST` coroutines for the lab test harness. This mode is **only for running `config/raft_lab_test.yml`** - the normal concurrency configs (like `12c1s3r1p.yml`) won't work with this build.
@@ -35,7 +35,6 @@ Additionally, **Raft can run standalone** (without Mako) via `deptran_server`:
 
 - **Mako + Paxos**: Original Mako system using Paxos for replication (`./ci/ci.sh`)
 - **Mako + Raft**: Mako transactions with Raft as the replication layer (`./ci/ci_mako_raft.sh`)
-- **Standalone Raft**: Pure Raft consensus testing via `deptran_server` (no Mako transactions) - use regular `make` build
 - **Raft Lab Tests**: Coroutine-based Raft tests (`make raft-test`) - only for `raft_lab_test.yml`
 
 ---
@@ -47,7 +46,7 @@ Additionally, **Raft can run standalone** (without Mako) via `deptran_server`:
 | Target | Command | Description |
 |--------|---------|-------------|
 | **Mako + Paxos** | `make -j32` | Default build with Paxos replication (~2-3 mins) |
-| **Mako + Raft** | `make mako-raft -j32` | Mako with Raft replication (builds `deptran_server` and Raft test binaries) |
+| **Mako + Raft** | `make mako-raft -j32` | Mako with Raft replication and Raft test binaries |
 | **Raft Lab Tests** | `make raft-test -j32` | Raft with testing coroutines (only for `raft_lab_test.yml`) |
 | **Clean** | `make clean` | Remove all build artifacts |
 | **Help** | `make help` | Show all available targets |
@@ -57,7 +56,7 @@ Additionally, **Raft can run standalone** (without Mako) via `deptran_server`:
 | Binary | Build | Description |
 |--------|-------|-------------|
 | `build/dbtest` | all | Main Mako binary (works with both Paxos and Raft replication) |
-| `build/deptran_server` | mako-raft | Standalone Raft server (for Raft-only testing) |
+| `build/deptran_server` | raft-test | Raft lab harness |
 | `build/simpleRaft` | mako-raft | Simple Raft replication test |
 | `build/simpleTransactionRepRaft` | mako-raft | Raft-based transaction replication test |
 | `build/testPreferredReplicaStartup` | mako-raft | Raft preferred replica startup test |
@@ -119,36 +118,10 @@ make mako-raft -j64
 ./ci/ci_mako_raft.sh cleanup                    # Clean up processes
 ```
 
-### Standalone Raft Tests (No Mako)
+### Raft Lab Tests (No Mako)
 
-Use `deptran_server` for testing **Raft consensus only** (without Mako transactions).
-
-#### Running Standalone Raft (use regular build)
-
-```bash
-# Build (regular make, NOT raft-test)
-make -j32
-
-# Basic Raft (1 client, 1 shard, 3 replicas)
-./build/deptran_server \
-  -f config/none_raft.yml \
-  -f config/1c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_1.yml \
-  -d 30 -P localhost
-
-# Higher concurrency (12 clients, ~25k TPS)
-./build/deptran_server \
-  -f config/none_raft.yml \
-  -f config/12c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_12.yml \
-  -d 30 -P localhost
-```
-
-#### Raft Lab Tests (use raft-test build)
+`deptran_server` is reserved for the coroutine-based Raft lab harness. It is
+not part of regular Paxos or Mako-Raft builds.
 
 ```bash
 # Build with RAFT_TEST coroutines (only for lab tests)
@@ -159,6 +132,7 @@ make raft-test -j32
 ```
 
 > **Warning**: The `make raft-test` build enables special coroutines for the lab harness. The normal concurrency configs (`1c1s3r1p.yml`, `12c1s3r1p.yml`, etc.) will **not work** with this build.
+> The harness is server-only; configurations with client sites are rejected.
 
 ### Unit Tests
 
@@ -284,7 +258,7 @@ Key configuration directories:
 | `config/hosts*.yml` | Host topology |
 | `config/rw.yml`, `config/concurrent_*.yml` | Workload settings |
 | `config/paxos.yml`, `config/1leader_2followers/` | Paxos protocol |
-| `config/raft.yml`, `config/none_raft.yml` | Raft protocol |
+| `config/raft.yml` | Raft protocol |
 
 ---
 
@@ -318,7 +292,7 @@ mako/
 
 | Issue | Solution |
 |-------|----------|
-| Frequent Raft leader churn | Increase heartbeat interval in `config/none_raft.yml` |
+| Frequent Raft leader churn | Increase `MAKO_RAFT_HEARTBEAT_INTERVAL_US` |
 | Commands stuck uncommitted | Check connectivity and `match_index_` in logs |
 | Build failures after CMake edits | Re-run `cmake -B build ...` before building |
 | Hanging test processes | Run `./ci/ci_mako_raft.sh cleanup` |

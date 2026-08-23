@@ -364,7 +364,6 @@ class TxLogServer {
   // — declared but never written or invoked anywhere.
 
   shared_ptr<mdb::TxnMgr> mdb_txn_mgr_{};
-  int mode_;
   // removed `Recorder *recorder_ = nullptr;`
   // — only assignment was a commented-out
   // `recorder_ = new Recorder(path);` in `scheduler.cc::SetupTransport`,
@@ -447,7 +446,6 @@ class TxLogServer {
   }
 
   TxLogServer();
-  TxLogServer(int mode);
   virtual ~TxLogServer();
 
 
@@ -481,8 +479,6 @@ class TxLogServer {
   virtual shared_ptr<Tx> GetOrCreateTx(txnid_t tid, bool ro = false);
   // @unsafe - Manages transaction lifecycle, calls external methods
   void DestroyTx(i64 tid);
-
-  inline int get_mode() { return mode_; }
 
   // Below are function calls that go deeper into the mdb.
   // They are merged from the called TxnRunner.

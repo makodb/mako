@@ -124,15 +124,7 @@ bool Tx::WriteColumns(Row *row,
 
 mdb::Row* Tx::CreateRow(const mdb::Schema *schema,
                           const std::vector<mdb::Value> &row_data) {
-  Row* r;
-  switch (Config::config_s->tx_proto_) {
-    case MODE_NONE:
-    case MODE_NOTX:
-    default:
-      r = mdb::VersionedRow::create(schema, row_data);
-      break;
-  }
-  return r;
+  return mdb::VersionedRow::create(schema, row_data);
 }
 
 bool Tx::InsertRow(Table *tbl, Row *row) {

@@ -210,7 +210,8 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
         Reactor::get_reactor()->looping_.set(false);
         return;
       }));
-      Log_info("raft_test_fiber_ id={}", raft_test_fiber_.as_ref().unwrap()->id);
+      Log_info("raft_test_fiber_ id={}",
+               raft_test_fiber_.as_ref().unwrap()->id.get());
 
       // wait until n_commo_created_ == 5, then resume the fiber
       raft_test_mutex_.lock();
