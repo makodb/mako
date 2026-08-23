@@ -1,6 +1,5 @@
 #include "__dep__.h"
 #include "benchmark_control_rpc.h"
-#include "stats_registry.h"
 
 #include "rrr/rrr.hpp"
 
@@ -46,11 +45,6 @@ void ServerControlServiceImpl::server_ready(
   defer.reply();
 }
 
-void ServerControlServiceImpl::do_statistics(const char *key,
-                                             int64_t value_delta) {
-  StatsRegistry::instance().do_statistics(key, value_delta);
-}
-
 void ServerControlServiceImpl::server_heart_beat(
     const ServerControlService::RpcServerHeartBeatRequest& rpc_req,
     ServerControlService::RpcServerHeartBeatResponse& rpc_resp,
@@ -80,13 +74,6 @@ void ServerControlServiceImpl::server_heart_beat_with_data(
   if (!sig_handler_set_)
     set_sig_handler();
   alarm(timeout_);
-
-  // Get statistics from StatsRegistry
-  auto& registry = StatsRegistry::instance();
-  auto statistics = registry.get_all_statistics();
-  for (auto it = statistics.begin(); it != statistics.end(); it++) {
-    res->statistics[std::string(it->first)] = it->second;
-  }
 
   defer.reply();
 }

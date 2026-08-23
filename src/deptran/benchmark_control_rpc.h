@@ -52,8 +52,6 @@ class ServerControlServiceImpl: public ServerControlService {
   ServerControlServiceImpl(const ServerControlServiceImpl&) = delete;
   ServerControlServiceImpl& operator=(const ServerControlServiceImpl&) = delete;
 
-  void do_statistics(const char *key, int64_t value_delta);
-
   // BEGIN typed-rpc-decls (ServerControlServiceImpl)
   // Typed RPC interface overrides (new API).
   void server_shutdown(const ServerControlService::RpcServerShutdownRequest& req, ServerControlService::RpcServerShutdownResponse& resp, rrr::DeferredReply defer) override;

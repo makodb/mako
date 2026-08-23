@@ -967,7 +967,6 @@ set(DEPTRAN_CORE_SRC
     src/deptran/replication_log_entry.cc
     src/deptran/scheduler.cc
     src/deptran/sharding.cc
-    src/deptran/stats_registry.cc
     src/deptran/tpc_command.cc
     src/deptran/tpcc_sharding.cc
     src/deptran/tx.cc
@@ -1200,7 +1199,6 @@ set(DEPTRAN_BORROW_SRC
     # src/deptran/server_worker.cc  # Excluded: false positives from rrr header functions
     # src/deptran/client_worker.cc  # Excluded: false positives from rrr header functions
     src/deptran/paxos_worker.cc
-    src/deptran/stats_registry.cc
     src/deptran/replication_helper.cc
     src/deptran/scheduler.cc
     # Files below excluded due to violations from included headers (not the .cc files themselves):
