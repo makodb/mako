@@ -936,22 +936,17 @@ set(MEMDB_SRC
 )
 
 set(DEPTRAN_CORE_SRC
-    src/deptran/RW_command.cc
     src/deptran/benchmark_control_rpc.cc
-    src/deptran/command_marshaler.cc
     src/deptran/communicator.cc
     src/deptran/config.cc
     src/deptran/frame.cc
     src/deptran/legacy_raft_log_payload.cc
-    src/deptran/marshal-value.cc
-    src/deptran/multi_value.cc
     src/deptran/paxos/commo.cc
     src/deptran/paxos/coordinator.cc
     src/deptran/paxos/frame.cc
     src/deptran/paxos/server.cc
     src/deptran/paxos/service.cc
     src/deptran/paxos_worker.cc
-    src/deptran/procedure.cc
     src/deptran/raft/application_log.cc
     src/deptran/raft/commo.cc
     src/deptran/raft/frame.cc
@@ -1030,8 +1025,7 @@ target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
 # std_port_hashbrown, so naming std_port pulls in both archives/BMIs.
 target_link_libraries(cluster PUBLIC rrr pthread btree_port vec_port rc_port std_port)
 
-# Build the replication core. The retired DepTran benchmark implementations
-# under src/bench are intentionally not part of Mako's link graph.
+# Build the replication core from the explicit manifest above.
 add_library(txlog_core_obj OBJECT
     ${TXLOG_HELPER_SRC}
     ${DEPTRAN_CORE_SRC}
@@ -1055,7 +1049,6 @@ target_include_directories(txlog_core_obj PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
     ${CMAKE_CURRENT_SOURCE_DIR}/src/memdb
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/bench
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
@@ -1111,9 +1104,6 @@ file(GLOB RAFT_BORROW_SRC
 #     false positive violations from header code.
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
-# The legacy Raft coordinator is outside the replication runtime and still
-# implements the retired transaction-facing Coordinator API.
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*/coordinator\\.cc$")
 # Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
 # src/cluster/ and are no longer part of RAFT_BORROW_SRC.
 
@@ -1210,7 +1200,6 @@ if(DEPTRAN_BORROW_SRC)
         src/rrr
         src/memdb
         src/deptran
-        src/bench
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
         third-party/yaml-cpp/include
     )

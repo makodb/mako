@@ -2,14 +2,11 @@
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include "__dep__.h"
-#include "command.h"
 #include "mako_commands.h"
 #include "deptran/view_data.h"
 
 namespace janus {
 
-
-class TxData;
 // Explicit kind from the `PayloadMember<MakoCommands>` registration.
 // Previously held a manual `kMarshallKind = MarshallDeputy::CMD_TPC_PREPARE`
 // constant; the central marker registration (see mako_commands.h) now

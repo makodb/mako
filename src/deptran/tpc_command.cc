@@ -1,6 +1,4 @@
 #include "tpc_command.h"
-#include "command.h"
-#include "command_marshaler.h"
 #include "rrr/misc/serializable.hpp"
 
 using namespace janus;
@@ -14,13 +12,9 @@ static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>(TpcBatc
 static int volatile x6 = (EnsureViewDataRegistered(), 0);
 
 
-// TpcPrepareCommand serialization via
-// BinaryWriteArchive / BinaryReadArchive. The nested
-// `shared_ptr<Marshallable> cmd_` field is wrapped/unwrapped through
-// a MarshallDeputy on each save/load — the Phase 3f-prep
-// `operator<<>>(BinaryWriteArchive/BinaryReadArchive, MarshallDeputy)`
-// overloads make this byte-for-byte equivalent to the legacy
-// Marshal encoding.
+// TpcPrepareCommand serialization via BinaryWriteArchive /
+// BinaryReadArchive. Command preserves the historical kind-plus-payload wire
+// encoding directly.
 void TpcPrepareCommand::save(BinaryWriteArchive& ar) const {
   rrr::Serialize_::serialize(tx_id_, ar);
   rrr::Serialize_::serialize(ret_, ar);
@@ -41,14 +35,8 @@ void TpcPrepareCommand::load(BinaryReadArchive& ar) {
   }
 }
 
-// TpcCommitCommand serialization via
-// BinaryWriteArchive / BinaryReadArchive. Both nested
-// `cmd_` (shared_ptr<Marshallable>) and optional
-// `sp_view_data_` (shared_ptr<ViewData>) are wrapped/unwrapped through
-// MarshallDeputy on each save/load — the Phase 3f-prep
-// `operator<<>>(BinaryWriteArchive/BinaryReadArchive, MarshallDeputy)`
-// overloads make this byte-for-byte equivalent to the legacy
-// Marshal encoding.
+// TpcCommitCommand serialization keeps the historical field order and uses
+// Command for both nested command and optional view payloads.
 void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
   rrr::Serialize_::serialize(tx_id_, ar);
   rrr::Serialize_::serialize(ret_, ar);

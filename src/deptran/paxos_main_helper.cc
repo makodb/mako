@@ -3,8 +3,6 @@
 #include "__dep__.h"
 #include "frame.h"
 #include "paxos_worker.h"
-#include "procedure.h"
-#include "command_marshaler.h"
 #include "benchmark_control_rpc.h"
 #include "concurrentqueue.h"
 #include "sys/time.h"

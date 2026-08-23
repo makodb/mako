@@ -2,9 +2,6 @@
 
 #include "__dep__.h"
 #include "constants.h"
-#include "../command.h"
-#include "deptran/procedure.h"
-#include "../command_marshaler.h"
 #include "../rcc_rpc.h"
 #include "server.h"
 #include <atomic>
@@ -17,7 +14,6 @@
 //   srand: [safe, (unsigned int) -> void]
 // }
 
-class SimpleCommand;
 namespace janus {
 
 class RaftServer;

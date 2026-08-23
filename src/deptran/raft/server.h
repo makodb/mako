@@ -40,7 +40,6 @@
 // }
 
 namespace janus {
-class CmdData;
 class ReplicatedDB;
 
 #define INVALID_SITEID  ((siteid_t)-1)

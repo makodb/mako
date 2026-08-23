@@ -3,7 +3,7 @@
 // Establish the full textual STL surface BEFORE any `import std` (which arrives
 // transitively via the imported rrr modules) — the same ordering workaround the
 // rrr targets use. Without it, late textual <stack>/<functional>/<cinttypes>
-// (pulled by server.h / memdb/row.h / this header) clash with the std module:
+// (pulled by server.h / this header) clash with the std module:
 // "cannot add 'abi_tag' attribute in a redeclaration". Must stay first; deptran
 // TUs include __dep__.h before anything else. See src/rrr/std_compat.hpp.
 #include <std_compat.hpp>
@@ -104,27 +104,6 @@ using rrr::PollThread;
 // `using rrr::Marshallable` and `using rrr::MarshallDeputy` —
 // the underlying classes are gone in this same release.
 
-// User include files
-//
-
-#include "memdb/value.h"
-#include "memdb/schema.h"
-#include "memdb/table.h"
-#include "memdb/txn.h"
-#include "memdb/txn_2pl.h"
-#include "memdb/txn_occ.h"
-#include "memdb/txn_unsafe.h"
-#include "memdb/utils.h"
-#include "memdb/row.h"
-#include "deptran/marshal-value.h"
-using mdb::Value;
-using mdb::Row;
-using mdb::VersionedRow;
-using mdb::symbol_t;
-using mdb::Table;
-using mdb::colid_t;
-using mdb::SnapshotTable;
-
 // rpc library
 class dummy_class {
  public:
@@ -139,4 +118,3 @@ class dummy_class {
 static dummy_class dummy___;
 
 #include "constants.h"
-typedef map<innid_t, map<int32_t, Value>> TxnOutput;

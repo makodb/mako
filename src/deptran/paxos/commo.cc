@@ -1,6 +1,5 @@
 #include "commo.h"
 
-#include "../command.h"
 #include "../rcc_rpc.h"
 
 namespace janus {

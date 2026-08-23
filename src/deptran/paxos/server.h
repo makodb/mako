@@ -9,7 +9,6 @@
 #include "deptran/raft/snapshot_manager.hpp"
 
 namespace janus {
-class CmdData;
 
 // polymorphic command fields
 // (`accepted_cmd_` / `committed_cmd_`) migrated from
