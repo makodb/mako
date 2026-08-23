@@ -20,6 +20,13 @@ TRANSPILER="${REPOSITORY_ROOT}/third-party/rusty-cpp/target/release/rusty-cpp-tr
 REQUIRED_RUSTY_CPP_COMMIT="a1f8fef85e8d43bb00f85f8ef32e5ecc69408642"
 FILES=()
 EXPECTED_BLOCKS=(
+  "src/deptran/raft/messages.hpp|raft_messages.append_entries_reply"
+  "src/deptran/raft/messages.hpp|raft_messages.durable"
+  "src/deptran/raft/messages.hpp|raft_messages.heartbeat"
+  "src/deptran/raft/messages.hpp|raft_messages.install_snapshot_reply"
+  "src/deptran/raft/messages.hpp|raft_messages.notify_restart"
+  "src/deptran/raft/messages.hpp|raft_messages.remove_server_req"
+  "src/deptran/raft/messages.hpp|raft_messages.timeout_now"
   "src/deptran/raft/messages.hpp|raft_messages.vote"
 )
 
