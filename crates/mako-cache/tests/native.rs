@@ -28,6 +28,19 @@ fn a_multi_key_commit_is_visible_then_flushed_as_one_atomic_backend_batch() {
         .put(b"binary\0key", b"\0\xffbinary\0value")
         .expect("put binary"));
     assert!(transaction.remove(b"doomed").expect("delete"));
+
+    assert_eq!(
+        transaction.get(b"empty").expect("read own empty put"),
+        Some(Vec::new())
+    );
+    assert_eq!(
+        transaction
+            .get(b"binary\0key")
+            .expect("read own binary put")
+            .as_deref(),
+        Some(&b"\0\xffbinary\0value"[..])
+    );
+    assert_eq!(transaction.get(b"doomed").expect("read own delete"), None);
     transaction.commit().expect("commit transaction");
 
     // Silo is authoritative immediately after acknowledgement; Rocks need not

@@ -168,9 +168,12 @@ uint32_t mako_local_abi_version(void) noexcept {
 
 uint64_t mako_local_feature_bits(void) noexcept {
   uint64_t features = MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS;
-  // Do not key this bit directly off READ_MY_WRITES. Several MassTrans paths,
-  // including point get and scans, still have their RYW logic commented out,
-  // so even an STO_RMW=ON build does not yet satisfy the public guarantee.
+#if READ_MY_WRITES
+  // The draft ABI currently exposes point operations only. MassTrans point
+  // reads copy a transaction's staged value (or hide its staged deletion),
+  // while the facade continues to reject a second mutation of the same key.
+  features |= MAKO_LOCAL_FEATURE_READ_MY_WRITES;
+#endif
 #if STO_OPACITY
   features |= MAKO_LOCAL_FEATURE_OPACITY;
 #endif

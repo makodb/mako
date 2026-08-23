@@ -36,6 +36,9 @@ std::atomic<int> g_tid_counter{0};
 void silo_thread_init() {
     TThread::set_id(g_tid_counter.fetch_add(1));
     TThread::set_mode(0);
+    // These tests exercise the single-version Silo path used by mako-local.
+    // The process-wide default is Mako's distributed multiversion role.
+    TThread::disable_multiversion();
     TThread::readset_shard_bits = 0;
     TThread::writeset_shard_bits = 0;
     TThread::transget_without_throw = false;
@@ -92,6 +95,7 @@ private:
 static mbta_type& make_masstrans(long id, const char* name) {
     auto* mt = new mbta_type();
     mt->set_table_id(id);
+    mt->set_is_remote(false);
     mt->set_table_name(name);
     return *mt;
 }
@@ -167,6 +171,104 @@ TEST_F(SiloNonTxnApi, MassTransScanInOrderAndRScanReverse) {
     ASSERT_GE(rkeys.size(), 1u);
     EXPECT_TRUE(std::is_sorted(rkeys.rbegin(), rkeys.rend()));
 }
+
+#if READ_MY_WRITES
+TEST_F(SiloNonTxnApi, MassTransInsertThenRepeatedGrowingUpdatesCommitAndAbort) {
+    mbta_type& mt = make_masstrans(9005, "mt_repeat_growth");
+    const std::string initial = mako::Encode("i");
+    const std::string medium = mako::Encode(std::string(4096, 'm'));
+    const std::string large = mako::Encode(std::string(32768, 'l'));
+
+    auto stage = [&](const char* key, bool commit) {
+        SCOPED_TRACE(key);
+        Sto::start_transaction();
+        try {
+            // Raw MassTrans returns `existed`, so false means insertion.
+            EXPECT_FALSE(mt.transInsert(lcdf::Str(key), StringWrapper(initial)));
+            std::string out;
+            EXPECT_TRUE(mt.transGet(lcdf::Str(key), out));
+            EXPECT_EQ(out, initial);
+            EXPECT_TRUE(mt.transPut(lcdf::Str(key), StringWrapper(medium)));
+            EXPECT_TRUE(mt.transGet(lcdf::Str(key), out));
+            EXPECT_EQ(out, medium);
+            EXPECT_TRUE(mt.transPut(lcdf::Str(key), StringWrapper(large)));
+            EXPECT_TRUE(mt.transGet(lcdf::Str(key), out));
+            EXPECT_EQ(out, large);
+            if (commit)
+                EXPECT_TRUE(Sto::try_commit_no_paxos());
+            else
+                Sto::silent_abort();
+        } catch (...) {
+            Sto::silent_abort();
+            throw;
+        }
+    };
+
+    stage("repeat-grow-commit", true);
+    std::string out;
+    ASSERT_TRUE(mt.get(lcdf::Str("repeat-grow-commit"), out));
+    EXPECT_EQ(out, large);
+
+    stage("repeat-grow-abort", false);
+    EXPECT_FALSE(mt.get(lcdf::Str("repeat-grow-abort"), out));
+    EXPECT_TRUE(mt.put(lcdf::Str("repeat-grow-abort"), initial));
+}
+
+TEST_F(SiloNonTxnApi, MassTransRywCompositionIsLocalSingleVersionOnly) {
+    mbta_type& mt = make_masstrans(9006, "mt_ryw_scope");
+    const std::string initial = mako::Encode("i");
+    const std::string large = mako::Encode(std::string(4096, 'l'));
+
+    struct RestoreLocalSingleVersion {
+        mbta_type& table;
+        ~RestoreLocalSingleVersion() {
+            Sto::silent_abort();
+            table.set_is_remote(false);
+            TThread::disable_multiversion();
+        }
+    } restore{mt};
+
+    auto expect_growing_own_insert_to_abort = [&](const char* key) {
+        Sto::start_transaction();
+        EXPECT_FALSE(mt.transInsert(lcdf::Str(key), StringWrapper(initial)));
+        bool aborted = false;
+        try {
+            (void)mt.transPut(lcdf::Str(key), StringWrapper(large));
+        } catch (const Transaction::Abort&) {
+            aborted = true;
+        }
+        EXPECT_TRUE(aborted);
+        Sto::silent_abort();
+    };
+
+    auto expect_own_insert_read_to_abort = [&](const char* key) {
+        Sto::start_transaction();
+        EXPECT_FALSE(mt.transInsert(lcdf::Str(key), StringWrapper(initial)));
+        std::string out;
+        TThread::transget_without_throw = false;
+        EXPECT_FALSE(mt.transGet(lcdf::Str(key), out));
+        EXPECT_TRUE(TThread::transget_without_throw);
+        TThread::transget_without_throw = false;
+        Sto::silent_abort();
+    };
+
+    TThread::enable_multiverison();
+    expect_growing_own_insert_to_abort("ryw-disabled-multiversion");
+    expect_own_insert_read_to_abort("ryw-read-disabled-multiversion");
+
+    TThread::disable_multiversion();
+    mt.set_is_remote(true);
+    expect_growing_own_insert_to_abort("ryw-disabled-remote");
+    expect_own_insert_read_to_abort("ryw-read-disabled-remote");
+
+    mt.set_is_remote(false);
+    std::string out;
+    EXPECT_FALSE(mt.get(lcdf::Str("ryw-disabled-multiversion"), out));
+    EXPECT_FALSE(mt.get(lcdf::Str("ryw-read-disabled-multiversion"), out));
+    EXPECT_FALSE(mt.get(lcdf::Str("ryw-disabled-remote"), out));
+    EXPECT_FALSE(mt.get(lcdf::Str("ryw-read-disabled-remote"), out));
+}
+#endif
 
 // ===========================================================================
 // 2. L3 level — through abstract_ordered_index* (virtual dispatch)

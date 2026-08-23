@@ -186,6 +186,10 @@ Current implementation status:
       timestamps alone are not proof of build identity.
 - [x] Temporary rejection of a second write to one table/key. This contains
       unsafe MassTrans write composition until the engine semantics are fixed.
+- [x] Conventional point read-your-writes for the currently supported
+      one-mutation-per-key profile. Point reads copy a staged put/insert and
+      hide a staged remove; repeated mutation and scan composition remain
+      gated separately below.
 - [x] Explicit 1 KiB table/key and 1 MiB value limits, plus a key-weighted
       512-item transaction budget that returns terminal `TXN_TOO_LARGE` before
       STO can allocate beyond its embedded transaction set or hit its assert.
@@ -208,15 +212,18 @@ behavior for:
   behavior, correct commit bytes, and correct abort cleanup; retain its numeric
   status as a permanent reservation once ABI v1 is frozen.
 
-The current production defaults are `STO_RMW=OFF` and `OPACITY=OFF`.
-Moreover, several MassTrans read-your-writes paths remain commented out even
-in an `STO_RMW=ON` build, so the ABI deliberately never advertises that
-feature yet. Conventional read-your-writes is required before the cache
-integration in Phase 1E is declared complete or production-ready; it should be
-fixed and tested as an explicit Silo semantic change, not silently inferred
-from a build flag by the Rust wrapper. The current vertical slice defaults
-this requirement off for bring-up and lets deployments require the feature
-explicitly.
+The current production defaults are `STO_RMW=ON` and `OPACITY=OFF`. CMake
+normalizes the RMW option to a numeric preprocessor definition; passing the
+literal token `ON` to `#if READ_MY_WRITES` previously left the guarded code
+disabled. The ABI advertises point read-your-writes only when that definition
+is active, and the Rust cache requires it by default. Runtime forwarding is
+deliberately limited to local single-version tables; native Mako remote proxies
+and replicated multiversion participants retain their legacy behavior until
+their staging and lock-transfer protocols are extended. The ABI guarantee
+covers the exposed point surface while the facade still rejects a second
+mutation of one table/key. Repeated mutation and forward/reverse scan overlays
+remain open Phase 1B/1C work and must not be inferred from the point capability
+bit.
 
 The Phase 1A-1D boundary profile requires point transactions, scans, and
 conventional read-your-writes. Opacity remains an explicit profile rather than
@@ -373,9 +380,9 @@ cancellation marker before Silo validation. The existing vertical-slice work
 already exercises record validation, ordered writeback, atomic RocksDB batches,
 retry/fail-stop behavior, native multi-key transactions, and reopen recovery.
 Those component tests do not by themselves establish that this revised
-preinstall-hook protocol, Phase 1E, or Milestone 1 has passed. Conventional
-read-your-writes, the remaining ABI boundary gates, and Phase 1F's exhaustive
-process-crash injection remain open.
+preinstall-hook protocol, Phase 1E, or Milestone 1 has passed. Same-key write
+composition, scan read-your-writes, the remaining ABI boundary gates, and
+Phase 1F's exhaustive process-crash injection remain open.
 
 1. **Prepare a detached permit before native commit.** Acquire one unit of
    bounded queue capacity and own every mutation byte, encoded-record buffer,
@@ -612,7 +619,8 @@ recovery.
 
 1. Reset the implementation's advertised revision to draft `0`, publish the
    operation/status state table, and reserve every existing status number.
-2. Finish Milestone 1B point-operation semantics, especially read-your-writes.
+2. Finish Milestone 1B point-operation semantics, especially repeated
+   same-key mutation composition; point read-your-writes is enabled.
 3. Add scan chunks and their recoverable buffer limits to the C ABI; revisit
    the conservative point-transaction budget only with safe pre-reservation.
 4. Generate or mechanically verify Rust declarations from the C header, then

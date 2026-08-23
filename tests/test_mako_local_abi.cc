@@ -124,7 +124,11 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   EXPECT_EQ(mako_local_abi_version(), MAKO_LOCAL_ABI_VERSION);
   const uint64_t features = mako_local_feature_bits();
   EXPECT_NE(features & MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS, 0U);
+#if READ_MY_WRITES
+  EXPECT_NE(features & MAKO_LOCAL_FEATURE_READ_MY_WRITES, 0U);
+#else
   EXPECT_EQ(features & MAKO_LOCAL_FEATURE_READ_MY_WRITES, 0U);
+#endif
 #if STO_OPACITY
   EXPECT_NE(features & MAKO_LOCAL_FEATURE_OPACITY, 0U);
 #else
@@ -510,6 +514,224 @@ TEST_F(LocalAbiTest, PutInsertAndRemoveReportExistence) {
   commit_and_destroy(txn);
 }
 
+#if READ_MY_WRITES
+TEST_F(LocalAbiTest, PointReadYourWritesSeesNewAndExistingPuts) {
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "ryw-put-existing", "old"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  txn = begin();
+  uint8_t created = 99;
+  ASSERT_EQ(put(txn, primary, "ryw-put-existing", "updated", &created),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(created, 0);
+  EXPECT_EQ(get(txn, primary, "ryw-put-existing"),
+            (std::pair<int, std::optional<std::string>>{
+                MAKO_LOCAL_OK, std::string("updated")}));
+
+  created = 99;
+  ASSERT_EQ(put(txn, primary, "ryw-put-new", "created", &created),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(created, 1);
+  EXPECT_EQ(get(txn, primary, "ryw-put-new"),
+            (std::pair<int, std::optional<std::string>>{
+                MAKO_LOCAL_OK, std::string("created")}));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-put-existing").second,
+            std::optional<std::string>("updated"));
+  EXPECT_EQ(get(txn, primary, "ryw-put-new").second,
+            std::optional<std::string>("created"));
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, PointReadYourWritesNewPutAbortsCleanly) {
+  auto *txn = begin();
+  uint8_t created = 99;
+  ASSERT_EQ(put(txn, primary, "ryw-put-abort", "temporary", &created),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(created, 1);
+  EXPECT_EQ(get(txn, primary, "ryw-put-abort"),
+            (std::pair<int, std::optional<std::string>>{
+                MAKO_LOCAL_OK, std::string("temporary")}));
+  abort_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-put-abort"),
+            (std::pair<int, std::optional<std::string>>{MAKO_LOCAL_OK,
+                                                        std::nullopt}));
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, PointReadYourWritesSeesInsertedValuesBeforeCommitOrAbort) {
+  uint8_t inserted = 99;
+  auto *txn = begin();
+  ASSERT_EQ(mako_local_txn_insert(
+                txn, primary,
+                reinterpret_cast<const uint8_t *>("ryw-insert-abort"), 16,
+                reinterpret_cast<const uint8_t *>("temporary"), 9, &inserted),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(inserted, 1);
+  EXPECT_EQ(get(txn, primary, "ryw-insert-abort").second,
+            std::optional<std::string>("temporary"));
+  abort_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-insert-abort"),
+            (std::pair<int, std::optional<std::string>>{MAKO_LOCAL_OK,
+                                                        std::nullopt}));
+  commit_and_destroy(txn);
+
+  inserted = 99;
+  txn = begin();
+  ASSERT_EQ(mako_local_txn_insert(
+                txn, primary,
+                reinterpret_cast<const uint8_t *>("ryw-insert-commit"), 17,
+                reinterpret_cast<const uint8_t *>("durable"), 7, &inserted),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(inserted, 1);
+  EXPECT_EQ(get(txn, primary, "ryw-insert-commit").second,
+            std::optional<std::string>("durable"));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-insert-commit").second,
+            std::optional<std::string>("durable"));
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, PointReadYourWritesHidesRemovedValuesBeforeCommitOrAbort) {
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "ryw-remove-abort", "keep"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "ryw-remove-commit", "delete"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  uint8_t existed = 99;
+  txn = begin();
+  ASSERT_EQ(mako_local_txn_remove(
+                txn, primary,
+                reinterpret_cast<const uint8_t *>("ryw-remove-abort"), 16,
+                &existed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(existed, 1);
+  EXPECT_EQ(get(txn, primary, "ryw-remove-abort"),
+            (std::pair<int, std::optional<std::string>>{MAKO_LOCAL_OK,
+                                                        std::nullopt}));
+  abort_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-remove-abort").second,
+            std::optional<std::string>("keep"));
+  commit_and_destroy(txn);
+
+  existed = 99;
+  txn = begin();
+  ASSERT_EQ(mako_local_txn_remove(
+                txn, primary,
+                reinterpret_cast<const uint8_t *>("ryw-remove-commit"), 17,
+                &existed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(existed, 1);
+  EXPECT_EQ(get(txn, primary, "ryw-remove-commit"),
+            (std::pair<int, std::optional<std::string>>{MAKO_LOCAL_OK,
+                                                        std::nullopt}));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-remove-commit"),
+            (std::pair<int, std::optional<std::string>>{MAKO_LOCAL_OK,
+                                                        std::nullopt}));
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, PointReadYourWritesPreservesEmptyAndBinaryValues) {
+  const std::string binary_key("ryw\0key", 7);
+  const std::string binary_value("value\0\xff", 7);
+
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "ryw-empty", ""), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, binary_key, binary_value), MAKO_LOCAL_OK);
+
+  auto empty = get(txn, primary, "ryw-empty");
+  ASSERT_EQ(empty.first, MAKO_LOCAL_OK);
+  ASSERT_TRUE(empty.second.has_value());
+  EXPECT_TRUE(empty.second->empty());
+  EXPECT_EQ(get(txn, primary, binary_key).second,
+            std::optional<std::string>(binary_value));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  empty = get(txn, primary, "ryw-empty");
+  ASSERT_TRUE(empty.second.has_value());
+  EXPECT_TRUE(empty.second->empty());
+  EXPECT_EQ(get(txn, primary, binary_key).second,
+            std::optional<std::string>(binary_value));
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, PointReadYourWritesHandlesLargeResizeOnCommitAndAbort) {
+  const std::string aborted_value(8192, 'a');
+  const std::string committed_value(16384, 'c');
+
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "ryw-resize-abort", "old-abort"),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "ryw-resize-commit", "old-commit"),
+            MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  txn = begin();
+  ASSERT_EQ(put(txn, primary, "ryw-resize-abort", aborted_value),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(get(txn, primary, "ryw-resize-abort").second,
+            std::optional<std::string>(aborted_value));
+  abort_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-resize-abort").second,
+            std::optional<std::string>("old-abort"));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  ASSERT_EQ(put(txn, primary, "ryw-resize-commit", committed_value),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(get(txn, primary, "ryw-resize-commit").second,
+            std::optional<std::string>(committed_value));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-resize-commit").second,
+            std::optional<std::string>(committed_value));
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, PointReadThenGrowingPutPreservesValidation) {
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "ryw-read-resize", "old"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  const std::string grown_value(8192, 'g');
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-read-resize"),
+            (std::pair<int, std::optional<std::string>>{
+                MAKO_LOCAL_OK, std::string("old")}));
+  EXPECT_EQ(get(txn, primary, "ryw-read-resize"),
+            (std::pair<int, std::optional<std::string>>{
+                MAKO_LOCAL_OK, std::string("old")}));
+  ASSERT_EQ(put(txn, primary, "ryw-read-resize", grown_value),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(get(txn, primary, "ryw-read-resize").second,
+            std::optional<std::string>(grown_value));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "ryw-read-resize").second,
+            std::optional<std::string>(grown_value));
+  commit_and_destroy(txn);
+}
+#endif
+
 TEST_F(LocalAbiTest, NestedBeginAndWrongDatabaseTableAreRejected) {
   auto *txn = begin();
   mako_local_txn *nested = nullptr;
@@ -583,6 +805,7 @@ TEST_F(LocalAbiTest, DatabaseCloseReportsBusyUntilTransactionEnds) {
   abort_and_destroy(txn);
 }
 
+#if !READ_MY_WRITES
 TEST_F(LocalAbiTest, UnadvertisedReadYourWritesConflictLeavesWorkerReusable) {
   ASSERT_EQ(mako_local_feature_bits() & MAKO_LOCAL_FEATURE_READ_MY_WRITES, 0U);
 
@@ -596,6 +819,7 @@ TEST_F(LocalAbiTest, UnadvertisedReadYourWritesConflictLeavesWorkerReusable) {
   ASSERT_EQ(put(txn, primary, "after-conflict", "works"), MAKO_LOCAL_OK);
   commit_and_destroy(txn);
 }
+#endif
 
 TEST_F(LocalAbiTest, ConcurrentReadWriteConflictAbortsExactlyOneCommit) {
   auto *seed = begin();

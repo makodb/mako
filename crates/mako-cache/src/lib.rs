@@ -58,16 +58,25 @@ use writeback::Writeback;
 const DEFAULT_TABLE_NAME: &[u8] = b"mako-cache/default";
 
 /// Cache-specific behavior independent of the concrete durable backend.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CacheOptions {
     /// Bounded transaction-log and retry settings.
     pub writeback: WritebackConfig,
     /// Reject startup unless the native engine advertises conventional
     /// read-your-writes behavior.
     ///
-    /// The current draft MassTrans binding does not advertise this feature,
-    /// so the default is `false` while that native semantic gap is completed.
+    /// Point read-your-writes is part of the default cache profile. Set this
+    /// to `false` only when deliberately opening against a legacy native build.
     pub require_read_my_writes: bool,
+}
+
+impl Default for CacheOptions {
+    fn default() -> Self {
+        Self {
+            writeback: WritebackConfig::default(),
+            require_read_my_writes: true,
+        }
+    }
 }
 
 /// Options for the concrete RocksDB-backed [`Db`].
@@ -858,8 +867,8 @@ mod tests {
     }
 
     #[test]
-    fn default_profile_is_honest_about_missing_read_your_writes() {
-        assert!(!CacheOptions::default().require_read_my_writes);
+    fn default_profile_requires_read_your_writes() {
+        assert!(CacheOptions::default().require_read_my_writes);
     }
 
     #[test]

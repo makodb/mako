@@ -15,6 +15,70 @@ fn native_features_include_point_transactions() {
 }
 
 #[test]
+fn point_reads_observe_own_put_insert_and_remove() {
+    if !features().unwrap().read_my_writes() {
+        return;
+    }
+    let db = LocalDb::open().unwrap();
+    let table = db.open_table("rust_point_ryw", 20_014).unwrap();
+
+    let mut seed = db.transaction().unwrap();
+    assert!(seed.put(&table, b"existing", b"old").unwrap());
+    assert!(seed.put(&table, b"doomed", b"present").unwrap());
+    seed.commit().unwrap();
+
+    // Growing an existing value exercises MassTrans's relocation path. The
+    // staged bytes must be copied from the transaction item, not reread from
+    // the still-committed physical row.
+    let large = vec![b'x'; 8 * 1024];
+    let mut tx = db.transaction().unwrap();
+    assert_eq!(
+        tx.get(&table, b"existing").unwrap().as_deref(),
+        Some(&b"old"[..])
+    );
+    assert_eq!(
+        tx.get(&table, b"existing").unwrap().as_deref(),
+        Some(&b"old"[..])
+    );
+    assert!(!tx.put(&table, b"existing", &large).unwrap());
+    assert_eq!(tx.get(&table, b"existing").unwrap(), Some(large.clone()));
+
+    assert!(tx.insert(&table, b"inserted", b"\0new\xff").unwrap());
+    assert_eq!(
+        tx.get(&table, b"inserted").unwrap().as_deref(),
+        Some(&b"\0new\xff"[..])
+    );
+
+    assert!(tx.remove(&table, b"doomed").unwrap());
+    assert_eq!(tx.get(&table, b"doomed").unwrap(), None);
+    tx.commit().unwrap();
+
+    let mut verify = db.transaction().unwrap();
+    assert_eq!(
+        verify.get(&table, b"existing").unwrap(),
+        Some(large.clone())
+    );
+    assert_eq!(
+        verify.get(&table, b"inserted").unwrap().as_deref(),
+        Some(&b"\0new\xff"[..])
+    );
+    assert_eq!(verify.get(&table, b"doomed").unwrap(), None);
+    verify.commit().unwrap();
+
+    let mut abort = db.transaction().unwrap();
+    assert!(!abort.put(&table, b"existing", b"aborted").unwrap());
+    assert_eq!(
+        abort.get(&table, b"existing").unwrap().as_deref(),
+        Some(&b"aborted"[..])
+    );
+    abort.abort().unwrap();
+
+    let mut after_abort = db.transaction().unwrap();
+    assert_eq!(after_abort.get(&table, b"existing").unwrap(), Some(large));
+    after_abort.commit().unwrap();
+}
+
+#[test]
 fn explicit_close_consumes_the_facade_without_a_drop_retry() {
     let db = LocalDb::open().unwrap();
     let table = db.open_table("rust_explicit_close", 20_009).unwrap();

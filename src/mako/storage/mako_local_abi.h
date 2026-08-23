@@ -39,7 +39,9 @@ extern "C" {
 
 /* Semantic guarantees of the linked draft engine. Point transactions are the
  * revision-0 baseline. A bit is absent until every exposed path implements the
- * guarantee; callers must not infer a capability from STO build flags. */
+ * guarantee; callers must not infer a capability from STO build flags. The
+ * revision-0 READ_MY_WRITES bit covers the exposed point operations only; no
+ * transactional scan API is exposed by this revision. */
 #define MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS (UINT64_C(1) << 0)
 #define MAKO_LOCAL_FEATURE_READ_MY_WRITES (UINT64_C(1) << 1)
 #define MAKO_LOCAL_FEATURE_OPACITY (UINT64_C(1) << 2)

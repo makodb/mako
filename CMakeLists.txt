@@ -532,7 +532,7 @@ endif()
 
 set(USE_MALLOC_MODE 1 CACHE STRING "Malloc mode: 0=libc, 1=jemalloc, 2=tcmalloc, 3=flow")
 set(MODE "perf" CACHE STRING "Build mode: perf, backoff, factor-gc, factor-gc-nowriteinplace, factor-fake-compression, sandbox")
-option(STO_RMW "Enable STO read-modify-write" OFF)
+option(STO_RMW "Enable STO read-modify-write" ON)
 option(HASHTABLE "Enable hashtable" OFF)
 option(GPROF "Enable profiling with gprof" OFF)
 option(OPACITY "Enable opacity" OFF)
@@ -816,10 +816,30 @@ endif()
 if(TRACKING_ROLLBACK)
   list(APPEND CXXFLAGS -DTRACKING_ROLLBACK)
 endif()
+
+# CMake boolean cache values are the strings ON/OFF. Passing those strings to
+# the C++ preprocessor makes both branches of a `#if` appear false because ON
+# and OFF are otherwise-undefined identifiers. Normalize the public options
+# to numeric definitions before they reach STO.
+if(STO_RMW)
+  set(READ_MY_WRITES_DEFINE 1)
+else()
+  set(READ_MY_WRITES_DEFINE 0)
+endif()
+if(HASHTABLE)
+  set(HASHTABLE_DEFINE 1)
+else()
+  set(HASHTABLE_DEFINE 0)
+endif()
+if(OPACITY)
+  set(STO_OPACITY_DEFINE 1)
+else()
+  set(STO_OPACITY_DEFINE 0)
+endif()
 list(APPEND CXXFLAGS
-  -DREAD_MY_WRITES=${STO_RMW}
-  -DHASHTABLE=${HASHTABLE}
-  -DSTO_OPACITY=${OPACITY}
+  -DREAD_MY_WRITES=${READ_MY_WRITES_DEFINE}
+  -DHASHTABLE=${HASHTABLE_DEFINE}
+  -DSTO_OPACITY=${STO_OPACITY_DEFINE}
 )
 # The `-include <masstree/config.h>` forced-include injects tokens at the start
 # of every TU. It must NOT be applied to C++20 named module files, which

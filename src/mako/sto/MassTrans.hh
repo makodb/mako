@@ -48,8 +48,8 @@ public:
   typedef typename std::conditional<Opacity, TVersion, TNonopaqueVersion>::type tversion_type;
 
   static __thread threadinfo_type mythreadinfo;
-  unsigned long long int table_id;
-  bool is_remote;
+  unsigned long long int table_id = 0;
+  bool is_remote = false;
   std::string table_name_;
 
 protected:
@@ -140,20 +140,25 @@ public:
         TThread::transget_without_throw=true;
         return false;
       }
-// #if READ_MY_WRITES  // it's always false by default
-//       if (has_delete(item)) {
-//         return false;
-//       }
-//       if (item.has_write()) {
-//         // read directly from the element if we're inserting it
-//         if (has_insert(item)) {
-// 	  assign_val(retval, e->read_value());
-//         } else {
-// 	    retval = item.template write_value<write_value_type>();
-//         }
-//         return true;
-//       }
-// #endif
+#if READ_MY_WRITES
+      if (readMyWritesEnabled()) {
+        if (has_delete(item)) {
+          return false;
+        }
+        if (item.has_write()) {
+          // A newly inserted value already lives in its private, invalid
+          // Masstree entry. Updates remain copy-staged in the TransItem until
+          // install. Copy either representation into the caller's output;
+          // never expose transaction- or tree-owned storage.
+          if (has_insert(item)) {
+            assign_val(retval, e->read_value());
+          } else {
+            retval = item.template write_value<write_value_type>();
+          }
+          return true;
+        }
+      }
+#endif
       Version elem_vers;
       if(!atomicRead(e, elem_vers, retval)){ // atomicRead might throw an error as well
         return false;
@@ -180,7 +185,7 @@ public:
       item.add_extra(key) ;
       bool valid = !(v & invalid_bit);
 #if READ_MY_WRITES
-      if (!valid && has_insert(item)) {
+      if (readMyWritesEnabled() && !valid && has_insert(item)) {
         if (has_delete(item)) {
           // insert-then-delete then delete, so second delete should return false
           return false;
@@ -199,7 +204,7 @@ public:
       assert(valid);
 #if READ_MY_WRITES
       // already deleted!
-      if (has_delete(item)) {
+      if (readMyWritesEnabled() && has_delete(item)) {
         return false;
       }
 #endif
@@ -697,7 +702,9 @@ public:
 
   bool remove(const Str& key, threadinfo_type& ti = mythreadinfo) {
     cursor_type lp(table_, key);
-    bool found = lp.find_locked(*ti.ti);
+    // finish() requires the original-node metadata initialized by
+    // find_insert(), including when this operation only removes a row.
+    bool found = lp.find_insert(*ti.ti);
     // Only deallocate when the key exists: on a miss the cursor's
     // value slot is uninitialized and dereferencing it is UB.
     if (found)
@@ -707,14 +714,51 @@ public:
   }
 
 protected:
+  bool readMyWritesEnabled() const {
+#if READ_MY_WRITES
+    // This milestone covers local single-version Silo. Native Mako's remote
+    // proxies and replicated multiversion participants have different staging
+    // and lock-transfer protocols and must retain their prior behavior.
+    return !is_remote && !TThread::is_multiversion();
+#else
+    return false;
+#endif
+  }
+
+  template <typename ValueType>
+  static const ValueType& storageValue(const ValueType& value) {
+    return value;
+  }
+
+  // StringWrapper deliberately keeps the transaction's std::string out of
+  // the transaction buffer. Normalize it once so sizing and in-place writes
+  // use that same backing value without materializing a temporary string.
+  static const std::string& storageValue(const StringWrapper& value) {
+    return *value.value();
+  }
+
   // called once we've checked our own writes for a found put()
   template <typename ValueType>
   void reallyHandlePutFound(TransProxy& item, versioned_value *e, Str key, const ValueType& value) {
     // resizing takes a lot of effort, so we first check if we'll need to
     // (values never shrink in size, so if we don't need to resize, we'll never need to)
+    const auto& storage_value = storageValue(value);
     auto *new_location = e;
-    bool needsResize = e->needsResize(value);
+    bool needsResize = e->needsResize(storage_value);
     if (needsResize) {
+#if READ_MY_WRITES
+      // Relocation changes the transaction-set key from the old allocation to
+      // its replacement. Preserve an earlier point read's observed version so
+      // read-then-grow still detects an intervening writer, and retire every
+      // read/write flag that could otherwise dereference the old allocation at
+      // commit. An inserted row additionally carries its cleanup key forward.
+      const bool preserve_ryw_state = readMyWritesEnabled();
+      const bool relocate_insert = preserve_ryw_state && has_insert(item);
+      const bool relocate_read = preserve_ryw_state && item.has_read();
+      Version relocated_read_version{};
+      if (relocate_read)
+        relocated_read_version = item.template read_value<Version>();
+#endif
       if (!has_insert(item)) {  // update
         // Allocate/copy while holding the old value lock, but do not invalidate
         // the published value until allocation has succeeded. In particular,
@@ -729,7 +773,7 @@ protected:
         }
         try {
           // Copies the old value into a larger, still-unpublished allocation.
-          new_location = e->resizeIfNeeded(value);
+          new_location = e->resizeIfNeeded(storage_value);
         } catch (...) {
           unlock(e);
           throw;
@@ -741,28 +785,58 @@ protected:
         // version from the now-unlocked old entry and clear only invalid_bit.
         new_location->version() = e->version() & ~invalid_bit;
       } else {
-        new_location = e->resizeIfNeeded(value);
+        new_location = e->resizeIfNeeded(storage_value);
       }
       // e can't get bigger so this should always be true
       assert(new_location != e);
       cursor_type lp(table_, key);
       // TODO: not even trying to pass around threadinfo here
-      bool found = lp.find_locked(*mythreadinfo.ti);
+      // find_insert initializes the cursor bookkeeping consumed by finish().
+      // find_locked alone leaves original_n_ unset, which is undefined
+      // behavior even when we only replace an existing value pointer.
+      bool found = lp.find_insert(*mythreadinfo.ti);
       (void)found;
       assert(found);
       lp.value() = new_location;
       lp.finish(0, *mythreadinfo.ti);
-      // now rcu free "e"
+      // The active transaction's RCU epoch keeps the retired item reachable
+      // to its old TransItem until abort/commit cleanup completes. Queue it
+      // immediately so a later replacement-item allocation failure cannot
+      // leak the now-unlinked allocation.
       e->deallocate_rcu(*mythreadinfo.ti);
+#if READ_MY_WRITES
+      if (preserve_ryw_state) {
+        auto relocated_item = Sto::new_item(this, new_location);
+        if (relocate_read)
+          relocated_item.observe(tversion_type(relocated_read_version));
+        if (relocate_insert)
+          relocated_item.template add_write<key_write_value_type>(key)
+              .add_flags(insert_bit);
+
+        // Build the replacement item completely before relinquishing the old
+        // insert's abort-cleanup ownership. If allocation or opacity checking
+        // above fails, abort can still remove the newly published invalid row
+        // by using the old item's retained key.
+        if (item.has_write())
+          item.clear_write();
+        if (relocate_read)
+          item.clear_read();
+        if (relocate_insert)
+          item.clear_flags(insert_bit);
+        item = relocated_item;
+      } else {
+        item = Sto::new_item(this, new_location);
+      }
+#else
+      item = Sto::new_item(this, new_location);
+#endif
     }
 #if READ_MY_WRITES
-    if (has_insert(item)) {
-      new_location->set_value(value_type(value));
+    if (readMyWritesEnabled() && has_insert(item)) {
+      new_location->set_value(storage_value);
     } else
 #endif
     {
-      if (new_location != e)
-        item = Sto::new_item(this, new_location);
       item.template add_write<write_value_type>(value); // write_value_type value0 = (write_value_type)value;
 
       item.add_extra(key) ;
@@ -779,7 +853,7 @@ protected:
       return false;
     }
 #if READ_MY_WRITES
-    if (has_delete(item)) {
+    if (readMyWritesEnabled() && has_delete(item)) {
       // delete-then-insert == update (technically v# would get set to 0, but this doesn't matter
       // if user can't read v#)
       if (INSERT) {
@@ -796,18 +870,13 @@ protected:
     if (SET) {
       reallyHandlePutFound(item, e, key, value);
     }
-    // Observe version AFTER reallyHandlePutFound. If a resize occurred,
-    // `item` now points to the new location (via Sto::new_item in
-    // reallyHandlePutFound line 697). Observing here ensures we record
-    // the correct location's version. The old TransItem (keyed by the
-    // invalidated original location) has no read observation, so the
-    // commit validation (Transaction.cc:538) skips it.
-    // FIX: Previously, observe was called BEFORE reallyHandlePutFound,
-    // which recorded the OLD location's version. After resize, the old
-    // location was marked invalid, causing a spurious OCC abort.
+    // Observe after reallyHandlePutFound so a first write that resized the
+    // value records the replacement location. If there was an earlier read,
+    // the relocation path already transferred its observation instead.
 #if READ_MY_WRITES
     // make sure this item doesn't get deleted (we don't care about other updates to it though)
-    if (!item.has_read() && !has_insert(item))
+    if (!readMyWritesEnabled() ||
+        (!item.has_read() && !has_insert(item)))
 #endif
     {
       auto current_e = item.item().template key<versioned_value*>();
@@ -849,10 +918,13 @@ protected:
   template <typename T>
   TransProxy t_read_only_item(T e) {
 #if READ_MY_WRITES
-    return Sto::read_item(this, e);
-#else
-    return Sto::fresh_item(this, e);
+    // RYW requires one transaction item per value. Sto::read_item may create
+    // duplicate read items before the transaction's first write, which leaves
+    // stale observations behind if a later growing write relocates the value.
+    if (readMyWritesEnabled())
+      return Sto::item(this, e);
 #endif
+    return Sto::fresh_item(this, e);
   }
 
   static bool has_insert(const TransItem& item) {
@@ -865,9 +937,10 @@ protected:
       return item.flags() & delete_bit;
   }
 
-  static bool validityCheck(const TransItem& item, versioned_value *e) {
+  bool validityCheck(const TransItem& item, versioned_value *e) const {
     bool v =  //likely(has_insert(item)) || !(e->version & invalid_bit);
-      likely(!(e->version() & invalid_bit)) || has_insert(item);
+      likely(!(e->version() & invalid_bit)) ||
+      (readMyWritesEnabled() && has_insert(item));
     //Warning("validityCheck:%d,%d",!(e->version() & invalid_bit), has_insert(item));
     return v;
   }

@@ -13,6 +13,20 @@ OUT=$B/mrx_kernel_probe
 
 cd "$B"
 
+# Keep template-affecting STO definitions identical to the library in this
+# cached build. A fresh configure emits numeric 0/1 values; an older cache may
+# still contain ON/OFF, which must not be mixed with differently compiled
+# MassTrans templates at link time.
+STO_DEFINES=$(awk '
+  /^  FLAGS = / && /-DREAD_MY_WRITES=/ {
+    for (i = 1; i <= NF; ++i)
+      if ($i ~ /^-D(READ_MY_WRITES|HASHTABLE|STO_OPACITY)=/)
+        printf "%s ", $i
+    exit
+  }
+' build.ninja)
+test -n "$STO_DEFINES"
+
 $CXX \
  -DCONFIG_H=\"$W/src/mako/config/config-perf.h\" \
  -DMASSTREE_CONFIG_H=\"$B/generated/masstree/config.h\" \
@@ -32,8 +46,8 @@ $CXX \
  -I$W/third-party/lz4 -Isrc -I$W \
  -DRUSTYCPP_DISABLE_ARC_LOG -DREUSE_FIBER -DERPC_FAKE=true \
  -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0 \
- -march=native -O2 -g -DFAIL_NEW_VERSION -DREAD_MY_WRITES=OFF \
- -DHASHTABLE=OFF -DSTO_OPACITY=OFF -I/usr/include -DUSE_JEMALLOC \
+ -march=native -O2 -g -DFAIL_NEW_VERSION $STO_DEFINES \
+ -I/usr/include -DUSE_JEMALLOC \
  -fno-omit-frame-pointer \
  -include $B/generated/masstree/config.h \
  @CMakeFiles/masstree_rocks_bench.dir/src/mako/benchmarks/masstree_rocks_bench.cc.o.modmap \
