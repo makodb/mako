@@ -8,6 +8,7 @@
 #include <rusty/arc.hpp>
 
 #include <time.h>
+#include <vector>
 #include <sys/time.h>
 #ifdef __APPLE__ // for OS X
 #include <mach/clock.h>
@@ -28,7 +29,7 @@ class ServerControlServiceImpl: public ServerControlService {
   unsigned int timeout_;
   bool sig_handler_set_;
 
-  static vector<ServerControlServiceImpl*> scsi_s;
+  static std::vector<ServerControlServiceImpl*> scsi_s;
 
   static void shutdown_wrapper(int sig);
 
@@ -57,7 +58,6 @@ class ServerControlServiceImpl: public ServerControlService {
   void server_shutdown(const ServerControlService::RpcServerShutdownRequest& req, ServerControlService::RpcServerShutdownResponse& resp, rrr::DeferredReply defer) override;
   void server_ready(const ServerControlService::RpcServerReadyRequest& req, ServerControlService::RpcServerReadyResponse& resp, rrr::DeferredReply defer) override;
   void server_heart_beat(const ServerControlService::RpcServerHeartBeatRequest& req, ServerControlService::RpcServerHeartBeatResponse& resp, rrr::DeferredReply defer) override;
-  void server_heart_beat_with_data(const ServerControlService::RpcServerHeartBeatWithDataRequest& req, ServerControlService::RpcServerHeartBeatWithDataResponse& resp, rrr::DeferredReply defer) override;
   // END typed-rpc-decls (ServerControlServiceImpl)
 };
 

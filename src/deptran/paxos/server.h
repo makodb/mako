@@ -23,11 +23,6 @@ struct PaxosData {
   Command committed_cmd_{};
 };
 
-struct BulkPrepare{
-  ballot_t seen_ballot;
-  int leader_id;
-};
-
 class PaxosServer : public TxLogServer {
  public:
   // ----min_active <= max_executed <= max_committed---
@@ -40,13 +35,11 @@ class PaxosServer : public TxLogServer {
   slotid_t cur_open_slot_ = 1;
   slotid_t max_touched_slot = 0;
   int leader_id;
-  map<pair<slotid_t, slotid_t>, BulkPrepare> bulk_prepares{};  // saves all the prepare ranges.
   map<slotid_t, shared_ptr<PaxosData>> logs_{}; // the committed values
   ballot_t cur_epoch;
   // for learner for the later on takeover
   slotid_t max_committed_slot_learner_ = 0;
 
-  int n_prepare_ = 0;
   int n_accept_ = 0;
   int n_commit_ = 0;
   bool in_applying_logs_{false};
@@ -127,7 +120,7 @@ class PaxosServer : public TxLogServer {
 #endif
 
   ~PaxosServer() {
-    Log_info("site par {}, loc {}: prepare {}, accept {}, commit {}", partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
+    Log_info("site par {}, loc {}: accept {}, commit {}", partition_id_, loc_id_, n_accept_, n_commit_);
 #ifdef CHECK_KEY_DISTRIBUTION
     if (loc_id_ == 0)
       key_distribution_.Print();
@@ -146,38 +139,6 @@ class PaxosServer : public TxLogServer {
     return sp_instance;
   }
 
-  // removed `OnForward` declaration —
-  // body was `verify(0); // Should never be called in Mako`; the
-  // `MultiPaxosServiceImpl::Forward(janus::Command, ...)` handler
-  // has an empty body that never reaches this method (Mako uses
-  // `OnForwardToLearner` instead via the `ForwardToLearnerServer`
-  // RPC).
-
-  void OnPrepare(slotid_t slot_id,
-                 ballot_t ballot,
-                 ballot_t *max_ballot,
-                 uint64_t* coro_id,
-                 rusty::Function<void()> cb);
-
-  // handler parameters take
-  // const janus::Command&; shared_ptr<Marshallable> callers
-  // auto-convert via Command's implicit ctor.
-  void OnAccept(const slotid_t slot_id,
-		const uint64_t time,
-                const ballot_t ballot,
-                const janus::Command& cmd,
-                ballot_t *max_ballot,
-                uint64_t* coro_id,
-                rusty::Function<void()> cb);
-
-  void OnCommit(const slotid_t slot_id,
-                const ballot_t ballot,
-                const janus::Command& cmd);
-
-  // removed `OnBulkPrepare`, `OnHeartbeat`
-  // declarations — only callers were the now-deleted
-  // `MultiPaxosServiceImpl::BulkPrepare` / `Heartbeat` handlers.
-
   void OnBulkAccept(const janus::Command& cmd,
                     i32* ballot,
                     i32 *valid,
@@ -188,10 +149,6 @@ class PaxosServer : public TxLogServer {
                     i32 *valid,
                     rusty::Function<void()> cb);
 
-  // removed `OnBulkPrepare2` declaration —
-  // only caller was the now-deleted
-  // `MultiPaxosServiceImpl::BulkPrepare2` handler.
-
   // Fill-then-wrap: fills the caller-owned response; the caller packs
   // it after this returns. (The old Function<void()> cb param was dead
   // ceremony — never invoked; it only carried the DeferredReply to its
@@ -200,16 +157,6 @@ class PaxosServer : public TxLogServer {
                       i32* ballot,
                       i32 *valid,
                       SyncLogResponse& ret_cmd);
-
-  void OnSyncCommit(const janus::Command& cmd,
-                      i32* ballot,
-                      i32 *valid,
-                      rusty::Function<void()> cb);
-
-
-  // removed `OnSyncNoOps` declaration — only
-  // caller was the now-deleted `MultiPaxosServiceImpl::SyncNoOps`
-  // handler.
 
   void OnForwardToLearner(const rrr::i32& par_id,
                         const uint64_t& slot,

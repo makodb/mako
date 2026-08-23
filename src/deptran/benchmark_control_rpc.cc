@@ -4,7 +4,7 @@
 #include "rrr/rrr.hpp"
 
 namespace janus {
-vector<ServerControlServiceImpl *> ServerControlServiceImpl::scsi_s{};
+std::vector<ServerControlServiceImpl *> ServerControlServiceImpl::scsi_s{};
 
 void ServerControlServiceImpl::shutdown_wrapper(int sig) {
   for (auto s : scsi_s) {
@@ -54,27 +54,6 @@ void ServerControlServiceImpl::server_heart_beat(
   if (!sig_handler_set_)
     set_sig_handler();
   alarm(timeout_);
-  defer.reply();
-}
-
-void ServerControlServiceImpl::server_heart_beat_with_data(
-    const ServerControlService::RpcServerHeartBeatWithDataRequest& rpc_req,
-    ServerControlService::RpcServerHeartBeatWithDataResponse& rpc_resp,
-    rrr::DeferredReply defer) {
-  (void)rpc_req;
-  ServerResponse *res = &rpc_resp.res;
-
-  // collapsed `if (recorder) { ... } else
-  // {res->r_cnt_sum = 0; ... }` to just the else branch — recorder
-  // was always nullptr; field + getter both gone.
-  res->r_cnt_sum = 0;
-  res->r_cnt_num = 0;
-  res->r_sz_sum = 0;
-  res->r_sz_num = 0;
-  if (!sig_handler_set_)
-    set_sig_handler();
-  alarm(timeout_);
-
   defer.reply();
 }
 
