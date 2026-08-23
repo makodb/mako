@@ -230,7 +230,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED libdpdk)
 
-# Find Python for txlog_core/txlog_bench build surfaces.
+# Find Python for the txlog_core build surface.
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 
 # Define paths
@@ -940,12 +940,6 @@ list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/server_worker.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/raft_lab_standalone.cc")
 
-# Collect benchmark source files (compiled separately from deptran core)
-file(GLOB_RECURSE TXLOG_BENCH_SRC
-    "src/bench/*/*.cc"
-)
-list(FILTER TXLOG_BENCH_SRC EXCLUDE REGEX "src/bench/paxos_lib/.*")
-
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
 set(TXLOG_HELPER_SRC
@@ -1003,9 +997,8 @@ target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
 # std_port_hashbrown, so naming std_port pulls in both archives/BMIs.
 target_link_libraries(cluster PUBLIC rrr pthread btree_port vec_port rc_port std_port)
 
-# Build txlog in layers:
-#   - txlog_core: deptran/rrr/memdb core (no src/bench/* compilation unit)
-#   - txlog_bench: benchmark implementations from src/bench/*
+# Build the replication core. The retired DepTran benchmark implementations
+# under src/bench are intentionally not part of Mako's link graph.
 add_library(txlog_core_obj OBJECT
     ${TXLOG_HELPER_SRC}
     ${DEPTRAN_CORE_SRC}
@@ -1045,26 +1038,6 @@ foreach(_SRC IN LISTS TXLOG_HELPER_SRC DEPTRAN_CORE_SRC RRR_SRC MEMDB_SRC)
 endforeach()
 target_compile_definitions(txlog_core_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
 
-add_library(txlog_bench_obj OBJECT ${TXLOG_BENCH_SRC})
-add_dependencies(txlog_bench_obj rcc_rpc_gen)
-set_target_properties(txlog_bench_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(txlog_bench_obj PRIVATE
-    src
-    src/rrr
-    src/memdb
-    src/deptran
-    src/bench
-    src/mako
-    src/mako/benchmarks
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-    third-party/yaml-cpp/include
-    ${Python3_INCLUDE_DIRS}
-)
-target_compile_options(txlog_bench_obj PRIVATE ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
-target_compile_definitions(txlog_bench_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
-# Inherit rrr module BMI paths from txlog_core_obj (which owns the FILE_SET).
-target_link_libraries(txlog_bench_obj PUBLIC txlog_core_obj)
-
 add_library(txlog_core STATIC $<TARGET_OBJECTS:txlog_core_obj>)
 target_link_libraries(txlog_core
     PUBLIC
@@ -1084,34 +1057,11 @@ target_include_directories(txlog_core PUBLIC
     src/deptran
 )
 
-add_library(txlog_bench STATIC $<TARGET_OBJECTS:txlog_bench_obj>)
-target_link_libraries(txlog_bench PUBLIC txlog_core)
-target_include_directories(txlog_bench PUBLIC
-    src
-    src/bench
-)
-
-# Canonical link set for targets that previously linked the monolithic txlog.
-# Keep txlog_core before/after txlog_bench to satisfy cross-archive refs on ld.
-add_library(txlog_full INTERFACE)
-target_link_libraries(txlog_full INTERFACE
-    txlog_core
-    txlog_bench
-    txlog_core
-)
-# Ensure bench registry object is linked from static txlog_bench.
-# macOS ld64 requires the C symbol underscore prefix in -u; GNU ld does not.
-if(APPLE)
-    target_link_options(txlog_full INTERFACE "LINKER:-u,_janus_register_bench_factories")
-else()
-    target_link_options(txlog_full INTERFACE "LINKER:-u,janus_register_bench_factories")
-endif()
 set(TXLOG_LINK_LIBS
-    txlog_full
+    txlog_core
 )
 set(TXLOG_BUILD_DEPS
     txlog_core
-    txlog_bench
 )
 
 # Temporary Raft-only target for borrow checking
