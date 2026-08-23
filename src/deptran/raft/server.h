@@ -102,12 +102,6 @@ struct RaftData {
 	ballot_t ballot;
 };
 
-// @safe - simple POD struct
-struct KeyValue {
-	int key;
-	i32 value;
-};
-
 #ifdef RAFT_TEST_CORO
 #define HEARTBEAT_INTERVAL 100000
 #else
@@ -641,49 +635,6 @@ class RaftServer : public TxLogServer {
     // @unsafe
     {
       PersistLogEntry(lastLogIndex, *instance, "SetLocalAppend: leader log");
-    }
-
-    // @unsafe
-    {
-#ifndef RAFT_TEST_CORO
-      if (cmd.kind_ == TpcCommitCommand::static_kind()){
-        const auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-        const auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd.unwrap()->cmd_);
-        verify(vec_piece_data.is_some());
-        auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
-
-        // Check if this is Mako data (STR values) versus legacy I32 data.
-        bool is_mako_data = false;
-        if (sp_vec_piece && !sp_vec_piece->empty()) {
-          auto first_cmd = (*sp_vec_piece)[0];
-          if (first_cmd && first_cmd->input.values_ && !first_cmd->input.values_->empty()) {
-            auto first_val = first_cmd->input.values_->begin()->second;
-            if (first_val.get_kind() == Value::STR) {
-              is_mako_data = true;
-              Log_debug("[RAFT-SETLOCALAPPEND] Skipping vestigial I/O code for Mako data (STR values)");
-            }
-          }
-        }
-
-        if (!is_mako_data) {
-          vector<struct KeyValue> kv_vector;
-          int index = 0;
-          for (auto it = sp_vec_piece->begin(); it != sp_vec_piece->end(); it++){
-            auto cmd_input = (*it)->input.values_;
-            for (auto it2 = cmd_input->begin(); it2 != cmd_input->end(); it2++) {
-              struct KeyValue key_value = {it2->first, it2->second.get_i32()};
-              kv_vector.push_back(key_value);
-            }
-          }
-
-          struct KeyValue key_values[kv_vector.size()];
-          std::copy(kv_vector.begin(), kv_vector.end(), key_values);
-        }
-      } else {
-        int value = -1;
-        int value_;
-      }
-#endif
     }
 
     // @unsafe

@@ -1802,6 +1802,14 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_messages ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_messages COMMAND test_raft_messages)
 
+    add_executable(test_raft_application_log tests/raft_application_log_test.cc)
+    target_include_directories(test_raft_application_log PRIVATE
+        ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_raft_application_log PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_application_log
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core)
+    add_test(NAME test_raft_application_log COMMAND test_raft_application_log)
+
     add_executable(test_raft_transport_facade tests/raft_transport_facade_test.cc)
     target_include_directories(test_raft_transport_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_transport_facade PRIVATE ${TEST_COMPILE_OPTIONS})

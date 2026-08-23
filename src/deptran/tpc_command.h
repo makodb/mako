@@ -40,7 +40,7 @@ class TpcCommitCommand
   txnid_t tx_id_ = 0;
   int ret_ = -1;
   Command cmd_{};
-  ballot_t term;
+  ballot_t term = 0;
   // Optional view data for WRONG_LEADER responses
   rusty::Option<rusty::Arc<ViewData>> sp_view_data_{};
 

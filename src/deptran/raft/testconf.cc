@@ -9,6 +9,8 @@
 #include "service.h"
 #include "commo.h"
 #include "recovery_manager.hpp"
+#include "application_log.h"
+#include "../replication_log_entry.h"
 
 #include "rrr/rrr.hpp"
 
@@ -171,16 +173,16 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
     return false;
   }
 
-  // Construct an empty TpcCommitCommand containing cmd as its tx_id_
+  // Construct a TpcCommitCommand containing cmd as its tx_id_. Use the same
+  // replication-native inner payload as the production Raft worker.
   auto cmdptr = rusty::Arc<TpcCommitCommand>::make();
-  auto vpd_p = rusty::Arc<VecPieceData>::make();
-  // @unsafe - unique-owner mutation window (factory-fresh Arcs).
-  vpd_p.get_mut().unwrap().sp_vec_piece_data_ =
-      std::make_shared<vector<shared_ptr<SimpleCommand>>>();
+  LogEntry raw_log;
+  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &raw_log.log_entry));
+  raw_log.length = static_cast<int>(raw_log.log_entry.size());
   {
     auto& mut_cmd = cmdptr.get_mut().unwrap();
     mut_cmd.tx_id_ = cmd;
-    mut_cmd.cmd_ = std::move(vpd_p);
+    mut_cmd.cmd_ = rusty::Arc<LogEntry>::make(std::move(raw_log));
   }
   // call Start()
   // Log_info("Start: Calling Start() on server {} for command {}", svr, cmd);
