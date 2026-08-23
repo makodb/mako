@@ -41,28 +41,31 @@ namespace raft {
 // ---------------------------------------------------------------------------
 // RequestVote
 // ---------------------------------------------------------------------------
+// Keep these leaf messages value-initialized (`T{}`).  Rust has no syntax for
+// C++ in-class field defaults, so spelling the zeroing at construction sites
+// preserves their aggregate shape for the following inline-DSL conversion.
 struct VoteReq {
-  uint64_t last_log_idx{0};
-  ballot_t last_log_term{0};
-  siteid_t candidate_site_id{0};
-  ballot_t current_term{0};
+  uint64_t last_log_idx;
+  int64_t  last_log_term;
+  uint16_t candidate_site_id;
+  int64_t  current_term;
 };
 
 struct VoteReply {
-  ballot_t max_ballot{0};
-  bool     vote_granted{false};
+  int64_t max_ballot;
+  bool    vote_granted;
 };
 
 // ---------------------------------------------------------------------------
 // VoteDurable — sent by a voter once its vote has been persisted.
 // ---------------------------------------------------------------------------
 struct VoteDurableReq {
-  ballot_t term{0};
-  siteid_t voter_id{0};
+  int64_t  term;
+  uint16_t voter_id;
 };
 
 struct VoteDurableReply {
-  bool acknowledged{false};
+  bool acknowledged;
 };
 
 // ---------------------------------------------------------------------------
