@@ -920,21 +920,6 @@ file(GLOB RRR_SRC
 # retired transaction engines and test harnesses into every Mako binary, and a
 # newly added compatibility source required a manual CMake reconfigure before
 # it could be linked from an existing build tree.
-set(MEMDB_SRC
-    src/memdb/MurmurHash3.cc
-    src/memdb/row.cc
-    src/memdb/schema.cc
-    src/memdb/table.cc
-    src/memdb/txn.cc
-    src/memdb/txn_2pl.cc
-    src/memdb/txn_nested.cc
-    src/memdb/txn_occ.cc
-    src/memdb/txn_unsafe.cc
-    src/memdb/utils.cc
-    src/memdb/value.cc
-    src/memdb/xxhash.cc
-)
-
 set(DEPTRAN_CORE_SRC
     src/deptran/benchmark_control_rpc.cc
     src/deptran/communicator.cc
@@ -1034,11 +1019,10 @@ add_library(txlog_core_obj OBJECT
     # these .cpp/.cc files here would re-emit module interface units
     # outside a FILE_SET. Downstream binaries pick rrr up via
     # `txlog_core`'s PUBLIC link to the `rrr` target.
-    ${MEMDB_SRC}
 )
 add_dependencies(txlog_core_obj rcc_rpc_gen)
-# Pull in rrr's PUBLIC include dirs + module BMI paths so deptran/
-# memdb .cc files that `#include "rrr/rrr.hpp"` find both the
+# Pull in rrr's PUBLIC include dirs + module BMI paths so deptran .cc files
+# that `#include "rrr/rrr.hpp"` find both the
 # umbrella header and the imports it references.
 target_link_libraries(txlog_core_obj PUBLIC rrr cluster)
 set_target_properties(txlog_core_obj PROPERTIES
@@ -1047,7 +1031,6 @@ set_target_properties(txlog_core_obj PROPERTIES
 target_include_directories(txlog_core_obj PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/memdb
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks
@@ -1058,7 +1041,7 @@ target_include_directories(txlog_core_obj PUBLIC
 target_compile_options(txlog_core_obj PRIVATE ${BENCH_CXXFLAGS})
 # Apply the masstree forced-include only to non-module sources (module files
 # must have `module;` as the first token).
-foreach(_SRC IN LISTS TXLOG_HELPER_SRC DEPTRAN_CORE_SRC RRR_SRC MEMDB_SRC)
+foreach(_SRC IN LISTS TXLOG_HELPER_SRC DEPTRAN_CORE_SRC RRR_SRC)
     get_filename_component(_SRC_ABS "${_SRC}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
     set_property(SOURCE "${_SRC_ABS}" APPEND PROPERTY COMPILE_OPTIONS ${MASSTREE_FORCE_INCLUDE_FLAG})
 endforeach()
@@ -1079,7 +1062,6 @@ target_link_libraries(txlog_core
 target_include_directories(txlog_core PUBLIC
     src
     src/rrr
-    src/memdb
     src/deptran
 )
 
@@ -1198,7 +1180,6 @@ if(DEPTRAN_BORROW_SRC)
     target_include_directories(deptran_borrow PUBLIC
         src
         src/rrr
-        src/memdb
         src/deptran
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
         third-party/yaml-cpp/include
@@ -1443,19 +1424,6 @@ add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
 add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 
-# Add memdb library if not already built
-if(NOT TARGET memdb)
-    file(GLOB MEMDB_BENCH_SRC "src/memdb/*.cc")
-    add_library(memdb STATIC ${MEMDB_BENCH_SRC})
-    target_include_directories(memdb PUBLIC
-        src
-        src/rrr
-        src/memdb
-    )
-    target_compile_options(memdb PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
-    target_link_libraries(memdb rrr pthread)
-endif()
-
 # ============================================================================
 # Test Configuration
 # ============================================================================
@@ -1539,7 +1507,6 @@ if(BUILD_TESTS)
         src
         src/rrr
         src/rrr/tests
-        src/memdb
         src/mako
         test
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
@@ -1551,7 +1518,6 @@ if(BUILD_TESTS)
     # Common test link libraries
     set(TEST_LINK_LIBS
         rrr
-        memdb
         pthread
         ${BENCH_LDFLAGS}
         ${LIBEVENT_LDFLAGS}
@@ -1628,7 +1594,7 @@ if(BUILD_TESTS)
     # Truly standalone: links ONLY the three cluster .cc sources + gtest.
     # ConfigManager talks to the cluster-owned KvStore port (get/put/
     # remove, stdlib only), so this binary needs no storage engine, no
-    # masstree config, no CONFIG_H, no txlog_core / rrr / memdb / RocksDB.
+    # masstree config, no CONFIG_H, no txlog_core / rrr / RocksDB.
     # The mako binding (OrderedIndexKvStore) is verified separately by
     # test_ordered_index_kv_store below.
     add_executable(test_config_manager
@@ -1701,8 +1667,7 @@ if(BUILD_TESTS)
     add_test(NAME test_ordered_index_kv_store COMMAND test_ordered_index_kv_store)
 
     # RPC Tests
-    # test_rpc only exercises RRR RPC paths and does not require memdb.
-    # Keep linkage minimal to avoid pulling unrelated memdb compile surfaces.
+    # test_rpc only exercises RRR RPC paths, so keep its linkage minimal.
     if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_rrr)
         # Ensure regular test builds also gate on SRPC borrow-check status.
     endif()

@@ -162,7 +162,6 @@ mako/
       benchmarks/     # Benchmark harness (TPC-C, TPC-A, RW)
     rrr/              # RPC framework and fibers
     bench/            # Benchmark workload implementations
-    memdb/            # In-memory datastore
   config/             # YAML configuration files
   ci/                 # CI test scripts
   examples/           # Example scripts and tests
