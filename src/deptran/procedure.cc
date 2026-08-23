@@ -14,8 +14,7 @@ static int volatile x1 =
     rrr::SerializableRegistry::reg<LegacyVecPieceData>(
         LegacyVecPieceData::static_kind());
 static int volatile x2 = rrr::SerializableRegistry::reg<VecRecData>(VecRecData::static_kind());
-static int volatile x3 = rrr::SerializableRegistry::reg<ViewData>(ViewData::static_kind());
-static int volatile x4 = rrr::SerializableRegistry::reg<KeyCmdBatchData>(KeyCmdBatchData::static_kind());
+static int volatile x3 = rrr::SerializableRegistry::reg<KeyCmdBatchData>(KeyCmdBatchData::static_kind());
 
 TxWorkspace::TxWorkspace() {
   values_ = std::make_shared<map<int32_t, Value>>();

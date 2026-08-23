@@ -4,7 +4,7 @@
 #include "__dep__.h"
 #include "command.h"
 #include "mako_commands.h"
-#include "deptran/procedure.h"
+#include "deptran/view_data.h"
 
 namespace janus {
 

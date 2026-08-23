@@ -11,6 +11,7 @@ static int volatile x2 = rrr::SerializableRegistry::reg<TpcCommitCommand>(TpcCom
 static int volatile x3 = rrr::SerializableRegistry::reg<TpcEmptyCommand>(TpcEmptyCommand::static_kind());
 static int volatile x4 = rrr::SerializableRegistry::reg<TpcNoopCommand>(TpcNoopCommand::static_kind());
 static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>(TpcBatchCommand::static_kind());
+static int volatile x6 = (EnsureViewDataRegistered(), 0);
 
 
 // TpcPrepareCommand serialization via

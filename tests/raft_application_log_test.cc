@@ -8,6 +8,7 @@
 #include "deptran/raft/application_log.h"
 #include "deptran/replication_log_entry.h"
 #include "deptran/tpc_command.h"
+#include "deptran/view_data.h"
 #include "rrr/rrr.hpp"
 
 namespace {
@@ -151,6 +152,57 @@ TEST(RaftApplicationLogTest, RoundTripsNativePayloadsInCommitBatch) {
     EXPECT_EQ(partition_id, static_cast<uint32_t>(i + 2));
     EXPECT_EQ(std::string(payload, length), i == 0 ? "first" : "second");
   }
+}
+
+TEST(RaftApplicationLogTest, ViewDataKindAndWireFormatRemainStable) {
+  static_assert(janus::ViewData::static_kind() == 16);
+  janus::EnsureViewDataRegistered();
+
+  janus::ViewData view_data;
+  view_data.view_.n_ = 3;
+  view_data.view_.view_id_ = 9;
+  view_data.view_.timestamp_ = 12345;
+  view_data.view_.leaders_ = {1, 2, 1};
+  view_data.partition_id_ = 7;
+
+  const janus::Command outgoing{
+      rusty::Arc<janus::ViewData>::make(view_data)};
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive writer{rrr::make_sink_proxy_buffer(&sink)};
+  rrr::Serialize_::serialize(outgoing, writer);
+
+  // Kind 16's v32 tag is followed by the historical payload layout: n, view
+  // id, timestamp, leader count, leaders, then partition id. The archive uses
+  // fixed-width native little-endian integers on the supported x86_64 ABI.
+  const std::vector<uint8_t> expected{
+      0x10,
+      0x03, 0x00, 0x00, 0x00,
+      0x09, 0x00, 0x00, 0x00,
+      0x39, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x03, 0x00, 0x00, 0x00,
+      0x01, 0x00, 0x00, 0x00,
+      0x02, 0x00, 0x00, 0x00,
+      0x01, 0x00, 0x00, 0x00,
+      0x07, 0x00, 0x00, 0x00};
+  ASSERT_EQ(sink.bytes.len(), expected.size());
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_EQ(sink.bytes[i], expected[i]) << "byte offset " << i;
+  }
+
+  janus::Command incoming;
+  rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
+  rrr::BinaryReadArchive reader{rrr::make_source_proxy_buffer(&source)};
+  rrr::Deserialize_::deserialize(incoming, reader);
+  EXPECT_TRUE(source.eof());
+
+  const auto decoded = rrr::marshallable_cast<janus::ViewData>(incoming);
+  ASSERT_TRUE(decoded.is_some());
+  EXPECT_EQ(decoded.unwrap()->view_.n_, 3);
+  EXPECT_EQ(decoded.unwrap()->view_.view_id_, 9u);
+  EXPECT_EQ(decoded.unwrap()->view_.timestamp_, 12345u);
+  EXPECT_EQ(decoded.unwrap()->view_.leaders_,
+            (std::vector<int>{1, 2, 1}));
+  EXPECT_EQ(decoded.unwrap()->partition_id_, 7u);
 }
 
 }  // namespace

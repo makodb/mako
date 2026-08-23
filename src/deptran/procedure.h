@@ -10,13 +10,12 @@
 #include "command_marshaler.h"
 #include "mako_commands.h"
 #include "txn_reg.h"
-#include "view.h"
+#include "view_data.h"
 
 namespace janus {
 
 class Coordinator;
 class Sharding;
-class ViewData;  // Forward declaration
 //class ChopStartResponse;
 
 class TxReply {
@@ -245,57 +244,6 @@ class VecRecData
       rrr::Deserialize_::deserialize(x, ar);
       key_data_->push_back(x);
     }
-  }
-};
-
-// Explicit kind from the `PayloadMember<MakoCommands>` registration.
-class ViewData
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, ViewData>::KIND> {
- public:
-  View view_;
-  parid_t partition_id_ = 0; // partition id for which this view applies
-
-  ViewData() = default;
-
-  explicit ViewData(const View& view) : view_(view) {}
-
-  ViewData(const View& view, parid_t pid) : view_(view), partition_id_(pid) {}
-
-  // Get the embedded View
-  const View& GetView() const { return view_; }
-  View& GetView() { return view_; }
-
-  void save(BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(view_.n_, ar);
-    rrr::Serialize_::serialize(view_.view_id_, ar);
-    rrr::Serialize_::serialize(view_.timestamp_, ar);
-    rrr::Serialize_::serialize(static_cast<int32_t>(view_.leaders_.size()), ar);
-    for (int leader : view_.leaders_) {
-      rrr::Serialize_::serialize(leader, ar);
-    }
-    rrr::Serialize_::serialize(partition_id_, ar);
-  }
-
-  void load(BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(view_.n_, ar);
-    rrr::Deserialize_::deserialize(view_.view_id_, ar);
-    rrr::Deserialize_::deserialize(view_.timestamp_, ar);
-    int32_t leader_count;
-    rrr::Deserialize_::deserialize(leader_count, ar);
-    view_.leaders_.clear();
-    view_.leaders_.reserve(leader_count);
-    for (int i = 0; i < leader_count; i++) {
-      int leader;
-      rrr::Deserialize_::deserialize(leader, ar);
-      view_.leaders_.push_back(leader);
-    }
-    rrr::Deserialize_::deserialize(partition_id_, ar);
-  }
-
-  std::string ToString() const {
-    return "ViewData{partition=" + std::to_string(partition_id_) +
-           ", " + view_.ToString() + "}";
   }
 };
 

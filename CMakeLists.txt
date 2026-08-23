@@ -970,6 +970,7 @@ set(DEPTRAN_CORE_SRC
     src/deptran/tpc_command.cc
     src/deptran/tpcc_sharding.cc
     src/deptran/tx.cc
+    src/deptran/view_data.cc
     src/deptran/workload.cc
 )
 
