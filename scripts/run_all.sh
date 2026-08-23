@@ -116,9 +116,6 @@ SCALE_MAX_SERV_SCALE=5
 
 # >>>>>>>> MICRO BENCH >>>>>>>>
 
-# null rpc starts from 1 to RPC_MAX_CLIENTS
-NULL_RPC_MAX_CLIENTS=24
-
 # kv starts from MICRO_BENCH_MIN_CLIENTS to MICRO_BENCH_MAX_CLIENTS
 MICRO_BENCH_MIN_CLIENTS=8
 MICRO_BENCH_MAX_CLIENTS=24
@@ -955,80 +952,6 @@ do_common_bench()
     done
 }
 
-do_null_rpc_bench()
-{
-    local figure_gen_file=$1
-    local num_c=0
-    for num_c in $(seq 1 ${NULL_RPC_MAX_CLIENTS})
-    do
-        local l_qps=0
-        local l_50_lt=0
-        local l_90_lt=0
-        local l_99_lt=0
-        local l_999_lt=0
-
-        local succ=0
-        local tried=0
-        while [ ${tried} -lt ${MAX_RETRY} ]
-        do
-            ssh -nf ${SERV_MACHINES[0]} "cd ${FULL_PATH} && taskset -c 16 ./build/rpc_microbench -s 0.0.0.0:${SERV_START_PORT} -b 0 -w 1 -e 1 1>/dev/null 2>/dev/null &"
-
-            sleep 1
-            while read line
-            do
-                echo "${line}"
-                if [[ ${line} == *"QPS:"* ]]
-                then
-                    local output=`echo ${line} | sed "s/QPS: \([0-9]*\); 50.0% LATENCY: \([0-9]*\.\?[0-9]*\); 90.0% LATENCY: \([0-9]*\.\?[0-9]*\); 99.0% LATENCY: \([0-9]*\.\?[0-9]*\); 99.9% LATENCY: \([0-9]*\.\?[0-9]*\)/\1 \2 \3 \4 \5/g"`
-                    read l_qps l_50_lt l_90_lt l_99_lt l_999_lt <<< "${output}"
-                    succ=1
-                fi
-            done < <(ssh ${CLIENT_MACHINES[0]} "cd ${FULL_PATH} && ./build/rpc_microbench -f -c ${SERV_MACHINES[0]}:${SERV_START_PORT} -t ${num_c} -w 1 -n 20 -b 0 -o 1")
-            ssh ${SERV_MACHINES[0]} 'killall -9 rpc_microbench &>/dev/null'
-            tried=$((${tried}+1))
-
-            if [ ${succ} -eq 1 ]
-            then
-                break
-            fi
-        done
-
-        if [ ${succ} -eq 1 ]
-        then
-            sed -i "s/__null_rpc\.qps__/${l_qps}, __null_rpc\.qps__/g" ${figure_gen_file}
-            sed -i "s/__null_rpc\.latency_50__/${l_50_lt}/g" ${figure_gen_file}
-            sed -i "s/__null_rpc\.latency_90__/${l_90_lt}/g" ${figure_gen_file}
-            sed -i "s/__null_rpc\.latency_99__/${l_99_lt}/g" ${figure_gen_file}
-            sed -i "s/__null_rpc\.latency_999__/${l_999_lt}/g" ${figure_gen_file}
-
-            echo "============== SUCCESS ===============" >>${BENCHMARK_LOGGING_FILE}
-            echo "TRIED         :   ${tried}" >>${BENCHMARK_LOGGING_FILE}
-            echo "BENCHMARK     :   micro_bench (null rpc)" >>${BENCHMARK_LOGGING_FILE}
-            echo "NUM CLIENTS   :   ${num_c}" >>${BENCHMARK_LOGGING_FILE}
-            echo "============== SUCCESS ===============" >>${BENCHMARK_LOGGING_FILE}
-            echo "" >>${BENCHMARK_LOGGING_FILE}
-        else
-            sed -i "s/__null_rpc\.qps__/-1, __null_rpc\.qps__/g" ${figure_gen_file}
-            sed -i "s/__null_rpc\.latency_50__/-1/g" ${figure_gen_file}
-            sed -i "s/__null_rpc\.latency_90__/-1/g" ${figure_gen_file}
-            sed -i "s/__null_rpc\.latency_99__/-1/g" ${figure_gen_file}
-            sed -i "s/__null_rpc\.latency_999__/-1/g" ${figure_gen_file}
-
-            echo "============== FAILURE ===============" >>${BENCHMARK_LOGGING_FILE}
-            echo "TRIED         :   ${tried}" >>${BENCHMARK_LOGGING_FILE}
-            echo "BENCHMARK     :   micro_bench (null rpc)" >>${BENCHMARK_LOGGING_FILE}
-            echo "NUM CLIENTS   :   ${num_c}" >>${BENCHMARK_LOGGING_FILE}
-            echo "============== FAILURE ===============" >>${BENCHMARK_LOGGING_FILE}
-            echo "" >>${BENCHMARK_LOGGING_FILE}
-        fi
-
-        sed -i "s/__null_rpc\.num_coos__/${num_c}, __null_rpc\.num_coos__/g" ${figure_gen_file}
-    done
-
-    sed -i "s/, __null_rpc\.qps__//g" ${figure_gen_file}
-    sed -i "s/, __null_rpc\.num_coos__//g" ${figure_gen_file}
-}
-
 do_kv_bench()
 {
     local figure_gen_file=$1
@@ -1744,8 +1667,6 @@ do_micro_bench()
 {
     local figure_gen_file=scripts/micro_bench_figure_gen_local.py
     cp -f template/micro_bench_figure_gen_template.py ${figure_gen_file}
-
-    do_null_rpc_bench ${figure_gen_file}
 
     do_kv_bench ${figure_gen_file}
 

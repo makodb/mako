@@ -80,6 +80,5 @@ gate is not quietly redefined later to fit a result.
 ## Not yet captured
 
 **Latency percentiles.** The criterion covers latency as well as
-throughput, and there is no harness: the only percentile code in the
-tree is entirely commented out, in a file with no build target. Until
-that is revived, half the gate is undefined.
+throughput, and no latency-percentile harness currently exists. Until
+one is added, half the gate is undefined.
