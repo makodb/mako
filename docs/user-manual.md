@@ -192,7 +192,7 @@ bash examples/simplePaxos.sh
   --shard-config src/mako/config/local-shards1-warehouses6.yml \
   -P localhost \
   -F config/1leader_2followers/paxos6_shardidx0.yml \
-  -F config/occ_paxos.yml \
+  -F config/paxos.yml \
   --startup-timeout-sec 60 \
   --is-replicated \
   --replication=paxos
@@ -207,7 +207,7 @@ bash examples/simplePaxos.sh
   --shard-config src/mako/config/local-shards1-warehouses6.yml \
   -P localhost \
   -F config/1leader_2followers/paxos6_shardidx0.yml \
-  -F config/occ_raft.yml \
+  -F config/raft.yml \
   --startup-timeout-sec 60 \
   --is-replicated \
   --replication=raft

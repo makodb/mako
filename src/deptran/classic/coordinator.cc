@@ -380,8 +380,6 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
 /** caller should be thread_safe */
 void CoordinatorClassic::Prepare() {
   TxData* cmd = (TxData*) cmd_;
-  auto mode = Config::GetConfig()->tx_proto_;
-  verify(mode == MODE_OCC);
    
   std::vector<i32> sids;
   for (auto& site : cmd->partition_ids_) {
@@ -482,8 +480,6 @@ void CoordinatorClassic::Commit() {
   it->second = true;
   // removed commented-out
   // `// ___TestPhaseThree(cmd_->id_);` — method deleted.
-  auto mode = Config::GetConfig()->tx_proto_;
-  verify(mode == MODE_OCC);
   Log_debug("send out finish request, cmd_id: {:x}, {}", tx_data().id_, n_finish_req_);
 
   verify(tx_data().commit_.load() == committed_);

@@ -22,7 +22,6 @@ using mdb::Row;
 using mdb::Table;
 using mdb::colid_t;
 
-#define IS_MODE_OCC (Config::GetConfig()->get_mode() == MODE_OCC)
 #define IS_MODE_NONE (Config::GetConfig()->get_mode() == MODE_NONE)
 
 class TxLogServer;

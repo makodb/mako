@@ -186,19 +186,19 @@ make -j32
 # Follower p1
 ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
   --db-type mbta --num-threads 6 --scale-factor 6 \
-  -F config/1leader_2followers/paxos6_shardidx0.yml -F config/occ_paxos.yml \
+  -F config/1leader_2followers/paxos6_shardidx0.yml -F config/paxos.yml \
   --txn-flags 1 --runtime 30 -P p1 &
 
 # Follower p2
 ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
   --db-type mbta --num-threads 6 --scale-factor 6 \
-  -F config/1leader_2followers/paxos6_shardidx0.yml -F config/occ_paxos.yml \
+  -F config/1leader_2followers/paxos6_shardidx0.yml -F config/paxos.yml \
   --txn-flags 1 --runtime 30 -P p2 &
 
 # Leader
 ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
   --db-type mbta --num-threads 6 --scale-factor 6 \
-  -F config/1leader_2followers/paxos6_shardidx0.yml -F config/occ_paxos.yml \
+  -F config/1leader_2followers/paxos6_shardidx0.yml -F config/paxos.yml \
   --txn-flags 1 --runtime 30 -P localhost &
 
 # Monitor logs
@@ -283,8 +283,8 @@ Key configuration directories:
 |-----------|---------|
 | `config/hosts*.yml` | Host topology |
 | `config/rw.yml`, `config/concurrent_*.yml` | Workload settings |
-| `config/occ_paxos.yml`, `config/1leader_2followers/` | Paxos protocol |
-| `config/none_raft.yml`, `config/occ_raft.yml` | Raft protocol |
+| `config/paxos.yml`, `config/1leader_2followers/` | Paxos protocol |
+| `config/raft.yml`, `config/none_raft.yml` | Raft protocol |
 
 ---
 

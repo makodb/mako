@@ -202,7 +202,6 @@ class Config {
                                 YAML::Node column);
   void UpdateWeights(YAML::Node config);
 
-  void InitMode(std::string&cc_name, string&ab_name);
   void InitBench(std::string &);
 
   uint32_t get_site_id();

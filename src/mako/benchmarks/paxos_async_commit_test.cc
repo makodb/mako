@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
     std::vector<std::string> paxos_config{};
     if (use_fork) {
         paxos_config.push_back("third-party/paxos/config/1leader_2followers/paxos3_shardidx0.yml");
-        paxos_config.push_back("third-party/paxos/config/occ_paxos.yml");
+        paxos_config.push_back("config/paxos.yml");
     }
 
     string paxos_proc_name = "localhost";

@@ -42,7 +42,6 @@ Config * Config::GetConfig() {
 int Config::CreateConfig(int argc, char **argv) {
   if (config_s != NULL) return -1;
 
-//  std::string filename = "./config/sample.yml";
   vector<string> config_paths;
   std::string proc_name = "localhost"; // default as "localhost"
   std::string exp_setting_name = "not_set"; // used to dump Distribution to file
@@ -460,11 +459,6 @@ void Config::LoadHostYML(YAML::Node config) {
   }
 }
 
-void Config::InitMode(string &cc_name, string& ab_name) {
-  tx_proto_ = Frame::Name2Mode(cc_name);
-  replica_proto_ = Frame::Name2Mode(ab_name);
-}
-
 void Config::InitBench(std::string &bench_str) {
   if (bench_str == "tpca") {
     benchmark_ = TPCA;
@@ -510,11 +504,17 @@ std::string Config::site2host_name(std::string& sitename) {
 
 
 void Config::LoadModeYML(YAML::Node config) {
-  auto mode_str = config["cc"].as<string>();
-  to_lower_in_place(mode_str);
+  // Production Mako supplies transaction execution through mbta/STO and only
+  // needs DepTran's replication mode.  If cc is omitted, preserve the default
+  // MODE_NONE instead of requiring a dummy transaction-protocol selection.
+  if (config["cc"]) {
+    auto mode_str = config["cc"].as<string>();
+    to_lower_in_place(mode_str);
+    tx_proto_ = Frame::Name2Mode(mode_str);
+  }
   auto ab_str = config["ab"].as<string>();
   to_lower_in_place(ab_str);
-  this->InitMode(mode_str, ab_str);
+  replica_proto_ = Frame::Name2Mode(ab_str);
   max_retry_ = config["retry"].as<int32_t>();
 //  concurrent_txn_ = config["ongoing"].as<uint32_t>();
   batch_start_ = config["batch"].as<bool>();

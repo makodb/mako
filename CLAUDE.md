@@ -91,7 +91,7 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 ## Code Architecture
 
 ### Core Directory Structure
-- `src/deptran/`: Transaction and replication protocol implementations (OCC, Paxos, Raft)
+- `src/deptran/`: Paxos/Raft replication and their shared runtime support
 - `src/mako/`: Mako system with Masstree storage engine and speculative execution
 - `src/bench/`: Benchmark implementations (TPC-C, TPC-A, RW, Micro)
 - `src/rrr/`: Custom RPC framework and networking layer
@@ -112,8 +112,9 @@ standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, Rule, TAPIR, FPGA-Raft,
 Copilot, RCC/Rococo, Carousel, and Februus implementations are retired. This
 includes the old `deptran` and `deptran_er` RCC aliases. EPaxos, Replicated
 Commit, and Multi-Paxos Plus were unimplemented selector placeholders and are
-unsupported; the project-wide `janus::` C++ namespace remains for compatibility.
-- **OCC** (`src/deptran/occ/`): Optimistic concurrency control
+unsupported. The former standalone DepTran OCC implementation is also retired;
+Mako's optimistic concurrency control is provided by its MBTA/STO engine. The
+project-wide `janus::` C++ namespace remains for compatibility.
 - **Paxos** (`src/deptran/paxos/`): Consensus for replication
 
 ### Transport Layer Architecture
@@ -146,7 +147,7 @@ is `RrrRequestHandle`.
 
 ### Key Classes and Components
 - `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
-- `SchedulerClassic`: Handles transaction scheduling and execution (protocol-specific subclasses like `SchedulerOcc`)
+- `TxLogServer`: Shared base for the Paxos and Raft replication servers
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
 - `Masstree`: High-performance in-memory index structure (Mako)

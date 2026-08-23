@@ -451,11 +451,11 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     return ret_vector;
   }
 
-  // Verify that replica_proto_ is set to MODE_RAFT via occ_raft.yml config
+  // Verify that replica_proto_ is set to MODE_RAFT via raft.yml config.
   auto config = Config::GetConfig();
   if (config->replica_proto_ != MODE_RAFT) {
     Log_warn("[RAFT-SETUP] replica_proto_={} is not MODE_RAFT ({}). "
-             "Make sure to use config/occ_raft.yml with 'ab: raft' setting.",
+             "Make sure to use config/raft.yml with 'ab: raft' setting.",
              config->replica_proto_, MODE_RAFT);
   } else {
     Log_info("[RAFT-SETUP] replica_proto_ correctly set to MODE_RAFT ({})",

@@ -71,7 +71,7 @@ EOF
     done
 
     # Build commands for each shard
-    CMD_BASE="./${BUILD_DIR:-build}/dbtest --num-threads $THREADS --shard-config ./src/mako/config/local-shards${NSHARD}-warehouses${THREADS}.yml -F config/occ_paxos.yml -P $CLUSTER"
+    CMD_BASE="./${BUILD_DIR:-build}/dbtest --num-threads $THREADS --shard-config ./src/mako/config/local-shards${NSHARD}-warehouses${THREADS}.yml -F config/paxos.yml -P $CLUSTER"
 
     CMD_SHARD0="$CMD_BASE --shard-index 0 -F config/1leader_2followers/paxos${THREADS}_shardidx0.yml"
     CMD_SHARD1="$CMD_BASE --shard-index 1 -F config/1leader_2followers/paxos${THREADS}_shardidx1.yml"

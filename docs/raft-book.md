@@ -761,11 +761,11 @@ host:
 
 ### Available Configurations
 
-| File | CC Mode | Use Case |
-|------|---------|----------|
-| `none_raft.yml` | None | Basic Raft testing |
-| `occ_raft.yml` | OCC | Optimistic CC |
-| `raft_lab_test.yml` | None | Lab test harness (5 servers) |
+| File | Purpose |
+|------|---------|
+| `raft.yml` | Production Mako Raft replication mode |
+| `none_raft.yml` | Legacy DepTran transaction testing with Raft |
+| `raft_lab_test.yml` | Five-server Raft lab harness |
 
 ### Per-Shard Configs
 

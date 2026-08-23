@@ -78,7 +78,7 @@ namespace janus {
 
 #define MODE_NONE   (0x00)
 // 0x01 is retired with the former standalone 2PL protocol; do not reuse it.
-#define MODE_OCC    (0x02)
+// 0x02 is retired with the former standalone OCC protocol; do not reuse it.
 // 0x04 was RCC/Rococo (including the deprecated deptran aliases).
 // Keep the value reserved so retired configurations fail instead of
 // silently selecting a different protocol.

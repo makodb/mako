@@ -8,11 +8,7 @@
 #include "scheduler.h"
 #include "none/coordinator.h"
 #include "none/scheduler.h"
-#include "occ/tx.h"
-#include "occ/coordinator.h"
 #include "benchmark_registry.h"
-
-#include "occ/scheduler.h"
 
 #include "paxos/frame.h"
 
@@ -40,7 +36,6 @@ Frame* Frame::GetFrame(int mode, int replica_mode) {
   switch (mode) {
     case MODE_NONE:
     case MODE_NOTX:
-    case MODE_OCC:
       frame = new Frame(mode, replica_mode);
       break;
     case MODE_MULTI_PAXOS:
@@ -101,17 +96,7 @@ Sharding* Frame::CreateSharding(Sharding *sd) {
 
 mdb::Row* Frame::CreateRow(const mdb::Schema *schema,
                            vector<Value> &row_data) {
-//  auto mode = Config::GetConfig()->cc_mode_;
-  auto mode = mode_;
-  mdb::Row* r = nullptr;
-  switch (mode) {
-    case MODE_NONE: // FIXME
-    case MODE_OCC:
-    default:
-      r = mdb::VersionedRow::create(schema, row_data);
-      break;
-  }
-  return r;
+  return mdb::VersionedRow::create(schema, row_data);
 }
 
 Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
@@ -121,27 +106,14 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
                                       uint32_t id,
                                       shared_ptr<TxnRegistry> txn_reg) {
   // TODO: clean this up; make Coordinator subclasses assign txn_reg_
-  Coordinator *coo;
-  auto attr = this;
-//  auto mode = Config::GetConfig()->cc_mode_;
-  auto mode = mode_;
-  switch (mode) {
-    case MODE_OCC:
-      coo = new CoordinatorOcc(coo_id,
-                         benchmark,
-                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
-                         id);
-      ((Coordinator*)coo)->txn_reg_ = txn_reg;
-      break;
-    case MODE_NONE:
-    default:
-      coo = new CoordinatorNone(coo_id,
-                          benchmark,
-                          client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
-                          id);
-      ((Coordinator*)coo)->txn_reg_ = txn_reg;
-      break;
-  }
+  Coordinator *coo = new CoordinatorNone(
+      coo_id,
+      benchmark,
+      client_status.is_some()
+          ? rusty::Some(client_status.as_ref().unwrap().clone())
+          : rusty::None,
+      id);
+  coo->txn_reg_ = txn_reg;
   coo->frame_ = this;
   return coo;
 }
@@ -188,9 +160,6 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
 	clock_gettime(CLOCK_MONOTONIC, &begin);*/
   Log_debug("enter CreateTx");
 	switch (mode_) {
-    case MODE_OCC:
-      sp_tx.reset(new TxOcc(epoch, tid, mgr));
-      break;
     case MODE_MULTI_PAXOS:
     case MODE_RAFT:
       break;
@@ -211,9 +180,6 @@ TxLogServer* Frame::CreateScheduler() {
   auto mode = Config::GetConfig()->tx_proto_;
   TxLogServer *sch = nullptr;
   switch(mode) {
-    case MODE_OCC:
-      sch = new SchedulerOcc();
-      break;
     case MODE_NOTX:
     case MODE_NONE:
       sch = new SchedulerNone();
@@ -245,7 +211,6 @@ vector<rrr::ServiceProxy> Frame::CreateRpcServices(uint32_t site_id,
   auto config = Config::GetConfig();
   auto result = std::vector<rrr::ServiceProxy>();
   switch(mode_) {
-    case MODE_OCC:
     case MODE_NONE:
     case MODE_NOTX:
     default:
@@ -257,7 +222,6 @@ vector<rrr::ServiceProxy> Frame::CreateRpcServices(uint32_t site_id,
 map<string, int> &Frame::FrameNameToMode() {
   static map<string, int> frame_name_mode_s = {
       {"none",          MODE_NONE},
-      {"occ",           MODE_OCC},
       {"notx",          MODE_NOTX},
       {"multi_paxos",   MODE_MULTI_PAXOS},
       {"raft",          MODE_RAFT},

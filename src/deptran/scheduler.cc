@@ -130,11 +130,6 @@ mdb::Txn *TxLogServer::GetOrCreateMTxn(const i64 tid) {
   auto it = mdb_txns_.find(tid);
   if (it == mdb_txns_.end()) {
     txn = mdb_txn_mgr_->start(tid);
-    // using occ lazy mode: increment version at commit time
-    auto mode = Config::GetConfig()->tx_proto_;
-    if (mode == MODE_OCC) {
-      ((mdb::TxnOCC *) txn)->set_policy(mdb::OCC_LAZY);
-    }
     auto ret = mdb_txns_.insert(std::pair<i64, mdb::Txn *>(tid, txn));
     verify(ret.second);
   } else {
@@ -193,9 +188,6 @@ Coordinator *TxLogServer::CreateRepCoord(const i64& dep_id) {
 TxLogServer::TxLogServer(int mode) : TxLogServer() {
   mode_ = mode;
   switch (mode) {
-    case MODE_OCC:
-      mdb_txn_mgr_ = make_shared<mdb::TxnMgrOCC>();
-      break;
     case MODE_NONE:
       mdb_txn_mgr_ = make_shared<mdb::TxnMgrUnsafe>();
       break;

@@ -87,6 +87,7 @@ src/rrr/Makefile
 src/mako/masstree/*
 profile-results/
 paxos*.yml
+!config/paxos.yml
 experiment_*.sh
 nfs_sync_*
 out-perf.masstree/*

@@ -115,7 +115,6 @@ txn_reg_->regs_[txn][pie].sharder_ \
 
 #define CREATE_ROW(schema, row_data) \
     switch (Config::config_s->tx_proto_) { \
-    case MODE_OCC: \
     case MODE_NONE: \
         r = mdb::VersionedRow::create(schema, row_data); \
         break; \
