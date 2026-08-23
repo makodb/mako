@@ -879,16 +879,14 @@ set(BENCH_LDFLAGS
 # Generate deptran RPC bindings.
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
-         ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py
-  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp src/deptran/rcc_rpc.rpc
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# Create a target for the generated RPC files
+# Create a target for the generated RPC header.
 add_custom_target(rcc_rpc_gen DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py
 )
 
 # Custom command for lz4 library - build only if missing
