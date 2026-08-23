@@ -35,8 +35,7 @@ bool SchedulerClassic::ExecutePiece(Tx& tx,
   piece_data.input.Aggregate(tx.ws_);
 // TODO enable this verify
   piece_data.input.VerifyReady();
-  piece_def.proc_handler_(nullptr,
-                          tx,
+  piece_def.proc_handler_(tx,
                           piece_data,
                           &ret_code,
                           ret_output[piece_data.inn_id()]);
@@ -293,7 +292,6 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
     if (commit_or_abort == SUCCESS) {
       DoCommit(*sp_tx);
     } else if (commit_or_abort == REJECT) {
-//      exec->AbortLaunch(res, callback);
       DoAbort(*sp_tx);
     } else {
       verify(0);

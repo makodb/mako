@@ -16,7 +16,6 @@ class CoordinatorBase;
 class TxData;
 class TxRequest;
 class Tx;
-class Executor;
 class TxLogServer;
 class ServerControlServiceImpl;
 class TxnRegistry;
@@ -57,7 +56,6 @@ class Frame {
 
   virtual Coordinator *CreateBulkCoordinator(Config *config, int benchmark);
 
-  virtual Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sch);
   virtual TxLogServer *CreateScheduler();
   virtual Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
   // for only dtxn

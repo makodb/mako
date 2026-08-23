@@ -15,7 +15,6 @@ class MultiPaxosFrame : public Frame {
  public:
   MultiPaxosFrame(int mode);
   MultiPaxosCommo *commo_ = nullptr;
-  Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) override;
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,
                                  int benchmark,

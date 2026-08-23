@@ -82,25 +82,12 @@ class Workload {
 
 };
 
-#define BEGIN_LOOP_PIE(txn, pie, max_i, iod) \
-for (int I = 0; I < max_i; I++) { \
-txn_reg_->reg(txn, pie + I, iod, \
-[this, I] ( \
-Executor* exec, \
-DTxn *dtxn, \
-SimpleCommand& cmd, \
-i32 *res, \
-map<int32_t, Value> &output) \
-{
-
-#define END_LOOP_PIE });}
-
 #define PROC \
-  [this] (Executor* exec, Tx& tx, SimpleCommand& cmd, \
+  [this] (Tx& tx, SimpleCommand& cmd, \
           int32_t *res, map<int32_t, Value> &output)
 
 #define LPROC \
-  [this, i] (Executor* exec, Tx& tx, SimpleCommand& cmd, \
+  [this, i] (Tx& tx, SimpleCommand& cmd, \
           int32_t *res, map<int32_t, Value> &output)
 
 #define BEGIN_CB(txn_type, inn_id) \

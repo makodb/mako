@@ -1,7 +1,6 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
-#include "exec.h"
 #include "coordinator.h"
 #include "server.h"
 #include "service.h"
@@ -77,12 +76,6 @@ bool RaftFrame::IsRaftLabTestConfig() {
 }
 #endif
 
-
-// @unsafe - factory method returns raw pointer via new (caller takes ownership)
-Executor *RaftFrame::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
-  Executor *exec = new RaftExecutor(cmd_id, sched);
-  return exec;
-}
 
 // @unsafe - factory method uses new to create raw pointer (caller takes ownership)
 Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,

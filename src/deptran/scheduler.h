@@ -328,7 +328,6 @@ class RecoverySet {
 // / `testDurableCommitNotification` are unrelated test method names.
 
 class TxnRegistry;
-class Executor;
 class Coordinator;
 class Frame;
 class Communicator;
@@ -353,7 +352,6 @@ class TxLogServer {
   siteid_t site_id_ = -1;
   unordered_map<txid_t, shared_ptr<Tx>> dtxns_{};
   unordered_map<txid_t, mdb::Txn *> mdb_txns_{};
-  unordered_map<txid_t, Executor *> executors_{};
 
   // app_next_ now takes janus::Command (not
   // shared_ptr<Marshallable>) so user code is one type level removed
@@ -483,8 +481,6 @@ class TxLogServer {
   virtual shared_ptr<Tx> GetOrCreateTx(txnid_t tid, bool ro = false);
   // @unsafe - Manages transaction lifecycle, calls external methods
   void DestroyTx(i64 tid);
-
-  virtual void DestroyExecutor(txnid_t txn_id);
 
   inline int get_mode() { return mode_; }
 

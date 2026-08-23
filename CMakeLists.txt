@@ -1215,7 +1215,6 @@ set(DEPTRAN_BORROW_SRC
     # src/deptran/client_worker.cc  # Excluded: false positives from rrr header functions
     src/deptran/paxos_worker.cc
     src/deptran/stats_registry.cc
-    src/deptran/executor.cc
     src/deptran/empty.cc
     src/deptran/replication_helper.cc
     src/deptran/scheduler.cc

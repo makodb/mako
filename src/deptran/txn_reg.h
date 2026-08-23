@@ -8,7 +8,6 @@ namespace janus {
 #define TXN_ONE_SHOT (0x1)
 
 class RequestHeader;
-class Executor;
 
 typedef std::map<
     int,
@@ -19,8 +18,7 @@ class TxData;
 class TxRequest;
 class SimpleCommand;
 
-typedef std::function<void(Executor* exec,
-                           Tx& tx,
+typedef std::function<void(Tx& tx,
                            SimpleCommand& cmd,
                            rrr::i32 *res,
                            map<int32_t, Value> &output

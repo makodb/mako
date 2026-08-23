@@ -771,7 +771,7 @@ The worker performs several key functions:
 
 **Setup chain.** The worker initialises in multiple phases:
 
-1. **Base setup**: Creates the protocol factory, which in turn creates the Raft server, communicator, coordinator, and executor.
+1. **Base setup**: Creates the protocol factory, which in turn creates the Raft server, communicator, and coordinator.
 2. **Service setup**: Starts the RPC server, registering Raft's RPC handlers with the network layer so the server can receive incoming messages from peers.
 3. **Communication setup**: Establishes outgoing RPC connections to all peers in the cluster. This is done after service setup to ensure peers can respond.
 4. **Heartbeat setup**: Starts the control-plane heartbeat mechanism for peer liveness detection.

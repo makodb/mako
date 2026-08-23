@@ -212,21 +212,6 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
   return sp_tx;
 }
 
-Executor* Frame::CreateExecutor(cmdid_t cmd_id, TxLogServer* sched) {
-  Executor* exec = nullptr;
-//  auto mode = Config::GetConfig()->cc_mode_;
-//  switch (mode) {
-//    case MODE_NONE:
-//      verify(0);
-//    case MODE_OCC:
-//      exec = new OCCExecutor(cmd_id, sched);
-//      break;
-//    default:
-//      verify(0);
-//  }
-  return exec;
-}
-
 TxLogServer* Frame::CreateScheduler() {
   Log_info("enter CreateScheduler, mode={}", Config::GetConfig()->tx_proto_);
   auto mode = Config::GetConfig()->tx_proto_;

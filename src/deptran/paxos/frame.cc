@@ -1,7 +1,6 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
-#include "exec.h"
 #include "coordinator.h"
 #include "server.h"
 #include "service.h"
@@ -37,11 +36,6 @@ struct foo : automatic_register<foo> {
 };*/
 
 MultiPaxosFrame::MultiPaxosFrame(int mode) : Frame(mode) {
-}
-
-Executor *MultiPaxosFrame::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
-  Executor *exec = new MultiPaxosExecutor(cmd_id, sched);
-  return exec;
 }
 
 Coordinator *MultiPaxosFrame::CreateCoordinator(cooid_t coo_id,

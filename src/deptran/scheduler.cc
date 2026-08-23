@@ -11,7 +11,6 @@
 #include "rcc_rpc.h"
 #include "frame.h"
 #include "benchmark_registry.h"
-#include "executor.h"
 #include "coordinator.h"
 #include "raft/server.h"
 #include "config.h"
@@ -271,15 +270,6 @@ void TxLogServer::reg_table(const std::string &name,
     mdb_txn_mgr_->reg_table(table_names.tpcc_order_c_id_secondary,
                             new mdb::SortedTable(name, schema));
   }
-}
-
-void TxLogServer::DestroyExecutor(txnid_t txn_id) {
-  Log_debug("destroy tid {}\n", txn_id);
-  auto it = executors_.find(txn_id);
-  verify(it != executors_.end());
-  auto exec = it->second;
-  executors_.erase(it);
-  delete exec;
 }
 
 void TxLogServer::Pause() {

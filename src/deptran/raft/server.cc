@@ -6,7 +6,6 @@
 
 #include "server.h"
 // #include "paxos_worker.h"
-#include "exec.h"
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"

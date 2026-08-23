@@ -38,7 +38,6 @@ class RaftFrame : public Frame {
   std::unique_ptr<RaftCommo> commo_;  // @unsafe - unique_ptr kept for test file compatibility
   /* TODO: have another class for common data */
   std::unique_ptr<RaftServer> svr_;  // @unsafe - unique_ptr kept for test file compatibility
-  Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) override;
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,
                                  int benchmark,

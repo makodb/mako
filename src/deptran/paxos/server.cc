@@ -2,7 +2,6 @@
 
 #include "server.h"
 #include "../paxos_worker.h"
-#include "exec.h"
 #include "paxos/commo.h"
 
 namespace janus {
