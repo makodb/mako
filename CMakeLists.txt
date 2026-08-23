@@ -830,7 +830,6 @@ set(MAKO_SRCFILES
   "${W}/sto/ThreadPool.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/kv_store.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/message.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/memory.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/helper_queue.cc"
