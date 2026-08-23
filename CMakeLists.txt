@@ -916,29 +916,70 @@ file(GLOB RRR_SRC
     "src/rrr/rpc/*.cpp"
 )
 
-# Collect MEMDB source files
-file(GLOB MEMDB_SRC
-    "src/memdb/*.h"
-    "src/memdb/*.cc"
+# Keep the replication core manifest explicit. Recursive globs silently pulled
+# retired transaction engines and test harnesses into every Mako binary, and a
+# newly added compatibility source required a manual CMake reconfigure before
+# it could be linked from an existing build tree.
+set(MEMDB_SRC
+    src/memdb/MurmurHash3.cc
+    src/memdb/row.cc
+    src/memdb/schema.cc
+    src/memdb/table.cc
+    src/memdb/txn.cc
+    src/memdb/txn_2pl.cc
+    src/memdb/txn_nested.cc
+    src/memdb/txn_occ.cc
+    src/memdb/txn_unsafe.cc
+    src/memdb/utils.cc
+    src/memdb/value.cc
+    src/memdb/xxhash.cc
 )
 
-# Collect deptran core source files
-file(GLOB_RECURSE DEPTRAN_CORE_SRC
-    "src/deptran/*.cc"
-    "src/deptran/*/*.cc"
+set(DEPTRAN_CORE_SRC
+    src/deptran/RW_command.cc
+    src/deptran/benchmark_control_rpc.cc
+    src/deptran/benchmark_registry.cc
+    src/deptran/client_status.cc
+    src/deptran/client_worker.cc
+    src/deptran/command_marshaler.cc
+    src/deptran/communicator.cc
+    src/deptran/config.cc
+    src/deptran/coordinator.cc
+    src/deptran/frame.cc
+    src/deptran/legacy_raft_log_payload.cc
+    src/deptran/marshal-value.cc
+    src/deptran/multi_value.cc
+    src/deptran/paxos/commo.cc
+    src/deptran/paxos/coordinator.cc
+    src/deptran/paxos/frame.cc
+    src/deptran/paxos/server.cc
+    src/deptran/paxos/service.cc
+    src/deptran/paxos_worker.cc
+    src/deptran/procedure.cc
+    src/deptran/raft/application_log.cc
+    src/deptran/raft/commo.cc
+    src/deptran/raft/coordinator.cc
+    src/deptran/raft/frame.cc
+    src/deptran/raft/raft_worker.cc
+    src/deptran/raft/replicated_db.cc
+    src/deptran/raft/server.cc
+    src/deptran/raft/service.cc
+    src/deptran/replication_log_entry.cc
+    src/deptran/scheduler.cc
+    src/deptran/sharding.cc
+    src/deptran/stats_registry.cc
+    src/deptran/tpc_command.cc
+    src/deptran/tpcc_sharding.cc
+    src/deptran/tx.cc
+    src/deptran/workload.cc
 )
-# NOTE: src/cluster/*.cc are C++23 module units of the `cluster` module (owned
-# by the `cluster` target's FILE_SET below), NOT plain deptran sources.
-# Compiling them here would re-emit module units outside their fileset (same
-# reason rrr's .cpp are kept out of txlog_core). Downstream code reaches the
-# cluster component by `import cluster;` and linking the `cluster` target.
-# Exclude specific deptran files (standalone binaries / optional backends)
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/s_main.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/paxos_main_helper.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft_main_helper.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/server_worker.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/raft_lab_standalone.cc")
+
+if(RAFT_TEST)
+    list(APPEND DEPTRAN_CORE_SRC
+        src/deptran/raft/test.cc
+        src/deptran/raft/testconf.cc
+    )
+endif()
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
