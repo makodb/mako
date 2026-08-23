@@ -8,6 +8,7 @@
 // #include "paxos_worker.h"
 #include "frame.h"
 #include "coordinator.h"
+#include "../legacy_raft_log_payload.h"
 #include "../tpc_command.h"
 #include "file_snapshot_manager.hpp"
 #include "replicated_db.h"
@@ -668,6 +669,10 @@ void RaftServer::LogTermChange(const char* reason,
 RaftServer::RaftServer(Frame * frame)
   : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
+  // RocksDB recovery deserializes polymorphic commands during Setup().  Make
+  // the immutable kind-4 compatibility factory available as soon as a Raft
+  // server exists, before any storage backend can be opened or replayed.
+  EnsureLegacyRaftLogPayloadRegistered();
   frame_ = frame ;
 #ifdef RAFT_TEST_CORO
   setIsLeader(false);

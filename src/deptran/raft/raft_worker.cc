@@ -9,10 +9,10 @@
 #include "service.h"
 #include "application_log.h"
 #include "../config.h"
+#include "../legacy_raft_log_payload.h"
 #include "../paxos/commo.h"   // PaxosStatus enum reused by Mako watermark callbacks
 #include "../replication_log_entry.h"
 #include "../tpc_command.h"  // TpcCommitCommand for batch optimization
-#include "../procedure.h"  // Legacy VecPieceData persisted-log compatibility
 
 import std;
 
@@ -583,11 +583,14 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
   // @unsafe
   {
   // Extract the application payload from TpcCommitCommand. New entries carry
-  // a replication-native LogEntry; VecPieceData remains readable so Raft can
-  // recover logs persisted by older Mako builds.
+  // a replication-native LogEntry; the MDB-free LegacyVecPieceData reader
+  // remains available solely for logs persisted by older Mako builds.
   const char* log = nullptr;
   int len = 0;
   uint32_t par_id = 0;
+  // Owns legacy bytes until both the callback and any safety-failure copy
+  // below have finished consuming `log`.
+  std::string legacy_payload;
 
   // Try TpcCommitCommand (production path with RAFT_BATCH_OPTIMIZATION)
   const auto tpc_cmd = marshallable_cast<TpcCommitCommand>(md);
@@ -614,31 +617,22 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
     }
     Log_debug("[RAFT-CALLBACK] Extracted application LogEntry (tx_id={}): len={}",
               tpc_cmd.unwrap()->tx_id_, len);
-  } else if (inner.kind_ == VecPieceData::static_kind()) {
-    const auto legacy = marshallable_cast<VecPieceData>(inner);
-    if (!legacy.is_some() || !legacy.unwrap()->sp_vec_piece_data_ ||
-        legacy.unwrap()->sp_vec_piece_data_->empty()) {
+  } else if (inner.kind_ == LegacyVecPieceData::static_kind()) {
+    const auto legacy = marshallable_cast<LegacyVecPieceData>(inner);
+    if (!legacy.is_some() ||
+        !legacy.unwrap()->TryGetApplicationLog(&legacy_payload, &par_id)) {
       Log_error("[RAFT-CALLBACK] Invalid legacy VecPieceData for slot {}",
                 slot_id);
       return status;
     }
-    const auto& simple_cmd = legacy.unwrap()->sp_vec_piece_data_->front();
-    if (!simple_cmd || !simple_cmd->input.values_ ||
-        simple_cmd->input.values_->empty()) {
-      Log_error("[RAFT-CALLBACK] Legacy VecPieceData has no values for slot {}",
+    if (legacy_payload.size() >
+        static_cast<size_t>(std::numeric_limits<int>::max())) {
+      Log_error("[RAFT-CALLBACK] Legacy VecPieceData payload is too large for slot {}",
                 slot_id);
       return status;
     }
-    const auto& first_val = simple_cmd->input.values_->begin()->second;
-    if (first_val.get_kind() != Value::STR) {
-      Log_error("[RAFT-CALLBACK] Legacy VecPieceData value is not STR for slot {}",
-                slot_id);
-      return status;
-    }
-    const std::string& payload = first_val.get_str();
-    log = payload.data();
-    len = static_cast<int>(payload.size());
-    par_id = simple_cmd->partition_id_;
+    log = legacy_payload.data();
+    len = static_cast<int>(legacy_payload.size());
     Log_info("[RAFT-CALLBACK] Decoded legacy VecPieceData at slot {}", slot_id);
   } else {
     Log_error("[RAFT-CALLBACK] Unsupported inner command kind {} for slot {}",

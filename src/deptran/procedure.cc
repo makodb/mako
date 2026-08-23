@@ -1,6 +1,7 @@
 #include "__dep__.h"
 #include "marshal-value.h"
 #include "coordinator.h"
+#include "legacy_raft_log_payload.h"
 #include "procedure.h"
 #include "rrr/misc/serializable.hpp"
 #include "benchmark_control_rpc.h"
@@ -9,7 +10,9 @@
 namespace janus {
 
 // Registry keys come from each payload's explicit MakoCommands membership.
-static int volatile x1 = rrr::SerializableRegistry::reg<VecPieceData>(VecPieceData::static_kind());
+static int volatile x1 =
+    rrr::SerializableRegistry::reg<LegacyVecPieceData>(
+        LegacyVecPieceData::static_kind());
 static int volatile x2 = rrr::SerializableRegistry::reg<VecRecData>(VecRecData::static_kind());
 static int volatile x3 = rrr::SerializableRegistry::reg<ViewData>(ViewData::static_kind());
 static int volatile x4 = rrr::SerializableRegistry::reg<KeyCmdBatchData>(KeyCmdBatchData::static_kind());

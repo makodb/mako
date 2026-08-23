@@ -1,11 +1,10 @@
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
 
-#include "deptran/procedure.h"
+#include "deptran/legacy_raft_log_payload.h"
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/tpc_command.h"
 #include "rrr/rrr.hpp"
@@ -27,6 +26,24 @@ const std::string& LegacyPayload() {
   return payload;
 }
 
+std::string FromHex(const std::string& hex) {
+  EXPECT_EQ(hex.size() % 2, 0u);
+  auto nibble = [](char digit) -> uint8_t {
+    if (digit >= '0' && digit <= '9') return digit - '0';
+    if (digit >= 'a' && digit <= 'f') return digit - 'a' + 10;
+    ADD_FAILURE() << "invalid hex digit";
+    return 0;
+  };
+
+  std::string bytes;
+  bytes.reserve(hex.size() / 2);
+  for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
+    bytes.push_back(static_cast<char>((nibble(hex[i]) << 4) |
+                                      nibble(hex[i + 1])));
+  }
+  return bytes;
+}
+
 std::string ToHex(const std::string& bytes) {
   static constexpr char digits[] = "0123456789abcdef";
   std::string hex;
@@ -46,36 +63,14 @@ std::string Serialize(const janus::raft::LogEntry& entry) {
                      sink.bytes.len());
 }
 
-janus::raft::LogEntry MakeLegacyEntry() {
-  auto piece = std::make_shared<janus::SimpleCommand>();
-  piece->input.keys_.insert(0);
-  (*piece->input.values_)[0] = mdb::Value(LegacyPayload());
-  piece->partition_id_ = 0x89abcdefu;
-
-  auto pieces = rusty::Arc<janus::VecPieceData>::make();
-  pieces.get_mut().unwrap().sp_vec_piece_data_ =
-      std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
-  pieces->sp_vec_piece_data_->push_back(std::move(piece));
-
-  auto commit = rusty::Arc<janus::TpcCommitCommand>::make();
-  auto& mut = commit.get_mut().unwrap();
-  mut.tx_id_ = 0x0102030405060708ULL;
-  mut.term = 37;
-  mut.cmd_ = std::move(pieces);
-
-  janus::raft::LogEntry entry;
-  entry.slot_id = 17;
-  entry.term = 23;
-  entry.max_ballot_seen = 29;
-  entry.max_ballot_accepted = 31;
-  entry.command = std::move(commit);
-  entry.committed = true;
-  entry.is_no_op = false;
-  return entry;
-}
-
 TEST(LegacyRaftLogTest, FreezesCanonicalKind4RocksDbValue) {
-  const std::string encoded = Serialize(MakeLegacyEntry());
+  // Explicit registration both selects the MDB-free kind-4 reader and forces
+  // its translation unit out of txlog_core's static archive.
+  rrr::SerializableRegistry::reg<janus::TpcCommitCommand>(
+      janus::TpcCommitCommand::static_kind());
+  janus::EnsureLegacyRaftLogPayloadRegistered();
+
+  const std::string encoded = FromHex(kGoldenHex);
   EXPECT_EQ(encoded.size(), 164u);
   EXPECT_EQ(ToHex(encoded), kGoldenHex);
 
@@ -97,17 +92,19 @@ TEST(LegacyRaftLogTest, FreezesCanonicalKind4RocksDbValue) {
   ASSERT_TRUE(commit.is_some());
   EXPECT_EQ(commit.unwrap()->tx_id_, 0x0102030405060708ULL);
   EXPECT_EQ(commit.unwrap()->term, 37);
-  const auto pieces =
-      rrr::marshallable_cast<janus::VecPieceData>(commit.unwrap()->cmd_);
-  ASSERT_TRUE(pieces.is_some());
-  ASSERT_TRUE(pieces.unwrap()->sp_vec_piece_data_);
-  ASSERT_EQ(pieces.unwrap()->sp_vec_piece_data_->size(), 1u);
-  const auto& piece = pieces.unwrap()->sp_vec_piece_data_->front();
-  ASSERT_TRUE(piece);
-  EXPECT_EQ(piece->partition_id_, 0x89abcdefu);
-  ASSERT_TRUE(piece->input.values_);
-  ASSERT_EQ(piece->input.values_->size(), 1u);
-  EXPECT_EQ(piece->input.values_->at(0).get_str(), LegacyPayload());
+  const auto legacy = rrr::marshallable_cast<janus::LegacyVecPieceData>(
+      commit.unwrap()->cmd_);
+  ASSERT_TRUE(legacy.is_some());
+  ASSERT_EQ(legacy.unwrap()->pieces.size(), 1u);
+  EXPECT_DOUBLE_EQ(legacy.unwrap()->time_sent_from_client, -1e9);
+  EXPECT_EQ(legacy.unwrap()->is_recovery_command, 0);
+
+  std::string payload;
+  uint32_t partition_id = 0;
+  ASSERT_TRUE(
+      legacy.unwrap()->TryGetApplicationLog(&payload, &partition_id));
+  EXPECT_EQ(partition_id, 0x89abcdefu);
+  EXPECT_EQ(payload, LegacyPayload());
 
   EXPECT_EQ(Serialize(decoded), encoded);
 }
