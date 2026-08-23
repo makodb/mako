@@ -4,7 +4,9 @@
 #include "__dep__.h"
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"
+#include <cstdint>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include <atomic>
 #include <functional>
@@ -16,11 +18,45 @@ namespace janus {
 class RaftServer;  // Forward declaration
 
 // @safe - Trivially copyable enum for operation type
+#if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(u8)]
+pub enum ReplicatedDBOp {
+    PUT = 1,
+    DELETE = 2,
+    BATCH = 3,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_replicated_db.operation version=1 rust_sha256=e6e33890ec5a6fa6633445ded015e012caca637c69b920dd9ed4cd6d17bacd62*/
+enum class ReplicatedDBOp : uint8_t;
+constexpr ReplicatedDBOp ReplicatedDBOp_PUT();
+constexpr ReplicatedDBOp ReplicatedDBOp_DELETE();
+constexpr ReplicatedDBOp ReplicatedDBOp_BATCH();
+
 enum class ReplicatedDBOp : uint8_t {
     PUT = 1,
     DELETE = 2,
     BATCH = 3
 };
+inline constexpr ReplicatedDBOp ReplicatedDBOp_PUT() { return ReplicatedDBOp::PUT; }
+inline constexpr ReplicatedDBOp ReplicatedDBOp_DELETE() { return ReplicatedDBOp::DELETE; }
+inline constexpr ReplicatedDBOp ReplicatedDBOp_BATCH() { return ReplicatedDBOp::BATCH; }
+/*RUSTYCPP:GEN-END id=raft_replicated_db.operation*/
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<ReplicatedDBOp>, uint8_t>);
+static_assert(std::is_trivially_copyable_v<ReplicatedDBOp>);
+static_assert(sizeof(ReplicatedDBOp) == sizeof(uint8_t));
+static_assert(alignof(ReplicatedDBOp) == alignof(uint8_t));
+static_assert(static_cast<uint8_t>(ReplicatedDBOp::PUT) == 1);
+static_assert(static_cast<uint8_t>(ReplicatedDBOp::DELETE) == 2);
+static_assert(static_cast<uint8_t>(ReplicatedDBOp::BATCH) == 3);
+// The emitted C++ Stage-1 provider deliberately preserves all raw byte
+// values accepted by legacy disk/wire decoding. Native Rust promotion must
+// validate bytes or use a transparent newtype before consuming these states.
+static_assert(static_cast<uint8_t>(static_cast<ReplicatedDBOp>(0)) == 0);
+static_assert(static_cast<uint8_t>(static_cast<ReplicatedDBOp>(0xff)) == 0xff);
 
 // @safe - Plain data struct for batch operations
 struct KVOperation {

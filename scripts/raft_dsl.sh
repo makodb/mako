@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate or verify the inline-Rust DSL carriers under src/deptran/raft.
+# Regenerate or verify the Raft inline-Rust DSL carriers.
 #
 # Unlike scripts/regen_storage_dsl.sh, Raft carriers do not receive an ODR or
 # textual post-pass: the pinned transpiler's output is committed byte-for-byte.
@@ -23,20 +23,16 @@ FILES=()
 EXPECTED_BLOCKS=(
   "src/deptran/raft/commo.h|raft_commo.ack_type"
   "src/deptran/raft/commo.h|raft_commo.notify_restart_status"
-  "src/deptran/raft/messages.hpp|raft_messages.append_entries_reply"
-  "src/deptran/raft/messages.hpp|raft_messages.durable"
-  "src/deptran/raft/messages.hpp|raft_messages.heartbeat"
-  "src/deptran/raft/messages.hpp|raft_messages.install_snapshot_reply"
-  "src/deptran/raft/messages.hpp|raft_messages.notify_restart"
-  "src/deptran/raft/messages.hpp|raft_messages.remove_server_req"
-  "src/deptran/raft/messages.hpp|raft_messages.timeout_now"
-  "src/deptran/raft/messages.hpp|raft_messages.vote"
   "src/deptran/raft/read_raft_disk.cc|raft_disk.data_record"
+  "src/deptran/raft/replicated_db.h|raft_replicated_db.operation"
   "src/deptran/raft/recovery_manager.hpp|raft_recovery.mode"
   "src/deptran/raft/server.h|raft_server.commit_status"
   "src/deptran/raft/server.h|raft_server.step_down_reason"
   "src/deptran/raft/server.cc|raft_server.preferred_leader_predicate"
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.format_enums"
+  "src/deptran/raft_main_helper.cc|raft_main.argument_casefold"
+  "src/deptran/raft_main_helper.cc|raft_main.group_mode"
+  "src/deptran/raft_main_helper.cc|raft_main.group_mode_argument_predicate"
 )
 
 usage() {
@@ -128,15 +124,19 @@ if ((${#FILES[@]} == 0)); then
   FULL_INVENTORY=1
   if command -v rg >/dev/null 2>&1; then
     mapfile -t FILES < <(
-      rg -l '#if RUSTYCPP_RUST' src/deptran/raft \
+      rg -l '#if RUSTYCPP_RUST' \
+        src/deptran/fpga_raft src/deptran/raft \
+        src/deptran/raft_main_helper.cc \
         -g '*.h' -g '*.hh' -g '*.hpp' -g '*.cc' -g '*.cpp' -g '*.cxx' |
         sort
     )
   else
     mapfile -t FILES < <(
-      grep -rl '#if RUSTYCPP_RUST' src/deptran/raft \
-        --include='*.h' --include='*.hh' --include='*.hpp' \
-        --include='*.cc' --include='*.cpp' --include='*.cxx' |
+      { grep -rl '#if RUSTYCPP_RUST' \
+          src/deptran/fpga_raft src/deptran/raft \
+          --include='*.h' --include='*.hh' --include='*.hpp' \
+          --include='*.cc' --include='*.cpp' --include='*.cxx'; \
+        grep -l '#if RUSTYCPP_RUST' src/deptran/raft_main_helper.cc; } |
         sort
     )
   fi
@@ -151,7 +151,7 @@ for index in "${!FILES[@]}"; do
   FILES[${index}]="${FILES[${index}]#./}"
   file="${FILES[${index}]}"
   case "${file}" in
-    src/deptran/raft/*) ;;
+    src/deptran/fpga_raft/*|src/deptran/raft/*|src/deptran/raft_main_helper.cc) ;;
     *)
       echo "refusing non-Raft carrier: ${file}" >&2
       exit 2

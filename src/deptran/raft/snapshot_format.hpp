@@ -357,16 +357,14 @@ class SnapshotFormat {
     }
 
     // Check compression support
-    if (header.compression !=
-        static_cast<uint8_t>(SnapshotCompression::NONE)) {
+    if (static_cast<SnapshotCompression>(header.compression) != SnapshotCompression::NONE) {
       rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: compression not supported");
       return false;
     }
 
     // Calculate expected total size
     size_t checksum_size = 0;
-    if (header.checksum_type ==
-        static_cast<uint8_t>(SnapshotChecksumType::CRC32)) {
+    if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
       checksum_size = 4;
     }
     size_t expected_size = sizeof(SnapshotHeader) + header.data_size + checksum_size;
@@ -378,8 +376,7 @@ class SnapshotFormat {
 
     // Verify data checksum
     const char* data_ptr = input + sizeof(SnapshotHeader);
-    if (header.checksum_type ==
-        static_cast<uint8_t>(SnapshotChecksumType::CRC32)) {
+    if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
       uint32_t expected_crc;
       std::memcpy(&expected_crc, data_ptr + header.data_size, 4);
       uint32_t actual_crc = CRC32::Calculate(data_ptr, header.data_size);

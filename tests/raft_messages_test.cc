@@ -13,9 +13,8 @@ using namespace janus::raft;
 
 namespace {
 
-// The vote-message preparation and following DSL ownership change must be
-// ABI-neutral. These mirrors retain the exact field order and primitive types
-// of the former declarations.
+// Keep the RPC payload ABI independent of typedef spelling. These mirrors pin
+// the exact field order and primitive representations.
 struct LegacyVoteReqLayout {
   uint64_t last_log_idx;
   int64_t last_log_term;
@@ -106,6 +105,13 @@ struct LegacyRemoveServerReqLayout {
   static_assert(sizeof(type) == sizeof(legacy));          \
   static_assert(alignof(type) == alignof(legacy))
 
+// The pinned inline emitter cannot express C++ default member initializers.
+// These assertions make the resulting plain-default-initialization contract a
+// hard Stage-1 boundary instead of silently weakening it.
+#define ASSERT_ZERO_DEFAULT_CONTRACT(type)                        \
+  static_assert(std::is_default_constructible_v<type>);           \
+  static_assert(!std::is_trivially_default_constructible_v<type>)
+
 static_assert(std::is_aggregate_v<VoteReq>);
 static_assert(std::is_aggregate_v<VoteReply>);
 static_assert(std::is_aggregate_v<VoteDurableReq>);
@@ -135,6 +141,22 @@ ASSERT_POD_LAYOUT(NotifyRestartReq, LegacyNotifyRestartReqLayout);
 ASSERT_POD_LAYOUT(NotifyRestartReply, LegacyNotifyRestartReplyLayout);
 ASSERT_POD_LAYOUT(InstallSnapshotReply, LegacyInstallSnapshotReplyLayout);
 ASSERT_POD_LAYOUT(RemoveServerReq, LegacyRemoveServerReqLayout);
+
+ASSERT_ZERO_DEFAULT_CONTRACT(VoteReq);
+ASSERT_ZERO_DEFAULT_CONTRACT(VoteReply);
+ASSERT_ZERO_DEFAULT_CONTRACT(VoteDurableReq);
+ASSERT_ZERO_DEFAULT_CONTRACT(VoteDurableReply);
+ASSERT_ZERO_DEFAULT_CONTRACT(AppendEntriesReply);
+ASSERT_ZERO_DEFAULT_CONTRACT(EmptyAppendEntriesReq);
+ASSERT_ZERO_DEFAULT_CONTRACT(EmptyAppendEntriesReply);
+ASSERT_ZERO_DEFAULT_CONTRACT(AppendEntriesDurableReq);
+ASSERT_ZERO_DEFAULT_CONTRACT(AppendEntriesDurableReply);
+ASSERT_ZERO_DEFAULT_CONTRACT(TimeoutNowReq);
+ASSERT_ZERO_DEFAULT_CONTRACT(TimeoutNowReply);
+ASSERT_ZERO_DEFAULT_CONTRACT(NotifyRestartReq);
+ASSERT_ZERO_DEFAULT_CONTRACT(NotifyRestartReply);
+ASSERT_ZERO_DEFAULT_CONTRACT(InstallSnapshotReply);
+ASSERT_ZERO_DEFAULT_CONTRACT(RemoveServerReq);
 
 static_assert(
     std::is_same_v<decltype(VoteReq::last_log_idx), uint64_t>);
@@ -289,6 +311,7 @@ ASSERT_FIELD_OFFSET(RemoveServerReq, LegacyRemoveServerReqLayout, server_id);
 
 #undef ASSERT_FIELD_OFFSET
 #undef ASSERT_POD_LAYOUT
+#undef ASSERT_ZERO_DEFAULT_CONTRACT
 
 }  // namespace
 
@@ -324,6 +347,34 @@ TEST(RaftMessagesTest, DefaultConstructAllRequestReplyTypes) {
   { AddServerReply r{};      EXPECT_FALSE(r.success); }
   { RemoveServerReq r{};     EXPECT_EQ(r.server_id, 0u); }
   { RemoveServerReply r{};   EXPECT_FALSE(r.success); }
+}
+
+TEST(RaftMessagesTest, PlainDefaultInitializationPreservesZeroContract) {
+  VoteReq vote;
+  EXPECT_EQ(vote.last_log_idx, 0u);
+  EXPECT_EQ(vote.last_log_term, 0);
+  EXPECT_EQ(vote.candidate_site_id, 0u);
+  EXPECT_EQ(vote.current_term, 0);
+
+  AppendEntriesReply append;
+  EXPECT_EQ(append.follower_append_ok, 0u);
+  EXPECT_EQ(append.follower_current_term, 0u);
+  EXPECT_EQ(append.follower_last_log_index, 0u);
+  EXPECT_EQ(append.follower_ack_type, 0u);
+
+  EmptyAppendEntriesReq heartbeat;
+  EXPECT_EQ(heartbeat.slot, 0u);
+  EXPECT_EQ(heartbeat.ballot, 0);
+  EXPECT_EQ(heartbeat.leader_site_id, 0u);
+  EXPECT_FALSE(heartbeat.trigger_election_now);
+
+  TimeoutNowReply timeout;
+  EXPECT_EQ(timeout.follower_term, 0u);
+  EXPECT_FALSE(timeout.success);
+
+  RemoveServerReq remove;
+  EXPECT_EQ(remove.term, 0u);
+  EXPECT_EQ(remove.server_id, 0u);
 }
 
 TEST(RaftMessagesTest, FieldAssignmentRoundTrip) {

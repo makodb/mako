@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <type_traits>
 
 #include "replication_helper.h"
 
@@ -10,6 +11,7 @@
 #include "raft/raft_worker.h"
 #include "raft/service.h"
 #include "paxos_worker.h"  // ElectionState definition lives here
+#include <rusty/rusty.hpp>
 
 
 import std;
@@ -28,10 +30,36 @@ using janus::raft_workers_g;
 // ============================================================================
 namespace raft_impl {
 
+#if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(u8)]
+pub enum RaftGroupMode {
+    kSingleGroup = 0,
+    kPerPartitionGroup = 1,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_main.group_mode version=1 rust_sha256=cf63b52398c20221967e157653e2031f5a744c2bc6c31f8bbabc264671f87431*/
+enum class RaftGroupMode : uint8_t;
+constexpr RaftGroupMode RaftGroupMode_kSingleGroup();
+constexpr RaftGroupMode RaftGroupMode_kPerPartitionGroup();
+
 enum class RaftGroupMode : uint8_t {
-  kSingleGroup = 0,
-  kPerPartitionGroup = 1,
+    kSingleGroup = 0,
+    kPerPartitionGroup = 1
 };
+inline constexpr RaftGroupMode RaftGroupMode_kSingleGroup() { return RaftGroupMode::kSingleGroup; }
+inline constexpr RaftGroupMode RaftGroupMode_kPerPartitionGroup() { return RaftGroupMode::kPerPartitionGroup; }
+/*RUSTYCPP:GEN-END id=raft_main.group_mode*/
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<RaftGroupMode>, uint8_t>);
+static_assert(std::is_trivially_copyable_v<RaftGroupMode>);
+static_assert(sizeof(RaftGroupMode) == sizeof(uint8_t));
+static_assert(alignof(RaftGroupMode) == alignof(uint8_t));
+static_assert(static_cast<uint8_t>(RaftGroupMode::kSingleGroup) == 0);
+static_assert(static_cast<uint8_t>(RaftGroupMode::kPerPartitionGroup) == 1);
+static_assert(RaftGroupMode{} == RaftGroupMode::kSingleGroup);
 
 #if defined(RAFT_DEFAULT_SINGLE_GROUP)
 constexpr RaftGroupMode kDefaultRaftGroupMode = RaftGroupMode::kSingleGroup;
@@ -77,18 +105,52 @@ constexpr std::chrono::milliseconds kLeaderWaitTimeout(5000);
 std::mutex leader_wait_mutex;
 std::condition_variable leader_wait_cv;
 
-bool equals_ignore_case(std::string_view lhs, std::string_view rhs) {
-  if (lhs.size() != rhs.size()) {
-    return false;
-  }
-  for (size_t i = 0; i < lhs.size(); ++i) {
-    if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
-        std::tolower(static_cast<unsigned char>(rhs[i]))) {
-      return false;
+#if RUSTYCPP_RUST
+#[allow(dead_code)]
+fn equals_ignore_case(lhs: &str, rhs: &str) -> bool {
+    if lhs.len() != rhs.len() {
+        return false;
     }
-  }
-  return true;
+    let lhs_bytes = lhs.as_bytes();
+    let rhs_bytes = rhs.as_bytes();
+    let mut i: usize = 0;
+    while i < lhs_bytes.len() {
+        if unsafe { tolower(lhs_bytes[i] as i32) } !=
+            unsafe { tolower(rhs_bytes[i] as i32) } {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
+
+unsafe extern "C" {
+    fn tolower(value: i32) -> i32;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_main.argument_casefold version=1 rust_sha256=aab3bef549cca60d628e6d6caf76e12a44624e86ed820f1f5bd092f9414321f4*/
+bool equals_ignore_case(std::string_view lhs, std::string_view rhs);
+
+extern "C" {
+    int32_t tolower(int32_t value);
+}
+
+bool equals_ignore_case(std::string_view lhs, std::string_view rhs) {
+    if (rusty::len(lhs) != rusty::len(rhs)) {
+        return false;
+    }
+    const auto lhs_bytes = rusty::as_bytes(lhs);
+    const auto rhs_bytes = rusty::as_bytes(rhs);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(lhs_bytes)) {
+        if (tolower(static_cast<int32_t>(lhs_bytes[i])) != tolower(static_cast<int32_t>(rhs_bytes[i]))) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+/*RUSTYCPP:GEN-END id=raft_main.argument_casefold*/
 
 std::optional<RaftGroupMode> parse_raft_group_mode_from_args(int argc, char* argv[]) {
   for (int i = 1; i < argc; ++i) {
@@ -145,9 +207,19 @@ void configure_raft_group_mode(int argc, char* argv[]) {
            raft_group_mode_g == RaftGroupMode::kSingleGroup ? "single" : "multi");
 }
 
-bool is_raft_group_mode_arg(std::string_view arg) {
-  return arg == "--raft-groups" || arg.rfind("--raft-groups=", 0) == 0;
+#if RUSTYCPP_RUST
+#[allow(dead_code)]
+fn is_raft_group_mode_arg(arg: &str) -> bool {
+    arg == "--raft-groups" || arg.starts_with("--raft-groups=")
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_main.group_mode_argument_predicate version=1 rust_sha256=a70c0881db3d75205a090a1ddfb8894ed2e796293ef72dcee1361bedd884da53*/
+bool is_raft_group_mode_arg(std::string_view arg);
+
+bool is_raft_group_mode_arg(std::string_view arg) {
+    return (rusty::detail::deref_if_pointer_like(rusty::to_string_view(arg)) == std::string_view("--raft-groups")) || rusty::starts_with(arg, "--raft-groups=");
+}
+/*RUSTYCPP:GEN-END id=raft_main.group_mode_argument_predicate*/
 
 void build_config_argv_without_raft_group_mode(
     int argc,

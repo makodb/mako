@@ -159,12 +159,12 @@ uint64_t GetAppendEntriesBatchMaxEntries() {
 }
 
 #if RUSTYCPP_RUST
-#[allow(non_snake_case)]
-pub fn IsPreferredLeaderConfigured(preferred_leader_site_id: u16) -> bool {
+#[allow(dead_code, non_snake_case)]
+fn IsPreferredLeaderConfigured(preferred_leader_site_id: u16) -> bool {
     preferred_leader_site_id != u16::MAX
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.preferred_leader_predicate version=1 rust_sha256=9fc426bfd657f316cd3ff6d14216d54cd7e30d952a847c61fdbc04722f7c335f*/
+/*RUSTYCPP:GEN-BEGIN id=raft_server.preferred_leader_predicate version=1 rust_sha256=fb616b2ee515d24b66cd4df76d251f96158cbd9444d1a0a9d0678db3dcfb166d*/
 bool IsPreferredLeaderConfigured(uint16_t preferred_leader_site_id);
 
 bool IsPreferredLeaderConfigured(uint16_t preferred_leader_site_id) {
@@ -173,6 +173,8 @@ bool IsPreferredLeaderConfigured(uint16_t preferred_leader_site_id) {
 /*RUSTYCPP:GEN-END id=raft_server.preferred_leader_predicate*/
 
 static_assert(std::is_same_v<siteid_t, uint16_t>);
+static_assert(static_cast<uint16_t>(INVALID_SITEID) ==
+              std::numeric_limits<uint16_t>::max());
 
 }  // namespace
 
