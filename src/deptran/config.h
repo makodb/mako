@@ -186,8 +186,6 @@ class Config {
   static Config* GetConfig();
   static void DestroyConfig();
 
-  void InitTPCCD();
-
   void Load();
 
   void LoadYML(std::string &);

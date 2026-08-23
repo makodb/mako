@@ -8,10 +8,8 @@
 
 
 #include "__dep__.h"
-#include "multi_value.h"
 #include "constants.h"
 #include "config.h"
-#include "multi_value.h"
 #include "sharding.h"
 #include "frame.h"
 #include "sharding.h"
@@ -284,8 +282,6 @@ void Config::Load() {
     }
   }
 
-  // TODO particular configuration for certain workloads.
-  this->InitTPCCD();
 }
 
 void Config::LoadYML(std::string &filename) {
@@ -723,43 +719,6 @@ void Config::LoadFailoverYML(YAML::Node config) {
   }
   failover_run_int_ = config["run_interval"].as<int32_t>();
   failover_stop_int_ = config["stop_interval"].as<int32_t>();
-}
-
-void Config::InitTPCCD() {
-  // TODO particular configuration for certain workloads.
-  EnsureBenchmarkRegistryInitialized();
-  auto table_names = BenchmarkRegistry::Instance().GetTableNames();
-  verify(!table_names.tpcc_warehouse.empty());
-  verify(!table_names.tpcc_district.empty());
-  verify(!table_names.tpcc_item.empty());
-  auto &tb_infos = sharding_->tb_infos_;
-  if (benchmark_ == TPCC_REAL_DIST_PART) {
-    i32 n_w_id =
-        (i32)(tb_infos[table_names.tpcc_warehouse].num_records);
-    verify(n_w_id > 0);
-    i32 n_d_id = (i32)(GetNumPartition() *
-        tb_infos[table_names.tpcc_district].num_records / n_w_id);
-    i32 d_id = 0, w_id = 0;
-
-    for (d_id = 0; d_id < n_d_id; d_id++)
-      for (w_id = 0; w_id < n_w_id; w_id++) {
-        MultiValue mv(std::vector<Value>({Value(d_id),
-                                          Value(w_id)}));
-        sharding_->insert_dist_mapping(mv);
-      }
-    i32 n_i_id =
-        (i32)(tb_infos[table_names.tpcc_item].num_records);
-    i32 i_id = 0;
-
-    for (i_id = 0; i_id < n_i_id; i_id++)
-      for (w_id = 0; w_id < n_w_id; w_id++) {
-        MultiValue mv(std::vector<Value>({
-                                             Value(i_id),
-                                             Value(w_id)
-                                         }));
-        sharding_->insert_stock_mapping(mv);
-      }
-  }
 }
 
 Config::~Config() {
