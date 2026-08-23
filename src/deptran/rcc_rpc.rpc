@@ -168,15 +168,8 @@ abstract service Classic {
   defer SimpleCmd( SimpleCommand cmd| i32 res);
   defer FailoverPauseSocketOut(| i32 res);
   defer FailoverResumeSocketOut(| i32 res);
-   
-  // input: contains many pieces, each piece consist of
-  // | <i32 p_type> <i64 pid> <i32 input_size> <i32 max_output_size> 
-  // <input_0> <input_1> ... |
-  // output: contains many pieces, each piece consist of
-  // | <i32 res> <i32 output_size> <output_0> <output_1> ... |
-  // below is for what?
 
-  defer rpc_null( | );
+  // RPC id 0x6315d00c belonged to the retired rpc_null benchmark endpoint.
   defer JetpackBeginRecovery(Command old_view,
                              Command new_view, 
                              epoch_t new_view_id);

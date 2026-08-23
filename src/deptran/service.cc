@@ -56,12 +56,6 @@ void ClassicServiceImpl::EarlyAbort(const ClassicService::RpcEarlyAbortRequest& 
   this->EarlyAbort(req.tid, &resp.res, std::move(defer));
 }
 
-void ClassicServiceImpl::rpc_null(const ClassicService::RpcRpcNullRequest& req, ClassicService::RpcRpcNullResponse& resp, rrr::DeferredReply defer) {
-  (void)req;
-  (void)resp;
-  this->rpc_null(std::move(defer));
-}
-
 void ClassicServiceImpl::UpgradeEpoch(const ClassicService::RpcUpgradeEpochRequest& req, ClassicService::RpcUpgradeEpochResponse& resp, rrr::DeferredReply defer) {
   this->UpgradeEpoch(req.curr_epoch, &resp.res, std::move(defer));
 }
@@ -434,10 +428,6 @@ void ClassicServiceImpl::EarlyAbort(const rrr::i64& tid,
   defer.reply();
 //  };
 //  Fiber::create_run(func);
-}
-
-void ClassicServiceImpl::rpc_null(rrr::DeferredReply defer) {
-  defer.reply();
 }
 
 void ClassicServiceImpl::UpgradeEpoch(const uint32_t& curr_epoch,

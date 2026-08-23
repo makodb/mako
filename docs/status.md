@@ -173,6 +173,7 @@ FPGA-Raft, Copilot, RCC/Rococo, TROAD, and MDCC protocol implementations are ret
 not supported configuration options. The old `deptran` and `deptran_er` names
 were RCC aliases and are retired too. The internal memdb `Txn2PL` base remains
 because OCC and nested transactions share its storage and query machinery.
+The `rpc_null` benchmark mode and its no-op Classic RPC endpoint are retired.
 Generic Jetpack recovery code remains as a legacy subsystem pending a separate
 audit; it is not a supported replacement for the retired Rule protocol.
 

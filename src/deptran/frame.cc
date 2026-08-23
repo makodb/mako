@@ -127,7 +127,6 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
   auto mode = mode_;
   switch (mode) {
     case MODE_OCC:
-    case MODE_RPC_NULL:
       coo = new CoordinatorOcc(coo_id,
                          benchmark,
                          client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
@@ -219,9 +218,6 @@ TxLogServer* Frame::CreateScheduler() {
     case MODE_NONE:
       sch = new SchedulerNone();
       break;
-    case MODE_RPC_NULL:
-      verify(0);
-      break;
     default:
       verify(0);
 //      sch = new CustomSched();
@@ -263,7 +259,6 @@ map<string, int> &Frame::FrameNameToMode() {
       {"none",          MODE_NONE},
       {"occ",           MODE_OCC},
       {"notx",          MODE_NOTX},
-      {"rpc_null",      MODE_RPC_NULL},
       {"multi_paxos",   MODE_MULTI_PAXOS},
       {"raft",          MODE_RAFT},
       {"epaxos",        MODE_NOT_READY},

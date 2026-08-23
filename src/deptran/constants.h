@@ -86,7 +86,7 @@ namespace janus {
 #define MODE_RULE    (0x15)
 // 0x12 is reserved for compatibility with the retired MDCC protocol.
 // 0x03 is reserved for compatibility with the retired TROAD protocol.
-#define MODE_RPC_NULL   (0x800)
+// 0x800 is reserved for compatibility with the retired rpc-null benchmark mode.
 #define MODE_NOTX   (0x1000)
 // 0x18 is reserved for compatibility with the retired None-Copilot adapter.
 

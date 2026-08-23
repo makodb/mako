@@ -2753,24 +2753,6 @@ public:
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFailoverResumeSocketOutResponse& o) { deserialize(o, ar); return ar; }
 
-    struct RpcRpcNullRequest {
-    };
-    friend inline void serialize(const RpcRpcNullRequest& o, rrr::BinaryWriteArchive& ar) {
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRpcNullRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcRpcNullRequest& o, rrr::BinaryReadArchive& ar) {
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRpcNullRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcRpcNullResponse {
-    };
-    friend inline void serialize(const RpcRpcNullResponse& o, rrr::BinaryWriteArchive& ar) {
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRpcNullResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcRpcNullResponse& o, rrr::BinaryReadArchive& ar) {
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRpcNullResponse& o) { deserialize(o, ar); return ar; }
-
     struct RpcJetpackBeginRecoveryRequest {
         Command old_view;
         Command new_view;
@@ -3137,7 +3119,6 @@ public:
         SIMPLECMD = 0x40161224,
         FAILOVERPAUSESOCKETOUT = 0x566789af,
         FAILOVERRESUMESOCKETOUT = 0x61f54de5,
-        RPC_NULL = 0x6315d00c,
         JETPACKBEGINRECOVERY = 0x50c73c47,
         JETPACKPULLIDSET = 0x6f8bb3e1,
         JETPACKPULLCMD = 0x32301751,
@@ -3194,9 +3175,6 @@ public:
         if ((ret = svr.reg_rpc(FAILOVERRESUMESOCKETOUT, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(RPC_NULL, svc_index)) != 0) {
-            goto err;
-        }
         if ((ret = svr.reg_rpc(JETPACKBEGINRECOVERY, svc_index)) != 0) {
             goto err;
         }
@@ -3240,7 +3218,6 @@ public:
         svr.unreg(SIMPLECMD);
         svr.unreg(FAILOVERPAUSESOCKETOUT);
         svr.unreg(FAILOVERRESUMESOCKETOUT);
-        svr.unreg(RPC_NULL);
         svr.unreg(JETPACKBEGINRECOVERY);
         svr.unreg(JETPACKPULLIDSET);
         svr.unreg(JETPACKPULLCMD);
@@ -3269,7 +3246,6 @@ public:
         case SIMPLECMD: __SimpleCmd__wrapper__(std::move(req), weak_sconn); break;
         case FAILOVERPAUSESOCKETOUT: __FailoverPauseSocketOut__wrapper__(std::move(req), weak_sconn); break;
         case FAILOVERRESUMESOCKETOUT: __FailoverResumeSocketOut__wrapper__(std::move(req), weak_sconn); break;
-        case RPC_NULL: __rpc_null__wrapper__(std::move(req), weak_sconn); break;
         case JETPACKBEGINRECOVERY: __JetpackBeginRecovery__wrapper__(std::move(req), weak_sconn); break;
         case JETPACKPULLIDSET: __JetpackPullIdSet__wrapper__(std::move(req), weak_sconn); break;
         case JETPACKPULLCMD: __JetpackPullCmd__wrapper__(std::move(req), weak_sconn); break;
@@ -3311,8 +3287,6 @@ public:
     virtual void FailoverPauseSocketOut(const RpcFailoverPauseSocketOutRequest& req, RpcFailoverPauseSocketOutResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void FailoverResumeSocketOut(const RpcFailoverResumeSocketOutRequest& req, RpcFailoverResumeSocketOutResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void rpc_null(const RpcRpcNullRequest& req, RpcRpcNullResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void JetpackBeginRecovery(const RpcJetpackBeginRecoveryRequest& req, RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
@@ -3597,21 +3571,6 @@ private:
         }
     }
     // @safe
-    void __rpc_null__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcRpcNullRequest __typed_req__;
-            auto __typed_resp__ = std::make_shared<RpcRpcNullResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                },
-                []() {});
-            this->rpc_null(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
     void __JetpackBeginRecovery__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         // @unsafe
         {
@@ -3854,8 +3813,6 @@ public:
     using RpcFailoverPauseSocketOutResponse = ClassicService::RpcFailoverPauseSocketOutResponse;
     using RpcFailoverResumeSocketOutRequest = ClassicService::RpcFailoverResumeSocketOutRequest;
     using RpcFailoverResumeSocketOutResponse = ClassicService::RpcFailoverResumeSocketOutResponse;
-    using RpcRpcNullRequest = ClassicService::RpcRpcNullRequest;
-    using RpcRpcNullResponse = ClassicService::RpcRpcNullResponse;
     using RpcJetpackBeginRecoveryRequest = ClassicService::RpcJetpackBeginRecoveryRequest;
     using RpcJetpackBeginRecoveryResponse = ClassicService::RpcJetpackBeginRecoveryResponse;
     using RpcJetpackPullIdSetRequest = ClassicService::RpcJetpackPullIdSetRequest;
@@ -4512,47 +4469,6 @@ public:
         auto __typed_fu_result__ = this->async_FailoverResumeSocketOut(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcFailoverResumeSocketOutResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class rpc_nullTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit rpc_nullTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcRpcNullResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcRpcNullResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcRpcNullResponse __typed_resp__;
-            return rusty::Result<RpcRpcNullResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-    };
-    rusty::Result<rpc_nullTypedFuture, rrr::i32> async_rpc_null(const RpcRpcNullRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RPC_NULL, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
-        if (__fu_result__.is_err()) {
-            return rusty::Result<rpc_nullTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        (void)req;
-        return rusty::Result<rpc_nullTypedFuture, rrr::i32>::Ok(rpc_nullTypedFuture(__fu_result__.unwrap()));
-    }
-    rusty::Result<RpcRpcNullResponse, rrr::i32> rpc_null(const RpcRpcNullRequest& req) {
-        auto __typed_fu_result__ = this->async_rpc_null(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcRpcNullResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
