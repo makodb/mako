@@ -325,16 +325,11 @@ majority confirms an entry).  For each newly committed slot:
 for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
     auto next_instance = GetRaftInstance(id);
     if (next_instance && next_instance->log_) {
-        RuleWitnessGC(next_instance->log_);
         app_next_(id, next_instance->log_);   // → RaftWorker::Next()
         executeIndex = id;
     }
 }
 ```
-
-The Rule witness-GC call remains as a mode-gated compatibility hook. It is
-inert in supported configurations now that the Rule alias and configs are
-retired, and stays with the generic Jetpack recovery stack pending its audit.
 
 ### 5.3 `Next()` — The Core Callback
 

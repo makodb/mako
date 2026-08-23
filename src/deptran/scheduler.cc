@@ -350,17 +350,6 @@ int32_t TxLogServer::OnUpgradeEpoch(uint32_t old_epoch) {
 // `GetUniqueCmdID(shared_ptr<Marshallable>)`, `DBGet(...)`, and
 // `DBPut(...)`.  None had callers anywhere in the tree.
 
-void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd) {
-  if (Config::GetConfig()->tx_proto_ == MODE_RULE && SimpleRWCommand::NeedRecordConflictInOriginalPath(cmd)) {
-    rep_sched_->witness_.push_back(cmd);
-  }
-}
-
-void TxLogServer::RuleWitnessGC(const janus::Command& cmd) {
-  if (Config::GetConfig()->tx_proto_ == MODE_RULE)
-    witness_.remove(cmd);
-}
-
 void RevoveryCandidates::push_back(uint64_t cmd_id, const janus::Command& cmd, bool is_write) {
   candidates_[cmd_id] = cmd;
   if (total_write_ == 0 && is_write) {

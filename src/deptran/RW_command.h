@@ -21,7 +21,6 @@ class SimpleRWCommand
   key_t key_;
   int32_t value_;
   pair<int32_t, int32_t> cmd_id_;
-  bool rule_mode_on_and_is_original_path_only_command_;
   static double zero_time_;
   bool is_recovery_command_{false};
   SimpleRWCommand();
@@ -58,7 +57,6 @@ class SimpleRWCommand
   static double GetCommandMsTime(const Command& cmd);
   static double GetCommandMsTimeElaps(const Command& cmd);
   static key_t GetKey(const Command& cmd);
-  static bool NeedRecordConflictInOriginalPath(const Command& cmd);
   // removed the
   // `shared_ptr<rrr::Marshallable>` overloads of every static
   // helper above.  After Marshallable retires, no caller can

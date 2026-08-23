@@ -329,8 +329,6 @@ class JetpackPullRecSetInsQuorumEvent: public QuorumEventBase {
   }
 };
 
-/************************RULE end*********************************/
-
 class Communicator {
  public:
   static uint64_t global_id;

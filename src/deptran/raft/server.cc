@@ -815,11 +815,7 @@ void RaftServer::StartApplyThread() {
     uint64_t apply_count = 0;
     auto last_log_time = std::chrono::steady_clock::now();
     while (!stop_ && apply_thread_running_.load()) {
-      // Drain entries from the queue
-      // apply_queue_ holds Command; entry is
-      // pair<slotid_t, Command>.  RuleWitnessGC takes
-      // shared_ptr<Marshallable> so unwrap at the boundary; app_next_
-      // takes Command directly.
+      // Drain entries from the queue.
       std::pair<slotid_t, Command> entry;
       bool got_entry = false;
       size_t queue_size = 0;
@@ -842,7 +838,6 @@ void RaftServer::StartApplyThread() {
                    site_id_, id, queue_size);
         }
         // @unsafe - callback may have side effects
-        RuleWitnessGC(log_entry);
         app_next_(id, log_entry);
         if (id >= 470 && id <= 500) {
           Log_info("[APPLY-THREAD] Site {}: DONE APPLYING entry {}", site_id_, id);
@@ -1349,10 +1344,6 @@ void RaftServer::applyLogs() {
       if (next_instance && next_instance->log_.has_value()) {
         // @unsafe
         {
-        // RuleWitnessGC takes shared_ptr<Marshallable>;
-        // app_next_ takes Command — Command's auto-conversion +
-        // explicit unwrap meet at the boundary.
-        RuleWitnessGC(next_instance->log_);
         Log_info("[APPLY-LOGS] site={} applying index={}", site_id_, id);
         app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
         executeIndex = id;

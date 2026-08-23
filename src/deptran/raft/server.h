@@ -36,8 +36,7 @@
 //   std::stoull: [safe, (const string&) -> uint64_t],
 //   std::stoll: [safe, (const string&) -> int64_t],
 //   std::this_thread::sleep_for: [safe, (duration) -> void],
-//   JetpackRecoveryEntry: [safe, (...) -> void],
-//   RuleWitnessGC: [safe, (...) -> void]
+//   JetpackRecoveryEntry: [safe, (...) -> void]
 // }
 
 namespace janus {

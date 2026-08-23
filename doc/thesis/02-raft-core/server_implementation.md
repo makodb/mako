@@ -285,7 +285,6 @@ applyLogs()
   |     |  FOR id = executeIndex+1 TO commitIndex:
   |     |    instance = GetRaftInstance(id)
   |     |    if instance && instance->log_:
-  |     |      RuleWitnessGC(instance->log_)
   |     |      app_next_(id, instance->log_)    <-- feeds to Mako transaction layer
   |     |      executeIndex = id
   |     |    else: break
@@ -296,10 +295,6 @@ applyLogs()
   |
   +-- [6] GC: remove old commands where slot + 60000 < executeIndex
 ```
-
-`RuleWitnessGC()` remains as a mode-gated compatibility hook. It is inert in
-supported configurations now that the Rule alias and configs are retired, and
-stays with the generic Jetpack recovery stack pending its separate audit.
 
 ### Concurrency Design
 

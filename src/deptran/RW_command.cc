@@ -58,7 +58,6 @@ SimpleRWCommand::SimpleRWCommand(const Command& cmd) {
 SimpleRWCommand::SimpleRWCommand(const SimpleCommand& cmd) {
   std::map<int32_t, mdb::Value> kv_map = *(cmd.input.values_);
   cmd_id_ = make_pair(cmd.client_id_, cmd.cmd_id_in_client_);
-  rule_mode_on_and_is_original_path_only_command_ = cmd.rule_mode_on_and_is_original_path_only_command_;
   if (cmd.type_ == RW_BENCHMARK_R_TXN || cmd.type_ == RW_BENCHMARK_R_TXN_0) {
     type_ = RW_BENCHMARK_R_TXN;
     key_ = kv_map[0].get_i32();
@@ -195,26 +194,6 @@ double SimpleRWCommand::GetCommandMsTimeElaps(const Command& cmd) {
 key_t SimpleRWCommand::GetKey(const Command& cmd) {
   SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   return parsed_cmd.key_;
-}
-
-bool SimpleRWCommand::NeedRecordConflictInOriginalPath(const Command& cmd) {
-  rusty::Option<rusty::Arc<VecPieceData>> cmd_cast{};
-  if (cmd.kind_ == TpcCommitCommand::static_kind()) {
-    const auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-    verify(tpc_cmd.is_some());
-    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd.unwrap()->cmd_);
-  } else if (cmd.kind_ == VecPieceData::static_kind()) {
-    cmd_cast = marshallable_cast<VecPieceData>(cmd);
-  } else {
-    // dropped the
-    // `MarshallDeputy::CONTAINER_CMD` branch — CmdData no longer
-    // inherits Marshallable, so this kind is unreachable.
-    verify(0);
-  }
-  verify(cmd_cast.is_some());
-  shared_ptr<TxPieceData> vector0 =
-      *(cmd_cast.as_ref().unwrap()->sp_vec_piece_data_->begin());
-  return vector0->rule_mode_on_and_is_original_path_only_command_;
 }
 
 void KeyDistribution::Insert(key_t key) {

@@ -592,11 +592,6 @@ class TxLogServer {
 
   Witness witness_;
 
-  // Compatibility hooks for the retired Rule mode. Keep these with the
-  // generic Jetpack recovery stack until that subsystem is audited.
-  void OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd);
-  void RuleWitnessGC(const janus::Command& cmd);
-
   // @unsafe
   void JetpackRecoveryEntry();
 
