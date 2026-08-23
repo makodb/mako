@@ -85,8 +85,7 @@ function tpcc {
 		cpu=2
 	fi
 	exp_name=${prefix}_tpcc_${shards}
-	./run_all.py -g -hh config/aws_hosts.yml -cc config/client_closed.yml -cc /tmp/concurrent.yml -cc config/tpcc.yml -cc config/occ_paxos.yml -b tpcc -m troad:troad -c 1 -c 2 -c 4 -c 8 -c 16 -c 24 -c 28 -c 32 -s $shards -u $cpu -r 3 -d $duration $exp_name --allow-client-overlap
-#	./run_all.py -g -hh config/aws_hosts.yml -cc config/client_closed.yml -cc /tmp/concurrent.yml -cc config/tpcc.yml -cc config/occ_paxos.yml -b tpcc -m troad:troad -c 1 -c 2 -c 4 -c 8 -c 16 -c 24 -c 28 -c 32 -s $shards -u $cpu -r 3 -d $duration $exp_name --allow-client-overlap
+	./run_all.py -g -hh config/aws_hosts.yml -cc config/client_closed.yml -cc /tmp/concurrent.yml -cc config/tpcc.yml -cc config/occ_paxos.yml -b tpcc -m occ:multi_paxos -c 1 -c 2 -c 4 -c 8 -c 16 -c 24 -c 28 -c 32 -s $shards -u $cpu -r 3 -d $duration $exp_name --allow-client-overlap
 	new_experiment $exp_name
 }
 

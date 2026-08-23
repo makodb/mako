@@ -180,7 +180,7 @@ void TpcaWorkload::RegisterPrecedures() {
          mb[0] = cmd.input.at(TPCA_VAR_X).get_blob();
 
          r = tx.Query(tx.GetTable(TPCA_CUSTOMER), mb, TPCA_ROW_1);
-         tx.ReadColumn(r, 1, &buf, RANK_I); // TODO test for T-Road
+         tx.ReadColumn(r, 1, &buf, RANK_I);
          output[TPCA_VAR_OX] = buf;
 
          int n = tx.tid_; // making this non-commutative in order to test isolation
