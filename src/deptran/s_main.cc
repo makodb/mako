@@ -153,25 +153,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
       worker.site_info_ = const_cast<Config::SiteInfo*>(&config->SiteById(site_info.id));
       Log_info("start SetupBase");
       worker.SetupBase();
-      // register txn piece logic
-      Log_info("start RegisterWorkload");
-      worker.RegisterWorkload();
-      // populate table according to benchmarks
-      worker.PopTable();
-      Log_info("table popped for site {}", (int)worker.site_info_->id);
-#ifdef DB_CHECKSUM
-      worker.DbChecksum();
-#endif
       // start server service
-#ifdef RAFT_TEST_CORO
-      // In test mode, only initialize replication services
-      if (worker.rep_sched_)
-        worker.rep_sched_->svr_workers_g = &svr_workers_g;
-#else
-      worker.tx_sched_->svr_workers_g = &svr_workers_g;
-      if (worker.rep_sched_)
-        worker.rep_sched_->svr_workers_g = &svr_workers_g;
-#endif
       worker.SetupService();
       Log_info("start communication for site {}", (int)worker.site_info_->id);
       worker.SetupCommo();
@@ -646,9 +628,6 @@ int main(int argc, char *argv[]) {
   }
   Log_info("Total throughtput is {:.2f}",
            static_cast<double>(total_throughput));
-#ifdef DB_CHECKSUM
-  sleep(90); // hopefully servers can finish hanging RPCs in 90 seconds.
-#endif
   sleep(10); // hopefully servers can finish reset of work in 10 seconds
 
   for (auto& worker : svr_workers_g) {
@@ -661,29 +640,6 @@ int main(int argc, char *argv[]) {
     ft.join();
   }
 
-#ifdef DB_CHECKSUM
-  map<parid_t, vector<int>> checksum_results = {};
-  for (auto& worker : svr_workers_g) {
-    auto p = worker.site_info_->partition_id_;
-    int sum = worker.DbChecksum();
-    checksum_results[p].push_back(sum);
-    Log_info("partition {} checksum {}", p, sum);
-  }
-  bool checksum_fail = false;
-  for (auto& pair : checksum_results) {
-    auto& vec = pair.second;
-    for (auto checksum: vec) {
-      if (checksum != vec[0]) {
-        checksum_fail = true;
-      }
-    }
-  }
-  if (checksum_fail) {
-    Log_warn("checksum match failed...perhaps wait longer before checksum?");
-  } else {
-    Log_info("checksum success");
-  }
-#endif
 #ifdef CPU_PROFILE
   // stop profiling
   ProfilerStop();

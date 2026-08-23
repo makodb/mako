@@ -7,7 +7,6 @@
 #include "procedure.h"
 #include "command_marshaler.h"
 #include "benchmark_control_rpc.h"
-#include "server_worker.h"
 #include "concurrentqueue.h"
 #include "sys/time.h"
 #ifdef CPU_PROFILE
