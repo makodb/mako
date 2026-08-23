@@ -958,7 +958,6 @@ set(DEPTRAN_CORE_SRC
     src/deptran/procedure.cc
     src/deptran/raft/application_log.cc
     src/deptran/raft/commo.cc
-    src/deptran/raft/coordinator.cc
     src/deptran/raft/frame.cc
     src/deptran/raft/raft_worker.cc
     src/deptran/raft/replicated_db.cc

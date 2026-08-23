@@ -9,47 +9,14 @@
 
 namespace janus {
 
-REG_FRAME(MODE_MULTI_PAXOS, vector<string>({"paxos"}), MultiPaxosFrame);
-
-/*template<typename D>
-struct automatic_register {
- private:
-  struct exec_register {
-    exec_register() {
-      D::do_it();
-    }
-  };
-  // will force instantiation of definition of static member
-  template<exec_register&> struct ref_it { };
-
-  static exec_register register_object;
-  static ref_it<register_object> referrer;
-};
-
-template<typename D> typename automatic_register<D>::exec_register
-    automatic_register<D>::register_object;
-
-struct foo : automatic_register<foo> {
-  static void do_it() {
-    REG_FRAME(MODE_MULTI_PAXOS, vector<string>({"paxos"}), MultiPaxosFrame);
-  }
-};*/
-
-MultiPaxosFrame::MultiPaxosFrame(int mode) : Frame(mode) {
-}
-
-Coordinator *MultiPaxosFrame::CreateCoordinator(cooid_t coo_id,
-                                                Config *config,
-                                                int benchmark,
-                                                rusty::Option<rusty::Arc<ClientStatus>> client_status,
-                                                uint32_t id,
-                                                shared_ptr<TxnRegistry> txn_reg) {
+Coordinator *MultiPaxosFrame::CreateCoordinator(cooid_t coo_id) {
+  auto *config = Config::GetConfig();
   verify(config != nullptr);
   CoordinatorMultiPaxos *coo;
   coo = new CoordinatorMultiPaxos(coo_id,
-                                  benchmark,
-                                  std::move(client_status),
-                                  id);
+                                  0,
+                                  rusty::None,
+                                  0);
   coo->frame_ = this;
   verify(commo_ != nullptr);
   coo->commo_ = commo_;
@@ -62,10 +29,11 @@ Coordinator *MultiPaxosFrame::CreateCoordinator(cooid_t coo_id,
 }
 
 
-Coordinator *MultiPaxosFrame::CreateBulkCoordinator(Config *config, int benchmark) {
+Coordinator *MultiPaxosFrame::CreateBulkCoordinator() {
+    auto *config = Config::GetConfig();
     verify(config != nullptr);
     CoordinatorMultiPaxos *coo;
-    coo = new BulkCoordinatorMultiPaxos(0, benchmark, rusty::None, 0);
+    coo = new BulkCoordinatorMultiPaxos(0, 0, rusty::None, 0);
     coo->frame_ = this;
     verify(commo_ != nullptr);
     coo->commo_ = commo_;
@@ -85,7 +53,8 @@ TxLogServer *MultiPaxosFrame::CreateScheduler() {
   return sch;
 }
 
-Communicator *MultiPaxosFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll) {
+Communicator *MultiPaxosFrame::CreateCommo(
+    rusty::Option<rusty::Arc<rrr::PollThread>> poll) {
   // We only have 1 instance of MultiPaxosFrame object that is returned from
   // GetFrame method. MultiPaxosCommo currently seems ok to share among the
   // clients of this method.
@@ -95,7 +64,7 @@ Communicator *MultiPaxosFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>>
   return commo_;
 }
 
-vector<rrr::ServiceProxy>
+std::vector<rrr::ServiceProxy>
 MultiPaxosFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
                                    rusty::Arc<rrr::PollThread> poll_thread_worker) {

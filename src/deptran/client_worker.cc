@@ -16,9 +16,11 @@
 #endif
 
 #include "frame.h"
+#include "paxos/frame.h"
 #include "procedure.h"
 #include "workload.h"
 #include "coordinator.h"
+#include "benchmark_registry.h"
 #include "benchmark_control_rpc.h"
 
 import std;
@@ -157,16 +159,9 @@ Coordinator* ClientWorker::CreateFailCtrlCoordinator() {
   cooid_t coo_id = cli_id_;
   uint64_t offset_id = 1000000; // TODO temp value
   coo_id = (coo_id << 16) + offset_id;
-  // Clone Arc<ClientStatus> for coordinator to use for statistics
-  auto client_status = client_status_.is_some()
-      ? rusty::Some(client_status_.as_ref().unwrap().clone())
-      : rusty::None;
-  auto coo = frame_->CreateCoordinator(coo_id,
-                                       config_,
-                                       benchmark,
-                                       std::move(client_status),
-                                       id,
-                                       txn_reg_);
+  auto* paxos_frame = dynamic_cast<MultiPaxosFrame*>(frame_);
+  verify(paxos_frame != nullptr);
+  auto coo = paxos_frame->CreateCoordinator(coo_id);
   coo->frame_ = frame_;
   coo->loc_id_ = my_site_.locale_id;
   coo->commo_ = commo_;
@@ -182,16 +177,9 @@ Coordinator* ClientWorker::CreateFailCtrlCoordinator() {
 Coordinator* ClientWorker::CreateCoordinator(uint16_t offset_id) {
   cooid_t coo_id = cli_id_;
   coo_id = (coo_id << 16) + offset_id;
-  // Clone Arc<ClientStatus> for coordinator to use for statistics
-  auto client_status = client_status_.is_some()
-      ? rusty::Some(client_status_.as_ref().unwrap().clone())
-      : rusty::None;
-  auto coo = frame_->CreateCoordinator(coo_id,
-                                       config_,
-                                       benchmark,
-                                       std::move(client_status),
-                                       id,
-                                       txn_reg_);
+  auto* paxos_frame = dynamic_cast<MultiPaxosFrame*>(frame_);
+  verify(paxos_frame != nullptr);
+  auto coo = paxos_frame->CreateCoordinator(coo_id);
   coo->frame_ = frame_;
   coo->loc_id_ = my_site_.locale_id;
   coo->commo_ = commo_;
@@ -577,9 +565,12 @@ ClientWorker::ClientWorker(
            site_info.host.c_str(), site_info.port, site_info.n_thread, site_info.partition_id_);
   // Merged: Use mako-dev's Option<Arc<PollThread>> pattern
   poll_thread_worker_ = poll_thread_worker.is_some() ? std::move(poll_thread_worker) : rusty::Some(PollThread::create());
-  // Jetpack: 2-param GetFrame (needs replica_proto_ for Raft)
-  frame_ = Frame::GetFrame(config->tx_proto_, config->replica_proto_);
-  tx_generator_ = frame_->CreateTxGenerator();
+  frame_ = Frame::GetFrame(config->replica_proto_);
+  frame_->site_info_ = &my_site_;
+  EnsureBenchmarkRegistryInitialized();
+  tx_generator_ = BenchmarkRegistry::Instance().CreateTxGenerator(
+      benchmark, config_);
+  verify(tx_generator_ != nullptr);
   config->get_all_site_addr(servers_);
   num_txn.store(0);
   success.store(0);

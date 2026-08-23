@@ -643,7 +643,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
   }
 
   // Create new RaftFrame
-  RaftFrame* frame = new RaftFrame(MODE_RAFT);
+  RaftFrame* frame = new RaftFrame();
   frame->site_info_ = site_info;
 
   // Create new RaftServer (persistence will be loaded when EnsureSetup is called)

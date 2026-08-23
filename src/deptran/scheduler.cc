@@ -21,70 +21,6 @@ import std;
 
 namespace janus {
 
-shared_ptr<Tx> TxLogServer::CreateTx(epoch_t epoch, txnid_t tid, bool
-read_only) {
-  Log_debug("create tid {}", tid);
-  verify(dtxns_.find(tid) == dtxns_.end());
-  if (epoch == 0) {
-    epoch = epoch_mgr_.curr_epoch_;
-  }
-  verify(epoch_mgr_.IsActive(epoch));
-  auto dtxn = frame_->CreateTx(epoch, tid, read_only, this);
-  if (dtxn != nullptr) {
-    dtxns_[tid] = dtxn;
-    // removed
-    // `dtxn->recorder_ = this->recorder_;` — both fields gone.
-    dtxn->txn_reg_ = txn_reg_;
-    verify(txn_reg_ != nullptr);
-    verify(dtxn->tid_ == tid);
-  } else {
-    verify(0);
-  }
-  if (epoch_enabled_) {
-    epoch_mgr_.AddToEpoch(epoch, tid);
-    TriggerUpgradeEpoch();
-  }
-  dtxn->sched_ = this;
-  return dtxn;
-}
-
-shared_ptr<Tx> TxLogServer::CreateTx(txnid_t tx_id, bool ro) {
-  Log_debug("create tid {:x}", tx_id);
-  verify(dtxns_.find(tx_id) == dtxns_.end());
-  auto dtxn = frame_->CreateTx(epoch_mgr_.curr_epoch_, tx_id, ro, this);
-  if (dtxn != nullptr) {
-    dtxns_[tx_id] = dtxn;
-    // removed
-    // `dtxn->recorder_ = this->recorder_;` — both fields gone.
-    verify(txn_reg_);
-    dtxn->txn_reg_ = txn_reg_;
-    verify(dtxn->tid_ == tx_id);
-    if (epoch_enabled_) {
-      epoch_mgr_.AddToCurrent(tx_id);
-      TriggerUpgradeEpoch();
-    }
-    dtxn->sched_ = this;
-  } else {
-    // for multi-paxos this would happen.
-    // verify(0);
-  }
-  return dtxn;
-}
-
-shared_ptr<Tx> TxLogServer::GetOrCreateTx(txnid_t tid, bool ro) {
-  //Log_info("The current server is {}", site_id_);
-  shared_ptr<Tx> ret = nullptr;
-  auto it = dtxns_.find(tid);
-  if (it == dtxns_.end()) {
-    ret = CreateTx(tid, ro);
-  } else {
-    ret = it->second;
-  }
-  //Log_info("Tx is {}", tid);
-  verify(ret != nullptr);
-  verify(ret->tid_ == tid);
-  return ret;
-}
 void TxLogServer::DestroyTx(i64 tid) {
   Log_debug("destroy tid {:x}", tid);
   auto it = dtxns_.find(tid);
@@ -160,30 +96,6 @@ void TxLogServer::SetRecoveryMode(bool recovering) {
              site_id_, transactions_recovered_);
   }
 }
-
-Coordinator *TxLogServer::CreateRepCoord(const i64& dep_id) {
-  Coordinator *coord;
-  static cooid_t cid = 0;
-  int32_t benchmark = 0;
-  static id_t id = 0;
-  verify(rep_frame_ != nullptr);
-  coord = rep_frame_->CreateCoordinator(cid++,
-                                        Config::GetConfig(),
-                                        benchmark,
-                                        rusty::None,
-                                        id++,
-                                        txn_reg_);
-  coord->frame_ = rep_frame_;
-  coord->dep_id_ = dep_id;
-  coord->par_id_ = partition_id_;
-  //Log_info("Partition id set: {}", partition_id_);
-  coord->loc_id_ = this->loc_id_;
-  // removed a second
-  // `coord->dep_id_ = dep_id;` immediately below this line — it was
-  // a duplicate write of the same value already done above.
-  return coord;
-}
-
 
 TxLogServer::~TxLogServer() {
   auto it = mdb_txns_.begin();

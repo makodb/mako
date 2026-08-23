@@ -4,6 +4,7 @@
 
 #include "paxos/server.h"
 #include "paxos/commo.h"
+#include "paxos/frame.h"
 #include "rrr/misc/serializable.hpp"
 
 import std;
@@ -31,7 +32,9 @@ static int volatile x9  = rrr::SerializableRegistry::reg<PaxosPrepCmd>(PaxosPrep
 
 void PaxosWorker::SetupBase() {
   auto config = Config::GetConfig();
-  rep_frame_ = Frame::GetFrame(config->replica_proto_);
+  rep_frame_ = dynamic_cast<MultiPaxosFrame*>(
+      Frame::GetFrame(config->replica_proto_));
+  verify(rep_frame_ != nullptr);
   rep_frame_->site_info_ = site_info_;
   rep_sched_ = rep_frame_->CreateScheduler();
   rep_sched_->loc_id_ = site_info_->locale_id;
@@ -252,7 +255,7 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
 }
 
 inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
-    auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0));
+    auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator());
     coord.get()->par_id_ = site_info_->partition_id_;
     coord.get()->loc_id_ = site_info_->locale_id;
 
@@ -272,7 +275,7 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
 
 int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   ballot_t received_epoch = -1;
-  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+  auto coord = rep_frame_->CreateBulkCoordinator();
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   bool done = false;
@@ -495,14 +498,8 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { /
 
 inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
   static cooid_t cid{1};
-  static id_t id{1};
   verify(rep_frame_ != nullptr);
-  auto coord = rep_frame_->CreateCoordinator(cid++,
-                                             Config::GetConfig(),
-                                             0,
-                                             rusty::None,
-                                             id++,
-                                             nullptr);
+  auto coord = rep_frame_->CreateCoordinator(cid++);
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.

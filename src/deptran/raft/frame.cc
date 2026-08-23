@@ -1,7 +1,6 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
-#include "coordinator.h"
 #include "server.h"
 #include "service.h"
 #include "commo.h"
@@ -27,17 +26,6 @@ import rusty;
 // }
 
 namespace janus {
-
-REG_FRAME(MODE_RAFT, vector<string>({"raft"}), RaftFrame);
-
-Frame* CreateRaftFrameBuiltin(int mode) {
-  return new RaftFrame(mode);
-}
-
-// @safe
-RaftFrame::RaftFrame(int mode) : Frame(mode) {
-
-}
 
 // @safe - Properly cleans up owned resources via Option<Box<T>>
 RaftFrame::~RaftFrame() {
@@ -77,35 +65,6 @@ bool RaftFrame::IsRaftLabTestConfig() {
 #endif
 
 
-// @unsafe - factory method uses new to create raw pointer (caller takes ownership)
-Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
-                                                Config *config,
-                                                int benchmark,
-                                                rusty::Option<rusty::Arc<ClientStatus>> client_status,
-                                                uint32_t id,
-                                                shared_ptr<TxnRegistry> txn_reg) {
-  verify(config != nullptr);
-  CoordinatorRaft *coo;
-  coo = new CoordinatorRaft(coo_id,
-                                  benchmark,
-                                  std::move(client_status),
-                                  id);
-  coo->frame_ = this;
-  verify(commo_ != nullptr);
-  coo->commo_ = commo_.get();
-  /* TODO: remove when have a class for common data */
-  verify(svr_ != nullptr);
-  coo->svr_ = this->svr_.get();
-  coo->slot_hint_ = slot_hint_;  // Safe: Arc copy shares ownership
-  coo->slot_id_ = slot_hint_->get();
-  slot_hint_->set(slot_hint_->get() + 1);
-  coo->n_replica_ = config->GetPartitionSize(site_info_->partition_id_);
-  coo->loc_id_ = this->site_info_->locale_id;
-  verify(coo->n_replica_ != 0); // TODO
-  Log_debug("create new raft coord, coo_id: {}", (int) coo->coo_id_);
-  return coo;
-}
-
 // @unsafe - returns raw pointer to owned member (caller does not take ownership), calls Log_error/Log_debug
 TxLogServer *RaftFrame::CreateScheduler() {
   if(svr_ == nullptr)
@@ -137,7 +96,8 @@ TxLogServer *RaftFrame::CreateScheduler() {
 }
 
 // @unsafe - returns raw pointer to owned member, external calls marked @external [safe]
-Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
+Communicator *RaftFrame::CreateCommo(
+    rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker) {
   // We only have 1 instance of RaftFrame object that is returned from
   // GetFrame method. RaftCommo currently seems ok to share among the
   // clients of this method.
@@ -231,7 +191,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
 }
 
 // @unsafe - external calls marked @external [safe]
-vector<rrr::ServiceProxy>
+std::vector<rrr::ServiceProxy>
 RaftFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
                                    rusty::Arc<rrr::PollThread> poll_thread_worker) {

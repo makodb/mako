@@ -469,14 +469,7 @@ class TxLogServer {
   virtual void Execute(Tx &txn_box,
                        innid_t inn_id);
 
-  Coordinator *CreateRepCoord(const i64& dep_id=0);
   virtual shared_ptr<Tx> GetTx(txnid_t tx_id);
-  virtual shared_ptr<Tx> CreateTx(txnid_t tx_id,
-                                  bool ro = false);
-  virtual shared_ptr<Tx> CreateTx(epoch_t epoch,
-                                  txnid_t txn_id,
-                                  bool read_only = false);
-  virtual shared_ptr<Tx> GetOrCreateTx(txnid_t tid, bool ro = false);
   // @unsafe - Manages transaction lifecycle, calls external methods
   void DestroyTx(i64 tid);
 

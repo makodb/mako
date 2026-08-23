@@ -16,6 +16,8 @@
 
 namespace janus {
 
+class MultiPaxosFrame;
+
 	typedef std::chrono::time_point<std::chrono::high_resolution_clock> timepoint;
 
   class BulkPaxosCmd;
@@ -367,7 +369,7 @@ public:
 
   Config::SiteInfo* site_info_ = nullptr;
   std::queue<std::tuple<int, int, int, int, const char *>> un_replay_logs_ ;  // timestamp, slot_id, status, len, log
-  Frame* rep_frame_ = nullptr;
+  MultiPaxosFrame* rep_frame_ = nullptr;
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
   std::recursive_mutex mtx_worker_submit{};
