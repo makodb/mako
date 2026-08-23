@@ -134,68 +134,68 @@ struct AppendEntriesReq {
 };
 
 struct AppendEntriesReply {
-  uint64_t follower_append_ok{0};
-  uint64_t follower_current_term{0};
-  uint64_t follower_last_log_index{0};
-  uint64_t follower_ack_type{0};
+  uint64_t follower_append_ok;
+  uint64_t follower_current_term;
+  uint64_t follower_last_log_index;
+  uint64_t follower_ack_type;
 };
 
 // ---------------------------------------------------------------------------
 // EmptyAppendEntries (heartbeat / election trigger)
 // ---------------------------------------------------------------------------
 struct EmptyAppendEntriesReq {
-  uint64_t slot{0};
-  ballot_t ballot{0};
-  uint64_t leader_current_term{0};
-  siteid_t leader_site_id{0};
-  uint64_t leader_prev_log_index{0};
-  uint64_t leader_prev_log_term{0};
-  uint64_t leader_commit_index{0};
-  bool     trigger_election_now{false};
+  uint64_t slot;
+  int64_t  ballot;
+  uint64_t leader_current_term;
+  uint16_t leader_site_id;
+  uint64_t leader_prev_log_index;
+  uint64_t leader_prev_log_term;
+  uint64_t leader_commit_index;
+  bool     trigger_election_now;
 };
 
 struct EmptyAppendEntriesReply {
-  uint64_t follower_append_ok{0};
-  uint64_t follower_current_term{0};
-  uint64_t follower_last_log_index{0};
-  uint64_t follower_ack_type{0};
+  uint64_t follower_append_ok;
+  uint64_t follower_current_term;
+  uint64_t follower_last_log_index;
+  uint64_t follower_ack_type;
 };
 
 // ---------------------------------------------------------------------------
 // AppendEntriesDurable — follower acks that its log has been fsync'd.
 // ---------------------------------------------------------------------------
 struct AppendEntriesDurableReq {
-  ballot_t term{0};
-  siteid_t follower_id{0};
-  uint64_t last_log_index{0};
+  int64_t  term;
+  uint16_t follower_id;
+  uint64_t last_log_index;
 };
 
 struct AppendEntriesDurableReply {
-  bool acknowledged{false};
+  bool acknowledged;
 };
 
 // ---------------------------------------------------------------------------
 // TimeoutNow — leader asks a follower to immediately start election
 // ---------------------------------------------------------------------------
 struct TimeoutNowReq {
-  uint64_t leader_term{0};
-  siteid_t leader_site_id{0};
+  uint64_t leader_term;
+  uint16_t leader_site_id;
 };
 
 struct TimeoutNowReply {
-  uint64_t follower_term{0};
-  bool     success{false};
+  uint64_t follower_term;
+  bool     success;
 };
 
 // ---------------------------------------------------------------------------
 // NotifyRestart — after crash recovery, tell peers to reconnect.
 // ---------------------------------------------------------------------------
 struct NotifyRestartReq {
-  siteid_t restarted_site_id{0};
+  uint16_t restarted_site_id;
 };
 
 struct NotifyRestartReply {
-  bool acknowledged{false};
+  bool acknowledged;
 };
 
 // ---------------------------------------------------------------------------
@@ -210,7 +210,7 @@ struct InstallSnapshotReq {
 };
 
 struct InstallSnapshotReply {
-  uint64_t term_out{0};
+  uint64_t term_out;
 };
 
 // ---------------------------------------------------------------------------
@@ -229,8 +229,8 @@ struct AddServerReply {
 };
 
 struct RemoveServerReq {
-  uint64_t term{0};
-  uint64_t server_id{0};
+  uint64_t term;
+  uint64_t server_id;
 };
 
 struct RemoveServerReply {
