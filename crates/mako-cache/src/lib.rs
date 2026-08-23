@@ -123,7 +123,7 @@ pub enum Error {
     Runtime(RuntimeError),
     /// The runtime-handle mutex was poisoned.
     RuntimeLockPoisoned,
-    /// Rust could not reserve ownership for a mutation before native staging.
+    /// Rust could not reserve owned transaction or recovery storage.
     AllocationFailed,
     /// The selected native feature profile is unavailable.
     MissingReadMyWrites,
@@ -185,7 +185,7 @@ impl fmt::Display for Error {
             Self::RuntimeStart(error) => write!(f, "cannot start write-back worker: {error}"),
             Self::Runtime(error) => write!(f, "{error}"),
             Self::RuntimeLockPoisoned => write!(f, "the cache runtime lock is poisoned"),
-            Self::AllocationFailed => write!(f, "could not allocate an owned transaction mutation"),
+            Self::AllocationFailed => write!(f, "could not allocate owned cache state"),
             Self::MissingReadMyWrites => {
                 write!(
                     f,
@@ -490,7 +490,15 @@ pub struct Transaction<'db, B: Blobs + 'static> {
     cache: &'db Cache<B>,
     table: mako_local::Table<'db>,
     native: Option<mako_local::Transaction<'db>>,
-    journal: Vec<Mutation>,
+    journal: Vec<JournalEntry>,
+}
+
+/// One canonical final mutation and the base-state fact needed to compose a
+/// later remove. Keeping these fields together makes it impossible for their
+/// indices or lifetimes to diverge.
+struct JournalEntry {
+    mutation: Mutation,
+    initially_present: bool,
 }
 
 impl<'db, B: Blobs + 'static> Transaction<'db, B> {
@@ -509,35 +517,25 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
     /// Upsert a key, returning whether it was newly created.
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<bool, Error> {
         check_native_lengths(key, Some(value))?;
-        self.journal
-            .try_reserve(1)
-            .map_err(|_| Error::AllocationFailed)?;
-        let mutation = Mutation::Put {
-            table_id: DEFAULT_TABLE_ID,
-            key: copy_bytes(key)?,
-            value: copy_bytes(value)?,
-        };
+        let journal_index = self.journal_index(key);
+        let owned_key = self.prepare_journal_key(journal_index, key)?;
+        let owned_value = copy_bytes(value)?;
         let table = self.table;
         let created = self.native_mut().put(&table, key, value)?;
-        self.journal.push(mutation);
+        self.record_put(journal_index, owned_key, owned_value, !created);
         Ok(created)
     }
 
     /// Insert a key only when absent, returning whether it was staged.
     pub fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<bool, Error> {
         check_native_lengths(key, Some(value))?;
-        self.journal
-            .try_reserve(1)
-            .map_err(|_| Error::AllocationFailed)?;
-        let mutation = Mutation::Put {
-            table_id: DEFAULT_TABLE_ID,
-            key: copy_bytes(key)?,
-            value: copy_bytes(value)?,
-        };
+        let journal_index = self.journal_index(key);
+        let owned_key = self.prepare_journal_key(journal_index, key)?;
+        let owned_value = copy_bytes(value)?;
         let table = self.table;
         let inserted = self.native_mut().insert(&table, key, value)?;
         if inserted {
-            self.journal.push(mutation);
+            self.record_put(journal_index, owned_key, owned_value, false);
         }
         Ok(inserted)
     }
@@ -545,19 +543,90 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
     /// Remove a key, returning whether a live value existed.
     pub fn remove(&mut self, key: &[u8]) -> Result<bool, Error> {
         check_native_lengths(key, None)?;
-        self.journal
-            .try_reserve(1)
-            .map_err(|_| Error::AllocationFailed)?;
-        let mutation = Mutation::Delete {
-            table_id: DEFAULT_TABLE_ID,
-            key: copy_bytes(key)?,
-        };
+        let journal_index = self.journal_index(key);
+        let owned_key = self.prepare_journal_key(journal_index, key)?;
         let table = self.table;
         let existed = self.native_mut().remove(&table, key)?;
         if existed {
-            self.journal.push(mutation);
+            self.record_remove(journal_index, owned_key);
         }
         Ok(existed)
+    }
+
+    fn journal_index(&self, key: &[u8]) -> Option<usize> {
+        self.journal
+            .iter()
+            .position(|entry| mutation_key(&entry.mutation) == key)
+    }
+
+    /// Reserve and copy everything a new journal entry would need before the
+    /// corresponding native mutation is staged. Existing entries reuse their
+    /// owned key, so only replacement values need allocation.
+    fn prepare_journal_key(
+        &mut self,
+        journal_index: Option<usize>,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, Error> {
+        if journal_index.is_some() {
+            return Ok(None);
+        }
+        self.journal
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        Ok(Some(copy_bytes(key)?))
+    }
+
+    fn record_put(
+        &mut self,
+        journal_index: Option<usize>,
+        owned_key: Option<Vec<u8>>,
+        value: Vec<u8>,
+        initially_present: bool,
+    ) {
+        match journal_index {
+            Some(index) => {
+                let key = take_mutation_key(&mut self.journal[index].mutation);
+                self.journal[index].mutation = Mutation::Put {
+                    table_id: DEFAULT_TABLE_ID,
+                    key,
+                    value,
+                };
+            }
+            None => {
+                self.journal.push(JournalEntry {
+                    mutation: Mutation::Put {
+                        table_id: DEFAULT_TABLE_ID,
+                        key: owned_key.expect("new journal entry has a prepared key"),
+                        value,
+                    },
+                    initially_present,
+                });
+            }
+        }
+    }
+
+    fn record_remove(&mut self, journal_index: Option<usize>, owned_key: Option<Vec<u8>>) {
+        match journal_index {
+            Some(index) if self.journal[index].initially_present => {
+                let key = take_mutation_key(&mut self.journal[index].mutation);
+                self.journal[index].mutation = Mutation::Delete {
+                    table_id: DEFAULT_TABLE_ID,
+                    key,
+                };
+            }
+            Some(index) => {
+                self.journal.remove(index);
+            }
+            None => {
+                self.journal.push(JournalEntry {
+                    mutation: Mutation::Delete {
+                        table_id: DEFAULT_TABLE_ID,
+                        key: owned_key.expect("new journal entry has a prepared key"),
+                    },
+                    initially_present: true,
+                });
+            }
+        }
     }
 
     /// Validate/install in Silo, then publish the preallocated durability
@@ -584,10 +653,8 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 
         // Preparation may allocate or wait for bounded capacity, so it must
         // finish before native Silo takes write locks.
-        let mut permit = self
-            .cache
-            .writeback
-            .reserve(std::mem::take(&mut self.journal))?;
+        let mutations = extract_mutations(std::mem::take(&mut self.journal))?;
+        let mut permit = self.cache.writeback.reserve(mutations)?;
 
         // Writers share this fence and therefore still lock, validate, bind,
         // and install concurrently. It only excludes read-only acknowledgement
@@ -706,6 +773,27 @@ fn copy_bytes(bytes: &[u8]) -> Result<Vec<u8>, Error> {
         .map_err(|_| Error::AllocationFailed)?;
     owned.extend_from_slice(bytes);
     Ok(owned)
+}
+
+fn mutation_key(mutation: &Mutation) -> &[u8] {
+    match mutation {
+        Mutation::Put { key, .. } | Mutation::Delete { key, .. } => key,
+    }
+}
+
+fn take_mutation_key(mutation: &mut Mutation) -> Vec<u8> {
+    match mutation {
+        Mutation::Put { key, .. } | Mutation::Delete { key, .. } => std::mem::take(key),
+    }
+}
+
+fn extract_mutations(journal: Vec<JournalEntry>) -> Result<Vec<Mutation>, Error> {
+    let mut mutations = Vec::new();
+    mutations
+        .try_reserve_exact(journal.len())
+        .map_err(|_| Error::AllocationFailed)?;
+    mutations.extend(journal.into_iter().map(|entry| entry.mutation));
+    Ok(mutations)
 }
 
 fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u64, Error> {

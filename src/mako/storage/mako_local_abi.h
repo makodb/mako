@@ -74,6 +74,8 @@ extern "C" {
 #define MAKO_LOCAL_BUSY 9
 #define MAKO_LOCAL_OUT_OF_MEMORY 10
 #define MAKO_LOCAL_INTERNAL 11 /* catchable C++ failure; assertions may abort */
+/* Retained at its assigned number for old/no-RYW engines. Current RYW builds
+ * compose repeated same-key mutations and do not return this status. */
 #define MAKO_LOCAL_DUPLICATE_WRITE 12
 #define MAKO_LOCAL_TXN_TOO_LARGE 13
 #define MAKO_LOCAL_VALUE_TOO_LARGE 14
@@ -140,9 +142,11 @@ int mako_local_txn_begin(mako_local_db *db, mako_local_txn **out)
  * transaction budget aborts the transaction and returns terminal
  * MAKO_LOCAL_TXN_TOO_LARGE.
  *
- * Until MassTrans write composition is repaired, this draft rejects a
- * second staged mutation of the same table/key with MAKO_LOCAL_DUPLICATE_WRITE.
- * The rejected call does not end the transaction. */
+ * Engines advertising MAKO_LOCAL_FEATURE_READ_MY_WRITES compose repeated
+ * mutations of the same table/key. A linked legacy/no-RYW build rejects the
+ * next mutation request with MAKO_LOCAL_DUPLICATE_WRITE; the rejection
+ * does not end the transaction. Every accepted operation is charged against
+ * the weighted budget, even when it targets an already-mutated key. */
 int mako_local_txn_get(mako_local_txn *txn, mako_local_table *table,
                        const uint8_t *key, size_t key_len,
                        uint8_t **value_out, size_t *value_len_out,

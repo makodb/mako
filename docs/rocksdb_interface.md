@@ -70,7 +70,7 @@ The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directo
 | `Put/Get/Delete` in txn | `txn->Put(cf, k, v)` | `table->Put(txn, k, v)` | Present; API shape flipped (Mako passes `void* txn` first) |
 | `GetForUpdate` | `txn->GetForUpdate(...)` | No equivalent | Silo OCC doesn't distinguish — every read is tracked implicitly |
 | Isolation level | Snapshot (default) or serializable | Always serializable | Silo is stricter |
-| Read-your-writes | Yes | Point reads with `STO_RMW=ON` on local single-version tables | The local ABI advertises point RYW; remote/MV participants, repeated same-key mutations, and transactional scan overlays remain gaps |
+| Read-your-writes | Yes | Point reads and repeated point mutations with `STO_RMW=ON` on local single-version tables | The local ABI advertises point RYW; remote/MV participants and transactional scan overlays remain gaps |
 | Commit | `txn->Commit()` returning `Status` | `db->commit_txn(txn)` returning `bool` | Aligned semantics; different signatures |
 | Rollback | `txn->Rollback()` | `db->abort_txn(txn)` | Aligned |
 | Retry on conflict | Caller loop | Caller loop | Aligned |

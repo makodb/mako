@@ -58,7 +58,7 @@ pub enum Error {
     OutOfMemory,
     /// A catchable C++ exception was contained at the boundary.
     Internal,
-    /// This engine build cannot safely compose two writes to one key yet.
+    /// The linked legacy/no-RYW engine cannot compose two writes to one key.
     DuplicateWrite,
     /// The transaction exceeded a native item or write-set limit and was aborted.
     TransactionTooLarge,
@@ -100,7 +100,7 @@ impl fmt::Display for Error {
             Self::Internal => write!(f, "the local ABI contained a C++ failure"),
             Self::DuplicateWrite => write!(
                 f,
-                "a transaction cannot mutate the same table/key twice in the draft ABI"
+                "the linked engine requires read-your-writes support to mutate one key twice"
             ),
             Self::TransactionTooLarge => {
                 write!(
@@ -516,7 +516,8 @@ impl<'db> Transaction<'db> {
         Ok(Some(result))
     }
 
-    /// Upsert `key`, returning `true` when it was newly created.
+    /// Upsert `key`, returning `true` when it was absent immediately before
+    /// this operation, including after an earlier same-transaction removal.
     pub fn put(&mut self, table: &Table<'db>, key: &[u8], value: &[u8]) -> Result<bool> {
         let mut created = 0u8;
         // SAFETY: input slices live through the call. C++ copies/encodes the
@@ -536,7 +537,8 @@ impl<'db> Transaction<'db> {
         Ok(created != 0)
     }
 
-    /// Insert only when absent, returning whether insertion was staged.
+    /// Insert only when absent in the transaction's current view, returning
+    /// whether insertion was staged.
     pub fn insert(&mut self, table: &Table<'db>, key: &[u8], value: &[u8]) -> Result<bool> {
         let mut inserted = 0u8;
         // SAFETY: same ownership contract as put.
@@ -555,7 +557,8 @@ impl<'db> Transaction<'db> {
         Ok(inserted != 0)
     }
 
-    /// Remove a key, returning whether a live value existed.
+    /// Remove a key, returning whether a live value existed in the
+    /// transaction's current view.
     pub fn remove(&mut self, table: &Table<'db>, key: &[u8]) -> Result<bool> {
         let mut existed = 0u8;
         // SAFETY: key slice lives through the call and existed is writable.

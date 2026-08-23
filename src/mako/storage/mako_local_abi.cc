@@ -171,7 +171,7 @@ uint64_t mako_local_feature_bits(void) noexcept {
 #if READ_MY_WRITES
   // The draft ABI currently exposes point operations only. MassTrans point
   // reads copy a transaction's staged value (or hide its staged deletion),
-  // while the facade continues to reject a second mutation of the same key.
+  // and local single-version transactions compose repeated mutations.
   features |= MAKO_LOCAL_FEATURE_READ_MY_WRITES;
 #endif
 #if STO_OPACITY
@@ -433,11 +433,13 @@ int mako_local_txn_put(mako_local_txn *txn, mako_local_table *table,
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
+#if !READ_MY_WRITES
     auto &mutations = txn->mutated_keys[table];
     const std::string mutation_key(
         key_len == 0 ? "" : reinterpret_cast<const char *>(key), key_len);
     if (mutations.contains(mutation_key))
       return MAKO_LOCAL_DUPLICATE_WRITE;
+#endif
     const int reserved = reserve_item_budget(txn, write_item_charge(key_len));
     if (reserved != MAKO_LOCAL_OK) return reserved;
     const std::string raw(
@@ -445,7 +447,9 @@ int mako_local_txn_put(mako_local_txn *txn, mako_local_table *table,
     txn->encoded_values.push_back(mako::Encode(raw));
     const bool existed = table->table->transPut(
         as_key(key, key_len), StringWrapper(txn->encoded_values.back()));
+#if !READ_MY_WRITES
     mutations.insert(mutation_key);
+#endif
     *created_out = existed ? 0 : 1;
     return MAKO_LOCAL_OK;
   } catch (const Transaction::Abort &) {
@@ -473,11 +477,13 @@ int mako_local_txn_insert(mako_local_txn *txn, mako_local_table *table,
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
+#if !READ_MY_WRITES
     auto &mutations = txn->mutated_keys[table];
     const std::string mutation_key(
         key_len == 0 ? "" : reinterpret_cast<const char *>(key), key_len);
     if (mutations.contains(mutation_key))
       return MAKO_LOCAL_DUPLICATE_WRITE;
+#endif
     const int reserved = reserve_item_budget(txn, write_item_charge(key_len));
     if (reserved != MAKO_LOCAL_OK) return reserved;
     const std::string raw(
@@ -485,7 +491,9 @@ int mako_local_txn_insert(mako_local_txn *txn, mako_local_table *table,
     txn->encoded_values.push_back(mako::Encode(raw));
     const bool existed = table->table->transInsert(
         as_key(key, key_len), StringWrapper(txn->encoded_values.back()));
+#if !READ_MY_WRITES
     if (!existed) mutations.insert(mutation_key);
+#endif
     *inserted_out = existed ? 0 : 1;
     return MAKO_LOCAL_OK;
   } catch (const Transaction::Abort &) {
@@ -510,15 +518,19 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
+#if !READ_MY_WRITES
     auto &mutations = txn->mutated_keys[table];
     const std::string mutation_key(
         key_len == 0 ? "" : reinterpret_cast<const char *>(key), key_len);
     if (mutations.contains(mutation_key))
       return MAKO_LOCAL_DUPLICATE_WRITE;
+#endif
     const int reserved = reserve_item_budget(txn, 1);
     if (reserved != MAKO_LOCAL_OK) return reserved;
     const bool existed = table->table->transDelete(as_key(key, key_len));
+#if !READ_MY_WRITES
     if (existed) mutations.insert(mutation_key);
+#endif
     *existed_out = existed ? 1 : 0;
     return MAKO_LOCAL_OK;
   } catch (const Transaction::Abort &) {

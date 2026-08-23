@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use mako_local::{
     advance_mako_timestamp_past, features, CommitDisposition, Error, LocalDb, MakoTimestamp,
-    MAX_MAKO_TIMESTAMP,
+    MAX_MAKO_TIMESTAMP, TRANSACTION_ITEM_BUDGET,
 };
 
 #[test]
@@ -338,9 +338,172 @@ fn insert_remove_and_nested_begin_have_typed_results() {
 }
 
 #[test]
-fn duplicate_writes_are_typed_and_leave_the_first_write_intact() {
+fn every_same_key_mutation_pair_composes_in_transaction_order() {
+    if !features().unwrap().read_my_writes() {
+        return;
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Mutation {
+        Put,
+        Insert,
+        Remove,
+    }
+
     let db = LocalDb::open().unwrap();
-    let table = db.open_table("rust_duplicate", 20_007).unwrap();
+    let table = db.open_table("rust_same_key_pairs", 20_007).unwrap();
+    let mutations = [Mutation::Put, Mutation::Insert, Mutation::Remove];
+    let mut sequence = 0usize;
+
+    for initially_present in [false, true] {
+        for first in mutations {
+            for second in mutations {
+                let key = format!("same-key-pair-{sequence}").into_bytes();
+                sequence += 1;
+
+                if initially_present {
+                    let mut seed = db.transaction().unwrap();
+                    assert!(seed.put(&table, &key, b"seed").unwrap());
+                    seed.commit().unwrap();
+                }
+
+                let mut expected = initially_present.then(|| b"seed".to_vec());
+                let mut tx = db.transaction().unwrap();
+                for (mutation, value) in [(first, &b"first"[..]), (second, &b"second"[..])] {
+                    let was_present = expected.is_some();
+                    let changed = match mutation {
+                        Mutation::Put => {
+                            let changed = tx.put(&table, &key, value).unwrap();
+                            expected = Some(value.to_vec());
+                            changed
+                        }
+                        Mutation::Insert => {
+                            let changed = tx.insert(&table, &key, value).unwrap();
+                            if !was_present {
+                                expected = Some(value.to_vec());
+                            }
+                            changed
+                        }
+                        Mutation::Remove => {
+                            let changed = tx.remove(&table, &key).unwrap();
+                            expected = None;
+                            changed
+                        }
+                    };
+                    let expected_changed = match mutation {
+                        Mutation::Put | Mutation::Insert => !was_present,
+                        Mutation::Remove => was_present,
+                    };
+                    assert_eq!(
+                        changed, expected_changed,
+                        "initially_present={initially_present}, first={first:?}, second={second:?}, operation={mutation:?}"
+                    );
+                    assert_eq!(
+                        tx.get(&table, &key).unwrap(),
+                        expected,
+                        "initially_present={initially_present}, first={first:?}, second={second:?}, operation={mutation:?}"
+                    );
+                }
+                tx.commit().unwrap();
+
+                let mut verify = db.transaction().unwrap();
+                assert_eq!(verify.get(&table, &key).unwrap(), expected);
+                verify.commit().unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn same_key_growth_delete_reinsert_chain_commits_and_aborts() {
+    if !features().unwrap().read_my_writes() {
+        return;
+    }
+
+    let db = LocalDb::open().unwrap();
+    let table = db.open_table("rust_same_key_chain", 20_015).unwrap();
+    let medium = vec![b'm'; 4 * 1024];
+    let large = vec![b'l'; 32 * 1024];
+
+    let mut seed = db.transaction().unwrap();
+    assert!(seed.put(&table, b"key", b"seed").unwrap());
+    seed.commit().unwrap();
+
+    let mut abort = db.transaction().unwrap();
+    assert!(!abort.put(&table, b"key", b"short").unwrap());
+    assert!(!abort.put(&table, b"key", &medium).unwrap());
+    assert_eq!(abort.get(&table, b"key").unwrap(), Some(medium));
+    assert!(!abort.put(&table, b"key", &large).unwrap());
+    assert_eq!(abort.get(&table, b"key").unwrap(), Some(large.clone()));
+    assert!(abort.remove(&table, b"key").unwrap());
+    assert_eq!(abort.get(&table, b"key").unwrap(), None);
+    assert!(abort.insert(&table, b"key", b"final\0\xff").unwrap());
+    assert_eq!(
+        abort.get(&table, b"key").unwrap().as_deref(),
+        Some(&b"final\0\xff"[..])
+    );
+    abort.abort().unwrap();
+
+    let mut after_abort = db.transaction().unwrap();
+    assert_eq!(
+        after_abort.get(&table, b"key").unwrap().as_deref(),
+        Some(&b"seed"[..])
+    );
+    after_abort.commit().unwrap();
+
+    let mut commit = db.transaction().unwrap();
+    assert!(commit.remove(&table, b"key").unwrap());
+    assert!(commit.put(&table, b"key", b"recreated").unwrap());
+    assert!(!commit.insert(&table, b"key", b"ignored").unwrap());
+    assert!(!commit.put(&table, b"key", &large).unwrap());
+    assert_eq!(commit.get(&table, b"key").unwrap(), Some(large.clone()));
+    commit.commit().unwrap();
+
+    let mut verify = db.transaction().unwrap();
+    assert_eq!(verify.get(&table, b"key").unwrap(), Some(large));
+    verify.commit().unwrap();
+}
+
+#[test]
+fn repeated_same_key_writes_remain_charged_to_the_item_budget() {
+    if !features().unwrap().read_my_writes() {
+        return;
+    }
+
+    const KEY_LEN: usize = 1;
+    const WRITE_CHARGE: usize = 4 + KEY_LEN.div_ceil(8);
+    const ACCEPTED: usize = TRANSACTION_ITEM_BUDGET / WRITE_CHARGE;
+
+    let db = LocalDb::open().unwrap();
+    let table = db.open_table("rust_same_key_budget", 20_016).unwrap();
+    let mut tx = db.transaction().unwrap();
+    for i in 0..ACCEPTED {
+        let value = [b'a' + (i % 26) as u8];
+        assert_eq!(tx.put(&table, b"b", &value).unwrap(), i == 0);
+    }
+    assert_eq!(
+        tx.put(&table, b"b", b"over-budget"),
+        Err(Error::TransactionTooLarge)
+    );
+    assert_eq!(
+        tx.put(&table, b"b", b"after-terminal"),
+        Err(Error::TransactionFinished)
+    );
+    drop(tx);
+
+    let mut verify = db.transaction().unwrap();
+    assert_eq!(verify.get(&table, b"b").unwrap(), None);
+    verify.commit().unwrap();
+}
+
+#[test]
+fn legacy_no_ryw_builds_still_report_duplicate_write() {
+    if features().unwrap().read_my_writes() {
+        return;
+    }
+
+    let db = LocalDb::open().unwrap();
+    let table = db.open_table("rust_legacy_duplicate", 20_017).unwrap();
 
     let mut tx = db.transaction().unwrap();
     tx.put(&table, b"key", b"first").unwrap();

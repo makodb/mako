@@ -83,6 +83,24 @@ class LocalAbiTest : public ::testing::Test {
         created == nullptr ? &local_created : created);
   }
 
+  static int insert(mako_local_txn *txn, mako_local_table *table,
+                    const std::string &key, const std::string &value,
+                    uint8_t *inserted = nullptr) {
+    uint8_t local_inserted = 0;
+    return mako_local_txn_insert(
+        txn, table, reinterpret_cast<const uint8_t *>(key.data()), key.size(),
+        reinterpret_cast<const uint8_t *>(value.data()), value.size(),
+        inserted == nullptr ? &local_inserted : inserted);
+  }
+
+  static int remove(mako_local_txn *txn, mako_local_table *table,
+                    const std::string &key, uint8_t *existed = nullptr) {
+    uint8_t local_existed = 0;
+    return mako_local_txn_remove(
+        txn, table, reinterpret_cast<const uint8_t *>(key.data()), key.size(),
+        existed == nullptr ? &local_existed : existed);
+  }
+
   static std::pair<int, std::optional<std::string>> get(
       mako_local_txn *txn, mako_local_table *table, const std::string &key) {
     uint8_t *bytes = nullptr;
@@ -137,6 +155,9 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_OK), "ok");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_CONFLICT),
                "transaction conflict");
+  static_assert(MAKO_LOCAL_DUPLICATE_WRITE == 12);
+  EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_DUPLICATE_WRITE),
+               "second mutation of one key is not supported");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_TXN_TOO_LARGE),
                "transaction exceeds the draft item budget");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_VALUE_TOO_LARGE),
@@ -775,6 +796,165 @@ TEST_F(LocalAbiTest, WrongThreadAndFinishedHandlesAreRejected) {
   destroy_tracked(txn);
 }
 
+#if READ_MY_WRITES
+TEST_F(LocalAbiTest, EverySameKeyMutationPairComposesInTransactionOrder) {
+  enum class Mutation { Put, Insert, Remove };
+  const std::vector<Mutation> mutations = {
+      Mutation::Put, Mutation::Insert, Mutation::Remove};
+  auto mutation_name = [](Mutation mutation) {
+    switch (mutation) {
+      case Mutation::Put: return "put";
+      case Mutation::Insert: return "insert";
+      case Mutation::Remove: return "remove";
+    }
+    return "unknown";
+  };
+
+  size_t sequence = 0;
+  for (const bool initially_present : {false, true}) {
+    for (const Mutation first : mutations) {
+      for (const Mutation second : mutations) {
+        const std::string key = "same-key-pair-" + std::to_string(sequence++);
+        SCOPED_TRACE(std::string(initially_present ? "present:" : "absent:") +
+                     mutation_name(first) + ":" + mutation_name(second));
+
+        if (initially_present) {
+          auto *seed = begin();
+          ASSERT_EQ(put(seed, primary, key, "seed"), MAKO_LOCAL_OK);
+          commit_and_destroy(seed);
+        }
+
+        std::optional<std::string> expected =
+            initially_present ? std::optional<std::string>("seed")
+                              : std::nullopt;
+        auto *txn = begin();
+        auto apply = [&](Mutation mutation, const std::string &value) {
+          const bool expected_changed = expected.has_value();
+          uint8_t changed = 99;
+          switch (mutation) {
+            case Mutation::Put:
+              ASSERT_EQ(put(txn, primary, key, value, &changed),
+                        MAKO_LOCAL_OK);
+              EXPECT_EQ(changed != 0, !expected_changed);
+              expected = value;
+              break;
+            case Mutation::Insert:
+              ASSERT_EQ(insert(txn, primary, key, value, &changed),
+                        MAKO_LOCAL_OK);
+              EXPECT_EQ(changed != 0, !expected_changed);
+              if (!expected_changed) expected = value;
+              break;
+            case Mutation::Remove:
+              ASSERT_EQ(remove(txn, primary, key, &changed), MAKO_LOCAL_OK);
+              EXPECT_EQ(changed != 0, expected_changed);
+              expected.reset();
+              break;
+          }
+          EXPECT_EQ(get(txn, primary, key),
+                    (std::pair<int, std::optional<std::string>>{
+                        MAKO_LOCAL_OK, expected}));
+        };
+
+        apply(first, "first");
+        apply(second, "second");
+        commit_and_destroy(txn);
+
+        txn = begin();
+        EXPECT_EQ(get(txn, primary, key),
+                  (std::pair<int, std::optional<std::string>>{
+                      MAKO_LOCAL_OK, expected}));
+        commit_and_destroy(txn);
+      }
+    }
+  }
+}
+
+TEST_F(LocalAbiTest, SameKeyGrowthDeleteReinsertChainCommitsAndAborts) {
+  const std::string medium(4096, 'm');
+  const std::string large(32768, 'l');
+  const std::string binary("final\0\xff", 7);
+
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "same-key-chain", "seed"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  txn = begin();
+  uint8_t changed = 99;
+  ASSERT_EQ(put(txn, primary, "same-key-chain", "short", &changed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(changed, 0);
+  ASSERT_EQ(put(txn, primary, "same-key-chain", medium, &changed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(changed, 0);
+  EXPECT_EQ(get(txn, primary, "same-key-chain").second,
+            std::optional<std::string>(medium));
+  ASSERT_EQ(put(txn, primary, "same-key-chain", large, &changed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(changed, 0);
+  EXPECT_EQ(get(txn, primary, "same-key-chain").second,
+            std::optional<std::string>(large));
+  ASSERT_EQ(remove(txn, primary, "same-key-chain", &changed), MAKO_LOCAL_OK);
+  EXPECT_EQ(changed, 1);
+  EXPECT_FALSE(get(txn, primary, "same-key-chain").second.has_value());
+  ASSERT_EQ(insert(txn, primary, "same-key-chain", binary, &changed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(changed, 1);
+  EXPECT_EQ(get(txn, primary, "same-key-chain").second,
+            std::optional<std::string>(binary));
+  abort_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "same-key-chain").second,
+            std::optional<std::string>("seed"));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  ASSERT_EQ(remove(txn, primary, "same-key-chain", &changed), MAKO_LOCAL_OK);
+  EXPECT_EQ(changed, 1);
+  ASSERT_EQ(put(txn, primary, "same-key-chain", "recreated", &changed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(changed, 1);
+  ASSERT_EQ(insert(txn, primary, "same-key-chain", "ignored", &changed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(changed, 0);
+  ASSERT_EQ(put(txn, primary, "same-key-chain", large, &changed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(changed, 0);
+  EXPECT_EQ(get(txn, primary, "same-key-chain").second,
+            std::optional<std::string>(large));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "same-key-chain").second,
+            std::optional<std::string>(large));
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, RepeatedSameKeyWritesRemainChargedToTheItemBudget) {
+  constexpr size_t key_len = 1;
+  constexpr size_t write_charge = 4 + (key_len + 7) / 8;
+  constexpr size_t accepted = MAKO_LOCAL_TXN_ITEM_BUDGET / write_charge;
+  static_assert(accepted * write_charge <= MAKO_LOCAL_TXN_ITEM_BUDGET);
+
+  auto *txn = begin();
+  uint8_t created = 99;
+  for (size_t i = 0; i != accepted; ++i) {
+    const std::string value(1, static_cast<char>('a' + i % 26));
+    ASSERT_EQ(put(txn, primary, "b", value, &created), MAKO_LOCAL_OK)
+        << "write " << i;
+    EXPECT_EQ(created, i == 0 ? 1 : 0);
+  }
+  EXPECT_EQ(put(txn, primary, "b", "over-budget", &created),
+            MAKO_LOCAL_TXN_TOO_LARGE);
+  EXPECT_EQ(put(txn, primary, "b", "after-terminal", &created),
+            MAKO_LOCAL_TXN_FINISHED);
+  destroy_tracked(txn);
+
+  txn = begin();
+  EXPECT_FALSE(get(txn, primary, "b").second.has_value());
+  commit_and_destroy(txn);
+}
+#else
 TEST_F(LocalAbiTest, DuplicateWritesAreRejectedWithoutCorruptingTheFirst) {
   auto *txn = begin();
   ASSERT_EQ(put(txn, primary, "repeat", "first"), MAKO_LOCAL_OK);
@@ -798,6 +978,7 @@ TEST_F(LocalAbiTest, DuplicateWritesAreRejectedWithoutCorruptingTheFirst) {
             MAKO_LOCAL_DUPLICATE_WRITE);
   abort_and_destroy(txn);
 }
+#endif
 
 TEST_F(LocalAbiTest, DatabaseCloseReportsBusyUntilTransactionEnds) {
   auto *txn = begin();

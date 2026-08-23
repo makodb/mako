@@ -83,6 +83,373 @@ fn a_multi_key_commit_is_visible_then_flushed_as_one_atomic_backend_batch() {
 }
 
 #[test]
+fn absent_put_then_delete_is_a_durable_noop() {
+    let backend = Arc::new(MemBlobs::new());
+    let cache = open(&backend);
+    let acknowledged_before = cache.highest_acknowledged_sequence();
+    let batches_before = backend.batch_count();
+    let ops_before = backend.op_count();
+
+    let mut transaction = cache.transaction().expect("begin transaction");
+    assert!(transaction
+        .put(b"same-key/absent-noop", b"temporary")
+        .expect("put absent key"));
+    assert_eq!(
+        transaction
+            .get(b"same-key/absent-noop")
+            .expect("read staged put")
+            .as_deref(),
+        Some(&b"temporary"[..])
+    );
+    assert!(transaction
+        .remove(b"same-key/absent-noop")
+        .expect("remove staged put"));
+    assert_eq!(
+        transaction
+            .get(b"same-key/absent-noop")
+            .expect("read staged delete"),
+        None
+    );
+    transaction.commit().expect("commit net no-op");
+
+    assert_eq!(cache.highest_acknowledged_sequence(), acknowledged_before);
+    assert_eq!(cache.flush().expect("flush net no-op"), acknowledged_before);
+    assert_eq!(backend.batch_count(), batches_before);
+    assert_eq!(backend.op_count(), ops_before);
+    assert_eq!(
+        cache
+            .get(b"same-key/absent-noop")
+            .expect("read committed no-op"),
+        None
+    );
+    cache.close().expect("close cache");
+
+    let reopened = open(&backend);
+    assert_eq!(
+        reopened
+            .get(b"same-key/absent-noop")
+            .expect("recover no-op"),
+        None
+    );
+    reopened.close().expect("close reopened cache");
+}
+
+#[test]
+fn existing_delete_then_put_is_one_canonical_put() {
+    let backend = Arc::new(MemBlobs::new());
+    let cache = open(&backend);
+    cache
+        .put(b"same-key/delete-put", b"original")
+        .expect("seed existing key");
+    cache.flush().expect("flush seed");
+    let batches_before = backend.batch_count();
+    let ops_before = backend.op_count();
+
+    let mut transaction = cache.transaction().expect("begin transaction");
+    assert!(transaction
+        .remove(b"same-key/delete-put")
+        .expect("remove existing key"));
+    assert!(transaction
+        .put(b"same-key/delete-put", b"replacement")
+        .expect("recreate deleted key"));
+    assert!(!transaction
+        .insert(b"same-key/delete-put", b"must-not-win")
+        .expect("insert over staged put"));
+    assert_eq!(
+        transaction
+            .get(b"same-key/delete-put")
+            .expect("read final staged value")
+            .as_deref(),
+        Some(&b"replacement"[..]),
+        "a failed insert must not overwrite the canonical staged put"
+    );
+    transaction.commit().expect("commit replacement");
+    cache.flush().expect("flush replacement");
+
+    assert_eq!(backend.batch_count() - batches_before, 1);
+    assert_eq!(
+        backend.op_count() - ops_before,
+        2,
+        "one log put and one materialized put prove the key was canonicalized"
+    );
+    assert_eq!(
+        cache
+            .get(b"same-key/delete-put")
+            .expect("read committed replacement")
+            .as_deref(),
+        Some(&b"replacement"[..])
+    );
+    cache.close().expect("close cache");
+
+    let reopened = open(&backend);
+    assert_eq!(
+        reopened
+            .get(b"same-key/delete-put")
+            .expect("recover replacement")
+            .as_deref(),
+        Some(&b"replacement"[..])
+    );
+    reopened.close().expect("close reopened cache");
+}
+
+#[test]
+fn every_same_key_mutation_pair_has_one_canonical_durable_result() {
+    #[derive(Clone, Copy, Debug)]
+    enum Mutation {
+        Put,
+        Insert,
+        Remove,
+    }
+
+    let backend = Arc::new(MemBlobs::new());
+    let cache = open(&backend);
+    let mutations = [Mutation::Put, Mutation::Insert, Mutation::Remove];
+    let mut recovered = Vec::new();
+    let mut sequence = 0usize;
+
+    for initially_present in [false, true] {
+        for first in mutations {
+            for second in mutations {
+                let key = format!("same-key/matrix-{sequence}").into_bytes();
+                sequence += 1;
+
+                if initially_present {
+                    cache.put(&key, b"seed").expect("seed matrix key");
+                    cache.flush().expect("flush matrix seed");
+                }
+                let acknowledged_before = cache.highest_acknowledged_sequence();
+                let batches_before = backend.batch_count();
+                let ops_before = backend.op_count();
+
+                let mut expected = initially_present.then(|| b"seed".to_vec());
+                let mut had_effective_mutation = false;
+                let mut transaction = cache.transaction().expect("begin matrix transaction");
+                for (mutation, value) in [(first, &b"first"[..]), (second, &b"second"[..])] {
+                    let was_present = expected.is_some();
+                    let changed = match mutation {
+                        Mutation::Put => {
+                            let created = transaction.put(&key, value).expect("matrix put");
+                            expected = Some(value.to_vec());
+                            had_effective_mutation = true;
+                            created
+                        }
+                        Mutation::Insert => {
+                            let inserted = transaction.insert(&key, value).expect("matrix insert");
+                            if inserted {
+                                expected = Some(value.to_vec());
+                                had_effective_mutation = true;
+                            }
+                            inserted
+                        }
+                        Mutation::Remove => {
+                            let existed = transaction.remove(&key).expect("matrix remove");
+                            if existed {
+                                expected = None;
+                                had_effective_mutation = true;
+                            }
+                            existed
+                        }
+                    };
+                    assert_eq!(
+                        changed,
+                        match mutation {
+                            Mutation::Put | Mutation::Insert => !was_present,
+                            Mutation::Remove => was_present,
+                        },
+                        "initially_present={initially_present}, first={first:?}, second={second:?}, operation={mutation:?}"
+                    );
+                    assert_eq!(
+                        transaction.get(&key).expect("read matrix staged value"),
+                        expected,
+                        "initially_present={initially_present}, first={first:?}, second={second:?}, operation={mutation:?}"
+                    );
+                }
+                transaction.commit().expect("commit matrix transaction");
+                cache.flush().expect("flush matrix transaction");
+
+                let has_canonical_mutation = if initially_present {
+                    had_effective_mutation
+                } else {
+                    expected.is_some()
+                };
+                assert_eq!(
+                    cache.highest_acknowledged_sequence() - acknowledged_before,
+                    u64::from(has_canonical_mutation),
+                    "initially_present={initially_present}, first={first:?}, second={second:?}"
+                );
+                assert_eq!(
+                    backend.batch_count() - batches_before,
+                    u64::from(has_canonical_mutation)
+                );
+                assert_eq!(
+                    backend.op_count() - ops_before,
+                    u64::from(has_canonical_mutation) * 2,
+                    "a canonical commit contains one log put and one final key mutation"
+                );
+                assert_eq!(cache.get(&key).expect("read matrix final value"), expected);
+                recovered.push((key, expected));
+            }
+        }
+    }
+    assert_eq!(sequence, 18);
+    cache.close().expect("close matrix cache");
+
+    let reopened = open(&backend);
+    for (key, expected) in recovered {
+        assert_eq!(
+            reopened.get(&key).expect("read recovered matrix value"),
+            expected
+        );
+    }
+    reopened.close().expect("close reopened matrix cache");
+}
+
+#[test]
+fn same_key_composition_preserves_results_and_abort_publishes_nothing() {
+    let backend = Arc::new(MemBlobs::new());
+    let cache = open(&backend);
+    cache
+        .put(b"same-key/existing", b"original")
+        .expect("seed existing key");
+    cache
+        .put(b"same-key/delete-final", b"present")
+        .expect("seed key to delete");
+    cache.flush().expect("flush seeds");
+    let batches_before = backend.batch_count();
+    let ops_before = backend.op_count();
+
+    let mut transaction = cache.transaction().expect("begin composition");
+    assert!(transaction
+        .put(b"same-key/new", b"v1")
+        .expect("create new key"));
+    assert!(!transaction
+        .put(b"same-key/new", b"v2")
+        .expect("overwrite new key"));
+    assert!(!transaction
+        .insert(b"same-key/new", b"ignored")
+        .expect("reject insert over new key"));
+
+    assert!(!transaction
+        .put(b"same-key/existing", b"first")
+        .expect("overwrite existing key"));
+    assert!(transaction
+        .remove(b"same-key/existing")
+        .expect("remove staged overwrite"));
+    assert!(!transaction
+        .remove(b"same-key/existing")
+        .expect("repeat remove"));
+    assert!(transaction
+        .insert(b"same-key/existing", b"second")
+        .expect("reinsert deleted key"));
+    assert!(!transaction
+        .put(b"same-key/existing", b"final")
+        .expect("overwrite reinserted key"));
+
+    assert!(!transaction
+        .put(b"same-key/delete-final", b"temporary")
+        .expect("overwrite key to delete"));
+    assert!(transaction
+        .remove(b"same-key/delete-final")
+        .expect("stage final delete"));
+    transaction.commit().expect("commit composition");
+    cache.flush().expect("flush composition");
+
+    assert_eq!(backend.batch_count() - batches_before, 1);
+    assert_eq!(
+        backend.op_count() - ops_before,
+        4,
+        "one log operation plus exactly one final mutation for each of three keys"
+    );
+    assert_eq!(
+        cache.get(b"same-key/new").expect("read new").as_deref(),
+        Some(&b"v2"[..])
+    );
+    assert_eq!(
+        cache
+            .get(b"same-key/existing")
+            .expect("read existing")
+            .as_deref(),
+        Some(&b"final"[..])
+    );
+    assert_eq!(
+        cache.get(b"same-key/delete-final").expect("read deleted"),
+        None
+    );
+
+    let acknowledged_before_abort = cache.highest_acknowledged_sequence();
+    let batches_before_abort = backend.batch_count();
+    let ops_before_abort = backend.op_count();
+    let mut aborted = cache.transaction().expect("begin aborted composition");
+    assert!(!aborted
+        .put(b"same-key/existing", b"aborted-1")
+        .expect("first aborted put"));
+    assert!(aborted
+        .remove(b"same-key/existing")
+        .expect("aborted remove"));
+    assert!(aborted
+        .insert(b"same-key/existing", b"aborted-2")
+        .expect("aborted reinsert"));
+    assert!(aborted
+        .put(b"same-key/aborted-new", b"aborted-new")
+        .expect("aborted new key"));
+    aborted.abort().expect("abort composition");
+
+    assert_eq!(
+        cache.highest_acknowledged_sequence(),
+        acknowledged_before_abort
+    );
+    assert_eq!(
+        cache.flush().expect("flush after abort"),
+        acknowledged_before_abort
+    );
+    assert_eq!(backend.batch_count(), batches_before_abort);
+    assert_eq!(backend.op_count(), ops_before_abort);
+    assert_eq!(
+        cache
+            .get(b"same-key/existing")
+            .expect("read after abort")
+            .as_deref(),
+        Some(&b"final"[..])
+    );
+    assert_eq!(
+        cache
+            .get(b"same-key/aborted-new")
+            .expect("read aborted new key"),
+        None
+    );
+    cache.close().expect("close cache");
+
+    let reopened = open(&backend);
+    assert_eq!(
+        reopened
+            .get(b"same-key/new")
+            .expect("recover new")
+            .as_deref(),
+        Some(&b"v2"[..])
+    );
+    assert_eq!(
+        reopened
+            .get(b"same-key/existing")
+            .expect("recover existing")
+            .as_deref(),
+        Some(&b"final"[..])
+    );
+    assert_eq!(
+        reopened
+            .get(b"same-key/delete-final")
+            .expect("recover delete"),
+        None
+    );
+    assert_eq!(
+        reopened
+            .get(b"same-key/aborted-new")
+            .expect("recover aborted new key"),
+        None
+    );
+    reopened.close().expect("close reopened cache");
+}
+
+#[test]
 fn read_only_noops_do_not_log_and_recovery_rejects_invalid_backends() {
     let backend = Arc::new(MemBlobs::new());
     let cache = open(&backend);

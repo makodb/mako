@@ -34,6 +34,7 @@ pub const MAKO_LOCAL_THREAD_LIMIT: c_int = 8;
 pub const MAKO_LOCAL_BUSY: c_int = 9;
 pub const MAKO_LOCAL_OUT_OF_MEMORY: c_int = 10;
 pub const MAKO_LOCAL_INTERNAL: c_int = 11;
+/// Reserved assigned status used by legacy/no-RYW engines.
 pub const MAKO_LOCAL_DUPLICATE_WRITE: c_int = 12;
 pub const MAKO_LOCAL_TXN_TOO_LARGE: c_int = 13;
 pub const MAKO_LOCAL_VALUE_TOO_LARGE: c_int = 14;

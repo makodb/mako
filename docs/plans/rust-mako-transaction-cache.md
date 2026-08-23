@@ -134,10 +134,10 @@ The local cache protocol must not call every ordering value a "timestamp":
 fields, and capabilities while Phases 1A-1D are completed. Only the boundary
 gate below
 may promote the surface to ABI v1. After that promotion, exported symbols and
-numeric statuses are permanent reservations; a status such as
-`DUPLICATE_WRITE` may stop being returned after the feature is repaired, but
-it is never removed or reassigned. Semantic expansions are advertised by
-capability bits or a later ABI revision rather than silently changing v1.
+numeric statuses are permanent reservations. `DUPLICATE_WRITE` is now a
+legacy/no-RYW result rather than part of the default profile, but its assigned
+number remains reserved. Semantic expansions are advertised by capability
+bits or a later ABI revision rather than silently changing v1.
 
 The first slice proves the boundary with the smallest useful transaction:
 
@@ -184,12 +184,14 @@ Current implementation status:
       discovery, and a required-native CMake/Cargo test mode. The content
       fingerprint and conformance gates in Phase 1C remain required because
       timestamps alone are not proof of build identity.
-- [x] Temporary rejection of a second write to one table/key. This contains
-      unsafe MassTrans write composition until the engine semantics are fixed.
-- [x] Conventional point read-your-writes for the currently supported
-      one-mutation-per-key profile. Point reads copy a staged put/insert and
-      hide a staged remove; repeated mutation and scan composition remain
-      gated separately below.
+- [x] Repeated same-key point mutations on local single-version tables. A
+      direct MassTrans matrix covers every three-operation combination of get,
+      small/large put, small/large insert, and remove from present/absent state
+      across commit and abort. The default ABI exposes that composition;
+      legacy/no-RYW builds retain the reserved `DUPLICATE_WRITE` containment.
+- [x] Conventional point read-your-writes. Point reads copy the transaction's
+      latest staged put/insert, hide a staged remove, and follow repeated
+      mutation composition. Transactional scan overlays remain separate work.
 - [x] Explicit 1 KiB table/key and 1 MiB value limits, plus a key-weighted
       512-item transaction budget that returns terminal `TXN_TOO_LARGE` before
       STO can allocate beyond its embedded transaction set or hit its assert.
@@ -207,10 +209,12 @@ behavior for:
 - forward and reverse range bounds;
 - record resize on commit and every abort cleanup path;
 - read-only transactions and contention progress.
-- repeated put/insert/delete composition on one key. Stop returning the
-  temporary `DUPLICATE_WRITE` result only after every sequence has defined RYW
-  behavior, correct commit bytes, and correct abort cleanup; retain its numeric
-  status as a permanent reservation once ABI v1 is frozen.
+
+The repeated point-mutation portion is complete for local single-version
+tables: native, C ABI, safe Rust, in-memory write-back, and RocksDB recovery
+tests cover operation results, final bytes, canonical one-mutation-per-key log
+records, commit, abort, value growth, and net no-op histories. Status 12 remains
+reserved for linked legacy/no-RYW engines.
 
 The current production defaults are `STO_RMW=ON` and `OPACITY=OFF`. CMake
 normalizes the RMW option to a numeric preprocessor definition; passing the
@@ -220,10 +224,9 @@ is active, and the Rust cache requires it by default. Runtime forwarding is
 deliberately limited to local single-version tables; native Mako remote proxies
 and replicated multiversion participants retain their legacy behavior until
 their staging and lock-transfer protocols are extended. The ABI guarantee
-covers the exposed point surface while the facade still rejects a second
-mutation of one table/key. Repeated mutation and forward/reverse scan overlays
-remain open Phase 1B/1C work and must not be inferred from the point capability
-bit.
+covers the exposed point surface, including repeated same-key mutations.
+Forward/reverse scan overlays remain open Phase 1B/1C work and must not be
+inferred from the point capability bit.
 
 The Phase 1A-1D boundary profile requires point transactions, scans, and
 conventional read-your-writes. Opacity remains an explicit profile rather than
@@ -380,9 +383,9 @@ cancellation marker before Silo validation. The existing vertical-slice work
 already exercises record validation, ordered writeback, atomic RocksDB batches,
 retry/fail-stop behavior, native multi-key transactions, and reopen recovery.
 Those component tests do not by themselves establish that this revised
-preinstall-hook protocol, Phase 1E, or Milestone 1 has passed. Same-key write
-composition, scan read-your-writes, the remaining ABI boundary gates, and
-Phase 1F's exhaustive process-crash injection remain open.
+preinstall-hook protocol, Phase 1E, or Milestone 1 has passed. Transactional
+scan read-your-writes, the remaining ABI boundary gates, and Phase 1F's
+exhaustive process-crash injection remain open.
 
 1. **Prepare a detached permit before native commit.** Acquire one unit of
    bounded queue capacity and own every mutation byte, encoded-record buffer,
@@ -619,18 +622,17 @@ recovery.
 
 1. Reset the implementation's advertised revision to draft `0`, publish the
    operation/status state table, and reserve every existing status number.
-2. Finish Milestone 1B point-operation semantics, especially repeated
-   same-key mutation composition; point read-your-writes is enabled.
-3. Add scan chunks and their recoverable buffer limits to the C ABI; revisit
+2. Add scan chunks and their recoverable buffer limits to the C ABI; repeated
+   same-key point composition and point read-your-writes are enabled. Revisit
    the conservative point-transaction budget only with safe pre-reservation.
-4. Generate or mechanically verify Rust declarations from the C header, then
+3. Generate or mechanically verify Rust declarations from the C header, then
    add the symbol, build-fingerprint, and cleanup-quarantine failpoint gates.
-5. Build the three-way deterministic differential harness and the independent
+4. Build the three-way deterministic differential harness and the independent
    full-history real-time/opacity oracle.
-6. Run sanitizer, concurrency, and wrapper-overhead gates.
-7. Finish the detached-permit/preinstall-hook protocol in Phase 1E, including
+5. Run sanitizer, concurrency, and wrapper-overhead gates.
+6. Finish the detached-permit/preinstall-hook protocol in Phase 1E, including
    carrying `MakoTimestamp`, removing the global commit gate and conflict
    cancellation slots, advancing Mako's timestamp floor on recovery, and
    proving the publish-gap/crash properties without eviction.
-8. Do not begin distributed porting until atomic local crash recovery is
+7. Do not begin distributed porting until atomic local crash recovery is
    demonstrated by fault injection.

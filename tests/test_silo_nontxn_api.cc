@@ -214,8 +214,148 @@ TEST_F(SiloNonTxnApi, MassTransInsertThenRepeatedGrowingUpdatesCommitAndAbort) {
     EXPECT_TRUE(mt.put(lcdf::Str("repeat-grow-abort"), initial));
 }
 
+TEST_F(SiloNonTxnApi, MassTransSameKeyCompositionExhaustiveTriples) {
+    mbta_type& mt = make_masstrans(9006, "mt_same_key_matrix");
+    const std::string initial = mako::Encode("initial");
+    const std::string small = mako::Encode("small");
+    const std::string large = mako::Encode(std::string(32768, 'L'));
+
+    enum class Operation {
+        Get,
+        PutSmall,
+        PutLarge,
+        InsertSmall,
+        InsertLarge,
+        Delete,
+    };
+    constexpr Operation operations[] = {
+        Operation::Get,
+        Operation::PutSmall,
+        Operation::PutLarge,
+        Operation::InsertSmall,
+        Operation::InsertLarge,
+        Operation::Delete,
+    };
+
+    auto operation_name = [](Operation operation) {
+        switch (operation) {
+        case Operation::Get:
+            return "get";
+        case Operation::PutSmall:
+            return "put-small";
+        case Operation::PutLarge:
+            return "put-large";
+        case Operation::InsertSmall:
+            return "insert-small";
+        case Operation::InsertLarge:
+            return "insert-large";
+        case Operation::Delete:
+            return "delete";
+        }
+        return "unknown";
+    };
+
+    size_t sequence_id = 0;
+    for (bool initially_present : {false, true}) {
+        for (bool commit : {false, true}) {
+            for (Operation first : operations) {
+                for (Operation second : operations) {
+                    for (Operation third : operations) {
+                        const std::string key =
+                            "composition-" + std::to_string(sequence_id++);
+                        SCOPED_TRACE(
+                            std::string(initially_present ? "existing: " : "absent: ") +
+                            operation_name(first) + " -> " +
+                            operation_name(second) + " -> " +
+                            operation_name(third) +
+                            (commit ? " (commit)" : " (abort)"));
+
+                        if (initially_present)
+                            ASSERT_TRUE(mt.put(lcdf::Str(key), initial));
+
+                        bool present = initially_present;
+                        std::string expected = initial;
+                        bool transaction_completed = false;
+                        Sto::start_transaction();
+                        try {
+                            for (Operation operation : {first, second, third}) {
+                                std::string out;
+                                switch (operation) {
+                                case Operation::Get:
+                                    EXPECT_EQ(mt.transGet(lcdf::Str(key), out), present);
+                                    if (present)
+                                        EXPECT_EQ(out, expected);
+                                    break;
+                                case Operation::PutSmall:
+                                case Operation::PutLarge: {
+                                    const std::string& value =
+                                        operation == Operation::PutSmall ? small : large;
+                                    EXPECT_EQ(
+                                        mt.transPut(lcdf::Str(key), StringWrapper(value)),
+                                        present);
+                                    present = true;
+                                    expected = value;
+                                    break;
+                                }
+                                case Operation::InsertSmall:
+                                case Operation::InsertLarge: {
+                                    const std::string& value =
+                                        operation == Operation::InsertSmall ? small : large;
+                                    EXPECT_EQ(
+                                        mt.transInsert(lcdf::Str(key), StringWrapper(value)),
+                                        present);
+                                    if (!present) {
+                                        present = true;
+                                        expected = value;
+                                    }
+                                    break;
+                                }
+                                case Operation::Delete:
+                                    EXPECT_EQ(mt.transDelete(lcdf::Str(key)), present);
+                                    present = false;
+                                    expected.clear();
+                                    break;
+                                }
+
+                                // Every operation is followed by a point read so the
+                                // matrix checks both operation composition and RYW.
+                                out.clear();
+                                EXPECT_EQ(mt.transGet(lcdf::Str(key), out), present);
+                                if (present)
+                                    EXPECT_EQ(out, expected);
+                            }
+
+                            if (commit) {
+                                transaction_completed = Sto::try_commit_no_paxos();
+                            } else {
+                                Sto::silent_abort();
+                                transaction_completed = true;
+                            }
+                        } catch (const Transaction::Abort&) {
+                            Sto::silent_abort();
+                        } catch (...) {
+                            Sto::silent_abort();
+                            throw;
+                        }
+                        ASSERT_TRUE(transaction_completed);
+
+                        const bool final_present = commit ? present : initially_present;
+                        const std::string& final_value =
+                            commit ? expected : initial;
+                        std::string out;
+                        EXPECT_EQ(mt.get(lcdf::Str(key), out), final_present);
+                        if (final_present)
+                            EXPECT_EQ(out, final_value);
+                    }
+                }
+            }
+        }
+    }
+    EXPECT_EQ(sequence_id, 864u);
+}
+
 TEST_F(SiloNonTxnApi, MassTransRywCompositionIsLocalSingleVersionOnly) {
-    mbta_type& mt = make_masstrans(9006, "mt_ryw_scope");
+    mbta_type& mt = make_masstrans(9007, "mt_ryw_scope");
     const std::string initial = mako::Encode("i");
     const std::string large = mako::Encode(std::string(4096, 'l'));
 
