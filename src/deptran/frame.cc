@@ -40,7 +40,6 @@ Frame* Frame::GetFrame(int mode, int replica_mode) {
   switch (mode) {
     case MODE_NONE:
     case MODE_NOTX:
-    case MODE_MDCC:
     case MODE_OCC:
       frame = new Frame(mode, replica_mode);
       break;
@@ -107,7 +106,6 @@ mdb::Row* Frame::CreateRow(const mdb::Schema *schema,
   mdb::Row* r = nullptr;
   switch (mode) {
     case MODE_NONE: // FIXME
-    case MODE_MDCC:
     case MODE_OCC:
     default:
       r = mdb::VersionedRow::create(schema, row_data);
@@ -135,9 +133,6 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
                          client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
-      break;
-    case MODE_MDCC:
-//      coo = (Coordinator*)new mdcc::MdccCoordinator(coo_id, id, config, ccsi);
       break;
     case MODE_NONE:
     default:
@@ -220,9 +215,6 @@ TxLogServer* Frame::CreateScheduler() {
     case MODE_OCC:
       sch = new SchedulerOcc();
       break;
-    case MODE_MDCC:
-//      sch = new mdcc::MdccScheduler();
-      break;
     case MODE_NOTX:
     case MODE_NONE:
       sch = new SchedulerNone();
@@ -257,7 +249,6 @@ vector<rrr::ServiceProxy> Frame::CreateRpcServices(uint32_t site_id,
   auto config = Config::GetConfig();
   auto result = std::vector<rrr::ServiceProxy>();
   switch(mode_) {
-    case MODE_MDCC:
     case MODE_OCC:
     case MODE_NONE:
     case MODE_NOTX:
@@ -273,7 +264,6 @@ map<string, int> &Frame::FrameNameToMode() {
       {"occ",           MODE_OCC},
       {"notx",          MODE_NOTX},
       {"rpc_null",      MODE_RPC_NULL},
-      {"mdcc",          MODE_MDCC},
       {"multi_paxos",   MODE_MULTI_PAXOS},
       {"raft",          MODE_RAFT},
       {"epaxos",        MODE_NOT_READY},

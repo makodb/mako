@@ -169,7 +169,7 @@ Proven, high-performance in-memory index. The critical missing piece is crash re
 | Carousel, Februus | <30% | Proof-of-concept only |
 
 The former standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, Rule, TAPIR,
-FPGA-Raft, Copilot, RCC/Rococo, and TROAD protocol implementations are retired and are
+FPGA-Raft, Copilot, RCC/Rococo, TROAD, and MDCC protocol implementations are retired and are
 not supported configuration options. The old `deptran` and `deptran_er` names
 were RCC aliases and are retired too. The internal memdb `Txn2PL` base remains
 because OCC and nested transactions share its storage and query machinery.
