@@ -823,7 +823,6 @@ set(MAKO_SRCFILES
   "${W}/benchmarks/sync_util_init.cc"
   "${W}/sto/Transaction.cc"
   "${W}/sto/MassTrans.cc"
-  "${W}/sto/common.cc"
   "${W}/sto/TRcu.cc"
   "${W}/sto/Packer.cc"
   "${W}/sto/ReplayDB.cc"
