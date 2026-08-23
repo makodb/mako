@@ -58,6 +58,15 @@ jobs:
           --target rrr_goal0_dual_compile test_client_service test_arc_mutex_thread test_txn_timeout test_raft_messages test_raft_quorum test_raft_channel_transport test_raft_transport_facade test_raft_dispatcher_facade test_raft_memory_snapshot_manager test_raft_test_cluster test_raft_rrr_transport_compile
           -- -k 0
 
+      - name: Verify Raft inline Rust DSL provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          transpiler="$(cat "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-executable.txt")"
+          test -x "${transpiler}"
+          "${transpiler}" --build-info
+          bash scripts/raft_dsl.sh --check --transpiler "${transpiler}"
+
       - name: Verify emitter and canonical Rust invalidate crate generation
         shell: bash
         run: |

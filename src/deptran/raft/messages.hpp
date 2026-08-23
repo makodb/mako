@@ -41,32 +41,78 @@ namespace raft {
 // ---------------------------------------------------------------------------
 // RequestVote
 // ---------------------------------------------------------------------------
-// Keep these leaf messages value-initialized (`T{}`).  Rust has no syntax for
-// C++ in-class field defaults, so spelling the zeroing at construction sites
-// preserves their aggregate shape for the following inline-DSL conversion.
+// Rust DSL is the source of truth for this leaf POD family. The adjacent
+// generated block is the C++ production compiler sees. Keep construction
+// value-initialized (`T{}`) to preserve positional aggregate call sites.
+#if RUSTYCPP_RUST
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
+#[repr(C)]
+pub struct VoteReq {
+    pub last_log_idx: u64,
+    pub last_log_term: i64,
+    pub candidate_site_id: u16,
+    pub current_term: i64,
+}
+
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
+#[repr(C)]
+pub struct VoteReply {
+    pub max_ballot: i64,
+    pub vote_granted: bool,
+}
+
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
+#[repr(C)]
+pub struct VoteDurableReq {
+    pub term: i64,
+    pub voter_id: u16,
+}
+
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
+#[repr(C)]
+pub struct VoteDurableReply {
+    pub acknowledged: bool,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_messages.vote version=1 rust_sha256=2eac51939a3d2a05a9f87ac846a9cb1231d47def474957bc2891864796805e32*/
+struct VoteReq;
+struct VoteReply;
+struct VoteDurableReq;
+struct VoteDurableReply;
+
 struct VoteReq {
-  uint64_t last_log_idx;
-  int64_t  last_log_term;
-  uint16_t candidate_site_id;
-  int64_t  current_term;
+    uint64_t last_log_idx;
+    int64_t last_log_term;
+    uint16_t candidate_site_id;
+    int64_t current_term;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 struct VoteReply {
-  int64_t max_ballot;
-  bool    vote_granted;
+    int64_t max_ballot;
+    bool vote_granted;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
-// ---------------------------------------------------------------------------
-// VoteDurable — sent by a voter once its vote has been persisted.
-// ---------------------------------------------------------------------------
 struct VoteDurableReq {
-  int64_t  term;
-  uint16_t voter_id;
+    int64_t term;
+    uint16_t voter_id;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 struct VoteDurableReply {
-  bool acknowledged;
+    bool acknowledged;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
+/*RUSTYCPP:GEN-END id=raft_messages.vote*/
 
 // ---------------------------------------------------------------------------
 // AppendEntries (with command payload)

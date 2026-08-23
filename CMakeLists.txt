@@ -220,6 +220,21 @@ set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppTranspiler.cmake)
 create_rustycpp_transpiler_build_target()
 
+# Stage-1 Raft source-provenance gate. Production still compiles the adjacent
+# generated C++ in the existing carriers; this target proves those bytes are a
+# fresh, unmodified rendering of their inline Rust DSL source.
+add_custom_target(raft_goal0_source_gate
+    COMMAND
+        bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_dsl.sh"
+        --check
+        --transpiler "${RUSTYCPP_TRANSPILER}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Checking Raft inline Rust DSL provenance"
+    USES_TERMINAL
+    VERBATIM
+)
+add_dependencies(raft_goal0_source_gate build_rusty_cpp_transpiler)
+
 # NOTE: RustyCppSubmodule.cmake already computes CPP_BORROW_CHECKER and creates
 # build targets. Do not override checker paths here or Docker CARGO_TARGET_DIR
 # support is bypassed.
@@ -1106,6 +1121,7 @@ add_library(txlog_core_obj OBJECT
     # `txlog_core`'s PUBLIC link to the `rrr` target.
 )
 add_dependencies(txlog_core_obj rcc_rpc_gen)
+add_dependencies(txlog_core_obj raft_goal0_source_gate)
 # Pull in rrr's PUBLIC include dirs + module BMI paths so deptran .cc files
 # that `#include "rrr/rrr.hpp"` find both the
 # umbrella header and the imports it references.
@@ -1177,6 +1193,7 @@ list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
 if(RAFT_BORROW_SRC)
     add_library(raft_borrow OBJECT ${RAFT_BORROW_SRC})
     set_target_properties(raft_borrow PROPERTIES EXCLUDE_FROM_ALL YES)
+    add_dependencies(raft_borrow raft_goal0_source_gate)
 
     target_include_directories(raft_borrow PUBLIC
         src
@@ -1210,6 +1227,7 @@ if(RAFT_BORROW_SRC)
             DEPENDS ${RAFT_BORROW_STAMPS}
             COMMENT "Running borrow checker on Raft sources only"
         )
+        add_dependencies(borrow_check_raft raft_goal0_source_gate)
 
         if(TARGET build_rusty_cpp_checker)
             add_dependencies(borrow_check_raft build_rusty_cpp_checker)
@@ -1905,6 +1923,23 @@ if(BUILD_TESTS)
     target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)
 
+    # Every direct Raft consumer first proves that committed generated C++ is
+    # the exact output of the owned inline Rust blocks. This keeps focused
+    # builds from bypassing the source-provenance gate.
+    set(RAFT_DSL_CONSUMER_TARGETS
+        test_raft_messages
+        test_raft_transport_facade
+        test_raft_rrr_transport_compile
+        test_raft_quorum
+        test_raft_dispatcher_facade
+        test_raft_channel_transport
+        test_raft_memory_snapshot_manager
+        test_raft_test_cluster
+        raft_lab_standalone
+    )
+    foreach(raft_dsl_consumer IN LISTS RAFT_DSL_CONSUMER_TARGETS)
+        add_dependencies(${raft_dsl_consumer} raft_goal0_source_gate)
+    endforeach()
 
     # Service proxy facade guard tests (Phase 2 leaf 1)
 
@@ -1982,6 +2017,7 @@ if(BUILD_TESTS)
     if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_rrr)
         add_dependencies(run_tests borrow_check_rrr)
     endif()
+    add_dependencies(run_tests raft_goal0_source_gate)
     add_dependencies(run_tests rrr_goal0_dual_compile)
 
     # Add borrow checking for test files if enabled
