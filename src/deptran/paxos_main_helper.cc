@@ -3,7 +3,6 @@
 #include "__dep__.h"
 #include "frame.h"
 #include "paxos_worker.h"
-#include "client_worker.h"
 #include "procedure.h"
 #include "command_marshaler.h"
 #include "benchmark_control_rpc.h"
@@ -26,7 +25,6 @@ using namespace janus;
 // ============================================================================
 namespace paxos_impl {
 
-vector<unique_ptr<ClientWorker>> client_workers_g = {};
 //vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 //static vector<shared_ptr<Coordinator>> bulk_coord_g = {};
 //static vector<pair<string, pair<int,uint32_t>>> submit_loggers(10000000);

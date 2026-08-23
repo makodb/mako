@@ -3,7 +3,6 @@
 
 #include "rcc_rpc.h"
 #include "server_status.h"
-#include "client_status.h"
 #include <rusty/function.hpp>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
@@ -62,45 +61,6 @@ class ServerControlServiceImpl: public ServerControlService {
   void server_heart_beat(const ServerControlService::RpcServerHeartBeatRequest& req, ServerControlService::RpcServerHeartBeatResponse& resp, rrr::DeferredReply defer) override;
   void server_heart_beat_with_data(const ServerControlService::RpcServerHeartBeatWithDataRequest& req, ServerControlService::RpcServerHeartBeatWithDataResponse& resp, rrr::DeferredReply defer) override;
   // END typed-rpc-decls (ServerControlServiceImpl)
-};
-
-/**
- * ClientControlServiceImpl handles RPC requests for client control.
- * Shared state is managed by ClientStatus, which can be held by both
- * this service and external callers (ClientWorker, Coordinators).
- *
- * This allows using reg_service() with owned Box<Service> while
- * external code can still access the shared state via Arc<ClientStatus>.
- */
-class ClientControlServiceImpl: public ClientControlService {
- private:
-  // Shared status - owned externally, service just observes/modifies
-  rusty::Arc<ClientStatus> status_;
-
-  void LogClientResponse(ClientResponse *res);
-
- public:
-  // Constructor takes Arc<ClientStatus> - shared state managed externally
-  ClientControlServiceImpl(rusty::Arc<ClientStatus> status);
-  ~ClientControlServiceImpl();
-
-  // Movable but not copyable (Arc is movable and clonable)
-  ClientControlServiceImpl(ClientControlServiceImpl&&) = default;
-  ClientControlServiceImpl& operator=(ClientControlServiceImpl&&) = default;
-  ClientControlServiceImpl(const ClientControlServiceImpl&) = delete;
-  ClientControlServiceImpl& operator=(const ClientControlServiceImpl&) = delete;
-
-  // BEGIN typed-rpc-decls (ClientControlServiceImpl)
-  // Typed RPC interface overrides (new API).
-  void client_shutdown(const ClientControlService::RpcClientShutdownRequest& req, ClientControlService::RpcClientShutdownResponse& resp, rrr::DeferredReply defer) override;
-  void client_force_stop(const ClientControlService::RpcClientForceStopRequest& req, ClientControlService::RpcClientForceStopResponse& resp, rrr::DeferredReply defer) override;
-  void client_response(const ClientControlService::RpcClientResponseRequest& req, ClientControlService::RpcClientResponseResponse& resp, rrr::DeferredReply defer) override;
-  void client_ready_block(const ClientControlService::RpcClientReadyBlockRequest& req, ClientControlService::RpcClientReadyBlockResponse& resp, rrr::DeferredReply defer) override;
-  void client_ready(const ClientControlService::RpcClientReadyRequest& req, ClientControlService::RpcClientReadyResponse& resp, rrr::DeferredReply defer) override;
-  void client_start(const ClientControlService::RpcClientStartRequest& req, ClientControlService::RpcClientStartResponse& resp, rrr::DeferredReply defer) override;
-  void client_get_txn_names(const ClientControlService::RpcClientGetTxnNamesRequest& req, ClientControlService::RpcClientGetTxnNamesResponse& resp, rrr::DeferredReply defer) override;
-  void DispatchTxn(const ClientControlService::RpcDispatchTxnRequest& req, ClientControlService::RpcDispatchTxnResponse& resp, rrr::DeferredReply defer) override;
-  // END typed-rpc-decls (ClientControlServiceImpl)
 };
 
 }

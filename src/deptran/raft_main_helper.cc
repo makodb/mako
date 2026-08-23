@@ -9,7 +9,6 @@
 #include "frame.h"
 #include "raft/raft_worker.h"
 #include "raft/service.h"
-#include "client_worker.h"
 #include "paxos_worker.h"  // ElectionState definition lives here
 
 
@@ -18,12 +17,10 @@ import std;
 using namespace janus;
 
 namespace janus {
-vector<unique_ptr<ClientWorker>> client_workers_storage = {};
 vector<shared_ptr<RaftWorker>> raft_workers_g = {};
 std::function<void(int)> leader_callback_{};
 }
 
-vector<unique_ptr<janus::ClientWorker>>& client_workers_g = janus::client_workers_storage;
 using janus::raft_workers_g;
 
 // ============================================================================
