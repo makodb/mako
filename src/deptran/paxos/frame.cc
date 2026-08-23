@@ -47,10 +47,7 @@ Coordinator *MultiPaxosFrame::CreateBulkCoordinator() {
 
 
 TxLogServer *MultiPaxosFrame::CreateScheduler() {
-  TxLogServer *sch = nullptr;
-  sch = new PaxosServer();
-  sch->frame_ = this;
-  return sch;
+  return new PaxosServer();
 }
 
 Communicator *MultiPaxosFrame::CreateCommo(
@@ -71,7 +68,13 @@ MultiPaxosFrame::CreateRpcServices(uint32_t site_id,
   auto config = Config::GetConfig();
   auto result = std::vector<rrr::ServiceProxy>();
   switch (config->replica_proto_) {
-    case MODE_MULTI_PAXOS:result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<MultiPaxosServiceImpl>(rep_sched)));
+    case MODE_MULTI_PAXOS: {
+      auto* server = dynamic_cast<PaxosServer*>(rep_sched);
+      verify(server != nullptr);
+      result.push_back(rrr::make_service_proxy_from_typed_box(
+          rusty::make_box<MultiPaxosServiceImpl>(server)));
+      break;
+    }
     default:break;
   }
   return result;

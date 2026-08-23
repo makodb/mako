@@ -965,10 +965,8 @@ set(DEPTRAN_CORE_SRC
     src/deptran/raft/service.cc
     src/deptran/replication_log_entry.cc
     src/deptran/scheduler.cc
-    src/deptran/sharding.cc
     src/deptran/tpc_command.cc
     src/deptran/tpcc_sharding.cc
-    src/deptran/tx.cc
     src/deptran/view_data.cc
     src/deptran/workload.cc
 )

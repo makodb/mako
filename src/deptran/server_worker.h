@@ -9,8 +9,8 @@
 namespace janus {
 
 class Communicator;
-class Frame;
-class TxLogServer;
+class RaftFrame;
+class RaftServer;
 
 // ServerWorker is the small embedded-server harness used by the RAFT_TEST
 // executable. Production Mako creates RaftWorker/PaxosWorker directly.
@@ -24,9 +24,9 @@ class ServerWorker {
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
   rrr::Server *hb_rpc_server_ = nullptr;
 
-  Frame* rep_frame_ = nullptr;
+  RaftFrame* rep_frame_ = nullptr;
   Config::SiteInfo *site_info_ = nullptr;
-  TxLogServer *rep_sched_ = nullptr;
+  RaftServer *rep_sched_ = nullptr;
 
   Communicator *rep_commo_ = nullptr;
 

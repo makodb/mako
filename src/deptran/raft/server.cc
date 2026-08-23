@@ -665,15 +665,13 @@ void RaftServer::LogTermChange(const char* reason,
   }
 }
 
-// @unsafe - raw pointer parameter is bounded (frame outlives server)
-RaftServer::RaftServer(Frame * frame)
+RaftServer::RaftServer()
   : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
   // RocksDB recovery deserializes polymorphic commands during Setup().  Make
   // the immutable kind-4 compatibility factory available as soon as a Raft
   // server exists, before any storage backend can be opened or replayed.
   EnsureLegacyRaftLogPayloadRegistered();
-  frame_ = frame ;
 #ifdef RAFT_TEST_CORO
   setIsLeader(false);
 #endif
@@ -1065,7 +1063,7 @@ void RaftServer::setIsLeader(bool isLeader) {
   bool prev_is_leader = is_leader_;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_STATE] setIsLeader invoked site {} (loc {}) term {}: prev_is_leader={} new_is_leader={}",
-           site_id_, frame_->site_info_->locale_id, currentTerm, prev_is_leader, isLeader);
+           site_id_, loc_id_, currentTerm, prev_is_leader, isLeader);
 #endif
 
 
@@ -1129,24 +1127,17 @@ void RaftServer::setIsLeader(bool isLeader) {
     transferring_leadership_ = false;
 
     // Only update view if we have enough information (not during initialization)
-    if (partition_id_ != 0xFFFFFFFF && site_id_ != -1 && frame_ != nullptr) {
-      // Move current new_view to old_view before updating
-      int n_replicas = 0;
-      // @unsafe
-      {
-      old_view_ = new_view_;
-
-      // Update new_view with this server as the leader
-      n_replicas = static_cast<int>(current_config_.size());
-      }
-      new_view_ = View(n_replicas, site_id_, currentTerm);
+    if (partition_id_ != 0xFFFFFFFF && site_id_ != INVALID_SITEID) {
+      const View old_view = current_view_;
+      const int n_replicas = static_cast<int>(current_config_.size());
+      current_view_ = View(n_replicas, site_id_, currentTerm);
       Log_info("[RAFT_VIEW] Server {} became leader for partition {}, term={}, old_view={}, new_view={}", 
                site_id_, partition_id_, currentTerm, 
-               old_view_.ToString().c_str(), new_view_.ToString().c_str());
+               old_view.ToString().c_str(), current_view_.ToString().c_str());
       
       // IMPORTANT: Update the communicator's view so it knows this server is the leader
       if (commo_) {
-        auto view_data = std::make_shared<ViewData>(new_view_, partition_id_);
+        auto view_data = std::make_shared<ViewData>(current_view_, partition_id_);
         // @unsafe
         { commo()->UpdatePartitionView(partition_id_, *view_data); }
         Log_info("[RAFT_VIEW] Updated communicator view for partition {} with new leader {}",
@@ -1908,9 +1899,8 @@ RaftServer::~RaftServer() {
   // The election timer coroutine (StartElectionTimer) and leadership transfer coroutine
   // (InitiateLeadershipTransfer) are detached and check stop_ before calling RequestVote().
   // We need to give them time to notice stop_=true and return before the vtable collapses.
-  // Without this sleep, there's a race where the coroutine wakes up, checks stop_=false,
-  // then the destructor runs (vtable collapses), then the coroutine calls RequestVote()
-  // through the base class vtable, hitting verify(0) and aborting.
+  // Without this sleep, a coroutine can wake after the derived object has begun
+  // destruction and access state that is no longer alive.
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
   Log_info("site par {}, loc {}: prepare {}, accept {}, commit {}",
@@ -1920,9 +1910,8 @@ RaftServer::~RaftServer() {
 // @unsafe - external calls marked @external [safe], mutex/pointer ops in @unsafe blocks
 bool RaftServer::RequestVote() {
   // FIX 2: Prevent RequestVote during shutdown
-  // The election timer coroutine may fire after ~RaftServer destructor runs,
-  // causing a call to the base class TxLogServer::RequestVote() which hits verify(0)
-  // Check stop_ flag to avoid this crash during teardown
+  // The election timer coroutine may fire while ~RaftServer is running. Check
+  // stop_ before touching election state.
   if (stop_) {
     Log_debug("[RAFT-SHUTDOWN] RequestVote called during shutdown (site={}), ignoring to prevent crash", site_id_);
     return false;
@@ -1930,13 +1919,8 @@ bool RaftServer::RequestVote() {
 
   // for(int i = 0; i < 1000; i++) Log_info("not calling the wrong method");
 
-  parid_t par_id = 0;
-  parid_t loc_id = 0;
-  // @unsafe
-  {
-  par_id = this->frame_->site_info_->partition_id_ ;
-  loc_id = this->frame_->site_info_->locale_id ;
-  }
+  const parid_t par_id = partition_id_;
+  const locid_t loc_id = loc_id_;
 
   uint32_t lstoff = 0  ;
   slotid_t lst_idx = 0 ;
@@ -2432,10 +2416,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
       // // Update follower's view to track the current leader
       // if (!IsLeader() && leaderSiteId != INVALID_SITEID) {
-      //     int prev_leader = new_view_.GetLeader();
-      //     old_view_ = new_view_;
       //     int n_replicas = Config::GetConfig()->GetPartitionSize(partition_id_);
-      //     new_view_ = View(n_replicas, leaderSiteId, leaderCurrentTerm);
       //     Log_info("[RAFT_VIEW_FOLLOWER] Server {} observed leader change {}->{} term={} prev_term={}",
       //              site_id_, prev_leader, leaderSiteId, leaderCurrentTerm, currentTerm);
       // }

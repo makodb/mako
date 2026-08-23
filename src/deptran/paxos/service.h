@@ -11,12 +11,11 @@
 class SimpleCommand;
 namespace janus {
 
-class TxLogServer;
 class PaxosServer;
 class MultiPaxosServiceImpl : public MultiPaxosService {
  public:
   PaxosServer* sched_;
-  MultiPaxosServiceImpl(TxLogServer* sched);
+  explicit MultiPaxosServiceImpl(PaxosServer* sched);
   // removed `Forward(janus::Command, ...)`
   // declaration — paired with its typed-rpc override (also removed
   // below); body was empty and the matching `MultiPaxos::Forward`

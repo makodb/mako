@@ -2,6 +2,7 @@
 
 #include "../__dep__.h"
 #include "../constants.h"
+#include "../distribution.h"
 #include "../scheduler.h"
 #include "../paxos_worker.h"
 #include "deptran/raft/log_storage.hpp"
@@ -239,10 +240,5 @@ class PaxosServer : public TxLogServer {
     }
   }
 
-  virtual bool HandleConflicts(Tx& dtxn,
-                               innid_t inn_id,
-                               vector<string>& conflicts) {
-    verify(0);
-  };
 };
 } // namespace janus

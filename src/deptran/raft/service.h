@@ -20,7 +20,6 @@
 class SimpleCommand;
 namespace janus {
 
-class TxLogServer;
 class RaftServer;
 
 // @unsafe - inherits from non-@interface RaftService
@@ -38,7 +37,7 @@ class RaftServiceImpl : public RaftService {
   // inbound and outbound RPCs share a thread.
   rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_;
 
-  RaftServiceImpl(TxLogServer* sched, rusty::Arc<rrr::PollThread> poll_thread);
+  RaftServiceImpl(RaftServer* sched, rusty::Arc<rrr::PollThread> poll_thread);
 
   // Called by test framework during Kill/Restart to update server pointer
   static void UpdateServer(siteid_t site_id, RaftServer* new_svr);

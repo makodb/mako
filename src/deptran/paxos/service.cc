@@ -49,8 +49,8 @@ void MultiPaxosServiceImpl::ForwardToLearnerServer(const MultiPaxosService::RpcF
   this->ForwardToLearnerServer(req.par_id, req.slot, req.ballot, req.cmd, &resp.ret_slot, &resp.ret_ballot, std::move(defer));
 }
 
-MultiPaxosServiceImpl::MultiPaxosServiceImpl(TxLogServer *sched)
-    : sched_((PaxosServer*)sched) {
+MultiPaxosServiceImpl::MultiPaxosServiceImpl(PaxosServer *sched)
+    : sched_(sched) {
 
 }
 

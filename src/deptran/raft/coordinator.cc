@@ -66,12 +66,11 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
         // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
         { auto& mut_cmd = *const_cast<TpcCommitCommand*>(tpc_cmd.unwrap().get()); mut_cmd.ret_ = WRONG_LEADER; }
 
-        // Get current view from TxLogServer (parent class)
-        // The new_view_ contains the most recent view information
+        // Use the last view published by this Raft server.
         View current_view;
         // @unsafe
         {
-        current_view = svr_->new_view_;
+        current_view = svr_->GetCurrentView();
 
         Log_info("[WRONG_LEADER] Server {} retrieving view: {}",
                  svr_->site_id_, current_view.ToString().c_str());

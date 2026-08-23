@@ -70,7 +70,7 @@ TxLogServer *RaftFrame::CreateScheduler() {
   if(svr_ == nullptr)
   {
     // @unsafe
-    { svr_ = std::make_unique<RaftServer>(this); }
+    { svr_ = std::make_unique<RaftServer>(); }
   }
   else
   {
@@ -200,7 +200,13 @@ RaftFrame::CreateRpcServices(uint32_t site_id,
   switch (config->replica_proto_) {
     // Fix 2: Pass poll_thread_worker to RaftServiceImpl so it can be
     // retrieved during Restart() to ensure inbound/outbound use same thread
-    case MODE_RAFT:result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread_worker.clone())));
+    case MODE_RAFT: {
+      auto* server = dynamic_cast<RaftServer*>(rep_sched);
+      verify(server != nullptr);
+      result.push_back(rrr::make_service_proxy_from_typed_box(
+          rusty::make_box<RaftServiceImpl>(server, poll_thread_worker.clone())));
+      break;
+    }
     default:break;
   }
   return result;

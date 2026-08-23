@@ -2,7 +2,7 @@
 #define RW_BENCHMARK_PIE_H_
 
 #include "deptran/workload.h"
-#include "../../deptran/scheduler.h"
+#include "deptran/distribution.h"
 #include <random>
 
 namespace janus {

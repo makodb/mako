@@ -1,8 +1,8 @@
 #include "server_worker.h"
 #include "benchmark_control_rpc.h"
-#include "scheduler.h"
 #include "frame.h"
 #include "communicator.h"
+#include "raft/frame.h"
 
 namespace janus {
 
@@ -34,15 +34,14 @@ void ServerWorker::SetupBase() {
   verify(config->IsReplicated());
   Log_info("replica_proto_={}", config->replica_proto_);
 
-  rep_frame_ = Frame::GetFrame(config->replica_proto_);
+  rep_frame_ = dynamic_cast<RaftFrame*>(Frame::GetFrame(config->replica_proto_));
   verify(rep_frame_ != nullptr);
   rep_frame_->site_info_ = site_info_;
-  rep_sched_ = rep_frame_->CreateScheduler();
+  rep_sched_ = dynamic_cast<RaftServer*>(rep_frame_->CreateScheduler());
   verify(rep_sched_ != nullptr);
-  rep_sched_->SetPartitionId(site_info_->partition_id_);
+  rep_sched_->partition_id_ = site_info_->partition_id_;
   rep_sched_->loc_id_ = site_info_->locale_id;
   rep_sched_->site_id_ = site_info_->id;
-  rep_sched_->rep_frame_ = rep_frame_;
 }
 
 void ServerWorker::SetupService() {
@@ -131,13 +130,15 @@ void ServerWorker::SetupCommo() {
 
 void ServerWorker::Pause() {
   Log_info("!!!!!!!! ServerWorker::Pause()");
-  rep_sched_->Pause();
+  verify(rep_commo_ != nullptr);
+  rep_commo_->Pause();
   // pause() not implemented in PollThreadWorker;
 }
 
 void ServerWorker::Resume() {
   // resume() not implemented in PollThreadWorker;
-  rep_sched_->Resume();
+  verify(rep_commo_ != nullptr);
+  rep_commo_->Resume();
 }
 
 void ServerWorker::ShutDown() {

@@ -4,6 +4,7 @@
 #include "../constants.h"
 #include "../scheduler.h"
 #include "../tpc_command.h"
+#include "../view.h"
 #include "commo.h"
 #include <deque>
 #include <rusty/box.hpp>
@@ -284,6 +285,7 @@ class RaftServer : public TxLogServer {
   std::set<siteid_t> current_config_;          // Active replica set (site IDs)
   bool config_change_pending_ = false;         // True when a config entry is in-flight
   uint64_t pending_config_index_ = 0;          // Log index of pending config entry
+  View current_view_{};                        // Last locally published leader view
 
   // ============================================================================
   // LEARNER / NEW SERVER CATCH-UP TRACKING
@@ -553,7 +555,7 @@ class RaftServer : public TxLogServer {
   void EnsureSetup();
 
   // @safe
-  bool IsLeader() override {
+  bool IsLeader() {
     // Defensive check: if we're shutting down (looping_=false),
     // return false to prevent accessing member variables during destruction
     if (!looping_) {
@@ -564,6 +566,8 @@ class RaftServer : public TxLogServer {
   
   // @safe - leadership state transition (callbacks and logging wrapped in @unsafe blocks)
   void setIsLeader(bool isLeader);
+
+  View GetCurrentView() const { return current_view_; }
 
   // @safe - stores callback for later invocation
   void RegisterLeaderChangeCallback(std::function<void(bool)> cb);
@@ -663,8 +667,7 @@ class RaftServer : public TxLogServer {
    }
 
 
-  // @safe - raw pointer parameter is bounded (frame outlives server)
-  RaftServer(Frame *frame) ;
+  RaftServer();
   // @unsafe - thread join and timer cleanup require manual resource management
   ~RaftServer() ;
 
@@ -1021,13 +1024,6 @@ class RaftServer : public TxLogServer {
 
   // @safe
   bool IsDisconnected();
-
-  // @safe - verify(0) is always-abort, no actual unsafe operations
-  virtual bool HandleConflicts(Tx& dtxn,
-                               innid_t inn_id,
-                               vector<string>& conflicts) {
-    verify(0);
-  };
 
   // @safe - external calls marked @external
   void removeCmd(slotid_t slot);

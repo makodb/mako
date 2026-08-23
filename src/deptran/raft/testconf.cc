@@ -34,7 +34,6 @@ RaftTestConfig::RaftTestConfig(std::map<siteid_t, RaftFrame*>& replicas) {
   for (auto& pair : replicas) {
     auto svr = pair.first;
     auto frame = pair.second;
-    frame->svr_->rep_frame_ = frame->svr_->frame_;  // Set rep_frame_ directly like lab solution
     RaftTestConfig::committed_cmds[svr].push_back(-1);
     RaftTestConfig::rpc_count_last[svr] = 0;
     disconnected_[svr] = false;
@@ -46,7 +45,6 @@ void RaftTestConfig::SetLearnerAction(void) {
   for (auto& pair : replicas) {
     auto svr = pair.first;
     auto frame = pair.second;
-    // rep_frame_ is already set in constructor, no need to set it here
     RaftTestConfig::commit_callbacks[svr] =
         [svr](int slot, janus::Command md) -> int {
           verify(md.kind_ == TpcCommitCommand::static_kind());
@@ -647,11 +645,10 @@ void RaftTestConfig::Restart(siteid_t svr) {
   frame->site_info_ = site_info;
 
   // Create new RaftServer (persistence will be loaded when EnsureSetup is called)
-  frame->svr_ = std::make_unique<RaftServer>(frame);
+  frame->svr_ = std::make_unique<RaftServer>();
   frame->svr_->site_id_ = svr;
   frame->svr_->partition_id_ = site_info->partition_id_;
   frame->svr_->loc_id_ = site_info->locale_id;
-  frame->svr_->rep_frame_ = frame;
 
   // Fix 2: Get the ORIGINAL poll thread from RaftServiceImpl (survives Kill)
   // This ensures inbound RPCs (via RPC server) and outbound RPCs (via Commo)

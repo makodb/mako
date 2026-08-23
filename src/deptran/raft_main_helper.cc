@@ -244,7 +244,8 @@ void create_stub_servers() {
   }
 
   auto& worker = raft_workers_g[0];
-  TxLogServer* rep_sched = worker->rep_sched_;
+  auto* rep_sched = dynamic_cast<RaftServer*>(worker->rep_sched_);
+  verify(rep_sched != nullptr);
 
   for (size_t i = 1; i < all_site_infos_g.size(); i++) {
     auto* site_info = all_site_infos_g[i];
