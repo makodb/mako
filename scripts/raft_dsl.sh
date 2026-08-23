@@ -34,6 +34,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/recovery_manager.hpp|raft_recovery.mode"
   "src/deptran/raft/server.h|raft_server.commit_status"
   "src/deptran/raft/server.h|raft_server.step_down_reason"
+  "src/deptran/raft/server.cc|raft_server.preferred_leader_predicate"
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.format_enums"
 )
 

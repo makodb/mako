@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <rusty/slice.hpp>
 
 #include "server.h"
 // #include "paxos_worker.h"
@@ -157,9 +158,21 @@ uint64_t GetAppendEntriesBatchMaxEntries() {
   return max_entries;
 }
 
-bool IsPreferredLeaderConfigured(siteid_t preferred_leader_site_id) {
-  return preferred_leader_site_id != INVALID_SITEID;
+#if RUSTYCPP_RUST
+#[allow(non_snake_case)]
+pub fn IsPreferredLeaderConfigured(preferred_leader_site_id: u16) -> bool {
+    preferred_leader_site_id != u16::MAX
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.preferred_leader_predicate version=1 rust_sha256=9fc426bfd657f316cd3ff6d14216d54cd7e30d952a847c61fdbc04722f7c335f*/
+bool IsPreferredLeaderConfigured(uint16_t preferred_leader_site_id);
+
+bool IsPreferredLeaderConfigured(uint16_t preferred_leader_site_id) {
+    return rusty::detail::deref_if_pointer_like(preferred_leader_site_id) != rusty::detail::deref_if_pointer_like(std::numeric_limits<uint16_t>::max());
+}
+/*RUSTYCPP:GEN-END id=raft_server.preferred_leader_predicate*/
+
+static_assert(std::is_same_v<siteid_t, uint16_t>);
 
 }  // namespace
 
