@@ -35,8 +35,7 @@
 //   std::min: [safe, (T, T) -> T],
 //   std::stoull: [safe, (const string&) -> uint64_t],
 //   std::stoll: [safe, (const string&) -> int64_t],
-//   std::this_thread::sleep_for: [safe, (duration) -> void],
-//   JetpackRecoveryEntry: [safe, (...) -> void]
+//   std::this_thread::sleep_for: [safe, (duration) -> void]
 // }
 
 namespace janus {
@@ -459,17 +458,6 @@ class RaftServer : public TxLogServer {
       counter_.store(0);
     }
   }
-  // @unsafe - raw pointer output params from base class virtual interface
-  void OnJetpackPullCmd(const epoch_t& jepoch,
-                        const epoch_t& oepoch,
-                        const std::vector<key_t>& keys,
-                        bool_t* ok,
-                        epoch_t* reply_jepoch,
-                        epoch_t* reply_oepoch,
-                        janus::Command* reply_old_view,
-                        janus::Command* reply_new_view,
-                        KeyCmdBatchData& batch) override;
-
   // @unsafe - const char* parameter type requires unsafe context
   void resetTimer(const char* reason = "unspecified") {
     // @unsafe

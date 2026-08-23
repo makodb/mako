@@ -664,43 +664,6 @@ void RaftServer::LogTermChange(const char* reason,
   }
 }
 
-namespace {
-
-// @unsafe
-bool JetpackRecoveryEnabled() {
-  static const bool enabled = []() {
-    const char* flag = std::getenv("MAKO_DISABLE_JETPACK");
-    if (!flag || flag[0] == '\0') {
-      return true;
-    }
-    std::string value(flag);
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-      return static_cast<char>(std::tolower(c));
-    });
-
-    auto is_true = [](const std::string& v) {
-      return v == "1" || v == "true" || v == "yes" || v == "on";
-    };
-    auto is_false = [](const std::string& v) {
-      return v == "0" || v == "false" || v == "no" || v == "off";
-    };
-
-    if (is_true(value)) {
-      Log_info("[JETPACK-RUNTIME] MAKO_DISABLE_JETPACK={} -> Jetpack recovery disabled", flag);
-      return false;
-    }
-    if (is_false(value)) {
-      return true;
-    }
-
-    Log_info("[JETPACK-RUNTIME] MAKO_DISABLE_JETPACK has unrecognised value '{}'; defaulting to disabled", flag);
-    return false;
-  }();
-  return enabled;
-}
-
-}  // namespace
-
 // @unsafe - raw pointer parameter is bounded (frame outlives server)
 RaftServer::RaftServer(Frame * frame)
   : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
@@ -710,27 +673,6 @@ RaftServer::RaftServer(Frame * frame)
   setIsLeader(false);
 #endif
   stop_ = false ;
-}
-
-// @unsafe - raw pointer output params from base class virtual interface
-void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
-                                   const epoch_t& oepoch,
-                                   const std::vector<key_t>& keys,
-                                   bool_t* ok,
-                                   epoch_t* reply_jepoch,
-                                   epoch_t* reply_oepoch,
-                                   janus::Command* reply_old_view,
-                                   janus::Command* reply_new_view,
-                                   KeyCmdBatchData& batch) {
-  TxLogServer::OnJetpackPullCmd(jepoch, oepoch, keys, ok, reply_jepoch, reply_oepoch,
-                                reply_old_view, reply_new_view, batch);
-  if (!IsLeader()) {
-    resetTimer("JetpackPullCmd RPC");
-#ifdef RAFT_LEADER_ELECTION_DEBUG
-    // Log_info("[RAFT_TIMER] server {} reset election timer due to JetpackPullCmd (keys={})",
-    //          site_id_, keys.size());
-#endif
-  }
 }
 
 // @unsafe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
@@ -1206,11 +1148,6 @@ void RaftServer::setIsLeader(bool isLeader) {
                  partition_id_, site_id_);
       }
       
-#ifndef RAFT_TEST_CORO
-      if (JetpackRecoveryEnabled()) {
-        JetpackRecoveryEntry();
-      }
-#endif
     }
 
     // ============================================================================
@@ -2094,24 +2031,9 @@ bool RaftServer::RequestVote() {
              site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get());
 #endif
 
-    this->rep_frame_ = this->frame_ ;
-
-    // auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
-    // auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    // verify(TpcEmptyCommand::kMarshallKind == TpcEmptyCommand::static_kind());
-    // auto sp_m = wrap_typed_marshallable(empty_cmd);
-    // ((CoordinatorRaft*)co)->Submit(sp_m);
-    
     if(IsLeader()) {
 	  	//for(int i = 0; i < 100; i++) Log_info("wait wait wait");
       Log_debug("vote accepted {} curterm {}", loc_id, currentTerm);
-#ifdef RAFT_TEST_CORO
-      // Skip JetpackRecovery in test environment to avoid RPC handler issues
-#else
-      if (JetpackRecoveryEnabled()) {
-        JetpackRecoveryEntry(); // Trigger Jetpack recovery on new leader election
-      }
-#endif
   		req_voting_ = false ;
 			return true;
     } else {
