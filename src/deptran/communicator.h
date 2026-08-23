@@ -5,8 +5,8 @@
 #include "msg.h"
 #include "config.h"
 #include "command_marshaler.h"
+#include "RW_command.h"
 #include "procedure.h"
-#include "deptran/rcc/dep_graph.h"
 #include "rcc_rpc.h"
 #include <ctime>
 #include <unordered_map>

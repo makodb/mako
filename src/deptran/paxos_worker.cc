@@ -235,7 +235,7 @@ void PaxosWorker::WaitForShutdown() {
     // Arc auto-releases on destruction
 
     // removed `for_each_service(...) { if
-    // (auto* s = dynamic_cast<DepTranServiceImpl*>(...)) { auto&
+    // (auto* s = dynamic_cast<ClassicServiceImpl*>(...)) { auto&
     // recorder = s->recorder_; if (recorder) { Log_info(...) } } }`
     // block — `Service::recorder_` field is always nullptr (now
     // gone); the `if (recorder)` branch was unreachable.

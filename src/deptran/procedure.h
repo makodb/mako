@@ -7,7 +7,6 @@
 #include "__dep__.h"
 #include "command.h"
 #include <rusty/function.hpp>
-#include "rcc/graph.h"
 #include "command_marshaler.h"
 #include "mako_commands.h"
 #include "txn_reg.h"
@@ -391,7 +390,6 @@ class TxData: public CmdData {
   // only `read_only_failed_ = true` writers were already
   // commented-out code in procedure.cc.
   double pre_time_ = 0.0;
-  bool early_return_ = false;
  public:
   // removed protected `ChooseRandom<T>`
   // template — defined here but never instantiated anywhere in the
@@ -424,11 +422,8 @@ class TxData: public CmdData {
   int max_try_ = 0;
   int n_try_ = 0;
 
-  // removed `bool validation_ok_{true};`
-  // (no writer or reader anywhere) and `bool need_validation_{false};`
-  // (the only writer was `tx_data().need_validation_ = true;` at
-  // `rcc/coord.cc:86`, no readers; that write was removed in this
-  // commit).
+  // removed `bool validation_ok_{true};` and
+  // `bool need_validation_{false};`; neither had a reader.
 
   weak_ptr<TxnRegistry> txn_reg_{};
   Sharding *sss_ = nullptr;
@@ -486,14 +481,8 @@ class TxData: public CmdData {
   // `verify(0)` defaults remain for any unintentionally surviving
   // virtual-dispatch path.
 
-  // removed `inline bool can_retry()` —
-  // defined but never called.  Removed `inline void
-  // disable_early_return()` — only call sites were commented-out
-  // legacy coordinator code.
-
-  inline bool do_early_return() {
-    return early_return_;
-  }
+  // removed `inline bool can_retry()` and
+  // `inline void disable_early_return()`; neither had a live caller.
 
   double last_attempt_latency();
 
@@ -505,7 +494,7 @@ class TxData: public CmdData {
   virtual ~TxData() {}
 };
 
-} // namespace rcc
+} // namespace janus
 
 // removed an empty `namespace rrr {}` block
 // at the bottom of this header — companion to the Phase 4e-2 cleanup

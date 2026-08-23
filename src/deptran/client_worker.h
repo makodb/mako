@@ -8,6 +8,7 @@
 #include "config.h"
 #include "communicator.h"
 #include "procedure.h"
+#include "scheduler.h"
 #include "client_status.h"
 
 namespace janus {

@@ -1,8 +1,7 @@
 #ifndef BENCHMARK_CTRL_H_
 #define BENCHMARK_CTRL_H_
 
-#include "rcc/dep_graph.h"
-#include "rcc_rpc.h" // before this one include all the custom data structures.
+#include "rcc_rpc.h"
 #include "server_status.h"
 #include "client_status.h"
 #include <rusty/function.hpp>
@@ -17,13 +16,6 @@
 #endif
 
 namespace janus {
-
-extern const char S_RES_KEY_N_SCC[];
-extern const char S_RES_KEY_N_ASK[];
-extern const char S_RES_KEY_START_GRAPH[];
-extern const char S_RES_KEY_COMMIT_GRAPH[];
-extern const char S_RES_KEY_ASK_GRAPH[];
-//extern const char S_RES_KEY_CPU[];
 
 void clock_gettime(struct timespec *time);
 double timespec2ms(struct timespec time);

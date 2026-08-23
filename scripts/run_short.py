@@ -377,7 +377,6 @@ class ClientController(object):
         self.pre_run_sec = 0
         self.run_nsec = 0
         self.pre_run_nsec = 0
-        self.n_asking = 0
         self.max_tps = 0
 
         self.recording_period = False
@@ -510,7 +509,6 @@ class ClientController(object):
         output_str += tabulate(total_table, headers=total_header) + "\n\n"
         output_str += "INTERVAL: elapsed time: " + str(round(interval_time, 2)) + "\n"
         output_str += tabulate(interval_table, headers=interval_header) + "\n"
-        output_str += "\tTotal asking finish: " + str(self.n_asking) + "\n"
         output_str += "----------------------------------------------------------------------\n"
         logger.info(output_str)
 

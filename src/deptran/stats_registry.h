@@ -17,21 +17,8 @@ struct ValueTimesPair;
  */
 class StatsRegistry {
 public:
-    // Stat key constants (moved from ServerControlServiceImpl)
-    static const std::string STAT_SZ_SCC;
-    static const std::string STAT_N_ASK;
-    static const std::string STAT_SZ_GRAPH_START;
-    static const std::string STAT_SZ_GRAPH_COMMIT;
-    static const std::string STAT_SZ_GRAPH_ASK;
-
     // Get the singleton instance
     static StatsRegistry& instance();
-
-    // Register a stat pointer by name
-    void set_stat(const std::string& name, AvgStat* stat);
-
-    // Get a stat by name (creates if doesn't exist)
-    AvgStat* get_stat(const std::string& name);
 
     // Record a statistic value
     void do_statistics(const char* key, int64_t value_delta);
@@ -39,9 +26,6 @@ public:
     // removed `set_recorder(Recorder*)` /
     // `get_recorder()` declarations — see stats_registry.cc retirement
     // comment.
-
-    // Get all stats (for heartbeat response)
-    std::map<std::string, AvgStat*> get_all_stats();
 
     // Get all statistics (for heartbeat response)
     std::unordered_map<const char*, ValueTimesPair> get_all_statistics();

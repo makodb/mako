@@ -79,7 +79,9 @@ namespace janus {
 #define MODE_NONE   (0x00)
 // 0x01 is retired with the former standalone 2PL protocol; do not reuse it.
 #define MODE_OCC    (0x02)
-#define MODE_RCC    (0x04)
+// 0x04 was RCC/Rococo (including the deprecated deptran aliases).
+// Keep the value reserved so retired configurations fail instead of
+// silently selecting a different protocol.
 // 0x15 is reserved for compatibility with the retired Rule protocol.
 #define MODE_RULE    (0x15)
 #define MODE_MDCC   (0x12)
@@ -89,7 +91,6 @@ namespace janus {
 // 0x18 is reserved for compatibility with the retired None-Copilot adapter.
 
     // deprecated.
-#define MODE_DEPTRAN (4)
 
 #define MODE_MULTI_PAXOS   (0x40)
 #define MODE_MULTI_PAXOS_PLUS   (0x41)

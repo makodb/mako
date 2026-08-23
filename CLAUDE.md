@@ -91,7 +91,7 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 ## Code Architecture
 
 ### Core Directory Structure
-- `src/deptran/`: Transaction and replication protocol implementations (OCC, RCC, Paxos, Raft)
+- `src/deptran/`: Transaction and replication protocol implementations (OCC, Paxos, Raft)
 - `src/mako/`: Mako system with Masstree storage engine and speculative execution
 - `src/bench/`: Benchmark implementations (TPC-C, TPC-A, RW, Micro)
 - `src/rrr/`: Custom RPC framework and networking layer
@@ -109,10 +109,10 @@ Goal 0. Never recreate a top-level `crates/srpc` hand port.
 ### Key Protocol Implementations
 The system implements multiple distributed transaction protocols. The former
 standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, Rule, TAPIR, FPGA-Raft,
-and Copilot implementations are retired; the project-wide `janus::` C++
-namespace remains for compatibility.
+Copilot, and RCC/Rococo implementations are retired. This includes the old
+`deptran` and `deptran_er` RCC aliases; the project-wide `janus::` C++ namespace
+remains for compatibility.
 - **OCC** (`src/deptran/occ/`): Optimistic concurrency control
-- **RCC/Rococo** (`src/deptran/rcc/`): Distributed consensus protocol
 - **Paxos** (`src/deptran/paxos/`): Consensus for replication
 
 ### Transport Layer Architecture

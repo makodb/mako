@@ -1,7 +1,6 @@
 #include "__dep__.h"
 #include "frame.h"
 #include "config.h"
-#include "rcc/row.h"
 #include "marshal-value.h"
 #include "coordinator.h"
 #include "tx.h"
@@ -9,7 +8,6 @@
 #include "scheduler.h"
 #include "none/coordinator.h"
 #include "none/scheduler.h"
-#include "rcc/coord.h"
 #include "occ/tx.h"
 #include "occ/coordinator.h"
 #include "benchmark_registry.h"
@@ -138,13 +136,6 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
-    case MODE_RCC:
-      coo = new RccCoord(coo_id,
-                         benchmark,
-                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
-                         id);
-      ((Coordinator*)coo)->txn_reg_ = txn_reg;
-      break;
     case MODE_MDCC:
 //      coo = (Coordinator*)new mdcc::MdccCoordinator(coo_id, id, config, ccsi);
       break;
@@ -206,9 +197,6 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
     case MODE_OCC:
       sp_tx.reset(new TxOcc(epoch, tid, mgr));
       break;
-    case MODE_RCC:
-      sp_tx.reset(new RccTx(epoch, tid, mgr, ro));
-      break;
     case MODE_MULTI_PAXOS:
     case MODE_RAFT:
       break;
@@ -255,7 +243,6 @@ TxLogServer* Frame::CreateScheduler() {
       sch = new SchedulerNone();
       break;
     case MODE_RPC_NULL:
-    case MODE_RCC:
       verify(0);
       break;
     default:
@@ -288,7 +275,6 @@ vector<rrr::ServiceProxy> Frame::CreateRpcServices(uint32_t site_id,
     case MODE_MDCC:
     case MODE_OCC:
     case MODE_NONE:
-    case MODE_RCC:
     case MODE_NOTX:
     default:
       result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<ClassicServiceImpl>(dtxn_sched, poll_thread_worker)));
@@ -302,8 +288,6 @@ map<string, int> &Frame::FrameNameToMode() {
       {"occ",           MODE_OCC},
       {"notx",          MODE_NOTX},
       {"rpc_null",      MODE_RPC_NULL},
-      {"deptran",       MODE_DEPTRAN},
-      {"deptran_er",    MODE_DEPTRAN},
       {"mdcc",          MODE_MDCC},
       {"multi_paxos",   MODE_MULTI_PAXOS},
       {"raft",          MODE_RAFT},

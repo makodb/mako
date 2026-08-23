@@ -1,6 +1,4 @@
 #include "procedure.h"
-#include "rcc/tx.h"
-#include "rrr/misc/any_message.hpp"  // graph fields are AnyMessage
 %%
 
 namespace janus;
@@ -179,48 +177,6 @@ abstract service Classic {
   // below is for what?
 
   defer rpc_null( | );
-  defer RccDispatch(vector<SimpleCommand> cmd |
-                    i32 res,
-                    TxnOutput output,
-                    AnyMessage md_graph);
-
-  defer RccFinish(cmdid_t id,
-                  AnyMessage md_graph |
-                  map<uint32_t, map<int32_t, Value>> outputs);
-
-  // defer RccInquire(epoch_t epoch,
-  //                  txnid_t txn_id |
-  //                  Command md_res_graph);
-
-  defer RccInquire(txnid_t txn_id, int32_t rank |
-                   map<uint64_t, parent_set_t>);
-
-  defer RccDispatchRo(SimpleCommand cmd |
-                      map<i32, Value> output);
-
-  defer RccInquireValidation(txid_t tx_id, int32_t rank | int32_t res);
-
-  defer RccNotifyGlobalValidation(txid_t tx_id, int32_t rank, int32_t res |);
-
-  defer RccCommit(cmdid_t id,
-                  rank_t rank,
-                  int32_t need_validation,
-                  parent_set_t  parents |
-                  int32_t res,
-                  TxnOutput output);
-
-  defer RccPreAccept(cmdid_t txn_id,
-                     rank_t rank,
-                     vector<SimpleCommand> cmd |
-                     i32 res,
-                     parent_set_t x );
-
-  defer RccAccept(cmdid_t txn_id,
-                  i32 rank,
-                  ballot_t ballot,
-                  parent_set_t p  |
-                  i32 res);
-
   defer JetpackBeginRecovery(Command old_view,
                              Command new_view, 
                              epoch_t new_view_id);
@@ -335,7 +291,6 @@ struct ClientResponse  {
     i64 period_sec;    // running time in seconds
     i64 period_nsec;   // running time in nano seconds
     i32 is_finish;  // if client finishs
-    i64 n_asking;   // asking finish request count
 }
 
 abstract service ServerControl {

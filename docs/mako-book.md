@@ -156,7 +156,6 @@ mako/
       paxos/          # Paxos consensus
       raft/           # Raft consensus
       occ/            # Optimistic concurrency control
-      rcc/            # Rococo protocol
     mako/             # Mako core
       masstree/       # Masstree storage engine
       lib/            # Transport backends, configuration

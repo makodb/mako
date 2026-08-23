@@ -59,7 +59,6 @@ class Config {
   std::string proc_name_;
   std::string exp_setting_name_;
   bool batch_start_;
-  bool early_return_;
   // removed `string logging_path_;` field
   // — only readers (`do_logging` and `log_path`) were already
   // deleted in Phase 4e-41; only writer was the `-r` CLI flag (also
@@ -263,7 +262,6 @@ class Config {
   // @safe - Get transaction timeout in microseconds
   uint64_t get_txn_timeout() const { return txn_timeout_us_; }
   bool get_batch_start();
-  bool do_early_return();
   // removed `bool do_logging();` declaration
   // — see config.cc retirement comment.
   bool IsReplicated();

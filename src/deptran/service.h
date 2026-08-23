@@ -3,8 +3,6 @@
 #include "__dep__.h"
 #include "rcc_rpc.h"
 
-#define DepTranServiceImpl ClassicServiceImpl
-
 namespace janus {
 
 class ServerControlServiceImpl;
@@ -15,13 +13,6 @@ class SchedulerClassic;
 class ClassicServiceImpl : public ClassicService {
 
  public:
-  AvgStat stat_sz_gra_start_{AvgStat::new_()};
-  AvgStat stat_sz_gra_commit_{AvgStat::new_()};
-  AvgStat stat_sz_gra_ask_{AvgStat::new_()};
-  AvgStat stat_sz_scc_{AvgStat::new_()};
-  AvgStat stat_n_ask_{AvgStat::new_()};
-  uint64_t n_asking_ = 0;
-
 //  std::mutex mtx_;
   // removed `Recorder* recorder_{nullptr};`
   // — only assignment was a commented-out
@@ -142,51 +133,6 @@ class ClassicServiceImpl : public ClassicService {
   ClassicServiceImpl(TxLogServer* sched,
                      rusty::Arc<rrr::PollThread> poll_thread_worker);
 
-  void RccDispatch(const vector<SimpleCommand>& cmd,
-                   int32_t* res,
-                   TxnOutput* output,
-                   rrr::AnyMessage* p_md_graph,
-                   rrr::DeferredReply done);
-
-  void RccPreAccept(const txid_t& txnid,
-                    const rank_t& rank,
-                    const vector<SimpleCommand>& cmd,
-                    int32_t* res,
-                    parent_set_t* parents,
-                    rrr::DeferredReply done);
-
-  void RccAccept(const txid_t& txnid,
-                 const rank_t& rank,
-                 const ballot_t& ballot,
-                 const parent_set_t& parents,
-                 int32_t* res,
-                 rrr::DeferredReply done);
-
-  void RccCommit(const txid_t& cmd_id,
-                 const rank_t& rank,
-                 const int32_t& need_validation,
-                 const parent_set_t& parents,
-                 int32_t* res,
-                 TxnOutput* output,
-                 rrr::DeferredReply done);
-
-  void RccFinish(const txid_t& cmd_id,
-                 const rrr::AnyMessage& md_graph,
-                 TxnOutput* output,
-                 rrr::DeferredReply done);
-
-  void RccInquire(const txid_t& tid,
-                  const int32_t& rank,
-                  map<txid_t, parent_set_t>*,
-                  rrr::DeferredReply done);
-
-  void RccDispatchRo(const SimpleCommand& cmd,
-                     map<int32_t, Value>* output,
-                     rrr::DeferredReply done);
-
-  void RccInquireValidation(const txid_t& txid, const int32_t& rank, int32_t* ret, rrr::DeferredReply done);
-  void RccNotifyGlobalValidation(const txid_t& txid, const int32_t& rank, const int32_t& res, rrr::DeferredReply done);
-
   void JetpackBeginRecovery(const janus::Command& old_view,
                             const janus::Command& new_view, 
                             const epoch_t& new_view_id, 
@@ -269,8 +215,6 @@ class ClassicServiceImpl : public ClassicService {
                              rrr::DeferredReply done);
 
  protected:
-  void RegisterStats();
-
   // BEGIN typed-rpc-decls (ClassicServiceImpl)
   // Typed RPC interface overrides (new API).
   void ReElect(const ClassicService::RpcReElectRequest& req, ClassicService::RpcReElectResponse& resp, rrr::DeferredReply defer) override;
@@ -286,15 +230,6 @@ class ClassicServiceImpl : public ClassicService {
   void rpc_null(const ClassicService::RpcRpcNullRequest& req, ClassicService::RpcRpcNullResponse& resp, rrr::DeferredReply defer) override;
   void UpgradeEpoch(const ClassicService::RpcUpgradeEpochRequest& req, ClassicService::RpcUpgradeEpochResponse& resp, rrr::DeferredReply defer) override;
   void TruncateEpoch(const ClassicService::RpcTruncateEpochRequest& req, ClassicService::RpcTruncateEpochResponse& resp, rrr::DeferredReply defer) override;
-  void RccDispatch(const ClassicService::RpcRccDispatchRequest& req, ClassicService::RpcRccDispatchResponse& resp, rrr::DeferredReply defer) override;
-  void RccFinish(const ClassicService::RpcRccFinishRequest& req, ClassicService::RpcRccFinishResponse& resp, rrr::DeferredReply defer) override;
-  void RccInquire(const ClassicService::RpcRccInquireRequest& req, ClassicService::RpcRccInquireResponse& resp, rrr::DeferredReply defer) override;
-  void RccDispatchRo(const ClassicService::RpcRccDispatchRoRequest& req, ClassicService::RpcRccDispatchRoResponse& resp, rrr::DeferredReply defer) override;
-  void RccInquireValidation(const ClassicService::RpcRccInquireValidationRequest& req, ClassicService::RpcRccInquireValidationResponse& resp, rrr::DeferredReply defer) override;
-  void RccNotifyGlobalValidation(const ClassicService::RpcRccNotifyGlobalValidationRequest& req, ClassicService::RpcRccNotifyGlobalValidationResponse& resp, rrr::DeferredReply defer) override;
-  void RccCommit(const ClassicService::RpcRccCommitRequest& req, ClassicService::RpcRccCommitResponse& resp, rrr::DeferredReply defer) override;
-  void RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req, ClassicService::RpcRccPreAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void RccAccept(const ClassicService::RpcRccAcceptRequest& req, ClassicService::RpcRccAcceptResponse& resp, rrr::DeferredReply defer) override;
   void JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) override;
   void JetpackPullIdSet(const ClassicService::RpcJetpackPullIdSetRequest& req, ClassicService::RpcJetpackPullIdSetResponse& resp, rrr::DeferredReply defer) override;
   void JetpackPullCmd(const ClassicService::RpcJetpackPullCmdRequest& req, ClassicService::RpcJetpackPullCmdResponse& resp, rrr::DeferredReply defer) override;

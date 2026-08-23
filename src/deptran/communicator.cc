@@ -6,8 +6,6 @@
 #include "communicator.h"
 #include "coordinator.h"
 #include "classic/coordinator.h"
-#include "rcc/graph.h"
-#include "rcc/graph_marshaler.h"
 #include "command.h"
 #include "command_marshaler.h"
 #include "classic/tpc_command.h"

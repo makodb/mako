@@ -8,7 +8,6 @@
 #include "deptran/classic/tpc_command.h"
 #include "deptran/procedure.h"
 #include "deptran/raft/replicated_db.h"
-#include "deptran/rcc/dep_graph.h"
 #include "deptran/paxos_worker.h"
 
 import std;
@@ -469,57 +468,6 @@ TEST(MarshallableProxyFacadeTest,
   EXPECT_EQ(decoded.unwrap()->op_, janus::ReplicatedDBOp::PUT);
   EXPECT_EQ(decoded.unwrap()->key_, "k1");
   EXPECT_EQ(decoded.unwrap()->value_, "v1");
-}
-
-TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
-  auto payload = rusty::Arc<janus::EmptyGraph>::make();
-  ASSERT_NE(payload.get(), nullptr);
-
-  // graph payloads moved from kind-tagged Serializable
-  // to the open-set `AnyMessage` envelope.  L10f-2 step 5 (2026-05-05):
-  // AnyMessage no longer inherits Marshallable; the envelope rides
-  // directly in RPC fields without a surrounding MarshallDeputy.
-  rrr::AnyMessage outgoing = rrr::AnyMessage::pack(payload);
-
-  BufferSink sink;
-  {
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    rrr::Serialize_::serialize(outgoing, writer);
-  }
-
-  rrr::AnyMessage incoming;
-  {
-    BufferSource src(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy(&src));
-    rrr::Deserialize_::deserialize(incoming, reader);
-  }
-  EXPECT_TRUE(incoming.is_a<janus::EmptyGraph>());
-  ASSERT_TRUE(incoming.unpack<janus::EmptyGraph>().is_some());
-}
-
-TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesAnyMessageEnvelope) {
-  auto payload = rusty::Arc<janus::RccGraph>::make();
-  ASSERT_NE(payload.get(), nullptr);
-
-  rrr::AnyMessage outgoing = rrr::AnyMessage::pack(payload);
-
-  BufferSink sink;
-  {
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    rrr::Serialize_::serialize(outgoing, writer);
-  }
-
-  rrr::AnyMessage incoming;
-  {
-    BufferSource src(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy(&src));
-    rrr::Deserialize_::deserialize(incoming, reader);
-  }
-
-  EXPECT_TRUE(incoming.is_a<janus::RccGraph>());
-  const auto decoded = incoming.unpack<janus::RccGraph>();
-  ASSERT_TRUE(decoded.is_some());
-  EXPECT_EQ(decoded.unwrap()->size(), 0u);
 }
 
 TEST(MarshallableProxyFacadeTest,

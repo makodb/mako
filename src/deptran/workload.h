@@ -126,53 +126,14 @@ txn_reg_->regs_[txn][pie].sharder_ \
 = std::make_pair(tb, vector<int32_t>({__VA_ARGS__}));
 
 
-#define RCC_KISS(row, col, imdt) \
-    if (IS_MODE_RCC && IN_PHASE_1) { \
-        verify(row != nullptr); \
-        ((RCCDTxn*)dtxn)->kiss(row, col, imdt); \
-    }
-
-#define RCC_PHASE1_RET \
-    { \
-        if (IS_MODE_RCC && IN_PHASE_1) { \
-            Log_debug("RETURN mode is RCC and in phase 1\n"); \
-            return; \
-        } \
-    } while(0);
-
-#define RCC_SAVE_ROW(row, index) \
-  if (IS_MODE_RCC && IN_PHASE_1) { \
-    auto &row_map = ((RCCDTxn*)dtxn)->dreqs_.back().row_map; \
-    auto ret = row_map.insert(std::pair<int, mdb::Row*>(index, row)); \
-    verify(ret.second); \
-    verify(row->schema_); \
-  }
-
-#define RCC_LOAD_ROW(row, index) \
-  if (IS_MODE_RCC && !(IN_PHASE_1)) { \
-    auto &row_map = ((RCCDTxn*)dtxn)->dreqs_.back().row_map; \
-    auto it = row_map.find(index); \
-    verify(it != row_map.end()); \
-    row = it->second; \
-    verify(row->schema_); \
-  }
-
 #define CREATE_ROW(schema, row_data) \
     switch (Config::config_s->tx_proto_) { \
     case MODE_OCC: \
     case MODE_NONE: \
         r = mdb::VersionedRow::create(schema, row_data); \
         break; \
-    case MODE_RCC: \
-        r = tx.CreateRow(schema, row_data); \
-        break; \
     default: \
         r = tx.CreateRow(schema, row_data); \
         break; \
     }
-
-
-#define IN_PHASE_1 (dtxn->phase_ == 1)
-
-
 } // namespace janus

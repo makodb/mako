@@ -7,7 +7,6 @@
 #include "procedure.h"
 #include "view.h"
 #include "tx.h"
-#include "rcc/tx.h"
 #include "classic/tpc_command.h"
 #include "RW_command.h"
 #include "config.h"
@@ -372,8 +371,8 @@ class TxLogServer {
   // — only assignment was a commented-out
   // `recorder_ = new Recorder(path);` in `scheduler.cc::SetupTransport`,
   // and the only readers were `dtxn->recorder_ = this->recorder_;`
-  // propagation lines in `scheduler.cc::CreateRccDtxn` /
-  // `CreateTx` (also gone in this phase).  Field always nullptr.
+  // propagation lines in the old transaction creation paths (also
+  // gone in this phase). Field always nullptr.
   Frame *frame_ = nullptr;
   Frame *rep_frame_ = nullptr;
   TxLogServer *tx_sched_ = nullptr;

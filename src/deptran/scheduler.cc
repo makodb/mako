@@ -6,8 +6,6 @@
 #include "constants.h"
 #include "tx.h"
 #include "scheduler.h"
-#include "rcc/graph.h"
-#include "rcc/graph_marshaler.h"
 #include "marshal-value.h"
 #include "procedure.h"
 #include "rcc_rpc.h"
@@ -202,7 +200,6 @@ TxLogServer::TxLogServer(int mode) : TxLogServer() {
       break;
     case MODE_NONE:
     case MODE_RPC_NULL:
-    case MODE_RCC:
       mdb_txn_mgr_ = make_shared<mdb::TxnMgrUnsafe>();
       break;
     default:verify(0);

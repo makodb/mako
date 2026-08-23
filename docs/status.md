@@ -166,12 +166,12 @@ Proven, high-performance in-memory index. The critical missing piece is crash re
 | Protocol | Completeness | Status |
 |----------|-------------|--------|
 | OCC | 65% | Lazy versioning, ad-hoc design |
-| RCC/Rococo | 55% | Complex dependency graphs, 24 `verify(0)` stubs |
 | TROAD, Carousel, Februus | <30% | Proof-of-concept only |
 
 The former standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, Rule, TAPIR,
-FPGA-Raft, and Copilot protocol implementations are retired and are not
-supported configuration options. The internal memdb `Txn2PL` base remains
+FPGA-Raft, Copilot, and RCC/Rococo protocol implementations are retired and are
+not supported configuration options. The old `deptran` and `deptran_er` names
+were RCC aliases and are retired too. The internal memdb `Txn2PL` base remains
 because OCC and nested transactions share its storage and query machinery.
 Generic Jetpack recovery code remains as a legacy subsystem pending a separate
 audit; it is not a supported replacement for the retired Rule protocol.

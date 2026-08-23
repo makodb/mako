@@ -71,7 +71,7 @@ BENCH_INTEREST_TXN=( "STOCK LEVEL" "STOCK LEVEL" )
 MAX_RETRY=5
 
 # available modes
-MODES=( deptran occ )
+MODES=( occ )
 
 # benchmark running duration
 BENCH_DURATION=60
@@ -130,7 +130,7 @@ MICRO_BENCH_MIN_COOS=8
 # for micro bench 4-piece txn
 MICRO_BENCH_NUM_SERVS=4
 
-MICRO_MODES=( none occ deptran )
+MICRO_MODES=( none occ )
 # <<<<<<<< MICRO BENCH <<<<<<<<
 
 

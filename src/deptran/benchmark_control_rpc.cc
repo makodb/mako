@@ -14,12 +14,6 @@ extern vector<unique_ptr<janus::ClientWorker>> client_workers_g;
 namespace janus {
 vector<ServerControlServiceImpl *> ServerControlServiceImpl::scsi_s{};
 
-const char S_RES_KEY_N_SCC[] = "scc";
-const char S_RES_KEY_N_ASK[] = "ask";
-const char S_RES_KEY_START_GRAPH[] = "start_graph";
-const char S_RES_KEY_COMMIT_GRAPH[] = "commit_graph";
-const char S_RES_KEY_ASK_GRAPH[] = "ask_graph";
-
 void ServerControlServiceImpl::shutdown_wrapper(int sig) {
   for (auto s : scsi_s) {
     s->do_shutdown();
@@ -99,19 +93,6 @@ void ServerControlServiceImpl::server_heart_beat_with_data(
   auto statistics = registry.get_all_statistics();
   for (auto it = statistics.begin(); it != statistics.end(); it++) {
     res->statistics[std::string(it->first)] = it->second;
-  }
-
-  auto stats = registry.get_all_stats();
-  for (auto &pair : stats) {
-    auto &name = pair.first;
-    auto &stat = pair.second;
-    auto ss = stat->reset();
-    verify(ss.sum_ >= 0);
-    verify(ss.n_stat_ >= 0);
-    Log_info("stat name: {}, value: {}, times: {}",
-             name.c_str(), ss.sum_, ss.n_stat_);
-    res->statistics[name].value = ss.sum_;
-    res->statistics[name].times = ss.n_stat_;
   }
 
   defer.reply();

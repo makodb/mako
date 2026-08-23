@@ -59,7 +59,6 @@ TxData::TxData() {
   // (the field went away with its only remaining writer; default
   // initialization for the bool was already false anyway).
   pre_time_ = timespec2ms(start_time_);
-  early_return_ = Config::GetConfig()->do_early_return();
 }
 
 // archive operators for TxWorkspace.
@@ -213,9 +212,8 @@ bool TxData::OutputReady() {
   }
 }
 
-// removed `void TxData::Merge(TxnOutput&)`
-// — the only remaining call site (`rcc/coord.cc:214`) was already
-// commented out. The live overloads
+// removed `void TxData::Merge(TxnOutput&)`; its only remaining call
+// site was commented out. The live overloads
 // `Merge(CmdData&)` and `Merge(innid_t, map<int32_t, Value>&)` cover
 // the per-piece merge path.
 

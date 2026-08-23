@@ -99,7 +99,6 @@ using rrr::i64;
 using rrr::Future;
 using rrr::RandomGenerator;
 // removed `using rrr::Recorder;` — class deleted.
-using rrr::AvgStat;
 using rrr::PollThread;
 // retired
 // `using rrr::Marshallable` and `using rrr::MarshallDeputy` —

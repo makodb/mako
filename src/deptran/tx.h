@@ -12,7 +12,6 @@
 #include <rusty/option.hpp>
 
 #include "__dep__.h"
-#include "rcc/row.h"
 #include "multi_value.h"
 #include "txn_reg.h"
 #include "procedure.h"
@@ -23,7 +22,6 @@ using mdb::Row;
 using mdb::Table;
 using mdb::colid_t;
 
-#define IS_MODE_RCC (Config::GetConfig()->get_mode() == MODE_RCC)
 #define IS_MODE_OCC (Config::GetConfig()->get_mode() == MODE_OCC)
 #define IS_MODE_NONE (Config::GetConfig()->get_mode() == MODE_NONE)
 
@@ -131,26 +129,6 @@ class Tx: public enable_shared_from_this<Tx> {
   virtual mdb::Table *GetTable(const std::string &tbl_name) const;
 
   virtual ~Tx();
-};
-
-class entry_t {
- public:
-  shared_ptr<Tx> last_{nullptr}; // last transaction(write) that touches this
-  unordered_set<shared_ptr<Tx>> active_{}; // last transaction(write) that touches this
-  rank_t rank_ {RANK_UNDEFINED};
-  // item. (arriving order)
-
-  const entry_t &operator=(const entry_t &rhs) {
-    last_ = rhs.last_;
-    return *this;
-  }
-
-  entry_t() {
-  }
-
-  entry_t(const entry_t &o) {
-    last_ = o.last_;
-  }
 };
 
 } // namespace janus

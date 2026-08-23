@@ -16,8 +16,6 @@
 #include "frame.h"
 #include "sharding.h"
 #include "benchmark_registry.h"
-#include "rcc/dep_graph.h"
-#include "rcc/graph_marshaler.h"
 #include "workload.h"
 
 import std;
@@ -259,7 +257,6 @@ Config::Config(char           *ctrl_hostname,
   proc_name_(string()),
   exp_setting_name_(string()),
   batch_start_(false),
-  early_return_(false),
   // removed `logging_path_(logging_path),`
   // initializer — field gone.
   single_server_(single_server),
@@ -465,15 +462,6 @@ void Config::LoadHostYML(YAML::Node config) {
 
 void Config::InitMode(string &cc_name, string& ab_name) {
   tx_proto_ = Frame::Name2Mode(cc_name);
-
-  if ((cc_name == "rococo") || (cc_name == "deptran")) {
-    // deprecated
-    early_return_ = false;
-  } else if (cc_name == "deptran_er") {
-    // deprecated
-    early_return_ = true;
-  }
-
   replica_proto_ = Frame::Name2Mode(ab_name);
 }
 
@@ -1072,10 +1060,6 @@ std::map<string, double>& Config::get_txn_weights() {
 int Config::GetProfilePath(char *prof_file) {
   if (prof_file == NULL) return -1;
   return sprintf(prof_file, "process-%s.prof", proc_name_.c_str());
-}
-
-bool Config::do_early_return() {
-  return early_return_;
 }
 
 // removed `Config::do_logging()` and

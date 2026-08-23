@@ -1819,11 +1819,10 @@ if(BUILD_TESTS)
         ${TEST_INCLUDE_DIRS}
         ${GTEST_INCLUDE_DIRS}
         # raft_rrr_transport_compile_test.cc transitively pulls in
-        # `src/deptran/raft/rrr_transport.hpp` → ... →
-        # `src/deptran/rcc/graph.h` → `__dep__.h` (lives in
-        # `src/deptran/`), which includes `yaml-cpp/yaml.h`.  Neither
-        # path is propagated through `rrr`, so add both explicitly
-        # here (same pattern as `txlog_core_obj`'s PUBLIC include set).
+        # deptran headers and `__dep__.h`, which includes
+        # `yaml-cpp/yaml.h`. Neither path is propagated through `rrr`,
+        # so add both explicitly here (same pattern as
+        # `txlog_core_obj`'s PUBLIC include set).
         ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
     target_compile_options(test_raft_rrr_transport_compile PRIVATE ${TEST_COMPILE_OPTIONS})
