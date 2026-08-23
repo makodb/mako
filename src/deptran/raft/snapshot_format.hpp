@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <type_traits>
 
 #include "rrr/rrr.hpp"
 #include "rrr_log.h"
@@ -33,21 +34,73 @@ namespace raft {
  * Currently only NONE is implemented; others reserved for future.
  */
 // @safe - POD enum
-enum class SnapshotCompression : uint8_t {
-  NONE = 0,    // No compression
-  SNAPPY = 1,  // Snappy compression (reserved)
-  ZSTD = 2     // ZSTD compression (reserved)
-};
+#if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(u8)]
+pub enum SnapshotCompression {
+    NONE = 0,
+    SNAPPY = 1,
+    ZSTD = 2,
+}
 
-/**
- * Checksum algorithm for snapshot verification.
- */
-// @safe - POD enum
-enum class SnapshotChecksumType : uint8_t {
-  NONE = 0,    // No checksum
-  CRC32 = 1,   // CRC32 (fast, 4 bytes)
-  SHA256 = 2   // SHA256 (reserved, 32 bytes)
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(u8)]
+pub enum SnapshotChecksumType {
+    NONE = 0,
+    CRC32 = 1,
+    SHA256 = 2,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.format_enums version=1 rust_sha256=81fc85d4e1129ffc61800903572ca389cd6a775eb15ed8f95f25b882a8435dd4*/
+enum class SnapshotCompression : uint8_t;
+constexpr SnapshotCompression SnapshotCompression_NONE();
+constexpr SnapshotCompression SnapshotCompression_SNAPPY();
+constexpr SnapshotCompression SnapshotCompression_ZSTD();
+enum class SnapshotChecksumType : uint8_t;
+constexpr SnapshotChecksumType SnapshotChecksumType_NONE();
+constexpr SnapshotChecksumType SnapshotChecksumType_CRC32();
+constexpr SnapshotChecksumType SnapshotChecksumType_SHA256();
+
+enum class SnapshotCompression : uint8_t {
+    NONE = 0,
+    SNAPPY = 1,
+    ZSTD = 2
 };
+inline constexpr SnapshotCompression SnapshotCompression_NONE() { return SnapshotCompression::NONE; }
+inline constexpr SnapshotCompression SnapshotCompression_SNAPPY() { return SnapshotCompression::SNAPPY; }
+inline constexpr SnapshotCompression SnapshotCompression_ZSTD() { return SnapshotCompression::ZSTD; }
+
+enum class SnapshotChecksumType : uint8_t {
+    NONE = 0,
+    CRC32 = 1,
+    SHA256 = 2
+};
+inline constexpr SnapshotChecksumType SnapshotChecksumType_NONE() { return SnapshotChecksumType::NONE; }
+inline constexpr SnapshotChecksumType SnapshotChecksumType_CRC32() { return SnapshotChecksumType::CRC32; }
+inline constexpr SnapshotChecksumType SnapshotChecksumType_SHA256() { return SnapshotChecksumType::SHA256; }
+/*RUSTYCPP:GEN-END id=raft_snapshot.format_enums*/
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<SnapshotCompression>, uint8_t>);
+static_assert(std::is_trivially_copyable_v<SnapshotCompression>);
+static_assert(sizeof(SnapshotCompression) == sizeof(uint8_t));
+static_assert(alignof(SnapshotCompression) == alignof(uint8_t));
+static_assert(static_cast<uint8_t>(SnapshotCompression::NONE) == 0);
+static_assert(static_cast<uint8_t>(SnapshotCompression::SNAPPY) == 1);
+static_assert(static_cast<uint8_t>(SnapshotCompression::ZSTD) == 2);
+static_assert(SnapshotCompression{} == SnapshotCompression::NONE);
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<SnapshotChecksumType>, uint8_t>);
+static_assert(std::is_trivially_copyable_v<SnapshotChecksumType>);
+static_assert(sizeof(SnapshotChecksumType) == sizeof(uint8_t));
+static_assert(alignof(SnapshotChecksumType) == alignof(uint8_t));
+static_assert(static_cast<uint8_t>(SnapshotChecksumType::NONE) == 0);
+static_assert(static_cast<uint8_t>(SnapshotChecksumType::CRC32) == 1);
+static_assert(static_cast<uint8_t>(SnapshotChecksumType::SHA256) == 2);
+static_assert(SnapshotChecksumType{} == SnapshotChecksumType::NONE);
 
 /**
  * Binary header for snapshot files.

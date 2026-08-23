@@ -11,8 +11,22 @@ using namespace janus::raft;
 
 static_assert(sizeof(SnapshotCompression) == 1);
 static_assert(alignof(SnapshotCompression) == 1);
+static_assert(std::is_same_v<
+              std::underlying_type_t<SnapshotCompression>, uint8_t>);
+static_assert(std::is_trivially_copyable_v<SnapshotCompression>);
+static_assert(static_cast<uint8_t>(SnapshotCompression::NONE) == 0);
+static_assert(static_cast<uint8_t>(SnapshotCompression::SNAPPY) == 1);
+static_assert(static_cast<uint8_t>(SnapshotCompression::ZSTD) == 2);
+static_assert(SnapshotCompression{} == SnapshotCompression::NONE);
 static_assert(sizeof(SnapshotChecksumType) == 1);
 static_assert(alignof(SnapshotChecksumType) == 1);
+static_assert(std::is_same_v<
+              std::underlying_type_t<SnapshotChecksumType>, uint8_t>);
+static_assert(std::is_trivially_copyable_v<SnapshotChecksumType>);
+static_assert(static_cast<uint8_t>(SnapshotChecksumType::NONE) == 0);
+static_assert(static_cast<uint8_t>(SnapshotChecksumType::CRC32) == 1);
+static_assert(static_cast<uint8_t>(SnapshotChecksumType::SHA256) == 2);
+static_assert(SnapshotChecksumType{} == SnapshotChecksumType::NONE);
 static_assert(sizeof(SnapshotHeader) == 52);
 static_assert(offsetof(SnapshotHeader, compression) == 20);
 static_assert(offsetof(SnapshotHeader, checksum_type) == 21);
