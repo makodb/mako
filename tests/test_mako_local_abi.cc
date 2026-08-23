@@ -138,14 +138,78 @@ class LocalAbiTest : public ::testing::Test {
   mako_local_txn *txn_for_cleanup = nullptr;
 };
 
+struct AbiScanChunk {
+  int status = MAKO_LOCAL_INTERNAL;
+  std::vector<std::pair<std::string, std::string>> entries;
+  size_t arena_used = 0;
+  size_t arena_required = 0;
+  uint8_t done = 0;
+};
+
+AbiScanChunk scan_chunk(mako_local_txn *txn, mako_local_table *table,
+                        const mako_local_scan_options &options, bool reverse,
+                        size_t entry_capacity, size_t arena_capacity) {
+  std::vector<mako_local_scan_entry> descriptors(entry_capacity);
+  std::vector<uint8_t> arena(arena_capacity);
+  size_t entry_count = std::numeric_limits<size_t>::max();
+  size_t arena_used = std::numeric_limits<size_t>::max();
+  size_t arena_required = std::numeric_limits<size_t>::max();
+  uint8_t done = 99;
+  auto *descriptor_data =
+      descriptors.empty() ? nullptr : descriptors.data();
+  auto *arena_data = arena.empty() ? nullptr : arena.data();
+  const int status = reverse
+      ? mako_local_txn_rscan_chunk(
+            txn, table, &options, descriptor_data, entry_capacity, arena_data,
+            arena_capacity, &entry_count, &arena_used, &arena_required, &done)
+      : mako_local_txn_scan_chunk(
+            txn, table, &options, descriptor_data, entry_capacity, arena_data,
+            arena_capacity, &entry_count, &arena_used, &arena_required, &done);
+
+  AbiScanChunk result{status, {}, arena_used, arena_required, done};
+  if (status != MAKO_LOCAL_OK) return result;
+  if (entry_count > descriptors.size() || arena_used > arena.size()) {
+    ADD_FAILURE() << "scan ABI reported output beyond caller capacity";
+    return result;
+  }
+  for (size_t i = 0; i != entry_count; ++i) {
+    const auto &entry = descriptors[i];
+    const size_t key_offset = entry.key_offset;
+    const size_t key_length = entry.key_length;
+    const size_t value_offset = entry.value_offset;
+    const size_t value_length = entry.value_length;
+    if (key_offset > arena_used || key_length > arena_used - key_offset ||
+        value_offset > arena_used || value_length > arena_used - value_offset) {
+      ADD_FAILURE() << "scan ABI reported a slice outside arena_used";
+      return result;
+    }
+    const std::string key = key_length == 0
+        ? std::string()
+        : std::string(
+              reinterpret_cast<const char *>(arena.data() + key_offset),
+              key_length);
+    const std::string value = value_length == 0
+        ? std::string()
+        : std::string(
+              reinterpret_cast<const char *>(arena.data() + value_offset),
+              value_length);
+    result.entries.emplace_back(key, value);
+  }
+  return result;
+}
+
 TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   EXPECT_EQ(mako_local_abi_version(), MAKO_LOCAL_ABI_VERSION);
   const uint64_t features = mako_local_feature_bits();
   EXPECT_NE(features & MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS, 0U);
 #if READ_MY_WRITES
   EXPECT_NE(features & MAKO_LOCAL_FEATURE_READ_MY_WRITES, 0U);
+  EXPECT_NE(features & MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS, 0U);
+  EXPECT_NE(features & MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES, 0U);
 #else
   EXPECT_EQ(features & MAKO_LOCAL_FEATURE_READ_MY_WRITES, 0U);
+  EXPECT_EQ(features & MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS, 0U);
+  EXPECT_EQ(features & MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES, 0U);
 #endif
 #if STO_OPACITY
   EXPECT_NE(features & MAKO_LOCAL_FEATURE_OPACITY, 0U);
@@ -166,6 +230,15 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
                "post-validation commit hook rejected transaction");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_TIMESTAMP_EXHAUSTED),
                "Mako logical timestamp exhausted");
+  static_assert(MAKO_LOCAL_BUFFER_TOO_SMALL == 17);
+  EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_BUFFER_TOO_SMALL),
+               "caller scan arena is too small for the next entry");
+  static_assert(sizeof(mako_local_scan_entry) == 4 * sizeof(uint32_t));
+  EXPECT_EQ(mako_local_scan_options_size(),
+            MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE);
+  EXPECT_EQ(mako_local_scan_options_size(),
+            offsetof(mako_local_scan_options, resume_len) + sizeof(size_t));
+  EXPECT_EQ(mako_local_scan_entry_size(), sizeof(mako_local_scan_entry));
   EXPECT_EQ(mako_local_advance_mako_timestamp_past(0),
             MAKO_LOCAL_INVALID_ARGUMENT);
   EXPECT_EQ(mako_local_advance_mako_timestamp_past(UINT32_MAX),
@@ -358,6 +431,318 @@ TEST_F(LocalAbiTest, OversizedInputsAreNonterminalAndLeaveOutputsInitialized) {
   // transaction remains usable.
   EXPECT_EQ(put(txn, primary, "after-large", "works", &created),
             MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, ScanChunksUseSymmetricBoundsAndExclusiveResume) {
+  const std::string nul_key("b\0", 2);
+  const std::string nul_value("nul\0value", 9);
+  const std::string max_key(MAKO_LOCAL_MAX_KEY_BYTES, 'z');
+  const std::string absolute_max_key(MAKO_LOCAL_MAX_KEY_BYTES,
+                                     static_cast<char>(UINT8_MAX));
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "", "empty-key"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "a", "va"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "b", "vb"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, nul_key, nul_value), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "c", ""), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "d", "vd"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, max_key, "maximum"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, absolute_max_key, "absolute-maximum"),
+            MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  const std::string lower = "a";
+  const std::string upper = "d";
+  const std::vector<std::pair<std::string, std::string>> ascending = {
+      {"a", "va"}, {"b", "vb"}, {nul_key, nul_value}, {"c", ""}};
+
+  txn = begin();
+  mako_local_scan_options options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+      reinterpret_cast<const uint8_t *>(lower.data()), lower.size(),
+      reinterpret_cast<const uint8_t *>(upper.data()), upper.size(),
+      nullptr, 0};
+  std::vector<std::pair<std::string, std::string>> seen;
+  std::string resume;
+  for (size_t guard = 0; guard != 10; ++guard) {
+    const auto chunk = scan_chunk(txn, primary, options, false, 2, 64);
+    ASSERT_EQ(chunk.status, MAKO_LOCAL_OK);
+    EXPECT_EQ(chunk.arena_required, 0U);
+    seen.insert(seen.end(), chunk.entries.begin(), chunk.entries.end());
+    if (chunk.done) break;
+    ASSERT_FALSE(chunk.entries.empty());
+    resume = chunk.entries.back().first;
+    options.flags |= MAKO_LOCAL_SCAN_HAS_RESUME;
+    options.resume = reinterpret_cast<const uint8_t *>(resume.data());
+    options.resume_len = resume.size();
+  }
+  EXPECT_EQ(seen, ascending);
+
+  options.flags = MAKO_LOCAL_SCAN_HAS_UPPER;
+  options.resume = nullptr;
+  options.resume_len = 0;
+  seen.clear();
+  resume.clear();
+  for (size_t guard = 0; guard != 10; ++guard) {
+    const auto chunk = scan_chunk(txn, primary, options, true, 2, 64);
+    ASSERT_EQ(chunk.status, MAKO_LOCAL_OK);
+    seen.insert(seen.end(), chunk.entries.begin(), chunk.entries.end());
+    if (chunk.done) break;
+    ASSERT_FALSE(chunk.entries.empty());
+    resume = chunk.entries.back().first;
+    options.flags |= MAKO_LOCAL_SCAN_HAS_RESUME;
+    options.resume = reinterpret_cast<const uint8_t *>(resume.data());
+    options.resume_len = resume.size();
+  }
+  auto descending = ascending;
+  std::reverse(descending.begin(), descending.end());
+  EXPECT_EQ(seen, descending);
+  commit_and_destroy(txn);
+
+  // A maximum-sized resume key needs no appended byte. The next chunk is the
+  // end of range rather than VALUE_TOO_LARGE or a duplicate.
+  txn = begin();
+  options = mako_local_scan_options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+      reinterpret_cast<const uint8_t *>(max_key.data()), max_key.size(),
+      reinterpret_cast<const uint8_t *>(absolute_max_key.data()),
+      absolute_max_key.size(), nullptr, 0};
+  auto chunk = scan_chunk(txn, primary, options, false, 1, 2048);
+  ASSERT_EQ(chunk.status, MAKO_LOCAL_OK);
+  ASSERT_EQ(chunk.entries.size(), 1U);
+  EXPECT_EQ(chunk.entries[0],
+            (std::pair<std::string, std::string>{max_key, "maximum"}));
+  EXPECT_EQ(chunk.done, 0U);
+  options.flags = MAKO_LOCAL_SCAN_HAS_UPPER |
+                  MAKO_LOCAL_SCAN_HAS_RESUME;
+  options.resume = reinterpret_cast<const uint8_t *>(max_key.data());
+  options.resume_len = max_key.size();
+  chunk = scan_chunk(txn, primary, options, false, 1, 2048);
+  EXPECT_EQ(chunk.status, MAKO_LOCAL_OK);
+  EXPECT_TRUE(chunk.entries.empty());
+  EXPECT_EQ(chunk.done, 1U);
+  commit_and_destroy(txn);
+
+  // No upper bound means +infinity, not the empty/minimum key. The synthetic
+  // native start must include the exact maximum key in the bounded ABI domain.
+  txn = begin();
+  options = mako_local_scan_options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, 0, nullptr, 0,
+      nullptr, 0, nullptr, 0};
+  chunk = scan_chunk(txn, primary, options, true, 16, 4096);
+  ASSERT_EQ(chunk.status, MAKO_LOCAL_OK);
+  ASSERT_FALSE(chunk.entries.empty());
+  EXPECT_EQ(chunk.entries.front(),
+            (std::pair<std::string, std::string>{absolute_max_key,
+                                                 "absolute-maximum"}));
+  EXPECT_EQ(chunk.entries.back(),
+            (std::pair<std::string, std::string>{"", "empty-key"}));
+  EXPECT_EQ(chunk.done, 1U);
+  for (size_t i = 1; i != chunk.entries.size(); ++i)
+    EXPECT_GT(chunk.entries[i - 1].first, chunk.entries[i].first);
+  commit_and_destroy(txn);
+
+  // Empty is a real key and an inclusive lower bound. Reverse resume can
+  // exclude it explicitly; it must not be mistaken for Masstree's +infinity
+  // sentinel.
+  txn = begin();
+  const std::string empty_upper = "a";
+  options = mako_local_scan_options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+      nullptr, 0,
+      reinterpret_cast<const uint8_t *>(empty_upper.data()),
+      empty_upper.size(), nullptr, 0};
+  chunk = scan_chunk(txn, primary, options, true, 1, 64);
+  ASSERT_EQ(chunk.status, MAKO_LOCAL_OK);
+  ASSERT_EQ(chunk.entries.size(), 1U);
+  EXPECT_EQ(chunk.entries[0].first, "");
+  options.flags |= MAKO_LOCAL_SCAN_HAS_RESUME;
+  options.resume = nullptr;
+  options.resume_len = 0;
+  chunk = scan_chunk(txn, primary, options, true, 1, 64);
+  EXPECT_EQ(chunk.status, MAKO_LOCAL_OK);
+  EXPECT_TRUE(chunk.entries.empty());
+  EXPECT_EQ(chunk.done, 1U);
+  commit_and_destroy(txn);
+}
+
+#if READ_MY_WRITES
+TEST_F(LocalAbiTest, TransactionalScansReadOwnPointMutationsWithoutChangingThem) {
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "a", "old-a"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "c", "old-c"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "e", "old-e"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  const std::string binary("new\0binary", 10);
+  txn = begin();
+  ASSERT_EQ(put(txn, primary, "a", "new-a"), MAKO_LOCAL_OK);
+  ASSERT_EQ(insert(txn, primary, "b", binary), MAKO_LOCAL_OK);
+  ASSERT_EQ(remove(txn, primary, "c"), MAKO_LOCAL_OK);
+  ASSERT_EQ(insert(txn, primary, "d", std::string(4096, 'd')),
+            MAKO_LOCAL_OK);
+
+  const std::string lower = "a";
+  const std::string upper = "e";
+  const mako_local_scan_options options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+      reinterpret_cast<const uint8_t *>(lower.data()), lower.size(),
+      reinterpret_cast<const uint8_t *>(upper.data()), upper.size(),
+      nullptr, 0};
+  const auto forward = scan_chunk(txn, primary, options, false, 8, 8192);
+  ASSERT_EQ(forward.status, MAKO_LOCAL_OK);
+  const std::vector<std::pair<std::string, std::string>> expected = {
+      {"a", "new-a"}, {"b", binary}, {"d", std::string(4096, 'd')}};
+  EXPECT_EQ(forward.entries, expected);
+  EXPECT_EQ(forward.done, 1U);
+
+  const auto reverse = scan_chunk(txn, primary, options, true, 8, 8192);
+  ASSERT_EQ(reverse.status, MAKO_LOCAL_OK);
+  auto reverse_expected = expected;
+  std::reverse(reverse_expected.begin(), reverse_expected.end());
+  EXPECT_EQ(reverse.entries, reverse_expected);
+
+  // Scan callbacks receive copies. Stripping Mako's trailer for the ABI must
+  // not truncate the transaction's actual staged write buffers.
+  EXPECT_EQ(get(txn, primary, "a").second, std::optional<std::string>("new-a"));
+  EXPECT_EQ(get(txn, primary, "b").second, std::optional<std::string>(binary));
+  commit_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "a").second, std::optional<std::string>("new-a"));
+  EXPECT_EQ(get(txn, primary, "b").second, std::optional<std::string>(binary));
+  EXPECT_FALSE(get(txn, primary, "c").second.has_value());
+  EXPECT_EQ(get(txn, primary, "d").second,
+            std::optional<std::string>(std::string(4096, 'd')));
+  commit_and_destroy(txn);
+}
+#endif
+
+TEST_F(LocalAbiTest, ScanArenaRetryIsExactNonterminalAndPartialChunksProgress) {
+  const std::string long_value(128, 'v');
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "long", long_value), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "p1", "11111"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "p2", "22222"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  const std::string lower = "long";
+  const std::string upper("long\0", 5);
+  mako_local_scan_options options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+      reinterpret_cast<const uint8_t *>(lower.data()), lower.size(),
+      reinterpret_cast<const uint8_t *>(upper.data()), upper.size(),
+      nullptr, 0};
+  txn = begin();
+  auto chunk = scan_chunk(txn, primary, options, false, 4, 4);
+  EXPECT_EQ(chunk.status, MAKO_LOCAL_BUFFER_TOO_SMALL);
+  EXPECT_TRUE(chunk.entries.empty());
+  EXPECT_EQ(chunk.arena_used, 0U);
+  EXPECT_EQ(chunk.arena_required, lower.size() + long_value.size());
+  EXPECT_EQ(chunk.done, 0U);
+
+  chunk = scan_chunk(txn, primary, options, false, 4,
+                     lower.size() + long_value.size());
+  ASSERT_EQ(chunk.status, MAKO_LOCAL_OK);
+  ASSERT_EQ(chunk.entries.size(), 1U);
+  EXPECT_EQ(chunk.entries[0],
+            (std::pair<std::string, std::string>{lower, long_value}));
+  EXPECT_EQ(chunk.done, 1U);
+
+  const std::string partial_lower = "p1";
+  const std::string partial_upper = "q";
+  options = mako_local_scan_options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+      reinterpret_cast<const uint8_t *>(partial_lower.data()),
+      partial_lower.size(),
+      reinterpret_cast<const uint8_t *>(partial_upper.data()),
+      partial_upper.size(), nullptr, 0};
+  chunk = scan_chunk(txn, primary, options, false, 4, 7);
+  ASSERT_EQ(chunk.status, MAKO_LOCAL_OK);
+  ASSERT_EQ(chunk.entries.size(), 1U);
+  EXPECT_EQ(chunk.entries[0],
+            (std::pair<std::string, std::string>{"p1", "11111"}));
+  EXPECT_EQ(chunk.done, 0U);
+  EXPECT_EQ(chunk.arena_required, 0U);
+
+  options.flags |= MAKO_LOCAL_SCAN_HAS_RESUME;
+  options.resume = reinterpret_cast<const uint8_t *>(partial_lower.data());
+  options.resume_len = partial_lower.size();
+  chunk = scan_chunk(txn, primary, options, false, 4, 7);
+  ASSERT_EQ(chunk.status, MAKO_LOCAL_OK);
+  ASSERT_EQ(chunk.entries.size(), 1U);
+  EXPECT_EQ(chunk.entries[0],
+            (std::pair<std::string, std::string>{"p2", "22222"}));
+
+  // BUFFER_TOO_SMALL did not finish the transaction.
+  ASSERT_EQ(put(txn, primary, "after-scan-retry", "works"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, ScanFailuresInitializeOutputsAndBudgetFailureIsTerminal) {
+  auto *txn = begin();
+  mako_local_scan_entry descriptor{99, 99, 99, 99};
+  uint8_t arena[8]{};
+  size_t count = 99;
+  size_t used = 99;
+  size_t required = 99;
+  uint8_t done = 99;
+  mako_local_scan_options bad_options{};
+  EXPECT_EQ(mako_local_txn_scan_chunk(
+                txn, primary, &bad_options, &descriptor, 1, arena,
+                sizeof(arena), &count, &used, &required, &done),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(count, 0U);
+  EXPECT_EQ(used, 0U);
+  EXPECT_EQ(required, 0U);
+  EXPECT_EQ(done, 0U);
+
+  const std::string oversized(MAKO_LOCAL_MAX_KEY_BYTES + 1, 'x');
+  bad_options = mako_local_scan_options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, 0,
+      reinterpret_cast<const uint8_t *>(oversized.data()), oversized.size(),
+      nullptr, 0, nullptr, 0};
+  count = used = required = 99;
+  done = 99;
+  EXPECT_EQ(mako_local_txn_scan_chunk(
+                txn, primary, &bad_options, &descriptor, 1, arena,
+                sizeof(arena), &count, &used, &required, &done),
+            MAKO_LOCAL_VALUE_TOO_LARGE);
+  EXPECT_EQ(count, 0U);
+  EXPECT_EQ(used, 0U);
+  EXPECT_EQ(required, 0U);
+  EXPECT_EQ(done, 0U);
+  abort_and_destroy(txn);
+
+  // Seed more row/predicate observations than the bounded 512-item profile can
+  // admit, using several small write transactions so setup itself stays below
+  // the point-operation budget.
+  for (size_t base = 0; base != 560; base += 70) {
+    txn = begin();
+    for (size_t i = base; i != base + 70; ++i) {
+      ASSERT_EQ(put(txn, primary, "budget-" + std::to_string(i), "v"),
+                MAKO_LOCAL_OK);
+    }
+    commit_and_destroy(txn);
+  }
+
+  txn = begin();
+  const mako_local_scan_options all{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, 0, nullptr, 0,
+      nullptr, 0, nullptr, 0};
+  const auto exhausted = scan_chunk(txn, primary, all, false, 600, 32768);
+  EXPECT_EQ(exhausted.status, MAKO_LOCAL_TXN_TOO_LARGE);
+  EXPECT_TRUE(exhausted.entries.empty());
+  EXPECT_EQ(exhausted.arena_used, 0U);
+  EXPECT_EQ(exhausted.arena_required, 0U);
+  EXPECT_EQ(exhausted.done, 0U);
+  EXPECT_EQ(get(txn, primary, "budget-0").first,
+            MAKO_LOCAL_TXN_FINISHED);
+  destroy_tracked(txn);
+
+  txn = begin();
+  ASSERT_EQ(put(txn, primary, "after-scan-budget", "works"), MAKO_LOCAL_OK);
   commit_and_destroy(txn);
 }
 

@@ -355,27 +355,81 @@ public:
   // range queries
   template <typename Callback, typename ValAllocator = DefaultValAllocator>
   void transQuery(Str begin, Str end, Callback callback, ValAllocator *va = NULL, threadinfo_type& ti = mythreadinfo) {
+    (void)transQueryImpl(begin, end, callback,
+                         true /* begin inclusive */, false /* end exclusive */,
+                         va, nullptr, ti);
+  }
+
+  // A bounded scan never creates more than `remaining_items` new transaction
+  // items. It decrements the caller's counter only for a new leaf predicate or
+  // row item, and returns false iff the budget stopped traversal. A callback
+  // that returns false is a successful early stop and therefore returns true.
+  // READ_MY_WRITES semantics are guaranteed only when readMyWritesEnabled().
+  template <typename Callback, typename ValAllocator = DefaultValAllocator>
+  bool transQueryBounded(Str begin, Str end, Callback callback,
+                         size_t& remaining_items,
+                         bool begin_inclusive = true,
+                         bool end_inclusive = false,
+                         ValAllocator *va = NULL,
+                         threadinfo_type& ti = mythreadinfo) {
+    return transQueryImpl(begin, end, callback, begin_inclusive,
+                          end_inclusive, va, &remaining_items, ti);
+  }
+
+protected:
+  template <typename Callback, typename ValAllocator>
+  bool transQueryImpl(Str begin, Str end, Callback callback,
+                      bool begin_inclusive, bool end_inclusive,
+                      ValAllocator *va,
+                      size_t *remaining_items, threadinfo_type& ti) {
+    bool budget_exhausted = false;
+    auto reserve_item = [&] (auto key) {
+      if (!remaining_items)
+        return true;
+
+      // Local single-version RYW uses one deduplicated TransItem per object.
+      // Other modes use fresh read items and must charge every visit.
+      bool creates_item = true;
+#if READ_MY_WRITES
+      if (readMyWritesEnabled())
+        creates_item = !Sto::check_item(this, key);
+#endif
+      if (!creates_item)
+        return true;
+      if (*remaining_items == 0) {
+        budget_exhausted = true;
+        return false;
+      }
+      --*remaining_items;
+      return true;
+    };
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
-      this->ensureNotFound(node, version);
+      if (reserve_item(tag_inter(node)))
+        this->ensureNotFound(node, version);
     };
     int deleted_cnt=0;
     auto value_callback = [&] (Str key, versioned_value* e) {
-      // TODO: this needs to read my writes
+      if (budget_exhausted || !reserve_item(e))
+        return false;
       auto item = this->t_read_only_item(e);
-// #if READ_MY_WRITES
-//       if (has_delete(item)) {
-//         return true;
-//       }
-//       if (item.has_write()) {
-//         // read directly from the element if we're inserting it
-//         if (has_insert(item)) {
-// 	      return range_query_has_insert(callback, key, e, va);
-// 	  //return callback(key, val);
-//         } else {
-//           return callback(key, item.template write_value<write_value_type>());
-//         }
-//       }
-// #endif
+#if READ_MY_WRITES
+      if (readMyWritesEnabled()) {
+        // Inserts are already linked into Masstree as private invalid entries,
+        // while updates live in the TransItem. Deletions remain linked until
+        // install. Overlay those three representations before reading the
+        // published value so the callback sees the transaction's logical view.
+        if (has_delete(item))
+          return true;
+        if (item.has_write()) {
+          if (has_insert(item))
+            return range_query_has_staged_value(callback, key,
+                                                e->read_value(), va);
+          return range_query_has_staged_value(
+              callback, key,
+              item.template write_value<write_value_type>(), va);
+        }
+      }
+#endif
       // not sure of a better way to do this
       value_type stack_val;
       value_type& val = va ? *(*va)() : stack_val;
@@ -404,34 +458,84 @@ public:
       }
     };
 
-    range_scanner<decltype(node_callback), decltype(value_callback)> scanner(end, node_callback, value_callback);
-    table_.scan(begin, true, scanner, *ti.ti);
+    range_scanner<decltype(node_callback), decltype(value_callback)> scanner(
+        end, end_inclusive, node_callback, value_callback);
+    table_.scan(begin, begin_inclusive, scanner, *ti.ti);
+    return !budget_exhausted;
+  }
+
+public:
+  template <typename Callback, typename ValAllocator = DefaultValAllocator>
+  void transRQuery(Str begin, Str end, Callback callback, ValAllocator *va = NULL, threadinfo_type& ti = mythreadinfo) {
+    (void)transRQueryImpl(begin, end, callback,
+                          true /* begin inclusive */, false /* end exclusive */,
+                          va, nullptr, ti);
   }
 
   template <typename Callback, typename ValAllocator = DefaultValAllocator>
-  void transRQuery(Str begin, Str end, Callback callback, ValAllocator *va = NULL, threadinfo_type& ti = mythreadinfo) {
+  bool transRQueryBounded(Str begin, Str end, Callback callback,
+                          size_t& remaining_items,
+                          bool begin_inclusive = true,
+                          bool end_inclusive = false,
+                          ValAllocator *va = NULL,
+                          threadinfo_type& ti = mythreadinfo) {
+    return transRQueryImpl(begin, end, callback, begin_inclusive,
+                           end_inclusive, va, &remaining_items, ti);
+  }
+
+protected:
+  template <typename Callback, typename ValAllocator>
+  bool transRQueryImpl(Str begin, Str end, Callback callback,
+                       bool begin_inclusive, bool end_inclusive,
+                       ValAllocator *va,
+                       size_t *remaining_items, threadinfo_type& ti) {
+    bool budget_exhausted = false;
+    auto reserve_item = [&] (auto key) {
+      if (!remaining_items)
+        return true;
+
+      bool creates_item = true;
+#if READ_MY_WRITES
+      if (readMyWritesEnabled())
+        creates_item = !Sto::check_item(this, key);
+#endif
+      if (!creates_item)
+        return true;
+      if (*remaining_items == 0) {
+        budget_exhausted = true;
+        return false;
+      }
+      --*remaining_items;
+      return true;
+    };
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
-      this->ensureNotFound(node, version);
+      if (reserve_item(tag_inter(node)))
+        this->ensureNotFound(node, version);
     };
     int deleted_cnt=0;
     auto value_callback = [&] (Str key, versioned_value* e) {
+      if (budget_exhausted || !reserve_item(e))
+        return false;
       auto item = this->t_read_only_item(e);
+#if READ_MY_WRITES
+      if (readMyWritesEnabled()) {
+        // Match the forward overlay exactly; direction only changes tree
+        // traversal and bound comparison, not the transaction-visible value.
+        if (has_delete(item))
+          return true;
+        if (item.has_write()) {
+          if (has_insert(item))
+            return range_query_has_staged_value(callback, key,
+                                                e->read_value(), va);
+          return range_query_has_staged_value(
+              callback, key,
+              item.template write_value<write_value_type>(), va);
+        }
+      }
+#endif
       // not sure of a better way to do this
       value_type stack_val;
       value_type& val = va ? *(*va)() : stack_val;
-// #if READ_MY_WRITES
-//       if (has_delete(item)) {
-//         return true;
-//       }
-//       if (item.has_write()) {
-//         // read directly from the element if we're inserting it
-//         if (has_insert(item)) {
-// 	        return range_query_has_insert(callback, key, e, va);
-//         } else {
-//             return callback(key, item.template write_value<write_value_type>());
-//         }
-//       }
-// #endif
       Version v;
       if(!atomicRead(e, v, val)){
         Sto::abort();
@@ -456,17 +560,24 @@ public:
       }
     };
 
-    range_scanner<decltype(node_callback), decltype(value_callback), true> scanner(end, node_callback, value_callback);
-    table_.rscan(begin, true, scanner, *ti.ti);
+    range_scanner<decltype(node_callback), decltype(value_callback), true>
+        scanner(end, end_inclusive, node_callback, value_callback);
+    table_.rscan(begin, begin_inclusive, scanner, *ti.ti);
+    return !budget_exhausted;
   }
 
 #if READ_MY_WRITES
-  template <typename Callback, typename ValAllocator>
+  template <typename Callback, typename StagedValue, typename ValAllocator>
   // for some reason inlining this/not making it a function gives a 5% slowdown on g++...
-  static __attribute__((noinline)) bool range_query_has_insert(Callback callback, Str key, versioned_value *e, ValAllocator *va) {
+  static __attribute__((noinline)) bool range_query_has_staged_value(
+      Callback callback, Str key, const StagedValue& staged,
+      ValAllocator *va) {
+    // Callbacks historically receive a mutable reference and wrappers strip
+    // Mako's encoded trailer in place. Never lend them the transaction's own
+    // staged string: truncating it here would also truncate the eventual write.
     value_type stack_val;
     value_type& val = va ? *(*va)() : stack_val;
-    assign_val(val, e->read_value());
+    assign_val(val, staged);
     return callback(key, val);
   }
 #endif
@@ -476,8 +587,11 @@ protected:
   template <typename Nodecallback, typename Valuecallback, bool Reverse = false>
   class range_scanner {
   public:
-    range_scanner(Str upper, Nodecallback nodecallback, Valuecallback valuecallback) : boundary_(upper), boundary_compar_(false),
-                                                                                       nodecallback_(nodecallback), valuecallback_(valuecallback) {}
+    range_scanner(Str upper, bool boundary_inclusive,
+                  Nodecallback nodecallback, Valuecallback valuecallback)
+        : boundary_(upper), boundary_compar_(false),
+          boundary_inclusive_(boundary_inclusive),
+          nodecallback_(nodecallback), valuecallback_(valuecallback) {}
 
     template <typename ITER, typename KEY>
     void check(const ITER& iter,
@@ -507,8 +621,13 @@ protected:
     }
     bool visit_value(const Masstree::key<uint64_t>& key, versioned_value *value, threadinfo&) {
       if (this->boundary_compar_) {
-        if ((!Reverse && boundary_ <= key.full_string()) ||
-            ( Reverse && boundary_ >= key.full_string()))
+        const bool past_boundary =
+            !Reverse
+                ? (boundary_inclusive_ ? boundary_ < key.full_string()
+                                       : boundary_ <= key.full_string())
+                : (boundary_inclusive_ ? boundary_ > key.full_string()
+                                       : boundary_ >= key.full_string());
+        if (past_boundary)
           return false;
       }
       
@@ -517,6 +636,7 @@ protected:
 
     Str boundary_;
     bool boundary_compar_;
+    bool boundary_inclusive_;
     Nodecallback nodecallback_;
     Valuecallback valuecallback_;
   };

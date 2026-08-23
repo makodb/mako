@@ -40,9 +40,14 @@ use mako_local::{CommitDisposition, LocalDb};
 use mrx_core::{BlobError, Blobs};
 use mrx_rocks::RocksBlobs;
 
+#[cfg(test)]
+mod failpoint;
 mod record;
 mod runtime;
 mod writeback;
+
+#[cfg(all(test, have_mako, have_rocksdb, target_family = "unix"))]
+mod crash_tests;
 
 pub use mako_local::{Error as LocalError, MakoTimestamp};
 pub use mrx_rocks::Durability;
@@ -65,8 +70,9 @@ pub struct CacheOptions {
     /// Reject startup unless the native engine advertises conventional
     /// read-your-writes behavior.
     ///
-    /// Point read-your-writes is part of the default cache profile. Set this
-    /// to `false` only when deliberately opening against a legacy native build.
+    /// Point and transactional-scan read-your-writes are part of the default
+    /// cache profile. Set this to `false` only when deliberately opening
+    /// against a legacy native build.
     pub require_read_my_writes: bool,
 }
 
@@ -344,7 +350,9 @@ impl<B: Blobs + 'static> Cache<B> {
     /// permits only one pre-existing durable cache namespace; see [`Cache`].
     pub fn from_backend(backend: B, options: CacheOptions) -> Result<Self, Error> {
         let features = mako_local::features()?;
-        if options.require_read_my_writes && !features.read_my_writes() {
+        if options.require_read_my_writes
+            && (!features.read_my_writes() || !features.scan_read_my_writes())
+        {
             return Err(Error::MissingReadMyWrites);
         }
 
@@ -493,6 +501,25 @@ pub struct Transaction<'db, B: Blobs + 'static> {
     journal: Vec<JournalEntry>,
 }
 
+/// A transactional range iterator over the cache's default table.
+///
+/// Forward and reverse scans both use the logical binary-key range `[lower,
+/// upper)`. Items own their key and value bytes. The iterator exclusively
+/// borrows its transaction until it is consumed or dropped.
+pub struct Scan<'txn, 'db> {
+    inner: mako_local::Scan<'txn, 'db>,
+}
+
+impl Iterator for Scan<'_, '_> {
+    type Item = Result<(Vec<u8>, Vec<u8>), Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner
+            .next()
+            .map(|result| result.map_err(Error::Native))
+    }
+}
+
 /// One canonical final mutation and the base-state fact needed to compose a
 /// later remove. Keeping these fields together makes it impossible for their
 /// indices or lifetimes to diverge.
@@ -512,6 +539,35 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
     pub fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, Error> {
         let table = self.table;
         Ok(self.native_mut().get(&table, key)?)
+    }
+
+    /// Scan `[lower, upper)` in ascending binary-key order.
+    ///
+    /// `None` means no upper bound. Earlier writes staged by this transaction
+    /// are reflected in the results.
+    pub fn scan<'txn>(
+        &'txn mut self,
+        lower: &[u8],
+        upper: Option<&[u8]>,
+    ) -> Result<Scan<'txn, 'db>, Error> {
+        let table = self.table;
+        Ok(Scan {
+            inner: self.native_mut().scan(&table, lower, upper)?,
+        })
+    }
+
+    /// Scan `[lower, upper)` in descending binary-key order.
+    ///
+    /// The lower endpoint remains inclusive and the upper endpoint exclusive.
+    pub fn rscan<'txn>(
+        &'txn mut self,
+        lower: &[u8],
+        upper: Option<&[u8]>,
+    ) -> Result<Scan<'txn, 'db>, Error> {
+        let table = self.table;
+        Ok(Scan {
+            inner: self.native_mut().rscan(&table, lower, upper)?,
+        })
     }
 
     /// Upsert a key, returning whether it was newly created.
@@ -655,6 +711,8 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         // finish before native Silo takes write locks.
         let mutations = extract_mutations(std::mem::take(&mut self.journal))?;
         let mut permit = self.cache.writeback.reserve(mutations)?;
+        #[cfg(test)]
+        crate::failpoint::hit(crate::failpoint::Point::DetachedPrepared);
 
         // Writers share this fence and therefore still lock, validate, bind,
         // and install concurrently. It only excludes read-only acknowledgement
@@ -671,6 +729,8 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         let report = native.commit_report_with_hook(|timestamp| match permit.bind(timestamp) {
             Ok(reservation) => {
                 bound = Some(reservation);
+                #[cfg(test)]
+                crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
                 true
             }
             Err(error) => {
@@ -678,6 +738,10 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                 false
             }
         });
+        #[cfg(test)]
+        if bound.is_some() {
+            crate::failpoint::hit(crate::failpoint::Point::NativeCommittedBeforeReady);
+        }
 
         if let Some(reservation) = bound {
             return match report.disposition {

@@ -40,11 +40,13 @@ extern "C" {
 /* Semantic guarantees of the linked draft engine. Point transactions are the
  * revision-0 baseline. A bit is absent until every exposed path implements the
  * guarantee; callers must not infer a capability from STO build flags. The
- * revision-0 READ_MY_WRITES bit covers the exposed point operations only; no
- * transactional scan API is exposed by this revision. */
+ * READ_MY_WRITES bit deliberately retains its original point-only meaning;
+ * SCAN_READ_MY_WRITES separately covers range results. */
 #define MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS (UINT64_C(1) << 0)
 #define MAKO_LOCAL_FEATURE_READ_MY_WRITES (UINT64_C(1) << 1)
 #define MAKO_LOCAL_FEATURE_OPACITY (UINT64_C(1) << 2)
+#define MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS (UINT64_C(1) << 3)
+#define MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES (UINT64_C(1) << 4)
 
 /* Draft input and transaction limits. The weighted transaction budget is one
  * item for get/remove and 4 + ceil(key_len / 8) for put/insert. Keeping it at
@@ -81,10 +83,44 @@ extern "C" {
 #define MAKO_LOCAL_VALUE_TOO_LARGE 14
 #define MAKO_LOCAL_COMMIT_HOOK_REJECTED 15
 #define MAKO_LOCAL_TIMESTAMP_EXHAUSTED 16
+#define MAKO_LOCAL_BUFFER_TOO_SMALL 17
 
 typedef struct mako_local_db mako_local_db;
 typedef struct mako_local_table mako_local_table;
 typedef struct mako_local_txn mako_local_txn;
+
+/* Scan options are append-only while this ABI is a draft. Callers set
+ * struct_size to MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE and zero fields they do not
+ * use. lower is always an inclusive binary bound. HAS_UPPER supplies an
+ * exclusive upper bound; without it the range is unbounded above. HAS_RESUME
+ * supplies an exclusive cursor: forward scans return keys greater than it and
+ * reverse scans return keys less than it. */
+#define MAKO_LOCAL_SCAN_HAS_UPPER (UINT32_C(1) << 0)
+#define MAKO_LOCAL_SCAN_HAS_RESUME (UINT32_C(1) << 1)
+
+typedef struct mako_local_scan_options {
+  uint32_t struct_size;
+  uint32_t flags;
+  const uint8_t *lower;
+  size_t lower_len;
+  const uint8_t *upper;
+  size_t upper_len;
+  const uint8_t *resume;
+  size_t resume_len;
+} mako_local_scan_options;
+
+#define MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE                                  \
+  ((uint32_t)(offsetof(mako_local_scan_options, resume_len) +             \
+              sizeof(((mako_local_scan_options *)0)->resume_len)))
+
+/* One scan result. Both slices live in the caller's arena and are described by
+ * byte offsets so no native or Masstree pointer crosses the boundary. */
+typedef struct mako_local_scan_entry {
+  uint32_t key_offset;
+  uint32_t key_length;
+  uint32_t value_offset;
+  uint32_t value_length;
+} mako_local_scan_entry;
 
 /* Called synchronously after native validation succeeds and before any write
  * is installed. `mako_timestamp` is the nonzero 32-bit Mako logical timestamp
@@ -98,6 +134,10 @@ typedef int (*mako_local_post_validate_hook)(void *context,
 /* Identity and diagnostics. The returned status string is static. */
 uint32_t mako_local_abi_version(void) MAKO_LOCAL_NOEXCEPT;
 uint64_t mako_local_feature_bits(void) MAKO_LOCAL_NOEXCEPT;
+/* Required revision-0 options prefix size. This remains fixed when trailing
+ * fields are appended to mako_local_scan_options. */
+size_t mako_local_scan_options_size(void) MAKO_LOCAL_NOEXCEPT;
+size_t mako_local_scan_entry_size(void) MAKO_LOCAL_NOEXCEPT;
 const char *mako_local_status_string(int status) MAKO_LOCAL_NOEXCEPT;
 
 /* Attach the calling OS thread to the shared native-Mako STO runtime.
@@ -162,6 +202,48 @@ int mako_local_txn_insert(mako_local_txn *txn, mako_local_table *table,
 int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
                           const uint8_t *key, size_t key_len,
                           uint8_t *existed_out) MAKO_LOCAL_NOEXCEPT;
+
+/* Transactional scan chunks over the same logical [lower, upper) range.
+ * scan_chunk returns ascending keys; rscan_chunk returns descending keys while
+ * preserving those bounds (lower included, upper excluded). Passing the last
+ * returned key as the next exclusive resume cursor produces no gap or
+ * duplicate, including for empty and maximum-length keys.
+ *
+ * Entries and decoded value bytes are copied into caller-owned storage. Native
+ * code retains nothing. entries_capacity must be nonzero. arena may be NULL
+ * only when arena_capacity is zero, and arena_capacity must fit uint32 offsets.
+ *
+ * On OK, entry_count_out entries and arena_used_out bytes are initialized.
+ * done_out is one only when the implementation proved the effective range is
+ * exhausted; a zero result may conservatively require one final empty call.
+ * arena_required_out is zero.
+ *
+ * If no entry fits, BUFFER_TOO_SMALL is nonterminal: entry_count_out and
+ * arena_used_out are zero, arena_required_out is the exact key-plus-value size
+ * of the first live entry, and done_out is zero. Grow the arena and retry the
+ * identical request. If at least one entry fits, the call instead returns that
+ * partial chunk with OK and the caller resumes after its final key.
+ *
+ * Once all four scalar output pointers are non-NULL they are zero-initialized
+ * before further validation. On any non-OK status other than
+ * BUFFER_TOO_SMALL, they remain zero. Buffer contents outside the reported
+ * entry/byte counts are unspecified. BUFFER_TOO_SMALL does not end the
+ * transaction; CONFLICT, TXN_TOO_LARGE, OUT_OF_MEMORY, and INTERNAL follow the
+ * point-operation terminal cleanup contract. */
+int mako_local_txn_scan_chunk(
+    mako_local_txn *txn, mako_local_table *table,
+    const mako_local_scan_options *options,
+    mako_local_scan_entry *entries, size_t entries_capacity,
+    uint8_t *arena, size_t arena_capacity,
+    size_t *entry_count_out, size_t *arena_used_out,
+    size_t *arena_required_out, uint8_t *done_out) MAKO_LOCAL_NOEXCEPT;
+int mako_local_txn_rscan_chunk(
+    mako_local_txn *txn, mako_local_table *table,
+    const mako_local_scan_options *options,
+    mako_local_scan_entry *entries, size_t entries_capacity,
+    uint8_t *arena, size_t arena_capacity,
+    size_t *entry_count_out, size_t *arena_used_out,
+    size_t *arena_required_out, uint8_t *done_out) MAKO_LOCAL_NOEXCEPT;
 
 /* Commit/abort end the transaction but retain the small opaque handle so the
  * caller can inspect the status safely. destroy frees it; destroying an active

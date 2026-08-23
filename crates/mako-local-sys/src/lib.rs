@@ -14,6 +14,11 @@ pub const MAKO_LOCAL_ABI_VERSION: u32 = 0;
 pub const MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS: u64 = 1 << 0;
 pub const MAKO_LOCAL_FEATURE_READ_MY_WRITES: u64 = 1 << 1;
 pub const MAKO_LOCAL_FEATURE_OPACITY: u64 = 1 << 2;
+pub const MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS: u64 = 1 << 3;
+pub const MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES: u64 = 1 << 4;
+
+pub const MAKO_LOCAL_SCAN_HAS_UPPER: u32 = 1 << 0;
+pub const MAKO_LOCAL_SCAN_HAS_RESUME: u32 = 1 << 1;
 
 pub const MAKO_LOCAL_MAX_TABLE_NAME_BYTES: usize = 1024;
 pub const MAKO_LOCAL_MAX_KEY_BYTES: usize = 1024;
@@ -40,6 +45,39 @@ pub const MAKO_LOCAL_TXN_TOO_LARGE: c_int = 13;
 pub const MAKO_LOCAL_VALUE_TOO_LARGE: c_int = 14;
 pub const MAKO_LOCAL_COMMIT_HOOK_REJECTED: c_int = 15;
 pub const MAKO_LOCAL_TIMESTAMP_EXHAUSTED: c_int = 16;
+pub const MAKO_LOCAL_BUFFER_TOO_SMALL: c_int = 17;
+
+/// One chunk request over the logical binary-key range `[lower, upper)`.
+///
+/// `upper` and `resume` are present only when their corresponding flag is set.
+/// A present resume key is exclusive in either scan direction.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct mako_local_scan_options {
+    pub struct_size: u32,
+    pub flags: u32,
+    pub lower: *const u8,
+    pub lower_len: usize,
+    pub upper: *const u8,
+    pub upper_len: usize,
+    pub resume: *const u8,
+    pub resume_len: usize,
+}
+
+/// Fixed revision-0 prefix size, independent of future trailing fields.
+pub const MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE: u32 =
+    (core::mem::offset_of!(mako_local_scan_options, resume_len) + core::mem::size_of::<usize>())
+        as u32;
+
+/// Offsets for one key/value pair packed into a caller-owned scan arena.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct mako_local_scan_entry {
+    pub key_offset: u32,
+    pub key_length: u32,
+    pub value_offset: u32,
+    pub value_length: u32,
+}
 
 /// Synchronous post-validation, pre-install callback.
 ///
@@ -72,6 +110,8 @@ pub struct mako_local_txn {
 extern "C" {
     pub fn mako_local_abi_version() -> u32;
     pub fn mako_local_feature_bits() -> u64;
+    pub fn mako_local_scan_options_size() -> usize;
+    pub fn mako_local_scan_entry_size() -> usize;
     pub fn mako_local_status_string(status: c_int) -> *const c_char;
     pub fn mako_local_thread_attach() -> c_int;
     pub fn mako_local_advance_mako_timestamp_past(observed: u32) -> c_int;
@@ -123,6 +163,32 @@ extern "C" {
         key_len: usize,
         existed_out: *mut u8,
     ) -> c_int;
+    pub fn mako_local_txn_scan_chunk(
+        txn: *mut mako_local_txn,
+        table: *mut mako_local_table,
+        options: *const mako_local_scan_options,
+        entries: *mut mako_local_scan_entry,
+        entries_capacity: usize,
+        arena: *mut u8,
+        arena_capacity: usize,
+        entry_count_out: *mut usize,
+        arena_used_out: *mut usize,
+        arena_required_out: *mut usize,
+        done_out: *mut u8,
+    ) -> c_int;
+    pub fn mako_local_txn_rscan_chunk(
+        txn: *mut mako_local_txn,
+        table: *mut mako_local_table,
+        options: *const mako_local_scan_options,
+        entries: *mut mako_local_scan_entry,
+        entries_capacity: usize,
+        arena: *mut u8,
+        arena_capacity: usize,
+        entry_count_out: *mut usize,
+        arena_used_out: *mut usize,
+        arena_required_out: *mut usize,
+        done_out: *mut u8,
+    ) -> c_int;
     pub fn mako_local_txn_commit(txn: *mut mako_local_txn) -> c_int;
     pub fn mako_local_txn_commit_with_hook(
         txn: *mut mako_local_txn,
@@ -159,6 +225,7 @@ mod tests {
             MAKO_LOCAL_VALUE_TOO_LARGE,
             MAKO_LOCAL_COMMIT_HOOK_REJECTED,
             MAKO_LOCAL_TIMESTAMP_EXHAUSTED,
+            MAKO_LOCAL_BUFFER_TOO_SMALL,
         ];
         for (i, a) in values.iter().enumerate() {
             for b in &values[i + 1..] {

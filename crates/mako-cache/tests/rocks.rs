@@ -181,11 +181,66 @@ fn canonical_same_key_histories_survive_rocks_recovery() {
 }
 
 #[test]
+fn transactional_scans_reflect_staged_writes_and_survive_rocks_reopen() {
+    let scratch = Scratch::new("transactional-scans");
+    let cache = open(&scratch);
+
+    let mut seed = cache.transaction().expect("begin scan seed");
+    seed.put(b"rocks-scan/a", b"old-a").expect("seed a");
+    seed.put(b"rocks-scan/b", b"old-b").expect("seed b");
+    seed.put(b"rocks-scan/c", b"old-c").expect("seed c");
+    seed.commit().expect("commit scan seed");
+
+    let mut transaction = cache.transaction().expect("begin scan transaction");
+    assert!(!transaction
+        .put(b"rocks-scan/a", b"new-a")
+        .expect("replace a"));
+    assert!(transaction.remove(b"rocks-scan/b").expect("remove b"));
+    assert!(transaction
+        .insert(b"rocks-scan/d", b"new-d")
+        .expect("insert d"));
+
+    let forward: Vec<_> = transaction
+        .scan(b"rocks-scan/", Some(b"rocks-scan0"))
+        .expect("start forward scan")
+        .collect::<Result<_, _>>()
+        .expect("collect forward scan");
+    assert_eq!(
+        forward,
+        vec![
+            (b"rocks-scan/a".to_vec(), b"new-a".to_vec()),
+            (b"rocks-scan/c".to_vec(), b"old-c".to_vec()),
+            (b"rocks-scan/d".to_vec(), b"new-d".to_vec()),
+        ]
+    );
+    let reverse: Vec<_> = transaction
+        .rscan(b"rocks-scan/", Some(b"rocks-scan0"))
+        .expect("start reverse scan")
+        .collect::<Result<_, _>>()
+        .expect("collect reverse scan");
+    assert_eq!(reverse, forward.iter().cloned().rev().collect::<Vec<_>>());
+    transaction.commit().expect("commit scanned writes");
+
+    cache.flush().expect("flush scanned transaction");
+    cache.close().expect("close scanned cache");
+
+    let reopened = open(&scratch);
+    let mut verify = reopened.transaction().expect("begin recovered scan");
+    let recovered: Vec<_> = verify
+        .scan(b"rocks-scan/", Some(b"rocks-scan0"))
+        .expect("start recovered scan")
+        .collect::<Result<_, _>>()
+        .expect("collect recovered scan");
+    assert_eq!(recovered, forward);
+    verify.commit().expect("commit recovered scan");
+    reopened.close().expect("close recovered scanned cache");
+}
+
+#[test]
 fn required_read_your_writes_follows_the_native_feature_bit() {
     let scratch = Scratch::new("required-ryw");
-    let supports_read_your_writes = mako_local::features()
-        .expect("read native features")
-        .read_my_writes();
+    let features = mako_local::features().expect("read native features");
+    let supports_read_your_writes = features.read_my_writes() && features.scan_read_my_writes();
     let mut options = Options::default();
     options.cache.require_read_my_writes = true;
 

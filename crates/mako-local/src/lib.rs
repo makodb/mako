@@ -54,7 +54,7 @@ pub enum Error {
     ThreadLimit,
     /// A database or native thread resource is still in use.
     Busy,
-    /// Native allocation failed.
+    /// Native allocation, or a fallible allocation needed by this wrapper, failed.
     OutOfMemory,
     /// A catchable C++ exception was contained at the boundary.
     Internal,
@@ -68,12 +68,28 @@ pub enum Error {
     CommitHookRejected,
     /// Mako's process-wide representable base timestamp space is exhausted.
     TimestampExhausted,
+    /// A transactional scan needs the scan/read-your-writes native feature.
+    TransactionalScansUnavailable,
+    /// A raw chunk scan's caller-owned arena could not hold its first result.
+    ///
+    /// The safe [`Scan`] iterator grows its arena and retries internally, so
+    /// ordinary safe callers should not observe this status.
+    BufferTooSmall,
     /// Rust declarations and the linked C++ ABI have different versions.
     AbiMismatch {
         /// Version compiled into the Rust declarations.
         expected: u32,
         /// Version reported by the linked C++ library.
         found: u32,
+    },
+    /// A scan ABI structure has a different native and Rust layout.
+    AbiLayoutMismatch {
+        /// Structure whose layout did not match.
+        structure: &'static str,
+        /// Size compiled into this crate.
+        expected: usize,
+        /// Size reported by the linked native library.
+        found: usize,
     },
     /// The native library returned a status unknown to this crate.
     UnknownStatus(i32),
@@ -96,7 +112,7 @@ impl fmt::Display for Error {
                 "STO's 460 process-lifetime thread slots are exhausted; use a fixed worker pool"
             ),
             Self::Busy => write!(f, "native resource is busy"),
-            Self::OutOfMemory => write!(f, "native allocation failed"),
+            Self::OutOfMemory => write!(f, "native or wrapper allocation failed"),
             Self::Internal => write!(f, "the local ABI contained a C++ failure"),
             Self::DuplicateWrite => write!(
                 f,
@@ -113,9 +129,22 @@ impl fmt::Display for Error {
                 write!(f, "post-validation commit hook rejected the transaction")
             }
             Self::TimestampExhausted => write!(f, "Mako logical timestamp exhausted"),
+            Self::TransactionalScansUnavailable => write!(
+                f,
+                "the linked engine does not support transactional scans with read-your-writes"
+            ),
+            Self::BufferTooSmall => write!(f, "transactional scan buffer is too small"),
             Self::AbiMismatch { expected, found } => write!(
                 f,
                 "mako-local ABI mismatch: Rust expects {expected}, linked C++ reports {found}"
+            ),
+            Self::AbiLayoutMismatch {
+                structure,
+                expected,
+                found,
+            } => write!(
+                f,
+                "mako-local ABI layout mismatch for {structure}: Rust expects {expected} bytes, linked C++ reports {found}"
             ),
             Self::UnknownStatus(status) => {
                 write!(f, "mako-local returned unknown status {status}")
@@ -215,6 +244,16 @@ impl Features {
         self.0 & sys::MAKO_LOCAL_FEATURE_OPACITY != 0
     }
 
+    /// Transactional forward and reverse chunk scans are available.
+    pub const fn transactional_scans(self) -> bool {
+        self.0 & sys::MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS != 0
+    }
+
+    /// Transactional scans observe earlier writes from the same transaction.
+    pub const fn scan_read_my_writes(self) -> bool {
+        self.0 & sys::MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES != 0
+    }
+
     /// Raw ABI feature bits, including future bits unknown to this crate.
     pub const fn bits(self) -> u64 {
         self.0
@@ -231,14 +270,36 @@ pub fn features() -> Result<Features> {
 fn verify_abi() -> Result<()> {
     // SAFETY: pure ABI identity accessor.
     let found = unsafe { sys::mako_local_abi_version() };
-    if found == sys::MAKO_LOCAL_ABI_VERSION {
-        Ok(())
-    } else {
-        Err(Error::AbiMismatch {
+    if found != sys::MAKO_LOCAL_ABI_VERSION {
+        return Err(Error::AbiMismatch {
             expected: sys::MAKO_LOCAL_ABI_VERSION,
             found,
-        })
+        });
     }
+
+    for (structure, expected, found) in [
+        (
+            "mako_local_scan_options",
+            sys::MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE as usize,
+            // SAFETY: pure ABI identity accessor.
+            unsafe { sys::mako_local_scan_options_size() },
+        ),
+        (
+            "mako_local_scan_entry",
+            std::mem::size_of::<sys::mako_local_scan_entry>(),
+            // SAFETY: pure ABI identity accessor.
+            unsafe { sys::mako_local_scan_entry_size() },
+        ),
+    ] {
+        if expected != found {
+            return Err(Error::AbiLayoutMismatch {
+                structure,
+                expected,
+                found,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn status(code: i32) -> Result<()> {
@@ -260,18 +321,36 @@ fn status(code: i32) -> Result<()> {
         sys::MAKO_LOCAL_VALUE_TOO_LARGE => Err(Error::ValueTooLarge),
         sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED => Err(Error::CommitHookRejected),
         sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED => Err(Error::TimestampExhausted),
+        sys::MAKO_LOCAL_BUFFER_TOO_SMALL => Err(Error::BufferTooSmall),
         other => Err(Error::UnknownStatus(other)),
     }
 }
 
 fn operation_is_terminal(code: i32) -> bool {
-    matches!(
-        code,
+    match code {
         sys::MAKO_LOCAL_CONFLICT
-            | sys::MAKO_LOCAL_OUT_OF_MEMORY
-            | sys::MAKO_LOCAL_INTERNAL
-            | sys::MAKO_LOCAL_TXN_TOO_LARGE
-    )
+        | sys::MAKO_LOCAL_OUT_OF_MEMORY
+        | sys::MAKO_LOCAL_INTERNAL
+        | sys::MAKO_LOCAL_TXN_TOO_LARGE
+        | sys::MAKO_LOCAL_TXN_FINISHED => true,
+        sys::MAKO_LOCAL_OK
+        | sys::MAKO_LOCAL_NOT_ATTACHED
+        | sys::MAKO_LOCAL_WRONG_THREAD
+        | sys::MAKO_LOCAL_TXN_ALREADY_ACTIVE
+        | sys::MAKO_LOCAL_WRONG_DB_OR_TABLE
+        | sys::MAKO_LOCAL_INVALID_ARGUMENT
+        | sys::MAKO_LOCAL_THREAD_LIMIT
+        | sys::MAKO_LOCAL_BUSY
+        | sys::MAKO_LOCAL_DUPLICATE_WRITE
+        | sys::MAKO_LOCAL_VALUE_TOO_LARGE
+        | sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED
+        | sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED
+        | sys::MAKO_LOCAL_BUFFER_TOO_SMALL => false,
+        // A future operation status has no known lifecycle contract. Never
+        // let callers commit a handle whose native state may already be
+        // terminal or uncertain.
+        _ => true,
+    }
 }
 
 fn commit_disposition(code: i32) -> CommitDisposition {
@@ -464,6 +543,308 @@ pub struct Transaction<'db> {
     _thread_affine: PhantomData<Rc<()>>,
 }
 
+const SCAN_CHUNK_ENTRIES: usize = 64;
+const INITIAL_SCAN_ARENA_BYTES: usize = 4 * 1024;
+
+#[derive(Clone, Copy)]
+enum ScanDirection {
+    Forward,
+    Reverse,
+}
+
+/// A fallible transactional range iterator.
+///
+/// Both directions traverse the same logical binary-key range `[lower,
+/// upper)`. Forward scans yield ascending keys and reverse scans yield
+/// descending keys. Each returned key and value is owned, so no native pointer
+/// escapes a chunk call.
+///
+/// The iterator fetches bounded chunks. Dropping it early keeps the
+/// transaction active, but its prefetched rows and predicates remain in the
+/// transaction's read set and can conservatively cause a later conflict.
+pub struct Scan<'txn, 'db> {
+    transaction: &'txn mut Transaction<'db>,
+    table: Table<'db>,
+    direction: ScanDirection,
+    lower: Vec<u8>,
+    upper: Option<Vec<u8>>,
+    resume: Option<Vec<u8>>,
+    entries: Vec<sys::mako_local_scan_entry>,
+    arena: Vec<u8>,
+    current: std::vec::IntoIter<(Vec<u8>, Vec<u8>)>,
+    done: bool,
+}
+
+impl<'txn, 'db> Scan<'txn, 'db> {
+    fn new(
+        transaction: &'txn mut Transaction<'db>,
+        table: Table<'db>,
+        direction: ScanDirection,
+        lower: &[u8],
+        upper: Option<&[u8]>,
+    ) -> Result<Self> {
+        transaction.active_raw()?;
+        if lower.len() > MAX_KEY_BYTES || upper.is_some_and(|bound| bound.len() > MAX_KEY_BYTES) {
+            return Err(Error::ValueTooLarge);
+        }
+        let capabilities = features()?;
+        if !capabilities.transactional_scans() || !capabilities.scan_read_my_writes() {
+            return Err(Error::TransactionalScansUnavailable);
+        }
+
+        let lower = copy_scan_bytes(lower)?;
+        let upper = upper.map(copy_scan_bytes).transpose()?;
+
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(SCAN_CHUNK_ENTRIES)
+            .map_err(|_| Error::OutOfMemory)?;
+        entries.resize(SCAN_CHUNK_ENTRIES, sys::mako_local_scan_entry::default());
+
+        let mut arena = Vec::new();
+        arena
+            .try_reserve_exact(INITIAL_SCAN_ARENA_BYTES)
+            .map_err(|_| Error::OutOfMemory)?;
+        arena.resize(INITIAL_SCAN_ARENA_BYTES, 0);
+
+        Ok(Self {
+            transaction,
+            table,
+            direction,
+            lower,
+            upper,
+            resume: None,
+            entries,
+            arena,
+            current: Vec::new().into_iter(),
+            // Even a statically empty range must cross the ABI once so native
+            // handle/database identity is validated before returning success.
+            done: false,
+        })
+    }
+
+    fn poison(&mut self) {
+        if !self.transaction.active {
+            return;
+        }
+        if let Some(raw) = self.transaction.raw {
+            // SAFETY: Scan's exclusive transaction borrow proves the live
+            // thread-affine handle cannot be used concurrently. A wrapper-side
+            // failure must abort so incomplete results cannot later commit.
+            let _ = unsafe { sys::mako_local_txn_abort(raw.as_ptr()) };
+        }
+        self.transaction.active = false;
+    }
+
+    fn fail<T>(&mut self, error: Error) -> Result<T> {
+        self.poison();
+        self.done = true;
+        Err(error)
+    }
+
+    fn grow_arena(&mut self, required: usize) -> Result<()> {
+        let max_entry_bytes = MAX_KEY_BYTES
+            .checked_add(MAX_VALUE_BYTES)
+            .expect("scan representation limits fit usize");
+        if required <= self.arena.len()
+            || required > max_entry_bytes
+            || required > u32::MAX as usize
+        {
+            return self.fail(Error::Internal);
+        }
+        self.arena
+            .try_reserve_exact(required - self.arena.len())
+            .map_err(|_| Error::OutOfMemory)
+            .or_else(|error| self.fail(error))?;
+        self.arena.resize(required, 0);
+        Ok(())
+    }
+
+    fn entry_slice(arena: &[u8], offset: u32, length: u32) -> Option<&[u8]> {
+        let start = offset as usize;
+        let end = start.checked_add(length as usize)?;
+        arena.get(start..end)
+    }
+
+    fn key_is_valid(&self, key: &[u8], previous: Option<&[u8]>) -> bool {
+        if key < self.lower.as_slice() || self.upper.as_deref().is_some_and(|upper| key >= upper) {
+            return false;
+        }
+        match (self.direction, previous) {
+            (ScanDirection::Forward, Some(previous)) => key > previous,
+            (ScanDirection::Reverse, Some(previous)) => key < previous,
+            (_, None) => true,
+        }
+    }
+
+    fn refill(&mut self) -> Result<()> {
+        loop {
+            let mut flags = 0;
+            let (upper, upper_len) = match self.upper.as_deref() {
+                Some(upper) => {
+                    flags |= sys::MAKO_LOCAL_SCAN_HAS_UPPER;
+                    (upper.as_ptr(), upper.len())
+                }
+                None => (std::ptr::null(), 0),
+            };
+            let (resume, resume_len) = match self.resume.as_deref() {
+                Some(resume) => {
+                    flags |= sys::MAKO_LOCAL_SCAN_HAS_RESUME;
+                    (resume.as_ptr(), resume.len())
+                }
+                None => (std::ptr::null(), 0),
+            };
+            let options = sys::mako_local_scan_options {
+                struct_size: sys::MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE,
+                flags,
+                lower: self.lower.as_ptr(),
+                lower_len: self.lower.len(),
+                upper,
+                upper_len,
+                resume,
+                resume_len,
+            };
+            let mut entry_count = 0usize;
+            let mut arena_used = 0usize;
+            let mut arena_required = 0usize;
+            let mut done = 0u8;
+            let raw = self.transaction.active_raw()?;
+            // SAFETY: every input and output buffer remains live and uniquely
+            // borrowed for this call. Native code writes no more than the
+            // supplied descriptor and arena capacities and retains nothing.
+            let code = unsafe {
+                match self.direction {
+                    ScanDirection::Forward => sys::mako_local_txn_scan_chunk(
+                        raw,
+                        self.table.raw.as_ptr(),
+                        &options,
+                        self.entries.as_mut_ptr(),
+                        self.entries.len(),
+                        self.arena.as_mut_ptr(),
+                        self.arena.len(),
+                        &mut entry_count,
+                        &mut arena_used,
+                        &mut arena_required,
+                        &mut done,
+                    ),
+                    ScanDirection::Reverse => sys::mako_local_txn_rscan_chunk(
+                        raw,
+                        self.table.raw.as_ptr(),
+                        &options,
+                        self.entries.as_mut_ptr(),
+                        self.entries.len(),
+                        self.arena.as_mut_ptr(),
+                        self.arena.len(),
+                        &mut entry_count,
+                        &mut arena_used,
+                        &mut arena_required,
+                        &mut done,
+                    ),
+                }
+            };
+
+            if code == sys::MAKO_LOCAL_BUFFER_TOO_SMALL {
+                if entry_count != 0
+                    || arena_used != 0
+                    || done != 0
+                    || arena_required <= self.arena.len()
+                {
+                    return self.fail(Error::Internal);
+                }
+                self.grow_arena(arena_required)?;
+                continue;
+            }
+            if let Err(error) = self.transaction.operation_status(code) {
+                self.done = true;
+                return Err(error);
+            }
+            if entry_count > self.entries.len()
+                || arena_used > self.arena.len()
+                || done > 1
+                || (entry_count == 0 && done == 0)
+            {
+                return self.fail(Error::Internal);
+            }
+
+            let arena = &self.arena[..arena_used];
+            let mut items = Vec::new();
+            if items.try_reserve_exact(entry_count).is_err() {
+                return self.fail(Error::OutOfMemory);
+            }
+            for descriptor in &self.entries[..entry_count] {
+                let Some(key) =
+                    Self::entry_slice(arena, descriptor.key_offset, descriptor.key_length)
+                else {
+                    return self.fail(Error::Internal);
+                };
+                let Some(value) =
+                    Self::entry_slice(arena, descriptor.value_offset, descriptor.value_length)
+                else {
+                    return self.fail(Error::Internal);
+                };
+                let previous = items
+                    .last()
+                    .map(|(key, _): &(Vec<u8>, Vec<u8>)| key.as_slice())
+                    .or(self.resume.as_deref());
+                if key.len() > MAX_KEY_BYTES
+                    || value.len() > MAX_VALUE_BYTES
+                    || !self.key_is_valid(key, previous)
+                {
+                    return self.fail(Error::Internal);
+                }
+                let key = match copy_scan_bytes(key) {
+                    Ok(key) => key,
+                    Err(error) => return self.fail(error),
+                };
+                let value = match copy_scan_bytes(value) {
+                    Ok(value) => value,
+                    Err(error) => return self.fail(error),
+                };
+                items.push((key, value));
+            }
+
+            if let Some((last_key, _)) = items.last() {
+                self.resume = match copy_scan_bytes(last_key) {
+                    Ok(key) => Some(key),
+                    Err(error) => return self.fail(error),
+                };
+            }
+            self.current = items.into_iter();
+            self.done = done != 0;
+            return Ok(());
+        }
+    }
+}
+
+impl Iterator for Scan<'_, '_> {
+    type Item = Result<(Vec<u8>, Vec<u8>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(item) = self.current.next() {
+            return Some(Ok(item));
+        }
+        if self.done {
+            return None;
+        }
+        match self.refill() {
+            Ok(()) => self.current.next().map(Ok),
+            Err(error) => {
+                self.done = true;
+                Some(Err(error))
+            }
+        }
+    }
+}
+
+fn copy_scan_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut owned = Vec::new();
+    owned
+        .try_reserve_exact(bytes.len())
+        .map_err(|_| Error::OutOfMemory)?;
+    owned.extend_from_slice(bytes);
+    Ok(owned)
+}
+
 impl<'db> Transaction<'db> {
     fn active_raw(&self) -> Result<*mut sys::mako_local_txn> {
         if !self.active {
@@ -483,6 +864,32 @@ impl<'db> Transaction<'db> {
             self.active = false;
         }
         status(code)
+    }
+
+    /// Scan `[lower, upper)` in ascending binary-key order.
+    ///
+    /// `None` for `upper` means the range is unbounded above. Earlier staged
+    /// puts, inserts, and removes are reflected in the iterator.
+    pub fn scan<'txn>(
+        &'txn mut self,
+        table: &Table<'db>,
+        lower: &[u8],
+        upper: Option<&[u8]>,
+    ) -> Result<Scan<'txn, 'db>> {
+        Scan::new(self, *table, ScanDirection::Forward, lower, upper)
+    }
+
+    /// Scan `[lower, upper)` in descending binary-key order.
+    ///
+    /// The upper endpoint remains exclusive and the lower endpoint inclusive,
+    /// exactly as in [`Self::scan`].
+    pub fn rscan<'txn>(
+        &'txn mut self,
+        table: &Table<'db>,
+        lower: &[u8],
+        upper: Option<&[u8]>,
+    ) -> Result<Scan<'txn, 'db>> {
+        Scan::new(self, *table, ScanDirection::Reverse, lower, upper)
     }
 
     /// Read a key, returning owned bytes. Missing and present-empty are
@@ -791,6 +1198,7 @@ mod tests {
                 sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED,
                 Err(Error::TimestampExhausted),
             ),
+            (sys::MAKO_LOCAL_BUFFER_TOO_SMALL, Err(Error::BufferTooSmall)),
         ];
 
         for (code, expected) in cases {
@@ -807,6 +1215,7 @@ mod tests {
             sys::MAKO_LOCAL_OUT_OF_MEMORY,
             sys::MAKO_LOCAL_INTERNAL,
             sys::MAKO_LOCAL_TXN_TOO_LARGE,
+            sys::MAKO_LOCAL_TXN_FINISHED,
         ] {
             assert!(operation_is_terminal(code), "status {code}");
         }
@@ -814,6 +1223,9 @@ mod tests {
         assert!(!operation_is_terminal(sys::MAKO_LOCAL_VALUE_TOO_LARGE));
         assert!(!operation_is_terminal(sys::MAKO_LOCAL_DUPLICATE_WRITE));
         assert!(!operation_is_terminal(sys::MAKO_LOCAL_INVALID_ARGUMENT));
+        assert!(!operation_is_terminal(sys::MAKO_LOCAL_BUFFER_TOO_SMALL));
+        assert!(operation_is_terminal(-1));
+        assert!(operation_is_terminal(i32::MAX));
     }
 
     #[test]

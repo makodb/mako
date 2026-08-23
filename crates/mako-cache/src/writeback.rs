@@ -568,6 +568,8 @@ impl<B: Blobs> Writeback<B> {
                 // waiting for Rocks.
                 let record = Arc::clone(&front.record);
                 drop(state);
+                #[cfg(test)]
+                crate::failpoint::hit(crate::failpoint::Point::ReadyBeforeBackend);
                 let record = record
                     .get()
                     .expect("a Ready slot must contain its finalized record");
@@ -576,6 +578,8 @@ impl<B: Blobs> Writeback<B> {
 
                 match result {
                     Ok(()) => {
+                        #[cfg(test)]
+                        crate::failpoint::hit(crate::failpoint::Point::BackendWrittenBeforeDurable);
                         let mut state = lock_recover(&self.state);
                         let current = state
                             .queue
@@ -592,6 +596,8 @@ impl<B: Blobs> Writeback<B> {
                         );
                         state.queue.pop_front();
                         state.durable = sequence.get();
+                        #[cfg(test)]
+                        crate::failpoint::hit(crate::failpoint::Point::DurableAdvanced);
                         drop(state);
                         self.capacity_available.notify_all();
                         self.changed.notify_all();

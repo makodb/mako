@@ -7,6 +7,7 @@
 #include "sto/StringWrapper.hh"
 #include "sto/thread_registration.hh"
 
+#include <algorithm>
 #include <atomic>
 #include <climits>
 #include <cstdlib>
@@ -139,6 +140,285 @@ int reserve_item_budget(mako_local_txn *txn, size_t charge) {
   return MAKO_LOCAL_OK;
 }
 
+constexpr uint32_t kKnownScanFlags =
+    MAKO_LOCAL_SCAN_HAS_UPPER | MAKO_LOCAL_SCAN_HAS_RESUME;
+
+struct maximum_scan_key_storage {
+  uint8_t bytes[MAKO_LOCAL_MAX_KEY_BYTES]{};
+
+  constexpr maximum_scan_key_storage() {
+    for (size_t i = 0; i != MAKO_LOCAL_MAX_KEY_BYTES; ++i)
+      bytes[i] = UINT8_MAX;
+  }
+};
+
+constexpr maximum_scan_key_storage kMaximumScanKey{};
+
+struct scan_window {
+  const uint8_t *begin;
+  size_t begin_len;
+  bool begin_inclusive;
+  const uint8_t *end;
+  size_t end_len;
+  bool end_inclusive;
+  bool empty;
+};
+
+// @safe - Bytewise Masstree key order without dereferencing empty slices.
+int compare_slices(const uint8_t *left, size_t left_len,
+                   const uint8_t *right, size_t right_len) {
+  const size_t common = std::min(left_len, right_len);
+  if (common != 0) {
+    const int compared = std::memcmp(left, right, common);
+    if (compared != 0) return compared;
+  }
+  if (left_len < right_len) return -1;
+  if (left_len > right_len) return 1;
+  return 0;
+}
+
+// @safe - Validates borrowed option slices and derives inclusive/exclusive
+// MassTrans bounds. No input pointer is retained beyond the ABI call.
+int make_scan_window(const mako_local_scan_options *options, bool reverse,
+                     scan_window *window) {
+  if (options == nullptr || window == nullptr ||
+      options->struct_size < MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE ||
+      (options->flags & ~kKnownScanFlags) != 0 ||
+      !valid_slice(options->lower, options->lower_len))
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+
+  const bool has_upper =
+      (options->flags & MAKO_LOCAL_SCAN_HAS_UPPER) != 0;
+  const bool has_resume =
+      (options->flags & MAKO_LOCAL_SCAN_HAS_RESUME) != 0;
+  if ((has_upper && !valid_slice(options->upper, options->upper_len)) ||
+      (has_resume && !valid_slice(options->resume, options->resume_len)))
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  if (options->lower_len > MAKO_LOCAL_MAX_KEY_BYTES ||
+      (has_upper && options->upper_len > MAKO_LOCAL_MAX_KEY_BYTES) ||
+      (has_resume && options->resume_len > MAKO_LOCAL_MAX_KEY_BYTES))
+    return MAKO_LOCAL_VALUE_TOO_LARGE;
+
+  *window = scan_window{nullptr, 0, false, nullptr, 0, false, false};
+  if (has_upper &&
+      compare_slices(options->lower, options->lower_len,
+                     options->upper, options->upper_len) >= 0) {
+    window->empty = true;
+    return MAKO_LOCAL_OK;
+  }
+
+  if (!reverse) {
+    window->begin = options->lower;
+    window->begin_len = options->lower_len;
+    window->begin_inclusive = true;
+    if (has_resume) {
+      if (has_upper &&
+          compare_slices(options->resume, options->resume_len,
+                         options->upper, options->upper_len) >= 0) {
+        window->empty = true;
+        return MAKO_LOCAL_OK;
+      }
+      if (compare_slices(options->resume, options->resume_len,
+                         options->lower, options->lower_len) >= 0) {
+        window->begin = options->resume;
+        window->begin_len = options->resume_len;
+        window->begin_inclusive = false;
+      }
+    }
+    if (has_upper) {
+      window->end = options->upper;
+      window->end_len = options->upper_len;
+    }
+    // Forward ranges always exclude their upper boundary.
+    window->end_inclusive = false;
+    return MAKO_LOCAL_OK;
+  }
+
+  // Reverse scans cover the same [lower, upper) set in descending order. Both
+  // upper and resume are exclusive, so the smaller one is the traversal start.
+  if (has_resume &&
+      compare_slices(options->resume, options->resume_len,
+                     options->lower, options->lower_len) <= 0) {
+    window->empty = true;
+    return MAKO_LOCAL_OK;
+  }
+  if (has_upper && has_resume) {
+    if (compare_slices(options->upper, options->upper_len,
+                       options->resume, options->resume_len) <= 0) {
+      window->begin = options->upper;
+      window->begin_len = options->upper_len;
+    } else {
+      window->begin = options->resume;
+      window->begin_len = options->resume_len;
+    }
+  } else if (has_upper) {
+    window->begin = options->upper;
+    window->begin_len = options->upper_len;
+  } else if (has_resume) {
+    window->begin = options->resume;
+    window->begin_len = options->resume_len;
+  } else {
+    // Masstree treats an empty reverse start as the minimum key, not +infinity.
+    // Keys exposed by this ABI are bounded to 1024 bytes, so 1024 0xff bytes is
+    // the actual maximum and must be included to make the upper bound open.
+    window->begin = kMaximumScanKey.bytes;
+    window->begin_len = MAKO_LOCAL_MAX_KEY_BYTES;
+    window->begin_inclusive = true;
+  }
+  if (has_upper || has_resume)
+    window->begin_inclusive = false;
+  window->end = options->lower;
+  window->end_len = options->lower_len;
+  window->end_inclusive = true;
+  return MAKO_LOCAL_OK;
+}
+
+struct scan_chunk_collector {
+  mako_local_scan_entry *entries;
+  size_t entries_capacity;
+  uint8_t *arena;
+  size_t arena_capacity;
+  size_t count = 0;
+  size_t used = 0;
+  size_t required = 0;
+  bool stopped_early = false;
+  bool malformed_value = false;
+
+  // @unsafe - Copies callback-borrowed MassTrans bytes into caller-owned
+  // buffers after checking every offset and length.
+  bool add(lcdf::Str key, const std::string &encoded_value) {
+    if (count >= entries_capacity) {
+      stopped_early = true;
+      return false;
+    }
+    if (encoded_value.size() <
+        static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE)) {
+      malformed_value = true;
+      return false;
+    }
+
+    const size_t key_len = static_cast<size_t>(key.length());
+    const size_t value_len =
+        encoded_value.size() - mako::EXTRA_BITS_FOR_VALUE;
+    if (key_len > UINT32_MAX || value_len > UINT32_MAX ||
+        key_len > SIZE_MAX - value_len) {
+      malformed_value = true;
+      return false;
+    }
+    const size_t entry_bytes = key_len + value_len;
+    if (used > arena_capacity || entry_bytes > arena_capacity - used) {
+      if (count == 0)
+        required = entry_bytes;
+      else
+        stopped_early = true;
+      return false;
+    }
+
+    const size_t key_offset = used;
+    const size_t value_offset = used + key_len;
+    if (value_offset > UINT32_MAX ||
+        value_len > UINT32_MAX - value_offset) {
+      malformed_value = true;
+      return false;
+    }
+    if (key_len != 0)
+      std::memcpy(arena + key_offset, key.data(), key_len);
+    if (value_len != 0)
+      std::memcpy(arena + value_offset, encoded_value.data(), value_len);
+    entries[count] = mako_local_scan_entry{
+        static_cast<uint32_t>(key_offset), static_cast<uint32_t>(key_len),
+        static_cast<uint32_t>(value_offset), static_cast<uint32_t>(value_len)};
+    used += entry_bytes;
+    ++count;
+
+    // Do not peek beyond a full descriptor buffer. Besides making `done`
+    // conservative, this prevents a capacity boundary from consuming one more
+    // OCC item and turning an otherwise valid chunk into TXN_TOO_LARGE.
+    if (count == entries_capacity) {
+      stopped_early = true;
+      return false;
+    }
+    return true;
+  }
+};
+
+// @unsafe - Bridges caller-owned C buffers to a synchronous native MassTrans
+// callback. The callback is stack-bound and no pointer is retained.
+int scan_chunk_impl(
+    mako_local_txn *txn, mako_local_table *table,
+    const mako_local_scan_options *options,
+    mako_local_scan_entry *entries, size_t entries_capacity,
+    uint8_t *arena, size_t arena_capacity,
+    size_t *entry_count_out, size_t *arena_used_out,
+    size_t *arena_required_out, uint8_t *done_out, bool reverse) {
+  if (entry_count_out == nullptr || arena_used_out == nullptr ||
+      arena_required_out == nullptr || done_out == nullptr)
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  *entry_count_out = 0;
+  *arena_used_out = 0;
+  *arena_required_out = 0;
+  *done_out = 0;
+
+  if (table == nullptr || entries == nullptr || entries_capacity == 0 ||
+      (arena == nullptr && arena_capacity != 0) || arena_capacity > UINT32_MAX)
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  scan_window window{};
+  const int bounds_status = make_scan_window(options, reverse, &window);
+  if (bounds_status != MAKO_LOCAL_OK) return bounds_status;
+  const int checked = check_txn(txn, table);
+  if (checked != MAKO_LOCAL_OK) return checked;
+  if (window.empty) {
+    *done_out = 1;
+    return MAKO_LOCAL_OK;
+  }
+
+  try {
+    if (txn->item_budget_used > MAKO_LOCAL_TXN_ITEM_BUDGET)
+      return operation_abort(txn, MAKO_LOCAL_TXN_TOO_LARGE);
+    size_t remaining_items =
+        MAKO_LOCAL_TXN_ITEM_BUDGET - txn->item_budget_used;
+    scan_chunk_collector collector{entries, entries_capacity, arena,
+                                   arena_capacity};
+    auto collect = [&](lcdf::Str key, std::string &encoded_value) {
+      return collector.add(key, encoded_value);
+    };
+    const bool within_budget = reverse
+        ? table->table->transRQueryBounded(
+              as_key(window.begin, window.begin_len),
+              as_key(window.end, window.end_len), collect, remaining_items,
+              window.begin_inclusive, window.end_inclusive)
+        : table->table->transQueryBounded(
+              as_key(window.begin, window.begin_len),
+              as_key(window.end, window.end_len), collect, remaining_items,
+              window.begin_inclusive, window.end_inclusive);
+    txn->item_budget_used = MAKO_LOCAL_TXN_ITEM_BUDGET - remaining_items;
+
+    if (!within_budget)
+      return operation_abort(txn, MAKO_LOCAL_TXN_TOO_LARGE);
+    if (TThread::transget_without_throw) {
+      TThread::transget_without_throw = false;
+      return operation_abort(txn, MAKO_LOCAL_CONFLICT);
+    }
+    if (collector.malformed_value)
+      return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+    if (collector.required != 0) {
+      *arena_required_out = collector.required;
+      return MAKO_LOCAL_BUFFER_TOO_SMALL;
+    }
+
+    *entry_count_out = collector.count;
+    *arena_used_out = collector.used;
+    *done_out = collector.stopped_early ? 0 : 1;
+    return MAKO_LOCAL_OK;
+  } catch (const Transaction::Abort &) {
+    return operation_abort(txn, MAKO_LOCAL_CONFLICT);
+  } catch (const std::bad_alloc &) {
+    return operation_abort(txn, MAKO_LOCAL_OUT_OF_MEMORY);
+  } catch (...) {
+    return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+  }
+}
+
 struct post_validate_bridge {
   mako_local_post_validate_hook hook;
   void *context;
@@ -169,15 +449,26 @@ uint32_t mako_local_abi_version(void) noexcept {
 uint64_t mako_local_feature_bits(void) noexcept {
   uint64_t features = MAKO_LOCAL_FEATURE_POINT_TRANSACTIONS;
 #if READ_MY_WRITES
-  // The draft ABI currently exposes point operations only. MassTrans point
-  // reads copy a transaction's staged value (or hide its staged deletion),
-  // and local single-version transactions compose repeated mutations.
-  features |= MAKO_LOCAL_FEATURE_READ_MY_WRITES;
+  // Chunk retry also relies on local single-version item deduplication: without
+  // it, revisiting a BUFFER_TOO_SMALL row can consume fresh transaction items.
+  // Therefore the complete transactional-scan contract, not only scan RYW, is
+  // advertised with the RYW profile.
+  features |= MAKO_LOCAL_FEATURE_READ_MY_WRITES |
+              MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS |
+              MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES;
 #endif
 #if STO_OPACITY
   features |= MAKO_LOCAL_FEATURE_OPACITY;
 #endif
   return features;
+}
+
+size_t mako_local_scan_options_size(void) noexcept {
+  return MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE;
+}
+
+size_t mako_local_scan_entry_size(void) noexcept {
+  return sizeof(mako_local_scan_entry);
 }
 
 const char *mako_local_status_string(int status) noexcept {
@@ -204,6 +495,8 @@ const char *mako_local_status_string(int status) noexcept {
       return "post-validation commit hook rejected transaction";
     case MAKO_LOCAL_TIMESTAMP_EXHAUSTED:
       return "Mako logical timestamp exhausted";
+    case MAKO_LOCAL_BUFFER_TOO_SMALL:
+      return "caller scan arena is too small for the next entry";
     default: return "unknown mako-local status";
   }
 }
@@ -540,6 +833,32 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
   } catch (...) {
     return operation_abort(txn, MAKO_LOCAL_INTERNAL);
   }
+}
+
+int mako_local_txn_scan_chunk(
+    mako_local_txn *txn, mako_local_table *table,
+    const mako_local_scan_options *options,
+    mako_local_scan_entry *entries, size_t entries_capacity,
+    uint8_t *arena, size_t arena_capacity,
+    size_t *entry_count_out, size_t *arena_used_out,
+    size_t *arena_required_out, uint8_t *done_out) noexcept {
+  return scan_chunk_impl(txn, table, options, entries, entries_capacity,
+                         arena, arena_capacity, entry_count_out,
+                         arena_used_out, arena_required_out, done_out,
+                         false /* forward */);
+}
+
+int mako_local_txn_rscan_chunk(
+    mako_local_txn *txn, mako_local_table *table,
+    const mako_local_scan_options *options,
+    mako_local_scan_entry *entries, size_t entries_capacity,
+    uint8_t *arena, size_t arena_capacity,
+    size_t *entry_count_out, size_t *arena_used_out,
+    size_t *arena_required_out, uint8_t *done_out) noexcept {
+  return scan_chunk_impl(txn, table, options, entries, entries_capacity,
+                         arena, arena_capacity, entry_count_out,
+                         arena_used_out, arena_required_out, done_out,
+                         true /* reverse */);
 }
 
 int mako_local_txn_commit(mako_local_txn *txn) noexcept {

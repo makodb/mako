@@ -189,9 +189,10 @@ Current implementation status:
       small/large put, small/large insert, and remove from present/absent state
       across commit and abort. The default ABI exposes that composition;
       legacy/no-RYW builds retain the reserved `DUPLICATE_WRITE` containment.
-- [x] Conventional point read-your-writes. Point reads copy the transaction's
-      latest staged put/insert, hide a staged remove, and follow repeated
-      mutation composition. Transactional scan overlays remain separate work.
+- [x] Conventional point and transactional-scan read-your-writes. Point reads
+      copy the transaction's latest staged put/insert, hide a staged remove,
+      and follow repeated mutation composition. Forward and reverse scans
+      merge the same staged state while preserving range and resume semantics.
 - [x] Explicit 1 KiB table/key and 1 MiB value limits, plus a key-weighted
       512-item transaction budget that returns terminal `TXN_TOO_LARGE` before
       STO can allocate beyond its embedded transaction set or hit its assert.
@@ -220,13 +221,16 @@ The current production defaults are `STO_RMW=ON` and `OPACITY=OFF`. CMake
 normalizes the RMW option to a numeric preprocessor definition; passing the
 literal token `ON` to `#if READ_MY_WRITES` previously left the guarded code
 disabled. The ABI advertises point read-your-writes only when that definition
-is active, and the Rust cache requires it by default. Runtime forwarding is
+is active, and the Rust cache requires it by default. It advertises
+`TRANSACTIONAL_SCANS` and `SCAN_READ_MY_WRITES` together only for that RYW
+profile; a legacy/no-RYW engine remains point-only rather than exposing scans
+whose overlays it cannot honor. Runtime forwarding is
 deliberately limited to local single-version tables; native Mako remote proxies
 and replicated multiversion participants retain their legacy behavior until
 their staging and lock-transfer protocols are extended. The ABI guarantee
-covers the exposed point surface, including repeated same-key mutations.
-Forward/reverse scan overlays remain open Phase 1B/1C work and must not be
-inferred from the point capability bit.
+covers the exposed point and scan surfaces, including repeated same-key
+mutations and scan overlays. Scan support is negotiated by its two scan feature
+bits and is not inferred from the point capability bit.
 
 The Phase 1A-1D boundary profile requires point transactions, scans, and
 conventional read-your-writes. Opacity remains an explicit profile rather than
@@ -239,12 +243,14 @@ declared profile.
 
 ### 1C. Complete the ABI surface
 
-- Add chunked forward and reverse scans. Results use entry offsets into a
+- [x] Add chunked forward and reverse scans. Results use entry offsets into a
   caller-owned byte arena; no callback into Rust and no internal pointer may
   cross the boundary. Forward bounds are `[start, end)`; reverse bounds must
   be defined and tested symmetrically. Resume keys must produce no gaps or
   duplicates.
-- Add `BUFFER_TOO_SMALL` for scans. `TXN_TOO_LARGE` is already a recoverable
+- [x] Add `BUFFER_TOO_SMALL` for scans, including retry without gaps or
+  duplicates. A no-RYW profile does not advertise the chunk API.
+  `TXN_TOO_LARGE` is already a recoverable
   terminal error: draft point transactions use a conservative 512-item
   key-weighted budget and never reach STO's 32,768-item hard assertion.
 - Numeric table IDs are unique within a database. Pin the remaining behavior
@@ -288,7 +294,9 @@ declared profile.
 
 ### 1D. Complete the safe Rust layer
 
-- Add owned scan iterators over the chunk API.
+- [x] Add owned forward and reverse scan iterators over the chunk API, with
+  feature-gated scan RYW, caller-owned chunk storage, and default-table
+  exposure through `mako-cache`.
 - Add compile-fail tests proving a transaction cannot move threads, outlive
   its database, or be held in a spawned async task.
 - Unit-test the generated/verified status mapping and abort-on-drop against a
@@ -384,7 +392,9 @@ already exercises record validation, ordered writeback, atomic RocksDB batches,
 retry/fail-stop behavior, native multi-key transactions, and reopen recovery.
 Those component tests do not by themselves establish that this revised
 preinstall-hook protocol, Phase 1E, or Milestone 1 has passed. Transactional
-scan read-your-writes, the remaining ABI boundary gates, and Phase 1F's
+scan read-your-writes and its C ABI, safe Rust, and cache integration slice are
+complete. An initial fresh-process SIGKILL smoke gate now covers six outer
+protocol boundaries, but the remaining ABI boundary gates and Phase 1F's
 exhaustive process-crash injection remain open.
 
 1. **Prepare a detached permit before native commit.** Acquire one unit of
@@ -498,10 +508,22 @@ not establish atomic recovery of a multi-key commit.
 
 ### 1F. Recovery and crash gates
 
+The initial smoke gate is complete for six named boundaries: after detached
+preparation, after preinstall bind, after native commit but before Ready,
+after Ready but before backend application, after the backend write but before
+durable-watermark advancement, and after durable-watermark advancement. Each
+case uses a fresh writer process, a real `SIGKILL`, and a fresh verifier process
+against synchronous RocksDB; the verifier requires a three-key transaction to
+recover entirely old or entirely new.
+
+This is not the exhaustive Phase 1F gate. The following work remains:
+
 - Crash at every boundary: before/after detached preparation, after Silo lock
   and timestamp allocation, before/after validation, before/after preinstall
   bind, during install, before/after Ready publication, during the exact
   RocksDB batch, and before/after watermark advancement.
+- Add recovery/replay interruption points, including record validation, clock
+  flooring, and idempotent multi-key replay.
 - Assert only two recovered states for every transaction: all writes or none.
 - Mutation-test stale writeback, early detached-capacity discharge,
   hook-time allocation, conflict cancellation slots, missing/premature Ready
@@ -620,19 +642,25 @@ recovery.
 
 ## Immediate execution order
 
-1. Reset the implementation's advertised revision to draft `0`, publish the
-   operation/status state table, and reserve every existing status number.
-2. Add scan chunks and their recoverable buffer limits to the C ABI; repeated
-   same-key point composition and point read-your-writes are enabled. Revisit
-   the conservative point-transaction budget only with safe pre-reservation.
-3. Generate or mechanically verify Rust declarations from the C header, then
-   add the symbol, build-fingerprint, and cleanup-quarantine failpoint gates.
-4. Build the three-way deterministic differential harness and the independent
+Transactional scan chunks, scan read-your-writes, and their C ABI, safe Rust,
+and cache exposure are complete for the RYW profile. The six-boundary
+fresh-process SIGKILL matrix is the initial crash smoke gate, not Phase 1F's
+exhaustive gate.
+
+1. Finish the remaining ABI-freeze work: publish the normative operation/status
+   state table, reserve every existing status number, and retain draft revision
+   `0` until the full boundary gate passes. Revisit the conservative transaction
+   budget only with safe pre-reservation.
+2. Generate or mechanically verify the Rust declarations from the C header,
+   then add the symbol, build-fingerprint, and cleanup-quarantine failpoint
+   gates.
+3. Build the three-way deterministic differential harness and the independent
    full-history real-time/opacity oracle.
-5. Run sanitizer, concurrency, and wrapper-overhead gates.
-6. Finish the detached-permit/preinstall-hook protocol in Phase 1E, including
-   carrying `MakoTimestamp`, removing the global commit gate and conflict
-   cancellation slots, advancing Mako's timestamp floor on recovery, and
-   proving the publish-gap/crash properties without eviction.
-7. Do not begin distributed porting until atomic local crash recovery is
-   demonstrated by fault injection.
+4. Run sanitizer, concurrency, and wrapper-overhead gates.
+5. Extend the completed six-boundary fresh-process SIGKILL smoke gate into the
+   exhaustive Phase 1F campaign. Add the native lock/timestamp/validation/install
+   seams, interruption inside the RocksDB batch, and recovery/replay failures;
+   then close the remaining Phase 1E publish-gap and recovery evidence without
+   eviction.
+6. Do not begin distributed porting until atomic local crash recovery is
+   demonstrated by the exhaustive fault-injection gate.

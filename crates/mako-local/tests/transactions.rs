@@ -12,6 +12,210 @@ use mako_local::{
 fn native_features_include_point_transactions() {
     let features = features().unwrap();
     assert!(features.point_transactions());
+    assert!(!features.scan_read_my_writes() || features.transactional_scans());
+    assert!(!features.scan_read_my_writes() || features.read_my_writes());
+}
+
+#[test]
+fn transactional_scans_have_symmetric_binary_bounds_and_staged_visibility() {
+    if !features().unwrap().scan_read_my_writes() {
+        return;
+    }
+    let db = LocalDb::open().unwrap();
+    let table = db.open_table("rust_transactional_scan", 20_018).unwrap();
+
+    let mut seed = db.transaction().unwrap();
+    for (key, value) in [
+        (&b""[..], &b"empty"[..]),
+        (&b"a"[..], &b"old-a"[..]),
+        (&b"a\0"[..], &b"nul"[..]),
+        (&b"b"[..], &b"old-b"[..]),
+        (&b"c"[..], &b"old-c"[..]),
+        (&b"\xff"[..], &b"high"[..]),
+    ] {
+        seed.put(&table, key, value).unwrap();
+    }
+    seed.commit().unwrap();
+
+    let mut tx = db.transaction().unwrap();
+    assert!(!tx.put(&table, b"a", b"new-a").unwrap());
+    assert!(tx.remove(&table, b"a\0").unwrap());
+    assert!(tx.remove(&table, b"b").unwrap());
+    assert!(tx.put(&table, b"b", b"reborn-b").unwrap());
+    assert!(tx.insert(&table, b"ab", b"new-ab").unwrap());
+    assert!(tx.insert(&table, b"az", b"new-az").unwrap());
+
+    let forward: Vec<_> = tx
+        .scan(&table, b"a", Some(b"c"))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        forward,
+        vec![
+            (b"a".to_vec(), b"new-a".to_vec()),
+            (b"ab".to_vec(), b"new-ab".to_vec()),
+            (b"az".to_vec(), b"new-az".to_vec()),
+            (b"b".to_vec(), b"reborn-b".to_vec()),
+        ]
+    );
+    let reverse: Vec<_> = tx
+        .rscan(&table, b"a", Some(b"c"))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(reverse, forward.iter().cloned().rev().collect::<Vec<_>>());
+    tx.commit().unwrap();
+
+    let mut verify = db.transaction().unwrap();
+    let all: Vec<_> = verify
+        .scan(&table, b"", None)
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(all.first().unwrap().0, b"");
+    assert_eq!(all.last().unwrap().0, b"\xff");
+    assert!(!all.iter().any(|(key, _)| key == b"a\0"));
+    verify.commit().unwrap();
+}
+
+#[test]
+fn transactional_scan_chunks_resume_and_grow_the_arena_without_gaps() {
+    if !features().unwrap().scan_read_my_writes() {
+        return;
+    }
+    let db = LocalDb::open().unwrap();
+    let table = db
+        .open_table("rust_transactional_scan_chunks", 20_019)
+        .unwrap();
+    let large = vec![b'x'; 16 * 1024];
+
+    for batch in 0..2 {
+        let mut seed = db.transaction().unwrap();
+        for index in batch * 64..(batch + 1) * 64 {
+            let key = format!("k{index:03}");
+            let value = if index == 64 {
+                large.as_slice()
+            } else {
+                key.as_bytes()
+            };
+            seed.put(&table, key.as_bytes(), value).unwrap();
+        }
+        seed.commit().unwrap();
+    }
+
+    let mut forward_tx = db.transaction().unwrap();
+    let forward: Vec<_> = forward_tx
+        .scan(&table, b"k008", Some(b"k120"))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(forward.len(), 112);
+    assert_eq!(forward.first().unwrap().0, b"k008");
+    assert_eq!(forward.last().unwrap().0, b"k119");
+    assert_eq!(forward.iter().filter(|(key, _)| key == b"k064").count(), 1);
+    assert_eq!(
+        forward.iter().find(|(key, _)| key == b"k064").unwrap().1,
+        large
+    );
+    assert!(forward.windows(2).all(|pair| pair[0].0 < pair[1].0));
+    forward_tx.commit().unwrap();
+
+    let mut reverse_tx = db.transaction().unwrap();
+    let reverse: Vec<_> = reverse_tx
+        .rscan(&table, b"k008", Some(b"k120"))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(reverse, forward.into_iter().rev().collect::<Vec<_>>());
+    reverse_tx.commit().unwrap();
+}
+
+#[test]
+fn unsupported_scan_profile_is_typed_and_leaves_transaction_active() {
+    if features().unwrap().scan_read_my_writes() {
+        return;
+    }
+    let db = LocalDb::open().unwrap();
+    let table = db
+        .open_table("rust_transactional_scan_unavailable", 20_020)
+        .unwrap();
+    let mut tx = db.transaction().unwrap();
+    assert!(matches!(
+        tx.scan(&table, b"", None),
+        Err(Error::TransactionalScansUnavailable)
+    ));
+    tx.put(&table, b"point-path", b"still-active").unwrap();
+    tx.commit().unwrap();
+}
+
+#[test]
+fn empty_scans_still_validate_table_identity_and_leave_transaction_active() {
+    if !features().unwrap().scan_read_my_writes() {
+        return;
+    }
+    let left = LocalDb::open().unwrap();
+    let right = LocalDb::open().unwrap();
+    let left_table = left.open_table("rust_empty_scan_left", 20_022).unwrap();
+    let wrong_table = right.open_table("rust_empty_scan_right", 20_023).unwrap();
+    let mut transaction = left.transaction().unwrap();
+
+    let forward = transaction
+        .scan(&wrong_table, b"z", Some(b"a"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>();
+    assert_eq!(forward, Err(Error::WrongDatabaseOrTable));
+    let reverse = transaction
+        .rscan(&wrong_table, b"same", Some(b"same"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>();
+    assert_eq!(reverse, Err(Error::WrongDatabaseOrTable));
+
+    transaction
+        .put(&left_table, b"still-active", b"value")
+        .unwrap();
+    transaction.commit().unwrap();
+}
+
+#[test]
+fn transactional_scan_predicate_conflicts_with_a_concurrent_insert() {
+    if !features().unwrap().scan_read_my_writes() {
+        return;
+    }
+    let db = Arc::new(LocalDb::open().unwrap());
+    let _ = db
+        .open_table("rust_transactional_scan_phantom", 20_021)
+        .unwrap();
+    let (scanned_tx, scanned_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel(1);
+
+    let reader_db = Arc::clone(&db);
+    let reader = std::thread::spawn(move || {
+        let table = reader_db
+            .open_table("rust_transactional_scan_phantom", 20_021)
+            .unwrap();
+        let mut transaction = reader_db.transaction().unwrap();
+        let rows: Vec<_> = transaction
+            .scan(&table, b"phantom/", Some(b"phantom0"))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(rows.is_empty());
+        scanned_tx.send(()).unwrap();
+        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        transaction.commit()
+    });
+
+    scanned_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let table = db
+        .open_table("rust_transactional_scan_phantom", 20_021)
+        .unwrap();
+    let mut writer = db.transaction().unwrap();
+    writer.put(&table, b"phantom/new", b"value").unwrap();
+    writer.commit().unwrap();
+    release_tx.send(()).unwrap();
+
+    assert_eq!(reader.join().unwrap(), Err(Error::Conflict));
 }
 
 #[test]
