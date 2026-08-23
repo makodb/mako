@@ -17,6 +17,7 @@ cd "${REPOSITORY_ROOT}" || exit 2
 
 MODE="check"
 TRANSPILER="${REPOSITORY_ROOT}/third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
+RUSTC_BIN="${RUSTC:-rustc}"
 REQUIRED_RUSTY_CPP_COMMIT="a1f8fef85e8d43bb00f85f8ef32e5ecc69408642"
 FILES=()
 EXPECTED_BLOCKS=(
@@ -205,6 +206,11 @@ if [[ "${MODE}" == "rewrite" ]]; then
   exit 0
 fi
 
+if ! command -v "${RUSTC_BIN}" >/dev/null 2>&1; then
+  echo "no rustc executable found at ${RUSTC_BIN}" >&2
+  exit 2
+fi
+
 nearest_cargo_manifest() {
   local directory candidate
   directory="$(dirname -- "$1")"
@@ -283,7 +289,24 @@ for index in "${!FILES[@]}"; do
     diff -u "${file}" "${regenerated}" | head -80 >&2 || true
     failures=$((failures + 1))
   fi
+
+  rust_payload="$(dirname -- "${regenerated}")/raft_dsl.rs"
+  rust_library="$(dirname -- "${regenerated}")/libraft_dsl.rlib"
+  if ! output=$("${TRANSPILER}" inline-rust --emit-rust "${rust_payload}" \
+      --files "${file}" 2>&1); then
+    echo "FAILED ${file} (Rust extraction)" >&2
+    sed 's/^/    /' <<<"${output}" | head -20 >&2
+    failures=$((failures + 1))
+    continue
+  fi
+  if ! output=$("${RUSTC_BIN}" --edition=2021 \
+      --crate-name "raft_dsl_carrier_${index}" --crate-type=lib -D warnings \
+      "${rust_payload}" -o "${rust_library}" 2>&1); then
+    echo "FAILED ${file} (extracted Rust does not compile)" >&2
+    sed 's/^/    /' <<<"${output}" | head -20 >&2
+    failures=$((failures + 1))
+  fi
 done
 
-echo "checked ${#FILES[@]} Raft DSL carrier(s), ${failures} with drift"
+echo "checked ${#FILES[@]} Raft DSL carrier(s), generated C++ and extracted Rust; ${failures} failure(s)"
 exit $((failures > 0 ? 1 : 0))
