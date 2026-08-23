@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <type_traits>
 
 #include <rusty/cell.hpp>
 
@@ -31,11 +32,41 @@ namespace raft {
  * Mode of operation for recovery.
  */
 // @safe - Simple enum
-enum class RecoveryMode {
-  FRESH_START,      // No previous state, start fresh
-  NORMAL_RECOVERY,  // Previous state found, recover from storage
-  FORCED_FRESH      // User requested fresh start even if data exists
+#if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum RecoveryMode {
+    FRESH_START = 0,
+    NORMAL_RECOVERY = 1,
+    FORCED_FRESH = 2,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_recovery.mode version=1 rust_sha256=3823136f65d52c13816f0211602f5a547c5e391a587ab3bc60b9553a2db53647*/
+enum class RecoveryMode : int32_t;
+constexpr RecoveryMode RecoveryMode_FRESH_START();
+constexpr RecoveryMode RecoveryMode_NORMAL_RECOVERY();
+constexpr RecoveryMode RecoveryMode_FORCED_FRESH();
+
+enum class RecoveryMode : int32_t {
+    FRESH_START = 0,
+    NORMAL_RECOVERY = 1,
+    FORCED_FRESH = 2
 };
+inline constexpr RecoveryMode RecoveryMode_FRESH_START() { return RecoveryMode::FRESH_START; }
+inline constexpr RecoveryMode RecoveryMode_NORMAL_RECOVERY() { return RecoveryMode::NORMAL_RECOVERY; }
+inline constexpr RecoveryMode RecoveryMode_FORCED_FRESH() { return RecoveryMode::FORCED_FRESH; }
+/*RUSTYCPP:GEN-END id=raft_recovery.mode*/
+
+static_assert(std::is_same_v<int, int32_t>);
+static_assert(std::is_same_v<std::underlying_type_t<RecoveryMode>, int>);
+static_assert(std::is_trivially_copyable_v<RecoveryMode>);
+static_assert(sizeof(RecoveryMode) == sizeof(int32_t));
+static_assert(alignof(RecoveryMode) == alignof(int32_t));
+static_assert(static_cast<int32_t>(RecoveryMode::FRESH_START) == 0);
+static_assert(static_cast<int32_t>(RecoveryMode::NORMAL_RECOVERY) == 1);
+static_assert(static_cast<int32_t>(RecoveryMode::FORCED_FRESH) == 2);
+static_assert(RecoveryMode{} == RecoveryMode::FRESH_START);
 
 /**
  * Configuration for recovery behavior.

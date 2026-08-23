@@ -7,6 +7,7 @@
 #include "messages.hpp"
 #include <map>
 #include <mutex>
+#include <type_traits>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -32,10 +33,36 @@ namespace janus {
  * - PENDING: Should send/retry NotifyRestart (not yet acknowledged, timed out,
  *   or the peer's one-shot reconnect attempt failed)
  */
-enum class NotifyRestartStatus {
-  ACKNOWLEDGED,  // Peer reconnected to us
-  PENDING        // Need to send/retry NotifyRestart
+#if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum NotifyRestartStatus {
+    ACKNOWLEDGED = 0,
+    PENDING = 1,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_commo.notify_restart_status version=1 rust_sha256=0f703eaa978f1b096a3cdb839c88fd0b42532c6cdf972c2ff731ca83092e4f5a*/
+enum class NotifyRestartStatus : int32_t;
+constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED();
+constexpr NotifyRestartStatus NotifyRestartStatus_PENDING();
+
+enum class NotifyRestartStatus : int32_t {
+    ACKNOWLEDGED = 0,
+    PENDING = 1
 };
+inline constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED() { return NotifyRestartStatus::ACKNOWLEDGED; }
+inline constexpr NotifyRestartStatus NotifyRestartStatus_PENDING() { return NotifyRestartStatus::PENDING; }
+/*RUSTYCPP:GEN-END id=raft_commo.notify_restart_status*/
+
+static_assert(std::is_same_v<int, int32_t>);
+static_assert(std::is_same_v<std::underlying_type_t<NotifyRestartStatus>, int>);
+static_assert(std::is_trivially_copyable_v<NotifyRestartStatus>);
+static_assert(sizeof(NotifyRestartStatus) == sizeof(int32_t));
+static_assert(alignof(NotifyRestartStatus) == alignof(int32_t));
+static_assert(static_cast<int32_t>(NotifyRestartStatus::ACKNOWLEDGED) == 0);
+static_assert(static_cast<int32_t>(NotifyRestartStatus::PENDING) == 1);
+static_assert(NotifyRestartStatus{} == NotifyRestartStatus::ACKNOWLEDGED);
 
 // @unsafe - inherits from non-@interface base QuorumEvent
 class RaftVoteQuorumEvent: public QuorumEventBase {
@@ -105,10 +132,34 @@ class SendAppendEntriesResults {
  * Memory: Entry appended to in-memory log (immediate response)
  * Durable: Entry persisted to disk (sent via AppendEntriesDurable RPC)
  */
+#if RUSTYCPP_RUST
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(u64)]
+pub enum AckType {
+    Memory = 0,
+    Durable = 1,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_commo.ack_type version=1 rust_sha256=a4a8dc541c6c5e970e786f9c1e0f32a2c02cfd2eed148b63e2c8623f07058b56*/
+enum class AckType : uint64_t;
+constexpr AckType AckType_Memory();
+constexpr AckType AckType_Durable();
+
 enum class AckType : uint64_t {
-  Memory = 0,
-  Durable = 1
+    Memory = 0,
+    Durable = 1
 };
+inline constexpr AckType AckType_Memory() { return AckType::Memory; }
+inline constexpr AckType AckType_Durable() { return AckType::Durable; }
+/*RUSTYCPP:GEN-END id=raft_commo.ack_type*/
+
+static_assert(std::is_same_v<std::underlying_type_t<AckType>, uint64_t>);
+static_assert(std::is_trivially_copyable_v<AckType>);
+static_assert(sizeof(AckType) == sizeof(uint64_t));
+static_assert(alignof(AckType) == alignof(uint64_t));
+static_assert(static_cast<uint64_t>(AckType::Memory) == 0);
+static_assert(static_cast<uint64_t>(AckType::Durable) == 1);
+static_assert(AckType{} == AckType::Memory);
 
 // Response data for async AppendEntries RPC
 // Uses shared_ptr semantics to ensure memory validity when callback fires.

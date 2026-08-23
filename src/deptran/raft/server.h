@@ -10,6 +10,7 @@
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
+#include <type_traits>
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
@@ -57,11 +58,40 @@ class ReplicatedDB;
  * - HigherTerm: Saw higher term from another server.
  *   Entries may still be valid, no automatic rollback notification.
  */
-enum class StepDownReason {
-  UnsecuredFailure,  // Lost spec quorum while unsecured
-  SecuredFailure,    // Lost quorum but was secured
-  HigherTerm         // Saw higher term from another server
+#if RUSTYCPP_RUST
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum StepDownReason {
+    UnsecuredFailure = 0,
+    SecuredFailure = 1,
+    HigherTerm = 2,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.step_down_reason version=1 rust_sha256=7dbfeb0d9b13f74566cf44845511c90676df477ef444f17563468b22c83508ad*/
+enum class StepDownReason : int32_t;
+constexpr StepDownReason StepDownReason_UnsecuredFailure();
+constexpr StepDownReason StepDownReason_SecuredFailure();
+constexpr StepDownReason StepDownReason_HigherTerm();
+
+enum class StepDownReason : int32_t {
+    UnsecuredFailure = 0,
+    SecuredFailure = 1,
+    HigherTerm = 2
 };
+inline constexpr StepDownReason StepDownReason_UnsecuredFailure() { return StepDownReason::UnsecuredFailure; }
+inline constexpr StepDownReason StepDownReason_SecuredFailure() { return StepDownReason::SecuredFailure; }
+inline constexpr StepDownReason StepDownReason_HigherTerm() { return StepDownReason::HigherTerm; }
+/*RUSTYCPP:GEN-END id=raft_server.step_down_reason*/
+
+static_assert(std::is_same_v<int, int32_t>);
+static_assert(std::is_same_v<std::underlying_type_t<StepDownReason>, int>);
+static_assert(std::is_trivially_copyable_v<StepDownReason>);
+static_assert(sizeof(StepDownReason) == sizeof(int32_t));
+static_assert(alignof(StepDownReason) == alignof(int32_t));
+static_assert(static_cast<int32_t>(StepDownReason::UnsecuredFailure) == 0);
+static_assert(static_cast<int32_t>(StepDownReason::SecuredFailure) == 1);
+static_assert(static_cast<int32_t>(StepDownReason::HigherTerm) == 2);
+static_assert(StepDownReason{} == StepDownReason::UnsecuredFailure);
 
 /**
  * CommitStatus - Notification status for client callbacks
@@ -71,11 +101,40 @@ enum class StepDownReason {
  * - DURABLE: Entry reached disk quorum with secured leader, guaranteed
  * - ROLLEDBACK: Entry will not commit (leader stepped down gracefully)
  */
-enum class CommitStatus {
-  SPECULATIVE,  // Entry reached memory quorum
-  DURABLE,      // Entry reached disk quorum with secured leader
-  ROLLEDBACK    // Entry will not commit (best-effort notification)
+#if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum CommitStatus {
+    SPECULATIVE = 0,
+    DURABLE = 1,
+    ROLLEDBACK = 2,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.commit_status version=1 rust_sha256=a0a4be811263e8e2e0aba0b42364b65dd19ba8161895ee9e2cd49143f7db036d*/
+enum class CommitStatus : int32_t;
+constexpr CommitStatus CommitStatus_SPECULATIVE();
+constexpr CommitStatus CommitStatus_DURABLE();
+constexpr CommitStatus CommitStatus_ROLLEDBACK();
+
+enum class CommitStatus : int32_t {
+    SPECULATIVE = 0,
+    DURABLE = 1,
+    ROLLEDBACK = 2
 };
+inline constexpr CommitStatus CommitStatus_SPECULATIVE() { return CommitStatus::SPECULATIVE; }
+inline constexpr CommitStatus CommitStatus_DURABLE() { return CommitStatus::DURABLE; }
+inline constexpr CommitStatus CommitStatus_ROLLEDBACK() { return CommitStatus::ROLLEDBACK; }
+/*RUSTYCPP:GEN-END id=raft_server.commit_status*/
+
+static_assert(std::is_same_v<std::underlying_type_t<CommitStatus>, int>);
+static_assert(std::is_trivially_copyable_v<CommitStatus>);
+static_assert(sizeof(CommitStatus) == sizeof(int32_t));
+static_assert(alignof(CommitStatus) == alignof(int32_t));
+static_assert(static_cast<int32_t>(CommitStatus::SPECULATIVE) == 0);
+static_assert(static_cast<int32_t>(CommitStatus::DURABLE) == 1);
+static_assert(static_cast<int32_t>(CommitStatus::ROLLEDBACK) == 2);
+static_assert(CommitStatus{} == CommitStatus::SPECULATIVE);
 
 // @safe - data struct with shared_ptr fields (shared_ptr marked @external)
 //
