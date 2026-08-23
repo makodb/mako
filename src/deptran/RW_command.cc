@@ -196,22 +196,4 @@ key_t SimpleRWCommand::GetKey(const Command& cmd) {
   return parsed_cmd.key_;
 }
 
-void KeyDistribution::Insert(key_t key) {
-  key_count_[key]++;
-}
-
-void KeyDistribution::Print() {
-  sort_vec_.clear();
-  int sum = 0;
-  for (auto it = key_count_.begin(); it != key_count_.end(); it++) {
-    sort_vec_.push_back(make_pair(-it->second, it->first));
-    sum += it->second;
-  }
-  sort(sort_vec_.begin(), sort_vec_.end());
-  int cnt = 0;
-  for (auto it = sort_vec_.begin(); it != sort_vec_.end() && cnt <= 100; it++, cnt++) {
-    Log_info("[KeyDistribution] key = {} occur = {} pct= {:.2f}", it->second, -it->first, -it->first * 100.0 / sum);
-  }
-}
-
 }

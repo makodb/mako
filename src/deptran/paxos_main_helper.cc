@@ -575,7 +575,6 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
 
   while (es->running) {
     auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    WAN_WAIT_TIME(5); // 5ms is far enough within the same datacenter, otherwise, several seconds across data-center
     auto xx1 = std::chrono::high_resolution_clock::now() ;
     if (duration2.count()/1000.0/1000.0 > 1000) { // timeout: 1s
      Log_info("the time for the heartbeat: {:f} ms", duration2.count()/1000.0/1000.0);

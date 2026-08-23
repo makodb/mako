@@ -114,6 +114,16 @@ class RaftServer : public TxLogServer {
   friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
   friend class RaftLabTest;     // Allow test cases to access private members for verification
  private:
+  struct AsyncCallbackLifetime {
+    std::mutex mutex;
+    RaftServer* server = nullptr;
+  };
+
+  // RPC futures can outlive the server during test kill/restart. Destruction
+  // nulls this shared gate after waiting for any callback already using it.
+  std::shared_ptr<AsyncCallbackLifetime> async_callback_lifetime_ =
+      std::make_shared<AsyncCallbackLifetime>();
+
   // ============================================================================
   // LOG PERSISTENCE
   // ============================================================================
@@ -180,7 +190,7 @@ class RaftServer : public TxLogServer {
   slotid_t snapidx_ = 0 ;
   ballot_t snapterm_ = 0 ;
   int32_t wait_int_ = 100000 ;
-  bool disconnected_ = false;
+  std::atomic_bool disconnected_{false};
   bool req_voting_ = false ;
   bool in_applying_logs_ = false ;
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
@@ -520,9 +530,11 @@ class RaftServer : public TxLogServer {
   // @safe - election timeout calculation (external calls wrapped in @unsafe blocks)
   uint64_t GetElectionTimeout();
  public:
-  // @unsafe - Returns raw pointer cast
+  // @unsafe - Returns the scheduler's non-owning typed communicator.
   RaftCommo* commo() {
-    return (RaftCommo*) commo_;
+    auto* communicator = dynamic_cast<RaftCommo*>(commo_);
+    verify(communicator != nullptr);
+    return communicator;
   }
 
   slotid_t min_active_slot_ = 1; // anything before (lt) this slot is freed
@@ -1009,7 +1021,7 @@ class RaftServer : public TxLogServer {
                       bool_t* success, std::string* error_msg,
                       uint64_t* leader_hint);
 
-  // @unsafe - modifies proxy maps with C-style casts on raw pointers (non-trivial pointer arithmetic)
+  // Gates inbound and outbound test traffic without moving transport state.
   void Disconnect(const bool disconnect = true);
 
   // @safe - calls Disconnect (wrapped in @unsafe block) and resetTimer

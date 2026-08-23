@@ -67,7 +67,6 @@ void CoordinatorMultiPaxos::Accept() {
                 "par_id_: {:x}, slot_id: {:x}",
             par_id_, slot_id_);
   auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_);
-  WAN_WAIT;
   if (sp_quorum->yes()) {
     committed_ = true;
   } else if (sp_quorum->no()) {
@@ -189,7 +188,6 @@ void BulkCoordinatorMultiPaxos::Accept() {
         par_id_, cmd_, [](ballot_t, int) {});
     
   // auto strt = std::chrono::high_resolution_clock::now();
-  WAN_WAIT;
   // auto endt2 = std::chrono::high_resolution_clock::now();
   sp_quorum->wait();
   // auto endt3 = std::chrono::high_resolution_clock::now();

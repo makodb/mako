@@ -660,8 +660,6 @@ void RaftTestConfig::Restart(siteid_t svr) {
     Log_warn("[RAFT-RESTART] site {}: poll thread not found, creating new one", svr);
     frame->commo_ = std::make_unique<RaftCommo>(rusty::None);
   }
-  frame->commo_->loc_id_ = site_info->locale_id;
-
   // Set commo_ in server before initializing
   frame->svr_->commo_ = frame->commo_.get();
 
@@ -724,8 +722,9 @@ void RaftTestConfig::Restart(siteid_t svr) {
   // Using Fiber::create_run would schedule on the current reactor (site 0's test thread),
   // not on this server's poll thread. We must use poll_thread->add() instead.
 #ifdef RAFT_TEST_CORO
-  if (frame->svr_->heartbeat_ && frame->commo_->rpc_poll_.is_some()) {
-    auto& poll_thread = frame->commo_->rpc_poll_.as_ref().unwrap();
+  auto restart_poll_thread = frame->commo_->PollThread();
+  if (frame->svr_->heartbeat_ && restart_poll_thread.is_some()) {
+    auto& poll_thread = restart_poll_thread.as_ref().unwrap();
 
     // Add HeartbeatLoop as a job to the correct poll thread
     auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
@@ -768,7 +767,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
   // Add back to replicas map - EnsureSetup() will be called lazily on first RPC to start coroutines
   replicas[svr] = frame;
 
-  // Mark as connected in test config (don't call Reconnect, proxies will be restored on demand)
+  // The fresh communicator owns fresh peers; no stale proxy cache is restored.
   disconnected_[svr] = false;
 
   // Reset RPC count

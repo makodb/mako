@@ -18,7 +18,6 @@
 
 namespace janus {
 
-class RaftCommo;
 class RaftServer;
 // @unsafe - inherits from non-@interface Coordinator
 class CoordinatorRaft : public Coordinator {
@@ -29,13 +28,6 @@ class CoordinatorRaft : public Coordinator {
   enum Phase { INIT_END = 0, PREPARE = 1, ACCEPT = 2, COMMIT = 3, FORWARD = 4 };
   const int32_t n_phase_ = 4;
 
-  // @unsafe - C-style cast on raw pointer
-  RaftCommo *commo() {
-    // TODO fix this.
-    verify(commo_ != nullptr);
-    // @unsafe
-    { return (RaftCommo *) commo_; }
-  }
   bool in_submission_ = false; // debug;
   // removed `in_prepare_` and `in_accept`
   // debug-guard fields — neither was ever written or read in the

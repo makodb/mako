@@ -101,9 +101,6 @@ void ServerWorker::SetupCommo() {
   verify(svr_poll_thread_worker_.is_some());
   if (rep_frame_) {
     rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
-    if (rep_commo_) {
-      rep_commo_->loc_id_ = site_info_->locale_id;
-    }
     verify(rep_commo_ != nullptr);
     rep_sched_->commo_ = rep_commo_;
     verify(rep_sched_->commo_ != nullptr);
@@ -126,19 +123,6 @@ void ServerWorker::SetupCommo() {
   if (rep_sched_->site_id_ == 0) {
     Reactor::get_reactor()->run_loop(true, true);
   }
-}
-
-void ServerWorker::Pause() {
-  Log_info("!!!!!!!! ServerWorker::Pause()");
-  verify(rep_commo_ != nullptr);
-  rep_commo_->Pause();
-  // pause() not implemented in PollThreadWorker;
-}
-
-void ServerWorker::Resume() {
-  // resume() not implemented in PollThreadWorker;
-  verify(rep_commo_ != nullptr);
-  rep_commo_->Resume();
 }
 
 void ServerWorker::ShutDown() {

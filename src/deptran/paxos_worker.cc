@@ -21,6 +21,16 @@ moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
+namespace {
+
+struct SyncLogCallbackState {
+  std::mutex mutex;
+  bool accepting_responses = true;
+  std::vector<rusty::Arc<SyncLogResponse>> responses;
+};
+
+}  // namespace
+
 // Registry keys come from each payload's explicit MakoCommands membership.
 static int volatile xxx = rrr::SerializableRegistry::reg<BulkPaxosCmd>(BulkPaxosCmd::static_kind());
 static int volatile x4  = rrr::SerializableRegistry::reg<BulkPrepareLog>(BulkPrepareLog::static_kind());
@@ -63,13 +73,13 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
         // Note: rep_commo_ should be initialized before workload starts
         // If workload starts before all sites connect, this will be skipped
         if (rep_commo_ != nullptr) {
-          ((MultiPaxosCommo*)rep_commo_)->ForwardToLearner(site_info_->partition_id_,
-                                         slot_id,
-                                         cur_epoch,  // Use PaxosWorker's cur_epoch instead of coordinator
-                                         md,
-                                         [](uint64_t slot, ballot_t ballot) {
-                                           //Log_info("received a ack from the learner, slot: {}, ballot: {}", slot, ballot);
-                                         });
+          rep_commo_->ForwardToLearner(
+              site_info_->partition_id_, slot_id,
+              cur_epoch,  // Use PaxosWorker's cur_epoch instead of coordinator
+              md,
+              [](uint64_t slot, ballot_t ballot) {
+                //Log_info("received a ack from the learner, slot: {}, ballot: {}", slot, ballot);
+              });
         }
       }
 
@@ -163,10 +173,10 @@ void PaxosWorker::SetupService() {
 void PaxosWorker::SetupCommo() {
   if (rep_frame_) {
     // Use clone() to preserve svr_poll_thread_worker_ for later use by GetPollThread()
-    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
-    if (rep_commo_) {
-      rep_commo_->loc_id_ = site_info_->locale_id;
-    }
+    auto* communicator =
+        rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
+    rep_commo_ = dynamic_cast<MultiPaxosCommo*>(communicator);
+    verify(rep_commo_ != nullptr);
     rep_sched_->commo_ = rep_commo_;
   }
   // removed commented-out
@@ -275,36 +285,39 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
 // also clears the rcc_rpc.proto definitions.
 
 int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
-  ballot_t received_epoch = -1;
-  auto coord = rep_frame_->CreateBulkCoordinator();
-  coord->par_id_ = site_info_->partition_id_;
-  coord->loc_id_ = site_info_->locale_id;
-  bool done = false;
   auto es_pww = es_pw;
-  vector<rusty::Arc<SyncLogResponse>> responses;
+  auto callback_state = std::make_shared<SyncLogCallbackState>();
   // @unsafe { boundary copy: shared_ptr<SyncLogRequest> param -> Arc envelope }
-  auto sp_quorum = coord->commo_->BroadcastSyncLog(site_info_->partition_id_,
-                                                   rusty::Arc<SyncLogRequest>::make(*sync_log_req),
-                                                   [&received_epoch, &done, es_pww, &responses](shared_ptr<janus::Command> md,
-                                                                                    ballot_t ballot,
-                                                                                    int resp_type) {
-    if(!resp_type)
+  auto sp_quorum = rep_commo_->BroadcastSyncLog(
+      site_info_->partition_id_,
+      rusty::Arc<SyncLogRequest>::make(*sync_log_req),
+      [callback_state, es_pww](shared_ptr<janus::Command> md,
+                               ballot_t ballot,
+                               int resp_type) {
+    if (!resp_type) {
       es_pww->step_down(ballot);
-    else{
-      if(!done){
-        rusty::Option<rusty::Arc<SyncLogResponse>> x{rusty::None};
-        if (md != nullptr) {
-          x = marshallable_cast<SyncLogResponse>(*md);
-        }
-        // last use — unwrap() intentionally moves the Arc out.
-        responses.emplace_back(x.unwrap());
-      } else{
-        return;
-      }
+      return;
     }
+
+    rusty::Option<rusty::Arc<SyncLogResponse>> response{rusty::None};
+    if (md != nullptr) {
+      response = marshallable_cast<SyncLogResponse>(*md);
+    }
+    verify(response.is_some());
+
+    std::lock_guard<std::mutex> lock(callback_state->mutex);
+    if (!callback_state->accepting_responses) {
+      return;
+    }
+    callback_state->responses.emplace_back(response.unwrap());
   });
   sp_quorum->wait();
-  done = true;
+  vector<rusty::Arc<SyncLogResponse>> responses;
+  {
+    std::lock_guard<std::mutex> lock(callback_state->mutex);
+    callback_state->accepting_responses = false;
+    responses = std::move(callback_state->responses);
+  }
   if (sp_quorum->yes()) {
     map<pair<int,slotid_t>, rusty::Arc<janus::Command>> commited_slots;
     for(int i = 0; i < responses.size(); i++){
@@ -356,6 +369,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       //      std::cout << sync_cmds[i]->slots[kk] << " ";
       //std::cout << std::endl;
       auto pw = pxs_workers_g[i];
+      verify(pw->rep_commo_ != nullptr);
       auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i,
                                                            rusty::Arc<BulkPaxosCmd>::make(std::move(sync_cmds[i])),
                                                            [es_pww](ballot_t ballot, int valid){
@@ -371,7 +385,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
     }
     return -1;
   }
-  return received_epoch;
+  return -1;
 }
 
 // removed `PaxosWorker::SendSyncNoOpLog` —

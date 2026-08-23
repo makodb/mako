@@ -75,12 +75,4 @@ class SimpleRWCommand
   }
 };
 
-class KeyDistribution {
-  unordered_map<key_t, int> key_count_;
-  vector<pair<int, key_t>> sort_vec_;
- public:
-  void Insert(key_t key);
-  void Print();
-};
-
 }

@@ -39,7 +39,6 @@ void PaxosServer::OnPrepare(slotid_t slot_id,
   }
   *max_ballot = instance->max_ballot_seen_;
   n_prepare_++;
-  WAN_WAIT
   cb();
 }
 
@@ -73,7 +72,6 @@ void PaxosServer::OnAccept(const slotid_t slot_id,
   }
   *max_ballot = instance->max_ballot_seen_;
   n_accept_++;
-  WAN_WAIT
   cb();
 }
 

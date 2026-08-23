@@ -127,6 +127,34 @@ class Distribution {
   }
 };
 
+// Lightweight key-frequency diagnostic used by Multi-Paxos when
+// CHECK_KEY_DISTRIBUTION is enabled. It lives with the other replication
+// diagnostics and has no dependency on the retired transaction command lane.
+class KeyDistribution {
+ private:
+  std::unordered_map<key_t, int> key_count_;
+  std::vector<std::pair<int, key_t>> sort_vec_;
+
+ public:
+  void Insert(key_t key) { ++key_count_[key]; }
+
+  void Print() {
+    sort_vec_.clear();
+    int sum = 0;
+    for (const auto& [key, occurrences] : key_count_) {
+      sort_vec_.emplace_back(-occurrences, key);
+      sum += occurrences;
+    }
+    std::sort(sort_vec_.begin(), sort_vec_.end());
+    int count = 0;
+    for (auto it = sort_vec_.begin();
+         it != sort_vec_.end() && count <= 100; ++it, ++count) {
+      Log_info("[KeyDistribution] key = {} occur = {} pct= {:.2f}",
+               it->second, -it->first, -it->first * 100.0 / sum);
+    }
+  }
+};
+
 // Small integer-frequency summary used by the legacy RW workload diagnostics.
 class Frequency {
  private:

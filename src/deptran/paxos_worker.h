@@ -17,6 +17,7 @@
 namespace janus {
 
 class MultiPaxosFrame;
+class MultiPaxosCommo;
 
 	typedef std::chrono::time_point<std::chrono::high_resolution_clock> timepoint;
 
@@ -371,7 +372,7 @@ public:
   std::queue<std::tuple<int, int, int, int, const char *>> un_replay_logs_ ;  // timestamp, slot_id, status, len, log
   MultiPaxosFrame* rep_frame_ = nullptr;
   TxLogServer* rep_sched_ = nullptr;
-  Communicator* rep_commo_ = nullptr;
+  MultiPaxosCommo* rep_commo_ = nullptr;
   std::recursive_mutex mtx_worker_submit{};
   std::mutex condition_mutex;
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;

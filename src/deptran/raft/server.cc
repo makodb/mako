@@ -667,6 +667,7 @@ void RaftServer::LogTermChange(const char* reason,
 RaftServer::RaftServer()
   : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
+  async_callback_lifetime_->server = this;
   // RocksDB recovery deserializes polymorphic commands during Setup().  Make
   // the immutable kind-4 compatibility factory available as soon as a Raft
   // server exists, before any storage backend can be opened or replayed.
@@ -1004,46 +1005,16 @@ void RaftServer::Setup() {
   // Election timer will be started in Start() method when first command is submitted
 }
 
-// @unsafe - modifies connection state, accesses proxy maps
 void RaftServer::Disconnect(const bool disconnect) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  verify(disconnected_ != disconnect);
-  // global map of rpc_par_proxies_ values accessed by partition then by site
-  static map<parid_t, map<siteid_t, map<siteid_t, vector<SiteProxyPair>>>> _proxies{};
-  if (_proxies.find(partition_id_) == _proxies.end()) {
-    _proxies[partition_id_] = {};
-  }
-  RaftCommo *c = (RaftCommo*) commo();
-  if (disconnect) {
-    // Clear any stale proxy data from previous Kill/Restart cycle
-    // This can happen when a server is killed, restarted (with new proxies),
-    // and then killed again - the old _proxies data was never cleared
-    if (_proxies[partition_id_][loc_id_].size() > 0) {
-      Log_info("[DISCONNECT] Clearing stale proxy data for partition {}, site {} (had {} entries)",
-               partition_id_, loc_id_, _proxies[partition_id_][loc_id_].size());
-      _proxies[partition_id_][loc_id_].clear();
-    }
-    verify(c->rpc_par_proxies_.size() > 0);
-    auto sz = c->rpc_par_proxies_.size();
-    _proxies[partition_id_][loc_id_].insert(c->rpc_par_proxies_.begin(), c->rpc_par_proxies_.end());
-    c->rpc_par_proxies_ = {};
-    verify(_proxies[partition_id_][loc_id_].size() == sz);
-    verify(c->rpc_par_proxies_.size() == 0);
-  } else {
-    verify(_proxies[partition_id_][loc_id_].size() > 0);
-    auto sz = _proxies[partition_id_][loc_id_].size();
-    c->rpc_par_proxies_ = {};
-    c->rpc_par_proxies_.insert(_proxies[partition_id_][loc_id_].begin(), _proxies[partition_id_][loc_id_].end());
-    _proxies[partition_id_][loc_id_] = {};
-    verify(_proxies[partition_id_][loc_id_].size() == 0);
-    verify(c->rpc_par_proxies_.size() == sz);
-  }
-  disconnected_ = disconnect;
+  verify(disconnected_.load(std::memory_order_acquire) != disconnect);
+  commo()->SetNetworkEnabled(!disconnect);
+  disconnected_.store(disconnect, std::memory_order_release);
 }
 
 // @safe
 bool RaftServer::IsDisconnected() {
-  return disconnected_;
+  return disconnected_.load(std::memory_order_acquire);
 }
 
 // @safe - read-only leader hint lookup
@@ -1066,34 +1037,23 @@ void RaftServer::setIsLeader(bool isLeader) {
 #endif
 
 
-  if (isLeader) {  // [Jetpack] This need to be done before new leader realized it is a leader, otherwise new leader will use incorrect next_index_ balabala
-    // Add null check for communicator
-    if (commo_ == nullptr) {
-      Log_info("commo_ is null, skipping leader initialization");
-    } else {
-      // Reset leader volatile state
-      vector<SiteProxyPair> proxies;
-      // @unsafe
-      {
-      RaftCommo *c = (RaftCommo*) commo();
-      verify(c != nullptr);
-      proxies = c->rpc_par_proxies_[partition_id_];
+  if (isLeader && failover_) {
+    std::set<siteid_t> replication_targets = current_config_;
+    replication_targets.insert(learners_.begin(), learners_.end());
+    for (const auto peer_id : replication_targets) {
+      if (peer_id == site_id_) {
+        continue;
       }
-      if(failover_) {
-        for (auto& p : proxies) {
-          if (p.first != site_id_) {
-            // set matchIndex = 0
-            match_index_[p.first] = 0;
-            // set nextIndex = lastLogIndex + 1
-            next_index_[p.first] = lastLogIndex + 1;
-            Log_debug("loc_id_={} match_index_[{}]={}, next_index_[{}]={}", loc_id_, p.first, match_index_[p.first], p.first, next_index_[p.first]);
-          }
-        }
-        // matchedIndex and nextIndex should have indices for all servers + learners except self
-        verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
-        verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
-      }
+      match_index_[peer_id] = 0;
+      next_index_[peer_id] = lastLogIndex + 1;
+      Log_debug("loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
+                loc_id_, peer_id, match_index_[peer_id],
+                peer_id, next_index_[peer_id]);
     }
+    const size_t expected = replication_targets.size() -
+        static_cast<size_t>(replication_targets.count(site_id_) > 0);
+    verify(match_index_.size() == expected);
+    verify(next_index_.size() == expected);
   }
 
 
@@ -1133,15 +1093,6 @@ void RaftServer::setIsLeader(bool isLeader) {
       Log_info("[RAFT_VIEW] Server {} became leader for partition {}, term={}, old_view={}, new_view={}", 
                site_id_, partition_id_, currentTerm, 
                old_view.ToString().c_str(), current_view_.ToString().c_str());
-      
-      // IMPORTANT: Update the communicator's view so it knows this server is the leader
-      if (commo_) {
-        auto view_data = std::make_shared<ViewData>(current_view_, partition_id_);
-        // @unsafe
-        { commo()->UpdatePartitionView(partition_id_, *view_data); }
-        Log_info("[RAFT_VIEW] Updated communicator view for partition {} with new leader {}",
-                 partition_id_, site_id_);
-      }
       
     }
 
@@ -1344,26 +1295,19 @@ void RaftServer::HeartbeatLoop() {
   }
 
   parid_t partition_id = partition_id_;
-  // Log_info("!!!!!!! if (!failover_)");
-  // if (!failover_) {
-    vector<SiteProxyPair> proxies;
-    // @unsafe
-    {
-    proxies = commo()->rpc_par_proxies_[partition_id];
+  std::set<siteid_t> replication_targets = current_config_;
+  replication_targets.insert(learners_.begin(), learners_.end());
+  for (const auto peer_id : replication_targets) {
+    if (peer_id == site_id_) {
+      continue;
     }
-    for (auto& p : proxies) {
-      if (p.first == site_id_) {
-        continue;  // skip self
-      }
-      // set matchIndex = 0
-      match_index_[p.first] = 0;
-      // set nextIndex = 1
-      next_index_[p.first] = 1;
-    }
-    // matchedIndex and nextIndex should have indices for all servers + learners except self
-    verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
-    verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
-  // }
+    match_index_[peer_id] = 0;
+    next_index_[peer_id] = 1;
+  }
+  const size_t expected = replication_targets.size() -
+      static_cast<size_t>(replication_targets.count(site_id_) > 0);
+  verify(match_index_.size() == expected);
+  verify(next_index_.size() == expected);
 
   Log_debug("heartbeat loop init from site: {}", site_id_);
   looping_ = true;
@@ -1474,30 +1418,39 @@ void RaftServer::HeartbeatLoop() {
               uint64_t snap_last_idx = snap_meta.last_included_index;
               uint64_t snap_last_term = snap_meta.last_included_term;
               uint64_t send_term = currentTerm;
+              auto callback_lifetime = async_callback_lifetime_;
               commo()->SendInstallSnapshot(
                   site_id, partition_id_,
                   send_term, site_id_,
                   snap_last_idx, snap_last_term,
                   snap_data,
-                  [this, site_id, snap_last_idx, send_term](uint64_t follower_term) {
+                  [callback_lifetime, site_id, snap_last_idx, send_term](uint64_t follower_term) {
+                    std::lock_guard<std::mutex> lifetime_lock(
+                        callback_lifetime->mutex);
+                    auto* server = callback_lifetime->server;
+                    if (server == nullptr) {
+                      return;
+                    }
                     // @unsafe - callback modifies shared state under lock
-                    std::lock_guard<std::recursive_mutex> lock(mtx_);
-                    if (follower_term > currentTerm) {
+                    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+                    if (follower_term > server->currentTerm) {
                       Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
-                               site_id_, site_id, follower_term, currentTerm);
-                      currentTerm = follower_term;
-                      stepDown(StepDownReason::HigherTerm);
+                               server->site_id_, site_id, follower_term,
+                               server->currentTerm);
+                      server->currentTerm = follower_term;
+                      server->stepDown(StepDownReason::HigherTerm);
                       return;
                     }
-                    if (currentTerm != send_term) {
+                    if (server->currentTerm != send_term) {
                       Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Term changed since snapshot send, ignoring response",
-                               site_id_);
+                               server->site_id_);
                       return;
                     }
-                    next_index_[site_id] = snap_last_idx + 1;
-                    match_index_[site_id] = snap_last_idx;
+                    server->next_index_[site_id] = snap_last_idx + 1;
+                    server->match_index_[site_id] = snap_last_idx;
                     Log_info("[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
-                             site_id_, site_id, snap_last_idx + 1, snap_last_idx);
+                             server->site_id_, site_id, snap_last_idx + 1,
+                             snap_last_idx);
                   });
               skip_follower = true;  // Skip normal AppendEntries for this follower
             } else {
@@ -1853,6 +1806,11 @@ RaftServer::~RaftServer() {
   // This must happen before vtable collapse to prevent race conditions
   stop_ = true;
 
+  {
+    std::lock_guard<std::mutex> lifetime_lock(async_callback_lifetime_->mutex);
+    async_callback_lifetime_->server = nullptr;
+  }
+
   // Stop and join the background apply thread if it was started. The thread
   // captures `this` and walks apply_queue_ / app_next_, so it must finish
   // before any member state is destroyed.
@@ -1963,7 +1921,8 @@ bool RaftServer::RequestVote() {
   shared_ptr<RaftVoteQuorumEvent> sp_quorum;
   // @unsafe
   {
-  sp_quorum = ((RaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, term );
+  sp_quorum = commo()->BroadcastVote(
+      par_id, lst_idx, lst_term, loc_id, term);
   sp_quorum->wait_timeout(1000000);
   }
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
