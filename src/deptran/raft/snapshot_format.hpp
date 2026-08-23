@@ -23,6 +23,7 @@
 #include <string>
 
 #include "rrr/rrr.hpp"
+#include "rrr_log.h"
 
 namespace janus {
 namespace raft {
@@ -192,13 +193,13 @@ class SnapshotFormat {
                         SnapshotCompression compression = SnapshotCompression::NONE,
                         SnapshotChecksumType checksum_type = SnapshotChecksumType::CRC32) {
     if (!output) {
-      Log_error("[SNAPSHOT-FORMAT] Serialize: null output");
+      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: null output");
       return false;
     }
 
     // Only NONE compression is supported
     if (compression != SnapshotCompression::NONE) {
-      Log_error("[SNAPSHOT-FORMAT] Serialize: compression not supported");
+      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: compression not supported");
       return false;
     }
 
@@ -268,13 +269,13 @@ class SnapshotFormat {
                           uint64_t* last_term,
                           std::string* data) {
     if (!input || !last_index || !last_term || !data) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: null parameters");
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: null parameters");
       return false;
     }
 
     // Check minimum size
     if (input_size < sizeof(SnapshotHeader)) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: input too small ({} < {})",
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: input too small ({} < {})",
                 input_size, sizeof(SnapshotHeader));
       return false;
     }
@@ -285,49 +286,52 @@ class SnapshotFormat {
 
     // Validate magic and version
     if (header.magic != MAGIC) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid magic 0x{:08X} (expected 0x{:08X})",
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid magic 0x{:08X} (expected 0x{:08X})",
                 header.magic, MAGIC);
       return false;
     }
     if (header.version != VERSION) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version {}", header.version);
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version {}", header.version);
       return false;
     }
 
     // Verify header CRC
     uint32_t expected_header_crc = CRC32::Calculate(input, 44);
     if (header.header_crc != expected_header_crc) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: header CRC mismatch (0x{:08X} != 0x{:08X})",
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: header CRC mismatch (0x{:08X} != 0x{:08X})",
                 header.header_crc, expected_header_crc);
       return false;
     }
 
     // Check compression support
-    if (static_cast<SnapshotCompression>(header.compression) != SnapshotCompression::NONE) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: compression not supported");
+    if (header.compression !=
+        static_cast<uint8_t>(SnapshotCompression::NONE)) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: compression not supported");
       return false;
     }
 
     // Calculate expected total size
     size_t checksum_size = 0;
-    if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
+    if (header.checksum_type ==
+        static_cast<uint8_t>(SnapshotChecksumType::CRC32)) {
       checksum_size = 4;
     }
     size_t expected_size = sizeof(SnapshotHeader) + header.data_size + checksum_size;
     if (input_size < expected_size) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: input truncated ({} < {})",
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: input truncated ({} < {})",
                 input_size, expected_size);
       return false;
     }
 
     // Verify data checksum
     const char* data_ptr = input + sizeof(SnapshotHeader);
-    if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
+    if (header.checksum_type ==
+        static_cast<uint8_t>(SnapshotChecksumType::CRC32)) {
       uint32_t expected_crc;
       std::memcpy(&expected_crc, data_ptr + header.data_size, 4);
       uint32_t actual_crc = CRC32::Calculate(data_ptr, header.data_size);
       if (expected_crc != actual_crc) {
-        Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x{:08X} != 0x{:08X})",
+        rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x{:08X} != 0x{:08X})",
                   expected_crc, actual_crc);
         return false;
       }
