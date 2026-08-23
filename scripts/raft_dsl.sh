@@ -30,6 +30,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/messages.hpp|raft_messages.remove_server_req"
   "src/deptran/raft/messages.hpp|raft_messages.timeout_now"
   "src/deptran/raft/messages.hpp|raft_messages.vote"
+  "src/deptran/raft/read_raft_disk.cc|raft_disk.data_record"
   "src/deptran/raft/recovery_manager.hpp|raft_recovery.mode"
   "src/deptran/raft/server.h|raft_server.commit_status"
   "src/deptran/raft/server.h|raft_server.step_down_reason"
