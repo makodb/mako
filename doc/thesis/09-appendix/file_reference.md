@@ -42,7 +42,6 @@ may drift as the implementation evolves.
 | `commo.h` | 108 | MultiPaxosCommo and quorum event definitions |
 | `service.h` | 92 | MultiPaxosServiceImpl class |
 | `frame.h` | 33 | MultiPaxosFrame header |
-| `commoh.h` | 0 | Empty legacy placeholder |
 
 ## 3. Integration Files
 
