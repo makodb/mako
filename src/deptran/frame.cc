@@ -261,8 +261,6 @@ map<string, int> &Frame::FrameNameToMode() {
       {"notx",          MODE_NOTX},
       {"multi_paxos",   MODE_MULTI_PAXOS},
       {"raft",          MODE_RAFT},
-      {"epaxos",        MODE_NOT_READY},
-      {"rep_commit",    MODE_NOT_READY},
   };
   return frame_name_mode_s;
 }

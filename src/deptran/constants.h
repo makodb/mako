@@ -89,17 +89,13 @@ namespace janus {
 #define MODE_NOTX   (0x1000)
 // 0x18 is reserved for compatibility with the retired None-Copilot adapter.
 
-    // deprecated.
-
 #define MODE_MULTI_PAXOS   (0x40)
-#define MODE_MULTI_PAXOS_PLUS   (0x41)
-#define MODE_EPAXOS        (0x80)
+// 0x41 is reserved for the former Multi-Paxos-Plus placeholder.
+// 0x80 is reserved for the former EPaxos placeholder.
 // 0x100 is reserved for compatibility with the retired TAPIR protocol.
-#define MODE_TAPIR         (0x100)
 #define MODE_RAFT (0x400)
 // 0x401 is reserved for compatibility with the retired FPGA-Raft protocol.
 // 0x4000 is reserved for compatibility with the retired Copilot protocol.
-#define MODE_NOT_READY     (0x00)
 
 #define OP_IR   (0x1)
 #define OP_DR   (0x2)

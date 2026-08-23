@@ -109,9 +109,10 @@ Goal 0. Never recreate a top-level `crates/srpc` hand port.
 ### Key Protocol Implementations
 The system implements multiple distributed transaction protocols. The former
 standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, Rule, TAPIR, FPGA-Raft,
-Copilot, and RCC/Rococo implementations are retired. This includes the old
-`deptran` and `deptran_er` RCC aliases; the project-wide `janus::` C++ namespace
-remains for compatibility.
+Copilot, RCC/Rococo, Carousel, and Februus implementations are retired. This
+includes the old `deptran` and `deptran_er` RCC aliases. EPaxos, Replicated
+Commit, and Multi-Paxos Plus were unimplemented selector placeholders and are
+unsupported; the project-wide `janus::` C++ namespace remains for compatibility.
 - **OCC** (`src/deptran/occ/`): Optimistic concurrency control
 - **Paxos** (`src/deptran/paxos/`): Consensus for replication
 
