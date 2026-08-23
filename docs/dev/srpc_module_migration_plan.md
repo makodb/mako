@@ -1,5 +1,9 @@
 # SRPC (rrr) C++23 Module Migration — Incremental Plan
 
+> Historical context (August 2026): the measurements and downstream notes in
+> this plan describe the former DepTran/MemDB build graph. The current tree no
+> longer contains `src/memdb`, and `txlog_core` no longer links that engine.
+
 ## Background
 
 The rrr library was migrated to C++23 named modules in commit `0cf5b972`
