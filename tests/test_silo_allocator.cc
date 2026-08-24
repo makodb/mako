@@ -1,27 +1,24 @@
 #include <stdint.h>
 #include <stddef.h>
-#include <string.h>
-#include <stdlib.h>
 
 #include <gtest/gtest.h>
 #include "mako/allocator.h"
-#include "mako/tuple.h"
 
 import std;
 
 // ============================================================================
-// SILO ALLOCATOR TESTS - Testing real memory allocation system
+// SILO SUPPORT ALLOCATOR TESTS - Testing the live allocator
 // ============================================================================
 
 class SiloAllocatorTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Initialize allocator with realistic parameters (as per test.cc line 976)
+        // Initialize the allocator with a realistic per-core capacity.
         size_t ncpus = 4;  // 4 CPUs for testing
         size_t maxpercore = 128 * 1024 * 1024;  // 128MB per core
         allocator::Initialize(ncpus, maxpercore);
     }
-    
+
     void TearDown() override {
         // Cleanup - allocator handles its own cleanup
     }
@@ -123,7 +120,7 @@ TEST_F(SiloAllocatorTest, ManagesPointer_Managed) {
 TEST_F(SiloAllocatorTest, ManagesPointer_Unmanaged) {
     int stack_var = 42;
     void* stack_ptr = &stack_var;
-    
+
     EXPECT_FALSE(allocator::ManagesPointer(stack_ptr))
         << "Stack pointer should not be managed";
 }
@@ -162,15 +159,15 @@ TEST_F(SiloAllocatorTest, ConcurrentAllocations_MultiCPU) {
 TEST_F(SiloAllocatorTest, LargeAllocations) {
     int cpu = 0;
     const size_t large_size = 1024 * 1024; // 1MB
-    
+
     void* large_arena = allocator::AllocateArenas(cpu, large_size);
     ASSERT_NE(large_arena, nullptr) << "Large allocation failed";
-    
+
     // Verify we can use the entire allocation
     char* ptr = static_cast<char*>(large_arena);
     ptr[0] = 'A';
     ptr[large_size - 1] = 'Z';
-    
+
     EXPECT_EQ(ptr[0], 'A');
     EXPECT_EQ(ptr[large_size - 1], 'Z');
 }
@@ -181,218 +178,20 @@ TEST_F(SiloAllocatorTest, LargeAllocations) {
 TEST_F(SiloAllocatorTest, Performance_1000Allocations) {
     int cpu = 0;
     auto start = std::chrono::high_resolution_clock::now();
-    
+
     std::vector<void*> arenas;
     for (int i = 0; i < 1000; i++) {
         void* arena = allocator::AllocateArenas(cpu, 256);
         if (arena) arenas.push_back(arena);
     }
-    
+
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    
+
     std::cout << "1000 allocations took: " << duration.count() << " μs" << std::endl;
     std::cout << "Average: " << (duration.count() / 1000.0) << " μs per allocation" << std::endl;
-    
+
     EXPECT_EQ(arenas.size(), 1000);
     EXPECT_LT(duration.count(), 100000); // Less than 100ms
 }
 */
-
-// ============================================================================
-// SILO TUPLE TESTS - Testing real tuple management  
-// ============================================================================
-
-class SiloTupleTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        allocator::Initialize(4, 128 * 1024 * 1024);
-    }
-};
-
-// Test tuple creation with proper parameters
-TEST_F(SiloTupleTest, TupleCreation_WithParameters) {
-    size_t data_size = 256;
-    
-    // Use public factory method
-    dbtuple* tuple = dbtuple::alloc_first(data_size, false);
-    
-    ASSERT_NE(tuple, nullptr);
-    EXPECT_GE(tuple->alloc_size, data_size);
-}
-
-// Test tuple version handling
-TEST_F(SiloTupleTest, VersionManagement) {
-    size_t size = 128;
-    dbtuple* tuple = dbtuple::alloc_first(size, false);
-    
-    dbtuple::version_t v = tuple->unstable_version();
-    EXPECT_NE(v, 0) << "Version should be initialized";
-}
-
-// Test tuple locking
-TEST_F(SiloTupleTest, Locking_TryLockUnlock) {
-    size_t size = 128;
-    dbtuple* tuple = dbtuple::alloc_first(size, false);
-    
-    // Lock for write
-    tuple->lock(true);
-    EXPECT_TRUE(tuple->is_locked());
-    
-    tuple->unlock();
-    EXPECT_FALSE(tuple->is_locked());
-}
-
-// Test tuple data storage
-TEST_F(SiloTupleTest, DataStorage_ReadWrite) {
-    size_t data_size = 256;
-    dbtuple* tuple = dbtuple::alloc_first(data_size, false);
-    char* data = reinterpret_cast<char*>(tuple->get_value_start());
-    
-    // Write data
-    const char* test_str = "Test Data for Tuple";
-    strcpy(data, test_str);
-    
-    // Read and verify
-    EXPECT_STREQ(data, test_str);
-}
-
-// Test concurrent tuple access
-TEST_F(SiloTupleTest, ConcurrentAccess_LockContention) {
-    size_t size = 128;
-    dbtuple* tuple = dbtuple::alloc_first(size, false);
-    
-    std::vector<std::thread> threads;
-    std::atomic<int> lock_successes{0};
-    
-    for (int i = 0; i < 4; i++) {
-        threads.emplace_back([tuple, &lock_successes]() {
-            for (int j = 0; j < 50; j++) {
-                // Spin lock
-                tuple->lock(true);
-                lock_successes++;
-                // Critical section
-                std::this_thread::yield();
-                tuple->unlock();
-            }
-        });
-    }
-    
-    for (auto& t : threads) {
-        t.join();
-    }
-    
-    std::cout << "Lock successes: " << lock_successes.load() << std::endl;
-    EXPECT_EQ(lock_successes.load(), 200); // 4 threads * 50 iterations
-}
-
-// Test multiple tuple creation
-TEST_F(SiloTupleTest, MultipleTuples_Independent) {
-    std::vector<dbtuple*> tuples;
-    
-    for (int i = 0; i < 50; i++) {
-        size_t size = 128;
-        dbtuple* tuple = dbtuple::alloc_first(size, false);
-        ASSERT_NE(tuple, nullptr) << "Allocation " << i << " failed";
-        tuples.push_back(tuple);
-    }
-    
-    EXPECT_EQ(tuples.size(), 50);
-    
-    // Verify all unique
-    for (size_t i = 0; i < tuples.size(); i++) {
-        for (size_t j = i + 1; j < tuples.size(); j++) {
-            EXPECT_NE(tuples[i], tuples[j]);
-        }
-    }
-}
-
-// ============================================================================
-// INTEGRATED ALLOCATOR + TUPLE TESTS
-// ============================================================================
-
-TEST(SiloIntegration, AllocatorAndTuple_RealUsage) {
-    allocator::Initialize(4, 128 * 1024 * 1024);
-    
-    // Allocate memory on specific CPU
-    int cpu = 0;
-    size_t data_size = 512;
-    
-    // Use factory which uses allocator internally via RCU
-    dbtuple* tuple = dbtuple::alloc_first(data_size, false);
-    ASSERT_NE(tuple, nullptr);
-    
-    // Note: dbtuple::alloc_first uses rcu::alloc which uses allocator internally
-    // The pointer may not be directly managed by allocator API but by RCU layer
-    
-    // Use tuple
-    dbtuple::version_t v = tuple->unstable_version();
-    EXPECT_NE(v, 0);
-    
-    // Write data
-    char* data = reinterpret_cast<char*>(tuple->get_value_start());
-    strcpy(data, "Integration Test Data");
-    EXPECT_STREQ(data, "Integration Test Data");
-}
-
-TEST(SiloIntegration, MultiThreaded_AllocatorAndTuples) {
-    allocator::Initialize(4, 128 * 1024 * 1024);
-    
-    std::vector<std::thread> threads;
-    std::atomic<int> tuples_created{0};
-    std::atomic<int> data_verified{0};
-    
-    for (int cpu = 0; cpu < 4; cpu++) {
-        threads.emplace_back([cpu, &tuples_created, &data_verified]() {
-            // Bind to CPU (simulated by just running loop)
-            for (int i = 0; i < 25; i++) {
-                size_t size = 128;
-                dbtuple* tuple = dbtuple::alloc_first(size, false);
-                if (tuple) {
-                    tuples_created++;
-                    
-                    // Verify we can use the tuple
-                    char* data = reinterpret_cast<char*>(tuple->get_value_start());
-                    data[0] = 'A' + cpu;
-                    if (data[0] == 'A' + cpu) {
-                        data_verified++;
-                    }
-                }
-            }
-        });
-    }
-    
-    for (auto& t : threads) {
-        t.join();
-    }
-    
-    std::cout << "Tuples created: " << tuples_created.load() << std::endl;
-    std::cout << "Data verified: " << data_verified.load() << std::endl;
-    
-    EXPECT_EQ(tuples_created.load(), 100);
-    EXPECT_EQ(data_verified.load(), 100);
-}
-
-TEST(SiloIntegration, Performance_TupleCreationThroughput) {
-    allocator::Initialize(4, 128 * 1024 * 1024);
-    
-    auto start = std::chrono::high_resolution_clock::now();
-    
-    std::vector<dbtuple*> tuples;
-    for (int i = 0; i < 1000; i++) {
-        size_t size = 256;
-        dbtuple* tuple = dbtuple::alloc_first(size, false);
-        if (tuple) {
-            tuples.push_back(tuple);
-        }
-    }
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    
-    std::cout << "Created 1000 tuples in: " << duration.count() << " μs" << std::endl;
-    std::cout << "Average: " << (duration.count() / 1000.0) << " μs per tuple" << std::endl;
-    
-    EXPECT_EQ(tuples.size(), 1000);
-    EXPECT_LT(duration.count(), 50000); // Less than 50ms
-}

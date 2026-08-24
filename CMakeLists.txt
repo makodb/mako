@@ -790,10 +790,99 @@ list(APPEND CFLAGS ${LIBEVENT_CFLAGS})
 list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
 list(APPEND CXXFLAGS -fno-omit-frame-pointer)
 
+# The original Silo transaction engine is retained as source-only history.
+# Production Mako uses STO/MassTrans through storage/mbta_wrapper.hh. Keep the
+# explicit manifest and configure-time assertion so an archived source cannot
+# silently drift back into libmako. The headers also fail closed through
+# src/mako/retired_silo_engine.h.
+set(RETIRED_SILO_ENGINE_SOURCES
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/btree.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/tuple.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/txn_btree.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/txn.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/txn_proto2_impl.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/test.cc"
+)
+set(RETIRED_SILO_ENGINE_REALPATHS "")
+foreach(RETIRED_SILO_ENGINE_SOURCE IN LISTS RETIRED_SILO_ENGINE_SOURCES)
+  file(REAL_PATH "${RETIRED_SILO_ENGINE_SOURCE}"
+    RETIRED_SILO_ENGINE_REALPATH)
+  list(APPEND RETIRED_SILO_ENGINE_REALPATHS
+    "${RETIRED_SILO_ENGINE_REALPATH}")
+endforeach()
+
+function(COLLECT_BUILDSYSTEM_TARGETS DIRECTORY_PATH OUTPUT_VARIABLE)
+  get_property(LOCAL_TARGETS DIRECTORY "${DIRECTORY_PATH}"
+    PROPERTY BUILDSYSTEM_TARGETS)
+  set(ALL_TARGETS ${LOCAL_TARGETS})
+
+  get_property(CHILD_DIRECTORIES DIRECTORY "${DIRECTORY_PATH}"
+    PROPERTY SUBDIRECTORIES)
+  foreach(CHILD_DIRECTORY IN LISTS CHILD_DIRECTORIES)
+    COLLECT_BUILDSYSTEM_TARGETS("${CHILD_DIRECTORY}" CHILD_TARGETS)
+    list(APPEND ALL_TARGETS ${CHILD_TARGETS})
+  endforeach()
+
+  set(${OUTPUT_VARIABLE} "${ALL_TARGETS}" PARENT_SCOPE)
+endfunction()
+
+function(ASSERT_NO_RETIRED_SILO_SOURCES)
+  COLLECT_BUILDSYSTEM_TARGETS("${CMAKE_SOURCE_DIR}" ALL_BUILD_TARGETS)
+  foreach(BUILD_TARGET IN LISTS ALL_BUILD_TARGETS)
+    get_target_property(TARGET_SOURCE_DIR "${BUILD_TARGET}" SOURCE_DIR)
+    get_target_property(TARGET_SOURCES "${BUILD_TARGET}" SOURCES)
+    if(NOT TARGET_SOURCES OR TARGET_SOURCES STREQUAL "TARGET_SOURCES-NOTFOUND")
+      continue()
+    endif()
+
+    foreach(TARGET_SOURCE IN LISTS TARGET_SOURCES)
+      # Generator expressions cannot be canonicalized at configure time, so
+      # reject any expression containing an absolute, source-root-relative,
+      # or target-source-relative spelling of an archived file before the
+      # normal real-path comparison below.
+      foreach(RETIRED_SILO_ENGINE_SOURCE IN LISTS RETIRED_SILO_ENGINE_SOURCES)
+        file(RELATIVE_PATH RETIRED_SILO_SOURCE_FROM_ROOT
+          "${CMAKE_SOURCE_DIR}" "${RETIRED_SILO_ENGINE_SOURCE}")
+        file(RELATIVE_PATH RETIRED_SILO_SOURCE_FROM_TARGET
+          "${TARGET_SOURCE_DIR}" "${RETIRED_SILO_ENGINE_SOURCE}")
+        foreach(RETIRED_SILO_SOURCE_SPELLING
+            "${RETIRED_SILO_ENGINE_SOURCE}"
+            "${RETIRED_SILO_SOURCE_FROM_ROOT}"
+            "${RETIRED_SILO_SOURCE_FROM_TARGET}")
+          string(FIND "${TARGET_SOURCE}" "${RETIRED_SILO_SOURCE_SPELLING}"
+            RETIRED_SILO_SOURCE_TEXT_INDEX)
+          if(NOT RETIRED_SILO_SOURCE_TEXT_INDEX EQUAL -1)
+            message(FATAL_ERROR
+              "Target ${BUILD_TARGET} attempts to compile the retired "
+              "original Silo engine source through '${TARGET_SOURCE}': "
+              "${RETIRED_SILO_ENGINE_SOURCE}")
+          endif()
+        endforeach()
+      endforeach()
+
+      if(TARGET_SOURCE MATCHES "\\$<" OR TARGET_SOURCE MATCHES ">")
+        continue()
+      endif()
+      cmake_path(ABSOLUTE_PATH TARGET_SOURCE
+        BASE_DIRECTORY "${TARGET_SOURCE_DIR}" NORMALIZE
+        OUTPUT_VARIABLE CANONICAL_TARGET_SOURCE)
+      if(EXISTS "${CANONICAL_TARGET_SOURCE}")
+        file(REAL_PATH "${CANONICAL_TARGET_SOURCE}" CANONICAL_TARGET_SOURCE)
+      endif()
+      list(FIND RETIRED_SILO_ENGINE_REALPATHS
+        "${CANONICAL_TARGET_SOURCE}" RETIRED_SILO_SOURCE_INDEX)
+      if(NOT RETIRED_SILO_SOURCE_INDEX EQUAL -1)
+        message(FATAL_ERROR
+          "Target ${BUILD_TARGET} attempts to compile the retired original "
+          "Silo engine source: ${CANONICAL_TARGET_SOURCE}")
+      endif()
+    endforeach()
+  endforeach()
+endfunction()
+
 # Source files
 set(MAKO_SRCFILES
   "${W}/allocator.cc"
-  "${W}/btree.cc"
   "${W}/core.cc"
   "${W}/counter.cc"
   "${W}/memory.cc"
@@ -802,10 +891,6 @@ set(MAKO_SRCFILES
   "${W}/stats_server.cc"
   "${W}/thread.cc"
   "${W}/ticker.cc"
-  "${W}/tuple.cc"
-  "${W}/txn_btree.cc"
-  "${W}/txn.cc"
-  "${W}/txn_proto2_impl.cc"
   "${W}/varint.cc"
   # Masstree's .cc files have been lifted into the standalone
   # `masstree` static library (see src/masstree/CMakeLists.txt). They
@@ -1228,6 +1313,9 @@ endif()
 
 # Add the mako library
 add_library(mako STATIC ${MAKO_SRCFILES})
+# Run after every subdirectory has been configured so no current or future
+# target can hide a retired source behind target_sources() or a helper library.
+cmake_language(DEFER CALL ASSERT_NO_RETIRED_SILO_SOURCES)
 # masstree/compiler.hh does a bare `#include "config.h"`. Put the masstree
 # generated-config dir at the FRONT of this target's include path so it
 # resolves to masstree's own config.h and not src/deptran/config.h (also on
@@ -1886,10 +1974,10 @@ if(BUILD_TESTS)
     add_custom_target(run_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
         DEPENDS test_masstree
-                test_silo_varint test_silo_rcu_thread test_silo_allocator_tuple
+                test_silo_varint test_silo_rcu_thread test_silo_allocator
                 test_sto_transaction test_sto_transaction_real
                 simpleTransaction simplePaxos shard1ReplicationSimple
-        COMMENT "Running all tests (masstree + Silo/STO)"
+        COMMENT "Running all tests (Masstree + live Silo support/STO)"
     )
     if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_rrr)
         add_dependencies(run_tests borrow_check_rrr)
@@ -1917,7 +2005,10 @@ if(BUILD_TESTS)
     endif()
 
     # ============================================================================
-    # SILO/STO TESTS (merged from tests/ directory)
+    # LIVE SILO SUPPORT + STO TESTS (merged from tests/ directory)
+    #
+    # "Silo" here names shared support such as allocator, RCU, and
+    # SiloRuntime. The original Silo transaction engine is quarantined above.
 
     # Test: Silo Varint (Utility)
     add_executable(test_silo_varint tests/test_silo_varint.cc)
@@ -1963,9 +2054,9 @@ if(BUILD_TESTS)
     )
     add_test(NAME SiloRCUThreadTests COMMAND test_silo_rcu_thread)
 
-    # Test: Silo Allocator + Tuple Integration (Real System)
-    add_executable(test_silo_allocator_tuple tests/test_silo_allocator_tuple.cc)
-    target_link_libraries(test_silo_allocator_tuple
+    # Test: allocator support retained by the STO/MassTrans runtime
+    add_executable(test_silo_allocator tests/test_silo_allocator.cc)
+    target_link_libraries(test_silo_allocator
         mako
         rrr
         ${TXLOG_LINK_LIBS}
@@ -1978,12 +2069,12 @@ if(BUILD_TESTS)
         rocksdb
         ${LIBEVENT_LDFLAGS}
     )
-    target_include_directories(test_silo_allocator_tuple PRIVATE
+    target_include_directories(test_silo_allocator PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/mako
         ${GTEST_INCLUDE_DIRS}
     )
-    add_test(NAME SiloAllocatorTupleTests COMMAND test_silo_allocator_tuple)
+    add_test(NAME SiloAllocatorTests COMMAND test_silo_allocator)
 
     # Test: SiloRuntime per-site isolation (moved out of src/masstree/tests
     # because its subject matter is the SiloRuntime, not Masstree).
@@ -2143,12 +2234,12 @@ if(BUILD_TESTS)
     )
     add_test(NAME STOTransactionRealTests COMMAND test_sto_transaction_real)
 
-    # Custom target to run all SILO/STO tests
+    # Custom target to run live Silo-support and STO tests
     add_custom_target(run_silo_sto_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "Silo|STO"
-        DEPENDS test_silo_varint test_silo_rcu_thread test_silo_allocator_tuple 
+        DEPENDS test_silo_varint test_silo_rcu_thread test_silo_allocator
                 test_sto_transaction test_sto_transaction_real
-        COMMENT "Running all Silo/STO tests"
+        COMMENT "Running live Silo-support and STO tests"
     )
 
     # Keep this summary honest: it must name only targets this file actually
@@ -2160,16 +2251,16 @@ if(BUILD_TESTS)
     message(STATUS "Test targets configured:")
     message(STATUS "  Masstree Tests:")
     message(STATUS "    - test_masstree: Core Masstree b-tree regression tests")
-    message(STATUS "  Silo/STO Tests:")
+    message(STATUS "  Live Silo-support/STO Tests:")
     message(STATUS "    - test_silo_varint: Varint encoding/decoding (22 tests)")
     message(STATUS "    - test_silo_rcu_thread: RCU memory management (9 tests)")
-    message(STATUS "    - test_silo_allocator_tuple: Allocator + Tuple integration (18 tests)")
+    message(STATUS "    - test_silo_allocator: allocator support (9 tests)")
     message(STATUS "    - test_sto_transaction: STO Transaction RCU (13 tests)")
     message(STATUS "    - test_sto_transaction_real: STO Transaction integration tests")
     message(STATUS "Additional perf binaries:")
     message(STATUS "  - masstree_perf: On-demand Masstree throughput benchmark (JSON output)")
     message(STATUS "")
     message(STATUS "Run all tests with: make run_tests")
-    message(STATUS "Run Silo/STO tests: make run_silo_sto_tests")
+    message(STATUS "Run live Silo-support/STO tests: make run_silo_sto_tests")
     message(STATUS "Or individually: make test && ctest")
 endif()

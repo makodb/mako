@@ -114,7 +114,11 @@ includes the old `deptran` and `deptran_er` RCC aliases. EPaxos, Replicated
 Commit, and Multi-Paxos Plus were unimplemented selector placeholders and are
 unsupported. The former standalone DepTran OCC implementation is also retired;
 Mako's optimistic concurrency control is provided by its MBTA/STO engine. The
-project-wide `janus::` C++ namespace remains for compatibility.
+original Silo `txn`/`txn_btree`/`txn_proto2` transaction engine is likewise
+retired, source-guarded, and neither selectable nor runnable. Mako always uses
+STO `Transaction` with MassTrans through `storage/mbta_wrapper.hh`.
+`SiloRuntime` remains live allocator/RCU/Masstree support and is not the retired
+engine. The project-wide `janus::` C++ namespace remains for compatibility.
 - **Paxos** (`src/deptran/paxos/`): Consensus for replication
 
 ### Transport Layer Architecture

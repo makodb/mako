@@ -64,7 +64,7 @@ class BenchmarkConfig {
           running_(true),
           control_mode_(0),
           verbose_(1),
-          txn_flags_(1),
+          txn_flags_(0),
           runtime_(30),
           runtime_plus_(0),
           ops_per_worker_(0),

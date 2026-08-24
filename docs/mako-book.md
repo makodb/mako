@@ -786,8 +786,8 @@ t->put(lcdf::Str("k"), "value");   // same code either way
 - `masstree_ordered_index` — plain Masstree (L1), no transactions;
   owns value memory with RCU-deferred frees; the transactional
   virtuals abort loudly.
-- `mbta_ordered_index` — Silo's table; each non-txn op is an internal
-  one-op OCC transaction (Encode/strip handled internally).
+- `mbta_ordered_index` — STO/MassTrans transactional table; each non-txn op
+  is an internal one-op OCC transaction (Encode/strip handled internally).
 - `mbta_sharded_ordered_index` — per-key routing; remote keys travel
   self-contained non-txn RPCs, and writes on a replicated leader
   reach the replication log through the normal commit path.

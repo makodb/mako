@@ -290,6 +290,11 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 
 Note: `dbtest` does not currently expose a standard `--help` output.
 
+There is intentionally no storage-backend option. Every `dbtest` path uses
+STO `Transaction` with MassTrans through `mbta_wrapper`; the original Silo/NDB
+transaction engine is retired and guarded against compilation. Paxos and Raft
+select replication only. `SiloRuntime` remains live runtime support.
+
 ## Transport Backends
 
 Runtime selection:

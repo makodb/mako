@@ -172,7 +172,10 @@ FPGA-Raft, Copilot, RCC/Rococo, TROAD, MDCC, Carousel, and Februus protocol
 implementations are retired and are not supported configuration options. The
 old `deptran` and `deptran_er` names were RCC aliases and are retired too.
 The former internal MemDB transaction and storage stack is retired; Mako uses
-its native Masstree-backed transaction engine.
+STO `Transaction` with MassTrans/Masstree through `mbta_wrapper`. The original
+Silo `txn`/`txn_btree`/`txn_proto2` engine is also retired, source-guarded, and
+not selectable. `SiloRuntime` remains live allocator/RCU/Masstree support and
+must not be confused with that retired transaction engine.
 The `rpc_null` benchmark mode and its no-op Classic RPC endpoint are retired.
 Generic Jetpack recovery code remains as a legacy subsystem pending a separate
 audit; it is not a supported replacement for the retired Rule protocol.

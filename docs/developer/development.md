@@ -153,31 +153,14 @@ cd tests && ./run_tests.sh all
 ### Single Machine Setup (1 Leader + 2 Followers + 1 Learner)
 
 ```bash
-# Build
-make -j32
-
-# Start followers and leader in separate terminals
-# Follower p1
-./build/dbtest --verbose --bench tpcc --basedir ./tmp \
-  --db-type mbta --num-threads 6 --scale-factor 6 \
-  -F config/1leader_2followers/paxos6_shardidx0.yml -F config/paxos.yml \
-  --txn-flags 1 --runtime 30 -P p1 &
-
-# Follower p2
-./build/dbtest --verbose --bench tpcc --basedir ./tmp \
-  --db-type mbta --num-threads 6 --scale-factor 6 \
-  -F config/1leader_2followers/paxos6_shardidx0.yml -F config/paxos.yml \
-  --txn-flags 1 --runtime 30 -P p2 &
-
-# Leader
-./build/dbtest --verbose --bench tpcc --basedir ./tmp \
-  --db-type mbta --num-threads 6 --scale-factor 6 \
-  -F config/1leader_2followers/paxos6_shardidx0.yml -F config/paxos.yml \
-  --txn-flags 1 --runtime 30 -P localhost &
-
-# Monitor logs
-tail -f leader.log p1.log p2.log
+cmake --build build --target dbtest -j
+BUILD_DIR=build bash examples/test_1shard_replication.sh 6
 ```
+
+The maintained script generates isolated configs and launches the leader and
+followers with the current CLI. There is no `--db-type`: Mako always uses
+STO/MassTrans, while Paxos or Raft selects replication only. The original
+Silo/NDB transaction engine is retired and guarded against compilation.
 
 ---
 
