@@ -863,6 +863,8 @@ fn extract_mutations(journal: Vec<JournalEntry>) -> Result<Vec<Mutation>, Error>
 fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u64, Error> {
     let mut keys = Vec::<Vec<u8>>::new();
     backend.for_each_key(&mut |key| keys.push(key.to_vec()))?;
+    #[cfg(test)]
+    crate::failpoint::hit(crate::failpoint::Point::RecoveryKeysEnumerated);
 
     let mut log_keys = Vec::<(CommitSeq, Vec<u8>)>::new();
     let mut data_keys = Vec::<(Vec<u8>, u64, Vec<u8>)>::new();
@@ -879,6 +881,8 @@ fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u
         }
     }
     log_keys.sort_unstable_by_key(|(sequence, _)| *sequence);
+    #[cfg(test)]
+    let record_count = log_keys.len();
 
     let mut records = Vec::new();
     records
@@ -909,17 +913,34 @@ fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u
         }
         previous = record.sequence().get();
         records.push(record);
+        #[cfg(test)]
+        {
+            if records.len() == 1 {
+                crate::failpoint::hit(crate::failpoint::Point::RecoveryFirstRecordValidated);
+            }
+            if records.len() == record_count {
+                crate::failpoint::hit(crate::failpoint::Point::RecoveryLastRecordValidated);
+            }
+        }
     }
 
     validate_materialized_data(backend, &records, data_keys)?;
+    #[cfg(test)]
+    crate::failpoint::hit(crate::failpoint::Point::RecoveryMaterializedValidated);
 
     // Mako's logical counter is process-local. Raise it above every durable
     // timestamp before replay completes and the recovered cache is exposed,
     // otherwise a process restart could reuse transaction timestamps.
     if let Some(timestamp) = records.iter().map(CommitRecord::mako_timestamp).max() {
+        #[cfg(test)]
+        crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
         mako_local::advance_mako_timestamp_past(timestamp)?;
+        #[cfg(test)]
+        crate::failpoint::hit(crate::failpoint::Point::RecoveryAfterClockFloor);
     }
     replay_records(local, &records)?;
+    #[cfg(test)]
+    crate::failpoint::hit(crate::failpoint::Point::RecoveryReplayComplete);
     Ok(previous)
 }
 
@@ -966,6 +987,10 @@ fn validate_materialized_data<B: Blobs>(
 
 fn replay_records(local: &LocalDb, records: &[CommitRecord]) -> Result<(), Error> {
     let table = local.open_table(DEFAULT_TABLE_NAME, DEFAULT_TABLE_ID)?;
+    #[cfg(test)]
+    let replay_midpoint = records.len() / 2;
+    #[cfg(test)]
+    let mut records_replayed = 0usize;
     for record in records {
         let mut transaction = local.transaction()?;
         for mutation in record.mutations() {
@@ -990,6 +1015,13 @@ fn replay_records(local: &LocalDb, records: &[CommitRecord]) -> Result<(), Error
             }
             CommitDisposition::Aborted(error) | CommitDisposition::Unknown(error) => {
                 return Err(Error::Native(error));
+            }
+        }
+        #[cfg(test)]
+        {
+            records_replayed += 1;
+            if records_replayed == replay_midpoint {
+                crate::failpoint::hit(crate::failpoint::Point::RecoveryMidReplay);
             }
         }
     }

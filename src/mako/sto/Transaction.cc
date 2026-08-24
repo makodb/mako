@@ -57,6 +57,41 @@ __thread Transaction *TThread::txn = nullptr;
 __thread mako::ShardClient *TThread::sclient = nullptr;
 __thread HashWrapper *TThread::tprops = nullptr;
 std::function<void(threadinfo_t::epoch_type)> Transaction::epoch_advance_callback;
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+namespace {
+thread_local Transaction::test_commit_observer local_test_commit_observer =
+    nullptr;
+thread_local void* local_test_commit_observer_context = nullptr;
+}  // namespace
+
+// @unsafe: stores a caller-borrowed callback and opaque context in thread-local
+// state; their lifetime must cover every observed synchronous commit callback.
+void Transaction::set_test_commit_observer(
+    test_commit_observer observer, void* context) noexcept {
+    local_test_commit_observer_context = context;
+    local_test_commit_observer = observer;
+}
+
+// @safe: clears the thread-local borrowed observer before its context expires.
+void Transaction::clear_test_commit_observer() noexcept {
+    local_test_commit_observer = nullptr;
+    local_test_commit_observer_context = nullptr;
+}
+
+// @safe: reads only this worker's trivially initialized thread-local pointer.
+bool Transaction::test_commit_observer_registered() noexcept {
+    return local_test_commit_observer != nullptr;
+}
+
+// @unsafe: synchronously calls a non-owning test callback while transaction
+// write locks may be held. The callback is noexcept and must not allocate.
+void Transaction::notify_test_commit_observer(
+    test_commit_phase phase, uint32_t mako_timestamp) noexcept {
+    const auto observer = local_test_commit_observer;
+    if (observer != nullptr)
+        observer(local_test_commit_observer_context, phase, mako_timestamp);
+}
+#endif
 #if defined(SIMPLE_WORKLOAD)
 TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 1;
 #else
@@ -489,6 +524,11 @@ bool Transaction::try_commit(bool no_paxos,
     // Single watermark timestamp instead of vector
     uint32_t watermarkTimestamp = 0;
     writeset[0] = tset_size_;
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    const bool has_test_commit_observer =
+        test_commit_observer_registered();
+    unsigned installed_write_count = 0;
+#endif
 
     //phase1
     TransItem* it = nullptr;
@@ -586,12 +626,23 @@ bool Transaction::try_commit(bool no_paxos,
     }
 #endif
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        notify_test_commit_observer(test_commit_phase::writeset_locked,
+                                    0 /* not allocated yet */);
+    }
+#endif
 
     // Allocate the cache record's Mako logical timestamp after the entire
     // write set is locked but before validating the read set. A failed
     // transaction may consume a harmless timestamp gap. No cache log position
     // has been assigned yet, so validation failure needs no cancellation slot.
-    if (hook != nullptr && nwriteset != 0) {
+    if (nwriteset != 0 &&
+        (hook != nullptr
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+         || has_test_commit_observer
+#endif
+        )) {
         uint32_t timestamp = 0;
         if (!try_assign_mako_timestamp(timestamp)) {
             if (failure)
@@ -634,6 +685,14 @@ bool Transaction::try_commit(bool no_paxos,
 #endif
     }
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        assert(tid_unique_ != 0);
+        notify_test_commit_observer(
+            test_commit_phase::mako_timestamp_allocated, tid_unique_);
+    }
+#endif
+
     //phase2
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
@@ -668,6 +727,13 @@ bool Transaction::try_commit(bool no_paxos,
         }
     }
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        notify_test_commit_observer(
+            test_commit_phase::local_validation_complete, tid_unique_);
+    }
+#endif
+
     // Every validation has succeeded and no write is visible yet. The hook
     // attaches preallocated storage to the ordered cache log. Rejection is a
     // definite abort because phase3 has not begun.
@@ -677,6 +743,13 @@ bool Transaction::try_commit(bool no_paxos,
             *failure = preinstall_failure::hook_rejected;
         goto abort;
     }
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        notify_test_commit_observer(test_commit_phase::preinstall_accepted,
+                                    tid_unique_);
+    }
+#endif
 
     // A remote/read-set maximum may have raised the chosen timestamp above
     // this coordinator's local ticket. Floor the next-to-return clock before
@@ -691,6 +764,14 @@ bool Transaction::try_commit(bool no_paxos,
         if (it->has_write()) {
             TXP_INCREMENT(txp_total_w);
             it->owner()->install(*it, *this);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+            ++installed_write_count;
+            if (installed_write_count == 1 && nwriteset > 1 &&
+                has_test_commit_observer) {
+                notify_test_commit_observer(
+                    test_commit_phase::first_write_installed, tid_unique_);
+            }
+#endif
         }
     }
 #else
@@ -705,6 +786,14 @@ bool Transaction::try_commit(bool no_paxos,
             TXP_INCREMENT(txp_total_w);
             // to ensure invalid-bit to be reset in transPut for remote tables on the coordinator shard
             it->owner()->install(*it, *this);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+            ++installed_write_count;
+            if (installed_write_count == 1 && nwriteset > 1 &&
+                has_test_commit_observer) {
+                notify_test_commit_observer(
+                    test_commit_phase::first_write_installed, tid_unique_);
+            }
+#endif
         }
         if (TThread::writeset_shard_bits > 0||TThread::readset_shard_bits>0) {
             if (TThread::sclient == nullptr) {
@@ -737,6 +826,13 @@ bool Transaction::try_commit(bool no_paxos,
 #endif
             }
         }
+    }
+#endif
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (nwriteset != 0 && has_test_commit_observer) {
+        notify_test_commit_observer(test_commit_phase::all_writes_installed,
+                                    tid_unique_);
     }
 #endif
 

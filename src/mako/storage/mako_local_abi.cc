@@ -438,6 +438,50 @@ bool invoke_post_validate_hook(void *opaque,
   }
 }
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+struct test_commit_observer_bridge {
+  mako_local_test_commit_observer observer = nullptr;
+  void *context = nullptr;
+};
+
+thread_local test_commit_observer_bridge local_test_commit_observer_bridge;
+
+static_assert(static_cast<uint32_t>(
+                  Transaction::test_commit_phase::writeset_locked) ==
+              MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED);
+static_assert(static_cast<uint32_t>(
+                  Transaction::test_commit_phase::mako_timestamp_allocated) ==
+              MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED);
+static_assert(static_cast<uint32_t>(
+                  Transaction::test_commit_phase::local_validation_complete) ==
+              MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE);
+static_assert(static_cast<uint32_t>(
+                  Transaction::test_commit_phase::preinstall_accepted) ==
+              MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED);
+static_assert(static_cast<uint32_t>(
+                  Transaction::test_commit_phase::first_write_installed) ==
+              MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED);
+static_assert(static_cast<uint32_t>(
+                  Transaction::test_commit_phase::all_writes_installed) ==
+              MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED);
+
+// @unsafe - Calls a caller-borrowed C test callback synchronously from STO's
+// lock-held commit path. Exceptions are contained before reaching the noexcept
+// transaction core; callers must keep the callback context alive until clear.
+void invoke_test_commit_observer(
+    void *opaque, Transaction::test_commit_phase phase,
+    uint32_t mako_timestamp) noexcept {
+  auto *bridge = static_cast<test_commit_observer_bridge *>(opaque);
+  try {
+    bridge->observer(bridge->context, static_cast<uint32_t>(phase),
+                     mako_timestamp);
+  } catch (...) {
+    // A callback exception cannot alter commit semantics. Rust callbacks must
+    // likewise contain panics before they cross their extern "C" trampoline.
+  }
+}
+#endif
+
 }  // namespace
 
 extern "C" {
@@ -459,6 +503,9 @@ uint64_t mako_local_feature_bits(void) noexcept {
 #endif
 #if STO_OPACITY
   features |= MAKO_LOCAL_FEATURE_OPACITY;
+#endif
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  features |= MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER;
 #endif
   return features;
 }
@@ -497,6 +544,8 @@ const char *mako_local_status_string(int status) noexcept {
       return "Mako logical timestamp exhausted";
     case MAKO_LOCAL_BUFFER_TOO_SMALL:
       return "caller scan arena is too small for the next entry";
+    case MAKO_LOCAL_FEATURE_UNAVAILABLE:
+      return "requested native feature is unavailable";
     default: return "unknown mako-local status";
   }
 }
@@ -549,6 +598,40 @@ int mako_local_thread_attach(void) noexcept {
   } catch (...) {
     return MAKO_LOCAL_INTERNAL;
   }
+}
+
+// @unsafe - Registers a non-owning callback/context pair in this attached
+// worker's native TLS. The caller owns both until the matching clear call.
+int mako_local_test_set_commit_observer(
+    mako_local_test_commit_observer observer, void *context) noexcept {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  if (observer == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
+  if (!local_attached) return MAKO_LOCAL_NOT_ATTACHED;
+  if (local_test_commit_observer_bridge.observer != nullptr)
+    return MAKO_LOCAL_BUSY;
+  local_test_commit_observer_bridge.observer = observer;
+  local_test_commit_observer_bridge.context = context;
+  Transaction::set_test_commit_observer(
+      invoke_test_commit_observer, &local_test_commit_observer_bridge);
+  return MAKO_LOCAL_OK;
+#else
+  (void)observer;
+  (void)context;
+  return MAKO_LOCAL_FEATURE_UNAVAILABLE;
+#endif
+}
+
+// @unsafe - Ends the native TLS borrow before the caller may release context.
+int mako_local_test_clear_commit_observer(void) noexcept {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  if (!local_attached) return MAKO_LOCAL_NOT_ATTACHED;
+  Transaction::clear_test_commit_observer();
+  local_test_commit_observer_bridge.observer = nullptr;
+  local_test_commit_observer_bridge.context = nullptr;
+  return MAKO_LOCAL_OK;
+#else
+  return MAKO_LOCAL_FEATURE_UNAVAILABLE;
+#endif
 }
 
 int mako_local_db_open(mako_local_db **out) noexcept {

@@ -23,6 +23,7 @@
 
 #![warn(missing_docs)]
 
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::fmt;
 use std::marker::PhantomData;
@@ -68,6 +69,8 @@ pub enum Error {
     CommitHookRejected,
     /// Mako's process-wide representable base timestamp space is exhausted.
     TimestampExhausted,
+    /// A test-only or optional native capability was not compiled in.
+    FeatureUnavailable,
     /// A transactional scan needs the scan/read-your-writes native feature.
     TransactionalScansUnavailable,
     /// A raw chunk scan's caller-owned arena could not hold its first result.
@@ -129,6 +132,9 @@ impl fmt::Display for Error {
                 write!(f, "post-validation commit hook rejected the transaction")
             }
             Self::TimestampExhausted => write!(f, "Mako logical timestamp exhausted"),
+            Self::FeatureUnavailable => {
+                write!(f, "the requested native feature is unavailable")
+            }
             Self::TransactionalScansUnavailable => write!(
                 f,
                 "the linked engine does not support transactional scans with read-your-writes"
@@ -186,6 +192,56 @@ impl MakoTimestamp {
     pub const fn get(self) -> u32 {
         self.0.get()
     }
+}
+
+/// A test-only synchronous observation point in native local commit.
+///
+/// This type is public solely for fresh-process crash tests and is available at
+/// runtime only when the native library advertises
+/// `MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER`.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TestCommitPhase {
+    /// The complete write set is locked; no Mako timestamp exists yet.
+    WritesetLocked = sys::MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED,
+    /// The checked nonzero Mako timestamp has been assigned.
+    MakoTimestampAllocated = sys::MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
+    /// Every local validation has succeeded, before the preinstall hook.
+    LocalValidationComplete = sys::MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE,
+    /// The preinstall hook accepted, before the first write installation.
+    PreinstallAccepted = sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED,
+    /// The first write was installed and at least one more write remains.
+    FirstWriteInstalled = sys::MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED,
+    /// Every local write was installed, before commit cleanup and return.
+    AllWritesInstalled = sys::MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED,
+}
+
+impl TestCommitPhase {
+    const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            sys::MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED => Some(Self::WritesetLocked),
+            sys::MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED => {
+                Some(Self::MakoTimestampAllocated)
+            }
+            sys::MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE => {
+                Some(Self::LocalValidationComplete)
+            }
+            sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED => Some(Self::PreinstallAccepted),
+            sys::MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED => Some(Self::FirstWriteInstalled),
+            sys::MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED => Some(Self::AllWritesInstalled),
+            _ => None,
+        }
+    }
+}
+
+/// Test-only plain function pointer invoked synchronously at native commit
+/// seams. Timestamp zero occurs only at [`TestCommitPhase::WritesetLocked`].
+#[doc(hidden)]
+pub type TestCommitObserver = fn(TestCommitPhase, u32);
+
+thread_local! {
+    static TEST_COMMIT_OBSERVER: Cell<Option<TestCommitObserver>> = const { Cell::new(None) };
 }
 
 /// Whether a native commit definitely became visible.
@@ -254,6 +310,11 @@ impl Features {
         self.0 & sys::MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES != 0
     }
 
+    /// Test-only synchronous local commit crash-seam observation is compiled in.
+    pub const fn test_commit_observer(self) -> bool {
+        self.0 & sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER != 0
+    }
+
     /// Raw ABI feature bits, including future bits unknown to this crate.
     pub const fn bits(self) -> u64 {
         self.0
@@ -265,6 +326,49 @@ pub fn features() -> Result<Features> {
     verify_abi()?;
     // SAFETY: pure ABI identity accessor.
     Ok(Features(unsafe { sys::mako_local_feature_bits() }))
+}
+
+/// Install a test-only synchronous commit observer on the current attached
+/// worker thread.
+///
+/// The callback must not allocate, unwind, or re-enter mako-local. It may park
+/// the thread only for a fresh-process crash test whose controller will issue
+/// `SIGKILL`. A second install before [`clear_test_commit_observer`] returns
+/// [`Error::Busy`]. Production-default native builds return
+/// [`Error::FeatureUnavailable`]. In a hook-enabled test build, registration
+/// also makes an ordinary write commit allocate a Mako timestamp; timestamp
+/// exhaustion can therefore make that otherwise non-durable commit fail.
+#[doc(hidden)]
+pub fn install_test_commit_observer(observer: TestCommitObserver) -> Result<()> {
+    verify_abi()?;
+    TEST_COMMIT_OBSERVER.with(|slot| {
+        if slot.get().is_some() {
+            return Err(Error::Busy);
+        }
+        // SAFETY: the trampoline and its null context are static. Native stores
+        // them only in this thread's TLS until the paired clear call.
+        status(unsafe {
+            sys::mako_local_test_set_commit_observer(
+                Some(test_commit_observer_trampoline),
+                std::ptr::null_mut(),
+            )
+        })?;
+        slot.set(Some(observer));
+        Ok(())
+    })
+}
+
+/// Clear the test-only commit observer on the current attached worker thread.
+///
+/// Clearing an already-clear observer is harmless. The callback is removed
+/// from native TLS before its Rust function pointer is forgotten.
+#[doc(hidden)]
+pub fn clear_test_commit_observer() -> Result<()> {
+    verify_abi()?;
+    // SAFETY: registration is thread-local and native clear is idempotent.
+    status(unsafe { sys::mako_local_test_clear_commit_observer() })?;
+    TEST_COMMIT_OBSERVER.with(|slot| slot.set(None));
+    Ok(())
 }
 
 fn verify_abi() -> Result<()> {
@@ -322,6 +426,7 @@ fn status(code: i32) -> Result<()> {
         sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED => Err(Error::CommitHookRejected),
         sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED => Err(Error::TimestampExhausted),
         sys::MAKO_LOCAL_BUFFER_TOO_SMALL => Err(Error::BufferTooSmall),
+        sys::MAKO_LOCAL_FEATURE_UNAVAILABLE => Err(Error::FeatureUnavailable),
         other => Err(Error::UnknownStatus(other)),
     }
 }
@@ -345,7 +450,8 @@ fn operation_is_terminal(code: i32) -> bool {
         | sys::MAKO_LOCAL_VALUE_TOO_LARGE
         | sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED
         | sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED
-        | sys::MAKO_LOCAL_BUFFER_TOO_SMALL => false,
+        | sys::MAKO_LOCAL_BUFFER_TOO_SMALL
+        | sys::MAKO_LOCAL_FEATURE_UNAVAILABLE => false,
         // A future operation status has no known lifecycle contract. Never
         // let callers commit a handle whose native state may already be
         // terminal or uncertain.
@@ -1117,6 +1223,24 @@ where
     }
 }
 
+unsafe extern "C" fn test_commit_observer_trampoline(
+    _context: *mut c_void,
+    raw_phase: u32,
+    mako_timestamp: u32,
+) {
+    let Some(phase) = TestCommitPhase::from_raw(raw_phase) else {
+        return;
+    };
+    TEST_COMMIT_OBSERVER.with(|slot| {
+        let Some(observer) = slot.get() else {
+            return;
+        };
+        // A panic must never unwind through the C ABI or the noexcept C++
+        // transaction core. A callback panic cannot change commit disposition.
+        let _ = catch_unwind(AssertUnwindSafe(|| observer(phase, mako_timestamp)));
+    });
+}
+
 impl Drop for Transaction<'_> {
     fn drop(&mut self) {
         let Some(raw) = self.raw.take() else {
@@ -1155,6 +1279,44 @@ mod tests {
         );
         assert_eq!(MakoTimestamp::new(MAX_MAKO_TIMESTAMP + 1), None);
         assert_eq!(MakoTimestamp::new(u32::MAX), None);
+    }
+
+    #[test]
+    fn test_commit_phase_ids_and_feature_bit_are_stable() {
+        let phases = [
+            (
+                sys::MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED,
+                TestCommitPhase::WritesetLocked,
+            ),
+            (
+                sys::MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
+                TestCommitPhase::MakoTimestampAllocated,
+            ),
+            (
+                sys::MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE,
+                TestCommitPhase::LocalValidationComplete,
+            ),
+            (
+                sys::MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED,
+                TestCommitPhase::PreinstallAccepted,
+            ),
+            (
+                sys::MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED,
+                TestCommitPhase::FirstWriteInstalled,
+            ),
+            (
+                sys::MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED,
+                TestCommitPhase::AllWritesInstalled,
+            ),
+        ];
+        for (raw, phase) in phases {
+            assert_eq!(TestCommitPhase::from_raw(raw), Some(phase));
+            assert_eq!(phase as u32, raw);
+        }
+        assert_eq!(TestCommitPhase::from_raw(0), None);
+        assert_eq!(TestCommitPhase::from_raw(u32::MAX), None);
+        assert!(Features(sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER).test_commit_observer());
+        assert!(!Features(0).test_commit_observer());
     }
 
     #[test]
@@ -1199,6 +1361,10 @@ mod tests {
                 Err(Error::TimestampExhausted),
             ),
             (sys::MAKO_LOCAL_BUFFER_TOO_SMALL, Err(Error::BufferTooSmall)),
+            (
+                sys::MAKO_LOCAL_FEATURE_UNAVAILABLE,
+                Err(Error::FeatureUnavailable),
+            ),
         ];
 
         for (code, expected) in cases {
@@ -1224,6 +1390,7 @@ mod tests {
         assert!(!operation_is_terminal(sys::MAKO_LOCAL_DUPLICATE_WRITE));
         assert!(!operation_is_terminal(sys::MAKO_LOCAL_INVALID_ARGUMENT));
         assert!(!operation_is_terminal(sys::MAKO_LOCAL_BUFFER_TOO_SMALL));
+        assert!(!operation_is_terminal(sys::MAKO_LOCAL_FEATURE_UNAVAILABLE));
         assert!(operation_is_terminal(-1));
         assert!(operation_is_terminal(i32::MAX));
     }

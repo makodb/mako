@@ -512,6 +512,13 @@ option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
 option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, OFF=one group per partition)" ON)
+option(MAKO_LOCAL_TEST_HOOKS
+       "Enable test-only local commit crash-seam observers" OFF)
+
+if(MAKO_LOCAL_TEST_HOOKS)
+  add_compile_definitions(MAKO_LOCAL_TEST_HOOKS=1)
+  message(STATUS "Test-only local commit crash-seam observers enabled")
+endif()
 
 if(MAKO_USE_RAFT)
   add_compile_definitions(MAKO_USE_RAFT=1)
@@ -3094,6 +3101,12 @@ if(BUILD_TESTS)
     add_test(NAME STOTransactionRealTests COMMAND test_sto_transaction_real)
 
     if(CARGO_EXECUTABLE)
+        set(MAKO_CACHE_NATIVE_CRASH_TEST_ENV)
+        if(MAKO_LOCAL_TEST_HOOKS)
+            list(APPEND MAKO_CACHE_NATIVE_CRASH_TEST_ENV
+                 "MAKO_CACHE_REQUIRE_NATIVE_CRASH_HOOKS=1")
+        endif()
+
         add_custom_target(run_mako_local_rust_tests
             COMMAND ${CMAKE_COMMAND} -E env
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
@@ -3114,6 +3127,7 @@ if(BUILD_TESTS)
             COMMAND ${CMAKE_COMMAND} -E env
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${MAKO_CACHE_NATIVE_CRASH_TEST_ENV}
                     ${CARGO_EXECUTABLE} test -p mako-cache --all-targets
             COMMAND ${CMAKE_COMMAND} -E env
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"

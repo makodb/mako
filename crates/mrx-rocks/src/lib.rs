@@ -169,12 +169,32 @@ pub enum Durability {
     None,
 }
 
+/// A synchronous observation point around one RocksDB batch write.
+///
+/// Available only with the `test-hooks` feature. These points bracket the
+/// opaque `rocksdb_write` C call; they do not run inside RocksDB's WAL append,
+/// sync, or memtable installation. The linked C API exposes no such internal
+/// callback seam.
+#[cfg(feature = "test-hooks")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteBatchHookPoint {
+    /// Every operation has been copied into the native `WriteBatch`.
+    BatchConstructed,
+    /// Immediately before entering `rocksdb_write`.
+    BeforeWrite,
+    /// Immediately after `rocksdb_write` returns, before error handling.
+    AfterWrite,
+}
+
 /// A RocksDB database, usable as the cache's system of record.
 pub struct RocksBlobs {
     db: *mut sys::rocksdb_t,
     opts: *mut sys::rocksdb_options_t,
     read: *mut sys::rocksdb_readoptions_t,
     write: *mut sys::rocksdb_writeoptions_t,
+    #[cfg(feature = "test-hooks")]
+    write_batch_observer:
+        Option<std::sync::Arc<dyn Fn(WriteBatchHookPoint) + Send + Sync + 'static>>,
 }
 
 // SAFETY: RocksDB's `rocksdb_t` is documented as safe for concurrent use
@@ -245,7 +265,38 @@ impl RocksBlobs {
                 opts,
                 read: sys::rocksdb_readoptions_create(),
                 write,
+                #[cfg(feature = "test-hooks")]
+                write_batch_observer: None,
             })
+        }
+    }
+
+    /// Install a synchronous observer around this database's batch writes.
+    ///
+    /// This test-only facility is intentionally per database, avoiding global
+    /// state that could intercept unrelated writers. The observer runs inline
+    /// on the calling thread and may rendezvous with a crash-test controller;
+    /// a write cannot advance past a point until the observer returns.
+    /// Concurrent writes may invoke the observer concurrently.
+    #[cfg(feature = "test-hooks")]
+    pub fn set_write_batch_observer<F>(&mut self, observer: F)
+    where
+        F: Fn(WriteBatchHookPoint) + Send + Sync + 'static,
+    {
+        self.write_batch_observer = Some(std::sync::Arc::new(observer));
+    }
+
+    /// Remove this database's batch-write observer.
+    #[cfg(feature = "test-hooks")]
+    pub fn clear_write_batch_observer(&mut self) {
+        self.write_batch_observer = None;
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[inline]
+    fn observe_write_batch(&self, point: WriteBatchHookPoint) {
+        if let Some(observer) = &self.write_batch_observer {
+            observer(point);
         }
     }
 
@@ -336,10 +387,17 @@ impl Blobs for RocksBlobs {
                 }
             }
         }
+        #[cfg(feature = "test-hooks")]
+        self.observe_write_batch(WriteBatchHookPoint::BatchConstructed);
+
         let mut e = Err0::new();
         // SAFETY: as above. A WriteBatch is applied atomically, which is
         // the all-or-nothing guarantee the cache relies on.
+        #[cfg(feature = "test-hooks")]
+        self.observe_write_batch(WriteBatchHookPoint::BeforeWrite);
         unsafe { sys::rocksdb_write(self.db, self.write, batch, e.as_mut()) };
+        #[cfg(feature = "test-hooks")]
+        self.observe_write_batch(WriteBatchHookPoint::AfterWrite);
         // SAFETY: destroyed exactly once, after the write it describes.
         unsafe { sys::rocksdb_writebatch_destroy(batch) };
         e.check("rocksdb_write")

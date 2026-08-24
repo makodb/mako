@@ -47,6 +47,9 @@ extern "C" {
 #define MAKO_LOCAL_FEATURE_OPACITY (UINT64_C(1) << 2)
 #define MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS (UINT64_C(1) << 3)
 #define MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES (UINT64_C(1) << 4)
+/* Test-only; absent from production builds unless MAKO_LOCAL_TEST_HOOKS was
+ * explicitly enabled at configure time. */
+#define MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER (UINT64_C(1) << 5)
 
 /* Draft input and transaction limits. The weighted transaction budget is one
  * item for get/remove and 4 + ceil(key_len / 8) for put/insert. Keeping it at
@@ -84,6 +87,7 @@ extern "C" {
 #define MAKO_LOCAL_COMMIT_HOOK_REJECTED 15
 #define MAKO_LOCAL_TIMESTAMP_EXHAUSTED 16
 #define MAKO_LOCAL_BUFFER_TOO_SMALL 17
+#define MAKO_LOCAL_FEATURE_UNAVAILABLE 18
 
 typedef struct mako_local_db mako_local_db;
 typedef struct mako_local_table mako_local_table;
@@ -131,6 +135,20 @@ typedef struct mako_local_scan_entry {
 typedef int (*mako_local_post_validate_hook)(void *context,
                                              uint32_t mako_timestamp);
 
+/* Test-only synchronous local-commit observation phases. The first phase is
+ * reported with timestamp zero; every later phase carries the transaction's
+ * exact nonzero Mako logical timestamp. */
+#define MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED UINT32_C(1)
+#define MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED UINT32_C(2)
+#define MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE UINT32_C(3)
+#define MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED UINT32_C(4)
+#define MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED UINT32_C(5)
+#define MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED UINT32_C(6)
+
+typedef void (*mako_local_test_commit_observer)(void *context,
+                                                uint32_t phase,
+                                                uint32_t mako_timestamp);
+
 /* Identity and diagnostics. The returned status string is static. */
 uint32_t mako_local_abi_version(void) MAKO_LOCAL_NOEXCEPT;
 uint64_t mako_local_feature_bits(void) MAKO_LOCAL_NOEXCEPT;
@@ -143,6 +161,26 @@ const char *mako_local_status_string(int status) MAKO_LOCAL_NOEXCEPT;
 /* Attach the calling OS thread to the shared native-Mako STO runtime.
  * Idempotent on a thread; returns BUSY if another adapter owns the worker. */
 int mako_local_thread_attach(void) MAKO_LOCAL_NOEXCEPT;
+
+/* Install or clear a test-only observer for commits performed by this attached
+ * OS thread. The callback and context are borrowed until clear returns. The
+ * callback runs synchronously, potentially while every write lock is held; it
+ * may deliberately park for an external SIGKILL but must not allocate, unwind,
+ * call back into mako_local, or return after its context has expired.
+ * Registering an observer makes an otherwise ordinary write commit allocate a
+ * Mako timestamp; exhaustion can therefore make that test-only commit fail.
+ *
+ * The observer is called only for write transactions. A successful two-write
+ * commit reports all six phases in numeric order. FIRST_WRITE_INSTALLED is
+ * omitted for a one-write transaction. A lock conflict reports no phase;
+ * validation conflict and preinstall rejection report only phases reached
+ * before the failure. Both functions return FEATURE_UNAVAILABLE, and the
+ * feature bit is absent, when MAKO_LOCAL_TEST_HOOKS was not configured. A
+ * second set without an intervening clear returns BUSY; clear is idempotent. */
+int mako_local_test_set_commit_observer(
+    mako_local_test_commit_observer observer, void *context)
+    MAKO_LOCAL_NOEXCEPT;
+int mako_local_test_clear_commit_observer(void) MAKO_LOCAL_NOEXCEPT;
 
 /* Atomically ensure every subsequently minted Mako logical timestamp is
  * greater than `observed`. The argument must be a nonzero timestamp previously

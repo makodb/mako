@@ -385,6 +385,33 @@ public:
     // unwind because the transaction still holds its complete write set.
     using post_validation_hook = bool (*)(void*, uint32_t) noexcept;
 
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    // Test-only synchronous observation points for exact local crash seams.
+    // The callback and context are borrowed from the calling thread. It may
+    // deliberately park that thread for an external SIGKILL, but must not
+    // allocate or unwind while the transaction holds write-set locks.
+    // In this test-only profile, observing a write commit that has no
+    // post-validation hook still allocates a Mako timestamp so every phase
+    // after write-set locking can report the same meaningful value.
+    enum class test_commit_phase : uint32_t {
+        writeset_locked = 1,
+        mako_timestamp_allocated = 2,
+        local_validation_complete = 3,
+        preinstall_accepted = 4,
+        first_write_installed = 5,
+        all_writes_installed = 6,
+    };
+    using test_commit_observer =
+        void (*)(void*, test_commit_phase, uint32_t) noexcept;
+
+    static void set_test_commit_observer(test_commit_observer observer,
+                                         void* context) noexcept;
+    static void clear_test_commit_observer() noexcept;
+    static bool test_commit_observer_registered() noexcept;
+    static void notify_test_commit_observer(test_commit_phase phase,
+                                            uint32_t mako_timestamp) noexcept;
+#endif
+
     enum class preinstall_failure : uint8_t {
         none = 0,
         hook_rejected,

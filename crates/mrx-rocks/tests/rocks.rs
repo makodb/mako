@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mrx_core::{BlobOp, Blobs};
+#[cfg(feature = "test-hooks")]
+use mrx_rocks::WriteBatchHookPoint;
 use mrx_rocks::{Durability, RocksBlobs};
 
 /// A scratch database that removes itself.
@@ -44,7 +46,11 @@ fn open(s: &Scratch) -> RocksBlobs {
 fn values_round_trip() {
     let s = Scratch::new("round-trip");
     let db = open(&s);
-    db.write_batch(&[BlobOp::Put { key: b"k", val: b"v" }]).expect("write");
+    db.write_batch(&[BlobOp::Put {
+        key: b"k",
+        val: b"v",
+    }])
+    .expect("write");
     assert_eq!(db.get(b"k").expect("get").as_deref(), Some(&b"v"[..]));
     assert_eq!(db.get(b"absent").expect("get"), None);
 }
@@ -82,9 +88,18 @@ fn a_batch_is_all_or_nothing() {
     let s = Scratch::new("atomic");
     let db = open(&s);
     db.write_batch(&[
-        BlobOp::Put { key: b"a", val: b"1" },
-        BlobOp::Put { key: b"b", val: b"2" },
-        BlobOp::Put { key: b"c", val: b"3" },
+        BlobOp::Put {
+            key: b"a",
+            val: b"1",
+        },
+        BlobOp::Put {
+            key: b"b",
+            val: b"2",
+        },
+        BlobOp::Put {
+            key: b"c",
+            val: b"3",
+        },
     ])
     .expect("write");
     for (k, v) in [(&b"a"[..], &b"1"[..]), (b"b", b"2"), (b"c", b"3")] {
@@ -97,13 +112,22 @@ fn deletes_apply_and_a_batch_may_mix_them() {
     let s = Scratch::new("delete");
     let db = open(&s);
     db.write_batch(&[
-        BlobOp::Put { key: b"keep", val: b"1" },
-        BlobOp::Put { key: b"drop", val: b"2" },
+        BlobOp::Put {
+            key: b"keep",
+            val: b"1",
+        },
+        BlobOp::Put {
+            key: b"drop",
+            val: b"2",
+        },
     ])
     .expect("write");
     db.write_batch(&[
         BlobOp::Delete { key: b"drop" },
-        BlobOp::Put { key: b"new", val: b"3" },
+        BlobOp::Put {
+            key: b"new",
+            val: b"3",
+        },
     ])
     .expect("write");
     assert_eq!(db.get(b"drop").expect("get"), None);
@@ -118,6 +142,104 @@ fn empty_batches_are_a_no_op() {
     db.write_batch(&[]).expect("an empty batch must succeed");
 }
 
+#[cfg(feature = "test-hooks")]
+#[test]
+fn batch_observer_is_per_database_synchronous_and_ordered() {
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+
+    let observed_scratch = Scratch::new("observed-hooks");
+    let unobserved_scratch = Scratch::new("unobserved-hooks");
+    let mut observed = open(&observed_scratch);
+    let unobserved = open(&unobserved_scratch);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed_events = Arc::clone(&events);
+    let (reached_tx, reached_rx) = mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+    let resume_rx = Mutex::new(resume_rx);
+    observed.set_write_batch_observer(move |point| {
+        observed_events.lock().expect("event lock").push(point);
+        if point == WriteBatchHookPoint::BeforeWrite {
+            reached_tx.send(()).expect("announce BeforeWrite");
+            resume_rx
+                .lock()
+                .expect("resume lock")
+                .recv()
+                .expect("resume BeforeWrite");
+        }
+    });
+
+    unobserved
+        .write_batch(&[BlobOp::Put {
+            key: b"outside",
+            val: b"ignored",
+        }])
+        .expect("unobserved write");
+    assert!(events.lock().expect("event lock").is_empty());
+
+    let before_write = std::thread::scope(|scope| {
+        let writer = scope.spawn(|| {
+            observed.write_batch(&[BlobOp::Put {
+                key: b"inside",
+                val: b"seen",
+            }])
+        });
+        reached_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("writer must rendezvous at BeforeWrite");
+        let before_write = observed.get(b"inside");
+        resume_tx.send(()).expect("resume writer");
+        writer
+            .join()
+            .expect("writer thread")
+            .expect("observed write");
+        before_write
+    });
+    assert_eq!(
+        before_write.expect("get before write"),
+        None,
+        "BeforeWrite must run before RocksDB can expose the batch"
+    );
+    assert_eq!(
+        *events.lock().expect("event lock"),
+        [
+            WriteBatchHookPoint::BatchConstructed,
+            WriteBatchHookPoint::BeforeWrite,
+            WriteBatchHookPoint::AfterWrite,
+        ]
+    );
+    assert_eq!(
+        observed.get(b"inside").expect("get").as_deref(),
+        Some(&b"seen"[..]),
+        "AfterWrite must run before a successful write returns"
+    );
+}
+
+#[cfg(feature = "test-hooks")]
+#[test]
+fn empty_batches_and_cleared_observers_emit_nothing() {
+    use std::sync::{Arc, Mutex};
+
+    let scratch = Scratch::new("hook-boundaries");
+    let mut db = open(&scratch);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed_events = Arc::clone(&events);
+    db.set_write_batch_observer(move |point| {
+        observed_events.lock().expect("event lock").push(point);
+    });
+
+    db.write_batch(&[]).expect("empty batch");
+    assert!(events.lock().expect("event lock").is_empty());
+
+    db.clear_write_batch_observer();
+    db.write_batch(&[BlobOp::Put {
+        key: b"after-clear",
+        val: b"value",
+    }])
+    .expect("write after clear");
+    assert!(events.lock().expect("event lock").is_empty());
+}
+
 #[test]
 fn for_each_key_visits_everything_in_order() {
     // This is what establishes the key-resident invariant at open. A key
@@ -127,12 +249,16 @@ fn for_each_key_visits_everything_in_order() {
     let keys: Vec<String> = (0..500).map(|i| format!("k{i:04}")).collect();
     let ops: Vec<BlobOp<'_>> = keys
         .iter()
-        .map(|k| BlobOp::Put { key: k.as_bytes(), val: b"v" })
+        .map(|k| BlobOp::Put {
+            key: k.as_bytes(),
+            val: b"v",
+        })
         .collect();
     db.write_batch(&ops).expect("write");
 
     let mut seen = Vec::new();
-    db.for_each_key(&mut |k| seen.push(k.to_vec())).expect("iterate");
+    db.for_each_key(&mut |k| seen.push(k.to_vec()))
+        .expect("iterate");
     assert_eq!(seen.len(), 500);
     assert!(seen.windows(2).all(|w| w[0] < w[1]), "must be ascending");
     let unique: BTreeSet<_> = seen.iter().collect();
@@ -144,7 +270,11 @@ fn data_survives_reopen() {
     let s = Scratch::new("reopen");
     {
         let db = open(&s);
-        db.write_batch(&[BlobOp::Put { key: b"k", val: b"v" }]).expect("write");
+        db.write_batch(&[BlobOp::Put {
+            key: b"k",
+            val: b"v",
+        }])
+        .expect("write");
         db.flush().expect("flush");
     }
     let db = open(&s);

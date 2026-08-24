@@ -393,9 +393,12 @@ retry/fail-stop behavior, native multi-key transactions, and reopen recovery.
 Those component tests do not by themselves establish that this revised
 preinstall-hook protocol, Phase 1E, or Milestone 1 has passed. Transactional
 scan read-your-writes and its C ABI, safe Rust, and cache integration slice are
-complete. An initial fresh-process SIGKILL smoke gate now covers six outer
-protocol boundaries, but the remaining ABI boundary gates and Phase 1F's
-exhaustive process-crash injection remain open.
+complete. The fresh-process SIGKILL gate now covers nine outer/Rocks-wrapper
+write-path boundaries in the production-default profile and all fifteen named
+boundaries in a dedicated native-hook profile. Eight recovery/replay boundaries
+are each interrupted on two consecutive fresh-process restarts. The remaining
+ABI boundary gates, interruption inside RocksDB itself, and Phase 1F's mutation
+and history-oracle work remain open.
 
 1. **Prepare a detached permit before native commit.** Acquire one unit of
    bounded queue capacity and own every mutation byte, encoded-record buffer,
@@ -508,23 +511,36 @@ not establish atomic recovery of a multi-key commit.
 
 ### 1F. Recovery and crash gates
 
-The initial smoke gate is complete for six named boundaries: after detached
-preparation, after preinstall bind, after native commit but before Ready,
-after Ready but before backend application, after the backend write but before
-durable-watermark advancement, and after durable-watermark advancement. Each
-case uses a fresh writer process, a real `SIGKILL`, and a fresh verifier process
-against synchronous RocksDB; the verifier requires a three-key transaction to
-recover entirely old or entirely new.
+The write-path matrix now has fifteen named boundaries. The original six outer
+points remain, six test-only native points observe the exact Silo seams after
+the complete write set is locked, after Mako timestamp allocation, after local
+validation, after preinstall acceptance, after the first of multiple installs,
+and after all installs, and three Rocks wrapper points bracket batch
+construction and the `rocksdb_write` call. Every case uses a fresh writer, a
+real `SIGKILL`, synchronous RocksDB, and a fresh verifier that accepts only the
+complete old or complete new state of one three-key transaction. The six native
+points are compiled out by default; a `MAKO_LOCAL_TEST_HOOKS=ON` build runs all
+fifteen, and its CMake Rust-test target sets
+`MAKO_CACHE_REQUIRE_NATIVE_CRASH_HOOKS=1` so a stale hook-free archive fails the
+gate instead of silently running only nine.
 
-This is not the exhaustive Phase 1F gate. The following work remains:
+Recovery has eight additional points: after backend-key enumeration, after
+the first and last record validations, after materialized-state validation,
+before and after flooring Mako's clock, midway through four-record native
+replay, and after replay before cache exposure. Each point is killed on two
+successive process restarts against unchanged durable state. A final fresh
+process verifies exact values and tombstones, the four-record sequence, and a
+post-restart Mako timestamp greater than every recovered timestamp.
 
-- Crash at every boundary: before/after detached preparation, after Silo lock
-  and timestamp allocation, before/after validation, before/after preinstall
-  bind, during install, before/after Ready publication, during the exact
-  RocksDB batch, and before/after watermark advancement.
-- Add recovery/replay interruption points, including record validation, clock
-  flooring, and idempotent multi-key replay.
-- Assert only two recovered states for every transaction: all writes or none.
+This is still not the exhaustive Phase 1F gate. The wrapper points only bracket
+the stable RocksDB C API: they do not interrupt WAL append, WAL sync, or
+memtable installation inside `rocksdb_write`. RocksDB 9.10 has private C++
+sync points, but its stable C API exposes neither their callbacks nor a custom
+environment. A real mid-WAL point therefore needs a small version-pinned C++
+test shim or a custom RocksDB environment. The following work also remains:
+
+- Add any still-useful pre-preparation and abort/commit-cleanup/destroy crash
+  boundaries, with deterministic worker quarantine assertions.
 - Mutation-test stale writeback, early detached-capacity discharge,
   hook-time allocation, conflict cancellation slots, missing/premature Ready
   publication, unpinned unknown outcomes, partial replay, reordered commits,
@@ -643,9 +659,11 @@ recovery.
 ## Immediate execution order
 
 Transactional scan chunks, scan read-your-writes, and their C ABI, safe Rust,
-and cache exposure are complete for the RYW profile. The six-boundary
-fresh-process SIGKILL matrix is the initial crash smoke gate, not Phase 1F's
-exhaustive gate.
+and cache exposure are complete for the RYW profile. The hook-enabled
+fresh-process suite now exercises fifteen write-path and eight repeated
+recovery boundaries, but it remains short of Phase 1F's exhaustive gate because
+the inside-RocksDB, mutation, cleanup-quarantine, and history-oracle checks are
+still open.
 
 1. Finish the remaining ABI-freeze work: publish the normative operation/status
    state table, reserve every existing status number, and retain draft revision
@@ -657,10 +675,10 @@ exhaustive gate.
 3. Build the three-way deterministic differential harness and the independent
    full-history real-time/opacity oracle.
 4. Run sanitizer, concurrency, and wrapper-overhead gates.
-5. Extend the completed six-boundary fresh-process SIGKILL smoke gate into the
-   exhaustive Phase 1F campaign. Add the native lock/timestamp/validation/install
-   seams, interruption inside the RocksDB batch, and recovery/replay failures;
-   then close the remaining Phase 1E publish-gap and recovery evidence without
-   eviction.
+5. Finish Phase 1F: add a stable C++ RocksDB test shim for an actual inside-WAL
+   interruption, then add cleanup/quarantine crash points, the mutation suite,
+   and the durability-aware full-history oracle. Keep the dedicated
+   hook-enabled profile mandatory for this gate; the production-default build
+   intentionally contains no observer branches in the native commit hot path.
 6. Do not begin distributed porting until atomic local crash recovery is
    demonstrated by the exhaustive fault-injection gate.

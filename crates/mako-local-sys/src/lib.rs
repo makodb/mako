@@ -16,6 +16,14 @@ pub const MAKO_LOCAL_FEATURE_READ_MY_WRITES: u64 = 1 << 1;
 pub const MAKO_LOCAL_FEATURE_OPACITY: u64 = 1 << 2;
 pub const MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS: u64 = 1 << 3;
 pub const MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES: u64 = 1 << 4;
+pub const MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER: u64 = 1 << 5;
+
+pub const MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED: u32 = 1;
+pub const MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED: u32 = 2;
+pub const MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE: u32 = 3;
+pub const MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED: u32 = 4;
+pub const MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED: u32 = 5;
+pub const MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED: u32 = 6;
 
 pub const MAKO_LOCAL_SCAN_HAS_UPPER: u32 = 1 << 0;
 pub const MAKO_LOCAL_SCAN_HAS_RESUME: u32 = 1 << 1;
@@ -46,6 +54,7 @@ pub const MAKO_LOCAL_VALUE_TOO_LARGE: c_int = 14;
 pub const MAKO_LOCAL_COMMIT_HOOK_REJECTED: c_int = 15;
 pub const MAKO_LOCAL_TIMESTAMP_EXHAUSTED: c_int = 16;
 pub const MAKO_LOCAL_BUFFER_TOO_SMALL: c_int = 17;
+pub const MAKO_LOCAL_FEATURE_UNAVAILABLE: c_int = 18;
 
 /// One chunk request over the logical binary-key range `[lower, upper)`.
 ///
@@ -89,6 +98,17 @@ pub struct mako_local_scan_entry {
 pub type mako_local_post_validate_hook =
     Option<unsafe extern "C" fn(context: *mut c_void, mako_timestamp: u32) -> c_int>;
 
+/// Test-only synchronous observer for exact native local-commit crash seams.
+///
+/// The callback and context are borrowed until the caller clears the observer.
+/// Timestamp zero is used only for `WRITESET_LOCKED`; every later phase carries
+/// the transaction's assigned nonzero Mako timestamp. The callback may park for
+/// an external SIGKILL, but must not allocate, unwind, or re-enter mako-local.
+/// Registration makes an ordinary write commit allocate a Mako timestamp, so
+/// timestamp exhaustion can change that test-only commit's disposition.
+pub type mako_local_test_commit_observer =
+    Option<unsafe extern "C" fn(context: *mut c_void, phase: u32, mako_timestamp: u32)>;
+
 /// Opaque local database handle.
 #[repr(C)]
 pub struct mako_local_db {
@@ -114,6 +134,11 @@ extern "C" {
     pub fn mako_local_scan_entry_size() -> usize;
     pub fn mako_local_status_string(status: c_int) -> *const c_char;
     pub fn mako_local_thread_attach() -> c_int;
+    pub fn mako_local_test_set_commit_observer(
+        observer: mako_local_test_commit_observer,
+        context: *mut c_void,
+    ) -> c_int;
+    pub fn mako_local_test_clear_commit_observer() -> c_int;
     pub fn mako_local_advance_mako_timestamp_past(observed: u32) -> c_int;
 
     pub fn mako_local_db_open(out: *mut *mut mako_local_db) -> c_int;
@@ -226,6 +251,7 @@ mod tests {
             MAKO_LOCAL_COMMIT_HOOK_REJECTED,
             MAKO_LOCAL_TIMESTAMP_EXHAUSTED,
             MAKO_LOCAL_BUFFER_TOO_SMALL,
+            MAKO_LOCAL_FEATURE_UNAVAILABLE,
         ];
         for (i, a) in values.iter().enumerate() {
             for b in &values[i + 1..] {

@@ -11,3 +11,8 @@ publish = false
 mako-local = { path = "../mako-local" }
 mrx-core = { path = "../mrx-core" }
 mrx-rocks = { path = "../mrx-rocks" }
+
+[dev-dependencies]
+# Unit crash tests need deterministic wrapper-level RocksDB rendezvous points;
+# normal builds keep mrx-rocks' default, hook-free profile.
+mrx-rocks = { path = "../mrx-rocks", features = ["test-hooks"] }

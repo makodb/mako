@@ -3,8 +3,10 @@
 #include "mako/storage/mako_local_abi.h"
 #include "mako/sto/Transaction.hh"
 
+#include <array>
 #include <atomic>
 #include <barrier>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -23,6 +25,45 @@ struct HookObservation {
   int calls = 0;
   uint32_t timestamp = 0;
 };
+
+struct CommitPhaseObservation {
+  std::array<uint32_t, 8> phases{};
+  std::array<uint32_t, 8> timestamps{};
+  size_t calls = 0;
+
+  void reset() noexcept {
+    phases.fill(0);
+    timestamps.fill(0);
+    calls = 0;
+  }
+};
+
+void record_commit_phase(void *context, uint32_t phase,
+                         uint32_t timestamp) noexcept {
+  auto *observation = static_cast<CommitPhaseObservation *>(context);
+  if (observation->calls < observation->phases.size()) {
+    observation->phases[observation->calls] = phase;
+    observation->timestamps[observation->calls] = timestamp;
+  }
+  ++observation->calls;
+}
+
+struct ParkingCommitObserver {
+  CommitPhaseObservation observation;
+  std::atomic<bool> *parked;
+  std::atomic<bool> *release;
+};
+
+void park_after_writeset_lock(void *context, uint32_t phase,
+                              uint32_t timestamp) noexcept {
+  auto *parking = static_cast<ParkingCommitObserver *>(context);
+  record_commit_phase(&parking->observation, phase, timestamp);
+  if (phase == MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED) {
+    parking->parked->store(true, std::memory_order_release);
+    while (!parking->release->load(std::memory_order_acquire))
+      std::this_thread::yield();
+  }
+}
 
 int accept_hook(void *context, uint32_t timestamp) {
   auto *observation = static_cast<HookObservation *>(context);
@@ -50,6 +91,9 @@ class LocalAbiTest : public ::testing::Test {
   }
 
   void TearDown() override {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    EXPECT_EQ(mako_local_test_clear_commit_observer(), MAKO_LOCAL_OK);
+#endif
     if (txn_for_cleanup != nullptr) {
       EXPECT_EQ(mako_local_txn_destroy(txn_for_cleanup), MAKO_LOCAL_OK);
       txn_for_cleanup = nullptr;
@@ -136,6 +180,7 @@ class LocalAbiTest : public ::testing::Test {
   mako_local_db *db = nullptr;
   mako_local_table *primary = nullptr;
   mako_local_txn *txn_for_cleanup = nullptr;
+  CommitPhaseObservation commit_observation;
 };
 
 struct AbiScanChunk {
@@ -216,6 +261,15 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
 #else
   EXPECT_EQ(features & MAKO_LOCAL_FEATURE_OPACITY, 0U);
 #endif
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  EXPECT_NE(features & MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER, 0U);
+#else
+  EXPECT_EQ(features & MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER, 0U);
+  EXPECT_EQ(mako_local_test_set_commit_observer(record_commit_phase, nullptr),
+            MAKO_LOCAL_FEATURE_UNAVAILABLE);
+  EXPECT_EQ(mako_local_test_clear_commit_observer(),
+            MAKO_LOCAL_FEATURE_UNAVAILABLE);
+#endif
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_OK), "ok");
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_CONFLICT),
                "transaction conflict");
@@ -233,6 +287,9 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   static_assert(MAKO_LOCAL_BUFFER_TOO_SMALL == 17);
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_BUFFER_TOO_SMALL),
                "caller scan arena is too small for the next entry");
+  static_assert(MAKO_LOCAL_FEATURE_UNAVAILABLE == 18);
+  EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_FEATURE_UNAVAILABLE),
+               "requested native feature is unavailable");
   static_assert(sizeof(mako_local_scan_entry) == 4 * sizeof(uint32_t));
   EXPECT_EQ(mako_local_scan_options_size(),
             MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE);
@@ -371,6 +428,213 @@ TEST_F(LocalAbiTest, HookRejectionAndExceptionDefinitelyAbortBeforeInstall) {
   ASSERT_EQ(put(txn, primary, "after-hook-reject", "works"), MAKO_LOCAL_OK);
   commit_and_destroy(txn);
 }
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+TEST_F(LocalAbiTest,
+       TestCommitObserverReportsOrderedSeamsAndCanBeCleared) {
+  ASSERT_NE(mako_local_feature_bits() &
+                MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER,
+            0U);
+  ASSERT_EQ(mako_local_test_set_commit_observer(record_commit_phase,
+                                                &commit_observation),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_local_test_set_commit_observer(record_commit_phase,
+                                                &commit_observation),
+            MAKO_LOCAL_BUSY);
+  EXPECT_EQ(mako_local_test_set_commit_observer(nullptr, nullptr),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+
+  HookObservation hook;
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "observer-a", "one"), MAKO_LOCAL_OK);
+  ASSERT_EQ(put(txn, primary, "observer-b", "two"), MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_local_txn_commit_with_hook(txn, accept_hook, &hook),
+            MAKO_LOCAL_OK);
+  destroy_tracked(txn);
+
+  constexpr std::array<uint32_t, 6> expected_phases{
+      MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED,
+      MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
+      MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE,
+      MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED,
+      MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED,
+      MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED,
+  };
+  ASSERT_EQ(commit_observation.calls, expected_phases.size());
+  for (size_t i = 0; i != expected_phases.size(); ++i)
+    EXPECT_EQ(commit_observation.phases[i], expected_phases[i]) << i;
+  EXPECT_EQ(commit_observation.timestamps[0], 0U);
+  ASSERT_NE(hook.timestamp, 0U);
+  for (size_t i = 1; i != expected_phases.size(); ++i)
+    EXPECT_EQ(commit_observation.timestamps[i], hook.timestamp) << i;
+
+  // The observer itself requests the same checked Mako timestamp even when the
+  // caller uses ordinary local commit without a durability hook. A single
+  // write omits only the mid-install phase.
+  commit_observation.reset();
+  txn = begin();
+  ASSERT_EQ(put(txn, primary, "observer-single", "single"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+  constexpr std::array<uint32_t, 5> expected_single_write_phases{
+      MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED,
+      MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED,
+      MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE,
+      MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED,
+      MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED,
+  };
+  ASSERT_EQ(commit_observation.calls, expected_single_write_phases.size());
+  for (size_t i = 0; i != expected_single_write_phases.size(); ++i)
+    EXPECT_EQ(commit_observation.phases[i], expected_single_write_phases[i])
+        << i;
+  EXPECT_EQ(commit_observation.timestamps[0], 0U);
+  EXPECT_NE(commit_observation.timestamps[1], 0U);
+  for (size_t i = 2; i != expected_single_write_phases.size(); ++i)
+    EXPECT_EQ(commit_observation.timestamps[i],
+              commit_observation.timestamps[1]) << i;
+
+  // A read-only transaction reaches none of the write-commit seams, and its
+  // durability hook remains uncalled as well.
+  commit_observation.reset();
+  HookObservation read_only_hook;
+  txn = begin();
+  EXPECT_EQ(get(txn, primary, "observer-a").second,
+            std::optional<std::string>("one"));
+  EXPECT_EQ(mako_local_txn_commit_with_hook(
+                txn, accept_hook, &read_only_hook),
+            MAKO_LOCAL_OK);
+  destroy_tracked(txn);
+  EXPECT_EQ(commit_observation.calls, 0U);
+  EXPECT_EQ(read_only_hook.calls, 0);
+
+  ASSERT_EQ(mako_local_test_clear_commit_observer(), MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_local_test_clear_commit_observer(), MAKO_LOCAL_OK);
+
+  txn = begin();
+  ASSERT_EQ(put(txn, primary, "observer-cleared", "three"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+  EXPECT_EQ(commit_observation.calls, 0U);
+}
+
+TEST_F(LocalAbiTest, TestCommitObserverStopsBeforeRejectedPreinstall) {
+  ASSERT_EQ(mako_local_test_set_commit_observer(record_commit_phase,
+                                                &commit_observation),
+            MAKO_LOCAL_OK);
+  HookObservation hook;
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "observer-reject", "invisible"), MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_local_txn_commit_with_hook(txn, reject_hook, &hook),
+            MAKO_LOCAL_COMMIT_HOOK_REJECTED);
+  destroy_tracked(txn);
+
+  ASSERT_EQ(commit_observation.calls, 3U);
+  EXPECT_EQ(commit_observation.phases[0],
+            MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED);
+  EXPECT_EQ(commit_observation.phases[1],
+            MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED);
+  EXPECT_EQ(commit_observation.phases[2],
+            MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE);
+  EXPECT_EQ(commit_observation.timestamps[0], 0U);
+  EXPECT_NE(commit_observation.timestamps[1], 0U);
+  EXPECT_EQ(commit_observation.timestamps[1],
+            commit_observation.timestamps[2]);
+  EXPECT_EQ(commit_observation.timestamps[2], hook.timestamp);
+  EXPECT_EQ(mako_local_test_clear_commit_observer(), MAKO_LOCAL_OK);
+}
+
+TEST_F(LocalAbiTest, LockedWriteConflictDoesNotReportACommitSeam) {
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "observer-contended", "zero"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  struct WorkerResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int observer_set = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    int put = MAKO_LOCAL_INTERNAL;
+    int commit = MAKO_LOCAL_INTERNAL;
+    int destroy = MAKO_LOCAL_INTERNAL;
+    int observer_clear = MAKO_LOCAL_INTERNAL;
+    HookObservation hook;
+    CommitPhaseObservation phases;
+  } winner, loser;
+
+  std::atomic<bool> parked{false};
+  std::atomic<bool> release{false};
+  ParkingCommitObserver parking{{}, &parked, &release};
+
+  std::thread locking_worker([&] {
+    winner.attach = mako_local_thread_attach();
+    if (winner.attach == MAKO_LOCAL_OK)
+      winner.observer_set = mako_local_test_set_commit_observer(
+          park_after_writeset_lock, &parking);
+    mako_local_txn *txn = nullptr;
+    if (winner.observer_set == MAKO_LOCAL_OK)
+      winner.begin = mako_local_txn_begin(db, &txn);
+    if (winner.begin == MAKO_LOCAL_OK)
+      winner.put = put(txn, primary, "observer-contended", "winner");
+    if (winner.put == MAKO_LOCAL_OK)
+      winner.commit = mako_local_txn_commit_with_hook(
+          txn, accept_hook, &winner.hook);
+    if (txn != nullptr)
+      winner.destroy = mako_local_txn_destroy(txn);
+    winner.observer_clear = mako_local_test_clear_commit_observer();
+  });
+
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(5);
+  while (!parked.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::yield();
+  if (!parked.load(std::memory_order_acquire)) {
+    release.store(true, std::memory_order_release);
+    locking_worker.join();
+    FAIL() << "winning commit did not reach the write-set-locked seam";
+    return;
+  }
+
+  std::thread conflicting_worker([&] {
+    loser.attach = mako_local_thread_attach();
+    if (loser.attach == MAKO_LOCAL_OK)
+      loser.observer_set = mako_local_test_set_commit_observer(
+          record_commit_phase, &loser.phases);
+    mako_local_txn *txn = nullptr;
+    if (loser.observer_set == MAKO_LOCAL_OK)
+      loser.begin = mako_local_txn_begin(db, &txn);
+    if (loser.begin == MAKO_LOCAL_OK)
+      loser.put = put(txn, primary, "observer-contended", "loser");
+    if (loser.put == MAKO_LOCAL_OK)
+      loser.commit = mako_local_txn_commit_with_hook(
+          txn, accept_hook, &loser.hook);
+    if (txn != nullptr)
+      loser.destroy = mako_local_txn_destroy(txn);
+    loser.observer_clear = mako_local_test_clear_commit_observer();
+  });
+  conflicting_worker.join();
+  release.store(true, std::memory_order_release);
+  locking_worker.join();
+
+  EXPECT_EQ(winner.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(winner.observer_set, MAKO_LOCAL_OK);
+  EXPECT_EQ(winner.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(winner.put, MAKO_LOCAL_OK);
+  EXPECT_EQ(winner.commit, MAKO_LOCAL_OK);
+  EXPECT_EQ(winner.destroy, MAKO_LOCAL_OK);
+  EXPECT_EQ(winner.observer_clear, MAKO_LOCAL_OK);
+  EXPECT_EQ(parking.observation.calls, 5U);
+
+  EXPECT_EQ(loser.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(loser.observer_set, MAKO_LOCAL_OK);
+  EXPECT_EQ(loser.begin, MAKO_LOCAL_OK);
+  // MassTrans detects this exact held-version conflict while staging the put,
+  // so the worker deliberately never enters commit at all.
+  EXPECT_EQ(loser.put, MAKO_LOCAL_CONFLICT);
+  EXPECT_EQ(loser.commit, MAKO_LOCAL_INTERNAL);
+  EXPECT_EQ(loser.destroy, MAKO_LOCAL_OK);
+  EXPECT_EQ(loser.observer_clear, MAKO_LOCAL_OK);
+  EXPECT_EQ(loser.phases.calls, 0U);
+  EXPECT_EQ(loser.hook.calls, 0);
+}
+#endif
 
 TEST_F(LocalAbiTest, TableNamesAndNumericIdsAreBothUnique) {
   const std::string name = "identity";
