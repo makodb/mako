@@ -23,7 +23,7 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "a1f8fef85e8d43bb00f85f8ef32e5ecc69408642"
+REQUIRED_RUSTY_CPP_COMMIT = "77c3ad5a9ab69190ee361986caf579afa2eae570"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
 EXTRACTION_MANIFEST = "src/rrr/rust-modules.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"

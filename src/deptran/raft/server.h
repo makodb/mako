@@ -9,8 +9,11 @@
 #include <deque>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/num.hpp>
 #include <rusty/option.hpp>
+#include <rusty/slice.hpp>
 #include <type_traits>
+#include <utility>
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
@@ -135,6 +138,524 @@ static_assert(static_cast<int32_t>(CommitStatus::SPECULATIVE) == 0);
 static_assert(static_cast<int32_t>(CommitStatus::DURABLE) == 1);
 static_assert(static_cast<int32_t>(CommitStatus::ROLLEDBACK) == 2);
 static_assert(CommitStatus{} == CommitStatus::SPECULATIVE);
+
+// Pure scalar Raft decisions. Stateful sequencing, locks, persistence,
+// callbacks, logging, and pointer access remain at their existing C++ call
+// sites. `const fn` makes the generated C++ constexpr/implicitly inline.
+#if RUSTYCPP_RUST
+pub const fn raft_server_log_index_at_or_below(index: u64, boundary: u64) -> bool {
+    index <= boundary
+}
+
+pub const fn raft_server_log_index_above(index: u64, boundary: u64) -> bool {
+    index > boundary
+}
+
+pub const fn raft_server_site_is_preferred_leader(site_id: u16,
+                                                   preferred_site_id: u16,
+                                                   invalid_site_id: u16) -> bool {
+    preferred_site_id != invalid_site_id && site_id == preferred_site_id
+}
+
+pub const fn raft_server_leadership_monitor_should_start(is_preferred: bool,
+                                                          is_leader: bool,
+                                                          looping: bool) -> bool {
+    !is_preferred && is_leader && looping
+}
+
+pub const fn raft_server_preferred_replica_is_caught_up(preferred_match_index: u64,
+                                                         commit_index: u64) -> bool {
+    preferred_match_index >= commit_index
+}
+
+pub const fn raft_server_local_commit_has_caught_up(local_commit_index: u64,
+                                                     leader_commit_index: u64) -> bool {
+    local_commit_index >= leader_commit_index
+}
+
+pub const fn raft_server_election_timeout_has_fired(is_leader: bool,
+                                                     elapsed: u64,
+                                                     timeout: u64) -> bool {
+    !is_leader && elapsed > timeout
+}
+
+pub const fn raft_server_leadership_stable_window_elapsed(elapsed: u64,
+                                                           minimum: u64) -> bool {
+    elapsed >= minimum
+}
+
+pub const fn raft_server_random_range_needs_swap(minimum: u64,
+                                                  maximum: u64) -> bool {
+    maximum < minimum
+}
+
+pub const fn raft_server_random_range_is_single_point(minimum: u64,
+                                                       maximum: u64) -> bool {
+    maximum == minimum
+}
+
+pub const fn raft_server_random_range_cap(range: u64, maximum: u64) -> u64 {
+    if range > maximum {
+        maximum
+    } else {
+        range
+    }
+}
+
+pub const fn raft_server_election_in_startup_grace_period(now: u64,
+                                                           started_at: u64,
+                                                           grace_period: u64) -> bool {
+    now.wrapping_sub(started_at) < grace_period
+}
+
+pub const fn raft_server_vote_term_is_stale(candidate_term: u64,
+                                             current_term: u64) -> bool {
+    candidate_term < current_term
+}
+
+pub const fn raft_server_vote_is_already_granted_to_other(candidate_term: u64,
+                                                           current_term: u64,
+                                                           voted_for: u16,
+                                                           candidate_id: u16,
+                                                           invalid_site_id: u16) -> bool {
+    candidate_term == current_term &&
+        voted_for != invalid_site_id &&
+        voted_for != candidate_id
+}
+
+pub const fn raft_server_vote_is_idempotent(candidate_term: u64,
+                                             current_term: u64,
+                                             voted_for: u16,
+                                             candidate_id: u16) -> bool {
+    candidate_term == current_term && voted_for == candidate_id
+}
+
+pub const fn raft_server_candidate_log_is_at_least(candidate_term: i64,
+                                                    current_term: i64,
+                                                    candidate_index: u64,
+                                                    current_index: u64) -> bool {
+    candidate_term > current_term ||
+        (candidate_term == current_term && candidate_index >= current_index)
+}
+
+pub const fn raft_server_append_term_is_acceptable(leader_term: u64,
+                                                    follower_term: u64) -> bool {
+    leader_term >= follower_term
+}
+
+pub const fn raft_server_append_prefix_is_compacted_miss(previous_index: u64,
+                                                          minimum_active_slot: u64,
+                                                          snapshot_index: u64) -> bool {
+    previous_index != 0 &&
+        previous_index < minimum_active_slot &&
+        previous_index != snapshot_index
+}
+
+pub const fn raft_server_append_index_is_acceptable(previous_index: u64,
+                                                     last_log_index: u64,
+                                                     compacted_prefix_miss: bool) -> bool {
+    previous_index <= last_log_index && !compacted_prefix_miss
+}
+
+pub const fn raft_server_append_previous_term_is_acceptable(previous_index: u64,
+                                                             local_previous_term: u64,
+                                                             leader_previous_term: u64) -> bool {
+    previous_index == 0 || local_previous_term == leader_previous_term
+}
+
+pub const fn raft_server_append_is_acceptable(term_ok: bool,
+                                               index_ok: bool,
+                                               previous_term_ok: bool) -> bool {
+    term_ok && index_ok && previous_term_ok
+}
+
+pub const fn raft_server_commit_index_clamp(candidate_index: u64,
+                                             last_log_index: u64) -> u64 {
+    if candidate_index > last_log_index {
+        last_log_index
+    } else {
+        candidate_index
+    }
+}
+
+pub const fn raft_server_log_entry_is_current_term(entry_term: i64,
+                                                    current_term: u64) -> bool {
+    entry_term as u64 == current_term
+}
+
+pub const fn raft_server_snapshot_index_is_available(execute_index: u64) -> bool {
+    execute_index != 0
+}
+
+pub const fn raft_server_snapshot_is_due(snapshot_index: u64,
+                                          execute_index: u64,
+                                          threshold: u64) -> bool {
+    snapshot_index < execute_index &&
+        (execute_index - snapshot_index) > threshold
+}
+
+pub const fn raft_server_compaction_index_clamp(candidate_index: u64,
+                                                 commit_index: u64) -> u64 {
+    if candidate_index > commit_index {
+        commit_index
+    } else {
+        candidate_index
+    }
+}
+
+pub const fn raft_server_follower_next_index(last_log_index: u64) -> u64 {
+    last_log_index.wrapping_add(1)
+}
+
+pub const fn raft_server_append_reject_can_fast_backoff(last_log_index: u64,
+                                                         next_index: u64) -> bool {
+    last_log_index > 0 &&
+        raft_server_follower_next_index(last_log_index) < next_index
+}
+
+pub const fn raft_server_append_reject_has_term_conflict(last_log_index: u64,
+                                                          next_index: u64) -> bool {
+    last_log_index > 0 &&
+        raft_server_follower_next_index(last_log_index) == next_index &&
+        next_index > 1
+}
+
+pub const fn raft_server_append_reject_can_halve(next_index: u64) -> bool {
+    next_index > 10
+}
+
+pub const fn raft_server_append_reject_can_decrement(next_index: u64) -> bool {
+    next_index > 1
+}
+
+pub const fn raft_server_append_reject_halved(next_index: u64) -> u64 {
+    next_index / 2
+}
+
+pub const fn raft_server_append_reject_decremented(next_index: u64) -> u64 {
+    next_index.wrapping_sub(1)
+}
+
+pub const fn raft_server_append_reject_floor() -> u64 {
+    1
+}
+
+pub const fn raft_server_ack_is_memory(ack_type: u64) -> bool {
+    ack_type == 0
+}
+
+pub const fn raft_server_should_become_secured(already_secured: bool,
+                                                durable_vote_count: usize,
+                                                quorum: usize) -> bool {
+    !already_secured && durable_vote_count >= quorum
+}
+
+pub const fn raft_server_unsecured_leader_needs_quorum_check(already_secured: bool,
+                                                              is_leader: bool) -> bool {
+    !already_secured && is_leader
+}
+
+pub const fn raft_server_commit_status_is_durable(status: CommitStatus) -> bool {
+    (status as i32) == (CommitStatus::DURABLE as i32)
+}
+
+pub const fn raft_server_retention_window_normalize(window: u64) -> u64 {
+    if window > 0 {
+        window
+    } else {
+        1
+    }
+}
+
+pub const fn raft_server_retention_cutoff(execute_index: u64,
+                                           retention_window: u64) -> u64 {
+    if execute_index > retention_window {
+        execute_index - retention_window
+    } else {
+        0
+    }
+}
+
+pub const fn raft_server_leadership_transition_to_leader(new_is_leader: bool,
+                                                          previous_is_leader: bool) -> bool {
+    new_is_leader && !previous_is_leader
+}
+
+pub const fn raft_server_leadership_transition_to_follower(new_is_leader: bool,
+                                                            previous_is_leader: bool) -> bool {
+    !new_is_leader && previous_is_leader
+}
+
+pub const fn raft_server_observed_higher_term(observed_term: u64,
+                                               current_term: u64) -> bool {
+    observed_term > current_term
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_server.scalar_decisions version=1 rust_sha256=c509a4af4ce350d8470409ce9ff70d88fa096e71c9e666cd8e9a975bb636bf19*/
+constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary);
+constexpr bool raft_server_log_index_above(uint64_t index, uint64_t boundary);
+constexpr bool raft_server_site_is_preferred_leader(uint16_t site_id, uint16_t preferred_site_id, uint16_t invalid_site_id);
+constexpr bool raft_server_leadership_monitor_should_start(bool is_preferred, bool is_leader, bool looping);
+constexpr bool raft_server_preferred_replica_is_caught_up(uint64_t preferred_match_index, uint64_t commit_index);
+constexpr bool raft_server_local_commit_has_caught_up(uint64_t local_commit_index, uint64_t leader_commit_index);
+constexpr bool raft_server_election_timeout_has_fired(bool is_leader, uint64_t elapsed, uint64_t timeout);
+constexpr bool raft_server_leadership_stable_window_elapsed(uint64_t elapsed, uint64_t minimum);
+constexpr bool raft_server_random_range_needs_swap(uint64_t minimum, uint64_t maximum);
+constexpr bool raft_server_random_range_is_single_point(uint64_t minimum, uint64_t maximum);
+constexpr uint64_t raft_server_random_range_cap(uint64_t range, uint64_t maximum);
+constexpr bool raft_server_election_in_startup_grace_period(uint64_t now, uint64_t started_at, uint64_t grace_period);
+constexpr bool raft_server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term);
+constexpr bool raft_server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id, uint16_t invalid_site_id);
+constexpr bool raft_server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id);
+constexpr bool raft_server_candidate_log_is_at_least(int64_t candidate_term, int64_t current_term, uint64_t candidate_index, uint64_t current_index);
+constexpr bool raft_server_append_term_is_acceptable(uint64_t leader_term, uint64_t follower_term);
+constexpr bool raft_server_append_prefix_is_compacted_miss(uint64_t previous_index, uint64_t minimum_active_slot, uint64_t snapshot_index);
+constexpr bool raft_server_append_index_is_acceptable(uint64_t previous_index, uint64_t last_log_index, bool compacted_prefix_miss);
+constexpr bool raft_server_append_previous_term_is_acceptable(uint64_t previous_index, uint64_t local_previous_term, uint64_t leader_previous_term);
+constexpr bool raft_server_append_is_acceptable(bool term_ok, bool index_ok, bool previous_term_ok);
+constexpr uint64_t raft_server_commit_index_clamp(uint64_t candidate_index, uint64_t last_log_index);
+constexpr bool raft_server_log_entry_is_current_term(int64_t entry_term, uint64_t current_term);
+constexpr bool raft_server_snapshot_index_is_available(uint64_t execute_index);
+constexpr bool raft_server_snapshot_is_due(uint64_t snapshot_index, uint64_t execute_index, uint64_t threshold);
+constexpr uint64_t raft_server_compaction_index_clamp(uint64_t candidate_index, uint64_t commit_index);
+constexpr uint64_t raft_server_follower_next_index(uint64_t last_log_index);
+constexpr bool raft_server_append_reject_can_fast_backoff(uint64_t last_log_index, uint64_t next_index);
+constexpr bool raft_server_append_reject_has_term_conflict(uint64_t last_log_index, uint64_t next_index);
+constexpr bool raft_server_append_reject_can_halve(uint64_t next_index);
+constexpr bool raft_server_append_reject_can_decrement(uint64_t next_index);
+constexpr uint64_t raft_server_append_reject_halved(uint64_t next_index);
+constexpr uint64_t raft_server_append_reject_decremented(uint64_t next_index);
+constexpr uint64_t raft_server_append_reject_floor();
+constexpr bool raft_server_ack_is_memory(uint64_t ack_type);
+constexpr bool raft_server_should_become_secured(bool already_secured, size_t durable_vote_count, size_t quorum);
+constexpr bool raft_server_unsecured_leader_needs_quorum_check(bool already_secured, bool is_leader);
+constexpr uint64_t raft_server_retention_window_normalize(uint64_t window);
+constexpr uint64_t raft_server_retention_cutoff(uint64_t execute_index, uint64_t retention_window);
+constexpr bool raft_server_leadership_transition_to_leader(bool new_is_leader, bool previous_is_leader);
+constexpr bool raft_server_leadership_transition_to_follower(bool new_is_leader, bool previous_is_leader);
+constexpr bool raft_server_observed_higher_term(uint64_t observed_term, uint64_t current_term);
+constexpr bool raft_server_log_index_at_or_below(uint64_t index, uint64_t boundary) {
+    return rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(boundary);
+}
+constexpr bool raft_server_log_index_above(uint64_t index, uint64_t boundary) {
+    return rusty::detail::deref_if_pointer_like(index) > rusty::detail::deref_if_pointer_like(boundary);
+}
+constexpr bool raft_server_site_is_preferred_leader(uint16_t site_id, uint16_t preferred_site_id, uint16_t invalid_site_id) {
+    return (rusty::detail::deref_if_pointer_like(preferred_site_id) != rusty::detail::deref_if_pointer_like(invalid_site_id)) && (rusty::detail::deref_if_pointer_like(site_id) == rusty::detail::deref_if_pointer_like(preferred_site_id));
+}
+constexpr bool raft_server_leadership_monitor_should_start(bool is_preferred, bool is_leader, bool looping) {
+    return (!is_preferred && rusty::detail::deref_if_pointer_like(is_leader)) && rusty::detail::deref_if_pointer_like(looping);
+}
+constexpr bool raft_server_preferred_replica_is_caught_up(uint64_t preferred_match_index, uint64_t commit_index) {
+    return rusty::detail::deref_if_pointer_like(preferred_match_index) >= rusty::detail::deref_if_pointer_like(commit_index);
+}
+constexpr bool raft_server_local_commit_has_caught_up(uint64_t local_commit_index, uint64_t leader_commit_index) {
+    return rusty::detail::deref_if_pointer_like(local_commit_index) >= rusty::detail::deref_if_pointer_like(leader_commit_index);
+}
+constexpr bool raft_server_election_timeout_has_fired(bool is_leader, uint64_t elapsed, uint64_t timeout) {
+    return !is_leader && (rusty::detail::deref_if_pointer_like(elapsed) > rusty::detail::deref_if_pointer_like(timeout));
+}
+constexpr bool raft_server_leadership_stable_window_elapsed(uint64_t elapsed, uint64_t minimum) {
+    return rusty::detail::deref_if_pointer_like(elapsed) >= rusty::detail::deref_if_pointer_like(minimum);
+}
+constexpr bool raft_server_random_range_needs_swap(uint64_t minimum, uint64_t maximum) {
+    return rusty::detail::deref_if_pointer_like(maximum) < rusty::detail::deref_if_pointer_like(minimum);
+}
+constexpr bool raft_server_random_range_is_single_point(uint64_t minimum, uint64_t maximum) {
+    return rusty::detail::deref_if_pointer_like(maximum) == rusty::detail::deref_if_pointer_like(minimum);
+}
+constexpr uint64_t raft_server_random_range_cap(uint64_t range, uint64_t maximum) {
+    if (rusty::detail::deref_if_pointer_like(range) > rusty::detail::deref_if_pointer_like(maximum)) {
+        return std::move(maximum);
+    } else {
+        return std::move(range);
+    }
+}
+constexpr bool raft_server_election_in_startup_grace_period(uint64_t now, uint64_t started_at, uint64_t grace_period) {
+    return rusty::wrapping_sub(now, static_cast<std::remove_cvref_t<decltype(now)>>(std::move(started_at))) < rusty::detail::deref_if_pointer_like(grace_period);
+}
+constexpr bool raft_server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term) {
+    return rusty::detail::deref_if_pointer_like(candidate_term) < rusty::detail::deref_if_pointer_like(current_term);
+}
+constexpr bool raft_server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id, uint16_t invalid_site_id) {
+    return ((rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(voted_for) != rusty::detail::deref_if_pointer_like(invalid_site_id))) && (rusty::detail::deref_if_pointer_like(voted_for) != rusty::detail::deref_if_pointer_like(candidate_id));
+}
+constexpr bool raft_server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, uint16_t voted_for, uint16_t candidate_id) {
+    return (rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(voted_for) == rusty::detail::deref_if_pointer_like(candidate_id));
+}
+constexpr bool raft_server_candidate_log_is_at_least(int64_t candidate_term, int64_t current_term, uint64_t candidate_index, uint64_t current_index) {
+    return (rusty::detail::deref_if_pointer_like(candidate_term) > rusty::detail::deref_if_pointer_like(current_term)) || (((rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(candidate_index) >= rusty::detail::deref_if_pointer_like(current_index))));
+}
+constexpr bool raft_server_append_term_is_acceptable(uint64_t leader_term, uint64_t follower_term) {
+    return rusty::detail::deref_if_pointer_like(leader_term) >= rusty::detail::deref_if_pointer_like(follower_term);
+}
+constexpr bool raft_server_append_prefix_is_compacted_miss(uint64_t previous_index, uint64_t minimum_active_slot, uint64_t snapshot_index) {
+    return ((rusty::detail::deref_if_pointer_like(previous_index) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(previous_index) < rusty::detail::deref_if_pointer_like(minimum_active_slot))) && (rusty::detail::deref_if_pointer_like(previous_index) != rusty::detail::deref_if_pointer_like(snapshot_index));
+}
+constexpr bool raft_server_append_index_is_acceptable(uint64_t previous_index, uint64_t last_log_index, bool compacted_prefix_miss) {
+    return (rusty::detail::deref_if_pointer_like(previous_index) <= rusty::detail::deref_if_pointer_like(last_log_index)) && !compacted_prefix_miss;
+}
+constexpr bool raft_server_append_previous_term_is_acceptable(uint64_t previous_index, uint64_t local_previous_term, uint64_t leader_previous_term) {
+    return (rusty::detail::deref_if_pointer_like(previous_index) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(local_previous_term) == rusty::detail::deref_if_pointer_like(leader_previous_term));
+}
+constexpr bool raft_server_append_is_acceptable(bool term_ok, bool index_ok, bool previous_term_ok) {
+    return (rusty::detail::deref_if_pointer_like(term_ok) && rusty::detail::deref_if_pointer_like(index_ok)) && rusty::detail::deref_if_pointer_like(previous_term_ok);
+}
+constexpr uint64_t raft_server_commit_index_clamp(uint64_t candidate_index, uint64_t last_log_index) {
+    if (rusty::detail::deref_if_pointer_like(candidate_index) > rusty::detail::deref_if_pointer_like(last_log_index)) {
+        return std::move(last_log_index);
+    } else {
+        return std::move(candidate_index);
+    }
+}
+constexpr bool raft_server_log_entry_is_current_term(int64_t entry_term, uint64_t current_term) {
+    return (static_cast<uint64_t>(entry_term)) == rusty::detail::deref_if_pointer_like(current_term);
+}
+constexpr bool raft_server_snapshot_index_is_available(uint64_t execute_index) {
+    return rusty::detail::deref_if_pointer_like(execute_index) != static_cast<uint64_t>(0);
+}
+constexpr bool raft_server_snapshot_is_due(uint64_t snapshot_index, uint64_t execute_index, uint64_t threshold) {
+    return (rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(execute_index)) && (((rusty::detail::deref_if_pointer_like(execute_index) - rusty::detail::deref_if_pointer_like(snapshot_index))) > rusty::detail::deref_if_pointer_like(threshold));
+}
+constexpr uint64_t raft_server_compaction_index_clamp(uint64_t candidate_index, uint64_t commit_index) {
+    if (rusty::detail::deref_if_pointer_like(candidate_index) > rusty::detail::deref_if_pointer_like(commit_index)) {
+        return std::move(commit_index);
+    } else {
+        return std::move(candidate_index);
+    }
+}
+constexpr uint64_t raft_server_follower_next_index(uint64_t last_log_index) {
+    return rusty::wrapping_add(last_log_index, static_cast<std::remove_cvref_t<decltype(last_log_index)>>(1));
+}
+constexpr bool raft_server_append_reject_can_fast_backoff(uint64_t last_log_index, uint64_t next_index) {
+    return (rusty::detail::deref_if_pointer_like(last_log_index) > 0) && (raft_server_follower_next_index(std::move(last_log_index)) < rusty::detail::deref_if_pointer_like(next_index));
+}
+constexpr bool raft_server_append_reject_has_term_conflict(uint64_t last_log_index, uint64_t next_index) {
+    return ((rusty::detail::deref_if_pointer_like(last_log_index) > 0) && (raft_server_follower_next_index(std::move(last_log_index)) == rusty::detail::deref_if_pointer_like(next_index))) && (rusty::detail::deref_if_pointer_like(next_index) > 1);
+}
+constexpr bool raft_server_append_reject_can_halve(uint64_t next_index) {
+    return rusty::detail::deref_if_pointer_like(next_index) > 10;
+}
+constexpr bool raft_server_append_reject_can_decrement(uint64_t next_index) {
+    return rusty::detail::deref_if_pointer_like(next_index) > 1;
+}
+constexpr uint64_t raft_server_append_reject_halved(uint64_t next_index) {
+    return rusty::detail::deref_if_pointer_like(next_index) / static_cast<uint64_t>(2);
+}
+constexpr uint64_t raft_server_append_reject_decremented(uint64_t next_index) {
+    return rusty::wrapping_sub(next_index, static_cast<std::remove_cvref_t<decltype(next_index)>>(1));
+}
+constexpr uint64_t raft_server_append_reject_floor() {
+    return static_cast<uint64_t>(1);
+}
+constexpr bool raft_server_ack_is_memory(uint64_t ack_type) {
+    return rusty::detail::deref_if_pointer_like(ack_type) == static_cast<uint64_t>(0);
+}
+constexpr bool raft_server_should_become_secured(bool already_secured, size_t durable_vote_count, size_t quorum) {
+    return !already_secured && (rusty::detail::deref_if_pointer_like(durable_vote_count) >= rusty::detail::deref_if_pointer_like(quorum));
+}
+constexpr bool raft_server_unsecured_leader_needs_quorum_check(bool already_secured, bool is_leader) {
+    return !already_secured && rusty::detail::deref_if_pointer_like(is_leader);
+}
+constexpr bool raft_server_commit_status_is_durable(CommitStatus status) {
+    return ((static_cast<int32_t>(status))) == ((static_cast<int32_t>(CommitStatus_DURABLE())));
+}
+constexpr uint64_t raft_server_retention_window_normalize(uint64_t window) {
+    if (rusty::detail::deref_if_pointer_like(window) > 0) {
+        return std::move(window);
+    } else {
+        return static_cast<uint64_t>(1);
+    }
+}
+constexpr uint64_t raft_server_retention_cutoff(uint64_t execute_index, uint64_t retention_window) {
+    if (rusty::detail::deref_if_pointer_like(execute_index) > rusty::detail::deref_if_pointer_like(retention_window)) {
+        return rusty::detail::deref_if_pointer_like(execute_index) - rusty::detail::deref_if_pointer_like(retention_window);
+    } else {
+        return static_cast<uint64_t>(0);
+    }
+}
+constexpr bool raft_server_leadership_transition_to_leader(bool new_is_leader, bool previous_is_leader) {
+    return rusty::detail::deref_if_pointer_like(new_is_leader) && !previous_is_leader;
+}
+constexpr bool raft_server_leadership_transition_to_follower(bool new_is_leader, bool previous_is_leader) {
+    return !new_is_leader && rusty::detail::deref_if_pointer_like(previous_is_leader);
+}
+constexpr bool raft_server_observed_higher_term(uint64_t observed_term, uint64_t current_term) {
+    return rusty::detail::deref_if_pointer_like(observed_term) > rusty::detail::deref_if_pointer_like(current_term);
+}
+/*RUSTYCPP:GEN-END id=raft_server.scalar_decisions*/
+
+static_assert(raft_server_site_is_preferred_leader(
+    7, 7, static_cast<uint16_t>(INVALID_SITEID)));
+static_assert(!raft_server_site_is_preferred_leader(
+    static_cast<uint16_t>(INVALID_SITEID),
+    static_cast<uint16_t>(INVALID_SITEID),
+    static_cast<uint16_t>(INVALID_SITEID)));
+static_assert(raft_server_vote_is_already_granted_to_other(
+    4, 4, 1, 2, static_cast<uint16_t>(INVALID_SITEID)));
+static_assert(!raft_server_vote_is_already_granted_to_other(
+    4, 4, static_cast<uint16_t>(INVALID_SITEID), 2,
+    static_cast<uint16_t>(INVALID_SITEID)));
+static_assert(raft_server_vote_is_idempotent(4, 4, 2, 2));
+static_assert(raft_server_candidate_log_is_at_least(3, 2, 1, 9));
+static_assert(raft_server_candidate_log_is_at_least(3, 3, 9, 9));
+static_assert(!raft_server_candidate_log_is_at_least(3, 3, 8, 9));
+static_assert(raft_server_append_prefix_is_compacted_miss(4, 5, 3));
+static_assert(!raft_server_append_prefix_is_compacted_miss(3, 5, 3));
+static_assert(raft_server_append_previous_term_is_acceptable(0, 7, 8));
+static_assert(raft_server_append_is_acceptable(true, true, true));
+static_assert(!raft_server_append_is_acceptable(false, true, true));
+static_assert(!raft_server_append_is_acceptable(true, false, true));
+static_assert(!raft_server_append_is_acceptable(true, true, false));
+static_assert(raft_server_commit_index_clamp(9, 7) == 7);
+static_assert(raft_server_snapshot_is_due(4, 10, 5));
+static_assert(!raft_server_snapshot_is_due(10, 4, 5));
+static_assert(raft_server_follower_next_index(7) == 8);
+static_assert(raft_server_follower_next_index(UINT64_MAX) == 0);
+// Pin every branch of the incumbent rejection-backoff decision tree. The
+// helper arguments are (follower_last_log_index, current_next_index).
+static_assert(raft_server_append_reject_can_fast_backoff(4, 20));
+static_assert(raft_server_follower_next_index(4) == 5);
+static_assert(!raft_server_append_reject_can_fast_backoff(4, 5));
+static_assert(raft_server_append_reject_has_term_conflict(4, 5));
+static_assert(raft_server_append_reject_decremented(5) == 4);
+static_assert(!raft_server_append_reject_has_term_conflict(0, 1));
+static_assert(raft_server_append_reject_can_halve(20));
+static_assert(raft_server_append_reject_halved(20) == 10);
+static_assert(!raft_server_append_reject_can_halve(10));
+static_assert(raft_server_append_reject_can_decrement(10));
+static_assert(raft_server_append_reject_decremented(10) == 9);
+static_assert(!raft_server_append_reject_can_decrement(1));
+static_assert(raft_server_append_reject_floor() == 1);
+static_assert(raft_server_append_reject_can_fast_backoff(UINT64_MAX, 5));
+static_assert(raft_server_follower_next_index(UINT64_MAX) == 0);
+static_assert(!raft_server_append_reject_can_fast_backoff(UINT64_MAX, 0));
+static_assert(!raft_server_append_reject_has_term_conflict(UINT64_MAX, 0));
+static_assert(raft_server_ack_is_memory(0));
+static_assert(!raft_server_ack_is_memory(1));
+static_assert(!raft_server_ack_is_memory(UINT64_MAX));
+static_assert(raft_server_should_become_secured(false, 2, 2));
+static_assert(!raft_server_should_become_secured(false, 1, 2));
+static_assert(!raft_server_should_become_secured(true, 2, 2));
+static_assert(raft_server_should_become_secured(false, 0, 0));
+static_assert(raft_server_unsecured_leader_needs_quorum_check(false, true));
+static_assert(!raft_server_unsecured_leader_needs_quorum_check(true, true));
+static_assert(!raft_server_unsecured_leader_needs_quorum_check(false, false));
+static_assert(raft_server_commit_status_is_durable(CommitStatus::DURABLE));
+static_assert(!raft_server_commit_status_is_durable(CommitStatus::SPECULATIVE));
+static_assert(raft_server_retention_window_normalize(0) == 1);
+static_assert(raft_server_retention_window_normalize(1) == 1);
+static_assert(raft_server_retention_window_normalize(UINT64_MAX) == UINT64_MAX);
+static_assert(raft_server_retention_cutoff(5, 5) == 0);
+static_assert(raft_server_retention_cutoff(4, 5) == 0);
+static_assert(raft_server_retention_cutoff(6, 5) == 1);
+// Raft currently compares signed ballot_t values with uint64_t currentTerm.
+// These casts make the existing C++ usual-arithmetic-conversion semantics
+// explicit, including the historical negative-term edge case.
+static_assert(!raft_server_vote_term_is_stale(static_cast<uint64_t>(-1), 0));
+static_assert(raft_server_observed_higher_term(static_cast<uint64_t>(-1), 0));
+static_assert(raft_server_log_entry_is_current_term(
+    -1, static_cast<uint64_t>(-1)));
 
 // @safe - data struct with shared_ptr fields (shared_ptr marked @external)
 //
@@ -370,8 +891,9 @@ class RaftServer : public TxLogServer {
   bool AmIPreferredLeader() const {
     // @unsafe
     {
-      return preferred_leader_site_id_ != INVALID_SITEID &&
-             site_id_ == preferred_leader_site_id_;
+      return raft_server_site_is_preferred_leader(
+          site_id_, preferred_leader_site_id_,
+          static_cast<uint16_t>(INVALID_SITEID));
     }
   }
 
@@ -379,7 +901,8 @@ class RaftServer : public TxLogServer {
   bool HaveCaughtUp() const {
     // We've caught up if our commitIndex >= leader's last known commitIndex
     // Note: leader_last_commit_index_ is updated from AppendEntries heartbeats
-    return commitIndex >= leader_last_commit_index_;
+    return raft_server_local_commit_has_caught_up(
+        commitIndex, leader_last_commit_index_);
   }
 
   // ============================================================================
@@ -412,7 +935,8 @@ class RaftServer : public TxLogServer {
                site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, is_leader_, lst_log_idx, lst_log_term);
 #endif
 
-      if( can_term > currentTerm)
+      if (raft_server_observed_higher_term(
+              static_cast<uint64_t>(can_term), currentTerm))
       {
           // Any higher term seen means we must immediately step down.
           setIsLeader(false);
@@ -673,7 +1197,9 @@ class RaftServer : public TxLogServer {
   uint64_t GetLogRetentionWindow() const { return log_retention_window_; }
 
   // @safe - sets POD field (minimum 1 to avoid division by zero)
-  void SetLogRetentionWindow(uint64_t window) { log_retention_window_ = (window > 0) ? window : 1; }
+  void SetLogRetentionWindow(uint64_t window) {
+    log_retention_window_ = raft_server_retention_window_normalize(window);
+  }
 
   // @unsafe - external calls plus output pointer writes and shared_ptr ops
   // take janus::Command;
@@ -1128,7 +1654,8 @@ class RaftServer : public TxLogServer {
     }
 
     // If I'm a non-preferred leader, start monitoring for transfer opportunity
-    if (!AmIPreferredLeader() && is_leader_ && looping_) {
+    if (raft_server_leadership_monitor_should_start(
+            AmIPreferredLeader(), is_leader_, looping_)) {
       Log_info("[LEADERSHIP-TRANSFER] Site {}: I'm non-preferred leader, starting transfer monitoring",
                site_id_);
       StartLeadershipTransferMonitoring();

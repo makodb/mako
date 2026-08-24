@@ -105,9 +105,8 @@ struct LegacyRemoveServerReqLayout {
   static_assert(sizeof(type) == sizeof(legacy));          \
   static_assert(alignof(type) == alignof(legacy))
 
-// The pinned inline emitter cannot express C++ default member initializers.
-// These assertions make the resulting plain-default-initialization contract a
-// hard Stage-1 boundary instead of silently weakening it.
+// The pinned inline emitter must preserve C++ default member initializers.
+// These assertions keep plain default initialization a hard Stage-1 contract.
 #define ASSERT_ZERO_DEFAULT_CONTRACT(type)                        \
   static_assert(std::is_default_constructible_v<type>);           \
   static_assert(!std::is_trivially_default_constructible_v<type>)
@@ -356,6 +355,17 @@ TEST(RaftMessagesTest, PlainDefaultInitializationPreservesZeroContract) {
   EXPECT_EQ(vote.candidate_site_id, 0u);
   EXPECT_EQ(vote.current_term, 0);
 
+  VoteReply vote_reply;
+  EXPECT_EQ(vote_reply.max_ballot, 0);
+  EXPECT_FALSE(vote_reply.vote_granted);
+
+  VoteDurableReq vote_durable;
+  EXPECT_EQ(vote_durable.term, 0);
+  EXPECT_EQ(vote_durable.voter_id, 0u);
+
+  VoteDurableReply vote_durable_reply;
+  EXPECT_FALSE(vote_durable_reply.acknowledged);
+
   AppendEntriesReply append;
   EXPECT_EQ(append.follower_append_ok, 0u);
   EXPECT_EQ(append.follower_current_term, 0u);
@@ -365,12 +375,43 @@ TEST(RaftMessagesTest, PlainDefaultInitializationPreservesZeroContract) {
   EmptyAppendEntriesReq heartbeat;
   EXPECT_EQ(heartbeat.slot, 0u);
   EXPECT_EQ(heartbeat.ballot, 0);
+  EXPECT_EQ(heartbeat.leader_current_term, 0u);
   EXPECT_EQ(heartbeat.leader_site_id, 0u);
+  EXPECT_EQ(heartbeat.leader_prev_log_index, 0u);
+  EXPECT_EQ(heartbeat.leader_prev_log_term, 0u);
+  EXPECT_EQ(heartbeat.leader_commit_index, 0u);
   EXPECT_FALSE(heartbeat.trigger_election_now);
+
+  EmptyAppendEntriesReply heartbeat_reply;
+  EXPECT_EQ(heartbeat_reply.follower_append_ok, 0u);
+  EXPECT_EQ(heartbeat_reply.follower_current_term, 0u);
+  EXPECT_EQ(heartbeat_reply.follower_last_log_index, 0u);
+  EXPECT_EQ(heartbeat_reply.follower_ack_type, 0u);
+
+  AppendEntriesDurableReq append_durable;
+  EXPECT_EQ(append_durable.term, 0);
+  EXPECT_EQ(append_durable.follower_id, 0u);
+  EXPECT_EQ(append_durable.last_log_index, 0u);
+
+  AppendEntriesDurableReply append_durable_reply;
+  EXPECT_FALSE(append_durable_reply.acknowledged);
+
+  TimeoutNowReq timeout_request;
+  EXPECT_EQ(timeout_request.leader_term, 0u);
+  EXPECT_EQ(timeout_request.leader_site_id, 0u);
 
   TimeoutNowReply timeout;
   EXPECT_EQ(timeout.follower_term, 0u);
   EXPECT_FALSE(timeout.success);
+
+  NotifyRestartReq restart;
+  EXPECT_EQ(restart.restarted_site_id, 0u);
+
+  NotifyRestartReply restart_reply;
+  EXPECT_FALSE(restart_reply.acknowledged);
+
+  InstallSnapshotReply snapshot_reply;
+  EXPECT_EQ(snapshot_reply.term_out, 0u);
 
   RemoveServerReq remove;
   EXPECT_EQ(remove.term, 0u);

@@ -2,6 +2,7 @@
 #include "server.h"
 
 #include "rrr/rrr.hpp"
+#include <rusty/slice.hpp>
 
 // @external: {
 //   Log_info:   [safe, (...) -> void]
@@ -16,6 +17,37 @@
 namespace janus {
 
 using rusty::Result;
+
+// Pure RPC availability decisions over copied booleans. Each call site still
+// computes `disconnected` behind a `has_server && ...` guard so the generated
+// helper cannot broaden raw-pointer evaluation.
+#if RUSTYCPP_RUST
+pub const fn raft_service_server_unavailable(has_server: bool,
+                                             disconnected: bool) -> bool {
+    !has_server || disconnected
+}
+
+pub const fn raft_service_poll_thread_available(found: bool,
+                                                has_poll_thread: bool) -> bool {
+    found && has_poll_thread
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_service.scalar_decisions version=1 rust_sha256=dce2a2fed89f82866bf56d0044ab7dc1495b4aa7ceb893ba25be6227e0514b68*/
+constexpr bool raft_service_server_unavailable(bool has_server, bool disconnected);
+constexpr bool raft_service_poll_thread_available(bool found, bool has_poll_thread);
+constexpr bool raft_service_server_unavailable(bool has_server, bool disconnected) {
+    return !has_server || rusty::detail::deref_if_pointer_like(disconnected);
+}
+constexpr bool raft_service_poll_thread_available(bool found, bool has_poll_thread) {
+    return rusty::detail::deref_if_pointer_like(found) && rusty::detail::deref_if_pointer_like(has_poll_thread);
+}
+/*RUSTYCPP:GEN-END id=raft_service.scalar_decisions*/
+
+static_assert(raft_service_server_unavailable(false, false));
+static_assert(raft_service_server_unavailable(true, true));
+static_assert(!raft_service_server_unavailable(true, false));
+static_assert(raft_service_poll_thread_available(true, true));
+static_assert(!raft_service_poll_thread_available(false, true));
 
 // =====================================================================
 // Fiber-RPC handlers.
@@ -38,7 +70,9 @@ Result<RaftService::RpcVoteResponse, rrr::i32>
 RaftServiceImpl::Vote(const RpcVoteRequest& req) {
   RpcVoteResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.max_ballot = req.cur_term;
     resp.vote_granted = false;
     return Result<RpcVoteResponse, rrr::i32>::Ok(resp);
@@ -53,7 +87,9 @@ Result<RaftService::RpcVoteDurableResponse, rrr::i32>
 RaftServiceImpl::VoteDurable(const RpcVoteDurableRequest& req) {
   RpcVoteDurableResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.acknowledged = false;
     return Result<RpcVoteDurableResponse, rrr::i32>::Ok(resp);
   }
@@ -65,7 +101,9 @@ Result<RaftService::RpcAppendEntriesResponse, rrr::i32>
 RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
   RpcAppendEntriesResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.followerAppendOK = 0;
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
@@ -87,7 +125,9 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
   Log_debug("RaftServiceImpl: EmptyAppendEntries answering leader {}", req.leaderSiteId);
   RpcEmptyAppendEntriesResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.followerAppendOK = 0;
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
@@ -113,7 +153,9 @@ Result<RaftService::RpcAppendEntriesDurableResponse, rrr::i32>
 RaftServiceImpl::AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) {
   RpcAppendEntriesDurableResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.acknowledged = false;
     return Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(resp);
   }
@@ -126,7 +168,9 @@ Result<RaftService::RpcTimeoutNowResponse, rrr::i32>
 RaftServiceImpl::TimeoutNow(const RpcTimeoutNowRequest& req) {
   RpcTimeoutNowResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.followerTerm = 0;
     resp.success = false;
     return Result<RpcTimeoutNowResponse, rrr::i32>::Ok(resp);
@@ -142,7 +186,9 @@ RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
            req.restartedSiteId);
   RpcNotifyRestartResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.acknowledged = false;
     return Result<RpcNotifyRestartResponse, rrr::i32>::Ok(resp);
   }
@@ -167,7 +213,9 @@ Result<RaftService::RpcInstallSnapshotResponse, rrr::i32>
 RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
   RpcInstallSnapshotResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.term_out = 0;
     return Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(resp);
   }
@@ -181,7 +229,9 @@ Result<RaftService::RpcAddServerResponse, rrr::i32>
 RaftServiceImpl::AddServer(const RpcAddServerRequest& req) {
   RpcAddServerResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.success = false;
     resp.error_msg = "server down";
     resp.leader_hint = 0;
@@ -196,7 +246,9 @@ Result<RaftService::RpcRemoveServerResponse, rrr::i32>
 RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) {
   RpcRemoveServerResponse resp{};
   RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  bool has_server = svr != nullptr;
+  bool disconnected = has_server && svr->IsDisconnected();
+  if (raft_service_server_unavailable(has_server, disconnected)) {
     resp.success = false;
     resp.error_msg = "server down";
     resp.leader_hint = 0;
@@ -246,7 +298,9 @@ rusty::Option<rusty::Arc<rrr::PollThread>>
 RaftServiceImpl::GetPollThread(siteid_t site_id) {
   std::lock_guard<std::mutex> lock(registry_mutex_);
   auto it = service_registry_.find(site_id);
-  if (it != service_registry_.end() && it->second->poll_thread_.is_some()) {
+  bool found = it != service_registry_.end();
+  bool has_poll_thread = found && it->second->poll_thread_.is_some();
+  if (raft_service_poll_thread_available(found, has_poll_thread)) {
     return rusty::Some(it->second->poll_thread_.as_ref().unwrap().clone());
   }
   return rusty::None;

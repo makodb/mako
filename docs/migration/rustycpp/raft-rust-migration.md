@@ -53,17 +53,20 @@ An independently maintained Rust port is not a migration stage.
 - Complete value/POD and plain-control-flow work before stateful, inherited,
   threaded, RPC, storage, or snapshot boundaries.
 
-The conservative Stage-1 pass owns 12 blocks in eight carriers. It covers nine
-fixed-representation enums, the disk-diagnostic `RaftData` record, the pure
-preferred-leader predicate, and two startup argument helpers. The scalar RPC
-records remain handwritten because the pinned emitter cannot preserve their
-C++ default member
-initializers: emitting bare fields would change `T value;` from zeroed to
-indeterminate and change default-construction traits. Tests and adjacent
-assertions pin aggregate status, exact member types, field offsets,
-size, alignment, both C++ initialization forms, enum discriminants, snapshot
-bytes, the legacy handling of unknown snapshot bytes, and raw
-replicated-operation values.
+The current Stage-1 pass owns 40 blocks in 22 carriers. A fixed
+nonblank/non-comment census extracts 897 Rust lines, about 10.77% of the 8,330
+meaningful lines in the standard-Raft baseline used for this migration. This
+is 59.0% of PR #79's approximately 1,520-line/18.25% DSL surface, while
+excluding its state-core, container, interface, and behavior changes.
+
+The owned surface now includes fixed-representation values, all 15
+scalar-only RPC request/reply records, pure quorum/storage/snapshot/worker
+decisions, append-rejection backoff arithmetic, coordinator guards, log-entry
+ordering and wire-boolean conversion, test-harness index math, and the full
+CRC32 update loop. Tests and adjacent assertions pin aggregate status, exact
+member types, field offsets, size, alignment, plain/value/positional
+initialization, enum discriminants, snapshot bytes, signed and wrapping edge
+cases, and legacy handling of unknown values.
 
 ### Stage 2: exact Rust extraction
 
@@ -115,44 +118,105 @@ but its changes must be re-authored against current main and the current pinned
 emitter.  In particular, generated-C++ post-processing and helper/core reshapes
 are not inherited into this migration.
 
+The catalogue was applied by category:
+
+- Scalar records, fixed-representation enums, copied-scalar decisions, stream
+  arithmetic, and the CRC32 loop were re-authored where the current emitter can
+  reproduce the incumbent C++ contract exactly.
+- Mixed records were split at their boundary: scalar message families and leaf
+  methods moved, while command/string/array-bearing containers stayed C++.
+- State cores, traits/vtables, providers, ownership/container substitutions,
+  callback-readiness assertions, and generated-output patching were rejected.
+  Those are preparation or provider migrations, not source-ownership changes.
+
 ## Current status (2026-08-23)
 
-- The behavior- and structure-preserving Stage-1 candidate set in Raft-owned
-  code on the current tree is exhausted: 13 declarations or bodies are owned by
-  12 Rust DSL blocks in eight existing Raft carriers. Production still compiles
-  only their adjacent generated C++.
-- No RPC message record is claimed as Rust-owned yet. Even the scalar records
-  have a C++ plain-default-initialization contract the pinned emitter cannot
-  reproduce; focused tests now pin that stopping boundary.
+- The behavior- and structure-preserving PR-catalogue candidate set in
+  Raft-owned code is exhausted at 40 Rust DSL blocks in 22 carriers (897
+  extracted Rust lines, approximately 10.77% of the fixed standard-Raft
+  baseline). Production still compiles only the adjacent generated C++.
+- All 15 scalar-only RPC request/reply records are Rust-owned. The emitter's
+  exact inert `#[cfg_attr(any(), cpp_value_init)]` field marker generates the
+  incumbent C++ `{}` default member initializer while retaining aggregate,
+  layout, trivial-copy, plain-default-zero, value-init, and positional-init
+  contracts. Command- and string-bearing records remain C++-owned.
 - Value ownership includes `RecoveryMode`, `NotifyRestartStatus`,
   `StepDownReason`, `CommitStatus`, `AckType`, both snapshot mode enums,
   `ReplicatedDBOp`, `RaftGroupMode`, and the six-word disk diagnostic
   `RaftData`.
-- The three owned function bodies are `IsPreferredLeaderConfigured`,
-  `equals_ignore_case`, and `is_raft_group_mode_arg`. They retain their
-  anonymous-namespace C++ linkage and byte behavior. The case-fold helper uses
-  one narrow `tolower` C import so extracted Rust and emitted C++ both preserve
-  the legacy unsigned-byte, process-locale contract.
+- Pure copied-scalar decisions now cover the server, worker, coordinator,
+  communicator, quorum, channel transport, storage, recovery, snapshot,
+  service, frame, and test-harness leaves. Locks, atomics, RPC callbacks,
+  container traversal, persistence, filesystem/RocksDB calls, logging, and
+  branch sequencing remain at their original C++ call sites.
+- The CRC32 hot loop is Rust DSL, using raw pointers so each byte is observed
+  before the accumulator mutation even when input aliases the CRC object's
+  representation. Its generated optimized kernel is instruction-for-
+  instruction identical to the incumbent. The production lookup table contains
+  legacy non-IEEE entries; tests pin its existing checksum bytes rather than
+  silently changing persisted snapshots. Correcting that table requires a
+  separately versioned format change. The argument case-fold helper keeps its
+  narrow C `tolower` import and legacy unsigned-byte/process-locale domain.
 - The source gate pins emitter commit
-  `a1f8fef85e8d43bb00f85f8ef32e5ecc69408642`, ratchets the exact block
+  `77c3ad5a9ab69190ee361986caf579afa2eae570`, ratchets the exact block
   inventory, rejects source or generated-output drift, performs a clean
   temporary rewrite, and compiles every extracted carrier with real `rustc`.
   CMake production/test targets and CI depend on this gate.
 - The earlier standalone canonical-Rust quorum slice remains an experimental
   Stage-2 build-plumbing reference only; it is not part of this lineage.
 
+## Validation evidence (2026-08-23)
+
+- `scripts/raft_dsl.sh --check` accepts the frozen 40-block/22-carrier
+  inventory with zero failures. The RRR provenance gates report five
+  drift-free files, 37 manifest modules, and 79 passing extraction tests.
+- The pinned emitter's focused `cpp_value_init` suite passes five
+  unit/golden cases plus a Clang compile-and-run ABI smoke test; `cargo check`,
+  clippy, and the generated-diff check are clean. Its full suite has 2,364
+  passing and one ignored test; the three remaining failures are pre-existing,
+  unrelated marker-free direct-CodeGen fixtures.
+- A fresh Clang 22/libc++ Release build with `MAKO_USE_RAFT=ON` and
+  `RAFT_TEST=ON` compiles the final Raft, replicated-DB, txlog, disk-reader,
+  and nine focused test targets. Focused CTest is 9/9 green, including all six
+  standalone three-node, disconnect, partition, durable-write, and unknown-op
+  lab scenarios.
+- `rrr_goal0_dual_compile` compiles 38 modules with zero hand slots, links the
+  combined generated/production importer, passes every listed layout/runtime
+  contract, and matches 1,961 provider-owned strong ABI symbols.
+- Strict ASan+UBSan is green for all eight snapshot/CRC tests and for the
+  message and quorum suites. The unsuppressed broad lane is 4/9: its other
+  five executables stop only at the pre-existing `operator new` to
+  `rusty::Box`/`free` allocator mismatch; the involved call sites and runtime
+  headers are byte-identical to the baseline. Suppressing only that known
+  mismatch, while retaining leak detection and UBSan halt-on-error, makes the
+  broad lane 9/9 green. The migration does not hide or repair that independent
+  runtime defect.
+- Six retained matched baseline/candidate five-process `testNoOps` pairs show
+  98.57 versus 98.29 mean logs/s (candidate -0.28%); the mean paired delta is
+  -0.21% with 5.24% standard deviation. Preferred localhost completes 12/12;
+  the incomplete cluster results on both builds have the same pre-existing
+  peer fast-exit shape at 9/10 logs. This detects no regression, but the
+  harness is capped at ten 10ms-spaced logs and is therefore coarse. A longer
+  one-shard workload cannot be produced from the matched artifacts without a
+  broad module rebuild, so no stronger end-to-end claim is made. Independently,
+  Clang 22 `-O3 -march=native` emits identical 44-byte/14-instruction kernels
+  for the incumbent and generated CRC loop.
+
 ## Conservative Stage-1 stopping and promotion boundary
 
-The declarations left in C++ require emitter support or a representation, API,
-ownership, or call-graph decision rather than a mechanical source-ownership
-change:
+The declarations left in C++ require a representation, API, ownership, or
+call-graph decision rather than another mechanical source-ownership change:
 
-- The scalar RPC records use default member initializers. Removing them leaves
-  layout and value initialization unchanged, but changes plain default
-  initialization (`T value;`) from zeroed to indeterminate and changes
-  `is_trivially_default_constructible`. The pinned emitter has no authenticated
-  field-initializer marker, while constructor and macro substitutes change
-  aggregate semantics or obscure the source contract. They remain handwritten.
+- The new initializer marker is deliberately limited to named ordinary-struct
+  fields whose type is exactly a built-in bool or integer. It rejects active,
+  malformed, qualified, duplicate, wrong-placement, alias, float, character,
+  pointer, reference, array, and container uses. Extending it to non-scalars
+  would require a separate ABI contract and emitter change.
+- Generated free functions are not currently authenticated as C++ `noexcept`.
+  `RecoveryConfig` and `SnapshotConfig` therefore retain their literal default
+  member initializers: routing those literals through helpers changes both
+  implicit default constructors from nothrow to potentially throwing. Tests
+  pin the incumbent construction trait.
 - The duplicated guarded `slotid_t`/`ballot_t` fallback aliases are overridden
   in production by macros from `constants.h` (notably signed `int64_t` for
   `ballot_t`), while their fallback declarations spell unsigned `uint64_t`.
@@ -163,12 +227,19 @@ change:
   violates C++'s one-definition rule even when the platform aliases have the
   same underlying type. It remains C++-owned until the duplicates are moved to
   one shared definition or migrated together in a separate preparation change.
-
 - `AppendEntriesReq` depends on `janus::Command`. Snapshot and membership
   records depend on `std::string`; snapshot data is arbitrary bytes, not UTF-8.
   Inline mode does not yet apply a Rust-to-exact-C++ type map, so pseudo types
   may render C++ but fail the mandatory extracted-Rust gate, while canonical
   Rust `String` renders a different, move-only C++ type.
+- Snapshot-size guards deliberately use wrapping addition at the incumbent
+  `size_t` or `uint64_t` width. This retains malformed-input behavior, including
+  cross-width C++ promotions; overflow hardening must be a separate correctness
+  change before native Rust executes this parser.
+- The test-cluster index helper deliberately retains signed `int32_t` addition
+  and remainder. Its existing callers supply a nonzero server count and values
+  whose sum is representable. Native-Rust promotion must pin or redefine those
+  preconditions rather than accidentally introducing debug-only panics.
 - Stage 1 owns the `ReplicatedDBOp` declaration because its emitted C++ still
   accepts every raw `u8`, including unnamed values, with the same bytes and
   switch behavior. It is not ready for native-Rust promotion: a Rust enum
@@ -180,19 +251,20 @@ change:
   including locale-sensitive folding of bytes above ASCII, but canonical Rust
   must use an OS-string or byte-slice boundary rather than construct `&str`
   from unvalidated `argv` or environment bytes.
-- `SnapshotHeader`, metadata/config records, `LogEntry`, the standard
-  `RaftData`, `FpgaRaftData`, envelopes, pending contexts, and worker records
-  have default member initializers, arrays, strings, commands, callbacks,
-  pointers, atomics, guarded type aliases, or methods whose exact shape the
-  pinned inline emitter cannot preserve.
+- `SnapshotHeader`, full metadata/config records, the full `LogEntry`, the
+  standard `RaftData`, `FpgaRaftData`, envelopes, pending contexts, and worker
+  records still have arrays, strings, commands, callbacks, pointers, atomics,
+  guarded type aliases, or mixed methods whose exact shape the inline emitter
+  cannot preserve. Their scalar leaf methods are already owned where doing so
+  does not move the containing object or alter construction traits.
 - The remaining FPGA-Raft records and its nested status/phase enums contain
   commands, raw pointers, anonymous or unscoped nested enums, methods, or
   thread state. Crossing them requires a provider-level tranche.
-- Existing class methods cannot be projected independently: an `impl` for a
-  hand-written C++ class emits an orphan placeholder, and generated header
-  definitions are not C++ `inline`. Whole inherited/vtable, RPC, storage,
-  RocksDB/filesystem, scheduler, thread, and test-harness providers therefore
-  wait for provider-level migration support.
+- Existing class methods cannot generally be projected independently: an
+  `impl` for a hand-written C++ class emits an orphan placeholder. The pass
+  therefore takes free scalar helpers and one audited raw-pointer loop, while
+  whole inherited/vtable, RPC, storage, RocksDB/filesystem, scheduler, and
+  thread providers wait for provider-level migration support.
 - The remaining timeout/environment helpers call C++-owned dependencies or use
   static environment caches. Foreign declarations could make isolated wrappers
   compile, but would expand the bridge and call-graph surface while migrating

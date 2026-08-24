@@ -25,13 +25,100 @@
 #include <mutex>
 #include <regex>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
+
+#include <rusty/num.hpp>
+#include <rusty/slice.hpp>
 
 #include "snapshot_format.hpp"
 #include "snapshot_manager.hpp"
 
 namespace janus {
 namespace raft {
+
+#if RUSTYCPP_RUST
+pub const fn file_snapshot_advance_offset(offset: usize,
+                                          size: usize) -> usize {
+    offset.wrapping_add(size)
+}
+
+pub const fn file_snapshot_reader_bytes_to_read(data_size: usize,
+                                                offset: usize,
+                                                buffer_size: usize) -> usize {
+    let remaining = data_size.wrapping_sub(offset);
+    if buffer_size < remaining {
+        buffer_size
+    } else {
+        remaining
+    }
+}
+
+pub const fn file_snapshot_reader_is_complete(valid: bool,
+                                              data_size: usize,
+                                              offset: usize) -> bool {
+    valid && offset >= data_size
+}
+
+pub const fn file_snapshot_should_prune(snapshot_index: u64,
+                                        keep_after_index: u64) -> bool {
+    snapshot_index < keep_after_index
+}
+
+pub const fn file_snapshot_has_latest(snapshot_count: usize) -> bool {
+    snapshot_count > 0
+}
+
+pub const fn file_snapshot_retention_required(snapshot_count: usize,
+                                              max_snapshots: usize) -> bool {
+    snapshot_count > max_snapshots
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_file_snapshot.scalar_decisions version=1 rust_sha256=3c1a8d6828eb41e802454104731e8af131c2e4be76409f3cc383538946aaaf47*/
+constexpr size_t file_snapshot_advance_offset(size_t offset, size_t size);
+constexpr size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size);
+constexpr bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset);
+constexpr bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index);
+constexpr bool file_snapshot_has_latest(size_t snapshot_count);
+constexpr bool file_snapshot_retention_required(size_t snapshot_count, size_t max_snapshots);
+constexpr size_t file_snapshot_advance_offset(size_t offset, size_t size) {
+    return rusty::wrapping_add(offset, static_cast<std::remove_cvref_t<decltype(offset)>>(std::move(size)));
+}
+constexpr size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size) {
+    auto remaining = rusty::wrapping_sub(data_size, static_cast<std::remove_cvref_t<decltype(data_size)>>(std::move(offset)));
+    if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {
+        return std::move(buffer_size);
+    } else {
+        return std::move(remaining);
+    }
+}
+constexpr bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset) {
+    return rusty::detail::deref_if_pointer_like(valid) && (rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(data_size));
+}
+constexpr bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index) {
+    return rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(keep_after_index);
+}
+constexpr bool file_snapshot_has_latest(size_t snapshot_count) {
+    return rusty::detail::deref_if_pointer_like(snapshot_count) > 0;
+}
+constexpr bool file_snapshot_retention_required(size_t snapshot_count, size_t max_snapshots) {
+    return rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots);
+}
+/*RUSTYCPP:GEN-END id=raft_file_snapshot.scalar_decisions*/
+
+static_assert(file_snapshot_advance_offset(7, 5) == 12);
+static_assert(file_snapshot_advance_offset(static_cast<size_t>(-1), 1) == 0);
+static_assert(file_snapshot_reader_bytes_to_read(10, 4, 3) == 3);
+static_assert(file_snapshot_reader_bytes_to_read(10, 4, 9) == 6);
+static_assert(!file_snapshot_reader_is_complete(false, 10, 10));
+static_assert(file_snapshot_reader_is_complete(true, 10, 10));
+static_assert(file_snapshot_should_prune(9, 10));
+static_assert(!file_snapshot_should_prune(10, 10));
+static_assert(!file_snapshot_has_latest(0));
+static_assert(file_snapshot_has_latest(1));
+static_assert(file_snapshot_retention_required(4, 3));
+static_assert(!file_snapshot_retention_required(3, 3));
 
 /**
  * File-based snapshot writer.
@@ -70,7 +157,7 @@ class FileSnapshotWriter : public SnapshotWriter {
       return false;
     }
     buffer_.append(data, size);
-    offset_ += size;
+    offset_ = file_snapshot_advance_offset(offset_, size);
     return true;
   }
 
@@ -234,11 +321,11 @@ class FileSnapshotReader : public SnapshotReader {
       return false;
     }
 
-    size_t remaining = data_.size() - read_offset_;
-    size_t to_read = std::min(buffer_size, remaining);
+    size_t to_read = file_snapshot_reader_bytes_to_read(
+        data_.size(), read_offset_, buffer_size);
     if (to_read > 0) {
       std::memcpy(buffer, data_.data() + read_offset_, to_read);
-      read_offset_ += to_read;
+      read_offset_ = file_snapshot_advance_offset(read_offset_, to_read);
     }
     *bytes_read = to_read;
     return true;
@@ -246,7 +333,8 @@ class FileSnapshotReader : public SnapshotReader {
 
   // @unsafe - Check if all data read
   bool IsComplete() const override {
-    return valid_ && read_offset_ >= data_.size();
+    return file_snapshot_reader_is_complete(
+        valid_, data_.size(), read_offset_);
   }
 
   // @lifetime: (&'a) -> &'a
@@ -399,7 +487,8 @@ class FileSnapshotManager : public SnapshotManager {
     size_t deleted = 0;
 
     for (const auto& snap : snapshots) {
-      if (snap.last_included_index < keep_after_index) {
+      if (file_snapshot_should_prune(
+              snap.last_included_index, keep_after_index)) {
         std::string path = GetSnapshotPath(snap.last_included_index,
                                             snap.last_included_term);
         if (unlink(path.c_str()) == 0) {
@@ -505,7 +594,7 @@ class FileSnapshotManager : public SnapshotManager {
   // @unsafe (must hold mutex)
   rusty::Option<SnapshotMetadata> GetLatestSnapshotUnlocked() const {
     auto snapshots = ListSnapshotsUnlocked();
-    if (snapshots.empty()) {
+    if (!file_snapshot_has_latest(snapshots.size())) {
       return rusty::None;
     }
     return rusty::Some(snapshots[0]);
@@ -514,7 +603,8 @@ class FileSnapshotManager : public SnapshotManager {
   // @unsafe - Deletes files (must hold mutex)
   void ApplyRetentionPolicy() {
     auto snapshots = ListSnapshotsUnlocked();
-    if (snapshots.size() <= config_.max_snapshots) {
+    if (!file_snapshot_retention_required(
+            snapshots.size(), config_.max_snapshots)) {
       return;
     }
 

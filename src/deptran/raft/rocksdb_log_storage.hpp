@@ -15,11 +15,13 @@
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <utility>
 
 #include <rocksdb/c.h>
 
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
+#include <rusty/slice.hpp>
 
 #include "log_storage.hpp"
 #include "rrr/rrr.hpp"
@@ -28,6 +30,60 @@
 
 namespace janus {
 namespace raft {
+
+#if RUSTYCPP_RUST
+pub const fn rocksdb_log_storage_is_closed(is_open: bool) -> bool {
+    !is_open
+}
+
+pub const fn rocksdb_log_storage_missing_db(has_db: bool) -> bool {
+    !has_db
+}
+
+pub const fn rocksdb_log_range_valid(start: u64, end: u64) -> bool {
+    start < end
+}
+
+pub const fn rocksdb_log_empty_from_size(size: usize) -> bool {
+    size == 0
+}
+
+pub const fn rocksdb_log_value_present(has_value: bool) -> bool {
+    has_value
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_rocksdb_log.scalar_decisions version=1 rust_sha256=6873d59cc6d236720ec1fe897315083d9cb97b9636d9825edaf651a8e2ad4555*/
+constexpr bool rocksdb_log_storage_is_closed(bool is_open);
+constexpr bool rocksdb_log_storage_missing_db(bool has_db);
+constexpr bool rocksdb_log_range_valid(uint64_t start, uint64_t end);
+constexpr bool rocksdb_log_empty_from_size(size_t size);
+constexpr bool rocksdb_log_value_present(bool has_value);
+constexpr bool rocksdb_log_storage_is_closed(bool is_open) {
+    return !is_open;
+}
+constexpr bool rocksdb_log_storage_missing_db(bool has_db) {
+    return !has_db;
+}
+constexpr bool rocksdb_log_range_valid(uint64_t start, uint64_t end) {
+    return rusty::detail::deref_if_pointer_like(start) < rusty::detail::deref_if_pointer_like(end);
+}
+constexpr bool rocksdb_log_empty_from_size(size_t size) {
+    return rusty::detail::deref_if_pointer_like(size) == static_cast<size_t>(0);
+}
+constexpr bool rocksdb_log_value_present(bool has_value) {
+    return std::move(has_value);
+}
+/*RUSTYCPP:GEN-END id=raft_rocksdb_log.scalar_decisions*/
+
+static_assert(!rocksdb_log_storage_is_closed(true));
+static_assert(rocksdb_log_storage_is_closed(false));
+static_assert(!rocksdb_log_storage_missing_db(true));
+static_assert(rocksdb_log_storage_missing_db(false));
+static_assert(rocksdb_log_range_valid(1, 2));
+static_assert(!rocksdb_log_range_valid(2, 2));
+static_assert(rocksdb_log_empty_from_size(0));
+static_assert(!rocksdb_log_empty_from_size(1));
+static_assert(rocksdb_log_value_present(true));
 
 /**
  * RocksDB-backed implementation of LogStorage.
@@ -207,7 +263,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     rusty::Option<LogEntry> get(slotid_t slot_id) const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return rusty::None;
         }
 
@@ -220,7 +277,7 @@ public:
             take_rocksdb_error(&err);
             return rusty::None;
         }
-        if (value_ptr == nullptr) {
+        if (!rocksdb_log_value_present(value_ptr != nullptr)) {
             return rusty::None;
         }
 
@@ -237,7 +294,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     bool put(const LogEntry& entry) override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return false;
         }
 
@@ -258,7 +316,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     bool remove(slotid_t slot_id) override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return false;
         }
 
@@ -272,7 +331,7 @@ public:
             take_rocksdb_error(&err);
             return false;
         }
-        if (value_ptr == nullptr) {
+        if (!rocksdb_log_value_present(value_ptr != nullptr)) {
             return false;  // Key doesn't exist
         }
         rocksdb_free(value_ptr);
@@ -292,7 +351,9 @@ public:
     // @unsafe - Uses RocksDB API
     std::vector<LogEntry> get_range(slotid_t start, slotid_t end) const override {
         std::vector<LogEntry> result;
-        if (!is_open_.get() || db_ == nullptr || start >= end) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr) ||
+            !rocksdb_log_range_valid(start, end)) {
             return result;
         }
 
@@ -334,7 +395,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     bool put_batch(const std::vector<LogEntry>& entries) override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return false;
         }
 
@@ -365,7 +427,9 @@ public:
 
     // @unsafe - Uses RocksDB API
     bool remove_range(slotid_t start, slotid_t end) override {
-        if (!is_open_.get() || db_ == nullptr || start >= end) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr) ||
+            !rocksdb_log_range_valid(start, end)) {
             return false;
         }
 
@@ -420,7 +484,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     slotid_t get_first_index() const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return 0;
         }
 
@@ -454,7 +519,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     slotid_t get_last_index() const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return 0;
         }
 
@@ -505,7 +571,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     size_t size() const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return 0;
         }
 
@@ -538,7 +605,7 @@ public:
 
     // @unsafe - Calls size() which uses RocksDB
     bool empty() const override {
-        return size() == 0;  // @unsafe
+        return rocksdb_log_empty_from_size(size());  // @unsafe
     }
 
     // ========================================================================
@@ -547,7 +614,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     bool set_metadata(const std::string& key, const std::string& value) override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return false;
         }
 
@@ -564,7 +632,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     rusty::Option<std::string> get_metadata(const std::string& key) const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return rusty::None;
         }
 
@@ -579,7 +648,7 @@ public:
             take_rocksdb_error(&err);
             return rusty::None;
         }
-        if (value_ptr == nullptr) {
+        if (!rocksdb_log_value_present(value_ptr != nullptr)) {
             return rusty::None;
         }
 
@@ -594,7 +663,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     bool sync() override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return false;
         }
 
@@ -636,7 +706,8 @@ public:
 
     // @unsafe - Uses RocksDB API
     bool clear() override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
             return false;
         }
 

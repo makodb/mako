@@ -7,7 +7,9 @@
 #include "messages.hpp"
 #include <map>
 #include <mutex>
+#include <rusty/slice.hpp>
 #include <type_traits>
+#include <utility>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -64,6 +66,103 @@ static_assert(static_cast<int32_t>(NotifyRestartStatus::ACKNOWLEDGED) == 0);
 static_assert(static_cast<int32_t>(NotifyRestartStatus::PENDING) == 1);
 static_assert(NotifyRestartStatus{} == NotifyRestartStatus::ACKNOWLEDGED);
 
+// Pure Raft communicator decisions over copied scalar values. RPC ownership,
+// callback lifetimes, proxy access, and restart-status locking stay in C++.
+#if RUSTYCPP_RUST
+pub const fn commo_append_entries_empty_from_cmd(has_cmd: bool) -> bool {
+    !has_cmd
+}
+
+pub const fn commo_append_entries_reply_lost(ok: u64,
+                                             term: u64,
+                                             last_log_index: u64) -> bool {
+    ok == 0 && term == 0 && last_log_index == 0
+}
+
+pub const fn commo_append_entries_done_from_reply(ok: u64,
+                                                  term: u64,
+                                                  last_log_index: u64) -> bool {
+    !commo_append_entries_reply_lost(ok, term, last_log_index)
+}
+
+pub const fn commo_proxy_is_target(proxy_site: u16, target_site: u16) -> bool {
+    proxy_site == target_site
+}
+
+pub const fn commo_proxy_is_self(proxy_site: u16, self_site: u16) -> bool {
+    proxy_site == self_site
+}
+
+pub const fn commo_future_failed(error_code: i32) -> bool {
+    error_code != 0
+}
+
+pub const fn commo_notify_restart_is_pending(status: NotifyRestartStatus) -> bool {
+    (status as i32) == (NotifyRestartStatus::PENDING as i32)
+}
+
+pub const fn commo_retry_has_pending_sites(pending_count: usize) -> bool {
+    pending_count != 0
+}
+
+pub const fn commo_quorum_should_record_voter(voter_id: u16) -> bool {
+    voter_id != 0
+}
+
+pub const fn commo_quorum_should_advance_term(candidate_term: i64,
+                                               highest_term: i64) -> bool {
+    candidate_term > highest_term
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_commo.scalar_decisions version=1 rust_sha256=c9ebf40fa51412f9b1d9b63f8343befef1ab7884fce784f5184d31f0bce0ed60*/
+constexpr bool commo_append_entries_empty_from_cmd(bool has_cmd);
+constexpr bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index);
+constexpr bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index);
+constexpr bool commo_proxy_is_target(uint16_t proxy_site, uint16_t target_site);
+constexpr bool commo_proxy_is_self(uint16_t proxy_site, uint16_t self_site);
+constexpr bool commo_future_failed(int32_t error_code);
+constexpr bool commo_retry_has_pending_sites(size_t pending_count);
+constexpr bool commo_quorum_should_record_voter(uint16_t voter_id);
+constexpr bool commo_quorum_should_advance_term(int64_t candidate_term, int64_t highest_term);
+constexpr bool commo_append_entries_empty_from_cmd(bool has_cmd) {
+    return !has_cmd;
+}
+constexpr bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return ((rusty::detail::deref_if_pointer_like(ok) == static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(term) == static_cast<uint64_t>(0))) && (rusty::detail::deref_if_pointer_like(last_log_index) == static_cast<uint64_t>(0));
+}
+constexpr bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return !commo_append_entries_reply_lost(std::move(ok), std::move(term), std::move(last_log_index));
+}
+constexpr bool commo_proxy_is_target(uint16_t proxy_site, uint16_t target_site) {
+    return rusty::detail::deref_if_pointer_like(proxy_site) == rusty::detail::deref_if_pointer_like(target_site);
+}
+constexpr bool commo_proxy_is_self(uint16_t proxy_site, uint16_t self_site) {
+    return rusty::detail::deref_if_pointer_like(proxy_site) == rusty::detail::deref_if_pointer_like(self_site);
+}
+constexpr bool commo_future_failed(int32_t error_code) {
+    return rusty::detail::deref_if_pointer_like(error_code) != static_cast<int32_t>(0);
+}
+constexpr bool commo_notify_restart_is_pending(NotifyRestartStatus status) {
+    return ((static_cast<int32_t>(status))) == ((static_cast<int32_t>(NotifyRestartStatus_PENDING())));
+}
+constexpr bool commo_retry_has_pending_sites(size_t pending_count) {
+    return rusty::detail::deref_if_pointer_like(pending_count) != static_cast<size_t>(0);
+}
+constexpr bool commo_quorum_should_record_voter(uint16_t voter_id) {
+    return rusty::detail::deref_if_pointer_like(voter_id) != static_cast<uint16_t>(0);
+}
+constexpr bool commo_quorum_should_advance_term(int64_t candidate_term, int64_t highest_term) {
+    return rusty::detail::deref_if_pointer_like(candidate_term) > rusty::detail::deref_if_pointer_like(highest_term);
+}
+/*RUSTYCPP:GEN-END id=raft_commo.scalar_decisions*/
+
+static_assert(!commo_retry_has_pending_sites(0));
+static_assert(commo_retry_has_pending_sites(1));
+static_assert(!commo_quorum_should_record_voter(0));
+static_assert(commo_quorum_should_record_voter(1));
+static_assert(commo_quorum_should_advance_term(-1, -2));
+static_assert(!commo_quorum_should_advance_term(-2, -1));
+
 // @unsafe - inherits from non-@interface base QuorumEvent
 class RaftVoteQuorumEvent: public QuorumEventBase {
  private:
@@ -84,13 +183,13 @@ class RaftVoteQuorumEvent: public QuorumEventBase {
       // @unsafe
       { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
       // Track the voter for speculative voting
-      if (voter_id != 0) {
+      if (commo_quorum_should_record_voter(voter_id)) {
         std::lock_guard<std::mutex> lock(voters_mtx_);
         spec_voters_.insert(voter_id);
       }
     } else {
       vote_no();
-      if(term > q().highest_term_.get())
+      if (commo_quorum_should_advance_term(term, q().highest_term_.get()))
       {
         q().highest_term_.set(term);
       }

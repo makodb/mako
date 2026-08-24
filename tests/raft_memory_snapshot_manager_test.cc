@@ -1,6 +1,11 @@
+#include <algorithm>
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <random>
 #include <type_traits>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -35,6 +40,33 @@ static_assert(offsetof(SnapshotHeader, padding) == 50);
 
 namespace {
 
+constexpr std::array<uint32_t, 256> MakeCRC32ProbeTable() {
+  std::array<uint32_t, 256> table{};
+  for (uint32_t i = 0; i < table.size(); ++i) {
+    uint32_t value = i;
+    for (int bit = 0; bit < 8; ++bit) {
+      value = (value >> 1) ^
+              ((value & 1u) != 0 ? 0xEDB88320u : 0u);
+    }
+    table[i] = value;
+  }
+  return table;
+}
+
+inline constexpr auto kCRC32ProbeTable = MakeCRC32ProbeTable();
+
+// Exact pre-migration update loop, parameterized by a table so the DSL-owned
+// loop can be checked independently of CRC32's incumbent private table.
+void IncumbentCRC32Update(uint32_t* crc,
+                          const uint8_t* data,
+                          size_t size,
+                          const uint32_t* table) {
+  for (size_t i = 0; i < size; ++i) {
+    const uint8_t byte = data[i];
+    *crc = table[(*crc ^ byte) & 0xFFu] ^ (*crc >> 8);
+  }
+}
+
 std::string WithRawSnapshotModes(std::string encoded,
                                  uint8_t compression,
                                  uint8_t checksum_type) {
@@ -49,6 +81,74 @@ std::string WithRawSnapshotModes(std::string encoded,
 }
 
 }  // namespace
+
+TEST(SnapshotFormatTest, CRC32KnownBytesAndIncrementalUpdates) {
+  CRC32 empty;
+  empty.Update(nullptr, 0);
+  EXPECT_EQ(empty.Finalize(), 0u);
+  EXPECT_EQ(CRC32::Calculate(nullptr, 0), 0u);
+
+  constexpr char canonical[] = "123456789";
+  EXPECT_EQ(CRC32::Calculate(canonical, sizeof(canonical) - 1),
+            0xCBF43926u);
+
+  constexpr std::array<uint8_t, 5> high_bytes{
+      0x00, 0x7f, 0x80, 0xfe, 0xff};
+  // Pin the incumbent table rather than silently changing persisted snapshot
+  // checksums. Correcting its legacy non-IEEE entries needs a format/version
+  // migration separate from this source-ownership change.
+  EXPECT_EQ(CRC32::Calculate(
+                reinterpret_cast<const char*>(high_bytes.data()),
+                high_bytes.size()),
+            0x009CE935u);
+
+  CRC32 split;
+  split.Update(canonical, 4);
+  split.Update(canonical + 4, sizeof(canonical) - 1 - 4);
+  EXPECT_EQ(split.Finalize(), 0xCBF43926u);
+}
+
+TEST(SnapshotFormatTest, CRC32UpdateLoopMatchesIncumbentAcrossRandomChunking) {
+  std::mt19937_64 random(0x524146545f435243ULL);
+  for (size_t trial = 0; trial < 1000; ++trial) {
+    const size_t size = static_cast<size_t>(random() % 4097);
+    std::vector<uint8_t> bytes(size);
+    for (uint8_t& byte : bytes) {
+      byte = static_cast<uint8_t>(random());
+    }
+
+    uint32_t actual = snapshot_crc32_initial();
+    uint32_t expected = snapshot_crc32_initial();
+    size_t offset = 0;
+    while (offset < size) {
+      const size_t chunk = std::min(
+          size - offset, static_cast<size_t>((random() % 97) + 1));
+      snapshot_crc32_update_buffer(
+          &actual, bytes.data() + offset, chunk, kCRC32ProbeTable.data());
+      IncumbentCRC32Update(
+          &expected, bytes.data() + offset, chunk, kCRC32ProbeTable.data());
+      offset += chunk;
+    }
+    EXPECT_EQ(actual, expected) << "trial=" << trial;
+  }
+}
+
+TEST(SnapshotFormatTest, CRC32PreservesSelfAliasedByteObservation) {
+  for (size_t offset = 0; offset < sizeof(uint32_t); ++offset) {
+    for (size_t size = 0; size <= sizeof(uint32_t) - offset; ++size) {
+      uint32_t actual = snapshot_crc32_initial();
+      uint32_t expected = snapshot_crc32_initial();
+      snapshot_crc32_update_buffer(
+          &actual, reinterpret_cast<const uint8_t*>(&actual) + offset, size,
+          kCRC32ProbeTable.data());
+      IncumbentCRC32Update(
+          &expected, reinterpret_cast<const uint8_t*>(&expected) + offset,
+          size, kCRC32ProbeTable.data());
+      EXPECT_EQ(actual, expected)
+          << "offset=" << offset << " size=" << size;
+    }
+  }
+}
 
 TEST(MemorySnapshotManagerTest, TakeLoadRoundTrip) {
   MemorySnapshotManager mgr;
@@ -114,8 +214,8 @@ TEST(SnapshotFormatTest, DefaultModesPreserveWireBytesAndChecksum) {
             static_cast<uint8_t>(SnapshotCompression::NONE));
   EXPECT_EQ(header.checksum_type,
             static_cast<uint8_t>(SnapshotChecksumType::CRC32));
-  EXPECT_EQ(header.last_index, 42u);
-  EXPECT_EQ(header.last_term, 7u);
+  EXPECT_EQ(static_cast<uint64_t>(header.last_index), 42u);
+  EXPECT_EQ(static_cast<uint64_t>(header.last_term), 7u);
 
   uint32_t stored_crc = 0;
   std::memcpy(&stored_crc,

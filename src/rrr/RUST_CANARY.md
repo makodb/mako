@@ -64,13 +64,13 @@ cargo clippy --locked --workspace --manifest-path src/rrr/Cargo.toml \
 ```
 
 The approved transpiler/runtime stack is the clean rusty-cpp commit
-`a1f8fef85e8d43bb00f85f8ef32e5ecc69408642`. Both the ownership driver
+`77c3ad5a9ab69190ee361986caf579afa2eae570`. Both the ownership driver
 and the crate-mode gate require the repository gitlink, submodule HEAD, and
 the transpiler's one-line build information to identify that exact clean
 source:
 
 ```json
-{"git_hash":"a1f8fef85e8d43bb00f85f8ef32e5ecc69408642","git_dirty":false}
+{"git_hash":"77c3ad5a9ab69190ee361986caf579afa2eae570","git_dirty":false}
 ```
 
 The conventional direct-module layout is intentional. For example,

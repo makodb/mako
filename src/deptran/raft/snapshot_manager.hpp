@@ -15,9 +15,12 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <rusty/option.hpp>
+#include <rusty/slice.hpp>
 
 #include "rrr/rrr.hpp"
 
@@ -36,6 +39,22 @@ using ballot_t = uint64_t;
 /**
  * Metadata about a snapshot.
  */
+#if RUSTYCPP_RUST
+pub const fn snapshot_metadata_is_valid(last_included_index: u64) -> bool {
+    last_included_index > 0
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.metadata_decisions version=1 rust_sha256=3013f5d760a2b6533f8c599a53bd99c9b3ca0d582e606b7bfdcc3a9616a45ab3*/
+constexpr bool snapshot_metadata_is_valid(uint64_t last_included_index);
+constexpr bool snapshot_metadata_is_valid(uint64_t last_included_index) {
+    return rusty::detail::deref_if_pointer_like(last_included_index) > 0;
+}
+/*RUSTYCPP:GEN-END id=raft_snapshot.metadata_decisions*/
+
+static_assert(!snapshot_metadata_is_valid(0));
+static_assert(snapshot_metadata_is_valid(1));
+static_assert(snapshot_metadata_is_valid(UINT64_MAX));
+
 // @safe - POD struct
 struct SnapshotMetadata {
   slotid_t last_included_index{0};  // Last log entry included in snapshot
@@ -46,7 +65,7 @@ struct SnapshotMetadata {
 
   // @safe - Check if metadata is valid
   bool is_valid() const {
-    return last_included_index > 0;
+    return snapshot_metadata_is_valid(last_included_index);
   }
 
   // @unsafe - String formatting
@@ -291,6 +310,8 @@ struct SnapshotConfig {
     return config;
   }
 };
+
+static_assert(std::is_nothrow_default_constructible_v<SnapshotConfig>);
 
 }  // namespace raft
 }  // namespace janus

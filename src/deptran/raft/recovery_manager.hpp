@@ -18,8 +18,10 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 #include <rusty/cell.hpp>
+#include <rusty/slice.hpp>
 
 #include "log_storage.hpp"
 #include "rocksdb_log_storage.hpp"
@@ -68,6 +70,78 @@ static_assert(static_cast<int32_t>(RecoveryMode::NORMAL_RECOVERY) == 1);
 static_assert(static_cast<int32_t>(RecoveryMode::FORCED_FRESH) == 2);
 static_assert(RecoveryMode{} == RecoveryMode::FRESH_START);
 
+// Accept the fixed-representation value instead of constructing an enum from
+// arbitrary bytes. Generated C++ therefore retains the legacy fallback for an
+// unnamed value, while canonical Rust never has to materialize an invalid enum.
+#if RUSTYCPP_RUST
+pub const fn recovery_mode_is_fresh(mode: i32) -> bool {
+    mode == RecoveryMode::FRESH_START as i32 ||
+        mode == RecoveryMode::FORCED_FRESH as i32
+}
+
+pub const fn recovery_mode_needs_recovery(mode: i32) -> bool {
+    mode == RecoveryMode::NORMAL_RECOVERY as i32
+}
+
+pub const fn recovery_should_clear_forced_fresh(mode: i32,
+                                                clear_on_forced_fresh: bool) -> bool {
+    mode == RecoveryMode::FORCED_FRESH as i32 && clear_on_forced_fresh
+}
+
+pub const fn recovery_storage_open_failed(has_storage: bool,
+                                          storage_is_open: bool) -> bool {
+    !has_storage || !storage_is_open
+}
+
+pub const fn recovery_storage_missing(has_storage: bool) -> bool {
+    !has_storage
+}
+
+pub const fn recovery_replay_failed(recover_ok: bool) -> bool {
+    !recover_ok
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_recovery.scalar_decisions version=1 rust_sha256=82bd1904cc9101ad05e09ce7bbb616b88417e35531e9a8aba13d966732d4012a*/
+constexpr bool recovery_mode_is_fresh(int32_t mode);
+constexpr bool recovery_mode_needs_recovery(int32_t mode);
+constexpr bool recovery_should_clear_forced_fresh(int32_t mode, bool clear_on_forced_fresh);
+constexpr bool recovery_storage_open_failed(bool has_storage, bool storage_is_open);
+constexpr bool recovery_storage_missing(bool has_storage);
+constexpr bool recovery_replay_failed(bool recover_ok);
+constexpr bool recovery_mode_is_fresh(int32_t mode) {
+    return (rusty::detail::deref_if_pointer_like(mode) == (static_cast<int32_t>(RecoveryMode_FRESH_START()))) || (rusty::detail::deref_if_pointer_like(mode) == (static_cast<int32_t>(RecoveryMode_FORCED_FRESH())));
+}
+constexpr bool recovery_mode_needs_recovery(int32_t mode) {
+    return rusty::detail::deref_if_pointer_like(mode) == (static_cast<int32_t>(RecoveryMode_NORMAL_RECOVERY()));
+}
+constexpr bool recovery_should_clear_forced_fresh(int32_t mode, bool clear_on_forced_fresh) {
+    return (rusty::detail::deref_if_pointer_like(mode) == (static_cast<int32_t>(RecoveryMode_FORCED_FRESH()))) && rusty::detail::deref_if_pointer_like(clear_on_forced_fresh);
+}
+constexpr bool recovery_storage_open_failed(bool has_storage, bool storage_is_open) {
+    return !has_storage || !storage_is_open;
+}
+constexpr bool recovery_storage_missing(bool has_storage) {
+    return !has_storage;
+}
+constexpr bool recovery_replay_failed(bool recover_ok) {
+    return !recover_ok;
+}
+/*RUSTYCPP:GEN-END id=raft_recovery.scalar_decisions*/
+
+static_assert(recovery_mode_is_fresh(0));
+static_assert(!recovery_mode_is_fresh(1));
+static_assert(recovery_mode_is_fresh(2));
+static_assert(!recovery_mode_is_fresh(99));
+static_assert(recovery_mode_needs_recovery(1));
+static_assert(!recovery_mode_needs_recovery(0));
+static_assert(recovery_should_clear_forced_fresh(2, true));
+static_assert(!recovery_should_clear_forced_fresh(2, false));
+static_assert(recovery_storage_open_failed(false, false));
+static_assert(recovery_storage_open_failed(true, false));
+static_assert(!recovery_storage_open_failed(true, true));
+static_assert(recovery_storage_missing(false));
+static_assert(recovery_replay_failed(false));
+
 /**
  * Configuration for recovery behavior.
  */
@@ -102,6 +176,8 @@ struct RecoveryConfig {
     return config;  // @unsafe
   }
 };
+
+static_assert(std::is_nothrow_default_constructible_v<RecoveryConfig>);
 
 /**
  * Results from a recovery operation.
@@ -185,8 +261,9 @@ class RecoveryManager {
     detected_mode_.set(detect_mode());
 
     // Handle forced fresh start
-    if (detected_mode_.get() == RecoveryMode::FORCED_FRESH &&
-        config_.clear_on_forced_fresh) {
+    if (recovery_should_clear_forced_fresh(
+            static_cast<int32_t>(detected_mode_.get()),
+            config_.clear_on_forced_fresh)) {
       // @unsafe { filesystem operations }
       std::error_code ec;
       std::filesystem::remove_all(config_.storage_path, ec);
@@ -198,7 +275,9 @@ class RecoveryManager {
 
     // Create storage
     storage_ = std::make_shared<RocksDBLogStorage>(config_.storage_path);
-    if (!storage_->is_open()) {
+    if (recovery_storage_open_failed(
+            storage_ != nullptr,
+            storage_ != nullptr && storage_->is_open())) {
       Log_error("Failed to open RocksDB at {}", config_.storage_path.c_str());
       storage_ = nullptr;
       return nullptr;
@@ -217,7 +296,8 @@ class RecoveryManager {
 
   // @safe - Check if recovery is needed (vs fresh start)
   bool needs_recovery() const {
-    return detected_mode_.get() == RecoveryMode::NORMAL_RECOVERY;
+    return recovery_mode_needs_recovery(
+        static_cast<int32_t>(detected_mode_.get()));
   }
 
   // @safe - Get detected mode
@@ -251,8 +331,7 @@ class RecoveryManager {
     auto start_time = std::chrono::steady_clock::now();
 
     // Fresh start: nothing to recover
-    if (result.mode == RecoveryMode::FRESH_START ||
-        result.mode == RecoveryMode::FORCED_FRESH) {
+    if (recovery_mode_is_fresh(static_cast<int32_t>(result.mode))) {
       // Set storage for future persistence
       if (storage_) {
         set_storage(storage_);
@@ -263,7 +342,7 @@ class RecoveryManager {
     }
 
     // Normal recovery
-    if (!storage_) {
+    if (recovery_storage_missing(storage_ != nullptr)) {
       return RecoveryResult::failure("Storage not initialized");
     }
 
@@ -271,7 +350,7 @@ class RecoveryManager {
     set_storage(storage_);
 
     // Recover state
-    if (!recover()) {
+    if (recovery_replay_failed(recover())) {
       return RecoveryResult::failure("RecoverFromStorage failed");
     }
 

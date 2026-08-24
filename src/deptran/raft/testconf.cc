@@ -14,11 +14,54 @@
 
 #include "rrr/rrr.hpp"
 
+#include <rusty/slice.hpp>
+
 import std;
 
 namespace janus {
 
 #ifdef RAFT_TEST_CORO
+
+// Test-harness-only index decisions. Keep signed i32 arithmetic so the
+// generated C++ retains the incumbent overflow and division preconditions.
+#if RUSTYCPP_RUST
+pub const fn raft_test_server_index_is_valid(index: i32,
+                                              server_count: i32) -> bool {
+    index >= 0 && index < server_count
+}
+
+pub const fn raft_test_wrapped_server_index(index: i32,
+                                             offset: i32,
+                                             server_count: i32) -> i32 {
+    let mut wrapped = (index + offset) % server_count;
+    if wrapped < 0 {
+        wrapped += server_count;
+    }
+    wrapped
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_testconf.index_math version=1 rust_sha256=825eeaaa081055ba1b00d92dc254a79ff67c700f9436a9d7ddc5dc7a8f119dec*/
+constexpr bool raft_test_server_index_is_valid(int32_t index, int32_t server_count);
+constexpr int32_t raft_test_wrapped_server_index(int32_t index, int32_t offset, int32_t server_count);
+constexpr bool raft_test_server_index_is_valid(int32_t index, int32_t server_count) {
+    return (rusty::detail::deref_if_pointer_like(index) >= 0) && (rusty::detail::deref_if_pointer_like(index) < rusty::detail::deref_if_pointer_like(server_count));
+}
+constexpr int32_t raft_test_wrapped_server_index(int32_t index, int32_t offset, int32_t server_count) {
+    auto wrapped = ((rusty::detail::deref_if_pointer_like(index) + rusty::detail::deref_if_pointer_like(offset))) % rusty::detail::deref_if_pointer_like(server_count);
+    if (rusty::detail::deref_if_pointer_like(wrapped) < 0) {
+        rusty::detail::deref_if_pointer_like(wrapped) += server_count;
+    }
+    return std::move(wrapped);
+}
+/*RUSTYCPP:GEN-END id=raft_testconf.index_math*/
+
+static_assert(!raft_test_server_index_is_valid(-1, 5));
+static_assert(raft_test_server_index_is_valid(0, 5));
+static_assert(raft_test_server_index_is_valid(4, 5));
+static_assert(!raft_test_server_index_is_valid(5, 5));
+static_assert(raft_test_wrapped_server_index(4, 1, 5) == 0);
+static_assert(raft_test_wrapped_server_index(0, -1, 5) == 4);
+static_assert(raft_test_wrapped_server_index(0, -6, 5) == 4);
 
 int _test_id_g = 0;
 
@@ -802,7 +845,7 @@ siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
 
 siteid_t RaftTestConfig::getServerIdByIndex(int index) const {
   // Get server ID by its position in the replicas map (0-4)
-  if (index < 0 || index >= NSERVERS) {
+  if (!raft_test_server_index_is_valid(index, NSERVERS)) {
     // Index out of range, return -1
     return -1;
   }
@@ -836,10 +879,8 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
   }
   
   // Calculate new index with wrapping
-  int new_index = (current_index + offset) % NSERVERS;
-  if (new_index < 0) {
-    new_index += NSERVERS;
-  }
+  int new_index = raft_test_wrapped_server_index(
+      current_index, offset, NSERVERS);
   
   siteid_t result = getServerIdByIndex(new_index);
   if (result == -1) {

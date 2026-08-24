@@ -22,6 +22,11 @@
 #include <cstring>
 #include <string>
 #include <type_traits>
+#include <utility>
+
+#include <rusty/num.hpp>
+#include <rusty/ptr.hpp>
+#include <rusty/slice.hpp>
 
 #include "rrr/rrr.hpp"
 #include "rrr_log.h"
@@ -102,6 +107,82 @@ static_assert(static_cast<uint8_t>(SnapshotChecksumType::CRC32) == 1);
 static_assert(static_cast<uint8_t>(SnapshotChecksumType::SHA256) == 2);
 static_assert(SnapshotChecksumType{} == SnapshotChecksumType::NONE);
 
+// Scalar format decisions stay byte-oriented so the generated C++ preserves
+// the legacy handling of unnamed on-disk mode values. Rust `const fn`s emit as
+// C++ `constexpr`, keeping these header definitions inline without a post-pass.
+#if RUSTYCPP_RUST
+pub const fn snapshot_magic_valid(magic: u32) -> bool {
+    magic == 0x504E4153
+}
+
+pub const fn snapshot_version_valid(version: u32) -> bool {
+    version == 1
+}
+
+pub const fn snapshot_compression_supported(compression: u8) -> bool {
+    compression == SnapshotCompression::NONE as u8
+}
+
+pub const fn snapshot_checksum_enabled(checksum_type: u8) -> bool {
+    checksum_type == SnapshotChecksumType::CRC32 as u8
+}
+
+pub const fn snapshot_checksum_size(checksum_type: u8) -> usize {
+    if snapshot_checksum_enabled(checksum_type) {
+        4
+    } else {
+        0
+    }
+}
+
+pub const fn snapshot_expected_serialized_size(header_size: usize,
+                                               data_size: usize,
+                                               checksum_size: usize) -> usize {
+    header_size.wrapping_add(data_size).wrapping_add(checksum_size)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.format_decisions version=1 rust_sha256=c4fca66e2377c08c00ea74ecd23282df72dd7e91c03593fd922e8563655a7d7a*/
+constexpr bool snapshot_magic_valid(uint32_t magic);
+constexpr bool snapshot_version_valid(uint32_t version);
+constexpr bool snapshot_compression_supported(uint8_t compression);
+constexpr bool snapshot_checksum_enabled(uint8_t checksum_type);
+constexpr size_t snapshot_checksum_size(uint8_t checksum_type);
+constexpr size_t snapshot_expected_serialized_size(size_t header_size, size_t data_size, size_t checksum_size);
+constexpr bool snapshot_magic_valid(uint32_t magic) {
+    return rusty::detail::deref_if_pointer_like(magic) == static_cast<uint32_t>(1347305811);
+}
+constexpr bool snapshot_version_valid(uint32_t version) {
+    return rusty::detail::deref_if_pointer_like(version) == static_cast<uint32_t>(1);
+}
+constexpr bool snapshot_compression_supported(uint8_t compression) {
+    return rusty::detail::deref_if_pointer_like(compression) == (static_cast<uint8_t>(SnapshotCompression_NONE()));
+}
+constexpr bool snapshot_checksum_enabled(uint8_t checksum_type) {
+    return rusty::detail::deref_if_pointer_like(checksum_type) == (static_cast<uint8_t>(SnapshotChecksumType_CRC32()));
+}
+constexpr size_t snapshot_checksum_size(uint8_t checksum_type) {
+    if (snapshot_checksum_enabled(std::move(checksum_type))) {
+        return static_cast<size_t>(4);
+    } else {
+        return static_cast<size_t>(0);
+    }
+}
+constexpr size_t snapshot_expected_serialized_size(size_t header_size, size_t data_size, size_t checksum_size) {
+    return rusty::wrapping_add(rusty::wrapping_add(header_size, static_cast<std::remove_cvref_t<decltype(header_size)>>(std::move(data_size))), static_cast<std::remove_cvref_t<decltype(rusty::wrapping_add(header_size, static_cast<std::remove_cvref_t<decltype(header_size)>>(std::move(data_size))))>>(std::move(checksum_size)));
+}
+/*RUSTYCPP:GEN-END id=raft_snapshot.format_decisions*/
+
+static_assert(snapshot_magic_valid(0x504E4153));
+static_assert(!snapshot_magic_valid(0));
+static_assert(snapshot_version_valid(1));
+static_assert(!snapshot_version_valid(2));
+static_assert(snapshot_compression_supported(0));
+static_assert(!snapshot_compression_supported(0xff));
+static_assert(snapshot_checksum_size(0) == 0);
+static_assert(snapshot_checksum_size(1) == 4);
+static_assert(snapshot_checksum_size(0xff) == 0);
+static_assert(snapshot_expected_serialized_size(52, 7, 4) == 63);
+
 /**
  * Binary header for snapshot files.
  * Fixed size: 50 bytes (padded to 56 for alignment)
@@ -126,12 +207,94 @@ struct SnapshotHeader {
 
   // @safe - Check if header is valid
   bool is_valid() const {
-    return magic == 0x504E4153 && version == 1;
+    return snapshot_magic_valid(magic) && snapshot_version_valid(version);
   }
 };
 #pragma pack(pop)
 
 static_assert(sizeof(SnapshotHeader) == 52, "SnapshotHeader must be 52 bytes");
+
+#if RUSTYCPP_RUST
+pub const fn snapshot_crc32_initial() -> u32 {
+    0xFFFFFFFF
+}
+
+pub const fn snapshot_crc32_table_index(crc: u32, byte: u8) -> usize {
+    ((crc ^ byte as u32) & 0xFF) as usize
+}
+
+pub const fn snapshot_crc32_update_from_table(crc: u32,
+                                              table_value: u32) -> u32 {
+    table_value ^ (crc >> 8)
+}
+
+pub const fn snapshot_crc32_finalize(crc: u32) -> u32 {
+    crc ^ 0xFFFFFFFF
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.crc32_scalar_step version=1 rust_sha256=326017f9c327fcd6f8c0f02cebc51b06913f4a62c349e0418b3b19ca18b7bd0c*/
+constexpr uint32_t snapshot_crc32_initial();
+constexpr size_t snapshot_crc32_table_index(uint32_t crc, uint8_t byte);
+constexpr uint32_t snapshot_crc32_update_from_table(uint32_t crc, uint32_t table_value);
+constexpr uint32_t snapshot_crc32_finalize(uint32_t crc);
+constexpr uint32_t snapshot_crc32_initial() {
+    return static_cast<uint32_t>(4294967295);
+}
+constexpr size_t snapshot_crc32_table_index(uint32_t crc, uint8_t byte) {
+    return static_cast<size_t>((((rusty::detail::deref_if_pointer_like(crc) ^ (static_cast<uint32_t>(byte)))) & 255));
+}
+constexpr uint32_t snapshot_crc32_update_from_table(uint32_t crc, uint32_t table_value) {
+    return rusty::detail::deref_if_pointer_like(table_value) ^ ((rusty::detail::deref_if_pointer_like(crc) >> 8));
+}
+constexpr uint32_t snapshot_crc32_finalize(uint32_t crc) {
+    return rusty::detail::deref_if_pointer_like(crc) ^ static_cast<uint32_t>(4294967295);
+}
+/*RUSTYCPP:GEN-END id=raft_snapshot.crc32_scalar_step*/
+
+static_assert(snapshot_crc32_initial() == 0xFFFFFFFFu);
+static_assert(snapshot_crc32_table_index(0xFFFFFFFFu, 0) == 0xFFu);
+static_assert(snapshot_crc32_update_from_table(0xFFFFFFFFu, 0) ==
+              0x00FFFFFFu);
+static_assert(snapshot_crc32_finalize(0xFFFFFFFFu) == 0);
+
+// Keep the accumulator mutation inside the loop. Besides matching the hot
+// kernel, raw pointers preserve the incumbent's legal `unsigned char` view
+// when the input points into the CRC32 object's own representation.
+#if RUSTYCPP_RUST
+pub const unsafe fn snapshot_crc32_update_buffer(crc: *mut u32,
+                                                  data: *const u8,
+                                                  size: usize,
+                                                  table: *const u32) {
+    let mut i: usize = 0;
+    while i < size {
+        let byte = unsafe { *data.add(i) };
+        let table_index = snapshot_crc32_table_index(unsafe { *crc }, byte);
+        let table_value = unsafe { *table.add(table_index) };
+        let next_crc =
+            snapshot_crc32_update_from_table(unsafe { *crc }, table_value);
+        unsafe { *crc = next_crc };
+        i += 1;
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.crc32_update_loop version=1 rust_sha256=a464e417c3929aabc8dd5a42bcf910bef0e80633d1e1a0af13ed5e433270148e*/
+constexpr void snapshot_crc32_update_buffer(uint32_t* crc, const uint8_t* data, size_t size, const uint32_t* table);
+// @unsafe
+constexpr void snapshot_crc32_update_buffer(uint32_t* crc, const uint8_t* data, size_t size, const uint32_t* table) {
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(size)) {
+        const auto byte = *rusty::ptr::add(data, std::move(i));
+        const auto table_index = snapshot_crc32_table_index(*crc, std::move(byte));
+        const auto table_value = *rusty::ptr::add(table, std::move(table_index));
+        auto next_crc = snapshot_crc32_update_from_table(*crc, std::move(table_value));
+        // @unsafe
+        {
+            *crc = std::move(next_crc);
+        }
+        i += 1;
+    }
+}
+/*RUSTYCPP:GEN-END id=raft_snapshot.crc32_update_loop*/
 
 /**
  * CRC32 checksum calculator (IEEE 802.3 polynomial).
@@ -140,19 +303,17 @@ static_assert(sizeof(SnapshotHeader) == 52, "SnapshotHeader must be 52 bytes");
 class CRC32 {
  public:
   // @safe - Default constructor
-  CRC32() : crc_(0xFFFFFFFF) {}
+  CRC32() : crc_(snapshot_crc32_initial()) {}
 
   // @unsafe - Reads from raw pointer
   void Update(const char* data, size_t size) {
-    for (size_t i = 0; i < size; ++i) {
-      uint8_t byte = static_cast<uint8_t>(data[i]);
-      crc_ = TABLE[(crc_ ^ byte) & 0xFF] ^ (crc_ >> 8);
-    }
+    snapshot_crc32_update_buffer(
+        &crc_, reinterpret_cast<const uint8_t*>(data), size, TABLE);
   }
 
   // @safe - Returns final CRC value
   uint32_t Finalize() const {
-    return crc_ ^ 0xFFFFFFFF;
+    return snapshot_crc32_finalize(crc_);
   }
 
   /**
@@ -251,7 +412,7 @@ class SnapshotFormat {
     }
 
     // Only NONE compression is supported
-    if (compression != SnapshotCompression::NONE) {
+    if (!snapshot_compression_supported(static_cast<uint8_t>(compression))) {
       rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: compression not supported");
       return false;
     }
@@ -276,13 +437,15 @@ class SnapshotFormat {
 
     // Calculate data checksum
     uint32_t data_crc = 0;
-    if (checksum_type == SnapshotChecksumType::CRC32) {
+    if (snapshot_checksum_enabled(static_cast<uint8_t>(checksum_type))) {
       data_crc = CRC32::Calculate(data, size);
     }
 
     // Calculate output size: header + data + checksum
-    size_t checksum_size = (checksum_type == SnapshotChecksumType::CRC32) ? 4 : 0;
-    size_t total_size = sizeof(SnapshotHeader) + size + checksum_size;
+    size_t checksum_size =
+        snapshot_checksum_size(static_cast<uint8_t>(checksum_type));
+    size_t total_size = snapshot_expected_serialized_size(
+        sizeof(SnapshotHeader), size, checksum_size);
 
     // Resize output and copy data
     output->resize(total_size);
@@ -299,7 +462,7 @@ class SnapshotFormat {
     }
 
     // Copy checksum
-    if (checksum_type == SnapshotChecksumType::CRC32) {
+    if (snapshot_checksum_enabled(static_cast<uint8_t>(checksum_type))) {
       std::memcpy(ptr, &data_crc, 4);
     }
 
@@ -338,12 +501,12 @@ class SnapshotFormat {
     std::memcpy(&header, input, sizeof(SnapshotHeader));
 
     // Validate magic and version
-    if (header.magic != MAGIC) {
+    if (!snapshot_magic_valid(header.magic)) {
       rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid magic 0x{:08X} (expected 0x{:08X})",
                 header.magic, MAGIC);
       return false;
     }
-    if (header.version != VERSION) {
+    if (!snapshot_version_valid(header.version)) {
       rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version {}", header.version);
       return false;
     }
@@ -357,17 +520,15 @@ class SnapshotFormat {
     }
 
     // Check compression support
-    if (static_cast<SnapshotCompression>(header.compression) != SnapshotCompression::NONE) {
+    if (!snapshot_compression_supported(header.compression)) {
       rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: compression not supported");
       return false;
     }
 
     // Calculate expected total size
-    size_t checksum_size = 0;
-    if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
-      checksum_size = 4;
-    }
-    size_t expected_size = sizeof(SnapshotHeader) + header.data_size + checksum_size;
+    size_t checksum_size = snapshot_checksum_size(header.checksum_type);
+    size_t expected_size = snapshot_expected_serialized_size(
+        sizeof(SnapshotHeader), header.data_size, checksum_size);
     if (input_size < expected_size) {
       rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: input truncated ({} < {})",
                 input_size, expected_size);
@@ -376,7 +537,7 @@ class SnapshotFormat {
 
     // Verify data checksum
     const char* data_ptr = input + sizeof(SnapshotHeader);
-    if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
+    if (snapshot_checksum_enabled(header.checksum_type)) {
       uint32_t expected_crc;
       std::memcpy(&expected_crc, data_ptr + header.data_size, 4);
       uint32_t actual_crc = CRC32::Calculate(data_ptr, header.data_size);
@@ -408,7 +569,8 @@ class SnapshotFormat {
       return false;
     }
     std::memcpy(header, input, sizeof(SnapshotHeader));
-    if (header->magic != MAGIC || header->version != VERSION) {
+    if (!snapshot_magic_valid(header->magic) ||
+        !snapshot_version_valid(header->version)) {
       return false;
     }
     // Verify header CRC

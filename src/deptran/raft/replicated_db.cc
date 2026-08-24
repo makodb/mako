@@ -68,7 +68,7 @@ void ReplicatedDBCommand::save(BinaryWriteArchive& ar) const {
   rrr::Serialize_::serialize(static_cast<uint8_t>(op_), ar);
   rrr::Serialize_::serialize(key_, ar);
   rrr::Serialize_::serialize(value_, ar);
-  if (op_ == ReplicatedDBOp::BATCH) {
+  if (replicated_db_op_is_batch(static_cast<uint8_t>(op_))) {
     uint32_t count = static_cast<uint32_t>(batch_ops_.size());
     rrr::Serialize_::serialize(count, ar);
     for (const auto& op : batch_ops_) {
@@ -85,7 +85,7 @@ void ReplicatedDBCommand::load(BinaryReadArchive& ar) {
   op_ = static_cast<ReplicatedDBOp>(op_val);
   rrr::Deserialize_::deserialize(key_, ar);
   rrr::Deserialize_::deserialize(value_, ar);
-  if (op_ == ReplicatedDBOp::BATCH) {
+  if (replicated_db_op_is_batch(static_cast<uint8_t>(op_))) {
     uint32_t count;
     rrr::Deserialize_::deserialize(count, ar);
     batch_ops_.resize(count);
@@ -185,7 +185,8 @@ ReplicatedDB::~ReplicatedDB() {
 
 // @unsafe - Submits PUT command through Raft, blocks until committed
 bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
-  if (!db_ || !raft_) return false;
+  if (replicated_db_required_value_missing(db_ != nullptr) ||
+      replicated_db_required_value_missing(raft_ != nullptr)) return false;
 
   auto cmd = ReplicatedDBCommand::CreatePut(key, value);
 
@@ -200,20 +201,22 @@ bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
   // @unsafe - atomic operations and callback registration
   std::atomic<int> committed{0};  // 0=pending, 1=success, -1=rolled back
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
-    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+    committed.store(replicated_db_commit_callback_state(
+        status == CommitStatus::ROLLEDBACK));
   });
 
   // Poll until callback fires
-  while (committed.load() == 0) {
+  while (replicated_db_commit_pending(committed.load())) {
     usleep(100);  // 100us poll interval
   }
 
-  return committed.load() > 0;
+  return replicated_db_commit_succeeded(committed.load());
 }
 
 // @unsafe - Submits DELETE command through Raft, blocks until committed
 bool ReplicatedDB::Delete(const std::string& key) {
-  if (!db_ || !raft_) return false;
+  if (replicated_db_required_value_missing(db_ != nullptr) ||
+      replicated_db_required_value_missing(raft_ != nullptr)) return false;
 
   auto cmd = ReplicatedDBCommand::CreateDelete(key);
 
@@ -228,19 +231,22 @@ bool ReplicatedDB::Delete(const std::string& key) {
   // @unsafe - atomic operations and callback registration
   std::atomic<int> committed{0};
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
-    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+    committed.store(replicated_db_commit_callback_state(
+        status == CommitStatus::ROLLEDBACK));
   });
 
-  while (committed.load() == 0) {
+  while (replicated_db_commit_pending(committed.load())) {
     usleep(100);
   }
 
-  return committed.load() > 0;
+  return replicated_db_commit_succeeded(committed.load());
 }
 
 // @unsafe - Submits BATCH command through Raft, blocks until committed
 bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
-  if (!db_ || !raft_ || ops.empty()) return false;
+  if (replicated_db_required_value_missing(db_ != nullptr) ||
+      replicated_db_required_value_missing(raft_ != nullptr) ||
+      replicated_db_required_value_missing(!ops.empty())) return false;
 
   auto cmd = ReplicatedDBCommand::CreateBatch(ops);
 
@@ -255,19 +261,21 @@ bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
   // @unsafe - atomic operations and callback registration
   std::atomic<int> committed{0};
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
-    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+    committed.store(replicated_db_commit_callback_state(
+        status == CommitStatus::ROLLEDBACK));
   });
 
-  while (committed.load() == 0) {
+  while (replicated_db_commit_pending(committed.load())) {
     usleep(100);
   }
 
-  return committed.load() > 0;
+  return replicated_db_commit_succeeded(committed.load());
 }
 
 // @unsafe - Direct RocksDB read (stale read, no Raft involvement)
 bool ReplicatedDB::Get(const std::string& key, std::string* value) {
-  if (!db_ || !value) return false;
+  if (replicated_db_required_value_missing(db_ != nullptr) ||
+      replicated_db_required_value_missing(value != nullptr)) return false;
 
   size_t value_len = 0;
   char* err = nullptr;
@@ -280,7 +288,7 @@ bool ReplicatedDB::Get(const std::string& key, std::string* value) {
               key.c_str(), err_str.c_str());
     return false;
   }
-  if (value_ptr == nullptr) {
+  if (!replicated_db_read_found(value_ptr != nullptr)) {
     return false;  // Key not found
   }
 
@@ -291,7 +299,8 @@ bool ReplicatedDB::Get(const std::string& key, std::string* value) {
 
 // @unsafe - Linearizable read via ReadIndex protocol
 bool ReplicatedDB::LinearizableGet(const std::string& key, std::string* value) {
-  if (!raft_ || !raft_->IsLeader()) {
+  if (replicated_db_required_value_missing(raft_ != nullptr) ||
+      !replicated_db_is_leader(raft_->IsLeader())) {
     Log_warn("[REPLICATED-DB] LinearizableGet: not leader");
     return false;
   }
@@ -308,17 +317,18 @@ bool ReplicatedDB::LinearizableGet(const std::string& key, std::string* value) {
 
 // @unsafe - Applies committed Raft entries to local RocksDB
 void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
-  if (!db_ || !cmd.has_value()) return;
+  if (!db_ || !replicated_db_has_command_payload(cmd.has_value())) return;
 
   uint64_t index = static_cast<uint64_t>(slot);
 
   // Idempotency: skip already-applied entries
-  if (index <= last_applied_index_) {
+  if (replicated_db_should_skip_applied(index, last_applied_index_)) {
     return;
   }
 
   // Only process ReplicatedDBCommand entries
-  if (cmd.kind_ != ReplicatedDBCommand::static_kind()) {
+  if (!replicated_db_command_kind_matches(
+          cmd.kind_, ReplicatedDBCommand::static_kind())) {
     // Not our command type; still advance the index to avoid re-processing
     last_applied_index_ = index;
     PersistLastAppliedIndex();
@@ -416,7 +426,7 @@ void ReplicatedDB::LoadLastAppliedIndex() {
     take_rocksdb_error(&err);
     return;
   }
-  if (value_ptr == nullptr) {
+  if (!replicated_db_read_found(value_ptr != nullptr)) {
     last_applied_index_ = 0;
     return;
   }
@@ -641,7 +651,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
 
   // 0. Check compression header and decompress if needed
   // @unsafe { LZ4 C API, memcpy }
-  if (data.size() < 1) {
+  if (!replicated_db_snapshot_has_header(data.size())) {
     Log_error("[ReplicatedDB] LoadStateMachineSnapshot: data too small for header");
     return;
   }
@@ -649,9 +659,10 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   uint8_t compression = static_cast<uint8_t>(data[0]);
   std::string blob;
 
-  if (compression == SNAPSHOT_LZ4) {
+  if (replicated_db_snapshot_is_lz4(compression, SNAPSHOT_LZ4)) {
     // LZ4 compressed: header(1) + orig_size(4) + compressed_data
-    if (data.size() < 1 + sizeof(uint32_t)) {
+    if (!replicated_db_snapshot_has_bytes(
+            1, sizeof(uint32_t), data.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated LZ4 header");
       return;
     }
@@ -669,7 +680,8 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     }
     Log_info("[ReplicatedDB] Snapshot decompressed: {} -> {} bytes",
              data.size(), orig_size);
-  } else if (compression == SNAPSHOT_UNCOMPRESSED) {
+  } else if (replicated_db_snapshot_is_uncompressed(
+                 compression, SNAPSHOT_UNCOMPRESSED)) {
     // Uncompressed: header(1) + raw blob
     blob = data.substr(1);
   } else {
@@ -680,7 +692,8 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
 
   // 1. Parse the blob header
   size_t offset = 0;
-  if (blob.size() < sizeof(uint32_t)) {
+  if (!replicated_db_snapshot_has_bytes(
+          offset, sizeof(uint32_t), blob.size())) {
     Log_error("[ReplicatedDB] LoadStateMachineSnapshot: blob too small for header");
     return;
   }
@@ -697,7 +710,8 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   files.reserve(num_files);
 
   for (uint32_t i = 0; i < num_files; i++) {
-    if (offset + sizeof(uint32_t) > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(
+            offset, sizeof(uint32_t), blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} name_len", i);
       return;
     }
@@ -705,14 +719,15 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     std::memcpy(&name_len, blob.data() + offset, sizeof(name_len));
     offset += sizeof(name_len);
 
-    if (offset + name_len > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(offset, name_len, blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} name", i);
       return;
     }
     std::string name(blob.data() + offset, name_len);
     offset += name_len;
 
-    if (offset + sizeof(uint64_t) > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(
+            offset, sizeof(uint64_t), blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} size", i);
       return;
     }
@@ -720,7 +735,8 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     std::memcpy(&file_size, blob.data() + offset, sizeof(file_size));
     offset += sizeof(file_size);
 
-    if (offset + file_size > blob.size()) {
+    if (!replicated_db_snapshot_has_u64_bytes(
+            offset, file_size, blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} data", i);
       return;
     }

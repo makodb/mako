@@ -1,12 +1,15 @@
 #pragma once
 #include <rusty/arc.hpp>
+#include <rusty/num.hpp>
 #include <rusty/option.hpp>
+#include <rusty/slice.hpp>
 #include "__dep__.h"
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"
 #include <cstdint>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 #include <atomic>
 #include <functional>
@@ -57,6 +60,174 @@ static_assert(static_cast<uint8_t>(ReplicatedDBOp::BATCH) == 3);
 // validate bytes or use a transparent newtype before consuming these states.
 static_assert(static_cast<uint8_t>(static_cast<ReplicatedDBOp>(0)) == 0);
 static_assert(static_cast<uint8_t>(static_cast<ReplicatedDBOp>(0xff)) == 0xff);
+
+// These helpers own scalar decisions only. Raw operation bytes remain valid
+// inputs on the generated-C++ path, including unnamed values read from the
+// existing wire format.
+#if RUSTYCPP_RUST
+pub const fn replicated_db_op_is_batch(op: u8) -> bool {
+    op == ReplicatedDBOp::BATCH as u8
+}
+
+pub const fn replicated_db_has_command_payload(has_value: bool) -> bool {
+    has_value
+}
+
+pub const fn replicated_db_should_skip_applied(index: u64,
+                                               last_applied_index: u64) -> bool {
+    index <= last_applied_index
+}
+
+pub const fn replicated_db_command_kind_matches(kind: i32,
+                                                expected_kind: i32) -> bool {
+    kind == expected_kind
+}
+
+pub const fn replicated_db_required_value_missing(has_value: bool) -> bool {
+    !has_value
+}
+
+pub const fn replicated_db_commit_succeeded(commit_state: i32) -> bool {
+    commit_state > 0
+}
+
+pub const fn replicated_db_commit_pending(commit_state: i32) -> bool {
+    commit_state == 0
+}
+
+pub const fn replicated_db_commit_callback_state(rolled_back: bool) -> i32 {
+    if rolled_back {
+        -1
+    } else {
+        1
+    }
+}
+
+pub const fn replicated_db_read_found(has_value_ptr: bool) -> bool {
+    has_value_ptr
+}
+
+pub const fn replicated_db_is_leader(is_leader: bool) -> bool {
+    is_leader
+}
+
+pub const fn replicated_db_snapshot_has_header(size: usize) -> bool {
+    size >= 1
+}
+
+pub const fn replicated_db_snapshot_is_lz4(compression: u8,
+                                           lz4_tag: u8) -> bool {
+    compression == lz4_tag
+}
+
+pub const fn replicated_db_snapshot_is_uncompressed(compression: u8,
+                                                    uncompressed_tag: u8) -> bool {
+    compression == uncompressed_tag
+}
+
+pub const fn replicated_db_snapshot_has_bytes(offset: usize,
+                                              needed: usize,
+                                              total: usize) -> bool {
+    offset.wrapping_add(needed) <= total
+}
+
+pub const fn replicated_db_snapshot_has_u64_bytes(offset: u64,
+                                                  needed: u64,
+                                                  total: u64) -> bool {
+    offset.wrapping_add(needed) <= total
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_replicated_db.scalar_decisions version=1 rust_sha256=d319e421c490d07526222c902ab111822dfecd9c41b9801303d4d2b9f3c83ed1*/
+constexpr bool replicated_db_op_is_batch(uint8_t op);
+constexpr bool replicated_db_has_command_payload(bool has_value);
+constexpr bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index);
+constexpr bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind);
+constexpr bool replicated_db_required_value_missing(bool has_value);
+constexpr bool replicated_db_commit_succeeded(int32_t commit_state);
+constexpr bool replicated_db_commit_pending(int32_t commit_state);
+constexpr int32_t replicated_db_commit_callback_state(bool rolled_back);
+constexpr bool replicated_db_read_found(bool has_value_ptr);
+constexpr bool replicated_db_is_leader(bool is_leader);
+constexpr bool replicated_db_snapshot_has_header(size_t size);
+constexpr bool replicated_db_snapshot_is_lz4(uint8_t compression, uint8_t lz4_tag);
+constexpr bool replicated_db_snapshot_is_uncompressed(uint8_t compression, uint8_t uncompressed_tag);
+constexpr bool replicated_db_snapshot_has_bytes(size_t offset, size_t needed, size_t total);
+constexpr bool replicated_db_snapshot_has_u64_bytes(uint64_t offset, uint64_t needed, uint64_t total);
+constexpr bool replicated_db_op_is_batch(uint8_t op) {
+    return rusty::detail::deref_if_pointer_like(op) == (static_cast<uint8_t>(ReplicatedDBOp_BATCH()));
+}
+constexpr bool replicated_db_has_command_payload(bool has_value) {
+    return std::move(has_value);
+}
+constexpr bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index) {
+    return rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(last_applied_index);
+}
+constexpr bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind) {
+    return rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(expected_kind);
+}
+constexpr bool replicated_db_required_value_missing(bool has_value) {
+    return !has_value;
+}
+constexpr bool replicated_db_commit_succeeded(int32_t commit_state) {
+    return rusty::detail::deref_if_pointer_like(commit_state) > 0;
+}
+constexpr bool replicated_db_commit_pending(int32_t commit_state) {
+    return rusty::detail::deref_if_pointer_like(commit_state) == static_cast<int32_t>(0);
+}
+constexpr int32_t replicated_db_commit_callback_state(bool rolled_back) {
+    if (rolled_back) {
+        return -1;
+    } else {
+        return static_cast<int32_t>(1);
+    }
+}
+constexpr bool replicated_db_read_found(bool has_value_ptr) {
+    return std::move(has_value_ptr);
+}
+constexpr bool replicated_db_is_leader(bool is_leader) {
+    return std::move(is_leader);
+}
+constexpr bool replicated_db_snapshot_has_header(size_t size) {
+    return rusty::detail::deref_if_pointer_like(size) >= 1;
+}
+constexpr bool replicated_db_snapshot_is_lz4(uint8_t compression, uint8_t lz4_tag) {
+    return rusty::detail::deref_if_pointer_like(compression) == rusty::detail::deref_if_pointer_like(lz4_tag);
+}
+constexpr bool replicated_db_snapshot_is_uncompressed(uint8_t compression, uint8_t uncompressed_tag) {
+    return rusty::detail::deref_if_pointer_like(compression) == rusty::detail::deref_if_pointer_like(uncompressed_tag);
+}
+constexpr bool replicated_db_snapshot_has_bytes(size_t offset, size_t needed, size_t total) {
+    return rusty::wrapping_add(offset, static_cast<std::remove_cvref_t<decltype(offset)>>(std::move(needed))) <= rusty::detail::deref_if_pointer_like(total);
+}
+constexpr bool replicated_db_snapshot_has_u64_bytes(uint64_t offset, uint64_t needed, uint64_t total) {
+    return rusty::wrapping_add(offset, static_cast<std::remove_cvref_t<decltype(offset)>>(std::move(needed))) <= rusty::detail::deref_if_pointer_like(total);
+}
+/*RUSTYCPP:GEN-END id=raft_replicated_db.scalar_decisions*/
+
+static_assert(replicated_db_op_is_batch(3));
+static_assert(!replicated_db_op_is_batch(0));
+static_assert(replicated_db_has_command_payload(true));
+static_assert(replicated_db_should_skip_applied(7, 7));
+static_assert(!replicated_db_should_skip_applied(8, 7));
+static_assert(replicated_db_command_kind_matches(19, 19));
+static_assert(!replicated_db_required_value_missing(true));
+static_assert(replicated_db_required_value_missing(false));
+static_assert(replicated_db_commit_succeeded(1));
+static_assert(replicated_db_commit_pending(0));
+static_assert(replicated_db_commit_callback_state(true) == -1);
+static_assert(replicated_db_commit_callback_state(false) == 1);
+static_assert(replicated_db_read_found(true));
+static_assert(replicated_db_is_leader(true));
+static_assert(!replicated_db_snapshot_has_header(0));
+static_assert(replicated_db_snapshot_has_header(1));
+static_assert(replicated_db_snapshot_is_lz4(1, 1));
+static_assert(replicated_db_snapshot_is_uncompressed(0, 0));
+static_assert(replicated_db_snapshot_has_bytes(4, 6, 10));
+// Pin the incumbent unsigned-wrap boundary rather than silently hardening the
+// malformed-input path as PR #79 did. Any hardening belongs in a separate fix.
+static_assert(replicated_db_snapshot_has_bytes(
+    static_cast<size_t>(-1), 1, 0));
+static_assert(replicated_db_snapshot_has_u64_bytes(UINT64_MAX, 1, 0));
 
 // @safe - Plain data struct for batch operations
 struct KVOperation {
