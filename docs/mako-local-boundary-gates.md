@@ -33,6 +33,7 @@ Each native sanitizer gets a fresh CMake tree:
 ```bash
 BUILD_DIR=build-mako-local-asan  MAKO_LOCAL_SANITIZER=asan  ./ci/ci.sh makoLocalSanitizerGates
 BUILD_DIR=build-mako-local-ubsan MAKO_LOCAL_SANITIZER=ubsan ./ci/ci.sh makoLocalSanitizerGates
+rustup toolchain install nightly-2026-08-12 --profile minimal --component rust-src
 BUILD_DIR=build-mako-local-tsan  MAKO_LOCAL_SANITIZER=tsan  ./ci/ci.sh makoLocalSanitizerGates
 ```
 
@@ -48,12 +49,16 @@ outside the reviewed Masstree optimistic-read suppressions. Missing native
 artifacts, missing Cargo, or an unsanitized configuration fail rather than
 reduce coverage.
 
-Clang's TSan runtime is linked into an otherwise uninstrumented Rust standard
-library and libtest harness. Rust test executables therefore use
-`--test-threads=1` to avoid attributing harness-internal MPMC accesses to the
-native engine. This does not serialize the engine tests themselves:
-`worker_pools`, the history schedules, and the native C++ suite still create
-their explicit worker threads and exercise the concurrent boundary.
+TSan uses the same pinned `nightly-2026-08-12` as Miri plus
+`-Zsanitizer=thread -Zbuild-std`, so the Rust wrapper, standard library, and
+libtest harness are instrumented together with the Clang-TSan C++ archive.
+Merely linking Clang's runtime into stable Rust's prebuilt standard library
+causes false reports in its uninstrumented lock-free channels and is not an
+accepted fallback. Rust test executables retain `--test-threads=1` for bounded,
+deterministic reporting, not as a synchronization workaround. This does not
+serialize the engine tests themselves: `worker_pools`, the history schedules,
+and the native C++ suite still create their explicit worker threads and
+exercise the concurrent boundary.
 
 Cleanup/quarantine seams are tested in a distinct hook-enabled functional
 profile:

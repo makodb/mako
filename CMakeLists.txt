@@ -790,14 +790,52 @@ endif()
 if(MAKO_TSAN_ENABLED)
     list(APPEND MAKO_LOCAL_SANITIZERS_ENABLED thread)
     list(APPEND MAKO_LOCAL_SANITIZER_RUNTIME_ENV
-         "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/src/masstree/tsan_suppressions.txt:halt_on_error=1")
+         "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/src/masstree/tsan_suppressions.txt:halt_on_error=1:print_suppressions=1")
 endif()
 if(MAKO_LOCAL_SANITIZERS_ENABLED)
     list(JOIN MAKO_LOCAL_SANITIZERS_ENABLED "," MAKO_LOCAL_SANITIZER_LIST)
     set(MAKO_LOCAL_SANITIZER_FLAG "-fsanitize=${MAKO_LOCAL_SANITIZER_LIST}")
     set(MAKO_LOCAL_SANITIZER_RUSTFLAGS "$ENV{RUSTFLAGS}")
-    string(APPEND MAKO_LOCAL_SANITIZER_RUSTFLAGS
-           " -C linker=${CMAKE_CXX_COMPILER} -C link-arg=${MAKO_LOCAL_SANITIZER_FLAG}")
+    set(MAKO_LOCAL_SANITIZER_CARGO_PREFIX)
+    set(MAKO_LOCAL_SANITIZER_CARGO_TARGET_ARGS)
+    if(MAKO_TSAN_ENABLED)
+        list(LENGTH MAKO_LOCAL_SANITIZERS_ENABLED
+             MAKO_LOCAL_SANITIZER_COUNT)
+        if(NOT MAKO_LOCAL_SANITIZER_COUNT EQUAL 1)
+            message(FATAL_ERROR
+                "mako-local Rust TSan must run without another sanitizer")
+        endif()
+        if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+            message(FATAL_ERROR
+                "mako-local Rust TSan currently supports x86_64 Linux only")
+        endif()
+        execute_process(
+            COMMAND bash
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_mako_local_miri.sh"
+                    --print-toolchain
+            OUTPUT_VARIABLE MAKO_LOCAL_RUST_TSAN_TOOLCHAIN
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE MAKO_LOCAL_RUST_TSAN_TOOLCHAIN_STATUS)
+        if(NOT MAKO_LOCAL_RUST_TSAN_TOOLCHAIN_STATUS EQUAL 0 OR
+           MAKO_LOCAL_RUST_TSAN_TOOLCHAIN STREQUAL "")
+            message(FATAL_ERROR
+                "failed to resolve the pinned mako-local Rust TSan toolchain")
+        endif()
+
+        # Linking Clang TSan into a prebuilt, uninstrumented Rust std/libtest
+        # produces false races in Rust's lock-free synchronization internals.
+        # Rebuild the complete Rust side under the same dated nightly instead.
+        string(APPEND MAKO_LOCAL_SANITIZER_RUSTFLAGS
+               " -Zsanitizer=thread -C linker=${CMAKE_CXX_COMPILER}")
+        list(APPEND MAKO_LOCAL_SANITIZER_CARGO_PREFIX
+             "+${MAKO_LOCAL_RUST_TSAN_TOOLCHAIN}" "-Zbuild-std")
+        list(APPEND MAKO_LOCAL_SANITIZER_CARGO_TARGET_ARGS
+             "--target" "x86_64-unknown-linux-gnu")
+    else()
+        string(APPEND MAKO_LOCAL_SANITIZER_RUSTFLAGS
+               " -C linker=${CMAKE_CXX_COMPILER}"
+               " -C link-arg=${MAKO_LOCAL_SANITIZER_FLAG}")
+    endif()
     string(STRIP "${MAKO_LOCAL_SANITIZER_RUSTFLAGS}"
            MAKO_LOCAL_SANITIZER_RUSTFLAGS)
     message(STATUS
@@ -3495,7 +3533,10 @@ if(BUILD_TESTS)
                         "MAKO_LOCAL_REQUIRE_NATIVE=1"
                         "MAKO_LOCAL_REQUIRE_DIFFERENTIAL=1"
                         "MAKO_LOCAL_DIFFERENTIAL_DRIVER=$<TARGET_FILE:mako_local_differential_driver>"
-                        ${CARGO_EXECUTABLE} test --locked
+                        ${CARGO_EXECUTABLE}
+                        ${MAKO_LOCAL_SANITIZER_CARGO_PREFIX}
+                        test --locked
+                        ${MAKO_LOCAL_SANITIZER_CARGO_TARGET_ARGS}
                         -p mako-local -p mako-local-sys --all-targets --
                         --test-threads=1 --nocapture
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates

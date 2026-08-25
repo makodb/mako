@@ -179,6 +179,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install pinned Rust TSan toolchain
+        if: matrix.sanitizer == 'tsan'
+        run: |
+          toolchain=$(bash ./scripts/run_mako_local_miri.sh --print-toolchain)
+          rustup toolchain install "${toolchain}" \
+            --profile minimal --component rust-src
+
       - name: Run mako-local ${{ matrix.sanitizer }} boundary gate
         run: ./ci/ci.sh makoLocalSanitizerGates
 
