@@ -22,7 +22,7 @@
 
 #include "log_storage.hpp"
 #include "rocksdb_log_storage.hpp"
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 namespace janus {
 namespace raft {

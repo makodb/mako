@@ -102,7 +102,7 @@ string serialize_tpc_command(shared_ptr<TpcCommitCommand> cmd) {
     oss.write(reinterpret_cast<const char*>(&tx_id), sizeof(tx_id));
 
     // Extract log data from SimpleCommand
-    auto vpd = rrr::marshallable_cast<VecPieceData>(cmd->cmd_);
+    auto vpd = srpc::marshallable_cast<VecPieceData>(cmd->cmd_);
     if (vpd && vpd->sp_vec_piece_data_ && !vpd->sp_vec_piece_data_->empty()) {
         auto simple_cmd = (*vpd->sp_vec_piece_data_)[0];
         if (simple_cmd->input.values_) {

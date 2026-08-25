@@ -22,7 +22,7 @@ class SimpleCommand;
 typedef std::function<void(Executor* exec,
                            Tx& tx,
                            SimpleCommand& cmd,
-                           rrr::i32 *res,
+                           srpc::i32 *res,
                            map<int32_t, Value> &output
 )> ProcHandler;
 

@@ -10,8 +10,8 @@
 // open-set `AnyMessage` envelope. Pull in the bridge header (for
 // `wrap_serializable_aliased`, `marshallable_cast<T>` overloads) and
 // `any_message.hpp` for the envelope type.
-#include "rrr/misc/serializable.hpp"
-#include "rrr/misc/any_message.hpp"
+#include "srpc/misc/serializable.hpp"
+#include "srpc/misc/any_message.hpp"
 
 /**
  * This is NOT thread safe!!!
@@ -61,7 +61,7 @@ class RccGraph : public Graph<RccTx> {
   RccServer* sched_{nullptr};
   bool empty_{false};
 //  parid_t partition_id_ = 0; // TODO
-//  std::vector<rrr::Client *> rpc_clients_;
+//  std::vector<srpc::Client *> rpc_clients_;
 //  std::vector<RococoProxy *> rpc_proxies_;
 //  std::vector<std::string> server_addrs_;
 
@@ -79,13 +79,13 @@ class RccGraph : public Graph<RccTx> {
     uint64_t n = size();
     verify(n == 0);  // RccTx archive operators are not implemented;
                      // only empty graphs ever round-trip in practice.
-    rrr::Serialize_::serialize(n, ar);
+    srpc::Serialize_::serialize(n, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     verify(size() == 0);
     uint64_t n;
-    rrr::Deserialize_::deserialize(n, ar);
+    srpc::Deserialize_::deserialize(n, ar);
     verify(n == 0);  // matches the legacy `m >> *v` verify(0) stub
                      // for non-empty graphs.
   }

@@ -19,9 +19,9 @@ class FrameRococo : public Frame {
                                  uint32_t id,
                                  shared_ptr<TxnRegistry>) override;
   TxLogServer *CreateScheduler() override;
-  vector<rrr::ServiceProxy> CreateRpcServices(uint32_t site_id,
+  vector<srpc::ServiceProxy> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
-                                           rusty::Arc<rrr::PollThread> poll_thread_worker)
+                                           rusty::Arc<srpc::PollThread> poll_thread_worker)
   override;
   mdb::Row *CreateRow(const mdb::Schema *schema,
                       vector<Value> &row_data) override;

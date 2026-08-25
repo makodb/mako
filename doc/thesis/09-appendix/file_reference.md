@@ -57,7 +57,7 @@ Total: ~2,957 lines across 13 files.
 | `src/mako/benchmarks/bench.cc` | ~750 | TPC-C benchmark: `agg_persist_throughput` calculation (line 720-747) |
 | `src/deptran/server_worker.cc` | ~500 | Server worker: RecoveryManager integration, storage initialisation |
 
-## 4. Persistence Layer (`src/rrr/rpc/`)
+## 4. Persistence Layer (`src/srpc/rpc/`)
 
 | File | Lines | Description |
 |------|-------|-------------|

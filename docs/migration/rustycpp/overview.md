@@ -78,7 +78,7 @@ The tables below reflect the exact annotations currently in-tree. “Reason” e
 
 #### `service.cc`
 - **@safe**: `RaftServiceImpl::RaftServiceImpl`, `HandleVote`, `HandleAppendEntries`, `HandleEmptyAppendEntries`  
-  _Notes_: `Handle*` helpers dispatch onto the scheduler via `Coroutine::CreateRun`. The coroutine helper is annotated in `rrr` and the lambdas avoid raw pointer manipulation.
+  _Notes_: `Handle*` helpers dispatch onto the scheduler via `Coroutine::CreateRun`. The coroutine helper is annotated in `srpc` and the lambdas avoid raw pointer manipulation.
 - **@unsafe**: _none_
 
 #### `frame.cc`
@@ -114,12 +114,12 @@ The tables below reflect the exact annotations currently in-tree. “Reason” e
 
 #### 📚 Related Files Annotated (Outside Raft Module)
 
-##### src/rrr/reactor/coroutine.h
+##### src/srpc/reactor/coroutine.h
 - `Coroutine::CreateRun()` template - **@unsafe** (annotated for documentation, but checker ignores it - see template limitation)
   - Despite annotation, this appears as "undeclared" when called from any @safe function
   - This is due to template limitation in the borrow checker
 
-##### src/rrr/base/logging.hpp
+##### src/srpc/base/logging.hpp
 - **ALL logging functions marked @unsafe** (critical for frame.cc to pass)
   - `Log::info()` (both overloads) - **@unsafe**
   - `Log::debug()` (both overloads) - **@unsafe**
@@ -334,7 +334,7 @@ static void error(int line, const char* file, const char* fmt, ...);
 **Why this matters:**
 - The borrow checker looks for annotations **directly before** each function signature
 - A single comment at the top of a group is NOT parsed as applying to all functions
-- This was the root cause of `frame.cc` failing with "undeclared function rrr::Log::info" errors
+- This was the root cause of `frame.cc` failing with "undeclared function srpc::Log::info" errors
 - Required annotating ALL 10 logging function overloads in `logging.hpp` individually
 
 **Example from logging.hpp fix:**
@@ -482,7 +482,7 @@ Migrate the Raft consensus implementation (`src/deptran/raft/`) to use RustyCpp 
 - **Memory Leaks Found**: Timer object not properly deleted (line 17 in `server.cc`)
 - **Unclear Ownership**: Raw pointers throughout (Frame*, RaftCommo*, RaftServer*)
 - **Safety Guarantees**: Enable compile-time memory safety checks
-- **Consistency**: Align with project-wide RustyCpp migration (RRR already uses Arc)
+- **Consistency**: Align with project-wide RustyCpp migration (SRPC already uses Arc)
 
 ### Scope
 - **~4000 lines of code** across 9 files
@@ -1119,7 +1119,7 @@ rusty::Arc<IntEvent> SendAppendEntries2(..., rusty::Arc<Marshallable> cmd, ...);
 #### Step 3.3: Migrate IntEvent Smart Pointers ⚠️ BLOCKED
 **Files**: `commo.h`, `commo.cc`, `server.h`
 
-**Blocker**: `shared_ptr<IntEvent>` is created by `Reactor::CreateSpEvent<IntEvent>()` which is part of the RRR reactor framework API (outside Raft module). Cannot change without modifying reactor interface.
+**Blocker**: `shared_ptr<IntEvent>` is created by `Reactor::CreateSpEvent<IntEvent>()` which is part of the SRPC reactor framework API (outside Raft module). Cannot change without modifying reactor interface.
 
 **Before (Original)**:
 ```cpp
@@ -1135,10 +1135,10 @@ rusty::Arc<IntEvent> ready_for_replication_;
 rusty::Arc<IntEvent> SendAppendEntries2(...);
 ```
 
-**Note**: Check if IntEvent is defined in RRR framework
-- RRR already uses RustyCpp (we saw `rusty::Arc<PollThreadWorker>`)
+**Note**: Check if IntEvent is defined in SRPC framework
+- SRPC already uses RustyCpp (we saw `rusty::Arc<PollThreadWorker>`)
 - IntEvent might already have RustyCpp support
-- Check `src/rrr/` for IntEvent definition
+- Check `src/srpc/` for IntEvent definition
 
 **Testing**: Same as previous steps
 
@@ -2099,7 +2099,7 @@ git checkout rustycpp-phase-N-complete
 
 ### Upstream Dependencies
 - ✅ RustyCpp library available in `third-party/rusty-cpp/`
-- ✅ RRR framework already uses `rusty::Arc<PollThreadWorker>`
+- ✅ SRPC framework already uses `rusty::Arc<PollThreadWorker>`
 - ⚠️ Parent classes (TxLogServer, Coordinator, Communicator) use raw pointers
   - **Decision**: Keep raw pointer interfaces for now, migrate internals only
 
@@ -2195,7 +2195,7 @@ valgrind --leak-check=full --show-leak-kinds=all ./build/raft_test
 - RustyCpp documentation: `third-party/rusty-cpp/README.md`
 - Project migration guide: `CLAUDE.md`
 - RustyCpp examples: `third-party/rusty-cpp/examples/`
-- RRR framework (already migrated): `src/rrr/`
+- SRPC framework (already migrated): `src/srpc/`
 
 ### Contact
 - Questions: [Add contact info]

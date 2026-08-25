@@ -9,7 +9,7 @@ namespace janus {
 
 class TpccSharding : public Sharding {
  public:
-  std::multimap<c_last_id_t, rrr::i32> g_c_last2id; // XXX hardcode
+  std::multimap<c_last_id_t, srpc::i32> g_c_last2id; // XXX hardcode
   mdb::Schema g_c_last_schema;                      // XXX
 
   void PreparePrimaryColumn(tb_info_t *tb_info,

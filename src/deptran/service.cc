@@ -11,7 +11,7 @@
 #include "coordinator.h"
 #include "procedure.h"
 #include "rcc/dep_graph.h"
-#include "rrr/misc/serializable.hpp"  // wrap_serializable_aliased
+#include "srpc/misc/serializable.hpp"  // wrap_serializable_aliased
 #include "service.h"
 #include "rcc/server.h"
 #include "scheduler.h"
@@ -19,173 +19,173 @@
 #include "../bench/rw/workload.h" //<copilot+ kv debug>
 
 namespace janus {
-void ClassicServiceImpl::ReElect(const ClassicService::RpcReElectRequest& req, ClassicService::RpcReElectResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::ReElect(const ClassicService::RpcReElectRequest& req, ClassicService::RpcReElectResponse& resp, srpc::DeferredReply defer) {
   (void)req;
   this->ReElect(&resp.success, std::move(defer));
 }
 
-void ClassicServiceImpl::RuleSpeculativeExecute(const ClassicService::RpcRuleSpeculativeExecuteRequest& req, ClassicService::RpcRuleSpeculativeExecuteResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RuleSpeculativeExecute(const ClassicService::RpcRuleSpeculativeExecuteRequest& req, ClassicService::RpcRuleSpeculativeExecuteResponse& resp, srpc::DeferredReply defer) {
   this->RuleSpeculativeExecute(req.md, &resp.accepted, &resp.result, &resp.is_leader, std::move(defer));
 }
 
-void ClassicServiceImpl::Dispatch(const ClassicService::RpcDispatchRequest& req, ClassicService::RpcDispatchResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::Dispatch(const ClassicService::RpcDispatchRequest& req, ClassicService::RpcDispatchResponse& resp, srpc::DeferredReply defer) {
   this->Dispatch(req.tid, req.dep_id, req.cmd, &resp.res, &resp.output, &resp.coro_id, &resp.view_data, std::move(defer));
 }
 
-void ClassicServiceImpl::FailoverPauseSocketOut(const ClassicService::RpcFailoverPauseSocketOutRequest& req, ClassicService::RpcFailoverPauseSocketOutResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::FailoverPauseSocketOut(const ClassicService::RpcFailoverPauseSocketOutRequest& req, ClassicService::RpcFailoverPauseSocketOutResponse& resp, srpc::DeferredReply defer) {
   (void)req;
   this->FailoverPauseSocketOut(&resp.res, std::move(defer));
 }
 
-void ClassicServiceImpl::FailoverResumeSocketOut(const ClassicService::RpcFailoverResumeSocketOutRequest& req, ClassicService::RpcFailoverResumeSocketOutResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::FailoverResumeSocketOut(const ClassicService::RpcFailoverResumeSocketOutRequest& req, ClassicService::RpcFailoverResumeSocketOutResponse& resp, srpc::DeferredReply defer) {
   (void)req;
   this->FailoverResumeSocketOut(&resp.res, std::move(defer));
 }
 
-void ClassicServiceImpl::SimpleCmd(const ClassicService::RpcSimpleCmdRequest& req, ClassicService::RpcSimpleCmdResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::SimpleCmd(const ClassicService::RpcSimpleCmdRequest& req, ClassicService::RpcSimpleCmdResponse& resp, srpc::DeferredReply defer) {
   this->SimpleCmd(req.cmd, &resp.res, std::move(defer));
 }
 
-void ClassicServiceImpl::IsLeader(const ClassicService::RpcIsLeaderRequest& req, ClassicService::RpcIsLeaderResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::IsLeader(const ClassicService::RpcIsLeaderRequest& req, ClassicService::RpcIsLeaderResponse& resp, srpc::DeferredReply defer) {
   this->IsLeader(req.cur_pause, &resp.is_leader, std::move(defer));
 }
 
-void ClassicServiceImpl::IsFPGALeader(const ClassicService::RpcIsFPGALeaderRequest& req, ClassicService::RpcIsFPGALeaderResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::IsFPGALeader(const ClassicService::RpcIsFPGALeaderRequest& req, ClassicService::RpcIsFPGALeaderResponse& resp, srpc::DeferredReply defer) {
   this->IsFPGALeader(req.cur_pause, &resp.is_leader, std::move(defer));
 }
 
-void ClassicServiceImpl::Prepare(const ClassicService::RpcPrepareRequest& req, ClassicService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::Prepare(const ClassicService::RpcPrepareRequest& req, ClassicService::RpcPrepareResponse& resp, srpc::DeferredReply defer) {
   this->Prepare(req.tid, req.sids, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, std::move(defer));
 }
 
-void ClassicServiceImpl::Commit(const ClassicService::RpcCommitRequest& req, ClassicService::RpcCommitResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::Commit(const ClassicService::RpcCommitRequest& req, ClassicService::RpcCommitResponse& resp, srpc::DeferredReply defer) {
   this->Commit(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.view_data, std::move(defer));
 }
 
-void ClassicServiceImpl::Abort(const ClassicService::RpcAbortRequest& req, ClassicService::RpcAbortResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::Abort(const ClassicService::RpcAbortRequest& req, ClassicService::RpcAbortResponse& resp, srpc::DeferredReply defer) {
   this->Abort(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.view_data, std::move(defer));
 }
 
-void ClassicServiceImpl::EarlyAbort(const ClassicService::RpcEarlyAbortRequest& req, ClassicService::RpcEarlyAbortResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::EarlyAbort(const ClassicService::RpcEarlyAbortRequest& req, ClassicService::RpcEarlyAbortResponse& resp, srpc::DeferredReply defer) {
   this->EarlyAbort(req.tid, &resp.res, std::move(defer));
 }
 
-void ClassicServiceImpl::rpc_null(const ClassicService::RpcRpcNullRequest& req, ClassicService::RpcRpcNullResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::rpc_null(const ClassicService::RpcRpcNullRequest& req, ClassicService::RpcRpcNullResponse& resp, srpc::DeferredReply defer) {
   (void)req;
   (void)resp;
   this->rpc_null(std::move(defer));
 }
 
-void ClassicServiceImpl::UpgradeEpoch(const ClassicService::RpcUpgradeEpochRequest& req, ClassicService::RpcUpgradeEpochResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::UpgradeEpoch(const ClassicService::RpcUpgradeEpochRequest& req, ClassicService::RpcUpgradeEpochResponse& resp, srpc::DeferredReply defer) {
   this->UpgradeEpoch(req.curr_epoch, &resp.res, std::move(defer));
 }
 
-void ClassicServiceImpl::TruncateEpoch(const ClassicService::RpcTruncateEpochRequest& req, ClassicService::RpcTruncateEpochResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::TruncateEpoch(const ClassicService::RpcTruncateEpochRequest& req, ClassicService::RpcTruncateEpochResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->TruncateEpoch(req.old_epoch, std::move(defer));
 }
 
-void ClassicServiceImpl::TapirAccept(const ClassicService::RpcTapirAcceptRequest& req, ClassicService::RpcTapirAcceptResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::TapirAccept(const ClassicService::RpcTapirAcceptRequest& req, ClassicService::RpcTapirAcceptResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->TapirAccept(req.cmd_id, req.ballot, req.decision, std::move(defer));
 }
 
-void ClassicServiceImpl::TapirFastAccept(const ClassicService::RpcTapirFastAcceptRequest& req, ClassicService::RpcTapirFastAcceptResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::TapirFastAccept(const ClassicService::RpcTapirFastAcceptRequest& req, ClassicService::RpcTapirFastAcceptResponse& resp, srpc::DeferredReply defer) {
   this->TapirFastAccept(req.cmd_id, req.txn_cmds, &resp.res, std::move(defer));
 }
 
-void ClassicServiceImpl::TapirDecide(const ClassicService::RpcTapirDecideRequest& req, ClassicService::RpcTapirDecideResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::TapirDecide(const ClassicService::RpcTapirDecideRequest& req, ClassicService::RpcTapirDecideResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->TapirDecide(req.cmd_id, req.commit, std::move(defer));
 }
 
-void ClassicServiceImpl::RccDispatch(const ClassicService::RpcRccDispatchRequest& req, ClassicService::RpcRccDispatchResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RccDispatch(const ClassicService::RpcRccDispatchRequest& req, ClassicService::RpcRccDispatchResponse& resp, srpc::DeferredReply defer) {
   this->RccDispatch(req.cmd, &resp.res, &resp.output, &resp.md_graph, std::move(defer));
 }
 
-void ClassicServiceImpl::RccFinish(const ClassicService::RpcRccFinishRequest& req, ClassicService::RpcRccFinishResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RccFinish(const ClassicService::RpcRccFinishRequest& req, ClassicService::RpcRccFinishResponse& resp, srpc::DeferredReply defer) {
   this->RccFinish(req.id, req.md_graph, &resp.outputs, std::move(defer));
 }
 
-void ClassicServiceImpl::RccInquire(const ClassicService::RpcRccInquireRequest& req, ClassicService::RpcRccInquireResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RccInquire(const ClassicService::RpcRccInquireRequest& req, ClassicService::RpcRccInquireResponse& resp, srpc::DeferredReply defer) {
   this->RccInquire(req.txn_id, req.rank, &resp.out_0, std::move(defer));
 }
 
-void ClassicServiceImpl::RccDispatchRo(const ClassicService::RpcRccDispatchRoRequest& req, ClassicService::RpcRccDispatchRoResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RccDispatchRo(const ClassicService::RpcRccDispatchRoRequest& req, ClassicService::RpcRccDispatchRoResponse& resp, srpc::DeferredReply defer) {
   this->RccDispatchRo(req.cmd, &resp.output, std::move(defer));
 }
 
-void ClassicServiceImpl::RccInquireValidation(const ClassicService::RpcRccInquireValidationRequest& req, ClassicService::RpcRccInquireValidationResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RccInquireValidation(const ClassicService::RpcRccInquireValidationRequest& req, ClassicService::RpcRccInquireValidationResponse& resp, srpc::DeferredReply defer) {
   this->RccInquireValidation(req.tx_id, req.rank, &resp.res, std::move(defer));
 }
 
-void ClassicServiceImpl::RccNotifyGlobalValidation(const ClassicService::RpcRccNotifyGlobalValidationRequest& req, ClassicService::RpcRccNotifyGlobalValidationResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RccNotifyGlobalValidation(const ClassicService::RpcRccNotifyGlobalValidationRequest& req, ClassicService::RpcRccNotifyGlobalValidationResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->RccNotifyGlobalValidation(req.tx_id, req.rank, req.res, std::move(defer));
 }
 
-void ClassicServiceImpl::RccCommit(const ClassicService::RpcRccCommitRequest& req, ClassicService::RpcRccCommitResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RccCommit(const ClassicService::RpcRccCommitRequest& req, ClassicService::RpcRccCommitResponse& resp, srpc::DeferredReply defer) {
   this->RccCommit(req.id, req.rank, req.need_validation, req.parents, &resp.res, &resp.output, std::move(defer));
 }
 
-void ClassicServiceImpl::RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req, ClassicService::RpcRccPreAcceptResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req, ClassicService::RpcRccPreAcceptResponse& resp, srpc::DeferredReply defer) {
   this->RccPreAccept(req.txn_id, req.rank, req.cmd, &resp.res, &resp.x, std::move(defer));
 }
 
-void ClassicServiceImpl::RccAccept(const ClassicService::RpcRccAcceptRequest& req, ClassicService::RpcRccAcceptResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::RccAccept(const ClassicService::RpcRccAcceptRequest& req, ClassicService::RpcRccAcceptResponse& resp, srpc::DeferredReply defer) {
   this->RccAccept(req.txn_id, req.rank, req.ballot, req.p, &resp.res, std::move(defer));
 }
 
-void ClassicServiceImpl::JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->JetpackBeginRecovery(req.old_view, req.new_view, req.new_view_id, std::move(defer));
 }
 
-void ClassicServiceImpl::JetpackPullIdSet(const ClassicService::RpcJetpackPullIdSetRequest& req, ClassicService::RpcJetpackPullIdSetResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::JetpackPullIdSet(const ClassicService::RpcJetpackPullIdSetRequest& req, ClassicService::RpcJetpackPullIdSetResponse& resp, srpc::DeferredReply defer) {
   this->JetpackPullIdSet(req.jepoch, req.oepoch, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.id_set, std::move(defer));
 }
 
-void ClassicServiceImpl::JetpackPullCmd(const ClassicService::RpcJetpackPullCmdRequest& req, ClassicService::RpcJetpackPullCmdResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::JetpackPullCmd(const ClassicService::RpcJetpackPullCmdRequest& req, ClassicService::RpcJetpackPullCmdResponse& resp, srpc::DeferredReply defer) {
   this->JetpackPullCmd(req.jepoch, req.oepoch, req.key_batch, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.cmd_batch, std::move(defer));
 }
 
-void ClassicServiceImpl::JetpackRecordCmd(const ClassicService::RpcJetpackRecordCmdRequest& req, ClassicService::RpcJetpackRecordCmdResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::JetpackRecordCmd(const ClassicService::RpcJetpackRecordCmdRequest& req, ClassicService::RpcJetpackRecordCmdResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->JetpackRecordCmd(req.jepoch, req.oepoch, req.sid, req.rid, req.cmd_batch, std::move(defer));
 }
 
-void ClassicServiceImpl::JetpackPrepare(const ClassicService::RpcJetpackPrepareRequest& req, ClassicService::RpcJetpackPrepareResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::JetpackPrepare(const ClassicService::RpcJetpackPrepareRequest& req, ClassicService::RpcJetpackPrepareResponse& resp, srpc::DeferredReply defer) {
   this->JetpackPrepare(req.jepoch, req.oepoch, req.max_seen_ballot, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.reply_max_seen_ballot, &resp.accepted_ballot, &resp.replied_sid, &resp.replied_set_size, std::move(defer));
 }
 
-void ClassicServiceImpl::JetpackAccept(const ClassicService::RpcJetpackAcceptRequest& req, ClassicService::RpcJetpackAcceptResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::JetpackAccept(const ClassicService::RpcJetpackAcceptRequest& req, ClassicService::RpcJetpackAcceptResponse& resp, srpc::DeferredReply defer) {
   this->JetpackAccept(req.jepoch, req.oepoch, req.max_seen_ballot, req.sid, req.set_size, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.reply_max_seen_ballot, std::move(defer));
 }
 
-void ClassicServiceImpl::JetpackCommit(const ClassicService::RpcJetpackCommitRequest& req, ClassicService::RpcJetpackCommitResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::JetpackCommit(const ClassicService::RpcJetpackCommitRequest& req, ClassicService::RpcJetpackCommitResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->JetpackCommit(req.jepoch, req.oepoch, req.sid, req.set_size, std::move(defer));
 }
 
-void ClassicServiceImpl::JetpackPullRecSetIns(const ClassicService::RpcJetpackPullRecSetInsRequest& req, ClassicService::RpcJetpackPullRecSetInsResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::JetpackPullRecSetIns(const ClassicService::RpcJetpackPullRecSetInsRequest& req, ClassicService::RpcJetpackPullRecSetInsResponse& resp, srpc::DeferredReply defer) {
   this->JetpackPullRecSetIns(req.jepoch, req.oepoch, req.sid, req.rid, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.cmd, std::move(defer));
 }
 
-void ClassicServiceImpl::JetpackFinishRecovery(const ClassicService::RpcJetpackFinishRecoveryRequest& req, ClassicService::RpcJetpackFinishRecoveryResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::JetpackFinishRecovery(const ClassicService::RpcJetpackFinishRecoveryRequest& req, ClassicService::RpcJetpackFinishRecoveryResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->JetpackFinishRecovery(req.oepoch, std::move(defer));
 }
 
-void ClassicServiceImpl::MsgString(const ClassicService::RpcMsgStringRequest& req, ClassicService::RpcMsgStringResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::MsgString(const ClassicService::RpcMsgStringRequest& req, ClassicService::RpcMsgStringResponse& resp, srpc::DeferredReply defer) {
   this->MsgString(req.arg, &resp.ret, std::move(defer));
 }
 
-void ClassicServiceImpl::MsgMarshall(const ClassicService::RpcMsgMarshallRequest& req, ClassicService::RpcMsgMarshallResponse& resp, rrr::DeferredReply defer) {
+void ClassicServiceImpl::MsgMarshall(const ClassicService::RpcMsgMarshallRequest& req, ClassicService::RpcMsgMarshallResponse& resp, srpc::DeferredReply defer) {
   this->MsgMarshall(req.arg, &resp.ret, std::move(defer));
 }
 
 ClassicServiceImpl::ClassicServiceImpl(TxLogServer* sched,
-                                       rusty::Arc<rrr::PollThread> poll_thread_worker)
+                                       rusty::Arc<srpc::PollThread> poll_thread_worker)
     : dtxn_sched_(sched), poll_thread_worker_(poll_thread_worker) {
 
 #ifdef PIECE_COUNT
@@ -203,7 +203,7 @@ ClassicServiceImpl::ClassicServiceImpl(TxLogServer* sched,
 }
 
 void ClassicServiceImpl::ReElect(bool_t* success,
-																 rrr::DeferredReply defer) {
+																 srpc::DeferredReply defer) {
 	for(int i = 0; i < 100000; i++) Log_info("loop loop loop");
 	*success = dtxn_sched()->RequestVote();
 	defer.reply();
@@ -213,7 +213,7 @@ void ClassicServiceImpl::RuleSpeculativeExecute(const janus::Command& md,
                                                 bool_t* accepted,
                                                 int32_t* result,
                                                 bool_t* is_leader,
-                                                rrr::DeferredReply defer) {
+                                                srpc::DeferredReply defer) {
   dtxn_sched()->OnRuleSpeculativeExecute(md, accepted, result, is_leader);
   defer.reply();
 }
@@ -225,7 +225,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
                                   TxnOutput* output,
                                   uint64_t* coro_id,
                                   janus::Command* view_data,
-                                  rrr::DeferredReply defer) {
+                                  srpc::DeferredReply defer) {
   // usleep(20000);
 
 #ifdef LATENCY_LOG_DEBUG
@@ -271,7 +271,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   }
 
   // TxLogServer::Dispatch still takes std::shared_ptr<ViewData>&
-  // (rrr boundary, scheduler.h); convert to the Arc-based envelope
+  // (srpc boundary, scheduler.h); convert to the Arc-based envelope
   // at the edge below.
   std::shared_ptr<ViewData> view;
   // TxLogServer::Dispatch now takes janus::Command;
@@ -314,7 +314,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
 
 
 void ClassicServiceImpl::FailoverPauseSocketOut(
-    rrr::i32* res, rrr::DeferredReply defer) {
+    srpc::i32* res, srpc::DeferredReply defer) {
 #ifdef FAILOVER_DEBUG
   Log_info("!!!!!!!!!!!!!! ClassicServiceImpl::FailoverPauseSocketOut");
 #endif
@@ -349,7 +349,7 @@ void ClassicServiceImpl::FailoverPauseSocketOut(
 }
 
 void ClassicServiceImpl::FailoverResumeSocketOut(
-    rrr::i32* res, rrr::DeferredReply defer) {
+    srpc::i32* res, srpc::DeferredReply defer) {
 #ifdef FAILOVER_DEBUG
   Log_info("!!!!!!!!!!!!!! ClassicServiceImpl::FailoverResumeSocketOut");
 #endif
@@ -373,7 +373,7 @@ void ClassicServiceImpl::FailoverResumeSocketOut(
 }
 
 void ClassicServiceImpl::SimpleCmd(
-    const SimpleCommand& cmd, rrr::i32* res, rrr::DeferredReply defer) {
+    const SimpleCommand& cmd, srpc::i32* res, srpc::DeferredReply defer) {
   Fiber::create_run([res, defer = std::move(defer), this]() mutable {
     auto empty_cmd = rusty::Arc<TpcEmptyCommand>::make();
     // aliased wrap preserves event-member aliasing — the
@@ -388,25 +388,25 @@ void ClassicServiceImpl::SimpleCmd(
 }
 
 void ClassicServiceImpl::IsLeader(
-    const locid_t& can_id, bool_t* is_leader, rrr::DeferredReply defer) {
+    const locid_t& can_id, bool_t* is_leader, srpc::DeferredReply defer) {
   auto sched = (SchedulerClassic*)dtxn_sched_;
   *is_leader = sched->IsLeader();
   defer.reply();
 }
 
 void ClassicServiceImpl::IsFPGALeader(
-    const locid_t& can_id, bool_t* is_leader, rrr::DeferredReply defer) {
+    const locid_t& can_id, bool_t* is_leader, srpc::DeferredReply defer) {
   auto sched = (SchedulerClassic*)dtxn_sched_;
   *is_leader = sched->IsFPGALeader();
   defer.reply();
 }
-void ClassicServiceImpl::Prepare(const rrr::i64& tid,
+void ClassicServiceImpl::Prepare(const srpc::i64& tid,
                                  const std::vector<i32>& sids,
                                  const DepId& dep_id,
-                                 rrr::i32* res,
+                                 srpc::i32* res,
 																 bool_t* slow,
                                  uint64_t* coro_id,
-                                 rrr::DeferredReply defer) {
+                                 srpc::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   bool null_cmd = false;
@@ -441,13 +441,13 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
 #endif
 }
 
-void ClassicServiceImpl::Commit(const rrr::i64& tid,
+void ClassicServiceImpl::Commit(const srpc::i64& tid,
                                 const DepId& dep_id,
-                                rrr::i32* res,
+                                srpc::i32* res,
 																bool_t* slow,
                                 uint64_t* coro_id,
                                 janus::Command* view_data,
-                                rrr::DeferredReply defer) {
+                                srpc::DeferredReply defer) {
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   int ret = sched->OnCommit(tid, dep_id, SUCCESS);
@@ -483,13 +483,13 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
   defer.reply();
 }
 
-void ClassicServiceImpl::Abort(const rrr::i64& tid,
+void ClassicServiceImpl::Abort(const srpc::i64& tid,
                                const DepId& dep_id,
-                               rrr::i32* res,
+                               srpc::i32* res,
 															 bool_t* slow,
                                uint64_t* coro_id,
                                janus::Command* view_data,
-                               rrr::DeferredReply defer) {
+                               srpc::DeferredReply defer) {
   Log_debug("get abort_txn: tid: {}", tid);
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
@@ -511,9 +511,9 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
   defer.reply();
 }
 
-void ClassicServiceImpl::EarlyAbort(const rrr::i64& tid,
-                                    rrr::i32* res,
-                                    rrr::DeferredReply defer) {
+void ClassicServiceImpl::EarlyAbort(const srpc::i64& tid,
+                                    srpc::i32* res,
+                                    srpc::DeferredReply defer) {
   Log_debug("get abort_txn: tid: {}", tid);
 //  std::lock_guard<std::mutex> guard(mtx_);
 //  const auto& func = [tid, res, defer, this]() {
@@ -525,41 +525,41 @@ void ClassicServiceImpl::EarlyAbort(const rrr::i64& tid,
 //  Fiber::create_run(func);
 }
 
-void ClassicServiceImpl::rpc_null(rrr::DeferredReply defer) {
+void ClassicServiceImpl::rpc_null(srpc::DeferredReply defer) {
   defer.reply();
 }
 
 void ClassicServiceImpl::UpgradeEpoch(const uint32_t& curr_epoch,
                                       int32_t* res,
-                                      rrr::DeferredReply defer) {
+                                      srpc::DeferredReply defer) {
   *res = dtxn_sched()->OnUpgradeEpoch(curr_epoch);
   defer.reply();
 }
 
 void ClassicServiceImpl::TruncateEpoch(const uint32_t& old_epoch,
-                                       rrr::DeferredReply defer) {
+                                       srpc::DeferredReply defer) {
   verify(0);
 }
 
 void ClassicServiceImpl::TapirAccept(const cmdid_t& cmd_id,
                                      const ballot_t& ballot,
                                      const int32_t& decision,
-                                     rrr::DeferredReply defer) {
+                                     srpc::DeferredReply defer) {
   verify(0);
 }
 
 void ClassicServiceImpl::TapirFastAccept(const txid_t& tx_id,
                                          const vector<SimpleCommand>& txn_cmds,
-                                         rrr::i32* res,
-                                         rrr::DeferredReply defer) {
+                                         srpc::i32* res,
+                                         srpc::DeferredReply defer) {
   SchedulerTapir* sched = (SchedulerTapir*) dtxn_sched_;
   *res = sched->OnFastAccept(tx_id, txn_cmds);
   defer.reply();
 }
 
 void ClassicServiceImpl::TapirDecide(const cmdid_t& cmd_id,
-                                     const rrr::i32& decision,
-                                     rrr::DeferredReply defer) {
+                                     const srpc::i32& decision,
+                                     srpc::DeferredReply defer) {
   SchedulerTapir* sched = (SchedulerTapir*) dtxn_sched_;
   sched->OnDecide(cmd_id, decision, [defer = std::move(defer)]() mutable { defer.reply(); });
 }
@@ -567,22 +567,22 @@ void ClassicServiceImpl::TapirDecide(const cmdid_t& cmd_id,
 void ClassicServiceImpl::RccDispatch(const vector<SimpleCommand>& cmd,
                                      int32_t* res,
                                      TxnOutput* output,
-                                     rrr::AnyMessage* p_md_graph,
-                                     rrr::DeferredReply defer) {
+                                     srpc::AnyMessage* p_md_graph,
+                                     srpc::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(this->mtx_);
   RccServer* sched = (RccServer*) dtxn_sched_;
   auto p = rusty::Arc<RccGraph>::make();
   // graph reply rides directly as `AnyMessage` (aliased: OnDispatch's
   // fills through the shared payload stay visible to the packed reply).
-  *p_md_graph = rrr::AnyMessage::pack(p.clone());
+  *p_md_graph = srpc::AnyMessage::pack(p.clone());
   *res = sched->OnDispatch(cmd, output, std::move(p));
   defer.reply();
 }
 
 void ClassicServiceImpl::RccFinish(const cmdid_t& cmd_id,
-                                   const rrr::AnyMessage& md_graph,
+                                   const srpc::AnyMessage& md_graph,
                                    TxnOutput* output,
-                                   rrr::DeferredReply defer) {
+                                   srpc::DeferredReply defer) {
   // graph rides directly as AnyMessage.
   const auto sp_graph = md_graph.unpack<RccGraph>();
   verify(sp_graph.is_some());
@@ -599,7 +599,7 @@ void ClassicServiceImpl::RccFinish(const cmdid_t& cmd_id,
 void ClassicServiceImpl::RccInquire(const txnid_t& tid,
                                     const int32_t& rank,
                                     map<txid_t, parent_set_t>* ret,
-                                    rrr::DeferredReply defer) {
+                                    srpc::DeferredReply defer) {
 //  verify(IS_MODE_RCC || IS_MODE_RO6);
 //  std::lock_guard<std::mutex> guard(mtx_);
   RccServer* p_sched = (RccServer*) dtxn_sched_;
@@ -614,7 +614,7 @@ void ClassicServiceImpl::RccInquire(const txnid_t& tid,
 
 void ClassicServiceImpl::RccDispatchRo(const SimpleCommand& cmd,
                                        map<int32_t, Value>* output,
-                                       rrr::DeferredReply defer) {
+                                       srpc::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(mtx_);
   verify(0);
   auto tx = dtxn_sched_->GetOrCreateTx(cmd.root_id_, true);
@@ -626,14 +626,14 @@ void ClassicServiceImpl::RccInquireValidation(
     const txid_t& txid,
     const int32_t& rank,
     int32_t* ret,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   auto* s = (RccServer*) dtxn_sched_;
   *ret = s->OnInquireValidation(txid, rank);
   defer.reply();
 }
 
 void ClassicServiceImpl::RccNotifyGlobalValidation(
-    const txid_t& txid, const int32_t& rank, const int32_t& res, rrr::DeferredReply defer) {
+    const txid_t& txid, const int32_t& rank, const int32_t& res, srpc::DeferredReply defer) {
   auto* s = (RccServer*) dtxn_sched_;
   s->OnNotifyGlobalValidation(txid, rank, res);
   defer.reply();
@@ -645,7 +645,7 @@ void ClassicServiceImpl::RccCommit(const cmdid_t& cmd_id,
                                    const parent_set_t& parents,
                                    int32_t* res,
                                    TxnOutput* output,
-                                   rrr::DeferredReply defer) {
+                                   srpc::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(mtx_);
   auto p_sched = (RccServer*) dtxn_sched_;
   *res = p_sched->OnCommit(cmd_id, rank, need_validation, parents, output);
@@ -657,7 +657,7 @@ void ClassicServiceImpl::RccPreAccept(const cmdid_t& txnid,
                                       const vector<SimpleCommand>& cmds,
                                       int32_t* res,
                                       parent_set_t* res_parents,
-                                      rrr::DeferredReply defer) {
+                                      srpc::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (RccServer*) dtxn_sched_;
   *res = sched->OnPreAccept(txnid, rank, cmds, *res_parents);
@@ -669,7 +669,7 @@ void ClassicServiceImpl::RccAccept(const cmdid_t& txnid,
                                    const ballot_t& ballot,
                                    const parent_set_t& parents,
                                    int32_t* res,
-                                   rrr::DeferredReply defer) {
+                                   srpc::DeferredReply defer) {
   auto sched = (RccServer*) dtxn_sched_;
   *res = sched->OnAccept(txnid, rank, ballot, parents);
   defer.reply();
@@ -678,7 +678,7 @@ void ClassicServiceImpl::RccAccept(const cmdid_t& txnid,
 void ClassicServiceImpl::JetpackBeginRecovery(const janus::Command& old_view,
                                               const janus::Command& new_view, 
                                               const epoch_t& new_view_id, 
-                                              rrr::DeferredReply defer) {
+                                              srpc::DeferredReply defer) {
   dtxn_sched()->OnJetpackBeginRecovery(old_view, new_view, new_view_id);
   defer.reply();
 }
@@ -691,7 +691,7 @@ void ClassicServiceImpl::JetpackPullIdSet(const epoch_t& jepoch,
                                           janus::Command* reply_old_view,
                                           janus::Command* reply_new_view,
                                           janus::Command* id_set, 
-                                          rrr::DeferredReply defer) {
+                                          srpc::DeferredReply defer) {
   // Fill-then-wrap: the handler populates a local, which is packed
   // once complete — no mutation through a packed handle.
   VecRecData ret_id_set;
@@ -709,7 +709,7 @@ void ClassicServiceImpl::JetpackPullCmd(const epoch_t& jepoch,
                                         janus::Command* reply_old_view,
                                         janus::Command* reply_new_view,
                                         janus::Command* cmd_batch, 
-                                        rrr::DeferredReply defer) {
+                                        srpc::DeferredReply defer) {
   const auto vec_keys = marshallable_cast<VecRecData>(key_batch);
   std::vector<key_t> keys;
   if (vec_keys.is_some() && vec_keys.unwrap()->key_data_) {
@@ -729,7 +729,7 @@ void ClassicServiceImpl::JetpackRecordCmd(const epoch_t& jepoch,
                                           const int32_t& sid,
                                           const int32_t& rid,
                                           const janus::Command& md, 
-                                          rrr::DeferredReply defer) {
+                                          srpc::DeferredReply defer) {
   const auto batch = marshallable_cast<KeyCmdBatchData>(md);
   const KeyCmdBatchData empty_batch;
   dtxn_sched()->OnJetpackRecordCmd(jepoch, oepoch, sid, rid,
@@ -750,7 +750,7 @@ void ClassicServiceImpl::JetpackPrepare(const epoch_t& jepoch,
                                         ballot_t* accepted_ballot, 
                                         int32_t* replied_sid, 
                                         int32_t* replied_set_size, 
-                                        rrr::DeferredReply defer) {
+                                        srpc::DeferredReply defer) {
   dtxn_sched()->OnJetpackPrepare(jepoch, oepoch, max_seen_ballot, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, reply_max_seen_ballot, accepted_ballot, replied_sid, replied_set_size);
   defer.reply();
 }
@@ -766,7 +766,7 @@ void ClassicServiceImpl::JetpackAccept(const epoch_t& jepoch,
                                        janus::Command* reply_old_view,
                                        janus::Command* reply_new_view,
                                        ballot_t* reply_max_seen_ballot,
-                                       rrr::DeferredReply defer) {
+                                       srpc::DeferredReply defer) {
   dtxn_sched()->OnJetpackAccept(jepoch, oepoch, max_seen_ballot, sid, set_size, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, reply_max_seen_ballot);
   defer.reply();
 }
@@ -775,7 +775,7 @@ void ClassicServiceImpl::JetpackCommit(const epoch_t& jepoch,
                                        const epoch_t& oepoch, 
                                        const int32_t& sid, 
                                        const int32_t& set_size, 
-                                       rrr::DeferredReply defer) {
+                                       srpc::DeferredReply defer) {
   dtxn_sched()->OnJetpackCommit(jepoch, oepoch, sid, set_size);
   defer.reply();
 }
@@ -790,14 +790,14 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
                                               janus::Command* reply_old_view,
                                               janus::Command* reply_new_view,
                                               janus::Command* cmd, 
-                                              rrr::DeferredReply defer) {
+                                              srpc::DeferredReply defer) {
   *cmd = janus::Command::pack_aliased(rusty::Arc<TpcCommitCommand>::make());
   dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view);
   defer.reply();
 }
 
  void ClassicServiceImpl::JetpackFinishRecovery(const epoch_t& oepoch,
-                                                rrr::DeferredReply defer) {
+                                                srpc::DeferredReply defer) {
   dtxn_sched()->OnJetpackFinishRecovery(oepoch);
   defer.reply();
 }
@@ -818,7 +818,7 @@ void ClassicServiceImpl::RegisterStats() {
 
 void ClassicServiceImpl::MsgString(const string& arg,
                                    string* ret,
-                                   rrr::DeferredReply defer) {
+                                   srpc::DeferredReply defer) {
 
   verify(comm_ != nullptr);
   for (auto& f : comm_->msg_string_handlers_) {
@@ -833,7 +833,7 @@ void ClassicServiceImpl::MsgString(const string& arg,
 
 void ClassicServiceImpl::MsgMarshall(const janus::Command& arg,
                                      janus::Command* ret,
-                                     rrr::DeferredReply defer) {
+                                     srpc::DeferredReply defer) {
 
   verify(comm_ != nullptr);
   for (auto& f : comm_->msg_marshall_handlers_) {

@@ -6,11 +6,11 @@ class HelloworldClientService(object):
     TXN_READ = 0x4e5916a6
 
     __input_type_info__ = {
-        'txn_read': ['std::vector<rrr::i64>'],
+        'txn_read': ['std::vector<i64>'],
     }
 
     __output_type_info__ = {
-        'txn_read': ['rrr::i32'],
+        'txn_read': ['i32'],
     }
 
     def __bind_helper__(self, func):
@@ -19,7 +19,7 @@ class HelloworldClientService(object):
         return f
 
     def __reg_to__(self, server):
-        server.__reg_func__(HelloworldClientService.TXN_READ, self.__bind_helper__(self.txn_read), ['std::vector<rrr::i64>'], ['rrr::i32'])
+        server.__reg_func__(HelloworldClientService.TXN_READ, self.__bind_helper__(self.txn_read), ['std::vector<i64>'], ['i32'])
 
     def txn_read(__self__, _req):
         raise NotImplementedError('subclass HelloworldClientService and implement your own txn_read function')

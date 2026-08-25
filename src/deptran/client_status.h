@@ -12,7 +12,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #ifdef __APPLE__ // for OS X
 #include <mach/clock.h>
 #include <mach/mach.h>
@@ -22,7 +22,7 @@
 
 namespace janus {
 
-using rrr::verify;
+using srpc::verify;
 
 // Forward declarations
 void clock_gettime(struct timespec *time);

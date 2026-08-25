@@ -28,7 +28,7 @@ typedef std::pair<siteid_t, ClassicProxy*> SiteProxyPair;
 typedef std::pair<siteid_t, ClientControlProxy*> ClientSiteProxyPair;
 
 // Construction shim for the inline-Rust DSL `janus::QuorumEventWrapper`
-// (src/rrr/reactor/reactor.cpp): a DSL struct emits a `static new_` factory
+// (src/srpc/reactor/reactor.cpp): a DSL struct emits a `static new_` factory
 // rather than a real 2-arg constructor, so the per-protocol quorum events
 // derive from this adapter instead of the wrapper directly.
 class QuorumEventBase : public QuorumEventWrapper {
@@ -355,11 +355,11 @@ class Communicator {
   static uint64_t global_id;
   const int CONNECT_TIMEOUT_MS = 120*1000;
   const int CONNECT_SLEEP_MS = 1000;
-  rusty::Option<rusty::Arc<rrr::PollThread>> rpc_poll_;
+  rusty::Option<rusty::Arc<srpc::PollThread>> rpc_poll_;
   bool owns_poll_thread_ = false;  // True if we created the poll thread, false if passed in
   TxLogServer *rep_sched_ = nullptr;  // Jetpack protocols (Copilot) need direct scheduler access
   locid_t loc_id_ = -1;
-  map<siteid_t, rusty::Arc<rrr::Client>> rpc_clients_{};
+  map<siteid_t, rusty::Arc<srpc::Client>> rpc_clients_{};
   map<siteid_t, ClassicProxy *> rpc_proxies_{};
   map<parid_t, vector<SiteProxyPair>> rpc_par_proxies_{};
   map<parid_t, SiteProxyPair> leader_cache_ = {};
@@ -370,14 +370,14 @@ class Communicator {
   //
   // excised the dead CPU-utilization /
   // RPC-latency profiling subsystem.  Removed fields:
-  //   - `unordered_map<uint64_t, pair<rrr::i64, rrr::i64>> outbound_`
+  //   - `unordered_map<uint64_t, pair<srpc::i64, srpc::i64>> outbound_`
   //     (RPC start-time map; written in `BroadcastDispatch` callback
   //     at `communicator.cc:782` and read only inside the dead
   //     window-tracking blocks at `communicator.cc:1023-1048` and
   //     `communicator.cc:1161-1192`).
   //   - `int index`, `int total`, `int low_util` (the `_` suffix
   //     versions like `total_` are LIVE and stay).
-  //   - `rrr::i64 window[200]`, `window_time`, `total_time`,
+  //   - `srpc::i64 window[200]`, `window_time`, `total_time`,
   //     `window_avg`, `total_avg` (the rolling-window latency
   //     accounting).
   //   - `double cpu = 1.0`, `last_cpu = 1.0`, `tx` (the CPU /

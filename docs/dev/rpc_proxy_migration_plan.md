@@ -1,12 +1,12 @@
-# RRR Inheritance-to-Proxy Migration Plan
+# SRPC Inheritance-to-Proxy Migration Plan
 
 ## Scope
 
-**All of `src/rrr/`** — rpc/, reactor/, base/, misc/.
+**All of `src/srpc/`** — rpc/, reactor/, base/, misc/.
 
 ## Overview
 
-Replace C++ virtual inheritance in `src/rrr/` with the [proxy library](https://github.com/ngcpp/proxy) — a C++20 header-only library that provides polymorphism without inheritance via type erasure and compile-time facades.
+Replace C++ virtual inheritance in `src/srpc/` with the [proxy library](https://github.com/ngcpp/proxy) — a C++20 header-only library that provides polymorphism without inheritance via type erasure and compile-time facades.
 
 **Why proxy?**
 - No vtable overhead — proxy uses small object optimization and inline storage
@@ -14,7 +14,7 @@ Replace C++ virtual inheritance in `src/rrr/` with the [proxy library](https://g
 - Explicit allocation control (no hidden heap allocations for small types)
 - Better composability — facades can be combined without diamond inheritance
 
-## Inheritance Audit (full src/rrr/)
+## Inheritance Audit (full src/srpc/)
 
 | # | Base Class | File | Virtual Methods | Implementations | Storage Pattern |
 |---|-----------|------|----------------|-----------------|-----------------|
@@ -166,7 +166,7 @@ Three facades: `SnapshotManagerFacade` (10 methods), `SnapshotReaderFacade` (4 m
 
 **Files**: `misc/marshal.hpp`, many dependents across `src/deptran/`
 
-This is the highest-risk phase because Marshallable is used across the entire codebase, not just rrr/.
+This is the highest-risk phase because Marshallable is used across the entire codebase, not just srpc/.
 
 ```cpp
 struct MarshallableFacade : pro::facade_builder
@@ -179,7 +179,7 @@ struct MarshallableFacade : pro::facade_builder
 
 **Note**: Marshallable uses a `kind_` tag field for type erasure. The proxy migration must preserve this runtime type identification — either as a separate convention or by adding a `kind()` method to the facade.
 
-**Estimated LOC**: ~150 in rrr/, but many dependents outside scope need updating
+**Estimated LOC**: ~150 in srpc/, but many dependents outside scope need updating
 
 ### Phase 6: Cleanup NoCopy and RefCounted
 

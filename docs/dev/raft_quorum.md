@@ -4,7 +4,7 @@
 
 Phase 8.0 collapsed `TransportFacade` to fiber-synchronous: each per-peer
 `send_*(dst, req)` returns its `Reply` by value, blocking the caller's
-fiber on an `rrr::IntEvent` until the reply lands. That removes the
+fiber on an `srpc::IntEvent` until the reply lands. That removes the
 need for the legacy `RaftVoteQuorumEvent` / `SendAppendEntriesResults`
 broadcast machinery on the facade itself.
 
@@ -25,7 +25,7 @@ This file is a small, single-header utility whose contract is:
 
 ## Threading model
 
-In rrr's reactor model, all fibers within one `PollThread` execute
+In srpc's reactor model, all fibers within one `PollThread` execute
 cooperatively on a single OS thread — there's no true parallelism among
 sub-fibers. The leader spawns N sub-fibers, each of which yields on its
 own RPC's `IntEvent`. When an RPC reply arrives, the corresponding
@@ -35,13 +35,13 @@ We still use `rusty::Mutex` and `rusty::sync::atomic::Atomic<int>` in
 the data structure because:
 
 - The contract should remain correct if a future change moves replies
-  to a different thread (e.g. a chained dispatcher running on the rrr
+  to a different thread (e.g. a chained dispatcher running on the srpc
   callback thread before it even reaches the leader's poll thread).
 - The cost is negligible — these are uncontended within one fiber loop.
 
-## Why `std::shared_ptr<rrr::IntEvent>` and not `rusty::Arc<rrr::IntEvent>`
+## Why `std::shared_ptr<srpc::IntEvent>` and not `rusty::Arc<srpc::IntEvent>`
 
-The phase 8.x TODO said `rusty::Arc<rrr::IntEvent>`, but the rrr reactor
+The phase 8.x TODO said `rusty::Arc<srpc::IntEvent>`, but the srpc reactor
 **owns** every `Event` instance through `Reactor::all_events_` and emits
 the user-facing handle as `std::shared_ptr<Ev>` from
 `Reactor::create_sp_event<Ev>(args…)`. That's the only legal way to
@@ -49,8 +49,8 @@ construct an event — directly heap-allocating one would break the
 reactor's wakeup tracking. `rusty::Arc<T>::make(…)` always allocates
 its own `ControlBlock + new T(...)`, so it can't be used here.
 
-`RaftQuorum` therefore owns `std::shared_ptr<rrr::IntEvent>` directly
-and annotates the field `@unsafe` per `CLAUDE.md`'s rrr-boundary rule.
+`RaftQuorum` therefore owns `std::shared_ptr<srpc::IntEvent>` directly
+and annotates the field `@unsafe` per `CLAUDE.md`'s srpc-boundary rule.
 Callers see a Rusty surface — they never need to touch the `shared_ptr`.
 
 ## API
@@ -122,5 +122,5 @@ implicit; only the *other* peers contribute to `n_received_`.
   the mutex+atomic must hold).
 
 The unit test runs without a full deptran environment — it only needs
-`rrr::Reactor` + `rrr::PollThread` to drive the event loop, which is
+`srpc::Reactor` + `srpc::PollThread` to drive the event loop, which is
 the same minimum any other `test_raft_*` target uses.

@@ -12,7 +12,7 @@ with open(file_path, "r") as file:
 
 with open(file_path, "w") as file:
     for line in lines:
-        if ": public rrr::Service" in line:
+        if ": public srpc::Service" in line:
             keyword_detected = False
             for keyword in keywords:
                 if keyword in line:

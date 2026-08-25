@@ -11,7 +11,7 @@ public:
     std::vector<std::vector<Value> >inputs;
     std::vector<int>                output_sizes;
     std::vector<int>                pis;
-    rrr::FutureAttr                 fuattr;
+    srpc::FutureAttr                 fuattr;
   };
   std::set<i64> ro_txn_;
 

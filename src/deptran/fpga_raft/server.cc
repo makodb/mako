@@ -7,7 +7,7 @@
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
-#include "rrr/misc/serializable.hpp"  // wrap_serializable_aliased
+#include "srpc/misc/serializable.hpp"  // wrap_serializable_aliased
 
 
 namespace janus {

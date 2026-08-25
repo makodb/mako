@@ -1,7 +1,7 @@
 #include "server.h"
 #include "frame.h"
 #include "coordinator.h"
-#include "rrr/misc/serializable.hpp"  // wrap_serializable
+#include "srpc/misc/serializable.hpp"  // wrap_serializable
 
 // #define DEBUG
 #define WAIT_AT_UNCOMMIT

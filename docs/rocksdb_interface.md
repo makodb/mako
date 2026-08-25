@@ -209,7 +209,7 @@ decoupled-client server paths (the raw-struct handlers and
 `MakoClientService`) now run `ShardReceiver::RunNontxnOp`.
 `RemoteDB::ConnectNontxn(host, port)` + `GetTable(name, table_id)`
 give a client that interoperates with `ClientTcpServer` end-to-end
-(the rrr-protocol txn'd client still has no matching live server —
+(the srpc-protocol txn'd client still has no matching live server —
 pre-existing).
 
 ### IDatabase

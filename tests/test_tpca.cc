@@ -65,19 +65,19 @@
 ////    tpca_piece.reg_pieces();
 ////
 ////    // init service implement
-////    rrr::Service *deptran_service = new DepTranService();
+////    srpc::Service *deptran_service = new DepTranService();
 ////
-////    // init rrr::PollThread 8 threads
-////    struct rrr::poll_options poll_opt;
+////    // init srpc::PollThread 8 threads
+////    struct srpc::poll_options poll_opt;
 ////    poll_opt.n_threads = 1;
-////    rrr::PollThread *poll_mgr = new rrr::PollThread(poll_opt);
+////    srpc::PollThread *poll_mgr = new srpc::PollThread(poll_opt);
 ////
 ////    // init base::ThreadPool
 ////    unsigned int num_threads = 1;
 ////    base::ThreadPool *thread_pool = new base::ThreadPool(num_threads);
 ////
-////    // init rrr::Server
-////    rrr::Server *server = new rrr::Server(poll_mgr, thread_pool);
+////    // init srpc::Server
+////    srpc::Server *server = new srpc::Server(poll_mgr, thread_pool);
 ////
 ////    // reg service
 ////    server->reg(deptran_service);

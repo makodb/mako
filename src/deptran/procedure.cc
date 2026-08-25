@@ -2,17 +2,17 @@
 #include "marshal-value.h"
 #include "coordinator.h"
 #include "procedure.h"
-#include "rrr/misc/serializable.hpp"
+#include "srpc/misc/serializable.hpp"
 #include "benchmark_control_rpc.h"
 
 
 namespace janus {
 
 // Registry keys come from each payload's explicit MakoCommands membership.
-static int volatile x1 = rrr::SerializableRegistry::reg<VecPieceData>(VecPieceData::static_kind());
-static int volatile x2 = rrr::SerializableRegistry::reg<VecRecData>(VecRecData::static_kind());
-static int volatile x3 = rrr::SerializableRegistry::reg<ViewData>(ViewData::static_kind());
-static int volatile x4 = rrr::SerializableRegistry::reg<KeyCmdBatchData>(KeyCmdBatchData::static_kind());
+static int volatile x1 = srpc::SerializableRegistry::reg<VecPieceData>(VecPieceData::static_kind());
+static int volatile x2 = srpc::SerializableRegistry::reg<VecRecData>(VecRecData::static_kind());
+static int volatile x3 = srpc::SerializableRegistry::reg<ViewData>(ViewData::static_kind());
+static int volatile x4 = srpc::SerializableRegistry::reg<KeyCmdBatchData>(KeyCmdBatchData::static_kind());
 
 TxWorkspace::TxWorkspace() {
   values_ = std::make_shared<map<int32_t, Value>>();
@@ -67,28 +67,28 @@ TxData::TxData() {
 // above: keys_ (set<int32_t>), then per-present-key (k, value) pairs,
 // terminated by k=-1.
 void serialize(const TxWorkspace &ws, BinaryWriteArchive& ar) {
-  rrr::Serialize_::serialize(ws.keys_, ar);
+  srpc::Serialize_::serialize(ws.keys_, ar);
   auto& input_vars = *ws.values_;
   for (int32_t k : ws.keys_) {
     auto it = input_vars.find(k);
     if (it != input_vars.end()) {
-      rrr::Serialize_::serialize(k, ar);
-      rrr::Serialize_::serialize(it->second, ar);
+      srpc::Serialize_::serialize(k, ar);
+      srpc::Serialize_::serialize(it->second, ar);
     }
   }
-  rrr::Serialize_::serialize(static_cast<int32_t>(-1), ar);
+  srpc::Serialize_::serialize(static_cast<int32_t>(-1), ar);
 }
 
 BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const TxWorkspace &ws) { serialize(ws, ar); return ar; }
 
 void deserialize(TxWorkspace &ws, BinaryReadArchive& ar) {
-  rrr::Deserialize_::deserialize(ws.keys_, ar);
+  srpc::Deserialize_::deserialize(ws.keys_, ar);
   while (true) {
     int32_t k;
-    rrr::Deserialize_::deserialize(k, ar);
+    srpc::Deserialize_::deserialize(k, ar);
     if (k >= 0) {
       Value v;
-      rrr::Deserialize_::deserialize(v, ar);
+      srpc::Deserialize_::deserialize(v, ar);
       (*ws.values_)[k] = v;
     } else {
       break;
@@ -104,36 +104,36 @@ BinaryReadArchive& operator>>(BinaryReadArchive& ar, TxWorkspace &ws) { deserial
 //   time_ (double) | txn_type_ (i32) |
 //   has_view_data (bool_t) | optional MarshallDeputy view_md
 void serialize(const TxReply& reply, BinaryWriteArchive& ar) {
-  rrr::Serialize_::serialize(reply.res_, ar);
-  rrr::Serialize_::serialize(reply.output_, ar);
-  rrr::Serialize_::serialize(reply.n_try_, ar);
+  srpc::Serialize_::serialize(reply.res_, ar);
+  srpc::Serialize_::serialize(reply.output_, ar);
+  srpc::Serialize_::serialize(reply.n_try_, ar);
   // start_time_ is intentionally not serialized (legacy comment).
-  rrr::Serialize_::serialize(reply.time_, ar);
-  rrr::Serialize_::serialize(reply.txn_type_, ar);
+  srpc::Serialize_::serialize(reply.time_, ar);
+  srpc::Serialize_::serialize(reply.txn_type_, ar);
 
   bool_t has_view_data = reply.sp_view_data_.is_some() ? 1 : 0;
-  rrr::Serialize_::serialize(has_view_data, ar);
+  srpc::Serialize_::serialize(has_view_data, ar);
   if (has_view_data) {
     janus::Command view_md = reply.sp_view_data_.unwrap().clone();
-    rrr::Serialize_::serialize(view_md, ar);
+    srpc::Serialize_::serialize(view_md, ar);
   }
 }
 
 BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const TxReply& reply) { serialize(reply, ar); return ar; }
 
 void deserialize(TxReply& reply, BinaryReadArchive& ar) {
-  rrr::Deserialize_::deserialize(reply.res_, ar);
-  rrr::Deserialize_::deserialize(reply.output_, ar);
-  rrr::Deserialize_::deserialize(reply.n_try_, ar);
+  srpc::Deserialize_::deserialize(reply.res_, ar);
+  srpc::Deserialize_::deserialize(reply.output_, ar);
+  srpc::Deserialize_::deserialize(reply.n_try_, ar);
   memset(&reply.start_time_, 0, sizeof(reply.start_time_));
-  rrr::Deserialize_::deserialize(reply.time_, ar);
-  rrr::Deserialize_::deserialize(reply.txn_type_, ar);
+  srpc::Deserialize_::deserialize(reply.time_, ar);
+  srpc::Deserialize_::deserialize(reply.txn_type_, ar);
 
   bool_t has_view_data;
-  rrr::Deserialize_::deserialize(has_view_data, ar);
+  srpc::Deserialize_::deserialize(has_view_data, ar);
   if (has_view_data) {
     janus::Command view_md;
-    rrr::Deserialize_::deserialize(view_md, ar);
+    srpc::Deserialize_::deserialize(view_md, ar);
     reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
   } else {
     reply.sp_view_data_ = rusty::Option<rusty::Arc<ViewData>>();

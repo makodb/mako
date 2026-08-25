@@ -2,7 +2,7 @@
 //#include <unistd.h>
 //#include <thread>
 //#include <fcntl.h>
-//import rrr;
+//import srpc;
 //
 //TEST(io_wait, simple) {
 //
@@ -15,11 +15,11 @@
 //            int fd = open(filename, O_RDWR | O_CREAT, 00644);
 //            int i = 0;
 //            char buf[100];
-//            uint64_t t0 = rrr::Time::now();
+//            uint64_t t0 = srpc::Time::now();
 //            while (i < 100000) {
 //                if (i % 2000 == 0) {
-//                    uint64_t t1 = rrr::Time::now();
-//                    rrr::Log_info("time: {}", t1 - t0);
+//                    uint64_t t1 = srpc::Time::now();
+//                    srpc::Log_info("time: {}", t1 - t0);
 //                    t0 = t1;
 //                }
 //                int ret = write(fd, buf, 100);

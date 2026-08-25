@@ -5,7 +5,7 @@
 
 #include "client_worker.h"
 
-// The wait_recordplace macro is defined in rrr/reactor/event.h but macros do
+// The wait_recordplace macro is defined in srpc/reactor/event.h but macros do
 // not cross module boundaries, so redefine it locally here.
 #ifndef wait_recordplace
 #define wait_recordplace(ev, wait_func) do { \

@@ -2,24 +2,24 @@
 
 ## Overview
 
-This document provides the master plan for enhancing the rrr/rpc module (`src/rrr/rpc/`) to support server/client crash handling, automatic reconnection, and improved fault tolerance.
+This document provides the master plan for enhancing the srpc/rpc module (`src/srpc/rpc/`) to support server/client crash handling, automatic reconnection, and improved fault tolerance.
 
 ## Scope
 
-**In Scope**: rrr/rpc module - the TCP-based RPC framework in `src/rrr/rpc/`
+**In Scope**: srpc/rpc module - the TCP-based RPC framework in `src/srpc/rpc/`
 
-**Out of Scope**: eRPC (RDMA backend in `src/mako/lib/erpc_backend.h`) - eRPC has its own session management and reliability mechanisms provided by the eRPC library. The enhancements in this plan are specific to the rrr/rpc TCP transport.
+**Out of Scope**: eRPC (RDMA backend in `src/mako/lib/erpc_backend.h`) - eRPC has its own session management and reliability mechanisms provided by the eRPC library. The enhancements in this plan are specific to the srpc/rpc TCP transport.
 
 ## Current Architecture
 
 ### Key Files
 | File | Purpose |
 |------|---------|
-| `src/rrr/rpc/client.hpp` | Client-side RPC: `Future`, `ClientConnection`, `Client`, `ClientPool` |
-| `src/rrr/rpc/client.cpp` | Client implementation |
-| `src/rrr/rpc/server.hpp` | Server-side RPC: `Service`, `ServerConnection`, `ServerListener`, `Server` |
-| `src/rrr/rpc/server.cpp` | Server implementation |
-| `src/rrr/reactor/reactor.h` | Poll thread and async I/O management |
+| `src/srpc/rpc/client.hpp` | Client-side RPC: `Future`, `ClientConnection`, `Client`, `ClientPool` |
+| `src/srpc/rpc/client.cpp` | Client implementation |
+| `src/srpc/rpc/server.hpp` | Server-side RPC: `Service`, `ServerConnection`, `ServerListener`, `Server` |
+| `src/srpc/rpc/server.cpp` | Server implementation |
+| `src/srpc/reactor/reactor.h` | Poll thread and async I/O management |
 
 ### Current Limitations
 1. **No automatic reconnection** - client must manually call `connect()` after failure
@@ -285,7 +285,7 @@ Plus test code (estimated 2000-3000 LOC additional).
 
 ## References
 
-- Client RPC: `src/rrr/rpc/client.hpp`, `src/rrr/rpc/client.cpp`
-- Server RPC: `src/rrr/rpc/server.hpp`, `src/rrr/rpc/server.cpp`
-- Poll thread: `src/rrr/reactor/reactor.h`
+- Client RPC: `src/srpc/rpc/client.hpp`, `src/srpc/rpc/client.cpp`
+- Server RPC: `src/srpc/rpc/server.hpp`, `src/srpc/rpc/server.cpp`
+- Poll thread: `src/srpc/reactor/reactor.h`
 - RustyCpp guidelines: `CLAUDE.md`

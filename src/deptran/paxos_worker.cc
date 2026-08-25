@@ -4,7 +4,7 @@
 
 #include "paxos/server.h"
 #include "paxos/commo.h"
-#include "rrr/misc/serializable.hpp"
+#include "srpc/misc/serializable.hpp"
 #include "service.h"
 
 import std;
@@ -22,14 +22,14 @@ moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
 // Registry keys come from each payload's explicit MakoCommands membership.
-static int volatile xx  = rrr::SerializableRegistry::reg<LogEntry>(LogEntry::static_kind());
-static int volatile xxx = rrr::SerializableRegistry::reg<BulkPaxosCmd>(BulkPaxosCmd::static_kind());
-static int volatile x4  = rrr::SerializableRegistry::reg<BulkPrepareLog>(BulkPrepareLog::static_kind());
-static int volatile x5  = rrr::SerializableRegistry::reg<HeartBeatLog>(HeartBeatLog::static_kind());
-static int volatile x6  = rrr::SerializableRegistry::reg<SyncLogRequest>(SyncLogRequest::static_kind());
-static int volatile x7  = rrr::SerializableRegistry::reg<SyncLogResponse>(SyncLogResponse::static_kind());
-static int volatile x8  = rrr::SerializableRegistry::reg<SyncNoOpRequest>(SyncNoOpRequest::static_kind());
-static int volatile x9  = rrr::SerializableRegistry::reg<PaxosPrepCmd>(PaxosPrepCmd::static_kind());
+static int volatile xx  = srpc::SerializableRegistry::reg<LogEntry>(LogEntry::static_kind());
+static int volatile xxx = srpc::SerializableRegistry::reg<BulkPaxosCmd>(BulkPaxosCmd::static_kind());
+static int volatile x4  = srpc::SerializableRegistry::reg<BulkPrepareLog>(BulkPrepareLog::static_kind());
+static int volatile x5  = srpc::SerializableRegistry::reg<HeartBeatLog>(HeartBeatLog::static_kind());
+static int volatile x6  = srpc::SerializableRegistry::reg<SyncLogRequest>(SyncLogRequest::static_kind());
+static int volatile x7  = srpc::SerializableRegistry::reg<SyncLogResponse>(SyncLogResponse::static_kind());
+static int volatile x8  = srpc::SerializableRegistry::reg<SyncNoOpRequest>(SyncNoOpRequest::static_kind());
+static int volatile x9  = srpc::SerializableRegistry::reg<PaxosPrepCmd>(PaxosPrepCmd::static_kind());
 
 static int shared_ptr_apprch = 1;
 
@@ -41,21 +41,21 @@ static int shared_ptr_apprch = 1;
 // effective branch of the legacy from_marshal — the
 // `false && shared_ptr_apprch` arm was unreachable).
 void LogEntry::save(BinaryWriteArchive& ar) const {
-  rrr::Serialize_::serialize(length, ar);
+  srpc::Serialize_::serialize(length, ar);
   if (shared_ptr_apprch) {
     if (operation_test.get()) {
-      rrr::Serialize_::serialize(std::string(operation_test.get(), length), ar);
+      srpc::Serialize_::serialize(std::string(operation_test.get(), length), ar);
     } else {
-      rrr::Serialize_::serialize(log_entry, ar);
+      srpc::Serialize_::serialize(log_entry, ar);
     }
   } else {
-    rrr::Serialize_::serialize(log_entry, ar);
+    srpc::Serialize_::serialize(log_entry, ar);
   }
 }
 
 void LogEntry::load(BinaryReadArchive& ar) {
-  rrr::Deserialize_::deserialize(length, ar);
-  rrr::Deserialize_::deserialize(log_entry, ar);
+  srpc::Deserialize_::deserialize(length, ar);
+  srpc::Deserialize_::deserialize(log_entry, ar);
 }
 
 void PaxosWorker::SetupBase() {
@@ -157,8 +157,8 @@ void PaxosWorker::SetupService() {
   std::string bind_addr = site_info_->GetBindAddress();
   svr_poll_thread_worker_ = rusty::Some(PollThread::create());
 
-  // init rrr::Server first (before registering services)
-  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone())));
+  // init srpc::Server first (before registering services)
+  rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone())));
 
   // Create and register services (ownership transferred to rpc_server_)
   if (rep_frame_ != nullptr) {
@@ -204,7 +204,7 @@ void PaxosWorker::SetupHeartbeat() {
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
   svr_hb_poll_thread_worker_g = rusty::Some(PollThread::create());
-  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
+  hb_rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());

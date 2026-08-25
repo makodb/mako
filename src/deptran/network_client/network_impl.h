@@ -38,13 +38,13 @@ namespace network_client {
     
   // BEGIN typed-rpc-decls (NetworkClientServiceImpl)
   // Typed RPC interface overrides (new API).
-  void txn_rmw(const NetworkClientService::RpcTxnRmwRequest& req, NetworkClientService::RpcTxnRmwResponse& resp, rrr::DeferredReply defer) override;
-  void txn_read(const NetworkClientService::RpcTxnReadRequest& req, NetworkClientService::RpcTxnReadResponse& resp, rrr::DeferredReply defer) override;
-  void txn_new_order(const NetworkClientService::RpcTxnNewOrderRequest& req, NetworkClientService::RpcTxnNewOrderResponse& resp, rrr::DeferredReply defer) override;
-  void txn_payment(const NetworkClientService::RpcTxnPaymentRequest& req, NetworkClientService::RpcTxnPaymentResponse& resp, rrr::DeferredReply defer) override;
-  void txn_delivery(const NetworkClientService::RpcTxnDeliveryRequest& req, NetworkClientService::RpcTxnDeliveryResponse& resp, rrr::DeferredReply defer) override;
-  void txn_order_status(const NetworkClientService::RpcTxnOrderStatusRequest& req, NetworkClientService::RpcTxnOrderStatusResponse& resp, rrr::DeferredReply defer) override;
-  void txn_stock_level(const NetworkClientService::RpcTxnStockLevelRequest& req, NetworkClientService::RpcTxnStockLevelResponse& resp, rrr::DeferredReply defer) override;
+  void txn_rmw(const NetworkClientService::RpcTxnRmwRequest& req, NetworkClientService::RpcTxnRmwResponse& resp, srpc::DeferredReply defer) override;
+  void txn_read(const NetworkClientService::RpcTxnReadRequest& req, NetworkClientService::RpcTxnReadResponse& resp, srpc::DeferredReply defer) override;
+  void txn_new_order(const NetworkClientService::RpcTxnNewOrderRequest& req, NetworkClientService::RpcTxnNewOrderResponse& resp, srpc::DeferredReply defer) override;
+  void txn_payment(const NetworkClientService::RpcTxnPaymentRequest& req, NetworkClientService::RpcTxnPaymentResponse& resp, srpc::DeferredReply defer) override;
+  void txn_delivery(const NetworkClientService::RpcTxnDeliveryRequest& req, NetworkClientService::RpcTxnDeliveryResponse& resp, srpc::DeferredReply defer) override;
+  void txn_order_status(const NetworkClientService::RpcTxnOrderStatusRequest& req, NetworkClientService::RpcTxnOrderStatusResponse& resp, srpc::DeferredReply defer) override;
+  void txn_stock_level(const NetworkClientService::RpcTxnStockLevelRequest& req, NetworkClientService::RpcTxnStockLevelResponse& resp, srpc::DeferredReply defer) override;
   // END typed-rpc-decls (NetworkClientServiceImpl)
 } ;
 } // namespace network_client

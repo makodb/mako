@@ -74,9 +74,9 @@ class Frame {
                                   TxLogServer *sch);
 
   Workload *CreateTxGenerator();
-  virtual vector<rrr::ServiceProxy> CreateRpcServices(uint32_t site_id,
+  virtual vector<srpc::ServiceProxy> CreateRpcServices(uint32_t site_id,
                                                    TxLogServer *dtxn_sched,
-                                                   rusty::Arc<rrr::PollThread> poll_thread_worker);
+                                                   rusty::Arc<srpc::PollThread> poll_thread_worker);
 };
 
 #define RANDOM_VAR_NAME(var, file, line) \

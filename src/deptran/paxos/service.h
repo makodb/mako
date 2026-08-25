@@ -28,7 +28,7 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
                const ballot_t& ballot,
                ballot_t* max_ballot,
                uint64_t* coro_id,
-               rrr::DeferredReply defer);
+               srpc::DeferredReply defer);
 
   void Accept(const uint64_t& slot,
 	      const uint64_t& time,
@@ -36,22 +36,22 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
               const janus::Command& cmd,
               ballot_t* max_ballot,
               uint64_t* coro_id,
-              rrr::DeferredReply defer);
+              srpc::DeferredReply defer);
 
   void Decide(const uint64_t& slot,
               const ballot_t& ballot,
               const janus::Command& cmd,
-              rrr::DeferredReply defer);
+              srpc::DeferredReply defer);
 
   void BulkDecide(const janus::Command& cmd,
                   i32* ballot,
                   i32* valid,
-                  rrr::DeferredReply defer);
+                  srpc::DeferredReply defer);
 
   void BulkAccept(const janus::Command& cmd,
                   i32* ballot,
                   i32* valid,
-                  rrr::DeferredReply defer);
+                  srpc::DeferredReply defer);
 
   // removed `BulkPrepare(janus::Command, ...)`
   // and `Heartbeat(janus::Command, ...)` declarations — paired with
@@ -66,18 +66,18 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
                      i32* ballot,
                      i32* valid,
                      janus::Command* ret,
-                     rrr::DeferredReply defer);
+                     srpc::DeferredReply defer);
 
   void SyncCommit(const janus::Command& md_cmd,
                      i32* ballot,
                      i32* valid,
-                     rrr::DeferredReply defer);
+                     srpc::DeferredReply defer);
 
   // removed `SyncNoOps(janus::Command, ...)`
   // declaration — paired with its typed-rpc override (also removed
   // below).
 
-  void ForwardToLearnerServer(const rrr::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const janus::Command& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply defer);
+  void ForwardToLearnerServer(const srpc::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const janus::Command& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, srpc::DeferredReply defer);
 
 
   // BEGIN typed-rpc-decls (MultiPaxosServiceImpl)
@@ -85,9 +85,9 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
   // removed `Forward` typed-rpc override —
   // the matching abstract base class virtual is gone (rcc_rpc.rpc
   // updated; rcc_rpc.h regenerated) and the body was empty.
-  void Prepare(const MultiPaxosService::RpcPrepareRequest& req, MultiPaxosService::RpcPrepareResponse& resp, rrr::DeferredReply defer) override;
-  void Accept(const MultiPaxosService::RpcAcceptRequest& req, MultiPaxosService::RpcAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void Decide(const MultiPaxosService::RpcDecideRequest& req, MultiPaxosService::RpcDecideResponse& resp, rrr::DeferredReply defer) override;
+  void Prepare(const MultiPaxosService::RpcPrepareRequest& req, MultiPaxosService::RpcPrepareResponse& resp, srpc::DeferredReply defer) override;
+  void Accept(const MultiPaxosService::RpcAcceptRequest& req, MultiPaxosService::RpcAcceptResponse& resp, srpc::DeferredReply defer) override;
+  void Decide(const MultiPaxosService::RpcDecideRequest& req, MultiPaxosService::RpcDecideResponse& resp, srpc::DeferredReply defer) override;
   // removed `BulkPrepare`, `Heartbeat`,
   // `SyncNoOps` typed-rpc overrides — the matching abstract base
   // class virtuals are gone (rcc_rpc.rpc updated; rcc_rpc.h
@@ -95,11 +95,11 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
   // removed `BulkPrepare2` typed-rpc
   // override — the matching `MultiPaxos::BulkPrepare2` RPC was
   // dropped from rcc_rpc.rpc; no senders remain.
-  void BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void BulkDecide(const MultiPaxosService::RpcBulkDecideRequest& req, MultiPaxosService::RpcBulkDecideResponse& resp, rrr::DeferredReply defer) override;
-  void SyncLog(const MultiPaxosService::RpcSyncLogRequest& req, MultiPaxosService::RpcSyncLogResponse& resp, rrr::DeferredReply defer) override;
-  void SyncCommit(const MultiPaxosService::RpcSyncCommitRequest& req, MultiPaxosService::RpcSyncCommitResponse& resp, rrr::DeferredReply defer) override;
-  void ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, rrr::DeferredReply defer) override;
+  void BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, srpc::DeferredReply defer) override;
+  void BulkDecide(const MultiPaxosService::RpcBulkDecideRequest& req, MultiPaxosService::RpcBulkDecideResponse& resp, srpc::DeferredReply defer) override;
+  void SyncLog(const MultiPaxosService::RpcSyncLogRequest& req, MultiPaxosService::RpcSyncLogResponse& resp, srpc::DeferredReply defer) override;
+  void SyncCommit(const MultiPaxosService::RpcSyncCommitRequest& req, MultiPaxosService::RpcSyncCommitResponse& resp, srpc::DeferredReply defer) override;
+  void ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, srpc::DeferredReply defer) override;
   // END typed-rpc-decls (MultiPaxosServiceImpl)
 };
 

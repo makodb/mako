@@ -133,8 +133,8 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
   auto e = std::make_shared<RuleSpeculativeExecuteQuorumEvent>(n, SimpleRWCommand::RuleSuperMajority(n), n_leaders);
   WAN_WAIT;
   for (auto& pair : rpc_par_proxies_[par_id]) {
-    rrr::FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable(
+    srpc::FutureAttr fuattr;
+    fuattr.callback = srpc::FutureCallback::from_callable(
         [e, this](rusty::Arc<Future> fu) {
           if (fu->get_error_code() != 0) {
             Log_info("Get a error message in reply");
@@ -143,9 +143,9 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
           bool_t accepted;
           value_t result;
           bool_t is_leader;
-          rrr::deserialize_from(fu->get_reply(), accepted);
-          rrr::deserialize_from(fu->get_reply(), result);
-          rrr::deserialize_from(fu->get_reply(), is_leader);
+          srpc::deserialize_from(fu->get_reply(), accepted);
+          srpc::deserialize_from(fu->get_reply(), result);
+          srpc::deserialize_from(fu->get_reply(), is_leader);
           e->FeedResponse(accepted, result, is_leader);
         });
     
@@ -185,8 +185,8 @@ void CommunicatorRule::BroadcastDispatch(
   verify(!sp_vec_piece->empty());
   auto par_id = sp_vec_piece->at(0)->PartitionId();
 
-  rrr::FutureAttr fuattr;
-  fuattr.callback = rrr::FutureCallback::from_callable(
+  srpc::FutureAttr fuattr;
+  fuattr.callback = srpc::FutureCallback::from_callable(
       [this, callback, par_id](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
@@ -196,10 +196,10 @@ void CommunicatorRule::BroadcastDispatch(
         TxnOutput outputs;
         uint64_t coro_id = 0;
         janus::Command view_md;
-        rrr::deserialize_from(fu->get_reply(), ret);
-        rrr::deserialize_from(fu->get_reply(), outputs);
-        rrr::deserialize_from(fu->get_reply(), coro_id);
-        rrr::deserialize_from(fu->get_reply(), view_md);
+        srpc::deserialize_from(fu->get_reply(), ret);
+        srpc::deserialize_from(fu->get_reply(), outputs);
+        srpc::deserialize_from(fu->get_reply(), coro_id);
+        srpc::deserialize_from(fu->get_reply(), view_md);
         
         // Handle WRONG_LEADER response with view data
         if (ret == WRONG_LEADER && view_md.has_value()) {

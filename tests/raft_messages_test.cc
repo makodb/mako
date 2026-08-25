@@ -1,5 +1,5 @@
 // Compile-time sanity check that janus::raft::messages.hpp is
-// self-contained and rrr-boundary types round-trip cleanly.
+// self-contained and srpc-boundary types round-trip cleanly.
 #include <gtest/gtest.h>
 
 #include "deptran/raft/messages.hpp"

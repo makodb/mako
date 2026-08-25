@@ -10,19 +10,19 @@ CopilotServiceImpl::CopilotServiceImpl(TxLogServer *sched)
 // removed `Forward` typed-rpc override
 // (and matching N-arg overload further below).
 
-void CopilotServiceImpl::Prepare(const CopilotService::RpcPrepareRequest& req, CopilotService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
+void CopilotServiceImpl::Prepare(const CopilotService::RpcPrepareRequest& req, CopilotService::RpcPrepareResponse& resp, srpc::DeferredReply defer) {
   this->Prepare(req.is_pilot, req.slot, req.ballot, req.dep_id, &resp.ret_cmd, &resp.max_ballot, &resp.dep, &resp.status, std::move(defer));
 }
 
-void CopilotServiceImpl::FastAccept(const CopilotService::RpcFastAcceptRequest& req, CopilotService::RpcFastAcceptResponse& resp, rrr::DeferredReply defer) {
+void CopilotServiceImpl::FastAccept(const CopilotService::RpcFastAcceptRequest& req, CopilotService::RpcFastAcceptResponse& resp, srpc::DeferredReply defer) {
   this->FastAccept(req.is_pilot, req.slot, req.ballot, req.dep, req.cmd, req.dep_id, &resp.max_ballot, &resp.ret_dep, std::move(defer));
 }
 
-void CopilotServiceImpl::Accept(const CopilotService::RpcAcceptRequest& req, CopilotService::RpcAcceptResponse& resp, rrr::DeferredReply defer) {
+void CopilotServiceImpl::Accept(const CopilotService::RpcAcceptRequest& req, CopilotService::RpcAcceptResponse& resp, srpc::DeferredReply defer) {
   this->Accept(req.is_pilot, req.slot, req.ballot, req.dep, req.cmd, req.dep_id, &resp.max_ballot, std::move(defer));
 }
 
-void CopilotServiceImpl::Commit(const CopilotService::RpcCommitRequest& req, CopilotService::RpcCommitResponse& resp, rrr::DeferredReply defer) {
+void CopilotServiceImpl::Commit(const CopilotService::RpcCommitRequest& req, CopilotService::RpcCommitResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->Commit(req.is_pilot, req.slot, req.dep, req.cmd, std::move(defer));
 }
@@ -39,7 +39,7 @@ void CopilotServiceImpl::Prepare(const uint8_t& is_pilot,
                                  ballot_t* max_ballot,
                                  uint64_t* dep,
                                  status_t* status,
-                                 rrr::DeferredReply defer) {
+                                 srpc::DeferredReply defer) {
   verify(sched_);
   sched_->OnPrepare(is_pilot,
                     slot,
@@ -60,7 +60,7 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
                                     const DepId& dep_id,
                                     ballot_t* max_ballot,
                                     uint64_t* ret_dep,
-                                    rrr::DeferredReply defer) {
+                                    srpc::DeferredReply defer) {
   verify(sched_);
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
@@ -87,7 +87,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                                 const janus::Command& cmd,
                                 const DepId& dep_id,
                                 ballot_t* max_ballot,
-                                rrr::DeferredReply defer) {
+                                srpc::DeferredReply defer) {
   verify(sched_);
   sched_->OnAccept(is_pilot,
                    slot,
@@ -103,7 +103,7 @@ void CopilotServiceImpl::Commit(const uint8_t& is_pilot,
                                 const uint64_t& slot,
                                 const uint64_t& dep,
                                 const janus::Command& cmd,
-                                rrr::DeferredReply defer) {
+                                srpc::DeferredReply defer) {
   verify(sched_);
   sched_->OnCommit(is_pilot, slot, dep, cmd);
   defer.reply();

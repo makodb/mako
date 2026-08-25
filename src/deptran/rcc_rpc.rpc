@@ -1,6 +1,6 @@
 #include "procedure.h"
 #include "rcc/tx.h"
-#include "rrr/misc/any_message.hpp"  // graph fields are AnyMessage
+#include "srpc/misc/any_message.hpp"  // graph fields are AnyMessage
 %%
 
 namespace janus;

@@ -8,17 +8,17 @@
 #include "txn.h"
 #include "txn_2pl.h"
 #include "txn_occ.h"
-// the variadic Log_* wrappers live outside src/rrr now
-#include "rrr_log.h"
+// the variadic Log_* wrappers live outside src/srpc now
+#include "srpc_log.h"
 
 import std;
 
 namespace mdb {
 
-using rrr::Log_debug;
-using rrr::Log_info;
-using rrr::Log_warn;
-using rrr::Log_error;
+using srpc::Log_debug;
+using srpc::Log_info;
+using srpc::Log_warn;
+using srpc::Log_error;
 
 
 TxnOCC::TxnOCC(const TxnMgr *mgr,

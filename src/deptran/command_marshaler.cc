@@ -33,44 +33,44 @@ namespace janus {
 // elements use the Phase 4d-6 archive operators in marshal-value.cc,
 // and the TxWorkspace input field uses the Phase 4d-6 archive
 // operators in procedure.cc.
-void serialize(const SimpleCommand &cmd, rrr::BinaryWriteArchive &ar) {
+void serialize(const SimpleCommand &cmd, srpc::BinaryWriteArchive &ar) {
   verify(cmd.input.size() < 10000);
-  rrr::Serialize_::serialize(cmd.id_, ar);
-  rrr::Serialize_::serialize(cmd.type_, ar);
-  rrr::Serialize_::serialize(cmd.inn_id_, ar);
-  rrr::Serialize_::serialize(cmd.root_id_, ar);
-  rrr::Serialize_::serialize(cmd.root_type_, ar);
-  rrr::Serialize_::serialize(cmd.client_id_, ar);
-  rrr::Serialize_::serialize(cmd.cmd_id_in_client_, ar);
-  rrr::Serialize_::serialize(cmd.rule_mode_on_and_is_original_path_only_command_, ar);
-  rrr::Serialize_::serialize(cmd.input, ar);
-  rrr::Serialize_::serialize(cmd.output, ar);
-  rrr::Serialize_::serialize(cmd.output_size, ar);
-  rrr::Serialize_::serialize(cmd.partition_id_, ar);
-  rrr::Serialize_::serialize(cmd.timestamp_, ar);
-  rrr::Serialize_::serialize(cmd.rank_, ar);
+  srpc::Serialize_::serialize(cmd.id_, ar);
+  srpc::Serialize_::serialize(cmd.type_, ar);
+  srpc::Serialize_::serialize(cmd.inn_id_, ar);
+  srpc::Serialize_::serialize(cmd.root_id_, ar);
+  srpc::Serialize_::serialize(cmd.root_type_, ar);
+  srpc::Serialize_::serialize(cmd.client_id_, ar);
+  srpc::Serialize_::serialize(cmd.cmd_id_in_client_, ar);
+  srpc::Serialize_::serialize(cmd.rule_mode_on_and_is_original_path_only_command_, ar);
+  srpc::Serialize_::serialize(cmd.input, ar);
+  srpc::Serialize_::serialize(cmd.output, ar);
+  srpc::Serialize_::serialize(cmd.output_size, ar);
+  srpc::Serialize_::serialize(cmd.partition_id_, ar);
+  srpc::Serialize_::serialize(cmd.timestamp_, ar);
+  srpc::Serialize_::serialize(cmd.rank_, ar);
 }
 
-rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const SimpleCommand &cmd) { serialize(cmd, ar); return ar; }
+srpc::BinaryWriteArchive &operator<<(srpc::BinaryWriteArchive &ar, const SimpleCommand &cmd) { serialize(cmd, ar); return ar; }
 
-void deserialize(SimpleCommand &cmd, rrr::BinaryReadArchive &ar) {
-  rrr::Deserialize_::deserialize(cmd.id_, ar);
-  rrr::Deserialize_::deserialize(cmd.type_, ar);
-  rrr::Deserialize_::deserialize(cmd.inn_id_, ar);
-  rrr::Deserialize_::deserialize(cmd.root_id_, ar);
-  rrr::Deserialize_::deserialize(cmd.root_type_, ar);
-  rrr::Deserialize_::deserialize(cmd.client_id_, ar);
-  rrr::Deserialize_::deserialize(cmd.cmd_id_in_client_, ar);
-  rrr::Deserialize_::deserialize(cmd.rule_mode_on_and_is_original_path_only_command_, ar);
-  rrr::Deserialize_::deserialize(cmd.input, ar);
-  rrr::Deserialize_::deserialize(cmd.output, ar);
-  rrr::Deserialize_::deserialize(cmd.output_size, ar);
-  rrr::Deserialize_::deserialize(cmd.partition_id_, ar);
-  rrr::Deserialize_::deserialize(cmd.timestamp_, ar);
-  rrr::Deserialize_::deserialize(cmd.rank_, ar);
+void deserialize(SimpleCommand &cmd, srpc::BinaryReadArchive &ar) {
+  srpc::Deserialize_::deserialize(cmd.id_, ar);
+  srpc::Deserialize_::deserialize(cmd.type_, ar);
+  srpc::Deserialize_::deserialize(cmd.inn_id_, ar);
+  srpc::Deserialize_::deserialize(cmd.root_id_, ar);
+  srpc::Deserialize_::deserialize(cmd.root_type_, ar);
+  srpc::Deserialize_::deserialize(cmd.client_id_, ar);
+  srpc::Deserialize_::deserialize(cmd.cmd_id_in_client_, ar);
+  srpc::Deserialize_::deserialize(cmd.rule_mode_on_and_is_original_path_only_command_, ar);
+  srpc::Deserialize_::deserialize(cmd.input, ar);
+  srpc::Deserialize_::deserialize(cmd.output, ar);
+  srpc::Deserialize_::deserialize(cmd.output_size, ar);
+  srpc::Deserialize_::deserialize(cmd.partition_id_, ar);
+  srpc::Deserialize_::deserialize(cmd.timestamp_, ar);
+  srpc::Deserialize_::deserialize(cmd.rank_, ar);
 }
 
-rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, SimpleCommand &cmd) { deserialize(cmd, ar); return ar; }
+srpc::BinaryReadArchive &operator>>(srpc::BinaryReadArchive &ar, SimpleCommand &cmd) { deserialize(cmd, ar); return ar; }
 
 
 } // namespace janus

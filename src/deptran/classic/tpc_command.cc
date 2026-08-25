@@ -1,16 +1,16 @@
 #include "tpc_command.h"
 #include "../command.h"
 #include "../command_marshaler.h"
-#include "rrr/misc/serializable.hpp"
+#include "srpc/misc/serializable.hpp"
 
 using namespace janus;
 
 // Registry keys come from each payload's explicit MakoCommands membership.
-static int volatile x1 = rrr::SerializableRegistry::reg<TpcPrepareCommand>(TpcPrepareCommand::static_kind());
-static int volatile x2 = rrr::SerializableRegistry::reg<TpcCommitCommand>(TpcCommitCommand::static_kind());
-static int volatile x3 = rrr::SerializableRegistry::reg<TpcEmptyCommand>(TpcEmptyCommand::static_kind());
-static int volatile x4 = rrr::SerializableRegistry::reg<TpcNoopCommand>(TpcNoopCommand::static_kind());
-static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>(TpcBatchCommand::static_kind());
+static int volatile x1 = srpc::SerializableRegistry::reg<TpcPrepareCommand>(TpcPrepareCommand::static_kind());
+static int volatile x2 = srpc::SerializableRegistry::reg<TpcCommitCommand>(TpcCommitCommand::static_kind());
+static int volatile x3 = srpc::SerializableRegistry::reg<TpcEmptyCommand>(TpcEmptyCommand::static_kind());
+static int volatile x4 = srpc::SerializableRegistry::reg<TpcNoopCommand>(TpcNoopCommand::static_kind());
+static int volatile x5 = srpc::SerializableRegistry::reg<TpcBatchCommand>(TpcBatchCommand::static_kind());
 
 
 // TpcPrepareCommand serialization via
@@ -21,20 +21,20 @@ static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>(TpcBatc
 // overloads make this byte-for-byte equivalent to the legacy
 // Marshal encoding.
 void TpcPrepareCommand::save(BinaryWriteArchive& ar) const {
-  rrr::Serialize_::serialize(tx_id_, ar);
-  rrr::Serialize_::serialize(ret_, ar);
+  srpc::Serialize_::serialize(tx_id_, ar);
+  srpc::Serialize_::serialize(ret_, ar);
   // cmd_ is janus::Command — drive its archive op
   // directly instead of wrapping it in a temporary MarshallDeputy.
   // Wire format identical (`[v32 kind][payload]`).
-  rrr::Serialize_::serialize(cmd_, ar);
+  srpc::Serialize_::serialize(cmd_, ar);
 }
 
 void TpcPrepareCommand::load(BinaryReadArchive& ar) {
-  rrr::Deserialize_::deserialize(tx_id_, ar);
-  rrr::Deserialize_::deserialize(ret_, ar);
+  srpc::Deserialize_::deserialize(tx_id_, ar);
+  srpc::Deserialize_::deserialize(ret_, ar);
   // cmd_ load through Command's archive op.
   if (!cmd_.has_value()) {
-    rrr::Deserialize_::deserialize(cmd_, ar);
+    srpc::Deserialize_::deserialize(cmd_, ar);
   } else {
     verify(0);
   }
@@ -49,36 +49,36 @@ void TpcPrepareCommand::load(BinaryReadArchive& ar) {
 // overloads make this byte-for-byte equivalent to the legacy
 // Marshal encoding.
 void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
-  rrr::Serialize_::serialize(tx_id_, ar);
-  rrr::Serialize_::serialize(ret_, ar);
-  rrr::Serialize_::serialize(term, ar);
+  srpc::Serialize_::serialize(tx_id_, ar);
+  srpc::Serialize_::serialize(ret_, ar);
+  srpc::Serialize_::serialize(term, ar);
   // drive cmd_ through Command's archive op directly.
-  rrr::Serialize_::serialize(cmd_, ar);
+  srpc::Serialize_::serialize(cmd_, ar);
   bool_t has_view_data = sp_view_data_.is_some() ? 1 : 0;
-  rrr::Serialize_::serialize(has_view_data, ar);
+  srpc::Serialize_::serialize(has_view_data, ar);
   if (has_view_data) {
     // was MarshallDeputy view_md(sp_view_data_) — Command
     // produces identical wire bytes via the same registry-dispatched
     // save/load path.
     janus::Command view_md = sp_view_data_.unwrap().clone();
-    rrr::Serialize_::serialize(view_md, ar);
+    srpc::Serialize_::serialize(view_md, ar);
   }
 }
 
 void TpcCommitCommand::load(BinaryReadArchive& ar) {
-  rrr::Deserialize_::deserialize(tx_id_, ar);
-  rrr::Deserialize_::deserialize(ret_, ar);
-  rrr::Deserialize_::deserialize(term, ar);
+  srpc::Deserialize_::deserialize(tx_id_, ar);
+  srpc::Deserialize_::deserialize(ret_, ar);
+  srpc::Deserialize_::deserialize(term, ar);
   // cmd_ load through Command's archive op.
   if (!cmd_.has_value())
-    rrr::Deserialize_::deserialize(cmd_, ar);
+    srpc::Deserialize_::deserialize(cmd_, ar);
   else
     verify(0);
   bool_t has_view_data;
-  rrr::Deserialize_::deserialize(has_view_data, ar);
+  srpc::Deserialize_::deserialize(has_view_data, ar);
   if (has_view_data) {
     janus::Command view_md;
-    rrr::Deserialize_::deserialize(view_md, ar);
+    srpc::Deserialize_::deserialize(view_md, ar);
     sp_view_data_ = marshallable_cast<ViewData>(view_md);
   }
 }
@@ -95,14 +95,14 @@ void TpcCommitCommand::load(BinaryReadArchive& ar) {
 // legacy encoding.
 void TpcBatchCommand::save(BinaryWriteArchive& ar) const {
   verify(size_ == cmds_.size());
-  rrr::Serialize_::serialize(size_, ar);
+  srpc::Serialize_::serialize(size_, ar);
   for (auto it = cmds_.begin(); it != cmds_.end(); ++it) {
     (*it)->save(ar);
   }
 }
 
 void TpcBatchCommand::load(BinaryReadArchive& ar) {
-  rrr::Deserialize_::deserialize(size_, ar);
+  srpc::Deserialize_::deserialize(size_, ar);
   for (uint32_t i = 0; i < size_; i++) {
     auto cmd = rusty::Arc<TpcCommitCommand>::make();
     // @unsafe - unique-owner mutation window (factory-fresh Arc).

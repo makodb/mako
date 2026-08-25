@@ -63,16 +63,16 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
     { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
     // Capture response shared_ptr - ensures memory stays valid even after caller releases
-    fuattr.callback = rrr::FutureCallback::from_callable([response,site_id](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([response,site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         // Don't reconnect here - rely on NotifyRestart mechanism instead
         Log_debug("[APPEND_RPC] Error response from site {}, error_code={}", site_id, fu->get_error_code());
         return;
       }
-      rrr::deserialize_from(fu->get_reply(), response->status);
-      rrr::deserialize_from(fu->get_reply(), response->term);
-      rrr::deserialize_from(fu->get_reply(), response->last_log_index);
-      rrr::deserialize_from(fu->get_reply(), response->ack_type);
+      srpc::deserialize_from(fu->get_reply(), response->status);
+      srpc::deserialize_from(fu->get_reply(), response->term);
+      srpc::deserialize_from(fu->get_reply(), response->last_log_index);
+      srpc::deserialize_from(fu->get_reply(), response->ack_type);
       Log_debug("[APPEND_RPC] Success response from site {}: status={}, term={}, lastLogIndex={}, ackType={}",
                site_id, response->status, response->term, response->last_log_index, response->ack_type);
       response->event.as_ref().unwrap()->set(1);
@@ -150,17 +150,17 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
     // @unsafe
     { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([res, cmd, site_id](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([res, cmd, site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         // Don't reconnect here - rely on NotifyRestart mechanism instead
         Log_debug("[APPEND_RPC] Error response from site {}, error_code={}", site_id, fu->get_error_code());
         return;
       }
       // std::lock_guard<std::recursive_mutex> lk(res->mtx);
-      rrr::deserialize_from(fu->get_reply(), res->ok);
-      rrr::deserialize_from(fu->get_reply(), res->followerTerm);
-      rrr::deserialize_from(fu->get_reply(), res->followerLastLogIndex);
-      rrr::deserialize_from(fu->get_reply(), res->followerAckType);
+      srpc::deserialize_from(fu->get_reply(), res->ok);
+      srpc::deserialize_from(fu->get_reply(), res->followerTerm);
+      srpc::deserialize_from(fu->get_reply(), res->followerLastLogIndex);
+      srpc::deserialize_from(fu->get_reply(), res->followerAckType);
       res->empty = !cmd.has_value();
       // false, 0, 0, 0 is the return value reserved to simulate a lost RPC.
       // only set res->done if it's not a lost RPC
@@ -236,7 +236,7 @@ RaftCommo::BroadcastVote(parid_t par_id,
     // @unsafe
     { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e,site_id](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e,site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         // Don't reconnect here - rely on NotifyRestart mechanism instead
         Log_debug("[VOTE_RPC] Error response from site {}, error_code={}", site_id, fu->get_error_code());
@@ -244,8 +244,8 @@ RaftCommo::BroadcastVote(parid_t par_id,
       }
       ballot_t term = 0;
       bool_t vote = false ;
-      rrr::deserialize_from(fu->get_reply(), term);
-      rrr::deserialize_from(fu->get_reply(), vote);
+      srpc::deserialize_from(fu->get_reply(), term);
+      srpc::deserialize_from(fu->get_reply(), vote);
       // SPECULATIVE VOTING: Track which site voted yes
       e->FeedResponse(vote, term, site_id);
     });
@@ -297,7 +297,7 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
     { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
 
-    fuattr.callback = rrr::FutureCallback::from_callable([callback,site_id](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([callback,site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         // RPC failed (network error, timeout, etc.)
         // Don't reconnect here - rely on NotifyRestart mechanism instead
@@ -312,8 +312,8 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
       uint64_t follower_term = 0;
       bool_t success = false;
 
-      rrr::deserialize_from(fu->get_reply(), follower_term);
-      rrr::deserialize_from(fu->get_reply(), success);
+      srpc::deserialize_from(fu->get_reply(), follower_term);
+      srpc::deserialize_from(fu->get_reply(), success);
 
       Log_info("[TIMEOUT-NOW-RPC] TimeoutNow RPC completed: success={}, follower_term={}",
                (int)success, follower_term);
@@ -383,14 +383,14 @@ void RaftCommo::SendVoteDurable(siteid_t candidate_id,
     return;
   }
   FutureAttr fuattr;
-  fuattr.callback = rrr::FutureCallback::from_callable([candidate_id, term, voter_id](rusty::Arc<Future> fu) {
+  fuattr.callback = srpc::FutureCallback::from_callable([candidate_id, term, voter_id](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_debug("[SPEC-RAFT] VoteDurable RPC to {} failed with error {}",
                 candidate_id, fu->get_error_code());
       return;
     }
     bool_t ack = false;
-    rrr::deserialize_from(fu->get_reply(), ack);
+    srpc::deserialize_from(fu->get_reply(), ack);
     Log_debug("[SPEC-RAFT] VoteDurable RPC to {} completed, ack={}", candidate_id, ack);
   });
 
@@ -441,14 +441,14 @@ void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
   }
 
   FutureAttr fuattr;
-  fuattr.callback = rrr::FutureCallback::from_callable([leader_id, term, follower_id, lastLogIndex](rusty::Arc<Future> fu) {
+  fuattr.callback = srpc::FutureCallback::from_callable([leader_id, term, follower_id, lastLogIndex](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to {} failed with error {}",
                 leader_id, fu->get_error_code());
       return;
     }
     bool_t ack = false;
-    rrr::deserialize_from(fu->get_reply(), ack);
+    srpc::deserialize_from(fu->get_reply(), ack);
     Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to {} completed, ack={}", leader_id, ack);
   });
 
@@ -515,7 +515,7 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
     FutureAttr fuattr;
 
     // Capture 'this' to update status map
-    fuattr.callback = rrr::FutureCallback::from_callable([this, site_id](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([this, site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         // Error/timeout - keep PENDING for retry
         Log_warn("[NOTIFY-RESTART] Failed to notify site {} - error code {} (will retry)",
@@ -525,7 +525,7 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
       }
 
       bool_t acknowledged = false;
-      rrr::deserialize_from(fu->get_reply(), acknowledged);
+      srpc::deserialize_from(fu->get_reply(), acknowledged);
 
       {
         std::lock_guard<std::mutex> lock(notify_restart_mtx_);
@@ -593,7 +593,7 @@ void RaftCommo::RetryPendingNotifyRestart() {
     }
 
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([this, site_id](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([this, site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_warn("[NOTIFY-RESTART] Retry failed for site {} - error code {} (will retry again)",
                  site_id, fu->get_error_code());
@@ -601,7 +601,7 @@ void RaftCommo::RetryPendingNotifyRestart() {
       }
 
       bool_t acknowledged = false;
-      rrr::deserialize_from(fu->get_reply(), acknowledged);
+      srpc::deserialize_from(fu->get_reply(), acknowledged);
 
       {
         std::lock_guard<std::mutex> lock(notify_restart_mtx_);
@@ -683,7 +683,7 @@ void RaftCommo::SendInstallSnapshot(siteid_t site_id,
     { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
 
-    fuattr.callback = rrr::FutureCallback::from_callable([callback, site_id](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([callback, site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_debug("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot to site {} - error code {}",
                   site_id, fu->get_error_code());
@@ -694,7 +694,7 @@ void RaftCommo::SendInstallSnapshot(siteid_t site_id,
       }
 
       uint64_t follower_term = 0;
-      rrr::deserialize_from(fu->get_reply(), follower_term);
+      srpc::deserialize_from(fu->get_reply(), follower_term);
 
       Log_info("[INSTALL-SNAPSHOT-RPC] InstallSnapshot response from site {}: term={}",
                site_id, follower_term);
@@ -761,17 +761,17 @@ void RaftCommo::SendAppendEntriesCb(
     { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
     auto cmd_keep = cmd;  // keep alive across the async boundary
-    fuattr.callback = rrr::FutureCallback::from_callable([on_reply, cmd_keep, follower_id](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([on_reply, cmd_keep, follower_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_debug("[APPEND_RPC_CB] Error from site {} code={}",
                   follower_id, fu->get_error_code());
         return;
       }
       raft::AppendEntriesReply r{};
-      rrr::deserialize_from(fu->get_reply(), r.follower_append_ok);
-      rrr::deserialize_from(fu->get_reply(), r.follower_current_term);
-      rrr::deserialize_from(fu->get_reply(), r.follower_last_log_index);
-      rrr::deserialize_from(fu->get_reply(), r.follower_ack_type);
+      srpc::deserialize_from(fu->get_reply(), r.follower_append_ok);
+      srpc::deserialize_from(fu->get_reply(), r.follower_current_term);
+      srpc::deserialize_from(fu->get_reply(), r.follower_last_log_index);
+      srpc::deserialize_from(fu->get_reply(), r.follower_ack_type);
       on_reply(follower_id, r);
     });
 
@@ -829,7 +829,7 @@ void RaftCommo::BroadcastVoteCb(
     // @unsafe
     { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([on_reply, site_id](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([on_reply, site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_debug("[VOTE_RPC_CB] Error from site {} code={}",
                   site_id, fu->get_error_code());
@@ -838,8 +838,8 @@ void RaftCommo::BroadcastVoteCb(
       raft::VoteReply r{};
       ballot_t term = 0;
       bool_t vote = false;
-      rrr::deserialize_from(fu->get_reply(), term);
-      rrr::deserialize_from(fu->get_reply(), vote);
+      srpc::deserialize_from(fu->get_reply(), term);
+      srpc::deserialize_from(fu->get_reply(), vote);
       r.max_ballot = term;
       r.vote_granted = vote;
       on_reply(site_id, r);

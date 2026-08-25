@@ -42,9 +42,9 @@ void output_val(i32 val) {
 void *nc_start_client(void *input) {
   int par_id = ((struct args*)input)->par_id;
   FutureAttr fuattr;  // fuattr
-  fuattr.callback = rrr::FutureCallback::from_callable([&] (rusty::Arc<Future> fu) {
+  fuattr.callback = srpc::FutureCallback::from_callable([&] (rusty::Arc<Future> fu) {
     i32 val;
-    rrr::deserialize_from(fu->get_reply(), val);
+    srpc::deserialize_from(fu->get_reply(), val);
     output_val(val);
   });
   std::vector<int64_t> ret;
@@ -75,8 +75,8 @@ void *nc_start_client(void *input) {
 
 void nc_setup_client(int nkeys, int nthreads, int run) {
   for (int i=0; i<nthreads; i++) {
-    rrr::PollThread *pm = new rrr::PollThread();
-    rrr::Client *client = new rrr::Client(pm);
+    srpc::PollThread *pm = new srpc::PollThread();
+    srpc::Client *client = new srpc::Client(pm);
     auto port_s=std::to_string(10010+i);
     while (client->connect(reinterpret_cast<const int8_t*>((std::string(server_ip)+":"+port_s).c_str()), true)!=0) {
       usleep(100 * 1000); // retry to connect
@@ -101,7 +101,7 @@ void nc_setup_client(int nkeys, int nthreads, int run) {
 
 void *nc_start_server2(void *input) {
     auto poll_arc = PollThread::create();
-    rrr::Server *server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_arc)));
+    srpc::Server *server = new srpc::Server(srpc::Server::new_(rusty::Some(poll_arc)));
 
     server->reg_service_typed(rusty::make_box<HelloworldClientServiceImpl>());
     server->start(reinterpret_cast<const int8_t*>((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str())  );

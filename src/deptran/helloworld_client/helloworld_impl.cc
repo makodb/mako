@@ -10,7 +10,7 @@ HelloworldClientServiceImpl::HelloworldClientServiceImpl() {}
 void HelloworldClientServiceImpl::txn_read(
     const HelloworldClientService::RpcTxnReadRequest& rpc_req,
     HelloworldClientService::RpcTxnReadResponse& resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   const auto& req = rpc_req._req;
 
   if (req.size() == 1) {
@@ -21,7 +21,7 @@ void HelloworldClientServiceImpl::txn_read(
     std::cout << "[server]receive second request" << std::endl;
   }
 
-  resp.val = static_cast<rrr::i32>(req.size());
+  resp.val = static_cast<srpc::i32>(req.size());
   std::cout << "receive " << req.size() << " request - done" << std::endl;
   defer.reply();
 }

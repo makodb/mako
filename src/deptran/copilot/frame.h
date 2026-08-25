@@ -33,9 +33,9 @@ class CopilotFrame : public Frame {
   
   Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::Option<rusty::Arc<PollThread>>()) override;
   
-  vector<rrr::ServiceProxy> CreateRpcServices(uint32_t site_id,
+  vector<srpc::ServiceProxy> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
-                                           rusty::Arc<rrr::PollThread> poll_thread_worker) override;
+                                           rusty::Arc<srpc::PollThread> poll_thread_worker) override;
 
   // Statistic
   uint32_t n_fast_accept_ = 0;

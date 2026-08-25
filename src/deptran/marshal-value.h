@@ -3,7 +3,7 @@
 
 #include "__dep__.h"
 
-namespace rrr {
+namespace srpc {
 
 // Marshal-deprecation slice A: archive serde free functions own the
 // mdb::Value wire format (Marshal-form mirrors deleted).
@@ -17,5 +17,5 @@ BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const mdb::Value &value
 
 BinaryReadArchive& operator >> (BinaryReadArchive& ar, mdb::Value &value);
 
-} // namespace rrr
+} // namespace srpc
 

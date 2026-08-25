@@ -2,7 +2,7 @@
 
 #include "__dep__.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include "mako_commands.h"
 
 namespace janus {
@@ -14,8 +14,8 @@ class SimpleCommand;  // forward decl for ctor below; full def in procedure.h
 // rule_mode_*, is_recovery_command_, zero_time_ fields are local
 // state, never serialized).
 class SimpleRWCommand
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, SimpleRWCommand>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, SimpleRWCommand>::KIND> {
  public:
   int32_t type_;
   key_t key_;
@@ -28,7 +28,7 @@ class SimpleRWCommand
   // SimpleRWCommand(const SimpleRWCommand &o);
   // Command is the only polymorphic
   // ctor.  The L10f-2 step 5 retirement of Marshallable removed the
-  // legacy `shared_ptr<rrr::Marshallable>` overload — no production
+  // legacy `shared_ptr<srpc::Marshallable>` overload — no production
   // callers remained.
   SimpleRWCommand(const Command& cmd);
   // SimpleCommand-direct ctor.
@@ -40,8 +40,8 @@ class SimpleRWCommand
   std::string cmd_to_string();
   bool same_as(SimpleRWCommand &other);
 
-  void save(rrr::BinaryWriteArchive& ar) const;
-  void load(rrr::BinaryReadArchive& ar);
+  void save(srpc::BinaryWriteArchive& ar) const;
+  void load(srpc::BinaryReadArchive& ar);
 
   bool IsRead();
   bool IsWrite();
@@ -62,7 +62,7 @@ class SimpleRWCommand
   static bool Conflict(const Command& cmd1, const Command& cmd2);
 
   // removed the
-  // `shared_ptr<rrr::Marshallable>` overloads of every static
+  // `shared_ptr<srpc::Marshallable>` overloads of every static
   // helper above.  After Marshallable retires, no caller can
   // synthesize that argument shape.
   static uint64_t CombineInt32(pair<uint32_t, uint32_t> a) {

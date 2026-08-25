@@ -25,7 +25,7 @@ class Executor {
   Executor() = delete;
   Executor(txnid_t txn_id, TxLogServer* sched);
   virtual void Execute(const SimpleCommand &cmd,
-                       rrr::i32 *res,
+                       srpc::i32 *res,
                        map<int32_t, Value> &output);
   virtual void Execute(const vector<SimpleCommand>& cmd,
                        TxnOutput* output) ;

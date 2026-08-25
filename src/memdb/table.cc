@@ -1,7 +1,7 @@
 #include "utils.h"
 #include "table.h"
-// the variadic Log_* wrappers live outside src/rrr now
-#include "rrr_log.h"
+// the variadic Log_* wrappers live outside src/srpc now
+#include "srpc_log.h"
 
 using namespace std;
 
@@ -71,7 +71,7 @@ int SortedMultiKey::compare(const SortedMultiKey& o) const {
             }
             break;
         default:
-            rrr::Log_fatal("unexpected column type {}", (int)info->type);
+            srpc::Log_fatal("unexpected column type {}", (int)info->type);
             verify(0);
         }
     }

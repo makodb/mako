@@ -36,7 +36,7 @@ class TxSnow: public RccTx {
 //  virtual void commit(
 //      const ChopFinishRequest &req,
 //      ChopFinishResponse *res,
-//      rrr::DeferredReply *defer
+//      srpc::DeferredReply *defer
 //  );
 
   // This is not called by a read-only-transaction's start phase,

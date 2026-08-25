@@ -88,7 +88,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
     auto site = p.first;
 
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e, ballot, is_pilot, slot_id, site](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e, ballot, is_pilot, slot_id, site](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -97,10 +97,10 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
       ballot_t b;
       uint64_t dep;
       status_t status;
-      rrr::deserialize_from(fu->get_reply(), md);
-      rrr::deserialize_from(fu->get_reply(), b);
-      rrr::deserialize_from(fu->get_reply(), dep);
-      rrr::deserialize_from(fu->get_reply(), status);
+      srpc::deserialize_from(fu->get_reply(), md);
+      srpc::deserialize_from(fu->get_reply(), b);
+      srpc::deserialize_from(fu->get_reply(), dep);
+      srpc::deserialize_from(fu->get_reply(), status);
       bool ok = (ballot == b);
 
       if (ok) {
@@ -162,7 +162,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
       e->FeedRetDep(dep);
     } else {
       FutureAttr fuattr;
-      fuattr.callback = rrr::FutureCallback::from_callable([e, dep, ballot, site, cmd_env](rusty::Arc<Future> fu) {
+      fuattr.callback = srpc::FutureCallback::from_callable([e, dep, ballot, site, cmd_env](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
@@ -170,8 +170,8 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
         ballot_t b;
         slotid_t sgst_dep;
 
-        rrr::deserialize_from(fu->get_reply(), b);
-        rrr::deserialize_from(fu->get_reply(), sgst_dep);
+        srpc::deserialize_from(fu->get_reply(), b);
+        srpc::deserialize_from(fu->get_reply(), sgst_dep);
         bool ok = (ballot == b);
 #ifdef FULL_LOG_DEBUG
   Log_info("cmd<{}, {}> sgst_dep={} dep={}", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, sgst_dep, dep);
@@ -236,13 +236,13 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
       e->FeedResponse(true);
     } else {
       FutureAttr fuattr;
-      fuattr.callback = rrr::FutureCallback::from_callable([e, ballot, site](rusty::Arc<Future> fu) {
+      fuattr.callback = srpc::FutureCallback::from_callable([e, ballot, site](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
         }
         ballot_t b;
-        rrr::deserialize_from(fu->get_reply(), b);
+        srpc::deserialize_from(fu->get_reply(), b);
         e->FeedResponse(ballot == b);
 
         e->remove_xid(site);
@@ -285,7 +285,7 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
     if (site == 1) continue;
 #endif
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e, site](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e, site](rusty::Arc<Future> fu) {
       e->remove_xid(site);
     });
     CopilotProxy::RpcCommitRequest req;

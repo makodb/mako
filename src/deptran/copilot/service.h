@@ -33,7 +33,7 @@ class CopilotServiceImpl : public CopilotService {
                ballot_t* max_ballot,
                uint64_t* dep,
                status_t* status,
-               rrr::DeferredReply defer);
+               srpc::DeferredReply defer);
 
   void FastAccept(const uint8_t& is_pilot,
                   const uint64_t& slot,
@@ -43,7 +43,7 @@ class CopilotServiceImpl : public CopilotService {
                   const DepId& dep_id,
                   ballot_t* max_ballot,
                   uint64_t* ret_dep,
-                  rrr::DeferredReply defer);
+                  srpc::DeferredReply defer);
 
   void Accept(const uint8_t& is_pilot,
               const uint64_t& slot,
@@ -52,22 +52,22 @@ class CopilotServiceImpl : public CopilotService {
               const janus::Command& cmd,
               const DepId& dep_id,
               ballot_t* max_ballot,
-              rrr::DeferredReply defer);
+              srpc::DeferredReply defer);
 
   void Commit(const uint8_t& is_pilot,
               const uint64_t& slot,
               const uint64_t& dep,
               const janus::Command& cmd,
-              rrr::DeferredReply defer);
+              srpc::DeferredReply defer);
 
   // BEGIN typed-rpc-decls (CopilotServiceImpl)
   // Typed RPC interface overrides (new API).
   // removed `Forward` typed-rpc override —
   // matching abstract base class virtual is gone (rcc_rpc.rpc updated).
-  void Prepare(const CopilotService::RpcPrepareRequest& req, CopilotService::RpcPrepareResponse& resp, rrr::DeferredReply defer) override;
-  void FastAccept(const CopilotService::RpcFastAcceptRequest& req, CopilotService::RpcFastAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void Accept(const CopilotService::RpcAcceptRequest& req, CopilotService::RpcAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void Commit(const CopilotService::RpcCommitRequest& req, CopilotService::RpcCommitResponse& resp, rrr::DeferredReply defer) override;
+  void Prepare(const CopilotService::RpcPrepareRequest& req, CopilotService::RpcPrepareResponse& resp, srpc::DeferredReply defer) override;
+  void FastAccept(const CopilotService::RpcFastAcceptRequest& req, CopilotService::RpcFastAcceptResponse& resp, srpc::DeferredReply defer) override;
+  void Accept(const CopilotService::RpcAcceptRequest& req, CopilotService::RpcAcceptResponse& resp, srpc::DeferredReply defer) override;
+  void Commit(const CopilotService::RpcCommitRequest& req, CopilotService::RpcCommitResponse& resp, srpc::DeferredReply defer) override;
   // END typed-rpc-decls (CopilotServiceImpl)
 };
 

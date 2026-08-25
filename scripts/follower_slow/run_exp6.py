@@ -29,7 +29,7 @@ from collections import OrderedDict
 from tabulate import tabulate
 
 # deptran python modules
-sys.path += os.path.abspath(os.path.join(os.path.split(__file__)[0], "./src/rrr/pylib")),
+sys.path += os.path.abspath(os.path.join(os.path.split(__file__)[0], "./src/srpc/pylib")),
 sys.path += os.path.abspath(os.path.join(os.path.split(__file__)[0], "./src")),
 from simplerpc import Client
 from simplerpc.marshal import Marshal

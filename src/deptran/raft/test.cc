@@ -7456,15 +7456,15 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
 
   // Marshal
   // @unsafe { Archive I/O }
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
+  srpc::BufferSink sink;
+  srpc::BinaryWriteArchive war(srpc::make_sink_proxy_buffer(&sink));
   cmd->save(war);
 
   // Unmarshal into a new command
   // @unsafe { Archive I/O }
   auto cmd2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
+  srpc::BufferSource src(sink.bytes.data(), sink.bytes.len());
+  srpc::BinaryReadArchive rar(srpc::make_source_proxy_buffer(&src));
   cmd2->load(rar);
 
   Assert2(cmd2->op_ == ReplicatedDBOp::PUT,
@@ -7479,12 +7479,12 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   // Test with empty key and value
   // @unsafe { Factory creates rusty::Arc }
   auto cmd_empty = ReplicatedDBCommand::CreatePut("", "");
-  rrr::BufferSink sink2;
-  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy_buffer(&sink2));
+  srpc::BufferSink sink2;
+  srpc::BinaryWriteArchive war2(srpc::make_sink_proxy_buffer(&sink2));
   cmd_empty->save(war2);
   auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
-  rrr::BinaryReadArchive rar2(rrr::make_source_proxy_buffer(&src2));
+  srpc::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
+  srpc::BinaryReadArchive rar2(srpc::make_source_proxy_buffer(&src2));
   cmd_empty2->load(rar2);
   Assert2(cmd_empty2->op_ == ReplicatedDBOp::PUT, "Empty PUT op should be PUT");
   Assert2(cmd_empty2->key_.empty(), "Empty PUT key should be empty");
@@ -7495,12 +7495,12 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   std::string large_value(4096, 'V');
   // @unsafe { Factory creates rusty::Arc }
   auto cmd_large = ReplicatedDBCommand::CreatePut(large_key, large_value);
-  rrr::BufferSink sink3;
-  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy_buffer(&sink3));
+  srpc::BufferSink sink3;
+  srpc::BinaryWriteArchive war3(srpc::make_sink_proxy_buffer(&sink3));
   cmd_large->save(war3);
   auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
-  rrr::BinaryReadArchive rar3(rrr::make_source_proxy_buffer(&src3));
+  srpc::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
+  srpc::BinaryReadArchive rar3(srpc::make_source_proxy_buffer(&src3));
   cmd_large2->load(rar3);
   Assert2(cmd_large2->key_ == large_key,
           "Large key should survive round-trip");
@@ -7527,15 +7527,15 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
 
   // Marshal
   // @unsafe { Archive I/O }
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
+  srpc::BufferSink sink;
+  srpc::BinaryWriteArchive war(srpc::make_sink_proxy_buffer(&sink));
   cmd->save(war);
 
   // Unmarshal into a new command
   // @unsafe { Archive I/O }
   auto cmd2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
+  srpc::BufferSource src(sink.bytes.data(), sink.bytes.len());
+  srpc::BinaryReadArchive rar(srpc::make_source_proxy_buffer(&src));
   cmd2->load(rar);
 
   Assert2(cmd2->op_ == ReplicatedDBOp::DELETE,
@@ -7552,14 +7552,14 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   auto cmd3 = ReplicatedDBCommand::CreateDelete("deputy_test_key");
   janus::Command md;
   md = std::move(cmd3);
-  rrr::BufferSink sink2;
-  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy_buffer(&sink2));
-  rrr::Serialize_::serialize(md, war2);
+  srpc::BufferSink sink2;
+  srpc::BinaryWriteArchive war2(srpc::make_sink_proxy_buffer(&sink2));
+  srpc::Serialize_::serialize(md, war2);
 
   janus::Command md2;
-  rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
-  rrr::BinaryReadArchive rar2(rrr::make_source_proxy_buffer(&src2));
-  rrr::Deserialize_::deserialize(md2, rar2);
+  srpc::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
+  srpc::BinaryReadArchive rar2(srpc::make_source_proxy_buffer(&src2));
+  srpc::Deserialize_::deserialize(md2, rar2);
   Assert2(md2.has_value(), "janus::Command should have deserialized data");
   const auto cmd4 = marshallable_cast<ReplicatedDBCommand>(md2);
   Assert2(cmd4.is_some(), "Should dynamic_cast to ReplicatedDBCommand");
@@ -7593,15 +7593,15 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
 
   // Marshal
   // @unsafe { Archive I/O }
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
+  srpc::BufferSink sink;
+  srpc::BinaryWriteArchive war(srpc::make_sink_proxy_buffer(&sink));
   cmd->save(war);
 
   // Unmarshal into a new command
   // @unsafe { Archive I/O }
   auto cmd2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
+  srpc::BufferSource src(sink.bytes.data(), sink.bytes.len());
+  srpc::BinaryReadArchive rar(srpc::make_source_proxy_buffer(&src));
   cmd2->load(rar);
 
   Assert2(cmd2->op_ == ReplicatedDBOp::BATCH,
@@ -7635,12 +7635,12 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   std::vector<KVOperation> empty_ops;
   // @unsafe { Factory creates rusty::Arc }
   auto cmd_empty = ReplicatedDBCommand::CreateBatch(empty_ops);
-  rrr::BufferSink sink2;
-  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy_buffer(&sink2));
+  srpc::BufferSink sink2;
+  srpc::BinaryWriteArchive war2(srpc::make_sink_proxy_buffer(&sink2));
   cmd_empty->save(war2);
   auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
-  rrr::BinaryReadArchive rar2(rrr::make_source_proxy_buffer(&src2));
+  srpc::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
+  srpc::BinaryReadArchive rar2(srpc::make_source_proxy_buffer(&src2));
   cmd_empty2->load(rar2);
   Assert2(cmd_empty2->op_ == ReplicatedDBOp::BATCH,
           "Empty batch op should be BATCH");
@@ -7655,12 +7655,12 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   }
   // @unsafe { Factory creates rusty::Arc }
   auto cmd_large = ReplicatedDBCommand::CreateBatch(large_ops);
-  rrr::BufferSink sink3;
-  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy_buffer(&sink3));
+  srpc::BufferSink sink3;
+  srpc::BinaryWriteArchive war3(srpc::make_sink_proxy_buffer(&sink3));
   cmd_large->save(war3);
   auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
-  rrr::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
-  rrr::BinaryReadArchive rar3(rrr::make_source_proxy_buffer(&src3));
+  srpc::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
+  srpc::BinaryReadArchive rar3(srpc::make_source_proxy_buffer(&src3));
   cmd_large2->load(rar3);
   Assert2(cmd_large2->batch_ops_.size() == 100,
           "Large batch should have 100 ops, got %zu", cmd_large2->batch_ops_.size());

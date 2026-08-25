@@ -22,7 +22,7 @@ void RO6Coord::deptran_start(TxData *ch) {
 //  while ((subcmd = (SimpleCommand*) cmd_->GetNextReadySubCmd()) != nullptr) {
 //    header.pid = next_pie_id();
 //
-//    rrr::FutureAttr fuattr;
+//    srpc::FutureAttr fuattr;
 //
 //    // remember this a asynchronous call! variable funtional range is important!
 //    fuattr.callback = [ch, pi, this, header, subcmd](rusty::Arc<Future> fu) {
@@ -33,7 +33,7 @@ void RO6Coord::deptran_start(TxData *ch) {
 //        std::lock_guard<std::recursive_mutex> lock(this->mtx_);
 //
 //        ChopStartResponse  res;
-//        rrr::deserialize_from(fu->get_reply(), res);
+//        srpc::deserialize_from(fu->get_reply(), res);
 //
 //        if (IS_MODE_RO6) {
 //          std::vector<i64> ro;
@@ -95,7 +95,7 @@ void RO6Coord::deptran_finish(TxData *ch) {
 //  Log_debug("deptran finish, {:x}", cmd_->id_);
 //
 //  // commit or abort piece
-//  rrr::FutureAttr fuattr;
+//  srpc::FutureAttr fuattr;
 //  fuattr.callback = [ch, this](rusty::Arc<Future> fu) {
 //    int e = fu->get_error_code();
 //        verify(e == 0);
@@ -109,7 +109,7 @@ void RO6Coord::deptran_finish(TxData *ch) {
 //
 //      Log_debug("receive finish response. tid: {:x}", cmd_->id_);
 //
-//      rrr::deserialize_from(fu->get_reply(), res);
+//      srpc::deserialize_from(fu->get_reply(), res);
 //
 //      if (n_finish_ack_ == ch->GetPartitionIds().size()) {
 //        ch->finish_callback(res);
@@ -179,7 +179,7 @@ void RO6Coord::ro6_start_ro(TxData *ch) {
 //  while ((subcmd = (SimpleCommand*) cmd_->GetNextReadySubCmd()) != nullptr) {
 //    header.pid = next_pie_id();
 //
-//    rrr::FutureAttr fuattr;
+//    srpc::FutureAttr fuattr;
 //
 //    // remember this a asynchronous call! variable funtional range is important!
 //    fuattr.callback = [ch, pi, this, header](rusty::Arc<Future> fu) {
@@ -187,7 +187,7 @@ void RO6Coord::ro6_start_ro(TxData *ch) {
 //        std::lock_guard<std::recursive_mutex> lock(this->mtx_);
 //
 //        map<int32_t, Value> res;
-//        rrr::deserialize_from(fu->get_reply(), res);
+//        srpc::deserialize_from(fu->get_reply(), res);
 //
 //        Log_debug("receive deptran RO start response, tid: {:x}, pid: {:x}, ",
 //                   header.tid,

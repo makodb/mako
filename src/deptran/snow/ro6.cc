@@ -61,7 +61,7 @@ void start_ro(
 void commit(
         const ChopFinishRequest &req,
         ChopFinishResponse* res,
-        rrr::DeferredReply defer
+        srpc::DeferredReply defer
 ) {
     1. extract the list of read txn ids in the msg from coordinator
     2. get the columns this txn is going to write
@@ -166,7 +166,7 @@ void TxSnow::start_ro(const SimpleCommand &cmd,
 //void TxSnow::commit(
 //    const ChopFinishRequest &req,
 //    ChopFinishResponse *res,
-//    rrr::DeferredReply *defer) {
+//    srpc::DeferredReply *defer) {
 //  std::vector<i64> ids;
 //  Compressor::string_to_vector(req.read_only, &ids);
 //

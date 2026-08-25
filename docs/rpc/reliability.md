@@ -1,6 +1,6 @@
 # RPC Reliability Features
 
-This document describes the reliability features implemented in the rrr/rpc module to handle server/client crashes, automatic reconnection, and fault tolerance.
+This document describes the reliability features implemented in the srpc/rpc module to handle server/client crashes, automatic reconnection, and fault tolerance.
 
 ## Overview
 
@@ -67,7 +67,7 @@ if (state == ConnectionState::CONNECTED) {
 Reconnection is configured via `ReconnectPolicy`:
 
 ```cpp
-import rrr.reconnect_policy;
+import srpc.reconnect_policy;
 
 // Preset policies
 auto aggressive = ReconnectPolicy::aggressive();  // Fast retries, unlimited attempts
@@ -106,7 +106,7 @@ delay = min(base_delay * multiplier^attempt, max_delay) + jitter
 The circuit breaker prevents cascade failures by tracking error rates:
 
 ```cpp
-import rrr.circuit_breaker;
+import srpc.circuit_breaker;
 
 // States: CLOSED (allowing requests), OPEN (failing fast), HALF_OPEN (testing)
 
@@ -162,7 +162,7 @@ client->reconnect();
 Requests can be configured with timeout and retry options:
 
 ```cpp
-import rrr.request_options;
+import srpc.request_options;
 
 // Preset options
 auto fast = RequestOptions::fast();            // 100ms timeout, 2 retries
@@ -433,10 +433,10 @@ auto result = pool.reconnect_all(config);
 | File | Description |
 |------|-------------|
 | `connection_state.hpp` | Connection state machine |
-| `rrr.reconnect_policy` | Reconnection policy and backoff (canonical Rust) |
-| `rrr.circuit_breaker` | Circuit breaker pattern (canonical Rust) |
+| `srpc.reconnect_policy` | Reconnection policy and backoff (canonical Rust) |
+| `srpc.circuit_breaker` | Circuit breaker pattern (canonical Rust) |
 | `request_queue.hpp` | Request queue for buffering |
-| `rrr.request_options` | Timeout and retry configuration C++ module |
+| `srpc.request_options` | Timeout and retry configuration C++ module |
 | `heartbeat.hpp` | Heartbeat/keep-alive mechanism |
 | `connection_metrics.hpp` | Connection metrics tracking |
 | `errors.hpp` | Structured error types |

@@ -223,7 +223,7 @@ thread), not on the server's poll thread.
 
 Solution (Part 1 - Poll Thread Storage):
 1. RaftServiceImpl now stores the poll thread during construction:
-   - service.h: Added poll_thread_ field (rusty::Option<rusty::Arc<rrr::PollThread>>)
+   - service.h: Added poll_thread_ field (rusty::Option<rusty::Arc<srpc::PollThread>>)
    - service.cc: Constructor accepts and stores poll thread
    - service.cc: Added GetPollThread(site_id) static method to retrieve it
 
@@ -291,14 +291,14 @@ field via the polymorphic kind-tagged envelope (originally MarshallDeputy;
 the post-L10f-2 equivalent is `janus::Command`):
 
 SerializeRaftData:
-1. Use rrr::Marshal for serialization (instead of raw memcpy)
+1. Use srpc::Marshal for serialization (instead of raw memcpy)
 2. Write primitive fields
 3. Write has_log flag (uint8_t) indicating if log_ is present
 4. If present, wrap log_ in the kind-tagged envelope and serialize it
    - Envelope writes kind_ (type ID) then calls save()
 
 DeserializeRaftData:
-1. Use rrr::Marshal for deserialization
+1. Use srpc::Marshal for deserialization
 2. Read primitive fields
 3. Read has_log flag
 4. If present, construct the kind-tagged envelope and deserialize

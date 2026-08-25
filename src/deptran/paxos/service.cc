@@ -7,15 +7,15 @@ namespace janus {
 // removed `Forward` typed-rpc override
 // (and matching N-arg overload further below).
 
-void MultiPaxosServiceImpl::Prepare(const MultiPaxosService::RpcPrepareRequest& req, MultiPaxosService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
+void MultiPaxosServiceImpl::Prepare(const MultiPaxosService::RpcPrepareRequest& req, MultiPaxosService::RpcPrepareResponse& resp, srpc::DeferredReply defer) {
   this->Prepare(req.slot, req.ballot, &resp.max_ballot, &resp.coro_id, std::move(defer));
 }
 
-void MultiPaxosServiceImpl::Accept(const MultiPaxosService::RpcAcceptRequest& req, MultiPaxosService::RpcAcceptResponse& resp, rrr::DeferredReply defer) {
+void MultiPaxosServiceImpl::Accept(const MultiPaxosService::RpcAcceptRequest& req, MultiPaxosService::RpcAcceptResponse& resp, srpc::DeferredReply defer) {
   this->Accept(req.slot, req.time, req.ballot, req.cmd, &resp.max_ballot, &resp.coro_id, std::move(defer));
 }
 
-void MultiPaxosServiceImpl::Decide(const MultiPaxosService::RpcDecideRequest& req, MultiPaxosService::RpcDecideResponse& resp, rrr::DeferredReply defer) {
+void MultiPaxosServiceImpl::Decide(const MultiPaxosService::RpcDecideRequest& req, MultiPaxosService::RpcDecideResponse& resp, srpc::DeferredReply defer) {
   (void)resp;
   this->Decide(req.slot, req.ballot, req.cmd, std::move(defer));
 }
@@ -26,26 +26,26 @@ void MultiPaxosServiceImpl::Decide(const MultiPaxosService::RpcDecideRequest& re
 // removed `BulkPrepare2` typed-rpc override
 // (and matching N-arg overload further below).
 
-void MultiPaxosServiceImpl::BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, rrr::DeferredReply defer) {
+void MultiPaxosServiceImpl::BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, srpc::DeferredReply defer) {
   this->BulkAccept(req.cmd, &resp.ballot, &resp.val, std::move(defer));
 }
 
-void MultiPaxosServiceImpl::BulkDecide(const MultiPaxosService::RpcBulkDecideRequest& req, MultiPaxosService::RpcBulkDecideResponse& resp, rrr::DeferredReply defer) {
+void MultiPaxosServiceImpl::BulkDecide(const MultiPaxosService::RpcBulkDecideRequest& req, MultiPaxosService::RpcBulkDecideResponse& resp, srpc::DeferredReply defer) {
   this->BulkDecide(req.cmd, &resp.ballot, &resp.val, std::move(defer));
 }
 
-void MultiPaxosServiceImpl::SyncLog(const MultiPaxosService::RpcSyncLogRequest& req, MultiPaxosService::RpcSyncLogResponse& resp, rrr::DeferredReply defer) {
+void MultiPaxosServiceImpl::SyncLog(const MultiPaxosService::RpcSyncLogRequest& req, MultiPaxosService::RpcSyncLogResponse& resp, srpc::DeferredReply defer) {
   this->SyncLog(req.cmd, &resp.ballot, &resp.val, &resp.ret, std::move(defer));
 }
 
-void MultiPaxosServiceImpl::SyncCommit(const MultiPaxosService::RpcSyncCommitRequest& req, MultiPaxosService::RpcSyncCommitResponse& resp, rrr::DeferredReply defer) {
+void MultiPaxosServiceImpl::SyncCommit(const MultiPaxosService::RpcSyncCommitRequest& req, MultiPaxosService::RpcSyncCommitResponse& resp, srpc::DeferredReply defer) {
   this->SyncCommit(req.cmd, &resp.ballot, &resp.val, std::move(defer));
 }
 
 // removed `SyncNoOps` typed-rpc override
 // (and matching N-arg overload further below).
 
-void MultiPaxosServiceImpl::ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, rrr::DeferredReply defer) {
+void MultiPaxosServiceImpl::ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, srpc::DeferredReply defer) {
   this->ForwardToLearnerServer(req.par_id, req.slot, req.ballot, req.cmd, &resp.ret_slot, &resp.ret_ballot, std::move(defer));
 }
 
@@ -62,7 +62,7 @@ void MultiPaxosServiceImpl::Prepare(const uint64_t& slot,
                                     const ballot_t& ballot,
                                     ballot_t* max_ballot,
                                     uint64_t* coro_id,
-                                    rrr::DeferredReply defer) {
+                                    srpc::DeferredReply defer) {
   verify(sched_ != nullptr);
   sched_->OnPrepare(slot,
                     ballot,
@@ -77,7 +77,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
                                    const janus::Command& md_cmd,
                                    ballot_t* max_ballot,
                                    uint64_t* coro_id,
-                                   rrr::DeferredReply defer) {
+                                   srpc::DeferredReply defer) {
   verify(sched_ != nullptr);
   auto start = chrono::system_clock::now();
 
@@ -115,7 +115,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
 void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
                                    const ballot_t& ballot,
                                    const janus::Command& md_cmd,
-                                   rrr::DeferredReply defer) {
+                                   srpc::DeferredReply defer) {
   verify(sched_ != nullptr);
   // OnCommit takes janus::Command directly.
   sched_->OnCommit(slot, ballot, md_cmd);
@@ -135,7 +135,7 @@ void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
 void MultiPaxosServiceImpl::BulkAccept(const janus::Command& md_cmd,
                                        i32* ballot,
                                        i32* valid,
-                                       rrr::DeferredReply defer) {
+                                       srpc::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
     sched_->OnBulkAccept(md_cmd,
@@ -148,7 +148,7 @@ void MultiPaxosServiceImpl::BulkAccept(const janus::Command& md_cmd,
 void MultiPaxosServiceImpl::BulkDecide(const janus::Command& md_cmd,
                                        i32* ballot,
                                        i32* valid,
-                                       rrr::DeferredReply defer) {
+                                       srpc::DeferredReply defer) {
   verify(sched_ != nullptr);
   // Log_info("BulkDecide RPC handler called");
   Fiber::create_run([&] () {
@@ -167,7 +167,7 @@ void MultiPaxosServiceImpl::SyncLog(const janus::Command& md_cmd,
                                      i32* ballot,
                                      i32* valid,
                                      janus::Command* ret,
-                                     rrr::DeferredReply defer) {
+                                     srpc::DeferredReply defer) {
   verify(sched_ != nullptr);
   // Default reply payload (the OnSyncLog early-return path keeps it) —
   // byte-identical to the pre-reshape empty pack.
@@ -190,7 +190,7 @@ void MultiPaxosServiceImpl::SyncLog(const janus::Command& md_cmd,
 void MultiPaxosServiceImpl::SyncCommit(const janus::Command& md_cmd,
                                      i32* ballot,
                                      i32* valid,
-                                     rrr::DeferredReply defer) {
+                                     srpc::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
     sched_->OnSyncCommit(md_cmd,
@@ -204,11 +204,11 @@ void MultiPaxosServiceImpl::SyncCommit(const janus::Command& md_cmd,
 // removed `SyncNoOps(janus::Command, ...)`
 // N-arg overload — only caller was the deleted typed-rpc shim above.
 
-void MultiPaxosServiceImpl::ForwardToLearnerServer(const rrr::i32& par_id,
+void MultiPaxosServiceImpl::ForwardToLearnerServer(const srpc::i32& par_id,
                                                    const uint64_t& slot, 
                                                    const ballot_t& ballot, /* slot and ballot from the leader */
                                                    const janus::Command& cmd, 
-                                                   uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply defer) {
+                                                   uint64_t* ret_slot, ballot_t* ret_ballot, srpc::DeferredReply defer) {
     verify(sched_ != nullptr);
     *ret_slot = slot;
     *ret_ballot = ballot;

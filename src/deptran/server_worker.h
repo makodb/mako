@@ -23,13 +23,13 @@ class Communicator;
 class Frame;
 class ServerWorker {
  public:
-  rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
+  rusty::Option<rusty::Arc<srpc::PollThread>> svr_poll_thread_worker_;
   // Services are now owned by rpc_server_ via reg_service()
-  rrr::Server *rpc_server_ = nullptr;
+  srpc::Server *rpc_server_ = nullptr;
 
-  rusty::Option<rusty::Arc<rrr::PollThread>> svr_hb_poll_thread_worker_g;
+  rusty::Option<rusty::Arc<srpc::PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
-  rrr::Server *hb_rpc_server_ = nullptr;
+  srpc::Server *hb_rpc_server_ = nullptr;
 
   Frame* tx_frame_ = nullptr;
   Frame* rep_frame_ = nullptr;

@@ -1,7 +1,7 @@
 
 #include "schema.h"
-// the variadic Log_* wrappers live outside src/rrr now
-#include "rrr_log.h"
+// the variadic Log_* wrappers live outside src/srpc now
+#include "srpc_log.h"
 
 import std;
 
@@ -44,7 +44,7 @@ int Schema::do_add_column(const char* name, Value::kind type, bool key) {
             fixed_part_size_ += sizeof(double);
             break;
         default:
-            rrr::Log_fatal("value type {} not recognized", (int) type);
+            srpc::Log_fatal("value type {} not recognized", (int) type);
             verify(0);
             break;
         }

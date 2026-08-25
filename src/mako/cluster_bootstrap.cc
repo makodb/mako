@@ -15,7 +15,7 @@ import cluster;   // config/sharding metadata module (was #include "cluster/..."
 #include "deptran/config_kv_service.h"     // ConfigKvServiceImpl, make_config_read_fn,
                                            // ConfigKvServiceProxy
 
-#include "rrr/rrr.hpp"                      // rrr::Server / Client / PollThread, Log_*
+#include "srpc/srpc.hpp"                      // srpc::Server / Client / PollThread, Log_*
 
 namespace janus {
 namespace {
@@ -35,9 +35,9 @@ constexpr uint64_t kConfigPollIntervalMs = 1000;
 // Boxes give stable addresses for the raw-pointer cross-references below
 // (ConfigManager borrows the KvStore; ConfigWatcher borrows both the
 // ConfigManager and the routing cache).
-rusty::Option<rusty::Arc<rrr::PollThread>> g_cfg_poll;
-rrr::Server* g_cfg_server = nullptr;                          // shard-0 leader only
-rusty::Option<rusty::Arc<rrr::Client>> g_cfg_client;         // other nodes only
+rusty::Option<rusty::Arc<srpc::PollThread>> g_cfg_poll;
+srpc::Server* g_cfg_server = nullptr;                          // shard-0 leader only
+rusty::Option<rusty::Arc<srpc::Client>> g_cfg_client;         // other nodes only
 ConfigKvServiceProxy* g_cfg_proxy = nullptr;                 // other nodes only
 rusty::Option<rusty::Box<OrderedIndexKvStore>> g_cfg_kv_local;   // shard-0 leader
 rusty::Option<rusty::Box<RemoteKvStore>> g_cfg_kv_remote;        // other nodes
@@ -89,8 +89,8 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
     // Dedicated RPC server for config reads (config_node_init.cc pattern).
     Config::SiteInfo me = Config::GetConfig()->LeaderSiteByPartitionId(0);
     std::string bind_addr = "0.0.0.0:" + std::to_string(me.port + kConfigKvPortDelta);
-    g_cfg_poll = rusty::Some(rrr::PollThread::create());
-    g_cfg_server = new rrr::Server(rrr::Server::new_(rusty::Some(g_cfg_poll.as_ref().unwrap().clone())));
+    g_cfg_poll = rusty::Some(srpc::PollThread::create());
+    g_cfg_server = new srpc::Server(srpc::Server::new_(rusty::Some(g_cfg_poll.as_ref().unwrap().clone())));
     g_cfg_server->reg_service_typed(rusty::make_box<ConfigKvServiceImpl>(kv));
     if (g_cfg_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())) != 0) {
         Log_warn("BootstrapClusterConfig: config server failed to bind {}",
@@ -113,15 +113,15 @@ void StartRemoteWatcher() {
     Config::SiteInfo leader0 = Config::GetConfig()->LeaderSiteByPartitionId(0);
     std::string addr = leader0.GetHostAddr(kConfigKvPortDelta);
 
-    g_cfg_poll = rusty::Some(rrr::PollThread::create());
-    g_cfg_client = rusty::Some(rrr::Client::create(g_cfg_poll.as_ref().unwrap().clone()));
+    g_cfg_poll = rusty::Some(srpc::PollThread::create());
+    g_cfg_client = rusty::Some(srpc::Client::create(g_cfg_poll.as_ref().unwrap().clone()));
     if (g_cfg_client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(addr.c_str()), false) != 0) {
         Log_warn("BootstrapClusterConfig: could not connect to shard-0 config at {}",
                  addr.c_str());
         return;
     }
     g_cfg_proxy = new ConfigKvServiceProxy(
-        const_cast<rrr::Client*>(g_cfg_client.as_ref().unwrap().get()));
+        const_cast<srpc::Client*>(g_cfg_client.as_ref().unwrap().get()));
 
     g_cfg_kv_remote = rusty::Some(rusty::make_box<RemoteKvStore>(
         make_config_read_fn(g_cfg_proxy)));

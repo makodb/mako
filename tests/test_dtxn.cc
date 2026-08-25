@@ -1,16 +1,16 @@
-//import rrr;
+//import srpc;
 //#include "deptran/all.h"
 //
-//using namespace rrr;
+//using namespace srpc;
 //using namespace rococo;
 //
 //TEST(dtxn, txn_registry) {
 //    TxnRegistry::reg(1, 1, DF_NO, [] (const RequestHeader& header,
 //                               const Value *input,
-//                               rrr::i32 input_size,
-//                               rrr::i32 *res,
+//                               srpc::i32 input_size,
+//                               srpc::i32 *res,
 //                               Value *output,
-//                               rrr::i32 *output_size,
+//                               srpc::i32 *output_size,
 //                               row_map_t *row_map,
 //                               Vertex<PieInfo> *pv,
 //                               Vertex<TxnInfo> *tv,

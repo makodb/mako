@@ -1,7 +1,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "dep_graph.h"
-#include "rrr/misc/any_message.hpp"
+#include "srpc/misc/any_message.hpp"
 #include "server.h"
 
 namespace janus {
@@ -12,9 +12,9 @@ namespace janus {
 // tell them apart.  Aborts loud if name collides — see
 // `AnyMessageRegistry::register_type` for the policy.
 static int volatile g_reg_rcc_graph =
-    rrr::reg_any_message_as<RccGraph>("janus.RccGraph");
+    srpc::reg_any_message_as<RccGraph>("janus.RccGraph");
 static int volatile g_reg_empty_graph =
-    rrr::reg_any_message_as<EmptyGraph>("janus.EmptyGraph");
+    srpc::reg_any_message_as<EmptyGraph>("janus.EmptyGraph");
 
 shared_ptr<RccTx> RccGraph::FindOrCreateRccVertex(txnid_t txn_id,
                                                   RccServer *sched) {

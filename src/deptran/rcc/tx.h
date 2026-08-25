@@ -334,16 +334,16 @@ typedef vector<pair<txid_t, ParentEdge<RccTx>>> parent_set_t;
 // archive emission to serialize parent_set_t fields (a typedef for
 // vector<pair<txid_t, ParentEdge<RccTx>>>). (Marshal-form mirrors
 // deleted — Marshal-deprecation slice A.)
-inline void serialize(const ParentEdge<RccTx> &e, rrr::BinaryWriteArchive& ar) {
-  rrr::Serialize_::serialize(e.partitions_, ar);
+inline void serialize(const ParentEdge<RccTx> &e, srpc::BinaryWriteArchive& ar) {
+  srpc::Serialize_::serialize(e.partitions_, ar);
 }
 
-inline rrr::BinaryWriteArchive& operator<<(rrr::BinaryWriteArchive& ar, const ParentEdge<RccTx> &e) { serialize(e, ar); return ar; }
+inline srpc::BinaryWriteArchive& operator<<(srpc::BinaryWriteArchive& ar, const ParentEdge<RccTx> &e) { serialize(e, ar); return ar; }
 
-inline void deserialize(ParentEdge<RccTx> &e, rrr::BinaryReadArchive& ar) {
-  rrr::Deserialize_::deserialize(e.partitions_, ar);
+inline void deserialize(ParentEdge<RccTx> &e, srpc::BinaryReadArchive& ar) {
+  srpc::Deserialize_::deserialize(e.partitions_, ar);
 }
 
-inline rrr::BinaryReadArchive& operator>>(rrr::BinaryReadArchive& ar, ParentEdge<RccTx> &e) { deserialize(e, ar); return ar; }
+inline srpc::BinaryReadArchive& operator>>(srpc::BinaryReadArchive& ar, ParentEdge<RccTx> &e) { deserialize(e, ar); return ar; }
 
 } // namespace janus

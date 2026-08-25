@@ -166,10 +166,10 @@ bool Communicator::EnsureClientConnected(siteid_t site_id) {
 
   // Try to reconnect if in FAILED or DISCONNECTED state
   auto state = client->connection_state();
-  if (state == rrr::ConnectionState::FAILED ||
-      state == rrr::ConnectionState::DISCONNECTED) {
+  if (state == srpc::ConnectionState::FAILED ||
+      state == srpc::ConnectionState::DISCONNECTED) {
     Log_info("Communicator: site {} in state {}, attempting reconnect",
-             site_id, rrr::connection_state_to_string(state));
+             site_id, srpc::connection_state_to_string(state));
 
     if (client->try_reconnect_if_needed()) {
       Log_info("Communicator: reconnected to site {} successfully", site_id);
@@ -182,7 +182,7 @@ bool Communicator::EnsureClientConnected(siteid_t site_id) {
 
   // CONNECTING or other transient state - can't help immediately
   Log_debug("Communicator: site {} in transient state {}",
-            site_id, rrr::connection_state_to_string(state));
+            site_id, srpc::connection_state_to_string(state));
   return false;
 }
 
@@ -191,7 +191,7 @@ Communicator::RandomProxyForPartition(parid_t par_id) const {
   auto it = rpc_par_proxies_.find(par_id);
   verify(it != rpc_par_proxies_.end());
   auto& par_proxies = it->second;
-  int index = rrr::RandomGenerator::rand(0, par_proxies.size() - 1);
+  int index = srpc::RandomGenerator::rand(0, par_proxies.size() - 1);
   return par_proxies[index];
 }
 
@@ -293,7 +293,7 @@ Communicator::ConnectToClientSite(Config::SiteInfo& site,
   snprintf(addr, sizeof(addr), "%s:%d", site.host.c_str(), site.port);
 
   auto start = std::chrono::steady_clock::now();
-  auto rpc_cli = rrr::Client::create(rpc_poll_.as_ref().unwrap());
+  auto rpc_cli = srpc::Client::create(rpc_poll_.as_ref().unwrap());
   double elapsed;
   int attempt = 0;
   do {
@@ -301,7 +301,7 @@ Communicator::ConnectToClientSite(Config::SiteInfo& site,
     auto connect_result = rpc_cli->connect(reinterpret_cast<const int8_t*>(addr), false);
     if (connect_result == SUCCESS) {
       // Arc::get() returns const T*, but proxy doesn't mutate client
-      ClientControlProxy* rpc_proxy = new ClientControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
+      ClientControlProxy* rpc_proxy = new ClientControlProxy(const_cast<srpc::Client*>(rpc_cli.get()));
       rpc_clients_.insert(std::make_pair(site.id, rpc_cli));
       Log_debug("connect to client site: {} success!", addr);
       return std::make_pair(SUCCESS, rpc_proxy);
@@ -323,7 +323,7 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
                             std::chrono::milliseconds timeout) {
   string addr = site.GetHostAddr();
   auto start = std::chrono::steady_clock::now();
-  auto rpc_cli = rrr::Client::create(rpc_poll_.as_ref().unwrap());
+  auto rpc_cli = srpc::Client::create(rpc_poll_.as_ref().unwrap());
   double elapsed;
   int attempt = 0;
   do {
@@ -331,7 +331,7 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
     auto connect_result = rpc_cli->connect(reinterpret_cast<const int8_t*>(addr.c_str()), false);
     if (connect_result == SUCCESS) {
       // Arc::get() returns const T*, but proxy doesn't mutate client
-      ClassicProxy* rpc_proxy = new ClassicProxy(const_cast<rrr::Client*>(rpc_cli.get()));
+      ClassicProxy* rpc_proxy = new ClassicProxy(const_cast<srpc::Client*>(rpc_cli.get()));
       rpc_clients_.insert(std::make_pair(site.id, rpc_cli));
       rpc_proxies_.insert(std::make_pair(site.id, rpc_proxy));
 
@@ -339,15 +339,15 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
       auto conn_opt = rpc_cli->connection();
       if (conn_opt.is_some()) {
         // Client::host() returns std::string again: the canonical
-        // src/rrr/src/client.rs maps its Rust String through the type map's
-        // LegacyStdString, and rrr::reactor_clients_th_ is keyed by
+        // src/srpc/src/client.rs maps its Rust String through the type map's
+        // LegacyStdString, and srpc::reactor_clients_th_ is keyed by
         // std::string, so no conversion is needed.
         std::string host_key = rpc_cli->host();
-        if (!rrr::reactor_clients_th_.contains_key(host_key)) {
-          rrr::reactor_clients_th_.insert(host_key, rusty::Vec<rrr::PollableProxy>{});
+        if (!srpc::reactor_clients_th_.contains_key(host_key)) {
+          srpc::reactor_clients_th_.insert(host_key, rusty::Vec<srpc::PollableProxy>{});
         }
-        auto conn_proxy = rrr::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
-        rrr::reactor_clients_th_.get(host_key).unwrap().push(std::move(conn_proxy));
+        auto conn_proxy = srpc::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
+        srpc::reactor_clients_th_.get(host_key).unwrap().push(std::move(conn_proxy));
       }
       Log_info("connect to site: {} success!", addr.c_str());
       return std::make_pair(SUCCESS, rpc_proxy);
@@ -462,17 +462,17 @@ rusty::Arc<QuorumEvent> Communicator::SendReelect(){
 	int new_leader = (pair_leader_proxy.first + 1) % total;
 
 	for(auto& pair: rpc_par_proxies_[0]){
-		rrr::FutureAttr fuattr;
+		srpc::FutureAttr fuattr;
 		int id = pair.first;
 		if(id != 1) continue;
-			fuattr.callback = rrr::FutureCallback::from_callable(
+			fuattr.callback = srpc::FutureCallback::from_callable(
 				[e, this, id] (rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
         }
 				bool_t success = false;
-				rrr::deserialize_from(fu->get_reply(), success);
+				srpc::deserialize_from(fu->get_reply(), success);
 
 					if(success){
 						e->vote_yes();
@@ -498,8 +498,8 @@ void Communicator::BroadcastDispatch(
   verify(!sp_vec_piece->empty());
   auto par_id = sp_vec_piece->at(0)->PartitionId();
   
-  rrr::FutureAttr fuattr;
-  fuattr.callback = rrr::FutureCallback::from_callable(
+  srpc::FutureAttr fuattr;
+  fuattr.callback = srpc::FutureCallback::from_callable(
       [this, callback, par_id](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
@@ -509,10 +509,10 @@ void Communicator::BroadcastDispatch(
         TxnOutput outputs;
         uint64_t coro_id = 0;
         janus::Command view_md;
-        rrr::deserialize_from(fu->get_reply(), ret);
-        rrr::deserialize_from(fu->get_reply(), outputs);
-        rrr::deserialize_from(fu->get_reply(), coro_id);
-        rrr::deserialize_from(fu->get_reply(), view_md);
+        srpc::deserialize_from(fu->get_reply(), ret);
+        srpc::deserialize_from(fu->get_reply(), outputs);
+        srpc::deserialize_from(fu->get_reply(), coro_id);
+        srpc::deserialize_from(fu->get_reply(), view_md);
         
         // Handle WRONG_LEADER response with view data
         if (ret == WRONG_LEADER && view_md.has_value()) {
@@ -604,8 +604,8 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
     auto leader_id = pair_leader_proxy.first;
 
     phase_t phase = coo->phase_;
-    rrr::FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable(
+    srpc::FutureAttr fuattr;
+    fuattr.callback = srpc::FutureCallback::from_callable(
         [e, coo, this, phase, txn, src_coroid, leader_id, par_id](rusty::Arc<Future> fu) {
           if (fu->get_error_code() != 0) {
             Log_info("Get a error message in reply");
@@ -617,10 +617,10 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
           janus::Command view_md;
 	  			double cpu = 0.0;
 	  			double net = 0.0;
-          rrr::deserialize_from(fu->get_reply(), ret);
-          rrr::deserialize_from(fu->get_reply(), outputs);
-          rrr::deserialize_from(fu->get_reply(), coro_id);
-          rrr::deserialize_from(fu->get_reply(), view_md);
+          srpc::deserialize_from(fu->get_reply(), ret);
+          srpc::deserialize_from(fu->get_reply(), outputs);
+          srpc::deserialize_from(fu->get_reply(), coro_id);
+          srpc::deserialize_from(fu->get_reply(), view_md);
 
           e->value_.set(e->value_.get() + 1);
           if(phase != coo->phase_){
@@ -702,8 +702,8 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
         if (pair.first != pair_leader_proxy.first) {
           //if(first) curr->n_total_++;
           auto follower_id = pair.first;
-          rrr::FutureAttr fuattr;
-          fuattr.callback = rrr::FutureCallback::from_callable(
+          srpc::FutureAttr fuattr;
+          fuattr.callback = srpc::FutureCallback::from_callable(
               [e, coo, this, src_coroid, follower_id](rusty::Arc<Future> fu) {
                 if (fu->get_error_code() != 0) {
                   Log_info("Get a error message in reply");
@@ -713,10 +713,10 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
                 TxnOutput outputs;
                 uint64_t coro_id = 0;
                 janus::Command view_md;
-                rrr::deserialize_from(fu->get_reply(), ret);
-                rrr::deserialize_from(fu->get_reply(), outputs);
-                rrr::deserialize_from(fu->get_reply(), coro_id);
-                rrr::deserialize_from(fu->get_reply(), view_md);
+                srpc::deserialize_from(fu->get_reply(), ret);
+                srpc::deserialize_from(fu->get_reply(), outputs);
+                srpc::deserialize_from(fu->get_reply(), coro_id);
+                srpc::deserialize_from(fu->get_reply(), view_md);
                 //e->add_dep(coo->cli_id_, src_coroid, follower_id, coro_id);
                 //coo->ids_.push_back(follower_id);
                 // do nothing
@@ -771,7 +771,7 @@ Communicator::SendPrepare(Coordinator* coo,
     qe->id_.set(Communicator::global_id);
     qe->par_id_.set(quorum_id++);
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([this, e, qe, src_coroid, site_id, coo, phase, cmd, tid](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([this, e, qe, src_coroid, site_id, coo, phase, cmd, tid](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -779,9 +779,9 @@ Communicator::SendPrepare(Coordinator* coo,
       int32_t res;
 			bool_t slow;
       uint64_t coro_id = 0;
-      rrr::deserialize_from(fu->get_reply(), res);
-      rrr::deserialize_from(fu->get_reply(), slow);
-      rrr::deserialize_from(fu->get_reply(), coro_id);
+      srpc::deserialize_from(fu->get_reply(), res);
+      srpc::deserialize_from(fu->get_reply(), slow);
+      srpc::deserialize_from(fu->get_reply(), coro_id);
 
 			this->slow = slow;
       // qe->add_dep(coo->cli_id_, src_coroid, site_id, coro_id);
@@ -849,7 +849,7 @@ Communicator::SendPrepare(Coordinator* coo,
   std::function<void(rusty::Arc<Future>)> cb =
       [this, callback](rusty::Arc<Future> fu) {
         int res;
-        rrr::deserialize_from(fu->get_reply(), res);
+        srpc::deserialize_from(fu->get_reply(), res);
         callback(res);
       };
   fuattr.callback = cb;
@@ -900,7 +900,7 @@ Communicator::SendCommit(Coordinator* coo,
     coo->n_finish_req_++;
     FutureAttr fuattr;
     auto phase = coo->phase_;
-    fuattr.callback = rrr::FutureCallback::from_callable([this, e, qe, src_coroid, site_id, coo, phase, cmd, tid](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([this, e, qe, src_coroid, site_id, coo, phase, cmd, tid](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -909,10 +909,10 @@ Communicator::SendCommit(Coordinator* coo,
 			bool_t slow;
       uint64_t coro_id = 0;
       janus::Command view_md;
-      rrr::deserialize_from(fu->get_reply(), res);
-      rrr::deserialize_from(fu->get_reply(), slow);
-      rrr::deserialize_from(fu->get_reply(), coro_id);
-      rrr::deserialize_from(fu->get_reply(), view_md);
+      srpc::deserialize_from(fu->get_reply(), res);
+      srpc::deserialize_from(fu->get_reply(), slow);
+      srpc::deserialize_from(fu->get_reply(), coro_id);
+      srpc::deserialize_from(fu->get_reply(), view_md);
 			this->slow = slow;
 			// removed the `Profiling profile` reply field along with the
 			// `cpu = profile.cpu_util;` read — the whole CPU /
@@ -993,7 +993,7 @@ Communicator::SendCommit(Coordinator* coo,
   ___LogSent(pid, tid);
 #endif
   FutureAttr fuattr;
-  fuattr.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future>) { callback(); });
+  fuattr.callback = srpc::FutureCallback::from_callable([callback](rusty::Arc<Future>) { callback(); });
   auto proxy_pair = LeaderProxyForPartition(pid);
   ClassicProxy* proxy = proxy_pair.second;
   SetLeaderCache(pid, proxy_pair);
@@ -1025,7 +1025,7 @@ Communicator::SendAbort(Coordinator* coo,
     coo->n_finish_req_++;
     FutureAttr fuattr;
     auto phase = coo->phase_;
-    fuattr.callback = rrr::FutureCallback::from_callable([this, e, qe, coo, src_coroid, site_id, phase, cmd, tid](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([this, e, qe, coo, src_coroid, site_id, phase, cmd, tid](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1034,10 +1034,10 @@ Communicator::SendAbort(Coordinator* coo,
       bool_t slow;
       uint64_t coro_id = 0;
       janus::Command view_md;
-      rrr::deserialize_from(fu->get_reply(), res);
-      rrr::deserialize_from(fu->get_reply(), slow);
-      rrr::deserialize_from(fu->get_reply(), coro_id);
-      rrr::deserialize_from(fu->get_reply(), view_md);
+      srpc::deserialize_from(fu->get_reply(), res);
+      srpc::deserialize_from(fu->get_reply(), slow);
+      srpc::deserialize_from(fu->get_reply(), coro_id);
+      srpc::deserialize_from(fu->get_reply(), view_md);
       this->slow = slow;
 
       // Propagate the result status (including WRONG_LEADER) back to the coordinator
@@ -1113,7 +1113,7 @@ void Communicator::SendEarlyAbort(parid_t pid,
   ___LogSent(pid, tid);
 #endif
   FutureAttr fuattr;
-  fuattr.callback = rrr::FutureCallback::from_callable([](rusty::Arc<Future>) {});
+  fuattr.callback = srpc::FutureCallback::from_callable([](rusty::Arc<Future>) {});
   ClassicProxy* proxy = LeaderProxyForPartition(pid).second;
   Log_debug("SendAbort to {} tid:{}\n", pid, tid);
   ClassicProxy::RpcEarlyAbortRequest early_abort_req;
@@ -1130,7 +1130,7 @@ void Communicator::SendEarlyAbort(parid_t pid,
   ___LogSent(pid, tid);
 #endif
   FutureAttr fuattr;
-  fuattr.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future>) { callback(); });
+  fuattr.callback = srpc::FutureCallback::from_callable([callback](rusty::Arc<Future>) { callback(); });
   // ClassicProxy* proxy = LeaderProxyForPartition(pid).second;
   auto pair_proxies = PilotProxyForPartition(pid);
   Log_debug("SendAbort to {} tid:{}\n", pid, tid);
@@ -1154,10 +1154,10 @@ void Communicator::SendUpgradeEpoch(epoch_t curr_epoch,
           return;
         }
         int32_t res;
-        rrr::deserialize_from(fu->get_reply(), res);
+        srpc::deserialize_from(fu->get_reply(), res);
         callback(par_id, site_id, res);
       };
-      fuattr.callback = rrr::FutureCallback::from_callable(cb);
+      fuattr.callback = srpc::FutureCallback::from_callable(cb);
       auto proxy = (ClassicProxy*) pair.second;
       ClassicProxy::RpcUpgradeEpochRequest req;
       req.curr_epoch = curr_epoch;
@@ -1173,7 +1173,7 @@ void Communicator::SendTruncateEpoch(epoch_t old_epoch) {
     auto& proxies = pair.second;
     for (auto& pair: proxies) {
       FutureAttr fuattr;
-      fuattr.callback = rrr::FutureCallback::from_callable([](rusty::Arc<Future>) {});
+      fuattr.callback = srpc::FutureCallback::from_callable([](rusty::Arc<Future>) {});
       auto proxy = (ClassicProxy*) pair.second;
       ClassicProxy::RpcTruncateEpochRequest req;
       req.old_epoch = old_epoch;
@@ -1189,7 +1189,7 @@ void Communicator::SendForwardTxnRequest(
     std::function<void(const TxReply&)> callback) {
   Log_info("{}: {}, {}", __FUNCTION__, coo->coo_id_, coo->par_id_);
   verify(client_leaders_.size() > 0);
-  auto idx = rrr::RandomGenerator::rand(0, client_leaders_.size() - 1);
+  auto idx = srpc::RandomGenerator::rand(0, client_leaders_.size() - 1);
   auto p = client_leaders_[idx];
   auto leader_site_id = p.first;
   auto leader_proxy = p.second;
@@ -1202,13 +1202,13 @@ void Communicator::SendForwardTxnRequest(
   dispatch_request.tx_type = req.tx_type_;
 
   FutureAttr future;
-  future.callback = rrr::FutureCallback::from_callable([callback](rusty::Arc<Future> fu) {
+  future.callback = srpc::FutureCallback::from_callable([callback](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;
     }
     TxReply reply;
-    rrr::deserialize_from(fu->get_reply(), reply);
+    srpc::deserialize_from(fu->get_reply(), reply);
     callback(reply);
   });
   ClientControlProxy::RpcDispatchTxnRequest dispatch_rpc_req;
@@ -1232,13 +1232,13 @@ shared_ptr<GetLeaderQuorumEvent> Communicator::BroadcastGetLeader(
     if (p.first == cur_pause) continue;
     auto proxy = p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e, p](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e, p](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
       }
       bool_t is_leader = false;
-      rrr::deserialize_from(fu->get_reply(), is_leader);
+      srpc::deserialize_from(fu->get_reply(), is_leader);
       e->FeedResponse(is_leader, p.first);
     });
     ClassicProxy::RpcIsFPGALeaderRequest req;
@@ -1268,13 +1268,13 @@ rusty::Arc<QuorumEvent> Communicator::FailoverPauseSocketOut(
     if (p.first != loc_id) continue;
     auto proxy = p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
       }
       int res;
-      rrr::deserialize_from(fu->get_reply(), res);
+      srpc::deserialize_from(fu->get_reply(), res);
       if (res == 0)
         e->vote_yes();
       else
@@ -1309,13 +1309,13 @@ rusty::Arc<QuorumEvent> Communicator::FailoverResumeSocketOut(
     if (p.first != loc_id) continue;
     auto proxy = p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
       }
       int res;
-      rrr::deserialize_from(fu->get_reply(), res);
+      srpc::deserialize_from(fu->get_reply(), res);
       if (res == 0)
         e->vote_yes();
       else
@@ -1372,10 +1372,10 @@ void Communicator::SendSimpleCmd(groupid_t gid, SimpleCommand& cmd,
       return;
     }
     int res;
-    rrr::deserialize_from(fu->get_reply(), res);
+    srpc::deserialize_from(fu->get_reply(), res);
     callback(res);
   };
-  fuattr.callback = rrr::FutureCallback::from_callable(cb);
+  fuattr.callback = srpc::FutureCallback::from_callable(cb);
   ClassicProxy* proxy = LeaderProxyForPartition(gid).second;
   Log_debug("SendEmptyCmd to {} sites gid:{}\n", sids.size(), gid);
   ClassicProxy::RpcSimpleCmdRequest req;
@@ -1408,7 +1408,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
     // }
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1451,7 +1451,7 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
     // }
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1459,12 +1459,12 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
       janus::Command reply_old_view, reply_new_view, id_set;
-      rrr::deserialize_from(fu->get_reply(), ok);
-      rrr::deserialize_from(fu->get_reply(), reply_jepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_oepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_old_view);
-      rrr::deserialize_from(fu->get_reply(), reply_new_view);
-      rrr::deserialize_from(fu->get_reply(), id_set);
+      srpc::deserialize_from(fu->get_reply(), ok);
+      srpc::deserialize_from(fu->get_reply(), reply_jepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_oepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_old_view);
+      srpc::deserialize_from(fu->get_reply(), reply_new_view);
+      srpc::deserialize_from(fu->get_reply(), id_set);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, id_set);
     });
     ClassicProxy::RpcJetpackPullIdSetRequest req;
@@ -1525,7 +1525,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
     // Log_info("[JETPACK-DEBUG] Sending JetpackPullCmd to site {}", p.first);
     
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1533,12 +1533,12 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
       janus::Command reply_old_view, reply_new_view, cmd;
-      rrr::deserialize_from(fu->get_reply(), ok);
-      rrr::deserialize_from(fu->get_reply(), reply_jepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_oepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_old_view);
-      rrr::deserialize_from(fu->get_reply(), reply_new_view);
-      rrr::deserialize_from(fu->get_reply(), cmd);
+      srpc::deserialize_from(fu->get_reply(), ok);
+      srpc::deserialize_from(fu->get_reply(), reply_jepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_oepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_old_view);
+      srpc::deserialize_from(fu->get_reply(), reply_new_view);
+      srpc::deserialize_from(fu->get_reply(), cmd);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd);
     });
 
@@ -1592,7 +1592,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
     // }
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e, p](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e, p](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         // Log_info("[JETPACK-DEBUG] RecordCmd error from site {}: error_code={}",
         //          p.first, fu->get_error_code());
@@ -1641,7 +1641,7 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
     // }
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1652,15 +1652,15 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
       ballot_t reply_max_seen_ballot;
       ballot_t accepted_ballot;
       int replied_sid, replied_set_size;
-      rrr::deserialize_from(fu->get_reply(), ok);
-      rrr::deserialize_from(fu->get_reply(), reply_jepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_oepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_old_view);
-      rrr::deserialize_from(fu->get_reply(), reply_new_view);
-      rrr::deserialize_from(fu->get_reply(), reply_max_seen_ballot);
-      rrr::deserialize_from(fu->get_reply(), accepted_ballot);
-      rrr::deserialize_from(fu->get_reply(), replied_sid);
-      rrr::deserialize_from(fu->get_reply(), replied_set_size);
+      srpc::deserialize_from(fu->get_reply(), ok);
+      srpc::deserialize_from(fu->get_reply(), reply_jepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_oepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_old_view);
+      srpc::deserialize_from(fu->get_reply(), reply_new_view);
+      srpc::deserialize_from(fu->get_reply(), reply_max_seen_ballot);
+      srpc::deserialize_from(fu->get_reply(), accepted_ballot);
+      srpc::deserialize_from(fu->get_reply(), replied_sid);
+      srpc::deserialize_from(fu->get_reply(), replied_set_size);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, accepted_ballot, replied_sid, replied_set_size, reply_max_seen_ballot);
     });
     ClassicProxy::RpcJetpackPrepareRequest req;
@@ -1686,7 +1686,7 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
   for (auto& p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1695,12 +1695,12 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
       epoch_t reply_jepoch, reply_oepoch;
       janus::Command reply_old_view, reply_new_view;
       ballot_t reply_max_seen_ballot;
-      rrr::deserialize_from(fu->get_reply(), ok);
-      rrr::deserialize_from(fu->get_reply(), reply_jepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_oepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_old_view);
-      rrr::deserialize_from(fu->get_reply(), reply_new_view);
-      rrr::deserialize_from(fu->get_reply(), reply_max_seen_ballot);
+      srpc::deserialize_from(fu->get_reply(), ok);
+      srpc::deserialize_from(fu->get_reply(), reply_jepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_oepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_old_view);
+      srpc::deserialize_from(fu->get_reply(), reply_new_view);
+      srpc::deserialize_from(fu->get_reply(), reply_max_seen_ballot);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, reply_max_seen_ballot);
     });
     ClassicProxy::RpcJetpackAcceptRequest req;
@@ -1726,7 +1726,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastCommit(parid_t par_id, loc
   for (auto& p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1755,7 +1755,7 @@ shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRe
   for (auto& p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -1763,12 +1763,12 @@ shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRe
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
       janus::Command reply_old_view, reply_new_view, cmd;
-      rrr::deserialize_from(fu->get_reply(), ok);
-      rrr::deserialize_from(fu->get_reply(), reply_jepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_oepoch);
-      rrr::deserialize_from(fu->get_reply(), reply_old_view);
-      rrr::deserialize_from(fu->get_reply(), reply_new_view);
-      rrr::deserialize_from(fu->get_reply(), cmd);
+      srpc::deserialize_from(fu->get_reply(), ok);
+      srpc::deserialize_from(fu->get_reply(), reply_jepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_oepoch);
+      srpc::deserialize_from(fu->get_reply(), reply_old_view);
+      srpc::deserialize_from(fu->get_reply(), reply_new_view);
+      srpc::deserialize_from(fu->get_reply(), cmd);
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd);
     });
     ClassicProxy::RpcJetpackPullRecSetInsRequest req;
@@ -1793,7 +1793,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastFinishRecovery(parid_t par
   for (auto& p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;

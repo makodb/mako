@@ -76,7 +76,7 @@ src/masstree/config.h
 src/masstree/config.h.in
 src/masstree/config.h.in~
 src/masstree/config.status
-src/rrr/Makefile
+src/srpc/Makefile
 /CPackConfig.cmake
 /CPackSourceConfig.cmake
 /CTestTestfile.cmake

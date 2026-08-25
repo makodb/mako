@@ -22,7 +22,7 @@ namespace helloworld_client {
     
   // BEGIN typed-rpc-decls (HelloworldClientServiceImpl)
   // Typed RPC interface overrides (new API).
-  void txn_read(const HelloworldClientService::RpcTxnReadRequest& req, HelloworldClientService::RpcTxnReadResponse& resp, rrr::DeferredReply defer) override;
+  void txn_read(const HelloworldClientService::RpcTxnReadRequest& req, HelloworldClientService::RpcTxnReadResponse& resp, srpc::DeferredReply defer) override;
   // END typed-rpc-decls (HelloworldClientServiceImpl)
 } ;
 } // namespace helloworld_client

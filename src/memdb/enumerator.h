@@ -1,8 +1,8 @@
 #pragma once
 
 // `Enumerator<T>` — memdb's query-cursor interface (ResultSet, table
-// scans, txn queries). Relocated verbatim from rrr/base/basetypes.cpp:
-// memdb was its only consumer, and the no-manual-cpp goal keeps rrr
+// scans, txn queries). Relocated verbatim from srpc/base/basetypes.cpp:
+// memdb was its only consumer, and the no-manual-cpp goal keeps srpc
 // free of hand-written polymorphic templates. (Its sibling
 // MergedEnumerator had zero users and was deleted.)
 
@@ -29,8 +29,8 @@ public:
 
 // `NoCopy` — deleted-copy marker base for memdb's identity types
 // (Row/Table/Txn/TxnMgr/snapshot_group/MergedCursor). Relocated
-// verbatim from rrr/base/basetypes.cpp: memdb was its only remaining
-// consumer after the rrr wire-layer DSL flips dropped their NoCopy
+// verbatim from srpc/base/basetypes.cpp: memdb was its only remaining
+// consumer after the srpc wire-layer DSL flips dropped their NoCopy
 // bases for Cell move-only markers.
 class NoCopy {
 protected:

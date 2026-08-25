@@ -43,8 +43,8 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
   cmdid_t cmd_id = sp_vec_piece->at(0)->root_id_;
   verify(!sp_vec_piece->empty());
   auto par_id = sp_vec_piece->at(0)->PartitionId();
-  rrr::FutureAttr fuattr;
-  fuattr.callback = rrr::FutureCallback::from_callable([this, callback, par_id](rusty::Arc<Future> fu) {
+  srpc::FutureAttr fuattr;
+  fuattr.callback = srpc::FutureCallback::from_callable([this, callback, par_id](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;
@@ -53,10 +53,10 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     TxnOutput outputs;
     uint64_t coro_id = 0;
     janus::Command view_md;
-    rrr::deserialize_from(fu->get_reply(), ret);
-    rrr::deserialize_from(fu->get_reply(), outputs);
-    rrr::deserialize_from(fu->get_reply(), coro_id);
-    rrr::deserialize_from(fu->get_reply(), view_md);
+    srpc::deserialize_from(fu->get_reply(), ret);
+    srpc::deserialize_from(fu->get_reply(), outputs);
+    srpc::deserialize_from(fu->get_reply(), coro_id);
+    srpc::deserialize_from(fu->get_reply(), view_md);
     n_pending_rpc_[0]--;
     verify(n_pending_rpc_[0] >= 0);
     dispatch_quota.set(dispatch_quota.value_ + 1);
@@ -106,8 +106,8 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     send = true;
   }
 
-  rrr::FutureAttr fu2;
-  fu2.callback = rrr::FutureCallback::from_callable([this, callback, par_id](rusty::Arc<Future> fu) {
+  srpc::FutureAttr fu2;
+  fu2.callback = srpc::FutureCallback::from_callable([this, callback, par_id](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;
@@ -116,10 +116,10 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     TxnOutput outputs;
     uint64_t coro_id = 0;
     janus::Command view_md;
-    rrr::deserialize_from(fu->get_reply(), ret);
-    rrr::deserialize_from(fu->get_reply(), outputs);
-    rrr::deserialize_from(fu->get_reply(), coro_id);
-    rrr::deserialize_from(fu->get_reply(), view_md);
+    srpc::deserialize_from(fu->get_reply(), ret);
+    srpc::deserialize_from(fu->get_reply(), outputs);
+    srpc::deserialize_from(fu->get_reply(), coro_id);
+    srpc::deserialize_from(fu->get_reply(), view_md);
     n_pending_rpc_[1]--;
     verify(n_pending_rpc_[1] >= 0);
     dispatch_quota.set(dispatch_quota.value_ + 1);

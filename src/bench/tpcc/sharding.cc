@@ -233,7 +233,7 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
           //std::string buf;
           //for (int i = 0; i < tb_info_ptr->columns.size(); i++)
           //    buf.append(tb_info_ptr->columns[i].name).append(":").append(to_string(row_data[i])).append("; ");
-          //rrr::Log_info("{}", buf.c_str());
+          //srpc::Log_info("{}", buf.c_str());
 
           mdb::Row *r = frame_->CreateRow(schema, row_data);
           table_ptr->insert(r);
@@ -245,7 +245,7 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
 
           //
           if (tbl_sec_ptr) {
-            rrr::i32 cur_o_id_buf = r->get_column("o_id").get_i32();
+            srpc::i32 cur_o_id_buf = r->get_column("o_id").get_i32();
             const mdb::Schema *sch_buf = tbl_sec_ptr->schema();
             mdb::MultiBlob mb_buf(sch_buf->key_columns_id().size());
             mdb::Schema::iterator col_info_it = sch_buf->begin();
@@ -256,7 +256,7 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
             mdb::SortedTable::Cursor rs = tbl_sec_ptr->query(mb_buf);
             if (rs.has_next()) {
               mdb::Row *r_buf = rs.next();
-              rrr::i32 o_id_buf = r_buf->get_column("o_id").get_i32();
+              srpc::i32 o_id_buf = r_buf->get_column("o_id").get_i32();
               if (o_id_buf < cur_o_id_buf)
                 r_buf->update("o_id", cur_o_id_buf);
             }
@@ -274,7 +274,7 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
           //XXX c_last secondary index
           if (tb_info_ptr->tb_name == TPCC_TB_CUSTOMER) {
             std::string c_last_buf = r->get_column("c_last").get_str();
-            rrr::i32 c_id_buf = r->get_column("c_id").get_i32();
+            srpc::i32 c_id_buf = r->get_column("c_id").get_i32();
             size_t mb_size = g_c_last_schema.key_columns_id().size(), mb_i = 0;
             mdb::MultiBlob mb_buf(mb_size);
             mdb::Schema::iterator col_info_it = g_c_last_schema.begin();

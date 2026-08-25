@@ -6,7 +6,7 @@
 #include "client_worker.h"
 #include "stats_registry.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 
 extern vector<unique_ptr<janus::ClientWorker>> client_workers_g;
@@ -43,7 +43,7 @@ void ServerControlServiceImpl::do_shutdown() {
 void ServerControlServiceImpl::server_shutdown(
     const ServerControlService::RpcServerShutdownRequest& rpc_req,
     ServerControlService::RpcServerShutdownResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   (void)rpc_resp;
   do_shutdown();
@@ -53,7 +53,7 @@ void ServerControlServiceImpl::server_shutdown(
 void ServerControlServiceImpl::server_ready(
     const ServerControlService::RpcServerReadyRequest& rpc_req,
     ServerControlService::RpcServerReadyResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   rpc_resp.res = status_->is_ready() ? 1 : 0;
   defer.reply();
@@ -67,7 +67,7 @@ void ServerControlServiceImpl::do_statistics(const char *key,
 void ServerControlServiceImpl::server_heart_beat(
     const ServerControlService::RpcServerHeartBeatRequest& rpc_req,
     ServerControlService::RpcServerHeartBeatResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   (void)rpc_resp;
   if (!sig_handler_set_)
@@ -79,7 +79,7 @@ void ServerControlServiceImpl::server_heart_beat(
 void ServerControlServiceImpl::server_heart_beat_with_data(
     const ServerControlService::RpcServerHeartBeatWithDataRequest& rpc_req,
     ServerControlService::RpcServerHeartBeatWithDataResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   ServerResponse *res = &rpc_resp.res;
 
@@ -176,7 +176,7 @@ ClientControlServiceImpl::~ClientControlServiceImpl() {
 void ClientControlServiceImpl::client_shutdown(
     const ClientControlService::RpcClientShutdownRequest& rpc_req,
     ClientControlService::RpcClientShutdownResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   (void)rpc_resp;
   Log_info("Shutdown Client Control Service");
@@ -187,7 +187,7 @@ void ClientControlServiceImpl::client_shutdown(
 void ClientControlServiceImpl::client_force_stop(
     const ClientControlService::RpcClientForceStopRequest& rpc_req,
     ClientControlService::RpcClientForceStopResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   (void)rpc_resp;
   unsigned int num_threads = status_->num_threads();
@@ -203,7 +203,7 @@ void ClientControlServiceImpl::client_force_stop(
 void ClientControlServiceImpl::client_response(
     const ClientControlService::RpcClientResponseRequest& rpc_req,
     ClientControlService::RpcClientResponseResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req.dep_id;
   rpc_resp.res.is_finish = status_->collect_response(&rpc_resp.res) ? 1 : 0;
 #ifdef LOG_LEVEL_AS_DEBUG
@@ -215,7 +215,7 @@ void ClientControlServiceImpl::client_response(
 void ClientControlServiceImpl::client_ready_block(
     const ClientControlService::RpcClientReadyBlockRequest& rpc_req,
     ClientControlService::RpcClientReadyBlockResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   rpc_resp.res = 1;
   if (status_->get_status() != ClientStatus::Status::READY) {
@@ -227,7 +227,7 @@ void ClientControlServiceImpl::client_ready_block(
 void ClientControlServiceImpl::client_ready(
     const ClientControlService::RpcClientReadyRequest& rpc_req,
     ClientControlService::RpcClientReadyResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   rpc_resp.res = (status_->get_status() == ClientStatus::Status::READY) ? 1 : 0;
   defer.reply();
@@ -236,7 +236,7 @@ void ClientControlServiceImpl::client_ready(
 void ClientControlServiceImpl::client_start(
     const ClientControlService::RpcClientStartRequest& rpc_req,
     ClientControlService::RpcClientStartResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   (void)rpc_resp;
   status_->set_status_run_and_start_timer();
@@ -246,7 +246,7 @@ void ClientControlServiceImpl::client_start(
 void ClientControlServiceImpl::client_get_txn_names(
     const ClientControlService::RpcClientGetTxnNamesRequest& rpc_req,
     ClientControlService::RpcClientGetTxnNamesResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   rpc_resp.txn_names = status_->txn_names();
   defer.reply();
@@ -300,7 +300,7 @@ void ClientControlServiceImpl::LogClientResponse(ClientResponse *res) {
 void ClientControlServiceImpl::DispatchTxn(
     const ClientControlService::RpcDispatchTxnRequest& rpc_req,
     ClientControlService::RpcDispatchTxnResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   const TxDispatchRequest& req = rpc_req.req;
   // TODO: fix -- we dont need to do this everytime.
   std::vector<ClientWorker*> locale0_workers;
@@ -310,7 +310,7 @@ void ClientControlServiceImpl::DispatchTxn(
       locale0_workers.push_back(worker.get());
   }
   verify(locale0_workers.size() > 0);
-  auto worker = locale0_workers[rrr::RandomGenerator::rand(0, locale0_workers.size()-1)];
+  auto worker = locale0_workers[srpc::RandomGenerator::rand(0, locale0_workers.size()-1)];
   Log_info("{}: from coo {}; site {}", __FUNCTION__, req.id, worker->my_site_.id);
   verify(worker->my_site_.locale_id == 0);
   TxRequest request;

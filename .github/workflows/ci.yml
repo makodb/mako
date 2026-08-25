@@ -17,8 +17,8 @@ permissions:
 #  cancel-in-progress: false
 
 jobs:
-  rrr-goal0-dual-compile:
-    name: Goal-0 RRR canonical Rust dual compile
+  srpc-goal0-dual-compile:
+    name: Goal-0 SRPC canonical Rust dual compile
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/makodb/mako-ci-ubuntu24:latest
@@ -43,9 +43,9 @@ jobs:
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       # The consumer targets below are mako's own tests that link the
-      # production `rrr` archive -- which, per src/rrr_build/CMakeLists.txt, is built
+      # production `srpc` archive -- which, per src/srpc_build/CMakeLists.txt, is built
       # from exactly the thirty-seven generated canonical-Rust providers. They
-      # replace the nineteen `src/rrr/tests/` binaries this step used to name:
+      # replace the nineteen `src/srpc/tests/` binaries this step used to name:
       # those are srpc's tests, mako stopped building them in 4a06ef0e, and
       # ninja has been failing here with `unknown target 'test_timer'` ever
       # since. Chosen because they exercise the canonical modules (rpc,
@@ -55,7 +55,7 @@ jobs:
         run: >-
           cmake --build "${GOAL0_BUILD_DIR}"
           --parallel "${CI_MAKE_JOBS}"
-          --target rrr_goal0_dual_compile test_client_service test_arc_mutex_thread test_txn_timeout test_raft_messages test_raft_quorum test_raft_channel_transport test_raft_transport_facade test_raft_dispatcher_facade test_raft_memory_snapshot_manager test_raft_test_cluster test_raft_rrr_transport_compile
+          --target srpc_goal0_dual_compile test_client_service test_arc_mutex_thread test_txn_timeout test_raft_messages test_raft_quorum test_raft_channel_transport test_raft_transport_facade test_raft_dispatcher_facade test_raft_memory_snapshot_manager test_raft_test_cluster test_raft_srpc_transport_compile
           -- -k 0
 
       - name: Verify emitter and canonical Rust invalidate crate generation
@@ -64,13 +64,13 @@ jobs:
           set -euo pipefail
           # Only inputs are needed now: the outputs are identified by the
           # basenames the generator reports, not by path+mtime.
-          emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/rrr/goal0-transpiler-input.txt")"
+          emitter_input="$(sed -n '1p' "${GOAL0_BUILD_DIR}/src/srpc/goal0-transpiler-input.txt")"
           # Canonical Rust lives at its layout-mirroring path (base/misc/reactor/
           # rpc), not a flat src/. Only lib.rs remains under src/.
-          canonical_input="src/rrr/rpc/frame_codec.rs"
-          runtime_facade_input="src/rrr/rusty-rustc/src/lib.rs"
-          type_map_input="src/rrr/rust-type-map.toml"
-          module_index_input="src/rrr/cpp-module-index.toml"
+          canonical_input="src/srpc/rpc/frame_codec.rs"
+          runtime_facade_input="src/srpc/rusty-rustc/src/lib.rs"
+          type_map_input="src/srpc/rust-type-map.toml"
+          module_index_input="src/srpc/cpp-module-index.toml"
 
           # `touch` CREATES a missing path instead of failing, so a stale name
           # here would silently plant a stray file in the crate and make the
@@ -84,9 +84,9 @@ jobs:
             fi
           done
 
-          steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
+          steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${steady_output}"
-          if grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${steady_output}"; then
+          if grep -Fq 'Generating Goal-0 srpc crate C++ child modules' <<<"${steady_output}"; then
             echo 'crate generation reran without an emitter or source change' >&2
             exit 1
           fi
@@ -106,7 +106,7 @@ jobs:
           assert_regenerated=(bash scripts/ci/assert_crate_codegen.sh)
 
           touch "${emitter_input}"
-          changed_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
+          changed_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${changed_output}"
 
           # The invariant here is mako's build graph: touching an emitter input
@@ -115,32 +115,32 @@ jobs:
           # printed "Compiling" — cargo decides freshness by fingerprint, so a
           # touched-but-unchanged source can legitimately produce no rebuild, and
           # asserting on that mechanism made this step fail for the wrong reason.
-          "${assert_regenerated[@]}" rrr.frame_codec.cppm <<<"${changed_output}"
+          "${assert_regenerated[@]}" srpc.frame_codec.cppm <<<"${changed_output}"
 
           touch "${canonical_input}"
-          canonical_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
+          canonical_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${canonical_output}"
 
-          "${assert_regenerated[@]}" rrr.frame_codec.cppm <<<"${canonical_output}"
+          "${assert_regenerated[@]}" srpc.frame_codec.cppm <<<"${canonical_output}"
 
           touch "${runtime_facade_input}"
-          facade_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
+          facade_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
           printf '%s\n' "${facade_output}"
 
           "${assert_regenerated[@]}" \
-            rrr.request_queue.cppm \
-            rrr.load_balancer.cppm \
-            rrr.utils.cppm \
-            rrr.frame_codec.cppm \
+            srpc.request_queue.cppm \
+            srpc.load_balancer.cppm \
+            srpc.utils.cppm \
+            srpc.frame_codec.cppm \
             <<<"${facade_output}"
-          test ! -e "${GOAL0_BUILD_DIR}/src/rrr/goal0-crate-cpp/rusty"
+          test ! -e "${GOAL0_BUILD_DIR}/src/srpc/goal0-crate-cpp/rusty"
 
           for sidecar_input in "${type_map_input}" "${module_index_input}"; do
             touch "${sidecar_input}"
-            sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target rrr_goal0_crate_codegen -- -k 0 2>&1)"
+            sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
             printf '%s\n' "${sidecar_output}"
 
-            "${assert_regenerated[@]}" rrr.utils.cppm rrr.frame_codec.cppm \
+            "${assert_regenerated[@]}" srpc.utils.cppm srpc.frame_codec.cppm \
               <<<"${sidecar_output}"
           done
 
@@ -153,7 +153,7 @@ jobs:
           ctest --test-dir "${GOAL0_BUILD_DIR}"
           --output-on-failure
           --no-tests=error
-          -R '^(test_client_service|test_arc_mutex_thread|test_txn_timeout|test_raft_messages|test_raft_quorum|test_raft_channel_transport|test_raft_transport_facade|test_raft_dispatcher_facade|test_raft_memory_snapshot_manager|test_raft_test_cluster|test_raft_rrr_transport_compile)$'
+          -R '^(test_client_service|test_arc_mutex_thread|test_txn_timeout|test_raft_messages|test_raft_quorum|test_raft_channel_transport|test_raft_transport_facade|test_raft_dispatcher_facade|test_raft_memory_snapshot_manager|test_raft_test_cluster|test_raft_srpc_transport_compile)$'
 
   build-and-test:
     runs-on: ubuntu-24.04
@@ -228,8 +228,8 @@ jobs:
       - name: Compile
         run: ./ci/ci.sh compile
 
-      - name: Run tests - RRR unit tests
-        run: ./ci/ci.sh rrrTests
+      - name: Run tests - SRPC unit tests
+        run: ./ci/ci.sh srpcTests
 
       - name: Run tests - simple transaction
         run: ./ci/ci.sh simpleTransaction
@@ -240,13 +240,13 @@ jobs:
       - name: Run tests - simple replication
         run: ./ci/ci.sh simplePaxos 
 
-      - name: Run tests - simple 2 shards without replication (RRR)
+      - name: Run tests - simple 2 shards without replication (SRPC)
         run: ./ci/ci.sh shardNoReplication
 
       - name: Run tests - simple 1 shard with replication - dbtest
         run: ./ci/ci.sh shard1Replication
 
-      - name: Run tests - simple 2 shard with replication - dbtest (RRR)
+      - name: Run tests - simple 2 shard with replication - dbtest (SRPC)
         run: ./ci/ci.sh shard2Replication
 
       - name: Run tests - simple 1 shard with replication - simpleTransactionRep

@@ -1,6 +1,6 @@
 //#include <array>
 //
-//import rrr;
+//import srpc;
 //#include "memdb/schema.h"
 //#include "memdb/row.h"
 //#include "memdb/table.h"

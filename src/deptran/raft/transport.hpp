@@ -10,8 +10,8 @@
  *
  * Design intent:
  *  - Every reply-expecting `send_*` method returns its reply type
- *    directly. The calling fiber yields (via rrr::IntEvent::Wait on the
- *    rrr side, or a reply-slot signaled by the channel worker on the
+ *    directly. The calling fiber yields (via srpc::IntEvent::Wait on the
+ *    srpc side, or a reply-slot signaled by the channel worker on the
  *    in-memory side) until the reply arrives. No callbacks, no
  *    rusty::Function in the base signatures.
  *  - Fire-and-forget methods (vote-durable, append-durable,
@@ -20,12 +20,12 @@
  *    vote a quorum spawn N fibers, each issuing a per-peer send_vote.
  *
  * Concrete adapters:
- *    RrrTransportAdapter      — wraps RaftCommo / rrr::Future.
+ *    SrpcTransportAdapter      — wraps RaftCommo / srpc::Future.
  *    ChannelTransportAdapter  — wraps rusty::sync::mpsc.
  *
  * Rusty-safety:
  *  - Polymorphism via virtual dispatch with a virtual destructor.
- *  - std::shared_ptr appears only at the rrr-module boundary
+ *  - std::shared_ptr appears only at the srpc-module boundary
  *    (MarshallDeputy carries std::shared_ptr<Marshallable>). Every
  *    such boundary is annotated `@unsafe`.
  */
@@ -40,7 +40,7 @@ namespace janus {
 namespace raft {
 
 // Forward declarations to keep base construction independent of
-// messages.hpp's import of the rrr module.
+// messages.hpp's import of the srpc module.
 struct VoteReq;
 struct VoteReply;
 struct VoteDurableReq;

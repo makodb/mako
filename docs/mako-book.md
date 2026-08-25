@@ -98,7 +98,7 @@ Mako has a layered architecture:
 +------------------------------+-------------------------------+
                                |
 +------------------------------v-------------------------------+
-|            RPC Communication Layer (RRR)                       |
+|            RPC Communication Layer (SRPC)                       |
 |  +----------+----------+----------+----------+               |
 |  | TCP/IP   | Fibers    | Reactor  | Event    |               |
 |  | Sockets  |           | Pattern  | Loop     |               |
@@ -138,7 +138,7 @@ Mako has a layered architecture:
 - Participates in consensus (Paxos or Raft)
 - Key classes: `Scheduler`, `TxnRegistry`, `MultiPaxos`
 
-**RRR Communication Layer** (`src/rrr/`):
+**SRPC Communication Layer** (`src/srpc/`):
 - Custom RPC framework with asynchronous, fiber-based I/O
 - Reactor pattern for event-driven networking
 - Supports TCP/IP, DPDK, RDMA
@@ -162,7 +162,7 @@ mako/
       masstree/       # Masstree storage engine
       lib/            # Transport backends, configuration
       benchmarks/     # Benchmark harness (TPC-C, TPC-A, RW)
-    rrr/              # RPC framework and fibers
+    srpc/              # RPC framework and fibers
     bench/            # Benchmark workload implementations
     memdb/            # In-memory datastore
   config/             # YAML configuration files
@@ -805,7 +805,7 @@ Design and semantics: [`storage-interface.md`](storage-interface.md).
 
 Mako has a single RPC backend:
 
-| Feature | rrr/rpc |
+| Feature | srpc/rpc |
 |---------|---------|
 | Latency | ~10-50 us (TCP/IP) |
 | Hardware | Standard Ethernet |
@@ -817,7 +817,7 @@ Mako has a single RPC backend:
 ```
 
 Worker threads never see the transport: they reach requests through the
-`TransportRequestHandle` interface, implemented by `RrrRequestHandle`.
+`TransportRequestHandle` interface, implemented by `SrpcRequestHandle`.
 
 ```cpp
 class TransportRequestHandle {
@@ -828,9 +828,9 @@ class TransportRequestHandle {
 };
 ```
 
-### rrr/rpc Reliability Features
+### srpc/rpc Reliability Features
 
-The rrr/rpc backend includes production-grade reliability:
+The srpc/rpc backend includes production-grade reliability:
 - **Connection state machine**: NEW -> CONNECTING -> CONNECTED -> DISCONNECTING -> DISCONNECTED -> FAILED
 - **Automatic reconnection** with exponential backoff and jitter
 - **Circuit breaker** for fail-fast cascade prevention
@@ -1067,7 +1067,7 @@ make -j$(nproc)
 
 | Test | Description |
 |------|-------------|
-| `rrrTests` | RRR framework unit tests |
+| `srpcTests` | SRPC framework unit tests |
 | `simpleTransaction` | Basic transaction execution |
 | `simplePaxos` | Paxos replication |
 | `shardNoReplication` | 2 shards, no replication |
@@ -1317,7 +1317,7 @@ perf report
 | **Quorum** | Minimum replicas for progress: floor(N/2) + 1 |
 | **Reactor** | Event loop managing fibers in a thread |
 | **RocksDB** | LSM-tree persistent storage backend |
-| **RRR** | "Repeatable Research Runtime" - Mako's custom RPC/fiber framework |
+| **SRPC** | "Simple RPC" - Mako's custom RPC/fiber framework |
 | **RustyCpp** | Library providing Rust-like smart pointers and borrow checking for C++ |
 | **Safety Check** | Validation comparing transaction timestamp to watermark for follower replay |
 | **Scheduler** | Component managing transaction execution on a shard |

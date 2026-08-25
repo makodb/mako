@@ -173,7 +173,7 @@ void CoordinatorTapir::Accept() {
 void CoordinatorTapir::AcceptAck(phase_t phase, parid_t pid, rusty::Arc<Future> fu) {
   if (phase_ != phase) return;
   int res;
-  rrr::deserialize_from(fu->get_reply(), res);
+  srpc::deserialize_from(fu->get_reply(), res);
   verify(res == SUCCESS);
   n_accept_oks_[pid]++;
   if (n_accept_oks_[pid] >= GetSlowQuorum(pid)) {

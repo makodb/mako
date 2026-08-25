@@ -94,7 +94,7 @@ class Distribution {
   string statistics() {
     // snprintf instead of iomanip manipulators: under clang-22
     // `import std`, the <iomanip> operator<< overloads are not reliably
-    // reachable in module TUs (same fix as rrr base/common.h).
+    // reachable in module TUs (same fix as srpc base/common.h).
     char buf[64];
     string out;
     snprintf(buf, sizeof(buf), "%7s%9zu", "count", count());
@@ -362,7 +362,7 @@ class TxLogServer {
 
   // app_next_ now takes janus::Command (not
   // shared_ptr<Marshallable>) so user code is one type level removed
-  // from the rrr framework's wire-boundary shared_ptr.  MarshallDeputy
+  // from the srpc framework's wire-boundary shared_ptr.  MarshallDeputy
   // ctors are non-explicit, so callers passing `shared_ptr<Marshallable>`
   // (e.g. `instance->log_`) auto-convert at the call site.
   function<int(int, janus::Command)> app_next_{};

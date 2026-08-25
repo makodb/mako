@@ -1,6 +1,6 @@
 #pragma once
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include <rusty/async.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
@@ -16,151 +16,151 @@ class NetworkClientService {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcTxnRmwRequest {
-        std::vector<rrr::i64> _req;
+        std::vector<srpc::i64> _req;
     };
-    friend inline void serialize(const RpcTxnRmwRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o._req, ar);
+    friend inline void serialize(const RpcTxnRmwRequest& o, srpc::BinaryWriteArchive& ar) {
+        srpc::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnRmwRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnRmwRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o._req, ar);
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnRmwRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnRmwRequest& o, srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnRmwRequest& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnRmwRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnRmwResponse {
     };
-    friend inline void serialize(const RpcTxnRmwResponse& o, rrr::BinaryWriteArchive& ar) {
+    friend inline void serialize(const RpcTxnRmwResponse& o, srpc::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnRmwResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnRmwResponse& o, rrr::BinaryReadArchive& ar) {
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnRmwResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnRmwResponse& o, srpc::BinaryReadArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnRmwResponse& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnRmwResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnReadRequest {
-        std::vector<rrr::i64> _req;
+        std::vector<srpc::i64> _req;
     };
-    friend inline void serialize(const RpcTxnReadRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o._req, ar);
+    friend inline void serialize(const RpcTxnReadRequest& o, srpc::BinaryWriteArchive& ar) {
+        srpc::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnReadRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o._req, ar);
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnReadRequest& o, srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnReadRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnReadResponse {
     };
-    friend inline void serialize(const RpcTxnReadResponse& o, rrr::BinaryWriteArchive& ar) {
+    friend inline void serialize(const RpcTxnReadResponse& o, srpc::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnReadResponse& o, rrr::BinaryReadArchive& ar) {
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnReadResponse& o, srpc::BinaryReadArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnReadResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnNewOrderRequest {
         std::vector<int32_t> _req;
     };
-    friend inline void serialize(const RpcTxnNewOrderRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o._req, ar);
+    friend inline void serialize(const RpcTxnNewOrderRequest& o, srpc::BinaryWriteArchive& ar) {
+        srpc::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnNewOrderRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnNewOrderRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o._req, ar);
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnNewOrderRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnNewOrderRequest& o, srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnNewOrderRequest& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnNewOrderRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnNewOrderResponse {
     };
-    friend inline void serialize(const RpcTxnNewOrderResponse& o, rrr::BinaryWriteArchive& ar) {
+    friend inline void serialize(const RpcTxnNewOrderResponse& o, srpc::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnNewOrderResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnNewOrderResponse& o, rrr::BinaryReadArchive& ar) {
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnNewOrderResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnNewOrderResponse& o, srpc::BinaryReadArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnNewOrderResponse& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnNewOrderResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnPaymentRequest {
         std::vector<int32_t> _req;
     };
-    friend inline void serialize(const RpcTxnPaymentRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o._req, ar);
+    friend inline void serialize(const RpcTxnPaymentRequest& o, srpc::BinaryWriteArchive& ar) {
+        srpc::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnPaymentRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnPaymentRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o._req, ar);
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnPaymentRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnPaymentRequest& o, srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnPaymentRequest& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnPaymentRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnPaymentResponse {
     };
-    friend inline void serialize(const RpcTxnPaymentResponse& o, rrr::BinaryWriteArchive& ar) {
+    friend inline void serialize(const RpcTxnPaymentResponse& o, srpc::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnPaymentResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnPaymentResponse& o, rrr::BinaryReadArchive& ar) {
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnPaymentResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnPaymentResponse& o, srpc::BinaryReadArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnPaymentResponse& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnPaymentResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnDeliveryRequest {
         std::vector<int32_t> _req;
     };
-    friend inline void serialize(const RpcTxnDeliveryRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o._req, ar);
+    friend inline void serialize(const RpcTxnDeliveryRequest& o, srpc::BinaryWriteArchive& ar) {
+        srpc::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnDeliveryRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnDeliveryRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o._req, ar);
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnDeliveryRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnDeliveryRequest& o, srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnDeliveryRequest& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnDeliveryRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnDeliveryResponse {
     };
-    friend inline void serialize(const RpcTxnDeliveryResponse& o, rrr::BinaryWriteArchive& ar) {
+    friend inline void serialize(const RpcTxnDeliveryResponse& o, srpc::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnDeliveryResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnDeliveryResponse& o, rrr::BinaryReadArchive& ar) {
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnDeliveryResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnDeliveryResponse& o, srpc::BinaryReadArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnDeliveryResponse& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnDeliveryResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnOrderStatusRequest {
         std::vector<int32_t> _req;
     };
-    friend inline void serialize(const RpcTxnOrderStatusRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o._req, ar);
+    friend inline void serialize(const RpcTxnOrderStatusRequest& o, srpc::BinaryWriteArchive& ar) {
+        srpc::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnOrderStatusRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnOrderStatusRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o._req, ar);
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnOrderStatusRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnOrderStatusRequest& o, srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnOrderStatusRequest& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnOrderStatusRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnOrderStatusResponse {
     };
-    friend inline void serialize(const RpcTxnOrderStatusResponse& o, rrr::BinaryWriteArchive& ar) {
+    friend inline void serialize(const RpcTxnOrderStatusResponse& o, srpc::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnOrderStatusResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnOrderStatusResponse& o, rrr::BinaryReadArchive& ar) {
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnOrderStatusResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnOrderStatusResponse& o, srpc::BinaryReadArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnOrderStatusResponse& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnOrderStatusResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnStockLevelRequest {
         std::vector<int32_t> _req;
     };
-    friend inline void serialize(const RpcTxnStockLevelRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o._req, ar);
+    friend inline void serialize(const RpcTxnStockLevelRequest& o, srpc::BinaryWriteArchive& ar) {
+        srpc::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnStockLevelRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnStockLevelRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o._req, ar);
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnStockLevelRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnStockLevelRequest& o, srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnStockLevelRequest& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnStockLevelRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnStockLevelResponse {
     };
-    friend inline void serialize(const RpcTxnStockLevelResponse& o, rrr::BinaryWriteArchive& ar) {
+    friend inline void serialize(const RpcTxnStockLevelResponse& o, srpc::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnStockLevelResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcTxnStockLevelResponse& o, rrr::BinaryReadArchive& ar) {
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcTxnStockLevelResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnStockLevelResponse& o, srpc::BinaryReadArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnStockLevelResponse& o) { deserialize(o, ar); return ar; }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcTxnStockLevelResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
         TXN_RMW = 0x21524de9,
@@ -172,8 +172,8 @@ public:
         TXN_STOCK_LEVEL = 0x69916666,
     };
     // Registers RPC IDs with server using service index
-    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    // @unsafe - calls srpc::Server::reg_rpc / unreg (not borrow-checked)
+    int __reg_to__(srpc::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(TXN_RMW, svc_index)) != 0) {
             goto err;
@@ -208,7 +208,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
         switch (rpc_id) {
         case TXN_RMW: __txn_rmw__wrapper__(std::move(req), weak_sconn); break;
         case TXN_READ: __txn_read__wrapper__(std::move(req), weak_sconn); break;
@@ -222,136 +222,136 @@ public:
     }
     // typed service signatures
     // @safe
-    virtual void txn_rmw(const RpcTxnRmwRequest& req, RpcTxnRmwResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual void txn_rmw(const RpcTxnRmwRequest& req, RpcTxnRmwResponse& resp, srpc::DeferredReply defer) = 0;
     // @safe
-    virtual void txn_read(const RpcTxnReadRequest& req, RpcTxnReadResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual void txn_read(const RpcTxnReadRequest& req, RpcTxnReadResponse& resp, srpc::DeferredReply defer) = 0;
     // @safe
-    virtual void txn_new_order(const RpcTxnNewOrderRequest& req, RpcTxnNewOrderResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual void txn_new_order(const RpcTxnNewOrderRequest& req, RpcTxnNewOrderResponse& resp, srpc::DeferredReply defer) = 0;
     // @safe
-    virtual void txn_payment(const RpcTxnPaymentRequest& req, RpcTxnPaymentResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual void txn_payment(const RpcTxnPaymentRequest& req, RpcTxnPaymentResponse& resp, srpc::DeferredReply defer) = 0;
     // @safe
-    virtual void txn_delivery(const RpcTxnDeliveryRequest& req, RpcTxnDeliveryResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual void txn_delivery(const RpcTxnDeliveryRequest& req, RpcTxnDeliveryResponse& resp, srpc::DeferredReply defer) = 0;
     // @safe
-    virtual void txn_order_status(const RpcTxnOrderStatusRequest& req, RpcTxnOrderStatusResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual void txn_order_status(const RpcTxnOrderStatusRequest& req, RpcTxnOrderStatusResponse& resp, srpc::DeferredReply defer) = 0;
     // @safe
-    virtual void txn_stock_level(const RpcTxnStockLevelRequest& req, RpcTxnStockLevelResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual void txn_stock_level(const RpcTxnStockLevelRequest& req, RpcTxnStockLevelResponse& resp, srpc::DeferredReply defer) = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
     // @safe
-    void __txn_rmw__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __txn_rmw__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
         // @unsafe
         {
             RpcTxnRmwRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
+            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
+            srpc::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnRmwResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
+            auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                [__typed_resp__](srpc::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_rmw(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
-    void __txn_read__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __txn_read__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
         // @unsafe
         {
             RpcTxnReadRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
+            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
+            srpc::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
+            auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                [__typed_resp__](srpc::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_read(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
-    void __txn_new_order__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __txn_new_order__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
         // @unsafe
         {
             RpcTxnNewOrderRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
+            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
+            srpc::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnNewOrderResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
+            auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                [__typed_resp__](srpc::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_new_order(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
-    void __txn_payment__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __txn_payment__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
         // @unsafe
         {
             RpcTxnPaymentRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
+            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
+            srpc::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnPaymentResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
+            auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                [__typed_resp__](srpc::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_payment(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
-    void __txn_delivery__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __txn_delivery__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
         // @unsafe
         {
             RpcTxnDeliveryRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
+            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
+            srpc::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnDeliveryResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
+            auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                [__typed_resp__](srpc::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_delivery(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
-    void __txn_order_status__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __txn_order_status__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
         // @unsafe
         {
             RpcTxnOrderStatusRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
+            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
+            srpc::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnOrderStatusResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
+            auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                [__typed_resp__](srpc::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_order_status(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
-    void __txn_stock_level__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __txn_stock_level__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
         // @unsafe
         {
             RpcTxnStockLevelRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
+            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
+            srpc::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnStockLevelResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
+            auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                [__typed_resp__](srpc::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_stock_level(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -361,9 +361,9 @@ private:
 
 class NetworkClientProxy {
 protected:
-    rrr::Client* __cl__;
+    srpc::Client* __cl__;
 public:
-    NetworkClientProxy(rrr::Client* cl): __cl__(cl) { }
+    NetworkClientProxy(srpc::Client* cl): __cl__(cl) { }
     // Alias typed request/response structs from the sibling Service class.
     using RpcTxnRmwRequest = NetworkClientService::RpcTxnRmwRequest;
     using RpcTxnRmwResponse = NetworkClientService::RpcTxnRmwResponse;
@@ -381,295 +381,295 @@ public:
     using RpcTxnStockLevelResponse = NetworkClientService::RpcTxnStockLevelResponse;
     class txn_rmwTypedFuture {
     private:
-        rusty::Arc<rrr::Future> __fu__;
+        rusty::Arc<srpc::Future> __fu__;
     public:
-        explicit txn_rmwTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        explicit txn_rmwTypedFuture(rusty::Arc<srpc::Future> fu): __fu__(std::move(fu)) { }
         bool ready() const {
             return __fu__->ready();
         }
         void wait() const {
             __fu__->wait();
         }
-        rrr::i32 get_error_code() const {
+        srpc::i32 get_error_code() const {
             return __fu__->get_error_code();
         }
-        rusty::Arc<rrr::Future> raw_future() const {
+        rusty::Arc<srpc::Future> raw_future() const {
             return __fu__;
         }
-        rusty::Result<RpcTxnRmwResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
+        rusty::Result<RpcTxnRmwResponse, srpc::i32> resolve() const {
+            srpc::i32 __ret__ = __fu__->get_error_code();
             if (__ret__ != 0) {
-                return rusty::Result<RpcTxnRmwResponse, rrr::i32>::Err(__ret__);
+                return rusty::Result<RpcTxnRmwResponse, srpc::i32>::Err(__ret__);
             }
             RpcTxnRmwResponse __typed_resp__;
-            return rusty::Result<RpcTxnRmwResponse, rrr::i32>::Ok(__typed_resp__);
+            return rusty::Result<RpcTxnRmwResponse, srpc::i32>::Ok(__typed_resp__);
         }
     };
-    rusty::Result<txn_rmwTypedFuture, rrr::i32> async_txn_rmw(const RpcTxnRmwRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_RMW, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req._req, __m__);
+    rusty::Result<txn_rmwTypedFuture, srpc::i32> async_txn_rmw(const RpcTxnRmwRequest& req, const srpc::FutureAttr& __fu_attr__ = srpc::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_RMW, __fu_attr__, [&](srpc::BinaryWriteArchive& __m__) {
+            srpc::Serialize_::serialize(req._req, __m__);
         });
         if (__fu_result__.is_err()) {
-            return rusty::Result<txn_rmwTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+            return rusty::Result<txn_rmwTypedFuture, srpc::i32>::Err(__fu_result__.unwrap_err());
         }
-        return rusty::Result<txn_rmwTypedFuture, rrr::i32>::Ok(txn_rmwTypedFuture(__fu_result__.unwrap()));
+        return rusty::Result<txn_rmwTypedFuture, srpc::i32>::Ok(txn_rmwTypedFuture(__fu_result__.unwrap()));
     }
-    rusty::Result<RpcTxnRmwResponse, rrr::i32> txn_rmw(const RpcTxnRmwRequest& req) {
+    rusty::Result<RpcTxnRmwResponse, srpc::i32> txn_rmw(const RpcTxnRmwRequest& req) {
         auto __typed_fu_result__ = this->async_txn_rmw(req);
         if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTxnRmwResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+            return rusty::Result<RpcTxnRmwResponse, srpc::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
     class txn_readTypedFuture {
     private:
-        rusty::Arc<rrr::Future> __fu__;
+        rusty::Arc<srpc::Future> __fu__;
     public:
-        explicit txn_readTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        explicit txn_readTypedFuture(rusty::Arc<srpc::Future> fu): __fu__(std::move(fu)) { }
         bool ready() const {
             return __fu__->ready();
         }
         void wait() const {
             __fu__->wait();
         }
-        rrr::i32 get_error_code() const {
+        srpc::i32 get_error_code() const {
             return __fu__->get_error_code();
         }
-        rusty::Arc<rrr::Future> raw_future() const {
+        rusty::Arc<srpc::Future> raw_future() const {
             return __fu__;
         }
-        rusty::Result<RpcTxnReadResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
+        rusty::Result<RpcTxnReadResponse, srpc::i32> resolve() const {
+            srpc::i32 __ret__ = __fu__->get_error_code();
             if (__ret__ != 0) {
-                return rusty::Result<RpcTxnReadResponse, rrr::i32>::Err(__ret__);
+                return rusty::Result<RpcTxnReadResponse, srpc::i32>::Err(__ret__);
             }
             RpcTxnReadResponse __typed_resp__;
-            return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
+            return rusty::Result<RpcTxnReadResponse, srpc::i32>::Ok(__typed_resp__);
         }
     };
-    rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_READ, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req._req, __m__);
+    rusty::Result<txn_readTypedFuture, srpc::i32> async_txn_read(const RpcTxnReadRequest& req, const srpc::FutureAttr& __fu_attr__ = srpc::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_READ, __fu_attr__, [&](srpc::BinaryWriteArchive& __m__) {
+            srpc::Serialize_::serialize(req._req, __m__);
         });
         if (__fu_result__.is_err()) {
-            return rusty::Result<txn_readTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+            return rusty::Result<txn_readTypedFuture, srpc::i32>::Err(__fu_result__.unwrap_err());
         }
-        return rusty::Result<txn_readTypedFuture, rrr::i32>::Ok(txn_readTypedFuture(__fu_result__.unwrap()));
+        return rusty::Result<txn_readTypedFuture, srpc::i32>::Ok(txn_readTypedFuture(__fu_result__.unwrap()));
     }
-    rusty::Result<RpcTxnReadResponse, rrr::i32> txn_read(const RpcTxnReadRequest& req) {
+    rusty::Result<RpcTxnReadResponse, srpc::i32> txn_read(const RpcTxnReadRequest& req) {
         auto __typed_fu_result__ = this->async_txn_read(req);
         if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTxnReadResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+            return rusty::Result<RpcTxnReadResponse, srpc::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
     class txn_new_orderTypedFuture {
     private:
-        rusty::Arc<rrr::Future> __fu__;
+        rusty::Arc<srpc::Future> __fu__;
     public:
-        explicit txn_new_orderTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        explicit txn_new_orderTypedFuture(rusty::Arc<srpc::Future> fu): __fu__(std::move(fu)) { }
         bool ready() const {
             return __fu__->ready();
         }
         void wait() const {
             __fu__->wait();
         }
-        rrr::i32 get_error_code() const {
+        srpc::i32 get_error_code() const {
             return __fu__->get_error_code();
         }
-        rusty::Arc<rrr::Future> raw_future() const {
+        rusty::Arc<srpc::Future> raw_future() const {
             return __fu__;
         }
-        rusty::Result<RpcTxnNewOrderResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
+        rusty::Result<RpcTxnNewOrderResponse, srpc::i32> resolve() const {
+            srpc::i32 __ret__ = __fu__->get_error_code();
             if (__ret__ != 0) {
-                return rusty::Result<RpcTxnNewOrderResponse, rrr::i32>::Err(__ret__);
+                return rusty::Result<RpcTxnNewOrderResponse, srpc::i32>::Err(__ret__);
             }
             RpcTxnNewOrderResponse __typed_resp__;
-            return rusty::Result<RpcTxnNewOrderResponse, rrr::i32>::Ok(__typed_resp__);
+            return rusty::Result<RpcTxnNewOrderResponse, srpc::i32>::Ok(__typed_resp__);
         }
     };
-    rusty::Result<txn_new_orderTypedFuture, rrr::i32> async_txn_new_order(const RpcTxnNewOrderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_NEW_ORDER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req._req, __m__);
+    rusty::Result<txn_new_orderTypedFuture, srpc::i32> async_txn_new_order(const RpcTxnNewOrderRequest& req, const srpc::FutureAttr& __fu_attr__ = srpc::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_NEW_ORDER, __fu_attr__, [&](srpc::BinaryWriteArchive& __m__) {
+            srpc::Serialize_::serialize(req._req, __m__);
         });
         if (__fu_result__.is_err()) {
-            return rusty::Result<txn_new_orderTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+            return rusty::Result<txn_new_orderTypedFuture, srpc::i32>::Err(__fu_result__.unwrap_err());
         }
-        return rusty::Result<txn_new_orderTypedFuture, rrr::i32>::Ok(txn_new_orderTypedFuture(__fu_result__.unwrap()));
+        return rusty::Result<txn_new_orderTypedFuture, srpc::i32>::Ok(txn_new_orderTypedFuture(__fu_result__.unwrap()));
     }
-    rusty::Result<RpcTxnNewOrderResponse, rrr::i32> txn_new_order(const RpcTxnNewOrderRequest& req) {
+    rusty::Result<RpcTxnNewOrderResponse, srpc::i32> txn_new_order(const RpcTxnNewOrderRequest& req) {
         auto __typed_fu_result__ = this->async_txn_new_order(req);
         if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTxnNewOrderResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+            return rusty::Result<RpcTxnNewOrderResponse, srpc::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
     class txn_paymentTypedFuture {
     private:
-        rusty::Arc<rrr::Future> __fu__;
+        rusty::Arc<srpc::Future> __fu__;
     public:
-        explicit txn_paymentTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        explicit txn_paymentTypedFuture(rusty::Arc<srpc::Future> fu): __fu__(std::move(fu)) { }
         bool ready() const {
             return __fu__->ready();
         }
         void wait() const {
             __fu__->wait();
         }
-        rrr::i32 get_error_code() const {
+        srpc::i32 get_error_code() const {
             return __fu__->get_error_code();
         }
-        rusty::Arc<rrr::Future> raw_future() const {
+        rusty::Arc<srpc::Future> raw_future() const {
             return __fu__;
         }
-        rusty::Result<RpcTxnPaymentResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
+        rusty::Result<RpcTxnPaymentResponse, srpc::i32> resolve() const {
+            srpc::i32 __ret__ = __fu__->get_error_code();
             if (__ret__ != 0) {
-                return rusty::Result<RpcTxnPaymentResponse, rrr::i32>::Err(__ret__);
+                return rusty::Result<RpcTxnPaymentResponse, srpc::i32>::Err(__ret__);
             }
             RpcTxnPaymentResponse __typed_resp__;
-            return rusty::Result<RpcTxnPaymentResponse, rrr::i32>::Ok(__typed_resp__);
+            return rusty::Result<RpcTxnPaymentResponse, srpc::i32>::Ok(__typed_resp__);
         }
     };
-    rusty::Result<txn_paymentTypedFuture, rrr::i32> async_txn_payment(const RpcTxnPaymentRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_PAYMENT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req._req, __m__);
+    rusty::Result<txn_paymentTypedFuture, srpc::i32> async_txn_payment(const RpcTxnPaymentRequest& req, const srpc::FutureAttr& __fu_attr__ = srpc::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_PAYMENT, __fu_attr__, [&](srpc::BinaryWriteArchive& __m__) {
+            srpc::Serialize_::serialize(req._req, __m__);
         });
         if (__fu_result__.is_err()) {
-            return rusty::Result<txn_paymentTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+            return rusty::Result<txn_paymentTypedFuture, srpc::i32>::Err(__fu_result__.unwrap_err());
         }
-        return rusty::Result<txn_paymentTypedFuture, rrr::i32>::Ok(txn_paymentTypedFuture(__fu_result__.unwrap()));
+        return rusty::Result<txn_paymentTypedFuture, srpc::i32>::Ok(txn_paymentTypedFuture(__fu_result__.unwrap()));
     }
-    rusty::Result<RpcTxnPaymentResponse, rrr::i32> txn_payment(const RpcTxnPaymentRequest& req) {
+    rusty::Result<RpcTxnPaymentResponse, srpc::i32> txn_payment(const RpcTxnPaymentRequest& req) {
         auto __typed_fu_result__ = this->async_txn_payment(req);
         if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTxnPaymentResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+            return rusty::Result<RpcTxnPaymentResponse, srpc::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
     class txn_deliveryTypedFuture {
     private:
-        rusty::Arc<rrr::Future> __fu__;
+        rusty::Arc<srpc::Future> __fu__;
     public:
-        explicit txn_deliveryTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        explicit txn_deliveryTypedFuture(rusty::Arc<srpc::Future> fu): __fu__(std::move(fu)) { }
         bool ready() const {
             return __fu__->ready();
         }
         void wait() const {
             __fu__->wait();
         }
-        rrr::i32 get_error_code() const {
+        srpc::i32 get_error_code() const {
             return __fu__->get_error_code();
         }
-        rusty::Arc<rrr::Future> raw_future() const {
+        rusty::Arc<srpc::Future> raw_future() const {
             return __fu__;
         }
-        rusty::Result<RpcTxnDeliveryResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
+        rusty::Result<RpcTxnDeliveryResponse, srpc::i32> resolve() const {
+            srpc::i32 __ret__ = __fu__->get_error_code();
             if (__ret__ != 0) {
-                return rusty::Result<RpcTxnDeliveryResponse, rrr::i32>::Err(__ret__);
+                return rusty::Result<RpcTxnDeliveryResponse, srpc::i32>::Err(__ret__);
             }
             RpcTxnDeliveryResponse __typed_resp__;
-            return rusty::Result<RpcTxnDeliveryResponse, rrr::i32>::Ok(__typed_resp__);
+            return rusty::Result<RpcTxnDeliveryResponse, srpc::i32>::Ok(__typed_resp__);
         }
     };
-    rusty::Result<txn_deliveryTypedFuture, rrr::i32> async_txn_delivery(const RpcTxnDeliveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_DELIVERY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req._req, __m__);
+    rusty::Result<txn_deliveryTypedFuture, srpc::i32> async_txn_delivery(const RpcTxnDeliveryRequest& req, const srpc::FutureAttr& __fu_attr__ = srpc::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_DELIVERY, __fu_attr__, [&](srpc::BinaryWriteArchive& __m__) {
+            srpc::Serialize_::serialize(req._req, __m__);
         });
         if (__fu_result__.is_err()) {
-            return rusty::Result<txn_deliveryTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+            return rusty::Result<txn_deliveryTypedFuture, srpc::i32>::Err(__fu_result__.unwrap_err());
         }
-        return rusty::Result<txn_deliveryTypedFuture, rrr::i32>::Ok(txn_deliveryTypedFuture(__fu_result__.unwrap()));
+        return rusty::Result<txn_deliveryTypedFuture, srpc::i32>::Ok(txn_deliveryTypedFuture(__fu_result__.unwrap()));
     }
-    rusty::Result<RpcTxnDeliveryResponse, rrr::i32> txn_delivery(const RpcTxnDeliveryRequest& req) {
+    rusty::Result<RpcTxnDeliveryResponse, srpc::i32> txn_delivery(const RpcTxnDeliveryRequest& req) {
         auto __typed_fu_result__ = this->async_txn_delivery(req);
         if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTxnDeliveryResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+            return rusty::Result<RpcTxnDeliveryResponse, srpc::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
     class txn_order_statusTypedFuture {
     private:
-        rusty::Arc<rrr::Future> __fu__;
+        rusty::Arc<srpc::Future> __fu__;
     public:
-        explicit txn_order_statusTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        explicit txn_order_statusTypedFuture(rusty::Arc<srpc::Future> fu): __fu__(std::move(fu)) { }
         bool ready() const {
             return __fu__->ready();
         }
         void wait() const {
             __fu__->wait();
         }
-        rrr::i32 get_error_code() const {
+        srpc::i32 get_error_code() const {
             return __fu__->get_error_code();
         }
-        rusty::Arc<rrr::Future> raw_future() const {
+        rusty::Arc<srpc::Future> raw_future() const {
             return __fu__;
         }
-        rusty::Result<RpcTxnOrderStatusResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
+        rusty::Result<RpcTxnOrderStatusResponse, srpc::i32> resolve() const {
+            srpc::i32 __ret__ = __fu__->get_error_code();
             if (__ret__ != 0) {
-                return rusty::Result<RpcTxnOrderStatusResponse, rrr::i32>::Err(__ret__);
+                return rusty::Result<RpcTxnOrderStatusResponse, srpc::i32>::Err(__ret__);
             }
             RpcTxnOrderStatusResponse __typed_resp__;
-            return rusty::Result<RpcTxnOrderStatusResponse, rrr::i32>::Ok(__typed_resp__);
+            return rusty::Result<RpcTxnOrderStatusResponse, srpc::i32>::Ok(__typed_resp__);
         }
     };
-    rusty::Result<txn_order_statusTypedFuture, rrr::i32> async_txn_order_status(const RpcTxnOrderStatusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_ORDER_STATUS, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req._req, __m__);
+    rusty::Result<txn_order_statusTypedFuture, srpc::i32> async_txn_order_status(const RpcTxnOrderStatusRequest& req, const srpc::FutureAttr& __fu_attr__ = srpc::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_ORDER_STATUS, __fu_attr__, [&](srpc::BinaryWriteArchive& __m__) {
+            srpc::Serialize_::serialize(req._req, __m__);
         });
         if (__fu_result__.is_err()) {
-            return rusty::Result<txn_order_statusTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+            return rusty::Result<txn_order_statusTypedFuture, srpc::i32>::Err(__fu_result__.unwrap_err());
         }
-        return rusty::Result<txn_order_statusTypedFuture, rrr::i32>::Ok(txn_order_statusTypedFuture(__fu_result__.unwrap()));
+        return rusty::Result<txn_order_statusTypedFuture, srpc::i32>::Ok(txn_order_statusTypedFuture(__fu_result__.unwrap()));
     }
-    rusty::Result<RpcTxnOrderStatusResponse, rrr::i32> txn_order_status(const RpcTxnOrderStatusRequest& req) {
+    rusty::Result<RpcTxnOrderStatusResponse, srpc::i32> txn_order_status(const RpcTxnOrderStatusRequest& req) {
         auto __typed_fu_result__ = this->async_txn_order_status(req);
         if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTxnOrderStatusResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+            return rusty::Result<RpcTxnOrderStatusResponse, srpc::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
     class txn_stock_levelTypedFuture {
     private:
-        rusty::Arc<rrr::Future> __fu__;
+        rusty::Arc<srpc::Future> __fu__;
     public:
-        explicit txn_stock_levelTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        explicit txn_stock_levelTypedFuture(rusty::Arc<srpc::Future> fu): __fu__(std::move(fu)) { }
         bool ready() const {
             return __fu__->ready();
         }
         void wait() const {
             __fu__->wait();
         }
-        rrr::i32 get_error_code() const {
+        srpc::i32 get_error_code() const {
             return __fu__->get_error_code();
         }
-        rusty::Arc<rrr::Future> raw_future() const {
+        rusty::Arc<srpc::Future> raw_future() const {
             return __fu__;
         }
-        rusty::Result<RpcTxnStockLevelResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
+        rusty::Result<RpcTxnStockLevelResponse, srpc::i32> resolve() const {
+            srpc::i32 __ret__ = __fu__->get_error_code();
             if (__ret__ != 0) {
-                return rusty::Result<RpcTxnStockLevelResponse, rrr::i32>::Err(__ret__);
+                return rusty::Result<RpcTxnStockLevelResponse, srpc::i32>::Err(__ret__);
             }
             RpcTxnStockLevelResponse __typed_resp__;
-            return rusty::Result<RpcTxnStockLevelResponse, rrr::i32>::Ok(__typed_resp__);
+            return rusty::Result<RpcTxnStockLevelResponse, srpc::i32>::Ok(__typed_resp__);
         }
     };
-    rusty::Result<txn_stock_levelTypedFuture, rrr::i32> async_txn_stock_level(const RpcTxnStockLevelRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_STOCK_LEVEL, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req._req, __m__);
+    rusty::Result<txn_stock_levelTypedFuture, srpc::i32> async_txn_stock_level(const RpcTxnStockLevelRequest& req, const srpc::FutureAttr& __fu_attr__ = srpc::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(NetworkClientService::TXN_STOCK_LEVEL, __fu_attr__, [&](srpc::BinaryWriteArchive& __m__) {
+            srpc::Serialize_::serialize(req._req, __m__);
         });
         if (__fu_result__.is_err()) {
-            return rusty::Result<txn_stock_levelTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+            return rusty::Result<txn_stock_levelTypedFuture, srpc::i32>::Err(__fu_result__.unwrap_err());
         }
-        return rusty::Result<txn_stock_levelTypedFuture, rrr::i32>::Ok(txn_stock_levelTypedFuture(__fu_result__.unwrap()));
+        return rusty::Result<txn_stock_levelTypedFuture, srpc::i32>::Ok(txn_stock_levelTypedFuture(__fu_result__.unwrap()));
     }
-    rusty::Result<RpcTxnStockLevelResponse, rrr::i32> txn_stock_level(const RpcTxnStockLevelRequest& req) {
+    rusty::Result<RpcTxnStockLevelResponse, srpc::i32> txn_stock_level(const RpcTxnStockLevelRequest& req) {
         auto __typed_fu_result__ = this->async_txn_stock_level(req);
         if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcTxnStockLevelResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+            return rusty::Result<RpcTxnStockLevelResponse, srpc::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }

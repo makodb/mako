@@ -216,7 +216,7 @@ void TpccRdWorkload::RegPayment() {
              key_low(cmd.input[TPCC_VAR_C_LAST].get_str(), mbl, &C_LAST_SCHEMA);
          c_last_id_t key_high
              (cmd.input[TPCC_VAR_C_LAST].get_str(), mbh, &C_LAST_SCHEMA);
-         std::multimap<c_last_id_t, rrr::i32>::iterator it, it_low, it_high,
+         std::multimap<c_last_id_t, srpc::i32>::iterator it, it_low, it_high,
              it_mid;
          bool inc = false, mid_set = false;
          it_low = C_LAST2ID.lower_bound(key_low);

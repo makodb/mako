@@ -210,7 +210,7 @@ class PaxosServer : public TxLogServer {
   // caller was the now-deleted `MultiPaxosServiceImpl::SyncNoOps`
   // handler.
 
-  void OnForwardToLearner(const rrr::i32& par_id,
+  void OnForwardToLearner(const srpc::i32& par_id,
                         const uint64_t& slot,
                         const ballot_t& ballot,
                         const janus::Command& cmd,

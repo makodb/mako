@@ -11,12 +11,12 @@ Create a Recovery Manager to detect fresh start vs recovery and coordinate the r
 Both RaftServer and PaxosServer already have recovery methods from Phase 1.3/1.4:
 
 **RaftServer** (`src/deptran/raft/server.cc:105-151`):
-- `SetLogStorage(std::shared_ptr<rrr::LogStorage>)` - Set storage backend
+- `SetLogStorage(std::shared_ptr<srpc::LogStorage>)` - Set storage backend
 - `GetLogStorage()` - Get current storage
 - `RecoverFromStorage()` - Recover term, vote, commitIndex, log entries
 
 **PaxosServer** (`src/deptran/paxos/server.cc:850-912`):
-- `SetLogStorage(std::shared_ptr<rrr::LogStorage>)` - Set storage backend
+- `SetLogStorage(std::shared_ptr<srpc::LogStorage>)` - Set storage backend
 - `GetLogStorage()` - Get current storage
 - `RecoverFromStorage()` - Recover epoch, max_committed_slot, max_executed_slot, log entries
 
@@ -41,9 +41,9 @@ Both RaftServer and PaxosServer already have recovery methods from Phase 1.3/1.4
 ### Recovery Manager Class
 
 ```cpp
-// src/rrr/rpc/recovery_manager.hpp
+// src/srpc/rpc/recovery_manager.hpp
 
-namespace rrr {
+namespace srpc {
 
 enum class RecoveryMode {
   FRESH_START,     // No previous state, start fresh
@@ -102,7 +102,7 @@ private:
   bool initialized_{false};
 };
 
-} // namespace rrr
+} // namespace srpc
 ```
 
 ### Integration Points

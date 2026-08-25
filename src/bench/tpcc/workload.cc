@@ -74,7 +74,7 @@ void TpccWorkload::GetNewOrderTxnReq(TxRequest *req,
   int ol_cnt = RandomGenerator::rand(6, 15);
 //  int ol_cnt = 0;
 
-  rrr::i32 i_id_buf[ol_cnt];
+  srpc::i32 i_id_buf[ol_cnt];
 
   req->input_[TPCC_VAR_W_ID] = w_id;
   req->input_[TPCC_VAR_D_ID] = d_id;
@@ -84,7 +84,7 @@ void TpccWorkload::GetNewOrderTxnReq(TxRequest *req,
   bool all_local = true;
   for (int i = 0; i < ol_cnt; i++) {
     //req->input_[4 + 3 * i] = Value((i32)RandomGenerator::nu_rand(8191, 0, tpcc_para_.n_i_id_ - 1)); XXX nurand is the standard
-    rrr::i32
+    srpc::i32
         tmp_i_id = (i32) RandomGenerator::rand(0, tpcc_para_.n_i_id_ - 1 - i);
 
     int pre_n_less = 0, n_less = 0;

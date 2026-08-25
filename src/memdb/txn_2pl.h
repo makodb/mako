@@ -70,8 +70,8 @@ class Txn2PL: public Txn {
   void abort();
   bool commit();
 
-//  void init_piece(i64 tid, i64 pid, rrr::DragonBall *db, mdb::Value *output,
-//                  rrr::i32 *output_size);
+//  void init_piece(i64 tid, i64 pid, srpc::DragonBall *db, mdb::Value *output,
+//                  srpc::i32 *output_size);
 
 
 

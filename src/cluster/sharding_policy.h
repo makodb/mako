@@ -21,9 +21,9 @@ module;
 
 // deref_if_pointer_like + rusty::clone, used by the DSL-generated method
 // bodies below (clone wraps the enum literals in the factory struct
-// literals). rusty, NOT rrr — the standalone cluster test build already
+// literals). rusty, NOT srpc — the standalone cluster test build already
 // has this include path (sharding_policy_cache.h pulls rusty too), so it
-// does not break the no-rrr guarantee.
+// does not break the no-srpc guarantee.
 #include <rusty/slice.hpp>
 #include <rusty/move.hpp>
 
@@ -31,24 +31,24 @@ export module cluster:sharding_policy;
 import btree_port.btree.map;
 import rusty;                  // c529cd3d: rusty::Vec is a module now   // c529cd3d: btree_port is now a C++20 module (retired the .hpp header)
 
-// The policy value types serialize via their rrr Serializable save()/load()
-// DSL methods (see each `impl` below) instead of free-function rrr::Marshal
-// operator<< / operator>>. rrr::BinaryWrite/ReadArchive come from the
-// rrr.serializable C++23 module, imported here in the module purview (an
+// The policy value types serialize via their srpc Serializable save()/load()
+// DSL methods (see each `impl` below) instead of free-function srpc::Marshal
+// operator<< / operator>>. srpc::BinaryWrite/ReadArchive come from the
+// srpc.serializable C++23 module, imported here in the module purview (an
 // import cannot live in the global module fragment above) — a deliberate
 // trade to keep serialization authored in the DSL.
-import rrr.serializable;
+import srpc.serializable;
 
 namespace btree_port { using btree::map::BTreeMap; }  // compat: flat name the DSL/GEN expect
 
 export namespace janus {
 
 // @unsafe - deserialize into a bare local. The inline-Rust DSL moves bare-local
-// by-value args, but rrr::Deserialize_::deserialize needs a T& lvalue; `&mut x`
+// by-value args, but srpc::Deserialize_::deserialize needs a T& lvalue; `&mut x`
 // lowers to a raw pointer, which we forward through a deref (a place expression).
 template <typename T>
-inline void cluster_deser_(T* out, rrr::BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(*out, ar);  // @unsafe
+inline void cluster_deser_(T* out, srpc::BinaryReadArchive& ar) {
+    srpc::Deserialize_::deserialize(*out, ar);  // @unsafe
 }
 
 
@@ -105,22 +105,22 @@ impl KeyExtractor {
     fn by_hash() -> KeyExtractor {
         KeyExtractor { kind: KeyExtractorType::HASH_MOD, field_index: 0, prefix_length: 0 }
     }
-    // rrr Serializable value contract (save/load; no polymorphic kind()).
-    fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
-        rrr::Serialize_::serialize(((*self).kind as i32), ar);
-        rrr::Serialize_::serialize((*self).field_index, ar);
-        rrr::Serialize_::serialize((*self).prefix_length, ar);
+    // srpc Serializable value contract (save/load; no polymorphic kind()).
+    fn save(&self, ar: &mut srpc::BinaryWriteArchive) {
+        srpc::Serialize_::serialize(((*self).kind as i32), ar);
+        srpc::Serialize_::serialize((*self).field_index, ar);
+        srpc::Serialize_::serialize((*self).prefix_length, ar);
     }
-    fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
+    fn load(&mut self, ar: &mut srpc::BinaryReadArchive) {
         let mut k: i32 = 0;
         cluster_deser_(&mut k, ar);
         (*self).kind = k as KeyExtractorType;
-        rrr::Deserialize_::deserialize((*self).field_index, ar);
-        rrr::Deserialize_::deserialize((*self).prefix_length, ar);
+        srpc::Deserialize_::deserialize((*self).field_index, ar);
+        srpc::Deserialize_::deserialize((*self).prefix_length, ar);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=e5362c2ff870aefb22002ae702f524470a35da36d7c3e46d75b6e024f1ed4df0*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=bcc0f26782e14c1877316ef78e2dea76a98dc12c68a064af9be6512bbc8e79d3*/
 struct KeyExtractor;
 
 struct KeyExtractor {
@@ -133,8 +133,8 @@ struct KeyExtractor {
     static KeyExtractor by_field(int32_t index);
     static KeyExtractor by_prefix(int32_t length);
     static KeyExtractor by_hash();
-    void save(rrr::BinaryWriteArchive& ar) const;
-    void load(rrr::BinaryReadArchive& ar);
+    void save(srpc::BinaryWriteArchive& ar) const;
+    void load(srpc::BinaryReadArchive& ar);
 };
 
 
@@ -158,18 +158,18 @@ KeyExtractor KeyExtractor::by_hash() {
     return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::HASH_MOD)), .field_index = static_cast<int32_t>(0), .prefix_length = static_cast<int32_t>(0)};
 }
 
-void KeyExtractor::save(rrr::BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize((static_cast<int32_t>(((*this)).kind)), ar);
-    rrr::Serialize_::serialize(((*this)).field_index, ar);
-    rrr::Serialize_::serialize(((*this)).prefix_length, ar);
+void KeyExtractor::save(srpc::BinaryWriteArchive& ar) const {
+    srpc::Serialize_::serialize((static_cast<int32_t>(((*this)).kind)), ar);
+    srpc::Serialize_::serialize(((*this)).field_index, ar);
+    srpc::Serialize_::serialize(((*this)).prefix_length, ar);
 }
 
-void KeyExtractor::load(rrr::BinaryReadArchive& ar) {
+void KeyExtractor::load(srpc::BinaryReadArchive& ar) {
     int32_t k = static_cast<int32_t>(0);
     cluster_deser_(&k, ar);
     ((*this)).kind = static_cast<KeyExtractorType>(k);
-    rrr::Deserialize_::deserialize(((*this)).field_index, ar);
-    rrr::Deserialize_::deserialize(((*this)).prefix_length, ar);
+    srpc::Deserialize_::deserialize(((*this)).field_index, ar);
+    srpc::Deserialize_::deserialize(((*this)).prefix_length, ar);
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.1*/
 
@@ -202,19 +202,19 @@ impl RangeMapping {
     fn contains(&self, key: i64) -> bool {
         (*self).start_key <= key && key < (*self).end_key
     }
-    fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
-        rrr::Serialize_::serialize((*self).start_key, ar);
-        rrr::Serialize_::serialize((*self).end_key, ar);
-        rrr::Serialize_::serialize((*self).shard_id, ar);
+    fn save(&self, ar: &mut srpc::BinaryWriteArchive) {
+        srpc::Serialize_::serialize((*self).start_key, ar);
+        srpc::Serialize_::serialize((*self).end_key, ar);
+        srpc::Serialize_::serialize((*self).shard_id, ar);
     }
-    fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
-        rrr::Deserialize_::deserialize((*self).start_key, ar);
-        rrr::Deserialize_::deserialize((*self).end_key, ar);
-        rrr::Deserialize_::deserialize((*self).shard_id, ar);
+    fn load(&mut self, ar: &mut srpc::BinaryReadArchive) {
+        srpc::Deserialize_::deserialize((*self).start_key, ar);
+        srpc::Deserialize_::deserialize((*self).end_key, ar);
+        srpc::Deserialize_::deserialize((*self).shard_id, ar);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.2 version=1 rust_sha256=6230364922fc14352f2e2abea9339227a99d545c8d9308d8684e9e799ae8b978*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.2 version=1 rust_sha256=08118811e85ebbaba5f5f1dda1951897ffafaed688d5e7f088f7a8b77305665d*/
 struct RangeMapping;
 
 struct RangeMapping {
@@ -224,8 +224,8 @@ struct RangeMapping {
 
     static RangeMapping make(int64_t start, int64_t end, int32_t shard);
     bool contains(int64_t key) const;
-    void save(rrr::BinaryWriteArchive& ar) const;
-    void load(rrr::BinaryReadArchive& ar);
+    void save(srpc::BinaryWriteArchive& ar) const;
+    void load(srpc::BinaryReadArchive& ar);
 };
 
 
@@ -237,16 +237,16 @@ bool RangeMapping::contains(int64_t key) const {
     return (rusty::detail::deref_if_pointer_like(((*this)).start_key) <= rusty::detail::deref_if_pointer_like(key)) && (rusty::detail::deref_if_pointer_like(key) < rusty::detail::deref_if_pointer_like(((*this)).end_key));
 }
 
-void RangeMapping::save(rrr::BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(((*this)).start_key, ar);
-    rrr::Serialize_::serialize(((*this)).end_key, ar);
-    rrr::Serialize_::serialize(((*this)).shard_id, ar);
+void RangeMapping::save(srpc::BinaryWriteArchive& ar) const {
+    srpc::Serialize_::serialize(((*this)).start_key, ar);
+    srpc::Serialize_::serialize(((*this)).end_key, ar);
+    srpc::Serialize_::serialize(((*this)).shard_id, ar);
 }
 
-void RangeMapping::load(rrr::BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(((*this)).start_key, ar);
-    rrr::Deserialize_::deserialize(((*this)).end_key, ar);
-    rrr::Deserialize_::deserialize(((*this)).shard_id, ar);
+void RangeMapping::load(srpc::BinaryReadArchive& ar) {
+    srpc::Deserialize_::deserialize(((*this)).start_key, ar);
+    srpc::Deserialize_::deserialize(((*this)).end_key, ar);
+    srpc::Deserialize_::deserialize(((*this)).shard_id, ar);
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.2*/
 
@@ -303,20 +303,20 @@ impl TableShardingPolicy {
         }
         (*self).ranges.insert(idx, mapping);
     }
-    // rrr Serializable: name, extractor, range count + ranges, default_shard.
-    fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
-        rrr::Serialize_::serialize((*self).table_name, ar);
+    // srpc Serializable: name, extractor, range count + ranges, default_shard.
+    fn save(&self, ar: &mut srpc::BinaryWriteArchive) {
+        srpc::Serialize_::serialize((*self).table_name, ar);
         (*self).key_extractor.save(ar);
-        rrr::Serialize_::serialize(((*self).ranges.size() as i32), ar);
+        srpc::Serialize_::serialize(((*self).ranges.size() as i32), ar);
         let mut i: usize = 0;
         while i < (*self).ranges.size() {
             (*self).ranges[i].save(ar);
             i = i + 1;
         }
-        rrr::Serialize_::serialize((*self).default_shard, ar);
+        srpc::Serialize_::serialize((*self).default_shard, ar);
     }
-    fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
-        rrr::Deserialize_::deserialize((*self).table_name, ar);
+    fn load(&mut self, ar: &mut srpc::BinaryReadArchive) {
+        srpc::Deserialize_::deserialize((*self).table_name, ar);
         (*self).key_extractor.load(ar);
         let mut n: i32 = 0;
         cluster_deser_(&mut n, ar);
@@ -328,11 +328,11 @@ impl TableShardingPolicy {
             (*self).ranges.push(r);
             i = i + 1;
         }
-        rrr::Deserialize_::deserialize((*self).default_shard, ar);
+        srpc::Deserialize_::deserialize((*self).default_shard, ar);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=010a20ee1fa85ff481dc834054c4e28b17ffa620d37595d83c618c73edb3788d*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=d3f26d2b3cfb58409f2600a296752430c7b9ee61d1b2224b267331f63d0a7377*/
 struct TableShardingPolicy;
 
 struct TableShardingPolicy {
@@ -344,8 +344,8 @@ struct TableShardingPolicy {
     static TableShardingPolicy create(const std::string& name, const KeyExtractor& extractor);
     int32_t get_shard(int64_t key_value) const;
     void add_range(int64_t start, int64_t end, int32_t shard);
-    void save(rrr::BinaryWriteArchive& ar) const;
-    void load(rrr::BinaryReadArchive& ar);
+    void save(srpc::BinaryWriteArchive& ar) const;
+    void load(srpc::BinaryReadArchive& ar);
 };
 
 
@@ -378,20 +378,20 @@ void TableShardingPolicy::add_range(int64_t start, int64_t end, int32_t shard) {
     ((*this)).ranges.insert(std::move(idx), std::move(mapping));
 }
 
-void TableShardingPolicy::save(rrr::BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(((*this)).table_name, ar);
+void TableShardingPolicy::save(srpc::BinaryWriteArchive& ar) const {
+    srpc::Serialize_::serialize(((*this)).table_name, ar);
     ((*this)).key_extractor.save(ar);
-    rrr::Serialize_::serialize((static_cast<int32_t>(((*this)).ranges.size())), ar);
+    srpc::Serialize_::serialize((static_cast<int32_t>(((*this)).ranges.size())), ar);
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < ((*this)).ranges.size()) {
         ((*this)).ranges[i].save(ar);
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
     }
-    rrr::Serialize_::serialize(((*this)).default_shard, ar);
+    srpc::Serialize_::serialize(((*this)).default_shard, ar);
 }
 
-void TableShardingPolicy::load(rrr::BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(((*this)).table_name, ar);
+void TableShardingPolicy::load(srpc::BinaryReadArchive& ar) {
+    srpc::Deserialize_::deserialize(((*this)).table_name, ar);
     ((*this)).key_extractor.load(ar);
     int32_t n = static_cast<int32_t>(0);
     cluster_deser_(&n, ar);
@@ -403,7 +403,7 @@ void TableShardingPolicy::load(rrr::BinaryReadArchive& ar) {
         ((*this)).ranges.push(std::move(r));
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<int32_t>(1);
     }
-    rrr::Deserialize_::deserialize(((*this)).default_shard, ar);
+    srpc::Deserialize_::deserialize(((*this)).default_shard, ar);
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.3*/
 
@@ -464,19 +464,19 @@ impl ShardingPolicySet {
     fn table_count(&self) -> usize {
         (*self).policies.len()
     }
-    // rrr Serializable: version, num_shards, then each policy (the key is
+    // srpc Serializable: version, num_shards, then each policy (the key is
     // rebuilt from policy.table_name on load, so only values are written).
-    fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
-        rrr::Serialize_::serialize((*self).version, ar);
-        rrr::Serialize_::serialize((*self).num_shards, ar);
-        rrr::Serialize_::serialize(((*self).policies.len() as i32), ar);
+    fn save(&self, ar: &mut srpc::BinaryWriteArchive) {
+        srpc::Serialize_::serialize((*self).version, ar);
+        srpc::Serialize_::serialize((*self).num_shards, ar);
+        srpc::Serialize_::serialize(((*self).policies.len() as i32), ar);
         for kv in (*self).policies {
             kv.1.save(ar);
         }
     }
-    fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
-        rrr::Deserialize_::deserialize((*self).version, ar);
-        rrr::Deserialize_::deserialize((*self).num_shards, ar);
+    fn load(&mut self, ar: &mut srpc::BinaryReadArchive) {
+        srpc::Deserialize_::deserialize((*self).version, ar);
+        srpc::Deserialize_::deserialize((*self).num_shards, ar);
         let mut n: i32 = 0;
         cluster_deser_(&mut n, ar);
         (*self).policies.clear();
@@ -494,7 +494,7 @@ impl ShardingPolicySet {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=4fe903b2d2e2797167ac9874c40bfecf94a4d1aa3e926a2749f8a311732bc5b8*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=5992d91db2510c806df29680a3f8b3c76a58d6e114c8715f6c83696319a919fa*/
 struct ShardingPolicySet;
 
 struct ShardingPolicySet {
@@ -508,8 +508,8 @@ struct ShardingPolicySet {
     int32_t get_shard_for_key(const std::string& table_name, int64_t key_value) const;
     bool has_policy(const std::string& table_name) const;
     size_t table_count() const;
-    void save(rrr::BinaryWriteArchive& ar) const;
-    void load(rrr::BinaryReadArchive& ar);
+    void save(srpc::BinaryWriteArchive& ar) const;
+    void load(srpc::BinaryReadArchive& ar);
 };
 
 
@@ -540,18 +540,18 @@ size_t ShardingPolicySet::table_count() const {
     return rusty::len(((*this)).policies);
 }
 
-void ShardingPolicySet::save(rrr::BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(((*this)).version, ar);
-    rrr::Serialize_::serialize(((*this)).num_shards, ar);
-    rrr::Serialize_::serialize((static_cast<int32_t>(rusty::len(((*this)).policies))), ar);
+void ShardingPolicySet::save(srpc::BinaryWriteArchive& ar) const {
+    srpc::Serialize_::serialize(((*this)).version, ar);
+    srpc::Serialize_::serialize(((*this)).num_shards, ar);
+    srpc::Serialize_::serialize((static_cast<int32_t>(rusty::len(((*this)).policies))), ar);
     for (auto&& kv : rusty::for_in(((*this)).policies)) {
         rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)).save(ar);
     }
 }
 
-void ShardingPolicySet::load(rrr::BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(((*this)).version, ar);
-    rrr::Deserialize_::deserialize(((*this)).num_shards, ar);
+void ShardingPolicySet::load(srpc::BinaryReadArchive& ar) {
+    srpc::Deserialize_::deserialize(((*this)).version, ar);
+    srpc::Deserialize_::deserialize(((*this)).num_shards, ar);
     int32_t n = static_cast<int32_t>(0);
     cluster_deser_(&n, ar);
     ((*this)).policies.clear();

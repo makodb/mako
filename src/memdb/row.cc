@@ -2,8 +2,8 @@
 #include "row.h"
 #include "schema.h"
 #include "table.h"
-// the variadic Log_* wrappers live outside src/rrr now
-#include "rrr_log.h"
+// the variadic Log_* wrappers live outside src/srpc now
+#include "srpc_log.h"
 
 namespace mdb {
 
@@ -107,7 +107,7 @@ Value Row::get_column(int column_id) const {
         v = Value(std::string(b.data, b.len));
         break;
     default:
-        rrr::Log_fatal("unexpected value type {}", (int)info->type);
+        srpc::Log_fatal("unexpected value type {}", (int)info->type);
         verify(0);
         break;
     }
@@ -160,7 +160,7 @@ blob Row::get_blob(int column_id) const {
         }
         break;
     default:
-        rrr::Log_fatal("unexpected value type {}", (int)info->type);
+        srpc::Log_fatal("unexpected value type {}", (int)info->type);
         verify(0);
         break;
     }
@@ -256,7 +256,7 @@ void Row::update(int column_id, const Value& v) {
         this->update(column_id, v.get_str());
         break;
     default:
-        rrr::Log_fatal("unexpected value type {}", (int)v.get_kind());
+        srpc::Log_fatal("unexpected value type {}", (int)v.get_kind());
         verify(0);
         break;
     }
@@ -305,7 +305,7 @@ Row* Row::create(Row* raw_row, const Schema* schema, const std::vector<const Val
             var_part_size += it->get_str().size();
             break;
         default:
-            rrr::Log_fatal("unexpected value type {}", (int)it->get_kind());
+            srpc::Log_fatal("unexpected value type {}", (int)it->get_kind());
             verify(0);
             break;
         }
@@ -325,7 +325,7 @@ Row* Row::create(Row* raw_row, const Schema* schema, const std::vector<const Val
         case Value::STR:
             break;
         default:
-            rrr::Log_fatal("unexpected value type {}", (int)schema->col_info_[i].type);
+            srpc::Log_fatal("unexpected value type {}", (int)schema->col_info_[i].type);
             verify(0);
             break;
         }

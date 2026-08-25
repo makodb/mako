@@ -11,7 +11,7 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
                             const function<void(int res,
                                                 TxnOutput&,
                                                 const RccGraph&)>& callback) {
-  rrr::FutureAttr fuattr;
+  srpc::FutureAttr fuattr;
   auto tid = cmd[0].root_id_;
   auto par_id = cmd[0].partition_id_;
   std::function<void(rusty::Arc<Future>)> cb =
@@ -22,10 +22,10 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
         }
         int res;
         TxnOutput output;
-        rrr::AnyMessage am;
-        rrr::deserialize_from(fu->get_reply(), res);
-        rrr::deserialize_from(fu->get_reply(), output);
-        rrr::deserialize_from(fu->get_reply(), am);
+        srpc::AnyMessage am;
+        srpc::deserialize_from(fu->get_reply(), res);
+        srpc::deserialize_from(fu->get_reply(), output);
+        srpc::deserialize_from(fu->get_reply(), am);
         // graph field rides directly as AnyMessage.
         if (am.is_a<EmptyGraph>()) {
           RccGraph rgraph;
@@ -40,7 +40,7 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
           verify(0);
         }
       };
-  fuattr.callback = rrr::FutureCallback::from_callable(cb);
+  fuattr.callback = srpc::FutureCallback::from_callable(cb);
   auto proxy = NearestProxyForPartition(cmd[0].PartitionId()).second;
   Log_debug("dispatch to {}", cmd[0].PartitionId());
 //  verify(cmd.type_ > 0);
@@ -69,16 +69,16 @@ void RccCommo::SendFinish(parid_t pid,
       return;
     }
     map<innid_t, map<int32_t, Value>> outputs;
-    rrr::deserialize_from(fu->get_reply(), outputs);
+    srpc::deserialize_from(fu->get_reply(), outputs);
     callback(outputs);
   };
-  fuattr.callback = rrr::FutureCallback::from_callable(cb);
+  fuattr.callback = srpc::FutureCallback::from_callable(cb);
   auto proxy = NearestProxyForPartition(pid).second;
   // graph field is `AnyMessage` directly.
   auto sp_graph = rusty::Arc<RccGraph>::make(*graph);
   ClassicProxy::RpcRccFinishRequest req;
   req.id = tid;
-  req.md_graph = rrr::AnyMessage::pack(std::move(sp_graph));
+  req.md_graph = srpc::AnyMessage::pack(std::move(sp_graph));
   auto fu_result = proxy->async_RccFinish(req, fuattr);
   // Arc auto-released
 }
@@ -95,10 +95,10 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
       return;
     }
 //    janus::Command md;
-    rrr::deserialize_from(fu->get_reply(), *ret);
+    srpc::deserialize_from(fu->get_reply(), *ret);
     ev->set(1);
   };
-  fuattr.callback = rrr::FutureCallback::from_callable(cb);
+  fuattr.callback = srpc::FutureCallback::from_callable(cb);
   auto proxy = (ClassicProxy*)NearestProxyForPartition(pid).second;
   ClassicProxy::RpcRccInquireRequest req;
   req.txn_id = tid;
@@ -116,7 +116,7 @@ void RccCommo::BroadcastValidation(txid_t id, set<parid_t> pars, int result) {
     for (auto& pair : rpc_par_proxies_[partition_id]) {
       auto proxy = pair.second;
       FutureAttr fuattr;
-      fuattr.callback = rrr::FutureCallback::from_callable([] (rusty::Arc<Future> fu) {
+      fuattr.callback = srpc::FutureCallback::from_callable([] (rusty::Arc<Future> fu) {
       });
       int rank = RANK_D;
       verify(0);

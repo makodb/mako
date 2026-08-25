@@ -11,7 +11,7 @@ metadata structures, and the integration with the RaftServer.
 
 ### Binary Wire Format (SnapshotFormat)
 
-Snapshots are serialized using a binary format defined in `src/rrr/rpc/snapshot_format.hpp`:
+Snapshots are serialized using a binary format defined in `src/srpc/rpc/snapshot_format.hpp`:
 
 ```
 Magic (4B) | Version (4B) | Header Size (4B) | Data Size (8B) |
@@ -28,7 +28,7 @@ Key properties:
 
 ### SnapshotMetadata
 
-Defined in `src/rrr/rpc/snapshot_manager.hpp`:
+Defined in `src/srpc/rpc/snapshot_manager.hpp`:
 
 ```cpp
 struct SnapshotMetadata {
@@ -46,9 +46,9 @@ covers, enabling log truncation and InstallSnapshot RPC.
 
 ## Architecture
 
-### Storage Layer (rrr namespace)
+### Storage Layer (srpc namespace)
 
-Three layers of abstraction in `src/rrr/rpc/`:
+Three layers of abstraction in `src/srpc/rpc/`:
 
 1. **SnapshotManager** (interface) - Abstract API for snapshot CRUD operations
 2. **FileSnapshotManager** (implementation) - File-based storage with retention policy
@@ -176,4 +176,4 @@ All new code follows RustyCpp safety requirements:
 - `@safe`/`@unsafe` annotations on every function
 - `rusty::Option<T>` for optional return values (e.g., `GetLatestSnapshot()`)
 - No `std::unique_ptr` or `std::shared_ptr` in new Raft-level code (existing `shared_ptr`
-  usage in the rrr layer is grandfathered but documented)
+  usage in the srpc layer is grandfathered but documented)

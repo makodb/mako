@@ -116,7 +116,7 @@ cleanup_processes() {
     # ranges (20000-31699 shard/simpleTransaction band, 40000-64999
     # paxos/raft band — randomized bases reach ~54535 and their +10000
     # heartbeat ports ~64535). The kill-by-name list above cannot
-    # enumerate every server binary (e.g. leaked rrr test servers), and
+    # enumerate every server binary (e.g. leaked srpc test servers), and
     # a single live squatter mid-range EADDRINUSE-panics a later suite —
     # the port picker can only probe what is free at PICK time.
     while read -r pid; do
@@ -181,7 +181,7 @@ for p in (31000, 31100):
 }
 
 # Pick a port base for simpleTransaction by checking that the full shard range is free.
-# Keep RRR dynamic ports out of:
+# Keep SRPC dynamic ports out of:
 # 1) fixed Paxos/Raft control ports (45001+), and
 # 2) Linux default ephemeral range (32768+), which avoids self-collisions
 #    with outbound TCP connections during startup.
@@ -280,7 +280,7 @@ compile() {
     cmake -S . -B "${BUILD_DIR}" -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 2>&1 | tee build.log
     # -- -k 0: keep going past the first failure so one build surfaces ALL
     # compile errors (ninja default stops at the first batch).
-    cmake --build "${BUILD_DIR}" --parallel "${jobs}" --target all rrr_goal0_dual_compile -- -k 0 2>&1 | tee -a build.log
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" --target all srpc_goal0_dual_compile -- -k 0 2>&1 | tee -a build.log
     # Generate configuration
     bash ./src/mako/update_config.sh
 }
@@ -324,7 +324,7 @@ run_simple_paxos() {
     [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
 }
 
-# Function 4: Run 2-shard no replication test (RRR transport)
+# Function 4: Run 2-shard no replication test (SRPC transport)
 run_2shard_no_replication() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shardNoReplication"
@@ -617,17 +617,17 @@ run_2shard_single_process_replication() {
     [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
 }
 
-run_rrr_unit_tests() {
+run_srpc_unit_tests() {
     echo "========================================="
-    echo "Running: ./ci/ci.sh rrrTests"
+    echo "Running: ./ci/ci.sh srpcTests"
     echo "========================================="
     local base_port
     base_port=$(pick_simple_transaction_port_base)
     if [ -z "$base_port" ]; then
-        echo "ERROR: Failed to select a base port for rrrTests"
+        echo "ERROR: Failed to select a base port for srpcTests"
         return 1
     fi
-    echo "rrrTests simpleTransaction base port: $base_port"
+    echo "srpcTests simpleTransaction base port: $base_port"
     local src_config="src/mako/config/local-shards2-warehouses1.yml"
     local tmp_config
     tmp_config=$(mktemp /tmp/mako_simple_txn_ctest_XXXX.yml)
@@ -643,7 +643,7 @@ run_rrr_unit_tests() {
     # third-party/rusty-cpp/CMakeLists.txt:624 registers it, mako never builds
     # it -- but its name carries neither the `_port` nor the `rusty_` marker the
     # patterns keyed on, so it slipped through and was the single "Not Run"
-    # failure of `ci.sh rrrTests` (46/47 passing). Match it by name. NOTE: this
+    # failure of `ci.sh srpcTests` (46/47 passing). Match it by name. NOTE: this
     # denylist is name-shaped, so a future rusty-cpp test named outside these
     # patterns will slip through the same way; the durable fix is for the
     # exclusion to key on test provenance rather than spelling.
@@ -748,8 +748,8 @@ case "${1:-}" in
     shard2SingleProcessReplication)
         run_2shard_single_process_replication
         ;;
-    rrrTests)
-        run_rrr_unit_tests
+    srpcTests)
+        run_srpc_unit_tests
         ;;
     cpuThrottlingScaling)
         run_cpu_throttling_scaling
@@ -760,7 +760,7 @@ case "${1:-}" in
     all)
         # Run all steps in sequence
         compile
-        run_rrr_unit_tests
+        run_srpc_unit_tests
         run_simple_transaction
         run_client_server_test
         run_simple_paxos
@@ -794,7 +794,7 @@ case "${1:-}" in
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
         echo "  rocksdbTests, multiShardSingleProcess,"
         echo "  shard2SingleProcess, shard2SingleProcessReplication,"
-        echo "  rrrTests, cpuThrottlingScaling, clientServer, all"
+        echo "  srpcTests, cpuThrottlingScaling, clientServer, all"
         exit 1
         ;;
 esac

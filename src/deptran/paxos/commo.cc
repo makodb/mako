@@ -49,7 +49,7 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
   //   FutureAttr fuattr;
   //   fuattr.callback = [e, ballot] (Future* fu) {
   //     ballot_t b = 0;
-  //     rrr::deserialize_from(fu->get_reply(), b);
+  //     srpc::deserialize_from(fu->get_reply(), b);
   //     e->FeedResponse(b==ballot);
   //   };
   //   janus::Command md(cmd);
@@ -91,7 +91,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
     if (site_role!=2) continue;
      auto proxy = (MultiPaxosProxy*) p.second;
      FutureAttr fuattr;
-     fuattr.callback = rrr::FutureCallback::from_callable([/*e, */cb] (rusty::Arc<Future> fu) {
+     fuattr.callback = srpc::FutureCallback::from_callable([/*e, */cb] (rusty::Arc<Future> fu) {
         if (fu->get_error_code()!=0) {
           Log_info("received an error message6");
           return;
@@ -100,8 +100,8 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         ballot_t ballot;
         // if the learner is killed at this moment, throw an error
         // in datacenter failover, keep learners are alive
-        rrr::deserialize_from(fu->get_reply(), slot);
-        rrr::deserialize_from(fu->get_reply(), ballot);
+        srpc::deserialize_from(fu->get_reply(), slot);
+        srpc::deserialize_from(fu->get_reply(), ballot);
         cb(slot, ballot);
         //e->FeedResponse(1);
 	      });
@@ -184,7 +184,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
     if (Config::GetConfig()->SiteById(p.first).role==0) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e, cb] (rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message3");
         return;
@@ -192,9 +192,9 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
       i32 valid;
       i32 ballot;
       janus::Command response_val;
-      rrr::deserialize_from(fu->get_reply(), ballot);
-      rrr::deserialize_from(fu->get_reply(), valid);
-      rrr::deserialize_from(fu->get_reply(), response_val);
+      srpc::deserialize_from(fu->get_reply(), ballot);
+      srpc::deserialize_from(fu->get_reply(), valid);
+      srpc::deserialize_from(fu->get_reply(), response_val);
       auto sp_md = make_shared<janus::Command>(response_val);
       cb(sp_md, ballot, valid);
       e->FeedResponse(valid);
@@ -236,8 +236,8 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
   //   fuattr.callback = [e, cb] (Future* fu) {
   //     i32 valid;
   //     i32 ballot;
-  //     rrr::deserialize_from(fu->get_reply(), ballot);
-  //     rrr::deserialize_from(fu->get_reply(), valid);
+  //     srpc::deserialize_from(fu->get_reply(), ballot);
+  //     srpc::deserialize_from(fu->get_reply(), valid);
   //     cb(ballot, valid);
   //     e->FeedResponse(valid);
   //   };
@@ -268,15 +268,15 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     auto proxy = (MultiPaxosProxy*) p.second;  // a Proxy pool for the concurrent request
     FutureAttr fuattr;
     int st = p.first;
-    fuattr.callback = rrr::FutureCallback::from_callable([e, cb, st] (rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e, cb, st] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message2");
         return;
       }
       i32 valid;
       i32 ballot;
-      rrr::deserialize_from(fu->get_reply(), ballot);
-      rrr::deserialize_from(fu->get_reply(), valid);
+      srpc::deserialize_from(fu->get_reply(), ballot);
+      srpc::deserialize_from(fu->get_reply(), valid);
        // it's possible during failure because the client can receive reponse even the distant server shutdowns
       if (!valid)
         Log_debug("Accept invalid response received from {} site", st);
@@ -312,15 +312,15 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
     if (Config::GetConfig()->SiteById(p.first).role==2) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e, cb] (rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message");
         return;
       }
       i32 valid;
       i32 ballot;
-      rrr::deserialize_from(fu->get_reply(), ballot);
-      rrr::deserialize_from(fu->get_reply(), valid);
+      srpc::deserialize_from(fu->get_reply(), ballot);
+      srpc::deserialize_from(fu->get_reply(), valid);
       cb(ballot, valid);
       e->FeedResponse(valid);
     });

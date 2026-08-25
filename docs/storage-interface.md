@@ -72,7 +72,7 @@ e.g. `ShardReceiver::open_tables_table_id`).
   these multi-TU headers. `--check` is the drift guard.
 - The transpiler binary is built from rusty-cpp **upstream main**
   (parked at `build_local/rusty-cpp-transpiler-<sha>`); the submodule
-  pin does NOT move — upstream main dropped runtime headers rrr
+  pin does NOT move — upstream main dropped runtime headers srpc
   needs. Sound because GEN output is plain C++ with no rusty-runtime
   dependencies.
 - Trait → interface lowering: `pub trait` (namespace scope; non-pub
@@ -116,7 +116,7 @@ subtlety that makes this work: a struct is move-only *only* when it
 attaches a trait via `#[cpp_inherit] impl Trait for X` (inheritance). A
 plain struct with an inherent `impl X` lowers to a **copyable aggregate**
 (no synthesized ctor/move) — so these keep living in `std::map`/
-`std::vector` by value, and the rrr marshal reader (default-construct +
+`std::vector` by value, and the srpc marshal reader (default-construct +
 field fill, which stays C++ at the boundary) is unchanged. `get_shard`'s
 binary search is expressed directly in the DSL; the iterator insert and
 map lookups stay as C++ kernels the DSL calls (the same "DSL owns shape,

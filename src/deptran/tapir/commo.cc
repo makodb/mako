@@ -14,7 +14,7 @@ namespace janus {
 //                              const function<void(int,
 //                                                  TxnOutput &)>
 //                              &callback) {
-//  rrr::FutureAttr fuattr;
+//  srpc::FutureAttr fuattr;
 //  parid_t par_id = cmd[0].PartitionId();
 //  auto proxy = (ClassicProxy*)
 //      NearestProxyForPartition(cmd[0].PartitionId()).second;
@@ -22,8 +22,8 @@ namespace janus {
 //      [coo, this, callback] (Future *fu) {
 //        int32_t res;
 //        TxnOutput output;
-//        rrr::deserialize_from(fu->get_reply(), res);
-//        rrr::deserialize_from(fu->get_reply(), output);
+//        srpc::deserialize_from(fu->get_reply(), res);
+//        srpc::deserialize_from(fu->get_reply(), output);
 //        callback(res, output);
 //      };
 //  fuattr.callback = cb;
@@ -41,9 +41,9 @@ void TapirCommo::BroadcastFastAccept(parid_t par_id,
   for (auto &p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([cb] (rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([cb] (rusty::Arc<Future> fu) {
       int32_t res;
-      rrr::deserialize_from(fu->get_reply(), res);
+      srpc::deserialize_from(fu->get_reply(), res);
       cb(res);
     });
     ClassicProxy::RpcTapirFastAcceptRequest req;
@@ -61,7 +61,7 @@ void TapirCommo::BroadcastDecide(parid_t par_id,
   for (auto &p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([] (rusty::Arc<Future> fu) {});
+    fuattr.callback = srpc::FutureCallback::from_callable([] (rusty::Arc<Future> fu) {});
     ClassicProxy::RpcTapirDecideRequest req;
     req.cmd_id = cmd_id;
     req.commit = decision;
@@ -79,7 +79,7 @@ void TapirCommo::BroadcastAccept(parid_t par_id,
   for (auto &p: proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable(callback);
+    fuattr.callback = srpc::FutureCallback::from_callable(callback);
     ClassicProxy::RpcTapirAcceptRequest req;
     req.cmd_id = cmd_id;
     req.ballot = ballot;

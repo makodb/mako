@@ -18,7 +18,7 @@ Executor::~Executor() {
 }
 
 void Executor::Execute(const SimpleCommand &cmd,
-                       rrr::i32 *res,
+                       srpc::i32 *res,
                        map<int32_t, Value> &output) {
   verify(output.size() == 0);
   *res = SUCCESS;

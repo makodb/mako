@@ -320,7 +320,7 @@ struct table_row_pair {
   static Row *ROW_MAX; // Multi thread safe? TODO
 };
 
-// Lock-type hint carried in piece metadata. Was rrr::ALock::type_t;
+// Lock-type hint carried in piece metadata. Was srpc::ALock::type_t;
 // the ALock family was removed as dead code (nothing acquires these
 // locks anymore).
 enum lock_type_t : int { RLOCK = 0, WLOCK = 1 };

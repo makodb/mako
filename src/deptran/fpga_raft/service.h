@@ -23,7 +23,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
   void Heartbeat(const uint64_t& leaderPrevLogIndex,
                  const DepId& dep_id,
                  uint64_t* followerPrevLogIndex,
-                 rrr::DeferredReply defer);
+                 srpc::DeferredReply defer);
 
   // removed `Forward(janus::Command, ...)`
   // declaration — paired with its typed-rpc override (also removed
@@ -37,7 +37,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
             const ballot_t& cur_term,
             ballot_t* max_ballot,
             bool_t* vote_granted,
-            rrr::DeferredReply defer);
+            srpc::DeferredReply defer);
 
   void Vote2FPGA(const uint64_t& lst_log_idx,
                  const ballot_t& lst_log_term,
@@ -45,7 +45,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                  const ballot_t& cur_term,
                  ballot_t* max_ballot,
                  bool_t* vote_granted,
-                 rrr::DeferredReply defer);
+                 srpc::DeferredReply defer);
 
   void AppendEntries2(const uint64_t& slot,
                       const ballot_t& ballot,
@@ -58,7 +58,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                       uint64_t* followerAppendOK,
                       uint64_t* followerCurrentTerm,
                       uint64_t* followerLastLogIndex,
-                      rrr::DeferredReply defer);
+                      srpc::DeferredReply defer);
 
   void AppendEntries(const uint64_t& slot,
                      const ballot_t& ballot,
@@ -71,25 +71,25 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                      uint64_t* followerAppendOK,
                      uint64_t* followerCurrentTerm,
                      uint64_t* followerLastLogIndex,
-                     rrr::DeferredReply defer);
+                     srpc::DeferredReply defer);
 
   void Decide(const uint64_t& slot,
               const ballot_t& ballot,
               const DepId& dep_id,
               const janus::Command& cmd,
-              rrr::DeferredReply defer);
+              srpc::DeferredReply defer);
 
 
   // BEGIN typed-rpc-decls (FpgaRaftServiceImpl)
   // Typed RPC interface overrides (new API).
-  void Heartbeat(const FpgaRaftService::RpcHeartbeatRequest& req, FpgaRaftService::RpcHeartbeatResponse& resp, rrr::DeferredReply defer) override;
+  void Heartbeat(const FpgaRaftService::RpcHeartbeatRequest& req, FpgaRaftService::RpcHeartbeatResponse& resp, srpc::DeferredReply defer) override;
   // removed `Forward` typed-rpc override —
   // matching abstract base class virtual is gone (rcc_rpc.rpc updated).
-  void Vote(const FpgaRaftService::RpcVoteRequest& req, FpgaRaftService::RpcVoteResponse& resp, rrr::DeferredReply defer) override;
-  void Vote2FPGA(const FpgaRaftService::RpcVote2FPGARequest& req, FpgaRaftService::RpcVote2FPGAResponse& resp, rrr::DeferredReply defer) override;
-  void AppendEntries2(const FpgaRaftService::RpcAppendEntries2Request& req, FpgaRaftService::RpcAppendEntries2Response& resp, rrr::DeferredReply defer) override;
-  void AppendEntries(const FpgaRaftService::RpcAppendEntriesRequest& req, FpgaRaftService::RpcAppendEntriesResponse& resp, rrr::DeferredReply defer) override;
-  void Decide(const FpgaRaftService::RpcDecideRequest& req, FpgaRaftService::RpcDecideResponse& resp, rrr::DeferredReply defer) override;
+  void Vote(const FpgaRaftService::RpcVoteRequest& req, FpgaRaftService::RpcVoteResponse& resp, srpc::DeferredReply defer) override;
+  void Vote2FPGA(const FpgaRaftService::RpcVote2FPGARequest& req, FpgaRaftService::RpcVote2FPGAResponse& resp, srpc::DeferredReply defer) override;
+  void AppendEntries2(const FpgaRaftService::RpcAppendEntries2Request& req, FpgaRaftService::RpcAppendEntries2Response& resp, srpc::DeferredReply defer) override;
+  void AppendEntries(const FpgaRaftService::RpcAppendEntriesRequest& req, FpgaRaftService::RpcAppendEntriesResponse& resp, srpc::DeferredReply defer) override;
+  void Decide(const FpgaRaftService::RpcDecideRequest& req, FpgaRaftService::RpcDecideResponse& resp, srpc::DeferredReply defer) override;
   // END typed-rpc-decls (FpgaRaftServiceImpl)
 };
 

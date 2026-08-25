@@ -4,7 +4,7 @@
 #include "commo.h"
 #include "server.h"
 #include "frame.h"
-#include "rrr/misc/serializable.hpp"  // wrap_serializable
+#include "srpc/misc/serializable.hpp"  // wrap_serializable
 
 // #define DO_FINALIZE
 
@@ -12,7 +12,7 @@ namespace janus {
 
 const char* indicator[] = {"COPILOT", "PILOT"};
 
-bool FreeDangling(Communicator* comm, vector<std::pair<uint16_t, rrr::i64> > &dangling) {
+bool FreeDangling(Communicator* comm, vector<std::pair<uint16_t, srpc::i64> > &dangling) {
   for (auto &dang : dangling) {
     auto it = comm->rpc_clients_.find(dang.first);
     if (it != comm->rpc_clients_.end()) {

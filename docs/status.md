@@ -11,7 +11,7 @@ Mako is a **research-grade distributed transactional datastore** with strong aca
 
 | Component | Status | Production-Ready? |
 |-----------|--------|-------------------|
-| [RPC Framework (RRR/SRPC)](#1-rpc-framework-rrrsrpc) | 90% | Yes |
+| [RPC Framework (SRPC)](#1-rpc-framework-srpc) | 90% | Yes |
 | [Raft Consensus](#2-raft-consensus) | 70% | Partial |
 | [Paxos Consensus](#3-paxos-consensus) | 60% | No |
 | [Masstree (In-Memory Storage)](#4-masstree-in-memory-storage) | 90% | Yes (in-memory only) |
@@ -26,11 +26,11 @@ Mako is a **research-grade distributed transactional datastore** with strong aca
 
 ---
 
-## 1. RPC Framework (RRR/SRPC)
+## 1. RPC Framework (SRPC)
 
 **Status: 90% — Production-Ready**
 
-The RRR framework is the most mature component. Nearly all reliability features are fully implemented, not stubs.
+The SRPC framework is the most mature component. Nearly all reliability features are fully implemented, not stubs.
 
 ### What Works
 
@@ -467,12 +467,12 @@ Based on this assessment, here are the recommended development priorities:
               |                       |
               +-----------+-----------+
                           |
-                   RPC Framework (RRR)
+                   RPC Framework (SRPC)
                           |
                     Fiber / Reactor
 ```
 
-**Bottom-up readiness**: RRR and Masstree are solid foundations. The critical gap is the **persistence and recovery layer** connecting Masstree to RocksDB. Everything above (client APIs, Redis interface) depends on this being solved first.
+**Bottom-up readiness**: SRPC and Masstree are solid foundations. The critical gap is the **persistence and recovery layer** connecting Masstree to RocksDB. Everything above (client APIs, Redis interface) depends on this being solved first.
 
 ---
 

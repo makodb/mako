@@ -47,7 +47,7 @@ mdb::Txn* Scheduler2pl::get_mdb_txn(const i64 tid) {
 
 
 bool Scheduler2pl::Guard(Tx &tx_box, Row *row, int col_idx, bool write) {
-  // The rrr ALock family (and FineLockedRow's per-column locks) was
+  // The srpc ALock family (and FineLockedRow's per-column locks) was
   // removed as dead code, so 2PL fine-grained locking has no lock
   // implementation anymore. Abort loudly if this path is ever taken.
   verify(0);

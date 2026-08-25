@@ -2,8 +2,8 @@
 
 
 #include "value.h"
-// the variadic Log_* wrappers live outside src/rrr now
-#include "rrr_log.h"
+// the variadic Log_* wrappers live outside src/srpc now
+#include "srpc_log.h"
 
 import std;
 
@@ -57,7 +57,7 @@ int Value::compare(const Value& o) const {
         break;
 
     default:
-        rrr::Log_fatal("unexpected value type {}", (int)k_);
+        srpc::Log_fatal("unexpected value type {}", (int)k_);
         verify(0);
         break;
     }
@@ -81,7 +81,7 @@ void Value::write_binary(char* buf) const {
         memcpy(buf, &((*p_str_)[0]), p_str_->size());
         break;
     default:
-        rrr::Log_fatal("cannot write_binary() on value type {}", (int)k_);
+        srpc::Log_fatal("cannot write_binary() on value type {}", (int)k_);
         verify(0);
         break;
     }
@@ -107,7 +107,7 @@ blob Value::get_blob() const {
         b.len = p_str_->size();
         break;
     default:
-        rrr::Log_fatal("cannot get_blob() on value type {}", (int)k_);
+        srpc::Log_fatal("cannot get_blob() on value type {}", (int)k_);
         verify(0);
         break;
     }
@@ -132,7 +132,7 @@ std::ostream& operator<< (std::ostream& o, const Value& v) {
         o << "STR:" << *v.p_str_;
         break;
     default:
-        rrr::Log_fatal("unexpected value type {}", (int)v.k_);
+        srpc::Log_fatal("unexpected value type {}", (int)v.k_);
         verify(0);
         break;
     }

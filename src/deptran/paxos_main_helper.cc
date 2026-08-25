@@ -37,7 +37,7 @@ namespace paxos_impl {
 // getter functions accessed `nc_services[par_id]` which would have
 // been UB on the empty vector.  The live `nc_setup_server` /
 // `nc_start_server` create their own `NetworkClientServiceImpl`
-// instances inside an `rrr::Server` and never touch this global.
+// instances inside an `srpc::Server` and never touch this global.
 // removed
 //   `std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};`
 // — declared but never written or read anywhere in the codebase.
@@ -59,7 +59,7 @@ typedef pair<const char*, pair<int,int>> queue_entry_par;
 // removed
 //   `static std::queue<queue_entry_par> submit_queue_nc;`
 // — only used inside the now-deleted `PollSubQNc` function.
-// removed `static rrr::SpinLock l_;` —
+// removed `static srpc::SpinLock l_;` —
 // declared but no `lock()` / `unlock()` calls anywhere in the file
 // or codebase.
 // removed `static atomic<int> producer{0};`
@@ -558,7 +558,7 @@ void stuff_todo_learner_upgrade(){
 
 void* heartbeatBackground(void* arg) {
   auto poll_arc = PollThread::create();
-  auto rpc_cli = rrr::Client::create(poll_arc);
+  auto rpc_cli = srpc::Client::create(poll_arc);
   auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0);
   // get the leader's host + port
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
@@ -569,7 +569,7 @@ void* heartbeatBackground(void* arg) {
   }
 
   // Arc::get() returns const T*, but proxy doesn't mutate client
-  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
+  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<srpc::Client*>(rpc_cli.get()));
   while (es->running) {
     ServerControlProxy::RpcServerHeartBeatRequest req;
     auto connected = client_proxy->server_heart_beat(req);
@@ -771,7 +771,7 @@ nc_pclock(char *msg, clockid_t cid)
 
 void *nc_start_server(void *input) {
     auto poll_arc = PollThread::create();
-    rrr::Server *server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_arc)));
+    srpc::Server *server = new srpc::Server(srpc::Server::new_(rusty::Some(poll_arc)));
 
     server->reg_service_typed(rusty::make_box<NetworkClientServiceImpl>());
     server->start(reinterpret_cast<const int8_t*>((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str())  );

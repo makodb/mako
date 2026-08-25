@@ -4,12 +4,12 @@
 #include "bench/rw/workload.h"
 #include "classic/tpc_command.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 namespace janus {
 
 // Registry key comes from the payload's explicit MakoCommands membership.
-static int volatile x = rrr::SerializableRegistry::reg<SimpleRWCommand>(SimpleRWCommand::static_kind());
+static int volatile x = srpc::SerializableRegistry::reg<SimpleRWCommand>(SimpleRWCommand::static_kind());
 
 SimpleRWCommand::SimpleRWCommand() {
   //Log_info("[copilot+] SimpleRWCommand Empty created");
@@ -124,15 +124,15 @@ bool SimpleRWCommand::same_as(SimpleRWCommand &other) {
 // identical to the legacy to_marshal/from_marshal pair (just three
 // fields: type_, key_, value_).
 void SimpleRWCommand::save(BinaryWriteArchive& ar) const {
-  rrr::Serialize_::serialize(type_, ar);
-  rrr::Serialize_::serialize(key_, ar);
-  rrr::Serialize_::serialize(value_, ar);
+  srpc::Serialize_::serialize(type_, ar);
+  srpc::Serialize_::serialize(key_, ar);
+  srpc::Serialize_::serialize(value_, ar);
 }
 
 void SimpleRWCommand::load(BinaryReadArchive& ar) {
-  rrr::Deserialize_::deserialize(type_, ar);
-  rrr::Deserialize_::deserialize(key_, ar);
-  rrr::Deserialize_::deserialize(value_, ar);
+  srpc::Deserialize_::deserialize(type_, ar);
+  srpc::Deserialize_::deserialize(key_, ar);
+  srpc::Deserialize_::deserialize(value_, ar);
 }
 
 bool SimpleRWCommand::IsRead() {

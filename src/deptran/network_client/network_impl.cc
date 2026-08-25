@@ -16,7 +16,7 @@ NetworkClientServiceImpl::NetworkClientServiceImpl() {}
 void NetworkClientServiceImpl::txn_rmw(
     const NetworkClientService::RpcTxnRmwRequest& rpc_req,
     NetworkClientService::RpcTxnRmwResponse& resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   const auto& req = rpc_req._req;
   if (counter_rmw % 100 == 0) {
     std::cout << "rpc to be received:" << (getCurrentTimeMillis2() - req.back())
@@ -29,7 +29,7 @@ void NetworkClientServiceImpl::txn_rmw(
 void NetworkClientServiceImpl::txn_read(
     const NetworkClientService::RpcTxnReadRequest& rpc_req,
     NetworkClientService::RpcTxnReadResponse& resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   const auto& req = rpc_req._req;
   counter_read += 1;
   if (counter_read % 100 == 0) {
@@ -42,7 +42,7 @@ void NetworkClientServiceImpl::txn_read(
 void NetworkClientServiceImpl::txn_new_order(
     const NetworkClientService::RpcTxnNewOrderRequest& rpc_req,
     NetworkClientService::RpcTxnNewOrderResponse& resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)resp;
   new_order_requests.push_back(rpc_req._req);
   counter_new_order++;
@@ -52,7 +52,7 @@ void NetworkClientServiceImpl::txn_new_order(
 void NetworkClientServiceImpl::txn_payment(
     const NetworkClientService::RpcTxnPaymentRequest& rpc_req,
     NetworkClientService::RpcTxnPaymentResponse& resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)resp;
   payment_requests.push_back(rpc_req._req);
   counter_payement++;
@@ -62,7 +62,7 @@ void NetworkClientServiceImpl::txn_payment(
 void NetworkClientServiceImpl::txn_delivery(
     const NetworkClientService::RpcTxnDeliveryRequest& rpc_req,
     NetworkClientService::RpcTxnDeliveryResponse& resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)resp;
   delivery_requests.push_back(rpc_req._req);
   counter_delivery++;
@@ -72,7 +72,7 @@ void NetworkClientServiceImpl::txn_delivery(
 void NetworkClientServiceImpl::txn_order_status(
     const NetworkClientService::RpcTxnOrderStatusRequest& rpc_req,
     NetworkClientService::RpcTxnOrderStatusResponse& resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)resp;
   order_status_requests.push_back(rpc_req._req);
   counter_order_status++;
@@ -82,7 +82,7 @@ void NetworkClientServiceImpl::txn_order_status(
 void NetworkClientServiceImpl::txn_stock_level(
     const NetworkClientService::RpcTxnStockLevelRequest& rpc_req,
     NetworkClientService::RpcTxnStockLevelResponse& resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)resp;
   stock_level_requests.push_back(rpc_req._req);
   counter_stock_level++;

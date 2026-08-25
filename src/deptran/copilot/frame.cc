@@ -57,15 +57,15 @@ Communicator *CopilotFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> po
   return commo_;
 }
 
-vector<rrr::ServiceProxy>
+vector<srpc::ServiceProxy>
 CopilotFrame::CreateRpcServices(uint32_t site_id,
                                 TxLogServer *rep_sched,
-                                rusty::Arc<rrr::PollThread> poll_thread_worker) {
+                                rusty::Arc<srpc::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<rrr::ServiceProxy>();
+  auto result = std::vector<srpc::ServiceProxy>();
   switch (config->replica_proto_) {
     case MODE_COPILOT:
-      result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<CopilotServiceImpl>(rep_sched)));
+      result.push_back(srpc::make_service_proxy_from_typed_box(rusty::make_box<CopilotServiceImpl>(rep_sched)));
       break;
     default:
       break;

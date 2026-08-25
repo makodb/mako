@@ -125,13 +125,13 @@ void RaftWorker::SetupService() {
   std::string bind_addr = site_info_->GetBindAddress();
 
   // Create poll thread worker
-  svr_poll_thread_worker_ = rusty::Some(rrr::PollThread::create());
+  svr_poll_thread_worker_ = rusty::Some(srpc::PollThread::create());
 
   // Use as_ref().unwrap() to borrow without consuming the Option
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
   // Create RPC server first (before registering services)
-  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_worker.clone())));
+  rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(poll_worker.clone())));
 
   // Create and register Raft services (ownership transferred to rpc_server_)
   if (rep_frame_ != nullptr) {
@@ -180,8 +180,8 @@ void RaftWorker::SetupHeartbeat() {
   // Setup heartbeat/control RPC server
   // ServerControlServiceImpl ctor 3rd
   // `Recorder*` parameter removed; updated call site to 2 args.
-  svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
+  svr_hb_poll_thread_worker_g = rusty::Some(srpc::PollThread::create());
+  hb_rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());

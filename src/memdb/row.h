@@ -12,7 +12,7 @@
 #include "schema.h"
 #include "locking.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include <rusty/arc.hpp>
 
 using std::list;

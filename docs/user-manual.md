@@ -354,7 +354,7 @@ Primary CI script (`ci/ci.sh`) supports:
 - `multiShardSingleProcess`
 - `shard2SingleProcess`
 - `shard2SingleProcessReplication`
-- `rrrTests`
+- `srpcTests`
 - `cpuThrottlingScaling`
 - `clientServer`
 - `all`
@@ -457,7 +457,7 @@ Notes:
 - Example: `./docker_build.sh ci all 8` to run CI with 8 build jobs.
 - Jobs-only shorthand is supported: `./docker_build.sh ci 8` is equivalent to `./docker_build.sh ci all 8`.
 - `./docker_build.sh ci-quick <test>` skips rebuild and validates suite binaries up front (exists, executable, Docker-compatible RUNPATH); use `./docker_build.sh ci <test>` when `ci-quick` reports a binary issue.
-- `rrrTests` is not supported in `ci-quick` because it runs broad CTest suites; use `./docker_build.sh ci rrrTests`.
+- `srpcTests` is not supported in `ci-quick` because it runs broad CTest suites; use `./docker_build.sh ci srpcTests`.
 - `cpuThrottlingScaling` is supported via `./docker_build.sh ci` and `./docker_build.sh ci-quick`; it is longer-running than most tests because each CPU cap run waits for full benchmark completion to emit throughput summaries.
 - `shard1ReplicationSimple`, `shard2ReplicationSimple`, `shard1ReplicationSimpleRaft`, and `shard2ReplicationSimpleRaft` require `build_docker/simpleTransactionRep`; `test` alone may not produce that binary.
 

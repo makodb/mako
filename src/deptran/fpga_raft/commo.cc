@@ -30,14 +30,14 @@ void FpgaRaftCommo::BroadcastHeartbeat(parid_t par_id,
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
     
-		fuattr.callback = rrr::FutureCallback::from_callable([this, follower_id, logIndex] (rusty::Arc<Future> fu) {
+		fuattr.callback = srpc::FutureCallback::from_callable([this, follower_id, logIndex] (rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
       }
       uint64_t index = 0;
 			
-      rrr::deserialize_from(fu->get_reply(), index);
+      srpc::deserialize_from(fu->get_reply(), index);
 			this->matchedIndex[follower_id] = index;
 			
 			//Log_info("follower_index for {}: {} and leader_index: {}", follower_id, index, logIndex);
@@ -69,7 +69,7 @@ void FpgaRaftCommo::SendHeartbeat(parid_t par_id,
 		auto follower_id = p.first;
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([](rusty::Arc<Future> fu) {});
+    fuattr.callback = srpc::FutureCallback::from_callable([](rusty::Arc<Future> fu) {});
     
 		DepId di;
 		di.str = "dep";
@@ -105,7 +105,7 @@ void FpgaRaftCommo::SendAppendEntriesAgain(siteid_t site_id,
 		auto follower_id = p.first;
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([](rusty::Arc<Future> fu) {});
+    fuattr.callback = srpc::FutureCallback::from_callable([](rusty::Arc<Future> fu) {});
 
 		verify(cmd.has_value());
 
@@ -148,7 +148,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
   auto proxies = rpc_par_proxies_[par_id];
 
   unordered_set<std::string> ip_addrs {};
-  std::vector<std::shared_ptr<rrr::Client>> clients;
+  std::vector<std::shared_ptr<srpc::Client>> clients;
 
   vector<rusty::Arc<Future>> fus;
   WAN_WAIT;
@@ -185,7 +185,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
     struct timespec begin;
     clock_gettime(CLOCK_MONOTONIC, &begin);
 
-    fuattr.callback = rrr::FutureCallback::from_callable([this, e, isLeader, currentTerm, follower_id, n, ip, begin] (rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([this, e, isLeader, currentTerm, follower_id, n, ip, begin] (rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -194,9 +194,9 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
       uint64_t term = 0;
       uint64_t index = 0;
 			
-			rrr::deserialize_from(fu->get_reply(), accept);
-      rrr::deserialize_from(fu->get_reply(), term);
-      rrr::deserialize_from(fu->get_reply(), index);
+			srpc::deserialize_from(fu->get_reply(), accept);
+      srpc::deserialize_from(fu->get_reply(), term);
+      srpc::deserialize_from(fu->get_reply(), index);
 			
 			struct timespec end;
 			//clock_gettime(CLOCK_MONOTONIC, &begin);
@@ -245,7 +245,7 @@ void FpgaRaftCommo::BroadcastDecide(const parid_t par_id,
   for (auto& p : proxies) {
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([](rusty::Arc<Future> fu) {});
+    fuattr.callback = srpc::FutureCallback::from_callable([](rusty::Arc<Future> fu) {});
 		DepId di;
 		di.str = "dep";
 		di.id = dep_id;
@@ -280,15 +280,15 @@ FpgaRaftCommo::BroadcastVote(parid_t par_id,
         continue;
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
       }
       ballot_t term = 0;
       bool_t vote = false ;
-      rrr::deserialize_from(fu->get_reply(), term);
-      rrr::deserialize_from(fu->get_reply(), vote);
+      srpc::deserialize_from(fu->get_reply(), term);
+      srpc::deserialize_from(fu->get_reply(), vote);
       e->FeedResponse(vote, term);
       // TODO add max accepted value.
     });
@@ -324,15 +324,15 @@ FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,
         continue;
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = rrr::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
+    fuattr.callback = srpc::FutureCallback::from_callable([e](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
       }
       ballot_t term = 0;
       bool_t vote = false ;
-      rrr::deserialize_from(fu->get_reply(), term);
-      rrr::deserialize_from(fu->get_reply(), vote);
+      srpc::deserialize_from(fu->get_reply(), term);
+      srpc::deserialize_from(fu->get_reply(), vote);
       e->FeedResponse(vote, term);
     });
     FpgaRaftProxy::RpcVoteRequest req{};

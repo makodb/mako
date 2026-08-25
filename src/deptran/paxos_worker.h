@@ -35,8 +35,8 @@ namespace janus {
 
 // Explicit kind from the `PayloadMember<MakoCommands>` registration.
 class BulkPrepareLog
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, BulkPrepareLog>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, BulkPrepareLog>::KIND> {
   public:
   vector<pair<uint32_t,slotid_t>> min_prepared_slots;
   uint32_t leader_id;
@@ -45,29 +45,29 @@ class BulkPrepareLog
   BulkPrepareLog() = default;
 
   void save(BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(static_cast<int32_t>(min_prepared_slots.size()), ar);
-    for (auto i : min_prepared_slots) rrr::Serialize_::serialize(i, ar);
-    rrr::Serialize_::serialize(leader_id, ar);
-    rrr::Serialize_::serialize(epoch, ar);
+    srpc::Serialize_::serialize(static_cast<int32_t>(min_prepared_slots.size()), ar);
+    for (auto i : min_prepared_slots) srpc::Serialize_::serialize(i, ar);
+    srpc::Serialize_::serialize(leader_id, ar);
+    srpc::Serialize_::serialize(epoch, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     int32_t sz;
-    rrr::Deserialize_::deserialize(sz, ar);
+    srpc::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       pair<uint32_t, slotid_t> pr;
-      rrr::Deserialize_::deserialize(pr, ar);
+      srpc::Deserialize_::deserialize(pr, ar);
       min_prepared_slots.push_back(pr);
     }
-    rrr::Deserialize_::deserialize(leader_id, ar);
-    rrr::Deserialize_::deserialize(epoch, ar);
+    srpc::Deserialize_::deserialize(leader_id, ar);
+    srpc::Deserialize_::deserialize(epoch, ar);
   }
 };
 
 // Explicit kind from the `PayloadMember<MakoCommands>` registration.
 class PaxosPrepCmd
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, PaxosPrepCmd>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, PaxosPrepCmd>::KIND> {
   public:
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
@@ -79,35 +79,35 @@ class PaxosPrepCmd
   // prefix is `slots.size()` instead of `ballots.size()` — wire
   // format byte-for-byte identical.
   void save(BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
-    for (auto i : slots) rrr::Serialize_::serialize(i, ar);
-    rrr::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
-    for (auto i : ballots) rrr::Serialize_::serialize(i, ar);
-    rrr::Serialize_::serialize(leader_id, ar);
+    srpc::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
+    for (auto i : slots) srpc::Serialize_::serialize(i, ar);
+    srpc::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
+    for (auto i : ballots) srpc::Serialize_::serialize(i, ar);
+    srpc::Serialize_::serialize(leader_id, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     int32_t sz;
-    rrr::Deserialize_::deserialize(sz, ar);
+    srpc::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       slotid_t x;
-      rrr::Deserialize_::deserialize(x, ar);
+      srpc::Deserialize_::deserialize(x, ar);
       slots.push_back(x);
     }
-    rrr::Deserialize_::deserialize(sz, ar);
+    srpc::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       ballot_t x;
-      rrr::Deserialize_::deserialize(x, ar);
+      srpc::Deserialize_::deserialize(x, ar);
       ballots.push_back(x);
     }
-    rrr::Deserialize_::deserialize(leader_id, ar);
+    srpc::Deserialize_::deserialize(leader_id, ar);
   }
 };
 
 // Explicit kind from the `PayloadMember<MakoCommands>` registration.
 class HeartBeatLog
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, HeartBeatLog>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, HeartBeatLog>::KIND> {
   public:
   uint32_t leader_id;
   int epoch;
@@ -115,20 +115,20 @@ class HeartBeatLog
   HeartBeatLog() = default;
 
   void save(BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(leader_id, ar);
-    rrr::Serialize_::serialize(epoch, ar);
+    srpc::Serialize_::serialize(leader_id, ar);
+    srpc::Serialize_::serialize(epoch, ar);
   }
 
   void load(BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(leader_id, ar);
-    rrr::Deserialize_::deserialize(epoch, ar);
+    srpc::Deserialize_::deserialize(leader_id, ar);
+    srpc::Deserialize_::deserialize(epoch, ar);
   }
 };
 
 // Explicit kind from the `PayloadMember<MakoCommands>` registration.
 class SyncLogRequest
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, SyncLogRequest>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, SyncLogRequest>::KIND> {
   public:
     int leader_id;
     ballot_t epoch;
@@ -136,22 +136,22 @@ class SyncLogRequest
     SyncLogRequest() = default;
 
     void save(BinaryWriteArchive& ar) const {
-      rrr::Serialize_::serialize(leader_id, ar);
-      rrr::Serialize_::serialize(epoch, ar);
-      rrr::Serialize_::serialize(static_cast<int32_t>(sync_commit_slot.size()), ar);
+      srpc::Serialize_::serialize(leader_id, ar);
+      srpc::Serialize_::serialize(epoch, ar);
+      srpc::Serialize_::serialize(static_cast<int32_t>(sync_commit_slot.size()), ar);
       for (size_t i = 0; i < sync_commit_slot.size(); i++) {
-        rrr::Serialize_::serialize(sync_commit_slot[i], ar);
+        srpc::Serialize_::serialize(sync_commit_slot[i], ar);
       }
     }
 
     void load(BinaryReadArchive& ar) {
-      rrr::Deserialize_::deserialize(leader_id, ar);
-      rrr::Deserialize_::deserialize(epoch, ar);
+      srpc::Deserialize_::deserialize(leader_id, ar);
+      srpc::Deserialize_::deserialize(epoch, ar);
       int32_t sz;
-      rrr::Deserialize_::deserialize(sz, ar);
+      srpc::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
         slotid_t x;
-        rrr::Deserialize_::deserialize(x, ar);
+        srpc::Deserialize_::deserialize(x, ar);
         sync_commit_slot.push_back(x);
       }
     }
@@ -167,44 +167,44 @@ class SyncLogRequest
 // MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
 // layout as the legacy `m << *sync_data[i]` / `m >> *x`.
 class SyncLogResponse
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, SyncLogResponse>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, SyncLogResponse>::KIND> {
   public:
     vector<rusty::Arc<janus::Command>> sync_data;
     vector<vector<slotid_t>> missing_slots;
     SyncLogResponse() = default;
 
     void save(BinaryWriteArchive& ar) const {
-      rrr::Serialize_::serialize(static_cast<int32_t>(sync_data.size()), ar);
+      srpc::Serialize_::serialize(static_cast<int32_t>(sync_data.size()), ar);
       for (size_t i = 0; i < sync_data.size(); i++) {
-        rrr::Serialize_::serialize(*sync_data[i], ar);
+        srpc::Serialize_::serialize(*sync_data[i], ar);
       }
-      rrr::Serialize_::serialize(static_cast<int32_t>(missing_slots.size()), ar);
+      srpc::Serialize_::serialize(static_cast<int32_t>(missing_slots.size()), ar);
       for (size_t i = 0; i < missing_slots.size(); i++) {
-        rrr::Serialize_::serialize(static_cast<int32_t>(missing_slots[i].size()), ar);
+        srpc::Serialize_::serialize(static_cast<int32_t>(missing_slots[i].size()), ar);
         for (size_t j = 0; j < missing_slots[i].size(); j++) {
-          rrr::Serialize_::serialize(missing_slots[i][j], ar);
+          srpc::Serialize_::serialize(missing_slots[i][j], ar);
         }
       }
     }
 
     void load(BinaryReadArchive& ar) {
       int32_t sz;
-      rrr::Deserialize_::deserialize(sz, ar);
+      srpc::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
         auto x = rusty::Arc<janus::Command>::make();
         // @unsafe - unique-owner mutation window (factory-fresh Arc).
-        rrr::Deserialize_::deserialize(x.get_mut().unwrap(), ar);
+        srpc::Deserialize_::deserialize(x.get_mut().unwrap(), ar);
         sync_data.push_back(std::move(x));
       }
-      rrr::Deserialize_::deserialize(sz, ar);
+      srpc::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
         int32_t sz1;
-        rrr::Deserialize_::deserialize(sz1, ar);
+        srpc::Deserialize_::deserialize(sz1, ar);
         vector<slotid_t> cur;
         for (int j = 0; j < sz1; j++) {
           slotid_t x;
-          rrr::Deserialize_::deserialize(x, ar);
+          srpc::Deserialize_::deserialize(x, ar);
           cur.push_back(x);
         }
         missing_slots.push_back(std::move(cur));
@@ -214,8 +214,8 @@ class SyncLogResponse
 
 // Explicit kind from the `PayloadMember<MakoCommands>` registration.
 class SyncNoOpRequest
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, SyncNoOpRequest>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, SyncNoOpRequest>::KIND> {
   public:
   int leader_id;
   ballot_t epoch;
@@ -223,22 +223,22 @@ class SyncNoOpRequest
   SyncNoOpRequest() = default;
 
   void save(BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(leader_id, ar);
-    rrr::Serialize_::serialize(epoch, ar);
-    rrr::Serialize_::serialize(static_cast<int32_t>(sync_slots.size()), ar);
+    srpc::Serialize_::serialize(leader_id, ar);
+    srpc::Serialize_::serialize(epoch, ar);
+    srpc::Serialize_::serialize(static_cast<int32_t>(sync_slots.size()), ar);
     for (size_t i = 0; i < sync_slots.size(); i++) {
-      rrr::Serialize_::serialize(sync_slots[i], ar);
+      srpc::Serialize_::serialize(sync_slots[i], ar);
     }
   }
 
   void load(BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(leader_id, ar);
-    rrr::Deserialize_::deserialize(epoch, ar);
+    srpc::Deserialize_::deserialize(leader_id, ar);
+    srpc::Deserialize_::deserialize(epoch, ar);
     int32_t sz;
-    rrr::Deserialize_::deserialize(sz, ar);
+    srpc::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       slotid_t x;
-      rrr::Deserialize_::deserialize(x, ar);
+      srpc::Deserialize_::deserialize(x, ar);
       sync_slots.push_back(x);
     }
   }
@@ -258,8 +258,8 @@ class SyncNoOpRequest
 // ever enabled; only `length`, `log_entry`, and `operation_test` are
 // actually used by save/load.
 class LogEntry
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, LogEntry>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, LogEntry>::KIND> {
 public:
   int length = 0;
   std::string log_entry;  // for the serialization over the network, syncLog using shared_ptr as well
@@ -288,8 +288,8 @@ public:
 // `serialized_slots` members. They were a zero-copy fast path that
 // no caller ever enabled.
 class BulkPaxosCmd
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, BulkPaxosCmd>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, BulkPaxosCmd>::KIND> {
 public:
   int32_t leader_id;
   vector<slotid_t> slots{};
@@ -304,42 +304,42 @@ public:
   }
 
   void save(BinaryWriteArchive& ar) const {
-      rrr::Serialize_::serialize(static_cast<int32_t>(leader_id), ar);
-      rrr::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
+      srpc::Serialize_::serialize(static_cast<int32_t>(leader_id), ar);
+      srpc::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
       for (auto i : slots) {
-          rrr::Serialize_::serialize(i, ar);
+          srpc::Serialize_::serialize(i, ar);
       }
-      rrr::Serialize_::serialize(static_cast<int32_t>(ballots.size()), ar);
+      srpc::Serialize_::serialize(static_cast<int32_t>(ballots.size()), ar);
       for (auto i : ballots) {
-          rrr::Serialize_::serialize(i, ar);
+          srpc::Serialize_::serialize(i, ar);
       }
-      rrr::Serialize_::serialize(static_cast<int32_t>(cmds.size()), ar);
+      srpc::Serialize_::serialize(static_cast<int32_t>(cmds.size()), ar);
       for (const auto& sp : cmds) {
-          rrr::Serialize_::serialize(*sp, ar);
+          srpc::Serialize_::serialize(*sp, ar);
       }
   }
 
   void load(BinaryReadArchive& ar) {
       int32_t szs, szb, szc;
-      rrr::Deserialize_::deserialize(leader_id, ar);
-      rrr::Deserialize_::deserialize(szs, ar);
+      srpc::Deserialize_::deserialize(leader_id, ar);
+      srpc::Deserialize_::deserialize(szs, ar);
       for (int i = 0; i < szs; i++) {
           slotid_t x;
-          rrr::Deserialize_::deserialize(x, ar);
+          srpc::Deserialize_::deserialize(x, ar);
           slots.push_back(x);
       }
-      rrr::Deserialize_::deserialize(szb, ar);
+      srpc::Deserialize_::deserialize(szb, ar);
       // Read exactly the number of ballots that were serialized.
       for (int i = 0; i < szb; i++) {
           ballot_t x;
-          rrr::Deserialize_::deserialize(x, ar);
+          srpc::Deserialize_::deserialize(x, ar);
           ballots.push_back(x);
       }
-      rrr::Deserialize_::deserialize(szc, ar);
+      srpc::Deserialize_::deserialize(szc, ar);
       for (int i = 0; i < szc; i++) {
           auto sp_md = rusty::Arc<janus::Command>::make();
           // @unsafe - unique-owner mutation window (factory-fresh Arc).
-          rrr::Deserialize_::deserialize(sp_md.get_mut().unwrap(), ar);
+          srpc::Deserialize_::deserialize(sp_md.get_mut().unwrap(), ar);
           cmds.push_back(std::move(sp_md));
       }
   }
@@ -371,9 +371,9 @@ public:
   // removed `SubmitPool* submit_pool = nullptr;`
   // — always nullptr; the assignment was commented out and the
   // class itself is now deleted.
-  rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
+  rusty::Option<rusty::Arc<srpc::PollThread>> svr_poll_thread_worker_;
   // Services are now owned by rpc_server_ via reg_service()
-  rrr::Server* rpc_server_ = nullptr;
+  srpc::Server* rpc_server_ = nullptr;
   // removed `std::atomic<int> submit_num{0};`
   // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
   // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
@@ -388,9 +388,9 @@ public:
   // `AddAcceptNc` / `StartReadAcceptNc` NC-batching pair.
 
 
-  rusty::Option<rusty::Arc<rrr::PollThread>> svr_hb_poll_thread_worker_g;
+  rusty::Option<rusty::Arc<srpc::PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
-  rrr::Server* hb_rpc_server_ = nullptr;
+  srpc::Server* hb_rpc_server_ = nullptr;
 
   Config::SiteInfo* site_info_ = nullptr;
   std::queue<std::tuple<int, int, int, int, const char *>> un_replay_logs_ ;  // timestamp, slot_id, status, len, log
@@ -450,7 +450,7 @@ public:
   void register_apply_callback(std::function<void(const char*, int)>);
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)>);
   void register_apply_callback_par_id_return(std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)>);
-  rusty::Arc<rrr::PollThread> GetPollThread(){
+  rusty::Arc<srpc::PollThread> GetPollThread(){
       verify(svr_poll_thread_worker_.is_some());
       return svr_poll_thread_worker_.as_ref().unwrap().clone();
   }

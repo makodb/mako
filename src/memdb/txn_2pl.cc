@@ -74,9 +74,9 @@ void Txn2PL::release_resource() {
 
 
 // insert piece in piece_map_, set reply dragonball & set output
-//void Txn2PL::init_piece(i64 tid, i64 pid, rrr::DragonBall *db,
+//void Txn2PL::init_piece(i64 tid, i64 pid, srpc::DragonBall *db,
 //                        mdb::Value *output,
-//                        rrr::i32 *output_size) {
+//                        srpc::i32 *output_size) {
 //  PieceStatus *ps = new PieceStatus(tid,
 //                                    pid,
 //                                    db,

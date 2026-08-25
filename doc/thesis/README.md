@@ -234,7 +234,7 @@ These are the primary source files discussed across the documentation, organized
 
 | Term | Definition |
 |------|------------|
-| **rrr** | Mako's custom RPC framework: a TCP/IP-based request/response system with ~10--50 us latency. Used as the default transport. |
+| **srpc** | Mako's custom RPC framework: a TCP/IP-based request/response system with ~10--50 us latency. Used as the default transport. |
 | **eRPC** | An alternative high-performance RDMA-based RPC backend (~1--2 us latency). Not used for Raft testing. |
 | **DPDK** | Data Plane Development Kit: kernel bypass networking. Available as an optional transport but not used for Raft. |
 | **RustyCpp** | A static analysis tool that enforces Rust-style ownership and borrowing rules on C++ code. All new code must pass borrow checking. |

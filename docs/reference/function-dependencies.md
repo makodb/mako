@@ -502,7 +502,7 @@ Communicator* CreateCommo(...)
 
 ```cpp
 // Location: frame.h:37
-vector<rrr::Service*> CreateRpcServices(...)
+vector<srpc::Service*> CreateRpcServices(...)
   Status: ⏳ Complex factory - analyze later
 ```
 

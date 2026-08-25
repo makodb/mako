@@ -8,7 +8,7 @@
 #include "server_worker.h"
 #include "scheduler.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 // #define CPU_PROFILE 1
 
@@ -21,8 +21,8 @@ using namespace janus;
 // Shared client status for synchronization and statistics
 // Can be accessed by both RPC service and external callers (ClientWorker, Coordinators)
 static rusty::Option<rusty::Arc<ClientStatus>> client_status_g = rusty::None;
-static rusty::Option<rusty::Arc<rrr::PollThread>> cli_poll_thread_worker_g = rusty::None;
-static rrr::Server *cli_hb_server_g = nullptr;
+static rusty::Option<rusty::Arc<srpc::PollThread>> cli_poll_thread_worker_g = rusty::None;
+static srpc::Server *cli_hb_server_g = nullptr;
 
 static vector<ServerWorker> svr_workers_g = {};
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
@@ -61,8 +61,8 @@ void client_setup_heartbeat(int num_clients) {
   bool hb = Config::GetConfig()->do_heart_beat();
   if (hb) {
     // setup controller rpc server
-    cli_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-    cli_hb_server_g = new rrr::Server(rrr::Server::new_(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone())));
+    cli_poll_thread_worker_g = rusty::Some(srpc::PollThread::create());
+    cli_hb_server_g = new srpc::Server(srpc::Server::new_(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone())));
 
     // Create service with Arc<ClientStatus>, register as owned Box<Service>
     cli_hb_server_g->reg_service_typed(rusty::make_box<ClientControlServiceImpl>(

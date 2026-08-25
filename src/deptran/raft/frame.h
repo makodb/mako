@@ -47,9 +47,9 @@ class RaftFrame : public Frame {
                                  shared_ptr<TxnRegistry> txn_reg) override;
   TxLogServer *CreateScheduler() override;
   Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::Option<rusty::Arc<PollThread>>()) override;
-  vector<rrr::ServiceProxy> CreateRpcServices(uint32_t site_id,
+  vector<srpc::ServiceProxy> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
-                                           rusty::Arc<rrr::PollThread> poll_thread_worker) override;
+                                           rusty::Arc<srpc::PollThread> poll_thread_worker) override;
 };
 
 } // namespace janus

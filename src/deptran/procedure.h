@@ -186,8 +186,8 @@ typedef map<parid_t, vector<shared_ptr<SimpleCommand>>> ReadyPiecesData;
 // archive operators in `command_marshaler.cc`, which mirror the
 // existing Marshal-based ones byte-for-byte.
 class VecPieceData
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, VecPieceData>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, VecPieceData>::KIND> {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece_data_{};
@@ -197,33 +197,33 @@ class VecPieceData
 
   void save(BinaryWriteArchive& ar) const {
     verify(sp_vec_piece_data_);
-    rrr::Serialize_::serialize(static_cast<int32_t>(sp_vec_piece_data_->size()), ar);
+    srpc::Serialize_::serialize(static_cast<int32_t>(sp_vec_piece_data_->size()), ar);
     for (const auto& sp : *sp_vec_piece_data_) {
-      rrr::Serialize_::serialize(*sp, ar);
+      srpc::Serialize_::serialize(*sp, ar);
     }
-    rrr::Serialize_::serialize(time_sent_from_client_, ar);
-    rrr::Serialize_::serialize(is_recovery_command_, ar);
+    srpc::Serialize_::serialize(time_sent_from_client_, ar);
+    srpc::Serialize_::serialize(is_recovery_command_, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     verify(!sp_vec_piece_data_);
     sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<TxPieceData>>>();
     int32_t sz;
-    rrr::Deserialize_::deserialize(sz, ar);
+    srpc::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       auto x = std::make_shared<TxPieceData>();
-      rrr::Deserialize_::deserialize(*x, ar);
+      srpc::Deserialize_::deserialize(*x, ar);
       sp_vec_piece_data_->push_back(x);
     }
-    rrr::Deserialize_::deserialize(time_sent_from_client_, ar);
-    rrr::Deserialize_::deserialize(is_recovery_command_, ar);
+    srpc::Deserialize_::deserialize(time_sent_from_client_, ar);
+    srpc::Deserialize_::deserialize(is_recovery_command_, ar);
   }
 };
 
 // Explicit kind from the `PayloadMember<MakoCommands>` registration.
 class VecRecData
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, VecRecData>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, VecRecData>::KIND> {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<key_t>> key_data_{};
@@ -231,9 +231,9 @@ class VecRecData
 
   void save(BinaryWriteArchive& ar) const {
     verify(key_data_);
-    rrr::Serialize_::serialize(static_cast<int32_t>(key_data_->size()), ar);
+    srpc::Serialize_::serialize(static_cast<int32_t>(key_data_->size()), ar);
     for (const key_t& k : *key_data_) {
-      rrr::Serialize_::serialize(k, ar);
+      srpc::Serialize_::serialize(k, ar);
     }
   }
 
@@ -241,10 +241,10 @@ class VecRecData
     verify(!key_data_);
     key_data_ = std::make_shared<vector<key_t>>();
     int32_t sz;
-    rrr::Deserialize_::deserialize(sz, ar);
+    srpc::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       key_t x;
-      rrr::Deserialize_::deserialize(x, ar);
+      srpc::Deserialize_::deserialize(x, ar);
       key_data_->push_back(x);
     }
   }
@@ -252,8 +252,8 @@ class VecRecData
 
 // Explicit kind from the `PayloadMember<MakoCommands>` registration.
 class ViewData
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, ViewData>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, ViewData>::KIND> {
  public:
   View view_;
   parid_t partition_id_ = 0; // partition id for which this view applies
@@ -269,30 +269,30 @@ class ViewData
   View& GetView() { return view_; }
 
   void save(BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(view_.n_, ar);
-    rrr::Serialize_::serialize(view_.view_id_, ar);
-    rrr::Serialize_::serialize(view_.timestamp_, ar);
-    rrr::Serialize_::serialize(static_cast<int32_t>(view_.leaders_.size()), ar);
+    srpc::Serialize_::serialize(view_.n_, ar);
+    srpc::Serialize_::serialize(view_.view_id_, ar);
+    srpc::Serialize_::serialize(view_.timestamp_, ar);
+    srpc::Serialize_::serialize(static_cast<int32_t>(view_.leaders_.size()), ar);
     for (int leader : view_.leaders_) {
-      rrr::Serialize_::serialize(leader, ar);
+      srpc::Serialize_::serialize(leader, ar);
     }
-    rrr::Serialize_::serialize(partition_id_, ar);
+    srpc::Serialize_::serialize(partition_id_, ar);
   }
 
   void load(BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(view_.n_, ar);
-    rrr::Deserialize_::deserialize(view_.view_id_, ar);
-    rrr::Deserialize_::deserialize(view_.timestamp_, ar);
+    srpc::Deserialize_::deserialize(view_.n_, ar);
+    srpc::Deserialize_::deserialize(view_.view_id_, ar);
+    srpc::Deserialize_::deserialize(view_.timestamp_, ar);
     int32_t leader_count;
-    rrr::Deserialize_::deserialize(leader_count, ar);
+    srpc::Deserialize_::deserialize(leader_count, ar);
     view_.leaders_.clear();
     view_.leaders_.reserve(leader_count);
     for (int i = 0; i < leader_count; i++) {
       int leader;
-      rrr::Deserialize_::deserialize(leader, ar);
+      srpc::Deserialize_::deserialize(leader, ar);
       view_.leaders_.push_back(leader);
     }
-    rrr::Deserialize_::deserialize(partition_id_, ar);
+    srpc::Deserialize_::deserialize(partition_id_, ar);
   }
 
   std::string ToString() const {
@@ -312,8 +312,8 @@ class ViewData
 // auto-convert via Command's implicit ctor.  save/load drives
 // Command archive ops directly; wire format unchanged.
 class KeyCmdBatchData
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, KeyCmdBatchData>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, KeyCmdBatchData>::KIND> {
  public:
   std::vector<key_t> keys_;
   std::vector<Command> commands_;
@@ -346,23 +346,23 @@ class KeyCmdBatchData
   void save(BinaryWriteArchive& ar) const {
     verify(keys_.size() == commands_.size());
     int32_t sz = commands_.size();
-    rrr::Serialize_::serialize(sz, ar);
+    srpc::Serialize_::serialize(sz, ar);
     for (int32_t i = 0; i < sz; i++) {
-      rrr::Serialize_::serialize(keys_[i], ar);
+      srpc::Serialize_::serialize(keys_[i], ar);
       // drive Command's archive op directly (same wire
       // format as the previous `MarshallDeputy(commands_[i])` round-trip).
-      rrr::Serialize_::serialize(commands_[i], ar);
+      srpc::Serialize_::serialize(commands_[i], ar);
     }
   }
 
   void load(BinaryReadArchive& ar) {
     int32_t sz = 0;
-    rrr::Deserialize_::deserialize(sz, ar);
+    srpc::Deserialize_::deserialize(sz, ar);
     keys_.resize(sz);
     commands_.resize(sz);
     for (int32_t i = 0; i < sz; i++) {
-      rrr::Deserialize_::deserialize(keys_[i], ar);
-      rrr::Deserialize_::deserialize(commands_[i], ar);
+      srpc::Deserialize_::deserialize(keys_[i], ar);
+      srpc::Deserialize_::deserialize(commands_[i], ar);
     }
   }
 };
@@ -509,7 +509,7 @@ class TxData: public CmdData {
 
 } // namespace rcc
 
-// removed an empty `namespace rrr {}` block
+// removed an empty `namespace srpc {}` block
 // at the bottom of this header — companion to the Phase 4e-2 cleanup
 // of the same shape in `tpc_command.h`.  The block previously held
 // `TypedMarshallableAdapterTraits<T>` specializations for VecRecData

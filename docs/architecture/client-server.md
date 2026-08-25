@@ -79,7 +79,7 @@ delete db;
 |-----------|------|-------------|
 | RemoteDB | `src/mako/remote_db.hh` | Client-side database proxy |
 | RemoteTable | `src/mako/remote_db.hh` | Client-side table proxy |
-| MakoClientProxy | `src/mako/client_proxy.h` | RRR RPC client wrapper |
+| MakoClientProxy | `src/mako/client_proxy.h` | SRPC RPC client wrapper |
 | ClientTcpServer | `src/mako/lib/client_tcp_server.h` | Server-side TCP listener |
 
 ### RPC Protocol
@@ -186,5 +186,5 @@ struct RemoteOptions {
 
 The client-server architecture was implemented in January 2026:
 - Phase 1-5: Design, server, client library, examples, CI tests
-- Phase 6-7: RRR RPC integration, code consolidation
+- Phase 6-7: SRPC RPC integration, code consolidation
 - `makoServer.cc` was merged into `simpleTransactionRep.cc` with `--server` flag

@@ -65,10 +65,10 @@ class ServerControlServiceImpl: public ServerControlService {
 
   // BEGIN typed-rpc-decls (ServerControlServiceImpl)
   // Typed RPC interface overrides (new API).
-  void server_shutdown(const ServerControlService::RpcServerShutdownRequest& req, ServerControlService::RpcServerShutdownResponse& resp, rrr::DeferredReply defer) override;
-  void server_ready(const ServerControlService::RpcServerReadyRequest& req, ServerControlService::RpcServerReadyResponse& resp, rrr::DeferredReply defer) override;
-  void server_heart_beat(const ServerControlService::RpcServerHeartBeatRequest& req, ServerControlService::RpcServerHeartBeatResponse& resp, rrr::DeferredReply defer) override;
-  void server_heart_beat_with_data(const ServerControlService::RpcServerHeartBeatWithDataRequest& req, ServerControlService::RpcServerHeartBeatWithDataResponse& resp, rrr::DeferredReply defer) override;
+  void server_shutdown(const ServerControlService::RpcServerShutdownRequest& req, ServerControlService::RpcServerShutdownResponse& resp, srpc::DeferredReply defer) override;
+  void server_ready(const ServerControlService::RpcServerReadyRequest& req, ServerControlService::RpcServerReadyResponse& resp, srpc::DeferredReply defer) override;
+  void server_heart_beat(const ServerControlService::RpcServerHeartBeatRequest& req, ServerControlService::RpcServerHeartBeatResponse& resp, srpc::DeferredReply defer) override;
+  void server_heart_beat_with_data(const ServerControlService::RpcServerHeartBeatWithDataRequest& req, ServerControlService::RpcServerHeartBeatWithDataResponse& resp, srpc::DeferredReply defer) override;
   // END typed-rpc-decls (ServerControlServiceImpl)
 };
 
@@ -100,14 +100,14 @@ class ClientControlServiceImpl: public ClientControlService {
 
   // BEGIN typed-rpc-decls (ClientControlServiceImpl)
   // Typed RPC interface overrides (new API).
-  void client_shutdown(const ClientControlService::RpcClientShutdownRequest& req, ClientControlService::RpcClientShutdownResponse& resp, rrr::DeferredReply defer) override;
-  void client_force_stop(const ClientControlService::RpcClientForceStopRequest& req, ClientControlService::RpcClientForceStopResponse& resp, rrr::DeferredReply defer) override;
-  void client_response(const ClientControlService::RpcClientResponseRequest& req, ClientControlService::RpcClientResponseResponse& resp, rrr::DeferredReply defer) override;
-  void client_ready_block(const ClientControlService::RpcClientReadyBlockRequest& req, ClientControlService::RpcClientReadyBlockResponse& resp, rrr::DeferredReply defer) override;
-  void client_ready(const ClientControlService::RpcClientReadyRequest& req, ClientControlService::RpcClientReadyResponse& resp, rrr::DeferredReply defer) override;
-  void client_start(const ClientControlService::RpcClientStartRequest& req, ClientControlService::RpcClientStartResponse& resp, rrr::DeferredReply defer) override;
-  void client_get_txn_names(const ClientControlService::RpcClientGetTxnNamesRequest& req, ClientControlService::RpcClientGetTxnNamesResponse& resp, rrr::DeferredReply defer) override;
-  void DispatchTxn(const ClientControlService::RpcDispatchTxnRequest& req, ClientControlService::RpcDispatchTxnResponse& resp, rrr::DeferredReply defer) override;
+  void client_shutdown(const ClientControlService::RpcClientShutdownRequest& req, ClientControlService::RpcClientShutdownResponse& resp, srpc::DeferredReply defer) override;
+  void client_force_stop(const ClientControlService::RpcClientForceStopRequest& req, ClientControlService::RpcClientForceStopResponse& resp, srpc::DeferredReply defer) override;
+  void client_response(const ClientControlService::RpcClientResponseRequest& req, ClientControlService::RpcClientResponseResponse& resp, srpc::DeferredReply defer) override;
+  void client_ready_block(const ClientControlService::RpcClientReadyBlockRequest& req, ClientControlService::RpcClientReadyBlockResponse& resp, srpc::DeferredReply defer) override;
+  void client_ready(const ClientControlService::RpcClientReadyRequest& req, ClientControlService::RpcClientReadyResponse& resp, srpc::DeferredReply defer) override;
+  void client_start(const ClientControlService::RpcClientStartRequest& req, ClientControlService::RpcClientStartResponse& resp, srpc::DeferredReply defer) override;
+  void client_get_txn_names(const ClientControlService::RpcClientGetTxnNamesRequest& req, ClientControlService::RpcClientGetTxnNamesResponse& resp, srpc::DeferredReply defer) override;
+  void DispatchTxn(const ClientControlService::RpcDispatchTxnRequest& req, ClientControlService::RpcDispatchTxnResponse& resp, srpc::DeferredReply defer) override;
   // END typed-rpc-decls (ClientControlServiceImpl)
 };
 

@@ -56,7 +56,7 @@ public:
 - OLTP workloads with proper isolation
 - Production deployments
 
-## RRR RPC Framework Migration (Medium Priority)
+## SRPC RPC Framework Migration (Medium Priority)
 
 ### Current State
 
@@ -64,7 +64,7 @@ The client-server communication currently uses raw TCP sockets with custom messa
 
 ### Proposed Change
 
-Migrate to the existing RRR RPC framework (`src/rrr/rpc/`) to gain:
+Migrate to the existing SRPC RPC framework (`src/srpc/rpc/`) to gain:
 - Automatic connection management
 - Timeout and retry handling
 - Health checking
@@ -86,7 +86,7 @@ Migrate to the existing RRR RPC framework (`src/rrr/rpc/`) to gain:
 
 ### Migration Path
 
-Phase 1: Add RRR-based implementation alongside TCP
+Phase 1: Add SRPC-based implementation alongside TCP
 Phase 2: Test and validate correctness
 Phase 3: Deprecate raw TCP implementation
 Phase 4: Remove TCP code
@@ -112,11 +112,11 @@ Phase 4: Remove TCP code
 | Feature | Priority | Estimated Effort |
 |---------|----------|------------------|
 | Transaction Isolation | High | 300-400 LOC |
-| RRR Migration | Medium | 200-300 LOC |
+| SRPC Migration | Medium | 200-300 LOC |
 | Performance Eval | Low | Testing only |
 
 ## References
 
 - Current implementation: [Client-Server Architecture](client-server.md)
-- RRR RPC framework: `src/rrr/rpc/`
+- SRPC RPC framework: `src/srpc/rpc/`
 - Example code: `examples/simpleTransactionRep.cc`
