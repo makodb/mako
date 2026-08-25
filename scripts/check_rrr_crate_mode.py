@@ -5844,7 +5844,7 @@ ABI_SPECS = {
                 ),
                 (
                     "T",
-                    "janus::QuorumEvent@rrr.reactor::QuorumEvent(rusty::Cell<rrr::EventStatus@rrr.reactor>, rusty::thread::ThreadId, rrr::EventState@rrr.reactor, rusty::Cell<bool>, rusty::sync::Weak<rrr::EventPollable@rrr.reactor>, rusty::Cell<int>, rusty::Cell<int>, rusty::RefCell<std_port::collections::hash::map::HashMap@std_port<unsigned short, long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, int, int, rusty::Cell<janus::QuorumPolicy@rrr.reactor>, rusty::Cell<bool>, rusty::Cell<int>, rusty::Cell<int>, rusty::Cell<int>, rusty::Cell<long>, rusty::Cell<bool>, rusty::Cell<unsigned int>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Arc<rrr::IntEvent@rrr.reactor>)",
+                    "janus::QuorumEvent@rrr.reactor::QuorumEvent(rusty::Cell<rrr::EventStatus@rrr.reactor>, rusty::thread::ThreadId, rrr::EventState@rrr.reactor, rusty::Cell<bool>, rusty::sync::Weak<rrr::EventPollable@rrr.reactor>, rusty::Cell<int>, rusty::Cell<int>, rusty::RefCell<std_port::collections::hash::map::HashMap@std_port<unsigned short, long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, int, int, rusty::Cell<janus::QuorumPolicy@rrr.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<bool>, rusty::Cell<unsigned int>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Arc<rrr::IntEvent@rrr.reactor>)",
                 ),
                 (
                     "T",
