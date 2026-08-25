@@ -54,7 +54,7 @@ fn a_multi_key_commit_is_visible_then_flushed_as_one_atomic_backend_batch() {
 
     let acknowledged = cache.highest_acknowledged_sequence();
     assert_eq!(cache.flush().expect("flush transaction"), acknowledged);
-    assert_eq!(cache.durable_sequence(), acknowledged);
+    assert_eq!(cache.applied_sequence(), acknowledged);
     assert_eq!(backend.batch_count() - batches_before, 1);
     assert_eq!(
         backend.op_count() - ops_before,
@@ -83,7 +83,7 @@ fn a_multi_key_commit_is_visible_then_flushed_as_one_atomic_backend_batch() {
 }
 
 #[test]
-fn absent_put_then_delete_is_a_durable_noop() {
+fn absent_put_then_delete_is_a_backend_noop() {
     let backend = Arc::new(MemBlobs::new());
     let cache = open(&backend);
     let acknowledged_before = cache.highest_acknowledged_sequence();
@@ -193,7 +193,7 @@ fn existing_delete_then_put_is_one_canonical_put() {
 }
 
 #[test]
-fn every_same_key_mutation_pair_has_one_canonical_durable_result() {
+fn every_same_key_mutation_pair_has_one_canonical_backend_result() {
     #[derive(Clone, Copy, Debug)]
     enum Mutation {
         Put,
@@ -457,7 +457,7 @@ fn read_only_noops_do_not_log_and_recovery_rejects_invalid_backends() {
     cache.flush().expect("flush seed");
 
     let acknowledged = cache.highest_acknowledged_sequence();
-    let durable = cache.durable_sequence();
+    let applied = cache.applied_sequence();
     let batches = backend.batch_count();
     let ops = backend.op_count();
 
@@ -477,7 +477,7 @@ fn read_only_noops_do_not_log_and_recovery_rejects_invalid_backends() {
     remove.commit().expect("commit no-op remove");
 
     assert_eq!(cache.highest_acknowledged_sequence(), acknowledged);
-    assert_eq!(cache.durable_sequence(), durable);
+    assert_eq!(cache.applied_sequence(), applied);
     assert_eq!(cache.queued_transactions(), 0);
     assert_eq!(cache.flush().expect("flush no-ops"), acknowledged);
     assert_eq!(backend.batch_count(), batches);
@@ -498,8 +498,8 @@ fn read_only_noops_do_not_log_and_recovery_rejects_invalid_backends() {
         }])
         .expect("tamper backend");
     match Cache::from_backend(Arc::clone(&backend), CacheOptions::default()) {
-        Err(Error::DurableStateMismatch) => {}
-        Err(error) => panic!("expected durable-state mismatch, got {error:?}"),
+        Err(Error::BackendStateMismatch) => {}
+        Err(error) => panic!("expected backend-state mismatch, got {error:?}"),
         Ok(cache) => {
             cache.close().expect("close unexpectedly opened cache");
             panic!("corrupt materialized data was accepted");

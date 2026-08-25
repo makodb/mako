@@ -2,7 +2,7 @@
 //!
 //! A record is both the recovery description of one cache transaction and
 //! the source of the single RocksDB batch that materializes that transaction.
-//! The durable keyspace is private to `mako-cache`; raw application keys are
+//! The backend keyspace is private to `mako-cache`; raw application keys are
 //! never used as RocksDB keys directly.
 //!
 //! The value format is deliberately small and fixed-width where practical:
@@ -130,7 +130,7 @@ pub(crate) enum BackendKey<'a> {
     Foreign,
 }
 
-/// Classify a durable backend key without allocating.
+/// Classify a private backend key without allocating.
 ///
 /// Log keys must have exactly one eight-byte sequence suffix. Data keys have
 /// an eight-byte table identifier followed by an arbitrary (possibly empty)
@@ -166,7 +166,7 @@ pub(crate) fn classify_backend_key(key: &[u8]) -> BackendKey<'_> {
 /// A complete write set whose storage is prepared before native commit.
 ///
 /// Construction performs every validation, length calculation, and heap
-/// allocation needed by the eventual durable record. [`Self::bind`] only
+/// allocation needed by the eventual backend record. [`Self::bind`] only
 /// writes fixed-width scalar fields into this existing storage, so it is safe
 /// to call at Mako's post-validation serialization point while native write
 /// locks are held.
@@ -250,7 +250,7 @@ pub(crate) struct BoundCommitRecord {
 }
 
 impl BoundCommitRecord {
-    /// Finish the checksum without allocating and produce a durable record.
+    /// Finish the checksum without allocating and produce a backend record.
     pub(crate) fn finalize(mut self) -> CommitRecord {
         let checksum_offset = self.encoded.len() - CRC_LEN;
         let checksum = crc32c(&self.encoded[..checksum_offset]);

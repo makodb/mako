@@ -80,8 +80,8 @@ const CASES: &[(Point, Expected)] = &[
     (Point::RocksBatchConstructed, Expected::Old),
     (Point::RocksBeforeWrite, Expected::Old),
     (Point::RocksAfterWrite, Expected::New),
-    (Point::BackendWrittenBeforeDurable, Expected::New),
-    (Point::DurableAdvanced, Expected::New),
+    (Point::BackendWrittenBeforeApplied, Expected::New),
+    (Point::AppliedAdvanced, Expected::New),
 ];
 
 const RECOVERY_CASES: &[Point] = &[
@@ -361,7 +361,7 @@ fn recovery_crash_role() {
 fn recovery_verifier_role() {
     let db_path = required_path(DB_PATH_ENV);
     let cache = Db::open(&db_path, sync_options()).expect("reopen interrupted recovery");
-    assert_eq!(cache.durable_sequence(), RECOVERY_RECORDS);
+    assert_eq!(cache.applied_sequence(), RECOVERY_RECORDS);
     assert_eq!(cache.highest_acknowledged_sequence(), RECOVERY_RECORDS);
 
     let recovered = (

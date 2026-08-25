@@ -10,8 +10,10 @@
 //! checksummed record and all of its data mutations in a single atomic RocksDB
 //! `WriteBatch`.
 //!
-//! Consequently, [`Cache::flush`] and [`Cache::close`] are real durability
-//! barriers, but an unflushed process crash may lose an acknowledged tail.
+//! [`Cache::wait_applied`] and [`Cache::close`] drain acknowledged work into
+//! RocksDB, but neither operation adds a separate WAL flush or disk sync. The
+//! default batch mode uses `sync=false`; the applied watermark is process-local
+//! progress, not a durability promise.
 //! This first slice is deliberately unbounded in memory and exposes one
 //! logical application table. Transactions may contain many keys.
 //!
@@ -22,7 +24,7 @@
 //! tx.put(b"alice", b"10")?;
 //! tx.put(b"bob", b"20")?;
 //! tx.commit()?; // visible and queued, not necessarily in Rocks yet
-//! db.flush()?;
+//! db.wait_applied()?;
 //! db.close()?;
 //! # Ok(())
 //! # }
@@ -53,7 +55,8 @@ pub use mako_local::{Error as LocalError, MakoTimestamp};
 pub use mrx_rocks::Durability;
 pub use record::{CommitSeq, RecordError};
 pub use writeback::{
-    ConfigError as WritebackConfigError, FlushError, ReserveError, ResolveError, WritebackConfig,
+    AppliedWatermark, ApplyError, ConfigError as WritebackConfigError, ReserveError, ResolveError,
+    WritebackConfig,
 };
 
 use record::{classify_backend_key, BackendKey, CommitRecord, Mutation, DEFAULT_TABLE_ID};
@@ -62,7 +65,7 @@ use writeback::Writeback;
 
 const DEFAULT_TABLE_NAME: &[u8] = b"mako-cache/default";
 
-/// Cache-specific behavior independent of the concrete durable backend.
+/// Cache-specific behavior independent of the concrete backend.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CacheOptions {
     /// Bounded transaction-log and retry settings.
@@ -88,7 +91,11 @@ impl Default for CacheOptions {
 /// Options for the concrete RocksDB-backed [`Db`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Options {
-    /// Durability requested from each atomic RocksDB batch.
+    /// RocksDB write mode used for each atomic batch.
+    ///
+    /// The default is [`Durability::Wal`], which keeps the WAL enabled with
+    /// per-write synchronization disabled. The cache never separately flushes
+    /// or syncs RocksDB.
     pub durability: Durability,
     /// Cache and transaction-log settings.
     pub cache: CacheOptions,
@@ -108,21 +115,21 @@ impl Default for Options {
 pub enum Error {
     /// The native Silo/MassTrans boundary failed.
     Native(LocalError),
-    /// The durable backend failed outside the asynchronous flush path.
+    /// The backend failed outside the asynchronous application path.
     Backend(BlobError),
-    /// A durable transaction record was malformed or too large.
+    /// A backend transaction record was malformed or too large.
     Record(RecordError),
     /// Write-back construction options were invalid.
     WritebackConfig(WritebackConfigError),
     /// A complete pre-commit reservation could not be made.
     Reserve(ReserveError),
-    /// A bound durability reservation could not be resolved safely.
+    /// A bound write-back reservation could not be resolved safely.
     ///
     /// In particular, a transaction that is known committed is retained and
     /// left unacknowledged when an earlier queue slot has an unknown outcome.
     Resolve(ResolveError),
-    /// A durability barrier could not cover its acknowledged snapshot.
-    Flush(FlushError),
+    /// An application barrier could not cover its acknowledged snapshot.
+    Apply(ApplyError),
     /// Starting the background writer failed.
     RuntimeStart(std::io::Error),
     /// Stopping or draining the background writer failed.
@@ -135,10 +142,10 @@ pub enum Error {
     MissingReadMyWrites,
     /// The RocksDB contains a key outside this cache's tagged format.
     ForeignBackendKey,
-    /// A durable record or data key names a table unsupported by this slice.
+    /// A backend record or data key names a table unsupported by this slice.
     UnsupportedTable(u64),
-    /// A durable log record and its materialized RocksDB data disagree.
-    DurableStateMismatch,
+    /// A backend log record and its materialized RocksDB data disagree.
+    BackendStateMismatch,
     /// Recovery replay produced a result impossible for the retained history.
     RecoveryDiverged,
     /// Native installation succeeded, but terminal handle cleanup failed.
@@ -153,7 +160,8 @@ pub enum Error {
     /// Native commit returned an outcome that cannot safely be called abort.
     ///
     /// The corresponding queue slot is permanently pinned; later commits and
-    /// flushes fail rather than risk skipping a possibly visible transaction.
+    /// application barriers fail rather than risk skipping a possibly visible
+    /// transaction.
     UnknownCommitOutcome {
         /// Pinned cache commit sequence.
         sequence: CommitSeq,
@@ -187,7 +195,7 @@ impl fmt::Display for Error {
             Self::WritebackConfig(error) => write!(f, "{error}"),
             Self::Reserve(error) => write!(f, "{error}"),
             Self::Resolve(error) => write!(f, "{error}"),
-            Self::Flush(error) => write!(f, "{error}"),
+            Self::Apply(error) => write!(f, "{error}"),
             Self::RuntimeStart(error) => write!(f, "cannot start write-back worker: {error}"),
             Self::Runtime(error) => write!(f, "{error}"),
             Self::RuntimeLockPoisoned => write!(f, "the cache runtime lock is poisoned"),
@@ -203,12 +211,12 @@ impl fmt::Display for Error {
                 "RocksDB contains a key outside the mako-cache tagged format"
             ),
             Self::UnsupportedTable(table) => {
-                write!(f, "durable state names unsupported table {table}")
+                write!(f, "backend state names unsupported table {table}")
             }
-            Self::DurableStateMismatch => {
-                write!(f, "durable transaction log and materialized data disagree")
+            Self::BackendStateMismatch => {
+                write!(f, "backend transaction log and materialized data disagree")
             }
-            Self::RecoveryDiverged => write!(f, "native replay diverged from durable history"),
+            Self::RecoveryDiverged => write!(f, "native replay diverged from backend history"),
             Self::CommittedButCleanupFailed { sequence, source } => write!(
                 f,
                 "transaction {} committed and was queued, but native cleanup failed: {source}",
@@ -246,7 +254,7 @@ impl std::error::Error for Error {
             Self::WritebackConfig(error) => Some(error),
             Self::Reserve(error) => Some(error),
             Self::Resolve(error) => Some(error),
-            Self::Flush(error) => Some(error),
+            Self::Apply(error) => Some(error),
             Self::RuntimeStart(error) => Some(error),
             Self::Runtime(error) => Some(error),
             Self::CommittedButCleanupFailed { source, .. } => Some(source),
@@ -257,7 +265,7 @@ impl std::error::Error for Error {
             | Self::MissingReadMyWrites
             | Self::ForeignBackendKey
             | Self::UnsupportedTable(_)
-            | Self::DurableStateMismatch
+            | Self::BackendStateMismatch
             | Self::RecoveryDiverged => None,
         }
     }
@@ -299,9 +307,9 @@ impl From<ResolveError> for Error {
     }
 }
 
-impl From<FlushError> for Error {
-    fn from(value: FlushError) -> Self {
-        Self::Flush(value)
+impl From<ApplyError> for Error {
+    fn from(value: ApplyError) -> Self {
+        Self::Apply(value)
     }
 }
 
@@ -314,9 +322,9 @@ impl From<RuntimeError> for Error {
 /// Generic transaction cache over any atomic [`Blobs`] backend.
 ///
 /// Production uses [`Db`], while tests use `Cache<Arc<MemBlobs>>` to inject
-/// failures and inspect the durable ground truth.
+/// failures and inspect backend state.
 ///
-/// This local milestone supports one recovered durable cache namespace per
+/// This local milestone supports one recovered cache namespace per
 /// process. Native tables and the Mako timestamp authority are process-wide;
 /// independently reopening another pre-existing backend after transactions
 /// have begun cannot retroactively establish one timestamp history. A future
@@ -331,7 +339,7 @@ pub struct Cache<B: Blobs + 'static> {
     commit_fence: RwLock<()>,
 }
 
-/// Production cache using RocksDB as its durable backend.
+/// Production cache using RocksDB as its asynchronous backend.
 pub type Db = Cache<RocksBlobs>;
 
 impl Cache<RocksBlobs> {
@@ -347,7 +355,7 @@ impl<B: Blobs + 'static> Cache<B> {
     ///
     /// Recovery and validation complete before the background writer starts
     /// or this cache becomes accessible to callers. The Phase 1 process model
-    /// permits only one pre-existing durable cache namespace; see [`Cache`].
+    /// permits only one pre-existing cache namespace; see [`Cache`].
     pub fn from_backend(backend: B, options: CacheOptions) -> Result<Self, Error> {
         let features = mako_local::features()?;
         if options.require_read_my_writes
@@ -357,8 +365,12 @@ impl<B: Blobs + 'static> Cache<B> {
         }
 
         let local = LocalDb::open()?;
-        let durable_seed = recover(&local, &backend, options.writeback.max_record_bytes)?;
-        let writeback = Arc::new(Writeback::new(backend, durable_seed, options.writeback)?);
+        let applied_seed = recover(&local, &backend, options.writeback.max_record_bytes)?;
+        let writeback = Arc::new(Writeback::new_with_watermark(
+            backend,
+            applied_seed,
+            options.writeback,
+        )?);
         let runtime = Runtime::start(Arc::clone(&writeback)).map_err(Error::RuntimeStart)?;
 
         Ok(Self {
@@ -420,17 +432,32 @@ impl<B: Blobs + 'static> Cache<B> {
         Ok(existed)
     }
 
-    /// Make every transaction acknowledged before this call durable.
+    /// Wait until every transaction acknowledged before this call has been
+    /// applied to RocksDB.
     ///
-    /// `Sync`, `Wal`, and `None` define what a successful Rocks batch means;
-    /// see [`Durability`].
-    pub fn flush(&self) -> Result<u64, Error> {
-        Ok(self.writeback.flush()?)
+    /// This drains only the in-memory queue. It does not flush or sync
+    /// RocksDB; the selected [`Durability`] controls the ordinary batch-write
+    /// options.
+    pub fn wait_applied(&self) -> Result<u64, Error> {
+        Ok(self.writeback.wait_applied()?)
     }
 
-    /// Highest contiguous cache sequence applied in this run.
-    pub fn durable_sequence(&self) -> u64 {
-        self.writeback.durable_sequence()
+    /// Compatibility spelling for [`Self::wait_applied`].
+    ///
+    /// Despite the name, this adds no RocksDB flush or sync beyond the
+    /// configured ordinary batch writes.
+    pub fn flush(&self) -> Result<u64, Error> {
+        self.wait_applied()
+    }
+
+    /// Current in-memory progress of the ordered RocksDB consumer.
+    pub fn applied_watermark(&self) -> AppliedWatermark {
+        self.writeback.applied_watermark()
+    }
+
+    /// Highest contiguous cache sequence applied to RocksDB.
+    pub fn applied_sequence(&self) -> u64 {
+        self.writeback.applied_sequence()
     }
 
     /// Highest successful native commit published to the volatile queue.
@@ -443,7 +470,7 @@ impl<B: Blobs + 'static> Cache<B> {
         self.writeback.queue_len()
     }
 
-    /// Access the durable backend for read-only diagnostics and tests.
+    /// Access the backend for read-only diagnostics and tests.
     ///
     /// The cache exclusively owns its tagged keyspace. Calling a mutating
     /// [`Blobs`] method through this reference while the cache is live can
@@ -460,7 +487,7 @@ impl<B: Blobs + 'static> Cache<B> {
     /// Stop without draining, modelling loss of the volatile queue on crash.
     ///
     /// This is intended for crash tests and controlled process teardown. Any
-    /// sequence above the durable watermark may be lost.
+    /// sequence above the applied watermark may be lost.
     #[doc(hidden)]
     pub fn abort_without_flush(self) -> Result<(), Error> {
         let mut runtime = self
@@ -480,7 +507,7 @@ impl<B: Blobs + 'static> Cache<B> {
             .map_err(|_| Error::RuntimeLockPoisoned)?;
         match runtime.take() {
             Some(mut runtime) => Ok(runtime.shutdown()?),
-            None => Ok(self.writeback.durable_sequence()),
+            None => Ok(self.writeback.applied_sequence()),
         }
     }
 }
@@ -488,7 +515,9 @@ impl<B: Blobs + 'static> Cache<B> {
 impl<B: Blobs + 'static> Drop for Cache<B> {
     fn drop(&mut self) {
         if let Err(error) = self.shutdown() {
-            eprintln!("mako-cache: acknowledged transactions are NOT durable at shutdown: {error}");
+            eprintln!(
+                "mako-cache: acknowledged transactions were not applied at shutdown: {error}"
+            );
         }
     }
 }
@@ -685,7 +714,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         }
     }
 
-    /// Validate/install in Silo, then publish the preallocated durability
+    /// Validate/install in Silo, then publish the preallocated write-back
     /// record before returning success.
     pub fn commit(mut self) -> Result<(), Error> {
         let native = self
@@ -798,7 +827,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
         }
     }
 
-    /// Explicitly abort without creating a durability obligation.
+    /// Explicitly abort without creating a write-back obligation.
     pub fn abort(mut self) -> Result<(), Error> {
         self.native
             .take()
@@ -860,7 +889,11 @@ fn extract_mutations(journal: Vec<JournalEntry>) -> Result<Vec<Mutation>, Error>
     Ok(mutations)
 }
 
-fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u64, Error> {
+fn recover<B: Blobs>(
+    local: &LocalDb,
+    backend: &B,
+    max_bytes: usize,
+) -> Result<AppliedWatermark, Error> {
     let mut keys = Vec::<Vec<u8>>::new();
     backend.for_each_key(&mut |key| keys.push(key.to_vec()))?;
     #[cfg(test)]
@@ -894,14 +927,14 @@ fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u
         .map_err(|_| Error::AllocationFailed)?;
     let mut previous = 0u64;
     for (sequence, key) in log_keys {
-        let expected = previous.checked_add(1).ok_or(Error::DurableStateMismatch)?;
+        let expected = previous.checked_add(1).ok_or(Error::BackendStateMismatch)?;
         if sequence.get() != expected {
-            return Err(Error::DurableStateMismatch);
+            return Err(Error::BackendStateMismatch);
         }
-        let value = backend.get(&key)?.ok_or(Error::DurableStateMismatch)?;
+        let value = backend.get(&key)?.ok_or(Error::BackendStateMismatch)?;
         let record = CommitRecord::decode(&key, &value, max_bytes)?;
         if !timestamps.insert(record.mako_timestamp()) {
-            return Err(Error::DurableStateMismatch);
+            return Err(Error::BackendStateMismatch);
         }
         for mutation in record.mutations() {
             let table_id = match mutation {
@@ -928,10 +961,12 @@ fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u
     #[cfg(test)]
     crate::failpoint::hit(crate::failpoint::Point::RecoveryMaterializedValidated);
 
-    // Mako's logical counter is process-local. Raise it above every durable
+    // Mako's logical counter is process-local. Raise it above every recovered
     // timestamp before replay completes and the recovered cache is exposed,
     // otherwise a process restart could reuse transaction timestamps.
-    if let Some(timestamp) = records.iter().map(CommitRecord::mako_timestamp).max() {
+    let applied_mako_timestamp = records.last().map(CommitRecord::mako_timestamp);
+    let max_mako_timestamp = records.iter().map(CommitRecord::mako_timestamp).max();
+    if let Some(timestamp) = max_mako_timestamp {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
         mako_local::advance_mako_timestamp_past(timestamp)?;
@@ -941,7 +976,10 @@ fn recover<B: Blobs>(local: &LocalDb, backend: &B, max_bytes: usize) -> Result<u
     replay_records(local, &records)?;
     #[cfg(test)]
     crate::failpoint::hit(crate::failpoint::Point::RecoveryReplayComplete);
-    Ok(previous)
+    Ok(AppliedWatermark::recovered(
+        previous,
+        applied_mako_timestamp,
+    ))
 }
 
 fn validate_materialized_data<B: Blobs>(
@@ -971,16 +1009,16 @@ fn validate_materialized_data<B: Blobs>(
         let expected = final_state
             .remove(&(table_id, raw_key))
             .flatten()
-            .ok_or(Error::DurableStateMismatch)?;
+            .ok_or(Error::BackendStateMismatch)?;
         let actual = backend
             .get(&backend_key)?
-            .ok_or(Error::DurableStateMismatch)?;
+            .ok_or(Error::BackendStateMismatch)?;
         if actual != expected {
-            return Err(Error::DurableStateMismatch);
+            return Err(Error::BackendStateMismatch);
         }
     }
     if final_state.values().any(Option::is_some) {
-        return Err(Error::DurableStateMismatch);
+        return Err(Error::BackendStateMismatch);
     }
     Ok(())
 }
@@ -1053,6 +1091,11 @@ mod tests {
     #[test]
     fn default_profile_requires_read_your_writes() {
         assert!(CacheOptions::default().require_read_my_writes);
+        assert_eq!(
+            Options::default().durability,
+            Durability::Wal,
+            "the production cache must not request a per-write disk sync"
+        );
     }
 
     #[test]
@@ -1071,7 +1114,7 @@ mod tests {
 
     #[cfg(have_mako)]
     #[test]
-    fn native_mako_timestamp_is_carried_into_the_durable_record() {
+    fn native_mako_timestamp_is_carried_into_the_backend_record() {
         use std::sync::Arc;
 
         use mrx_core::fakes::MemBlobs;
@@ -1085,7 +1128,7 @@ mod tests {
             .snapshot()
             .into_iter()
             .find(|(key, _)| matches!(classify_backend_key(key), BackendKey::Log(_)))
-            .expect("one durable transaction record");
+            .expect("one backend transaction record");
         let record = CommitRecord::decode(
             &log_key,
             &encoded,
@@ -1111,7 +1154,7 @@ mod tests {
 
         assert!(matches!(
             Cache::from_backend(backend, CacheOptions::default()),
-            Err(Error::DurableStateMismatch)
+            Err(Error::BackendStateMismatch)
         ));
     }
 
@@ -1130,13 +1173,47 @@ mod tests {
 
         assert!(matches!(
             Cache::from_backend(backend, CacheOptions::default()),
-            Err(Error::DurableStateMismatch)
+            Err(Error::BackendStateMismatch)
         ));
     }
 
     #[cfg(have_mako)]
     #[test]
-    fn recovery_advances_mako_timestamp_past_the_durable_maximum() {
+    fn recovery_reconstructs_the_in_memory_applied_frontier() {
+        use std::sync::Arc;
+
+        use mrx_core::fakes::MemBlobs;
+
+        const HIGH_TIMESTAMP: u32 = 1 << 25;
+        const FRONTIER_TIMESTAMP: u32 = HIGH_TIMESTAMP - 1;
+        let backend = Arc::new(MemBlobs::new());
+        let first = test_record(1, HIGH_TIMESTAMP, b"higher-timestamp");
+        let second = test_record(2, FRONTIER_TIMESTAMP, b"sequence-frontier");
+        backend.write_batch(&first.backend_ops()).unwrap();
+        backend.write_batch(&second.backend_ops()).unwrap();
+
+        let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default()).unwrap();
+        assert_eq!(cache.applied_watermark().sequence(), 2);
+        assert_eq!(
+            cache.applied_watermark().mako_timestamp(),
+            MakoTimestamp::new(FRONTIER_TIMESTAMP),
+            "the timestamp identifies CacheSeq 2 rather than taking a numeric maximum"
+        );
+
+        cache.put(b"after-inverted-recovery", b"new").unwrap();
+        cache.wait_applied().unwrap();
+        let next = cache.applied_watermark();
+        assert_eq!(next.sequence(), 3);
+        assert!(
+            next.mako_timestamp().unwrap().get() > HIGH_TIMESTAMP,
+            "clock recovery must use the maximum timestamp, not the CacheSeq frontier timestamp"
+        );
+        cache.close().unwrap();
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn recovery_advances_mako_timestamp_past_the_recovered_maximum() {
         use std::sync::Arc;
 
         use mrx_core::fakes::MemBlobs;
@@ -1173,7 +1250,7 @@ mod tests {
 
     #[cfg(have_mako)]
     #[test]
-    fn recovery_rejects_an_exhausted_durable_mako_timestamp() {
+    fn recovery_rejects_an_exhausted_recovered_mako_timestamp() {
         use std::sync::Arc;
 
         use mako_local::MAX_MAKO_TIMESTAMP;
@@ -1215,19 +1292,19 @@ mod tests {
 
         assert!(matches!(
             cache.transaction(),
-            Err(Error::Flush(FlushError::UnknownOutcome { sequence }))
+            Err(Error::Apply(ApplyError::UnknownOutcome { sequence }))
                 if sequence.get() == 1
         ));
         assert!(matches!(
             in_flight.commit(),
-            Err(Error::Flush(FlushError::UnknownOutcome { sequence }))
+            Err(Error::Apply(ApplyError::UnknownOutcome { sequence }))
                 if sequence.get() == 1
         ));
 
         assert!(matches!(
             cache.close(),
-            Err(Error::Runtime(RuntimeError::Flush(
-                FlushError::UnknownOutcome { sequence }
+            Err(Error::Runtime(RuntimeError::Apply(
+                ApplyError::UnknownOutcome { sequence }
             ))) if sequence.get() == 1
         ));
     }

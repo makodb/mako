@@ -159,10 +159,9 @@ impl Drop for Err0 {
 /// How durable each writeback batch should be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Durability {
-    /// `fsync` every batch. The watermark then means "on the platter".
+    /// Request an `fsync` for every batch.
     Sync,
-    /// WAL only, no fsync. The watermark means "handed to the OS" — a
-    /// process crash is survived, a machine crash may not be.
+    /// WAL enabled with `sync=false`; disk persistence is asynchronous.
     Wal,
     /// No WAL. Fastest and the weakest: only correct where the durable
     /// store is itself a cache of something else.

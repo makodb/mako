@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use mrx_core::Blobs;
 
-use crate::writeback::{FlushError, ProcessOutcome, Writeback};
+use crate::writeback::{ApplyError, ProcessOutcome, Writeback};
 
 const IDLE_POLL: Duration = Duration::from_millis(10);
 
@@ -19,15 +19,15 @@ pub enum RuntimeError {
     /// The background worker panicked outside its guarded consumer attempt.
     /// Panics from `process_front` or the backend are caught and retried.
     BackgroundPanicked,
-    /// The clean-shutdown flush failed.
-    Flush(FlushError),
+    /// The clean-shutdown queue drain failed.
+    Apply(ApplyError),
 }
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::BackgroundPanicked => write!(f, "write-back worker panicked"),
-            Self::Flush(error) => write!(f, "clean write-back shutdown failed: {error}"),
+            Self::Apply(error) => write!(f, "clean write-back shutdown failed: {error}"),
         }
     }
 }
@@ -36,16 +36,16 @@ impl std::error::Error for RuntimeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::BackgroundPanicked => None,
-            Self::Flush(error) => Some(error),
+            Self::Apply(error) => Some(error),
         }
     }
 }
 
-/// A single background flusher attached to a shared write-back queue.
+/// A single background consumer attached to a shared write-back queue.
 ///
 /// [`Runtime::shutdown`] stops the worker and then synchronously drains the
 /// highest acknowledged snapshot. [`Runtime::abort`] stops without a drain,
-/// preserving the existing cache contract that an unflushed in-memory tail may
+/// preserving the existing cache contract that an unapplied in-memory tail may
 /// be lost on process failure. A panic from a backend attempt leaves the exact
 /// Ready record queued and is retried after the configured delay. Dropping the
 /// runtime is equivalent to aborting.
@@ -72,26 +72,26 @@ impl<B: Blobs + 'static> Runtime<B> {
         })
     }
 
-    /// Stop the worker and make the highest acknowledged snapshot durable.
+    /// Stop the worker and apply the highest acknowledged snapshot.
     ///
-    /// The flush is attempted even if the worker panicked, since both queue and
+    /// The drain is attempted even if the worker panicked, since both queue and
     /// consumer mutexes recover poison and a Ready record remains retryable. A
-    /// pinned unknown outcome is rejected even when it lies after the flushed
+    /// pinned unknown outcome is rejected even when it lies after the applied
     /// snapshot, so clean close cannot discard possibly visible native state.
-    /// If both the worker and synchronous drain fail, the durability-bearing
-    /// flush error is returned instead of the less specific worker panic.
+    /// If both the worker and synchronous drain fail, the application error is
+    /// returned instead of the less specific worker panic.
     pub fn shutdown(&mut self) -> Result<u64, RuntimeError> {
         let worker_result = self.stop_worker();
-        let flush_result = self
+        let apply_result = self
             .writeback
-            .flush()
+            .wait_applied()
             .and_then(|target| {
                 self.writeback.ensure_no_unknown()?;
                 Ok(target)
             })
-            .map_err(RuntimeError::Flush);
+            .map_err(RuntimeError::Apply);
 
-        match (worker_result, flush_result) {
+        match (worker_result, apply_result) {
             (_, Err(error)) => Err(error),
             (Err(error), Ok(_)) => Err(error),
             (Ok(()), Ok(target)) => Ok(target),
@@ -176,7 +176,7 @@ mod tests {
     fn config() -> WritebackConfig {
         WritebackConfig {
             capacity: 4,
-            max_flush_retries: 1,
+            max_apply_retries: 1,
             retry_delay: Duration::from_millis(10),
             ..WritebackConfig::default()
         }
@@ -205,7 +205,40 @@ mod tests {
         assert!(runtime.thread.is_none());
         assert_eq!(backend.batch_count(), 1);
         assert_eq!(backend.op_count(), 3);
-        assert_eq!(writeback.durable_sequence(), 1);
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(writeback.queue_len(), 0);
+    }
+
+    #[test]
+    fn background_worker_advances_applied_watermark_without_a_flush_barrier() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback =
+            Arc::new(Writeback::new(Arc::clone(&backend), 0, config()).expect("valid writeback"));
+        writeback
+            .reserve(vec![put(b"background", b"applied")])
+            .unwrap()
+            .bind(timestamp(9))
+            .unwrap()
+            .publish()
+            .unwrap();
+
+        let mut runtime = Runtime::start(Arc::clone(&writeback)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while writeback.applied_sequence() < 1 {
+            assert!(
+                Instant::now() < deadline,
+                "background worker did not advance the applied watermark"
+            );
+            writeback.wait_for_activity(Duration::from_millis(10));
+        }
+        runtime.abort().unwrap();
+
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(
+            writeback.applied_watermark().mako_timestamp(),
+            Some(timestamp(9))
+        );
+        assert_eq!(backend.batch_count(), 1);
         assert_eq!(writeback.queue_len(), 0);
     }
 
@@ -229,7 +262,7 @@ mod tests {
 
         assert!(runtime.thread.is_none());
         assert_eq!(backend.batch_count(), 0);
-        assert_eq!(writeback.durable_sequence(), 0);
+        assert_eq!(writeback.applied_sequence(), 0);
         assert_eq!(writeback.queue_len(), 1);
     }
 
@@ -249,7 +282,7 @@ mod tests {
 
         drop(Runtime::start(Arc::clone(&writeback)).unwrap());
         assert_eq!(backend.batch_count(), 0);
-        assert_eq!(writeback.durable_sequence(), 0);
+        assert_eq!(writeback.applied_sequence(), 0);
         assert_eq!(writeback.queue_len(), 1);
     }
 
@@ -329,12 +362,12 @@ mod tests {
         assert_eq!(runtime.shutdown().unwrap(), 2);
         assert_eq!(backend.attempts.load(Ordering::SeqCst), 3);
         assert_eq!(backend.inner.batch_count(), 2);
-        assert_eq!(writeback.durable_sequence(), 2);
+        assert_eq!(writeback.applied_sequence(), 2);
         assert_eq!(writeback.queue_len(), 0);
     }
 
     #[test]
-    fn clean_shutdown_rejects_unknown_after_flushing_safe_prefix() {
+    fn clean_shutdown_rejects_unknown_after_applying_safe_prefix() {
         let backend = Arc::new(MemBlobs::new());
         let writeback =
             Arc::new(Writeback::new(Arc::clone(&backend), 0, config()).expect("valid writeback"));
@@ -354,16 +387,16 @@ mod tests {
         let mut runtime = Runtime::start(Arc::clone(&writeback)).unwrap();
         assert!(matches!(
             runtime.shutdown(),
-            Err(RuntimeError::Flush(FlushError::UnknownOutcome { sequence }))
+            Err(RuntimeError::Apply(ApplyError::UnknownOutcome { sequence }))
                 if sequence.get() == 2
         ));
-        assert_eq!(writeback.durable_sequence(), 1);
+        assert_eq!(writeback.applied_sequence(), 1);
         assert_eq!(backend.batch_count(), 1);
         assert_eq!(writeback.queue_len(), 1);
     }
 
     #[test]
-    fn shutdown_prioritizes_flush_error_over_worker_panic() {
+    fn shutdown_prioritizes_apply_error_over_worker_panic() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Arc::new(Writeback::new(backend, 0, config()).expect("valid writeback"));
         writeback
@@ -382,7 +415,7 @@ mod tests {
 
         assert!(matches!(
             runtime.shutdown(),
-            Err(RuntimeError::Flush(FlushError::UnknownOutcome { sequence }))
+            Err(RuntimeError::Apply(ApplyError::UnknownOutcome { sequence }))
                 if sequence.get() == 1
         ));
     }

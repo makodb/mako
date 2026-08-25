@@ -25,8 +25,10 @@ Masstree cache              Silo transaction cache            Mako transaction c
 
 The first milestone deliberately does **not** port Silo. It keeps the proven
 C++ STO/MassTrans engine, gives Rust a narrow C ABI and safe ownership layer,
-then uses that engine as the single-machine transactional cache in front of a
-durable system of record. The C ABI remains a draft until the Phase 1A-1D
+then uses that engine as the single-machine transactional cache in front of
+RocksDB. In the current slice RocksDB is an asynchronously updated black box;
+disk-sync policy and recovery of an unsynced tail are later work. The C ABI
+remains a draft until the Phase 1A-1D
 boundary gate is complete. Later milestones move Mako's distributed
 orchestration into Rust, then replace the local C++ engine only after its
 behavior is captured by an executable compatibility suite.
@@ -48,12 +50,12 @@ behavior is captured by an executable compatibility suite.
    Initial deployments use a fixed set of long-lived synchronous workers.
 4. **Conflicts do not cause invisible retries.** Commit returns `Conflict`;
    the caller decides whether and how to rerun application logic.
-5. **Durability is transaction-granular.** The later cache must persist and
-   recover one committed transaction atomically. Per-key dirty tickets or
-   replaying each logged write as its own transaction are insufficient.
+5. **Backend application is transaction-granular.** One committed transaction
+   becomes one atomic RocksDB `WriteBatch`. A later durability milestone must
+   preserve the same unit when it defines sync and recovery guarantees.
 6. **MassTrans OCC versions, cache sequence numbers, and Mako timestamps
    remain separate types and number spaces.** `MakoTimestamp` wraps the
-   checked, nonzero 32-bit `tid_unique_`; `CacheSeq` orders local durability
+   checked, nonzero 32-bit `tid_unique_`; `CacheSeq` orders local application
    obligations; and MassTrans row versions remain engine-private validation
    state. Accidental comparison or conversion between them should be
    impossible in Rust.
@@ -63,7 +65,7 @@ behavior is captured by an executable compatibility suite.
    those resources can be cheaply recycled.
 8. **Distributed code depends on an engine-neutral Rust trait.** A
    `LocalTransactionEngine`/participant trait sits above `mako-local`; raw C
-   handles never leak into routing, durability, or 2PC. That makes the final
+   handles never leak into routing, write-back, or 2PC. That makes the final
    C++-to-Rust engine swap local rather than another distributed rewrite.
 
 ## Target architecture
@@ -75,13 +77,13 @@ Rust application / database facade
                 |
        +--------+---------------------------+
        |                                    |
-local transaction participant          durability pipeline
+local transaction participant          async application pipeline
        |                                    |
-safe `mako-local` crate                 transaction WAL / RocksDB batches
+safe `mako-local` crate                 transaction records / RocksDB batches
        |                                    |
-raw `mako-local-sys` declarations       durable commit watermark
+raw `mako-local-sys` declarations       in-memory applied watermark
        |                                    |
-`mako_local_*` C ABI                    atomic recovery
+`mako_local_*` C ABI                    later sync/recovery policy
        |
 C++ STO + MassTrans + Masstree
 
@@ -103,16 +105,17 @@ The local cache protocol must not call every ordering value a "timestamp":
   `(UINT32_MAX - 9) / 10`, preserving the existing one-decimal-digit term
   encoding. For a cache-backed write transaction it is allocated from Mako's
   checked local logical counter after all Silo write locks are held and before
-  read-set validation, then carried verbatim in the durable commit record.
+  read-set validation, then carried verbatim in the backend commit record.
   Validation may abort after allocation, so gaps are expected. The
   single-machine path has no remote participant timestamps to merge. The
   current distributed path also takes maxima from remote participants and the
   read set, but permits ties and therefore must not yet treat this scalar as a
   globally unique history key.
-- **`CacheSeq`** is the local, nonzero durability-queue sequence. It is
+- **`CacheSeq`** is the local, nonzero application-queue sequence. It is
   allocated only when a validated transaction binds its prepared record in
   the preinstall hook. It orders publication, RocksDB application, replay, and
-  the durable watermark; it is not an OCC version or a distributed timestamp.
+  the in-memory applied watermark; it is not an OCC version or a distributed
+  timestamp.
 - **MassTrans row versions** remain the current nonopaque profile's per-record
   OCC counters. Carrying `tid_unique_` does not replace them. An opaque STO
   profile may separately use the 64-bit `commit_tid_` clock for row versions,
@@ -352,38 +355,41 @@ This intermediate boundary gate excludes RocksDB durability and eviction. It
 is not completion of Milestone 1; distributed routing, 2PC, replication, and a
 native Rust OCC implementation remain outside Milestone 1 entirely.
 
-Before Phase 1E exposes a public database contract, name four states
-separately: **visible** in Silo, **acknowledged** to the caller, **durable** in
-the local system of record, and **final** after the configured replication
-rule. No API may use the single word “committed” when those states differ.
+Before Phase 1E exposes a public database contract, name five states
+separately: **visible** in Silo, **acknowledged** to the caller, **applied** to
+RocksDB, **durable** under a future disk-sync rule, and **final** after the
+configured replication rule. The current milestone implements only the first
+three. No API may use the single word “committed” when those states differ.
 
-### 1E. Correct unbounded write-back cache
+### 1E. Correct unbounded asynchronous write-back cache
 
-Phases 1A-1D establish an in-memory engine binding. This phase makes it a
-cache with a durable system of record.
+Phases 1A-1D establish an in-memory engine binding. This phase adds ordered,
+asynchronous application to a black-box RocksDB backend.
 
 Create a new `mako-cache` layer rather than adding transaction semantics to
 `mrx-core`:
 
 - Silo/MassTrans is the authoritative live state while the process runs.
-- RocksDB is the recoverable system of record.
+- RocksDB is an asynchronously updated materialization. This phase does not
+  define recovery of an unflushed tail.
 - Start unbounded: every live value remains in Silo. Eviction is a later
   subphase so it cannot obscure transaction/durability correctness.
 - Assign a cache commit sequence distinct from Mako's logical timestamp and
   MassTrans's per-record OCC versions.
-- Before entering native commit, acquire bounded durability capacity and
+- Before entering native commit, acquire bounded write-back capacity and
   fully prepare the owned commit-record body, RocksDB keys, and publication
   slot. The permit is still detached: it has no `CacheSeq` and is not visible
   to the ordered writer. This closes the allocation/backpressure publish gap
   without forcing transactions that later conflict to consume log positions.
-- Persist each transaction as one checksummed, versioned commit record and
+- Store each transaction as one checksummed, versioned commit record and
   apply its RocksDB mutations with one atomic `WriteBatch`.
-- Define `flush()` as: every transaction acknowledged before the call has a
-  durable commit record and atomically applied RocksDB batch. Keep the current
-  write-back choice explicit: an unflushed crash may lose an acknowledged
-  tail.
-- Recover only complete records, replay each record as one transaction, and
-  make replay idempotent by commit ID.
+- Define `wait_applied()` as: every transaction acknowledged before the call
+  has reached a successful atomic RocksDB batch. The compatibility spelling
+  `flush()` means the same thing and must not add a separate RocksDB flush, WAL
+  sync, or `fsync` beyond the configured ordinary batch writes.
+- Keep the applied watermark only in memory. Recovery from complete backend
+  records may reconstruct it on open, but recovery of an unflushed log tail is
+  outside this phase.
 
 The selected first-slice protocol is below. It supersedes the earlier design
 that put a global commit gate around native commit and assigned a sequence plus
@@ -397,8 +403,9 @@ complete. The fresh-process SIGKILL gate now covers nine outer/Rocks-wrapper
 write-path boundaries in the production-default profile and all fifteen named
 boundaries in a dedicated native-hook profile. Eight recovery/replay boundaries
 are each interrupted on two consecutive fresh-process restarts. The remaining
-ABI boundary gates, interruption inside RocksDB itself, and Phase 1F's mutation
-and history-oracle work remain open.
+ABI boundary gates and Phase 1F's mutation and history-oracle work remain
+open. Interruption inside RocksDB's WAL is deliberately not a milestone gate:
+RocksDB remains a black box.
 
 1. **Prepare a detached permit before native commit.** Acquire one unit of
    bounded queue capacity and own every mutation byte, encoded-record buffer,
@@ -436,12 +443,13 @@ and history-oracle work remain open.
    per-record versions separately. Outside the native lock critical section,
    Rust computes/fills the record checksum and atomically changes the bound
    slot from Prepared to Ready. Only then is the transaction acknowledged.
-   The bounded queue is volatile, so an acknowledged but unflushed tail may
-   still be lost on process crash under the selected write-back contract.
+   The bounded queue is volatile, so an acknowledged but unapplied tail may be
+   lost on process crash. This phase also makes no promise for an applied but
+   unsynced RocksDB tail.
 5. **Pin any ambiguous post-bind outcome.** Once bind succeeds, no failure may
    be treated as a normal conflict or cancellation. If native install/cleanup
    has an unknown outcome, or publication cannot prove the bound record Ready,
-   that `CacheSeq` pins the queue and durability watermark. The exact finalized
+   that `CacheSeq` pins the queue and applied watermark. The exact finalized
    write set remains attached to every ambiguous slot, and a known-committed
    suffix is likewise retained and pinned if an earlier ambiguity wins the
    publication race. New binds fail and no later sequence can be acknowledged
@@ -450,21 +458,22 @@ and history-oracle work remain open.
    Ready slots strictly in `CacheSeq` order. One `WriteBatch` contains the
    retained commit record and every put/delete in that transaction; a single
    RocksDB write atomically applies the whole batch before advancing the
-   durable watermark. A backend failure retains the same Ready record and
-   retries without letting a later sequence pass it. Ordinary conflicts never
-   appear in this queue.
-7. **Recover both state and Mako's clock.** Durable commit records are
-   retained. Reopen validates record version, checksum, `CacheSeq`, and the
-   checked `MakoTimestamp` range, then replays records in cache-sequence order
-   and idempotently materializes their mutations. Before accepting any new user
-   transaction, recovery advances Mako's process-wide local logical counter so
-   its next `tid_unique_` is strictly greater than the maximum recovered Mako
-   timestamp. Clock overflow or inability to establish that floor makes open
-   fail; recovery must never manufacture a Mako timestamp from `CacheSeq`.
-   The first slice exposes one default logical table and uses a tagged RocksDB
-   key format separating user data, commit records, and future internal
-   namespaces; compatibility or migration from `mrx`'s raw-key layout remains
-   a separate task.
+   in-memory `AppliedWatermark`. That watermark is the pair consisting of the
+   dense `CacheSeq` frontier and the exact `MakoTimestamp` on that frontier;
+   the sequence proves contiguity, while the timestamp identifies the Mako
+   transaction. A backend failure retains the same Ready record and leaves the
+   watermark unchanged, without letting a later sequence pass it. Ordinary
+   conflicts never appear in this queue.
+7. **Validate complete backend history on open.** Reopen validates any records
+   RocksDB presents by version, checksum, `CacheSeq`, and checked
+   `MakoTimestamp`, then replays them in cache-sequence order. It reconstructs
+   the in-memory applied position from the last `CacheSeq` record, while
+   separately flooring Mako's process-wide clock past the maximum recovered
+   timestamp. This validation does not promise recovery of a RocksDB tail that
+   had not been synced before a machine failure. The first slice exposes one
+   default logical table and uses a tagged RocksDB key format separating user
+   data, commit records, and future internal namespaces; compatibility or
+   migration from `mrx`'s raw-key layout remains a separate task.
 
 The timestamp switch bumps the draft commit-record value format from v2 to v3:
 v2 carried a 64-bit Silo TID, while v3 carries the exact 32-bit base
@@ -485,25 +494,34 @@ commute; neither number space is derived from the other.
 
 - This slice is unbounded and local: it has no value eviction, distributed
   routing, 2PC, replication, or distributed-finality semantics.
-- Phase 1 admits one recovered durable cache namespace per process. Native
+- Phase 1 admits one recovered cache namespace per process. Native
   tables and the timestamp authority are process-wide, so independently
   opening a second pre-existing backend after work begins cannot retroactively
   preserve history. Supporting multiple caches requires a supervisor that
   scans and floors every backend before admitting any transaction.
 
-The RocksDB durability mode qualifies what the durable watermark means; the
-API and tests must not collapse these modes into one promise:
+The in-memory applied watermark has one meaning in every RocksDB write mode:
+the complete ordered batch is confirmed present in RocksDB. During live
+application that confirmation is a successful `rocksdb_write` return; during
+open it is validated backend history. It never means “synced.” The current
+production default is `Wal`: ordinary writes use `sync=false`, and the cache
+adds no separate `FlushWAL`, `SyncWAL`, or memtable-flush call.
 
-- `Sync`: the atomic batch uses the RocksDB WAL and synchronously flushes it;
-  the watermark represents stable-storage completion subject to the storage
-  stack's fsync guarantees.
+- `Sync`: an explicitly configured atomic batch asks RocksDB to synchronize
+  its WAL. This lower-level option is useful for separate durability tests but
+  is not required by this milestone.
 - `Wal`: the WAL is enabled but not synchronously flushed. A completed batch
-  is recoverable after a process crash, while a machine or power failure may
-  lose the OS-cached tail.
+  has been accepted by RocksDB, while a machine or power failure may lose the
+  OS-cached tail.
 - `None`: the WAL is disabled. Batch application remains atomic while the
-  process is live, but the watermark is not a crash-durability guarantee; this
-  mode is only valid when RocksDB is itself disposable or for explicit test
-  and benchmark configurations.
+  process is live; this mode is only valid when RocksDB is disposable or for
+  explicit test and benchmark configurations.
+
+RocksDB 9.10 exposes a latest sequence number through the C API, but that is
+an accepted-write position rather than a passive last-synced position. It also
+exposes active flush operations, which this phase intentionally does not call.
+If a future version provides a sound passive sync notification, record it as a
+separate observed-durable watermark rather than changing `AppliedWatermark`.
 
 Do not reuse Mako's current recovery behavior unchanged: it applies logged
 key/value pairs as separate one-operation STO transactions and therefore does
@@ -511,33 +529,22 @@ not establish atomic recovery of a multi-key commit.
 
 ### 1F. Recovery and crash gates
 
-The write-path matrix now has fifteen named boundaries. The original six outer
-points remain, six test-only native points observe the exact Silo seams after
-the complete write set is locked, after Mako timestamp allocation, after local
+The write path has test-only native points at the exact Silo seams after the
+complete write set is locked, after Mako timestamp allocation, after local
 validation, after preinstall acceptance, after the first of multiple installs,
-and after all installs, and three Rocks wrapper points bracket batch
-construction and the `rocksdb_write` call. Every case uses a fresh writer, a
-real `SIGKILL`, synchronous RocksDB, and a fresh verifier that accepts only the
-complete old or complete new state of one three-key transaction. The six native
-points are compiled out by default; a `MAKO_LOCAL_TEST_HOOKS=ON` build runs all
-fifteen, and its CMake Rust-test target sets
-`MAKO_CACHE_REQUIRE_NATIVE_CRASH_HOOKS=1` so a stale hook-free archive fails the
-gate instead of silently running only nine.
+and after all installs. Rocks wrapper points bracket batch construction and the
+public `rocksdb_write` call. The milestone uses those component boundaries to
+verify publication and applied-watermark ordering; it does not inspect
+RocksDB's WAL implementation.
 
-Recovery has eight additional points: after backend-key enumeration, after
-the first and last record validations, after materialized-state validation,
-before and after flooring Mako's clock, midway through four-record native
-replay, and after replay before cache exposure. Each point is killed on two
-successive process restarts against unchanged durable state. A final fresh
-process verifies exact values and tombstones, the four-record sequence, and a
-post-restart Mako timestamp greater than every recovered timestamp.
+The repository also retains a stronger synchronous-Rocks SIGKILL/recovery
+matrix from earlier work. It remains useful ancillary coverage for complete
+records, clock flooring, and replay, but it is not a requirement for this
+asynchronous milestone. Recovery of an unflushed log tail, forced sync, torn
+WAL simulation, and interruption inside RocksDB are deferred to the later
+durability milestone. No private RocksDB C++ shim is required here.
 
-This is still not the exhaustive Phase 1F gate. The wrapper points only bracket
-the stable RocksDB C API: they do not interrupt WAL append, WAL sync, or
-memtable installation inside `rocksdb_write`. RocksDB 9.10 has private C++
-sync points, but its stable C API exposes neither their callbacks nor a custom
-environment. A real mid-WAL point therefore needs a small version-pinned C++
-test shim or a custom RocksDB environment. The following work also remains:
+The following work remains before the broader correctness gate is complete:
 
 - Add any still-useful pre-preparation and abort/commit-cleanup/destroy crash
   boundaries, with deterministic worker quarantine assertions.
@@ -545,9 +552,9 @@ test shim or a custom RocksDB environment. The following work also remains:
   hook-time allocation, conflict cancellation slots, missing/premature Ready
   publication, unpinned unknown outcomes, partial replay, reordered commits,
   duplicate replay, omitted Mako timestamps, and a recovered native clock not
-  advanced past the durable maximum.
+  advanced past the recovered maximum.
 - Run differential histories through the same full-history, real-time-aware
-  oracle used at the native boundary, extended with durability observations.
+  oracle used at the native boundary, extended with application observations.
 - Deliberately inject one divergence and require the differential harness to
   turn red, avoiding the stale-artifact false-green previously found in the
   Rust cache build.
@@ -571,15 +578,16 @@ not a release blocker.
 ### Milestone 1 final acceptance gate
 
 - Every Phase 1A-1D boundary gate is green.
-- Atomic multi-key recovery under exhaustive crash injection.
+- Atomic multi-key application through one black-box RocksDB `WriteBatch`.
 - Reopen advances Mako's native logical counter past every recovered record
   before admitting work, including near-exhaustion and corrupt-timestamp tests.
-- An honest commit watermark and `flush()` barrier under concurrent writers,
-  write failures, and sustained overload.
+- An honest in-memory `AppliedWatermark` and `wait_applied()` barrier under
+  concurrent writers, write failures, and sustained overload; neither claims
+  disk sync.
 - Concurrent disjoint commits demonstrate that only hook-time queue metadata
   is serialized; no database-wide native commit gate remains.
-- Clean shutdown drains all accepted transactions; forced shutdown loses no
-  covered transaction.
+- Clean shutdown drains all accepted transactions to RocksDB; forced shutdown
+  may discard only the unapplied in-memory tail.
 - Throughput, abort rate, p50, p99, recovery time, and log amplification are
   measured against both the current `mrx` cache and raw RocksDB.
 
@@ -588,7 +596,7 @@ not a release blocker.
 Port the distributed control plane while retaining the local C++ engine:
 
 1. Define a participant ABI for begin/read, batch-lock, validate, install,
-   abort, and durable-record production. A participant transaction stays on
+   abort, and commit-record production. A participant transaction stays on
    the same affinity-pinned worker for every phase.
 2. Port key routing and coordinator state to Rust. Keep Mako's point-key hash
    routing compatible first. Do not promise globally ordered range scans over
@@ -661,9 +669,10 @@ recovery.
 Transactional scan chunks, scan read-your-writes, and their C ABI, safe Rust,
 and cache exposure are complete for the RYW profile. The hook-enabled
 fresh-process suite now exercises fifteen write-path and eight repeated
-recovery boundaries, but it remains short of Phase 1F's exhaustive gate because
-the inside-RocksDB, mutation, cleanup-quarantine, and history-oracle checks are
-still open.
+recovery boundaries. The in-memory applied watermark is now explicit and
+advances only after a successful ordered backend call. Mutation,
+cleanup-quarantine, and history-oracle checks remain open; inside-RocksDB
+instrumentation is intentionally outside this milestone.
 
 1. Finish the remaining ABI-freeze work: publish the normative operation/status
    state table, reserve every existing status number, and retain draft revision
@@ -675,10 +684,11 @@ still open.
 3. Build the three-way deterministic differential harness and the independent
    full-history real-time/opacity oracle.
 4. Run sanitizer, concurrency, and wrapper-overhead gates.
-5. Finish Phase 1F: add a stable C++ RocksDB test shim for an actual inside-WAL
-   interruption, then add cleanup/quarantine crash points, the mutation suite,
-   and the durability-aware full-history oracle. Keep the dedicated
-   hook-enabled profile mandatory for this gate; the production-default build
+5. Finish Phase 1F with cleanup/quarantine points, the mutation suite, and an
+   application-aware full-history oracle. Keep the dedicated hook-enabled
+   profile mandatory for native seam tests; the production-default build
    intentionally contains no observer branches in the native commit hot path.
-6. Do not begin distributed porting until atomic local crash recovery is
-   demonstrated by the exhaustive fault-injection gate.
+6. Treat disk-sync observation, unflushed-tail recovery, and log reclamation as
+   a separate durability milestone. They do not block beginning the
+   distributed Rust port once the local transaction and ordered-application
+   contract passes its gate.

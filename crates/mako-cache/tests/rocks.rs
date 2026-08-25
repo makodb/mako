@@ -98,7 +98,7 @@ fn canonical_same_key_histories_survive_rocks_recovery() {
     assert_eq!(
         cache.highest_acknowledged_sequence(),
         sequence_after_seed,
-        "an absent-key put-delete must not create a durable record"
+        "an absent-key put-delete must not create a backend record"
     );
 
     let mut committed = cache.transaction().expect("begin canonical commit");
@@ -136,7 +136,7 @@ fn canonical_same_key_histories_survive_rocks_recovery() {
         .remove(b"rocks/same-key-existing")
         .expect("stage aborted delete"));
     assert!(aborted
-        .put(b"rocks/same-key-aborted", b"never-durable")
+        .put(b"rocks/same-key-aborted", b"never-applied")
         .expect("stage aborted insert"));
     aborted.abort().expect("abort history");
     assert_eq!(cache.highest_acknowledged_sequence(), sequence_after_commit);

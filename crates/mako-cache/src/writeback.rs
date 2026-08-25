@@ -1,4 +1,4 @@
-//! Transaction-ordered, asynchronous durable write-back.
+//! Transaction-ordered, asynchronous RocksDB write-back.
 //!
 //! Before entering native commit, a transaction prepares its complete record
 //! and claims bounded queue capacity, but it does not yet receive a cache
@@ -29,16 +29,60 @@ use crate::record::{
 /// Default maximum encoded transaction-record size (8 MiB).
 pub const DEFAULT_MAX_RECORD_BYTES: usize = 8 * 1024 * 1024;
 
-/// Controls the bounded commit queue and synchronous flush retries.
+/// In-memory progress of the ordered RocksDB consumer.
+///
+/// `sequence` is the dense [`CommitSeq`] prefix and is therefore the field
+/// that proves contiguity. `mako_timestamp` identifies the record at exactly
+/// that frontier. Mako timestamps may contain gaps and disjoint transactions
+/// may bind out of timestamp order, so the timestamp alone must not be
+/// interpreted as a dense log position. Neither field claims that RocksDB has
+/// synced data to disk.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AppliedWatermark {
+    sequence: u64,
+    mako_timestamp: Option<MakoTimestamp>,
+}
+
+impl AppliedWatermark {
+    /// Reconstruct progress from the backend during cache open.
+    pub(crate) const fn recovered(sequence: u64, mako_timestamp: Option<MakoTimestamp>) -> Self {
+        Self {
+            sequence,
+            mako_timestamp,
+        }
+    }
+
+    /// Highest contiguous cache sequence accepted by the backend.
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    /// Mako timestamp of the transaction at the applied sequence frontier.
+    pub const fn mako_timestamp(self) -> Option<MakoTimestamp> {
+        self.mako_timestamp
+    }
+
+    fn advance(&mut self, sequence: CommitSeq, mako_timestamp: MakoTimestamp) {
+        debug_assert_eq!(
+            sequence.get(),
+            self.sequence + 1,
+            "the applied watermark must advance one cache sequence at a time"
+        );
+        self.sequence = sequence.get();
+        self.mako_timestamp = Some(mako_timestamp);
+    }
+}
+
+/// Controls the bounded commit queue and synchronous drain retries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WritebackConfig {
     /// Maximum number of detached permits plus prepared or ready slots.
     pub capacity: usize,
     /// Maximum encoded size accepted by [`PreparedCommitRecord::prepare`].
     pub max_record_bytes: usize,
-    /// Extra attempts made by [`Writeback::flush`] after a failed backend
+    /// Extra attempts made by [`Writeback::wait_applied`] after a failed backend
     /// write. Zero means that the first failed attempt is returned.
-    pub max_flush_retries: usize,
+    pub max_apply_retries: usize,
     /// Delay between backend retry attempts.
     pub retry_delay: Duration,
 }
@@ -48,7 +92,7 @@ impl Default for WritebackConfig {
         Self {
             capacity: 1_024,
             max_record_bytes: DEFAULT_MAX_RECORD_BYTES,
-            max_flush_retries: 8,
+            max_apply_retries: 8,
             retry_delay: Duration::from_millis(1),
         }
     }
@@ -64,7 +108,7 @@ pub enum ConfigError {
     /// A zero retry delay would turn a persistent backend error into a spin
     /// loop.
     ZeroRetryDelay,
-    /// The durable seed leaves no sequence number for a future bind.
+    /// The applied seed leaves no sequence number for a future bind.
     SequenceExhausted,
 }
 
@@ -183,9 +227,9 @@ impl fmt::Display for ResolveError {
 
 impl std::error::Error for ResolveError {}
 
-/// A flush could not make its acknowledged snapshot durable.
+/// A queue drain could not apply its acknowledged snapshot to the backend.
 #[derive(Debug, Clone)]
-pub enum FlushError {
+pub enum ApplyError {
     /// A commit at or before the target has an ambiguous native outcome.
     UnknownOutcome {
         /// The first pinned sequence.
@@ -196,14 +240,14 @@ pub enum FlushError {
     Backend {
         /// Sequence whose atomic backend batch failed.
         sequence: CommitSeq,
-        /// Number of failed attempts made by this flush call.
+        /// Number of failed attempts made by this application barrier.
         attempts: usize,
         /// Last backend error.
         source: BlobError,
     },
 }
 
-impl fmt::Display for FlushError {
+impl fmt::Display for ApplyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownOutcome { sequence } => write!(
@@ -224,7 +268,7 @@ impl fmt::Display for FlushError {
     }
 }
 
-impl std::error::Error for FlushError {
+impl std::error::Error for ApplyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::UnknownOutcome { .. } => None,
@@ -252,7 +296,7 @@ struct State {
     /// Capacity claimed before native commit but not yet attached to `queue`.
     detached: usize,
     last_bound: u64,
-    durable: u64,
+    applied: AppliedWatermark,
     highest_acknowledged: u64,
     first_unknown: Option<CommitSeq>,
 }
@@ -272,13 +316,28 @@ pub struct Writeback<B: Blobs> {
 }
 
 impl<B: Blobs> Writeback<B> {
-    /// Create an empty queue whose first reservation is `durable_seed + 1`.
+    /// Create an empty queue whose first reservation is `applied_seed + 1`.
     ///
-    /// `durable_seed` is also the initial durable watermark, allowing a caller
-    /// that recovered a durable transaction log to continue its sequence.
+    /// This constructor is used by tests that only need a sequence seed. Cache
+    /// recovery uses [`Self::new_with_watermark`] to retain the recovered Mako
+    /// timestamp as well.
+    #[cfg(test)]
     pub fn new(
         backend: B,
-        durable_seed: u64,
+        applied_seed: u64,
+        config: WritebackConfig,
+    ) -> Result<Self, ConfigError> {
+        Self::new_with_watermark(
+            backend,
+            AppliedWatermark::recovered(applied_seed, None),
+            config,
+        )
+    }
+
+    /// Create a queue from progress reconstructed while opening the backend.
+    pub(crate) fn new_with_watermark(
+        backend: B,
+        applied_seed: AppliedWatermark,
         config: WritebackConfig,
     ) -> Result<Self, ConfigError> {
         if config.capacity == 0 {
@@ -290,7 +349,7 @@ impl<B: Blobs> Writeback<B> {
         if config.retry_delay.is_zero() {
             return Err(ConfigError::ZeroRetryDelay);
         }
-        if durable_seed == u64::MAX {
+        if applied_seed.sequence == u64::MAX {
             return Err(ConfigError::SequenceExhausted);
         }
 
@@ -300,9 +359,9 @@ impl<B: Blobs> Writeback<B> {
             state: Mutex::new(State {
                 queue: VecDeque::with_capacity(config.capacity),
                 detached: 0,
-                last_bound: durable_seed,
-                durable: durable_seed,
-                highest_acknowledged: durable_seed,
+                last_bound: applied_seed.sequence,
+                applied: applied_seed,
+                highest_acknowledged: applied_seed.sequence,
                 first_unknown: None,
             }),
             changed: Condvar::new(),
@@ -311,7 +370,7 @@ impl<B: Blobs> Writeback<B> {
         })
     }
 
-    /// Access the underlying durable backend.
+    /// Access the underlying backend.
     pub fn backend(&self) -> &B {
         &self.backend
     }
@@ -386,9 +445,14 @@ impl<B: Blobs> Writeback<B> {
         self.changed.notify_all();
     }
 
-    /// Highest contiguous bound record applied atomically to the backend.
-    pub fn durable_sequence(&self) -> u64 {
-        lock_recover(&self.state).durable
+    /// Current in-memory applied watermark.
+    pub fn applied_watermark(&self) -> AppliedWatermark {
+        lock_recover(&self.state).applied
+    }
+
+    /// Highest contiguous bound record accepted atomically by the backend.
+    pub fn applied_sequence(&self) -> u64 {
+        self.applied_watermark().sequence()
     }
 
     /// Highest sequence acknowledged to a caller as a successful native
@@ -407,8 +471,8 @@ impl<B: Blobs> Writeback<B> {
         lock_recover(&self.state).detached
     }
 
-    /// Snapshot the highest acknowledged sequence and make that snapshot
-    /// durable.
+    /// Snapshot the highest acknowledged sequence and apply that snapshot to
+    /// the backend.
     ///
     /// Transactions acknowledged after the snapshot are intentionally not
     /// part of this barrier. That includes a later pinned unknown slot: it does
@@ -416,13 +480,13 @@ impl<B: Blobs> Writeback<B> {
     /// separately rejects any unknown outcome. Each ready record is submitted
     /// to the backend in exactly one atomic `write_batch` call. A failed record
     /// remains unchanged at the front for the next retry.
-    pub fn flush(&self) -> Result<u64, FlushError> {
+    pub fn wait_applied(&self) -> Result<u64, ApplyError> {
         let target = {
             let state = lock_recover(&self.state);
             let target = state.highest_acknowledged;
             if let Some(sequence) = state.first_unknown {
                 if sequence.get() <= target {
-                    return Err(FlushError::UnknownOutcome { sequence });
+                    return Err(ApplyError::UnknownOutcome { sequence });
                 }
             }
             target
@@ -434,12 +498,12 @@ impl<B: Blobs> Writeback<B> {
         loop {
             {
                 let state = lock_recover(&self.state);
-                if state.durable >= target {
+                if state.applied.sequence >= target {
                     return Ok(target);
                 }
                 if let Some(sequence) = state.first_unknown {
                     if sequence.get() <= target {
-                        return Err(FlushError::UnknownOutcome { sequence });
+                        return Err(ApplyError::UnknownOutcome { sequence });
                     }
                 }
             }
@@ -457,20 +521,20 @@ impl<B: Blobs> Writeback<B> {
                         failed_attempts = 1;
                     }
 
-                    if failed_attempts > self.config.max_flush_retries {
+                    if failed_attempts > self.config.max_apply_retries {
                         // A concurrent consumer may have recovered between our
                         // failed attempt and this decision.
-                        let durable = lock_recover(&self.state).durable;
-                        match retry_progress(durable, target, sequence) {
-                            RetryProgress::TargetDurable => return Ok(target),
-                            RetryProgress::FailedSequenceDurable => {
+                        let applied = lock_recover(&self.state).applied.sequence;
+                        match retry_progress(applied, target, sequence) {
+                            RetryProgress::TargetApplied => return Ok(target),
+                            RetryProgress::FailedSequenceApplied => {
                                 failed_sequence = None;
                                 failed_attempts = 0;
                                 continue;
                             }
                             RetryProgress::NoProgress => {}
                         }
-                        return Err(FlushError::Backend {
+                        return Err(ApplyError::Backend {
                             sequence,
                             attempts: failed_attempts,
                             source: error,
@@ -479,10 +543,10 @@ impl<B: Blobs> Writeback<B> {
                     self.wait_for_activity(self.config.retry_delay);
                 }
                 ProcessOutcome::Blocked | ProcessOutcome::Idle => {
-                    self.wait_for_flush_progress(target);
+                    self.wait_for_apply_progress(target);
                 }
                 ProcessOutcome::Pinned(sequence) => {
-                    return Err(FlushError::UnknownOutcome { sequence });
+                    return Err(ApplyError::UnknownOutcome { sequence });
                 }
             }
         }
@@ -579,7 +643,7 @@ impl<B: Blobs> Writeback<B> {
                 match result {
                     Ok(()) => {
                         #[cfg(test)]
-                        crate::failpoint::hit(crate::failpoint::Point::BackendWrittenBeforeDurable);
+                        crate::failpoint::hit(crate::failpoint::Point::BackendWrittenBeforeApplied);
                         let mut state = lock_recover(&self.state);
                         let current = state
                             .queue
@@ -595,9 +659,9 @@ impl<B: Blobs> Writeback<B> {
                             "published front changed state during backend IO"
                         );
                         state.queue.pop_front();
-                        state.durable = sequence.get();
+                        state.applied.advance(sequence, record.mako_timestamp());
                         #[cfg(test)]
-                        crate::failpoint::hit(crate::failpoint::Point::DurableAdvanced);
+                        crate::failpoint::hit(crate::failpoint::Point::AppliedAdvanced);
                         drop(state);
                         self.capacity_available.notify_all();
                         self.changed.notify_all();
@@ -618,9 +682,9 @@ impl<B: Blobs> Writeback<B> {
         self.config.retry_delay
     }
 
-    pub(crate) fn ensure_no_unknown(&self) -> Result<(), FlushError> {
+    pub(crate) fn ensure_no_unknown(&self) -> Result<(), ApplyError> {
         match lock_recover(&self.state).first_unknown {
-            Some(sequence) => Err(FlushError::UnknownOutcome { sequence }),
+            Some(sequence) => Err(ApplyError::UnknownOutcome { sequence }),
             None => Ok(()),
         }
     }
@@ -630,9 +694,9 @@ impl<B: Blobs> Writeback<B> {
         self.capacity_available.notify_all();
     }
 
-    fn wait_for_flush_progress(&self, target: u64) {
+    fn wait_for_apply_progress(&self, target: u64) {
         let state = lock_recover(&self.state);
-        if state.durable >= target {
+        if state.applied.sequence >= target {
             return;
         }
         if state
@@ -672,16 +736,16 @@ enum DropAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RetryProgress {
-    TargetDurable,
-    FailedSequenceDurable,
+    TargetApplied,
+    FailedSequenceApplied,
     NoProgress,
 }
 
-fn retry_progress(durable: u64, target: u64, failed: CommitSeq) -> RetryProgress {
-    if durable >= target {
-        RetryProgress::TargetDurable
-    } else if durable >= failed.get() {
-        RetryProgress::FailedSequenceDurable
+fn retry_progress(applied: u64, target: u64, failed: CommitSeq) -> RetryProgress {
+    if applied >= target {
+        RetryProgress::TargetApplied
+    } else if applied >= failed.get() {
+        RetryProgress::FailedSequenceApplied
     } else {
         RetryProgress::NoProgress
     }
@@ -729,7 +793,7 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
             .checked_add(1)
             .expect("detached capacity guarantees commit sequence space");
         let sequence = CommitSeq::new(raw_sequence)
-            .expect("the sequence after a valid durable seed is nonzero");
+            .expect("the sequence after a valid applied seed is nonzero");
         let prepared = self
             .prepared
             .take()
@@ -936,10 +1000,10 @@ mod tests {
         }
     }
 
-    fn config(capacity: usize, max_flush_retries: usize) -> WritebackConfig {
+    fn config(capacity: usize, max_apply_retries: usize) -> WritebackConfig {
         WritebackConfig {
             capacity,
-            max_flush_retries,
+            max_apply_retries,
             retry_delay: Duration::from_millis(1),
             ..WritebackConfig::default()
         }
@@ -969,11 +1033,14 @@ mod tests {
             .publish()
             .unwrap();
 
-        assert_eq!(writeback.flush().unwrap(), 1);
+        assert_eq!(writeback.wait_applied().unwrap(), 1);
         assert_eq!(backend.batch_count(), 1);
-        // One durable commit-log entry plus the transaction's two data ops.
+        // One backend commit-record entry plus the transaction's two data ops.
         assert_eq!(backend.op_count(), 3);
-        assert_eq!(writeback.durable_sequence(), 1);
+        assert_eq!(
+            writeback.applied_watermark(),
+            AppliedWatermark::recovered(1, Some(mako_timestamp_of(11)))
+        );
         assert_eq!(writeback.queue_len(), 0);
     }
 
@@ -989,10 +1056,17 @@ mod tests {
             .unwrap()
             .publish()
             .unwrap();
+        writeback
+            .reserve(vec![put(b"c", b"three")])
+            .unwrap()
+            .bind(mako_timestamp_of(13))
+            .unwrap()
+            .publish()
+            .unwrap();
 
         assert!(matches!(
-            writeback.flush(),
-            Err(FlushError::Backend {
+            writeback.wait_applied(),
+            Err(ApplyError::Backend {
                 sequence,
                 attempts: 1,
                 ..
@@ -1002,11 +1076,24 @@ mod tests {
             backend.snapshot().is_empty(),
             "failed batch was all-or-none"
         );
-        assert_eq!(writeback.queue_len(), 1, "exact record remains queued");
+        assert_eq!(
+            writeback.applied_watermark(),
+            AppliedWatermark::default(),
+            "a rejected backend call cannot advance progress"
+        );
+        assert_eq!(
+            writeback.queue_len(),
+            2,
+            "failed front and its ready suffix remain queued"
+        );
 
-        assert_eq!(writeback.flush().unwrap(), 1);
-        assert_eq!(backend.batch_count(), 1);
-        assert_eq!(backend.op_count(), 3);
+        assert_eq!(writeback.wait_applied().unwrap(), 2);
+        assert_eq!(backend.batch_count(), 2);
+        assert_eq!(backend.op_count(), 5);
+        assert_eq!(
+            writeback.applied_watermark(),
+            AppliedWatermark::recovered(2, Some(mako_timestamp_of(13)))
+        );
         assert_eq!(writeback.queue_len(), 0);
     }
 
@@ -1016,10 +1103,10 @@ mod tests {
 
         assert_eq!(
             retry_progress(7, 8, failed),
-            RetryProgress::FailedSequenceDurable,
+            RetryProgress::FailedSequenceApplied,
             "the exact failed sequence is no longer a live backend failure"
         );
-        assert_eq!(retry_progress(8, 8, failed), RetryProgress::TargetDurable);
+        assert_eq!(retry_progress(8, 8, failed), RetryProgress::TargetApplied);
         assert_eq!(retry_progress(6, 8, failed), RetryProgress::NoProgress);
     }
 
@@ -1037,7 +1124,7 @@ mod tests {
         let committed = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 100);
         assert_eq!(committed.sequence().get(), 10, "abort left no sequence gap");
         committed.publish().unwrap();
-        assert_eq!(writeback.flush().unwrap(), 10);
+        assert_eq!(writeback.wait_applied().unwrap(), 10);
     }
 
     #[test]
@@ -1071,8 +1158,26 @@ mod tests {
 
         bound_second.publish().unwrap();
         assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
+        assert_eq!(writeback.applied_watermark(), AppliedWatermark::default());
+
         bound_first.publish().unwrap();
-        assert_eq!(writeback.flush().unwrap(), 2);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(
+            writeback.applied_watermark(),
+            AppliedWatermark::recovered(1, Some(mako_timestamp_of(202)))
+        );
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(
+            writeback.applied_watermark(),
+            AppliedWatermark::recovered(2, Some(mako_timestamp_of(101))),
+            "the timestamp names the frontier record; it is not a numeric maximum"
+        );
     }
 
     #[test]
@@ -1088,13 +1193,13 @@ mod tests {
         assert_eq!(writeback.highest_acknowledged(), 2);
 
         first.publish().unwrap();
-        assert_eq!(writeback.flush().unwrap(), 2);
+        assert_eq!(writeback.wait_applied().unwrap(), 2);
         assert_eq!(backend.batch_count(), 2);
-        assert_eq!(writeback.durable_sequence(), 2);
+        assert_eq!(writeback.applied_sequence(), 2);
     }
 
     #[test]
-    fn out_of_order_publication_still_flushes_in_sequence_order() {
+    fn out_of_order_publication_still_applies_in_sequence_order() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
         let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 31);
@@ -1103,9 +1208,9 @@ mod tests {
         assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
 
         first.publish().unwrap();
-        assert_eq!(writeback.flush().unwrap(), 2);
+        assert_eq!(writeback.wait_applied().unwrap(), 2);
         assert_eq!(backend.batch_count(), 2);
-        assert_eq!(writeback.durable_sequence(), 2);
+        assert_eq!(writeback.applied_sequence(), 2);
     }
 
     #[test]
@@ -1128,18 +1233,18 @@ mod tests {
             ProcessOutcome::Pinned(sequence) if sequence.get() == 1
         ));
         // No sequence beyond the ambiguity was acknowledged, so the empty
-        // acknowledged prefix is a valid flush target. Clean close still calls
-        // ensure_no_unknown and rejects the pinned queue.
-        assert_eq!(writeback.flush().unwrap(), 0);
+        // acknowledged prefix is a valid application target. Clean close still
+        // calls ensure_no_unknown and rejects the pinned queue.
+        assert_eq!(writeback.wait_applied().unwrap(), 0);
         assert!(matches!(
             writeback.ensure_no_unknown(),
-            Err(FlushError::UnknownOutcome { sequence }) if sequence.get() == 1
+            Err(ApplyError::UnknownOutcome { sequence }) if sequence.get() == 1
         ));
         assert!(matches!(
             writeback.reserve(vec![put(b"b", b"two")]),
             Err(ReserveError::UnknownOutcome { sequence }) if sequence.get() == 1
         ));
-        assert_eq!(writeback.durable_sequence(), 0);
+        assert_eq!(writeback.applied_sequence(), 0);
         assert_eq!(writeback.highest_acknowledged(), 0);
         assert_eq!(writeback.queue_len(), 2);
         let state = lock_recover(&writeback.state);
@@ -1214,19 +1319,19 @@ mod tests {
     }
 
     #[test]
-    fn flush_covers_safe_acknowledged_prefix_before_later_unknown() {
+    fn wait_applied_covers_safe_acknowledged_prefix_before_later_unknown() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
         let acknowledged = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 51);
         let later_unknown = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 52);
         later_unknown.pin_unknown().unwrap();
-        // A later ambiguity must not prevent acknowledgement and durability of
+        // A later ambiguity must not prevent acknowledgement and application of
         // an earlier safe prefix whose native outcome is known.
         acknowledged.publish().unwrap();
 
         assert_eq!(writeback.highest_acknowledged(), 1);
-        assert_eq!(writeback.flush().unwrap(), 1);
-        assert_eq!(writeback.durable_sequence(), 1);
+        assert_eq!(writeback.wait_applied().unwrap(), 1);
+        assert_eq!(writeback.applied_sequence(), 1);
         assert_eq!(backend.batch_count(), 1);
         assert_eq!(writeback.queue_len(), 1, "later pinned slot remains queued");
         assert!(matches!(
@@ -1258,7 +1363,7 @@ mod tests {
     }
 
     #[test]
-    fn flush_targets_acknowledged_not_reserved_tail() {
+    fn wait_applied_targets_acknowledged_not_reserved_tail() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(backend, 40, config(4, 0)).unwrap();
         writeback
@@ -1271,17 +1376,17 @@ mod tests {
         let still_prepared = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 72);
 
         assert_eq!(writeback.highest_acknowledged(), 41);
-        assert_eq!(writeback.flush().unwrap(), 41);
-        assert_eq!(writeback.durable_sequence(), 41);
+        assert_eq!(writeback.wait_applied().unwrap(), 41);
+        assert_eq!(writeback.applied_sequence(), 41);
         assert_eq!(writeback.queue_len(), 1);
 
         still_prepared.publish().unwrap();
-        assert_eq!(writeback.flush().unwrap(), 42);
-        assert_eq!(writeback.durable_sequence(), 42);
+        assert_eq!(writeback.wait_applied().unwrap(), 42);
+        assert_eq!(writeback.applied_sequence(), 42);
     }
 
     #[test]
-    fn flush_progress_wait_does_not_sleep_past_ready_publication() {
+    fn apply_progress_wait_does_not_sleep_past_ready_publication() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Arc::new(Writeback::new(backend, 0, config(2, 0)).unwrap());
         bind(
@@ -1294,7 +1399,7 @@ mod tests {
         let (returned_tx, returned_rx) = mpsc::channel();
         let waiter = Arc::clone(&writeback);
         let thread = std::thread::spawn(move || {
-            waiter.wait_for_flush_progress(1);
+            waiter.wait_for_apply_progress(1);
             returned_tx.send(()).unwrap();
         });
 
@@ -1402,6 +1507,122 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct ApplyThenBlockBlobs {
+        inner: MemBlobs,
+        gate: Mutex<(bool, bool)>,
+        changed: Condvar,
+    }
+
+    impl ApplyThenBlockBlobs {
+        fn wait_until_applied(&self) -> bool {
+            let mut gate = self.gate.lock().unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            while !gate.0 {
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    return false;
+                }
+                let (next, timeout) = self.changed.wait_timeout(gate, deadline - now).unwrap();
+                gate = next;
+                if timeout.timed_out() && !gate.0 {
+                    return false;
+                }
+            }
+            true
+        }
+
+        fn release(&self) {
+            let mut gate = self.gate.lock().unwrap();
+            gate.1 = true;
+            self.changed.notify_all();
+        }
+    }
+
+    impl Blobs for ApplyThenBlockBlobs {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+            self.inner.get(key)
+        }
+
+        fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
+            self.inner.write_batch(operations)?;
+            let mut gate = self.gate.lock().unwrap();
+            gate.0 = true;
+            self.changed.notify_all();
+            while !gate.1 {
+                gate = self.changed.wait(gate).unwrap();
+            }
+            Ok(())
+        }
+
+        fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
+            self.inner.for_each_key(f)
+        }
+    }
+
+    #[test]
+    fn watermark_advances_only_after_a_successful_backend_call_returns() {
+        let backend = Arc::new(ApplyThenBlockBlobs::default());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(2, 0)).unwrap();
+        bind(
+            writeback.reserve(vec![put(b"applied", b"value")]).unwrap(),
+            90,
+        )
+        .publish()
+        .unwrap();
+
+        std::thread::scope(|scope| {
+            let consumer_writeback = &writeback;
+            let consumer = scope.spawn(move || consumer_writeback.process_front());
+            let reached_backend = backend.wait_until_applied();
+            let batch_count = reached_backend.then(|| backend.inner.batch_count());
+            let (snapshot_tx, snapshot_rx) = mpsc::channel();
+            let observer = if reached_backend {
+                let observer_writeback = &writeback;
+                Some(scope.spawn(move || {
+                    snapshot_tx
+                        .send((
+                            observer_writeback.applied_watermark(),
+                            observer_writeback.queue_len(),
+                        ))
+                        .unwrap();
+                }))
+            } else {
+                None
+            };
+            let snapshot_while_blocked =
+                reached_backend.then(|| snapshot_rx.recv_timeout(Duration::from_secs(1)));
+
+            // Release before asserting or joining. If a regression held the
+            // queue-state mutex across backend IO, the observer above times
+            // out but can finish after this release instead of hanging.
+            backend.release();
+            let outcome = consumer.join().unwrap();
+            if let Some(observer) = observer {
+                observer.join().unwrap();
+            }
+
+            assert!(reached_backend, "backend did not reach its return gate");
+            assert_eq!(batch_count, Some(1));
+            let (watermark_while_blocked, queue_len_while_blocked) = snapshot_while_blocked
+                .expect("backend was reached")
+                .expect("watermark read blocked behind backend IO");
+            assert_eq!(
+                watermark_while_blocked,
+                AppliedWatermark::default(),
+                "backend side effects alone do not advance the watermark"
+            );
+            assert_eq!(queue_len_while_blocked, 1);
+            assert!(matches!(outcome, ProcessOutcome::Advanced));
+        });
+
+        assert_eq!(
+            writeback.applied_watermark(),
+            AppliedWatermark::recovered(1, Some(mako_timestamp_of(90)))
+        );
+        assert_eq!(writeback.queue_len(), 0);
+    }
+
     #[test]
     fn later_bind_does_not_wait_for_front_backend_io() {
         let backend = Arc::new(BlockingBlobs::default());
@@ -1435,7 +1656,7 @@ mod tests {
         });
 
         assert_eq!(writeback.highest_acknowledged(), 2);
-        assert_eq!(writeback.flush().unwrap(), 2);
+        assert_eq!(writeback.wait_applied().unwrap(), 2);
         assert_eq!(backend.inner.batch_count(), 2);
     }
 
@@ -1484,11 +1705,12 @@ mod tests {
 
         assert!(catch_unwind(AssertUnwindSafe(|| writeback.process_front())).is_err());
         assert_eq!(writeback.queue_len(), 1);
+        assert_eq!(writeback.applied_watermark(), AppliedWatermark::default());
         assert!(matches!(
             writeback.process_front(),
             ProcessOutcome::Advanced
         ));
         assert_eq!(writeback.backend().inner.batch_count(), 1);
-        assert_eq!(writeback.durable_sequence(), 1);
+        assert_eq!(writeback.applied_sequence(), 1);
     }
 }
