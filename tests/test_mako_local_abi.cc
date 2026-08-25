@@ -1,18 +1,24 @@
 // Contract tests for the pure-C local STO/MassTrans boundary.
 
 #include "mako/storage/mako_local_abi.h"
+#include "mako/sto/MassTrans.hh"
 #include "mako/sto/Transaction.hh"
+#include "mako/sto/common.hh"
 
 #include <array>
 #include <atomic>
 #include <barrier>
 #include <chrono>
 #include <climits>
+#include <cstdlib>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -65,6 +71,56 @@ void park_after_writeset_lock(void *context, uint32_t phase,
       std::this_thread::yield();
   }
 }
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+struct PayloadCopyPause {
+  std::atomic<int> calls{0};
+  std::atomic<bool> parked{false};
+  std::atomic<bool> release{false};
+  std::atomic<bool> timed_out{false};
+};
+
+void park_at_payload_copy_midpoint(void *context) noexcept {
+  auto *pause = static_cast<PayloadCopyPause *>(context);
+  pause->calls.fetch_add(1, std::memory_order_relaxed);
+  pause->parked.store(true, std::memory_order_release);
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(5);
+  while (!pause->release.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  if (!pause->release.load(std::memory_order_acquire))
+    pause->timed_out.store(true, std::memory_order_relaxed);
+}
+
+#if STO_OPACITY
+using DirectComparatorTable =
+    MassTrans<std::string, versioned_str_struct, true>;
+#else
+using DirectComparatorTable =
+    MassTrans<std::string, versioned_str_struct, false>;
+#endif
+
+DirectComparatorTable &direct_comparator_table() {
+  // MassTrans has process-lifetime RCU ownership. Keep the pointer rooted for
+  // the test process just like the local ABI's table registry.
+  static auto *table = new DirectComparatorTable();
+  return *table;
+}
+
+std::atomic<int> direct_comparator_calls{0};
+
+bool direct_comparator_false(const std::string &, const std::string &) {
+  direct_comparator_calls.fetch_add(1, std::memory_order_relaxed);
+  return false;
+}
+
+bool direct_comparator_true(const std::string &, const std::string &) {
+  direct_comparator_calls.fetch_add(1, std::memory_order_relaxed);
+  return true;
+}
+#endif
 
 int accept_hook(void *context, uint32_t timestamp) {
   auto *observation = static_cast<HookObservation *>(context);
@@ -412,6 +468,51 @@ TEST(MakoLocalAbiIdentity, RecoveryLeavesTheFinalTimestampMintable) {
 
   // This test owns the clock exclusively; restore the suite's real progress.
   clock.store(saved, std::memory_order_release);
+}
+
+TEST(MakoLocalAbiIdentity, VersionWordContentionUsesAtomicLockTransitions) {
+  using Version = TransactionTid::type;
+  constexpr int kIterations = 10000;
+  alignas(std::atomic_ref<Version>::required_alignment) Version version =
+      TransactionTid::increment_value;
+  std::atomic<bool> invalid_transition{false};
+  std::atomic<bool> timed_out{false};
+  std::barrier ready(3);
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(30);
+
+  auto contend = [&](int worker_id) {
+    ready.arrive_and_wait();
+    for (int i = 0; i != kIterations; ++i) {
+      while (!TransactionTid::try_lock(version, worker_id)) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+          timed_out.store(true, std::memory_order_relaxed);
+          return;
+        }
+        std::this_thread::yield();
+      }
+      const Version locked = TransactionTid::atomic_load(
+          version, std::memory_order_relaxed);
+      if (!TransactionTid::is_locked_here(locked, worker_id))
+        invalid_transition.store(true, std::memory_order_relaxed);
+      const Version next =
+          TransactionTid::unlocked(locked) + TransactionTid::increment_value |
+          TransactionTid::nonopaque_bit;
+      TransactionTid::set_version_unlock(version, next, worker_id);
+    }
+  };
+
+  std::thread first(contend, 1);
+  std::thread second(contend, 2);
+  ready.arrive_and_wait();
+  first.join();
+  second.join();
+
+  ASSERT_FALSE(timed_out.load(std::memory_order_relaxed));
+  EXPECT_FALSE(invalid_transition.load(std::memory_order_relaxed));
+  EXPECT_EQ(TransactionTid::atomic_load(version),
+            Version(1 + 2 * kIterations) * TransactionTid::increment_value |
+                TransactionTid::nonopaque_bit);
 }
 
 TEST_F(LocalAbiTest, MultiKeyMultiTableCommitIsVisibleTogether) {
@@ -1014,6 +1115,297 @@ TEST_F(LocalAbiTest, LockedWriteConflictDoesNotReportACommitSeam) {
   EXPECT_EQ(loser.observer_clear, MAKO_LOCAL_OK);
   EXPECT_EQ(loser.phases.calls, 0U);
   EXPECT_EQ(loser.hook.calls, 0);
+}
+
+TEST_F(LocalAbiTest, LockedRowsMakeBothScanDirectionsReportConflict) {
+  const std::string key = "scan-locked-row";
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, key, "before"), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  struct WriterResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int observer_set = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    int put = MAKO_LOCAL_INTERNAL;
+    int commit = MAKO_LOCAL_INTERNAL;
+    int destroy = MAKO_LOCAL_INTERNAL;
+    int observer_clear = MAKO_LOCAL_INTERNAL;
+  } writer_result;
+  std::atomic<bool> parked{false};
+  std::atomic<bool> release{false};
+  ParkingCommitObserver parking{{}, &parked, &release};
+
+  std::thread writer([&] {
+    writer_result.attach = mako_local_thread_attach();
+    if (writer_result.attach == MAKO_LOCAL_OK) {
+      writer_result.observer_set = mako_local_test_set_commit_observer(
+          park_after_writeset_lock, &parking);
+    }
+    mako_local_txn *txn = nullptr;
+    if (writer_result.observer_set == MAKO_LOCAL_OK)
+      writer_result.begin = mako_local_txn_begin(db, &txn);
+    if (writer_result.begin == MAKO_LOCAL_OK)
+      writer_result.put = put(txn, primary, key, "after");
+    if (writer_result.put == MAKO_LOCAL_OK)
+      writer_result.commit = mako_local_txn_commit(txn);
+    if (txn != nullptr)
+      writer_result.destroy = mako_local_txn_destroy(txn);
+    writer_result.observer_clear = mako_local_test_clear_commit_observer();
+  });
+
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(5);
+  while (!parked.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  if (!parked.load(std::memory_order_acquire)) {
+    release.store(true, std::memory_order_release);
+    writer.join();
+    FAIL() << "writer did not reach the write-set-locked seam";
+    return;
+  }
+
+  std::string upper = key;
+  upper.push_back('\0');
+  const mako_local_scan_options options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, MAKO_LOCAL_SCAN_HAS_UPPER,
+      reinterpret_cast<const uint8_t *>(key.data()), key.size(),
+      reinterpret_cast<const uint8_t *>(upper.data()), upper.size(), nullptr,
+      0};
+  for (const bool reverse : {false, true}) {
+    SCOPED_TRACE(reverse ? "reverse" : "forward");
+    auto *txn = begin();
+    const auto result = scan_chunk(txn, primary, options, reverse, 2, 128);
+    EXPECT_EQ(result.status, MAKO_LOCAL_CONFLICT);
+    EXPECT_TRUE(result.entries.empty());
+    EXPECT_EQ(result.arena_used, 0U);
+    EXPECT_EQ(result.arena_required, 0U);
+    EXPECT_EQ(result.done, 0U);
+    destroy_tracked(txn);
+  }
+
+  // Both exception paths completed native cleanup, so this worker can commit
+  // a disjoint transaction even while the writer remains parked.
+  auto *recovery = begin();
+  const int recovery_put = recovery == nullptr
+      ? MAKO_LOCAL_INTERNAL
+      : put(recovery, primary, "scan-conflict-recovery", "ok");
+  const int recovery_commit = recovery_put == MAKO_LOCAL_OK
+      ? mako_local_txn_commit(recovery)
+      : MAKO_LOCAL_INTERNAL;
+  const int recovery_destroy = recovery == nullptr
+      ? MAKO_LOCAL_INTERNAL
+      : mako_local_txn_destroy(recovery);
+  if (recovery_destroy == MAKO_LOCAL_OK && txn_for_cleanup == recovery)
+    txn_for_cleanup = nullptr;
+
+  release.store(true, std::memory_order_release);
+  writer.join();
+  EXPECT_EQ(recovery_put, MAKO_LOCAL_OK);
+  EXPECT_EQ(recovery_commit, MAKO_LOCAL_OK);
+  EXPECT_EQ(recovery_destroy, MAKO_LOCAL_OK);
+  EXPECT_EQ(writer_result.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(writer_result.observer_set, MAKO_LOCAL_OK);
+  EXPECT_EQ(writer_result.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(writer_result.put, MAKO_LOCAL_OK);
+  EXPECT_EQ(writer_result.commit, MAKO_LOCAL_OK);
+  EXPECT_EQ(writer_result.destroy, MAKO_LOCAL_OK);
+  EXPECT_EQ(writer_result.observer_clear, MAKO_LOCAL_OK);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, key).second,
+            std::optional<std::string>("after"));
+  EXPECT_EQ(get(verify, primary, "scan-conflict-recovery").second,
+            std::optional<std::string>("ok"));
+  commit_and_destroy(verify);
+}
+
+TEST_F(LocalAbiTest, DirectComparatorPreservesReadsAndPropagatesConflicts) {
+  auto &table = direct_comparator_table();
+  const std::string suffix = "-" +
+      std::to_string(next_table_id.fetch_add(1, std::memory_order_relaxed));
+  const std::string compared_key = "direct-comparator-key" + suffix;
+  const std::string side_key = "direct-comparator-side" + suffix;
+  const std::string insert_key = "direct-comparator-insert" + suffix;
+
+  auto direct_put = [&](const std::string &key,
+                        const std::string &value) {
+    Sto::start_transaction();
+    (void)table.transPut(lcdf::Str(key), mako::Encode(value));
+    return Sto::try_commit_no_paxos();
+  };
+  auto direct_get = [&](const std::string &key) {
+    Sto::start_transaction();
+    std::string value;
+    const bool found = table.transGet(lcdf::Str(key), value);
+    const bool committed = Sto::try_commit_no_paxos();
+    return std::tuple{found, committed, std::move(value)};
+  };
+
+  ASSERT_TRUE(direct_put(compared_key, "initial"));
+  ASSERT_TRUE(direct_put(side_key, "side-initial"));
+
+  // Predicate-false is a transactional read. A concurrent update after the
+  // comparison must invalidate the transaction and keep its disjoint write
+  // invisible.
+  direct_comparator_calls.store(0, std::memory_order_relaxed);
+  Sto::start_transaction();
+  const bool predicate_result = table.transPutMbta(
+      lcdf::Str(compared_key), mako::Encode("ignored"),
+      direct_comparator_false);
+  (void)table.transPut(lcdf::Str(side_key), mako::Encode("must-abort"));
+  struct DirectWriterResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    bool staged = false;
+    bool committed = false;
+    int observer_set = MAKO_LOCAL_INTERNAL;
+    int observer_clear = MAKO_LOCAL_INTERNAL;
+  } concurrent_writer;
+  std::thread updater([&] {
+    concurrent_writer.attach = mako_local_thread_attach();
+    if (concurrent_writer.attach != MAKO_LOCAL_OK) return;
+    try {
+      Sto::start_transaction();
+      concurrent_writer.staged = table.transPut(
+          lcdf::Str(compared_key), mako::Encode("concurrent"));
+      concurrent_writer.committed = Sto::try_commit_no_paxos();
+    } catch (...) {
+      Sto::silent_abort();
+    }
+  });
+  updater.join();
+  const bool stale_commit = Sto::try_commit_no_paxos();
+  EXPECT_FALSE(predicate_result);
+  EXPECT_EQ(direct_comparator_calls.load(std::memory_order_relaxed), 1);
+  EXPECT_EQ(concurrent_writer.attach, MAKO_LOCAL_OK);
+  EXPECT_TRUE(concurrent_writer.staged);
+  EXPECT_TRUE(concurrent_writer.committed);
+  EXPECT_FALSE(stale_commit);
+  {
+    const auto [found, committed, value] = direct_get(side_key);
+    EXPECT_TRUE(found);
+    EXPECT_TRUE(committed);
+    EXPECT_EQ(value, mako::Encode("side-initial"));
+  }
+
+  // Without an intervening writer, false remains a normal no-op and the same
+  // transaction can commit another key.
+  direct_comparator_calls.store(0, std::memory_order_relaxed);
+  Sto::start_transaction();
+  EXPECT_FALSE(table.transPutMbta(
+      lcdf::Str(compared_key), mako::Encode("still-ignored"),
+      direct_comparator_false));
+  (void)table.transPut(lcdf::Str(side_key), mako::Encode("side-committed"));
+  EXPECT_TRUE(Sto::try_commit_no_paxos());
+  EXPECT_EQ(direct_comparator_calls.load(std::memory_order_relaxed), 1);
+
+  // An insert followed by the replay comparator reads the transaction's own
+  // private invalid row instead of treating its invalid bit as a conflict.
+  direct_comparator_calls.store(0, std::memory_order_relaxed);
+  Sto::start_transaction();
+  EXPECT_FALSE(table.transInsert(lcdf::Str(insert_key),
+                                 mako::Encode("private")));
+  EXPECT_TRUE(table.transPutMbta(
+      lcdf::Str(insert_key), mako::Encode("updated"),
+      direct_comparator_true));
+  EXPECT_TRUE(Sto::try_commit_no_paxos());
+  EXPECT_EQ(direct_comparator_calls.load(std::memory_order_relaxed), 1);
+
+  // Park a writer with the record lock held. The comparator must not run, the
+  // soft-abort marker must be consumed by direct conflict propagation, and the
+  // caller's worker must remain immediately reusable.
+  std::atomic<bool> parked{false};
+  std::atomic<bool> release{false};
+  ParkingCommitObserver parking{{}, &parked, &release};
+  DirectWriterResult locking_writer;
+  std::thread locker([&] {
+    locking_writer.attach = mako_local_thread_attach();
+    if (locking_writer.attach == MAKO_LOCAL_OK) {
+      locking_writer.observer_set = mako_local_test_set_commit_observer(
+          park_after_writeset_lock, &parking);
+    }
+    if (locking_writer.observer_set == MAKO_LOCAL_OK) {
+      try {
+        Sto::start_transaction();
+        locking_writer.staged = table.transPut(
+            lcdf::Str(compared_key), mako::Encode("lock-winner"));
+        locking_writer.committed = Sto::try_commit_no_paxos();
+      } catch (...) {
+        Sto::silent_abort();
+      }
+    }
+    locking_writer.observer_clear = mako_local_test_clear_commit_observer();
+  });
+
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(5);
+  while (!parked.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  if (!parked.load(std::memory_order_acquire)) {
+    release.store(true, std::memory_order_release);
+    locker.join();
+    FAIL() << "direct writer did not reach the write-set-locked seam";
+    return;
+  }
+
+  direct_comparator_calls.store(0, std::memory_order_relaxed);
+  bool conflict_threw = false;
+  Sto::start_transaction();
+  try {
+    (void)table.transPutMbta(lcdf::Str(compared_key),
+                             mako::Encode("must-not-stage"),
+                             direct_comparator_true);
+  } catch (const Transaction::Abort &) {
+    conflict_threw = true;
+  }
+  if (Sto::in_progress()) Sto::silent_abort();
+  const bool marker_cleared = !TThread::transget_without_throw;
+
+  bool recovery_commit = false;
+  bool recovery_threw = false;
+  try {
+    recovery_commit = direct_put(side_key, "side-recovery");
+  } catch (...) {
+    recovery_threw = true;
+    Sto::silent_abort();
+  }
+  release.store(true, std::memory_order_release);
+  locker.join();
+  EXPECT_TRUE(conflict_threw);
+  EXPECT_TRUE(marker_cleared);
+  EXPECT_EQ(direct_comparator_calls.load(std::memory_order_relaxed), 0);
+  EXPECT_FALSE(recovery_threw);
+  EXPECT_TRUE(recovery_commit);
+  EXPECT_EQ(locking_writer.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(locking_writer.observer_set, MAKO_LOCAL_OK);
+  EXPECT_TRUE(locking_writer.staged);
+  EXPECT_TRUE(locking_writer.committed);
+  EXPECT_EQ(locking_writer.observer_clear, MAKO_LOCAL_OK);
+
+  direct_comparator_calls.store(0, std::memory_order_relaxed);
+  Sto::start_transaction();
+  EXPECT_TRUE(table.transPutMbta(
+      lcdf::Str(compared_key), mako::Encode("retry-winner"),
+      direct_comparator_true));
+  EXPECT_TRUE(Sto::try_commit_no_paxos());
+  EXPECT_EQ(direct_comparator_calls.load(std::memory_order_relaxed), 1);
+
+  {
+    const auto [found, committed, value] = direct_get(compared_key);
+    EXPECT_TRUE(found);
+    EXPECT_TRUE(committed);
+    EXPECT_EQ(value, mako::Encode("retry-winner"));
+  }
+  {
+    const auto [found, committed, value] = direct_get(insert_key);
+    EXPECT_TRUE(found);
+    EXPECT_TRUE(committed);
+    EXPECT_EQ(value, mako::Encode("updated"));
+  }
 }
 #endif
 
@@ -1832,6 +2224,34 @@ TEST_F(LocalAbiTest, PointReadYourWritesHidesRemovedValuesBeforeCommitOrAbort) {
   commit_and_destroy(txn);
 }
 
+TEST_F(LocalAbiTest, ExactLengthCallerKeyRequiresNoMasstreePadding) {
+  constexpr std::array<uint8_t, 17> key = {
+      'e', 'x', 'a', 'c', 't', '-', 'l', 'e', 'n', 'g', 't', 'h', '-', 'k', 'e',
+      'y', '!'};
+  auto free_bytes = [](uint8_t *bytes) { std::free(bytes); };
+  std::unique_ptr<uint8_t, decltype(free_bytes)> exact_key(
+      static_cast<uint8_t *>(std::malloc(key.size())), free_bytes);
+  ASSERT_NE(exact_key, nullptr);
+  std::memcpy(exact_key.get(), key.data(), key.size());
+
+  uint8_t created = 99;
+  auto *txn = begin();
+  ASSERT_EQ(mako_local_txn_put(
+                txn, primary, exact_key.get(), key.size(),
+                reinterpret_cast<const uint8_t *>("value"), 5, &created),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(created, 1);
+  commit_and_destroy(txn);
+
+  uint8_t existed = 99;
+  txn = begin();
+  ASSERT_EQ(mako_local_txn_remove(txn, primary, exact_key.get(), key.size(),
+                                  &existed),
+            MAKO_LOCAL_OK);
+  EXPECT_EQ(existed, 1);
+  commit_and_destroy(txn);
+}
+
 TEST_F(LocalAbiTest, PointReadYourWritesPreservesEmptyAndBinaryValues) {
   const std::string binary_key("ryw\0key", 7);
   const std::string binary_value("value\0\xff", 7);
@@ -2167,6 +2587,210 @@ TEST_F(LocalAbiTest, UnadvertisedReadYourWritesConflictLeavesWorkerReusable) {
   commit_and_destroy(txn);
 }
 #endif
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+TEST_F(LocalAbiTest, MidCopyUpdateRetriesWithoutReturningTornPayload) {
+  constexpr size_t kPayloadBytes = 64 * 1024;
+  const std::string first(kPayloadBytes, 'A');
+  const std::string second(kPayloadBytes, 'B');
+
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "payload-midpoint", first), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  PayloadCopyPause pause;
+  struct ReaderResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    int get = MAKO_LOCAL_INTERNAL;
+    std::optional<std::string> value;
+    int commit = MAKO_LOCAL_INTERNAL;
+    int destroy = MAKO_LOCAL_INTERNAL;
+    int recovery_begin = MAKO_LOCAL_INTERNAL;
+    int recovery_put = MAKO_LOCAL_INTERNAL;
+    int recovery_commit = MAKO_LOCAL_INTERNAL;
+    int recovery_destroy = MAKO_LOCAL_INTERNAL;
+  } reader_result;
+
+  std::thread reader([&] {
+    reader_result.attach = mako_local_thread_attach();
+    mako_local_txn *txn = nullptr;
+    if (reader_result.attach == MAKO_LOCAL_OK)
+      reader_result.begin = mako_local_txn_begin(db, &txn);
+    if (reader_result.begin == MAKO_LOCAL_OK) {
+      versioned_str::test_set_copy_midpoint_hook(
+          park_at_payload_copy_midpoint, &pause);
+      auto read = get(txn, primary, "payload-midpoint");
+      versioned_str::test_clear_copy_midpoint_hook();
+      reader_result.get = read.first;
+      reader_result.value = std::move(read.second);
+    }
+    if (reader_result.get == MAKO_LOCAL_OK)
+      reader_result.commit = mako_local_txn_commit(txn);
+    if (txn != nullptr)
+      reader_result.destroy = mako_local_txn_destroy(txn);
+
+    txn = nullptr;
+    reader_result.recovery_begin = mako_local_txn_begin(db, &txn);
+    if (reader_result.recovery_begin == MAKO_LOCAL_OK) {
+      reader_result.recovery_put =
+          put(txn, primary, "payload-midpoint-recovery", "ok");
+    }
+    if (reader_result.recovery_put == MAKO_LOCAL_OK)
+      reader_result.recovery_commit = mako_local_txn_commit(txn);
+    if (txn != nullptr)
+      reader_result.recovery_destroy = mako_local_txn_destroy(txn);
+  });
+
+  const auto park_deadline = std::chrono::steady_clock::now() +
+                             std::chrono::seconds(5);
+  while (!pause.parked.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < park_deadline) {
+    std::this_thread::yield();
+  }
+
+  const bool reader_parked = pause.parked.load(std::memory_order_acquire);
+  auto *writer = begin();
+  EXPECT_EQ(put(writer, primary, "payload-midpoint", second), MAKO_LOCAL_OK);
+  commit_and_destroy(writer);
+  pause.release.store(true, std::memory_order_release);
+  reader.join();
+
+  EXPECT_TRUE(reader_parked);
+  EXPECT_FALSE(pause.timed_out.load(std::memory_order_relaxed));
+  EXPECT_EQ(pause.calls.load(std::memory_order_relaxed), 1);
+  EXPECT_EQ(reader_result.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(reader_result.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(reader_result.get, MAKO_LOCAL_OK);
+  EXPECT_EQ(reader_result.value, std::optional<std::string>(second));
+  EXPECT_EQ(reader_result.commit, MAKO_LOCAL_OK);
+  EXPECT_EQ(reader_result.destroy, MAKO_LOCAL_OK);
+  EXPECT_EQ(reader_result.recovery_begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(reader_result.recovery_put, MAKO_LOCAL_OK);
+  EXPECT_EQ(reader_result.recovery_commit, MAKO_LOCAL_OK);
+  EXPECT_EQ(reader_result.recovery_destroy, MAKO_LOCAL_OK);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, "payload-midpoint").second,
+            std::optional<std::string>(second));
+  EXPECT_EQ(get(verify, primary, "payload-midpoint-recovery").second,
+            std::optional<std::string>("ok"));
+  commit_and_destroy(verify);
+}
+#endif
+
+TEST_F(LocalAbiTest, ConcurrentPublishedPayloadCopiesAreNeverTorn) {
+  constexpr size_t kPayloadBytes = 64 * 1024;
+  constexpr int kWriterIterations = 64;
+  constexpr int kReaderIterations = 96;
+  constexpr int kReaderCount = 4;
+  const std::string first(kPayloadBytes, 'A');
+  // Alternate both bytes and published length while staying within the large
+  // seed allocation, so readers stress in-place grow/shrink snapshots too.
+  const std::string second(1023, 'B');
+
+  auto *seed = begin();
+  ASSERT_EQ(put(seed, primary, "payload-race", first), MAKO_LOCAL_OK);
+  commit_and_destroy(seed);
+
+  std::barrier start(kReaderCount + 1);
+  std::barrier updates_done(kReaderCount + 1);
+  std::atomic<int> writer_failures{0};
+  std::atomic<int> reader_failures{0};
+  std::atomic<int> successful_reads{0};
+  std::vector<std::thread> workers;
+
+  workers.emplace_back([&] {
+    if (mako_local_thread_attach() != MAKO_LOCAL_OK) {
+      ++writer_failures;
+      start.arrive_and_wait();
+      updates_done.arrive_and_wait();
+      return;
+    }
+    start.arrive_and_wait();
+    for (int iteration = 0; iteration != kWriterIterations; ++iteration) {
+      mako_local_txn *txn = nullptr;
+      int status = mako_local_txn_begin(db, &txn);
+      if (status == MAKO_LOCAL_OK)
+        status = put(txn, primary, "payload-race",
+                     iteration % 2 == 0 ? second : first);
+      if (status == MAKO_LOCAL_OK)
+        status = mako_local_txn_commit(txn);
+      if (status != MAKO_LOCAL_OK) ++writer_failures;
+      if (txn != nullptr && mako_local_txn_destroy(txn) != MAKO_LOCAL_OK)
+        ++writer_failures;
+      std::this_thread::yield();
+    }
+    updates_done.arrive_and_wait();
+  });
+
+  for (int reader = 0; reader != kReaderCount; ++reader) {
+    workers.emplace_back([&] {
+      if (mako_local_thread_attach() != MAKO_LOCAL_OK) {
+        ++reader_failures;
+        start.arrive_and_wait();
+        updates_done.arrive_and_wait();
+        return;
+      }
+      start.arrive_and_wait();
+      for (int iteration = 0; iteration != kReaderIterations; ++iteration) {
+        mako_local_txn *txn = nullptr;
+        int status = mako_local_txn_begin(db, &txn);
+        std::optional<std::string> value;
+        if (status == MAKO_LOCAL_OK) {
+          auto read = get(txn, primary, "payload-race");
+          status = read.first;
+          value = std::move(read.second);
+        }
+        if (status == MAKO_LOCAL_OK) {
+          if (value != std::optional<std::string>(first) &&
+              value != std::optional<std::string>(second)) {
+            ++reader_failures;
+          } else {
+            ++successful_reads;
+          }
+          status = mako_local_txn_commit(txn);
+        }
+        if (status != MAKO_LOCAL_OK && status != MAKO_LOCAL_CONFLICT)
+          ++reader_failures;
+        if (txn != nullptr && mako_local_txn_destroy(txn) != MAKO_LOCAL_OK)
+          ++reader_failures;
+        std::this_thread::yield();
+      }
+
+      // Prove the reader remains usable after the contended phase, and make
+      // at least one successful exact-value observation deterministic.
+      updates_done.arrive_and_wait();
+      mako_local_txn *txn = nullptr;
+      int status = mako_local_txn_begin(db, &txn);
+      std::optional<std::string> value;
+      if (status == MAKO_LOCAL_OK) {
+        auto read = get(txn, primary, "payload-race");
+        status = read.first;
+        value = std::move(read.second);
+      }
+      if (status == MAKO_LOCAL_OK && value == std::optional<std::string>(first)) {
+        ++successful_reads;
+        status = mako_local_txn_commit(txn);
+      } else {
+        ++reader_failures;
+      }
+      if (status != MAKO_LOCAL_OK) ++reader_failures;
+      if (txn != nullptr && mako_local_txn_destroy(txn) != MAKO_LOCAL_OK)
+        ++reader_failures;
+    });
+  }
+
+  for (auto &worker : workers) worker.join();
+  EXPECT_EQ(writer_failures.load(), 0);
+  EXPECT_EQ(reader_failures.load(), 0);
+  EXPECT_GT(successful_reads.load(), 0);
+
+  auto *verify = begin();
+  EXPECT_EQ(get(verify, primary, "payload-race").second,
+            std::optional<std::string>(first));
+  commit_and_destroy(verify);
+}
 
 TEST_F(LocalAbiTest, ConcurrentReadWriteConflictAbortsExactlyOneCommit) {
   auto *seed = begin();

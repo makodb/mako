@@ -296,11 +296,13 @@ run_mako_local_abi_gates() {
     local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
     cmake --build "${BUILD_DIR}" --parallel "${jobs}" --target \
         check_mako_local_build_fingerprint \
+        test_mako_local_abi \
         test_mako_local_abi_c11 \
         test_mako_local_abi_cpp_conformance \
         run_mako_local_rust_tests
     local boundary_test
     for boundary_test in \
+        MakoLocalAbiTests \
         MakoLocalAbiC11Probe \
         MakoLocalAbiCppConformance \
         MakoLocalAbiSymbols \
@@ -310,6 +312,65 @@ run_mako_local_abi_gates() {
         ctest --test-dir "${BUILD_DIR}" --output-on-failure \
             --no-tests=error -R "^${boundary_test}$"
     done
+}
+
+# Configure a fresh, focused native boundary build for one sanitizer and run
+# the strict C++/C/Rust integration target. MAKO_LOCAL_SANITIZER is deliberately
+# a required selector so a CI matrix typo cannot silently run an ordinary build.
+run_mako_local_sanitizer_gates() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh makoLocalSanitizerGates"
+    echo "========================================="
+    local sanitizer="${MAKO_LOCAL_SANITIZER:-}"
+    local sanitizer_toggle
+    case "${sanitizer}" in
+        asan)
+            sanitizer_toggle="MAKO_ASAN=1"
+            ;;
+        ubsan)
+            sanitizer_toggle="MAKO_UBSAN=1"
+            ;;
+        tsan)
+            sanitizer_toggle="MAKO_TSAN=1"
+            ;;
+        *)
+            echo "ERROR: MAKO_LOCAL_SANITIZER must be asan, ubsan, or tsan" >&2
+            return 2
+            ;;
+    esac
+
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-4}}"
+    local generator="${CMAKE_GENERATOR:-Ninja}"
+    local build_type="${CMAKE_BUILD_TYPE:-RelWithDebInfo}"
+    echo "Configuring ${sanitizer} boundary gate in ${BUILD_DIR}"
+    env "${sanitizer_toggle}" cmake -S . -B "${BUILD_DIR}" \
+        -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" \
+        -DMAKO_LOCAL_TEST_HOOKS=OFF
+    env "${sanitizer_toggle}" cmake --build "${BUILD_DIR}" \
+        --parallel "${jobs}" --target run_mako_local_sanitizer_tests
+}
+
+# Cleanup-failure tests intentionally retain quarantined native state. Run
+# their exact production seam in a distinct hook-enabled functional profile so
+# ASan/LSan can keep the hook-free ownership baseline strict and exact.
+run_mako_local_hook_gates() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh makoLocalHookGates"
+    echo "========================================="
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-4}}"
+    local generator="${CMAKE_GENERATOR:-Ninja}"
+    local build_type="${CMAKE_BUILD_TYPE:-RelWithDebInfo}"
+    cmake -S . -B "${BUILD_DIR}" -G "${generator}" \
+        -DCMAKE_BUILD_TYPE="${build_type}" -DMAKO_LOCAL_TEST_HOOKS=ON
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" \
+        --target run_mako_local_hook_tests
+}
+
+run_mako_local_miri_gate() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh makoLocalMiriGate"
+    echo "========================================="
+    bash ./scripts/run_mako_local_miri.sh
 }
 
 # Function 2: Run simple transaction test
@@ -769,6 +830,15 @@ case "${1:-}" in
     makoLocalAbiGates)
         run_mako_local_abi_gates
         ;;
+    makoLocalSanitizerGates)
+        run_mako_local_sanitizer_gates
+        ;;
+    makoLocalHookGates)
+        run_mako_local_hook_gates
+        ;;
+    makoLocalMiriGate)
+        run_mako_local_miri_gate
+        ;;
     cleanup)
        cleanup
         ;;
@@ -871,7 +941,9 @@ case "${1:-}" in
         echo "Error: Unknown CI test target '${1:-}'"
         echo ""
         echo "Supported targets:"
-        echo "  compile, makoLocalAbiGates, cleanup, simpleTransaction, simplePaxos,"
+        echo "  compile, makoLocalAbiGates, makoLocalSanitizerGates,"
+        echo "  makoLocalHookGates, makoLocalMiriGate, cleanup,"
+        echo "  simpleTransaction, simplePaxos,"
         echo "  shardNoReplication, shardNoReplicationErpc,"
         echo "  shard1Replication, shard2Replication, shard2ReplicationErpc,"
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"

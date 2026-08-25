@@ -282,7 +282,14 @@ inline const char *oi_mbta_put_cmp(mbta_table *t, lcdf::Str key,
                                    oi_cmp_fn compar,
                                    const std::string &value) {
   STD_OP({
-    t->transPutMbta(key, StringWrapper(value), compar);
+    (void)t->transPutMbta(key, StringWrapper(value), compar);
+    // compare_published normally unwinds record conflicts directly. Keep this
+    // defensive translation for any future soft-conflict comparator path;
+    // predicate-false itself remains a successful no-op.
+    if (TThread::transget_without_throw) {
+      TThread::transget_without_throw = false;
+      throw Transaction::Abort();
+    }
     return 0;
   });
 }

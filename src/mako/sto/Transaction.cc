@@ -117,9 +117,11 @@ bool Transaction::test_cancel_fail_next_cleanup() noexcept {
 }
 #endif
 #if defined(SIMPLE_WORKLOAD)
-TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 1;
+std::atomic<TransactionTid::type> __attribute__((aligned(128)))
+    Transaction::_TID{1};
 #else
-TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 2 * TransactionTid::increment_value;
+std::atomic<TransactionTid::type> __attribute__((aligned(128)))
+    Transaction::_TID{2 * TransactionTid::increment_value};
 #endif
    // reserve TransactionTid::increment_value for prepopulated
 
@@ -188,7 +190,12 @@ bool Transaction::advance_mako_timestamp_past(uint32_t observed) noexcept {
 }
 
 static void __attribute__((used)) check_static_assertions() {
-    static_assert(sizeof(threadinfo_t) % 128 == 0, "threadinfo is 2-cache-line aligned");
+    static_assert(std::atomic<threadinfo_t::epoch_type>::is_always_lock_free,
+                  "the epoch protocol requires lock-free 64-bit atomics");
+    static_assert(std::atomic<TransactionTid::type>::is_always_lock_free,
+                  "the transaction clock requires lock-free 64-bit atomics");
+    static_assert(sizeof(threadinfo_t) % 128 == 0,
+                  "threadinfo occupies isolated 128-byte cache slots");
 }
 
 // @safe
@@ -229,19 +236,27 @@ void* Transaction::epoch_advancer(void*) {
 
     // don't bother epoch'ing til things have picked up
     usleep(100000);
-    while (global_epochs.run) {
-        epoch_type g = global_epochs.global_epoch;
+    while (global_epochs.run.load(std::memory_order_acquire)) {
+        const epoch_type g =
+            global_epochs.global_epoch.load(std::memory_order_seq_cst);
         epoch_type e = g;
         for (auto& t : tinfo) {
-            if (t.epoch != 0 && signed_epoch_type(t.epoch - e) < 0)
-                e = t.epoch;
+            const epoch_type participant_epoch =
+                t.epoch.load(std::memory_order_seq_cst);
+            if (participant_epoch != 0
+                && signed_epoch_type(participant_epoch - e) < 0)
+                e = participant_epoch;
         }
-        global_epochs.global_epoch = std::max(g + 1, epoch_type(1));
-        global_epochs.active_epoch = e;
-        global_epochs.recent_tid = Transaction::_TID;
+        const epoch_type next_epoch = std::max(g + 1, epoch_type(1));
+        global_epochs.global_epoch.store(next_epoch,
+                                         std::memory_order_seq_cst);
+        global_epochs.active_epoch.store(e, std::memory_order_seq_cst);
+        global_epochs.recent_tid.store(
+            Transaction::_TID.load(std::memory_order_acquire),
+            std::memory_order_relaxed);
 
         if (epoch_advance_callback)
-            epoch_advance_callback(global_epochs.global_epoch);
+            epoch_advance_callback(next_epoch);
 
         usleep(100000);
     }
@@ -292,7 +307,7 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
         TXP_INCREMENT(txp_hco_invalid);
 
     state_ = s_opacity_check;
-    start_tid_ = _TID;
+    start_tid_ = _TID.load(std::memory_order_acquire);
     release_fence();
     TransItem* it = nullptr;
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
@@ -1121,7 +1136,8 @@ void Transaction::print_stats() {
         auto base = tset_[tidx / tset_chunk];
         it = base + tidx % tset_chunk;
         versioned_str_struct *value = (*it).key<versioned_str_struct *>();
-        std::string val = std::string(value->data(), value->length());
+        std::string val;
+        value->copy_value_atomic(val);
         std::string key = "";
         if (hasInsertOp(it)) {  // key_write_value_type
             key = (*it).write_value<std::string>();

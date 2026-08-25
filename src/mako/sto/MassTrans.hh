@@ -179,7 +179,7 @@ public:
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
-      Version v = e->version();
+      Version v = TransactionTid::atomic_load(e->version());
       fence();
       auto item = t_item(e);
       item.add_extra(key) ;
@@ -219,6 +219,36 @@ public:
   }
 
 private:
+  template <typename ValueType>
+  bool compare_published(
+      versioned_value *e, const ValueType& value,
+      bool(*compar)(const std::string& newValue,
+                    const std::string& oldValue)) {
+    auto item = t_item(e);
+#if READ_MY_WRITES
+    if (readMyWritesEnabled() && has_insert(item)) {
+      // This transaction owns the linked invalid row. Other transactions
+      // reject it, so its private payload needs neither a published-version
+      // observation nor atomicRead's invalid-bit rejection. Preserve the
+      // replay verb's historical insert-then-compare composition.
+      value_type private_value;
+      assign_val(private_value, e->read_value());
+      return compar(storageValue(value), private_value);
+    }
+#endif
+
+    value_type published_value;
+    Version published_version;
+    if (!atomicRead(e, published_version, published_value))
+      propagate_atomic_read_conflict();
+
+    // A conditional write is also a transactional read, even when the
+    // predicate is false. Observe the exact version whose payload was passed
+    // to the comparator so a later commit cannot validate a different value.
+    item.observe(tversion_type(published_version));
+    return compar(storageValue(value), published_value);
+  }
+
   template <bool INSERT, bool SET, typename StringType, typename ValueType>
   bool trans_write(const StringType& key, const ValueType& value, bool(*compar)(const std::string& newValue,const std::string& oldValue), threadinfo_type& ti = mythreadinfo) {
     // optimization to do an unlocked lookup first
@@ -228,7 +258,7 @@ private:
       if (found) {
         if (compar != nullptr) {
           versioned_value *e = lp.value ();
-          if(!compar(value, e->read_value())){
+          if (!compare_published(e, value, compar)) {
             return false;
           }
         }
@@ -245,13 +275,15 @@ private:
     bool found = lp.find_insert(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
+      // Do not take the record lock while retaining the Masstree cursor lock:
+      // payload comparison may allocate or abort, and neither path should
+      // retain Masstree structural state.
+      lp.finish(0, *ti.ti);
       if (compar != nullptr) {
-        if(!compar(value, e->read_value())){
-          lp.finish (0, *ti.ti);
+        if (!compare_published(e, value, compar)) {
           return false;
         }
       }
-      lp.finish(0, *ti.ti);
       return handlePutFound<INSERT, SET>(e, key, value);
     } else {
       //      auto p = ti.ti->allocate(sizeof(versioned_value), memtag_value);
@@ -326,10 +358,9 @@ public:
 
 
   // Returns an approximate count of keys in the table (local shard only).
-  // Updated at commit time under lock; may be stale for recently aborted transactions.
+  // Updated at commit time; may be stale for recently aborted transactions.
   size_t approx_size() const {
-    // @safe - returns count updated at commit time (under lock); no atomics needed.
-    return size_count_;
+    return size_count_.load(std::memory_order_relaxed);
   }
 
   // goddammit templates/hax
@@ -434,9 +465,10 @@ protected:
       value_type stack_val;
       value_type& val = va ? *(*va)() : stack_val;
       Version v;
-      if(!atomicRead(e, v, val)){
-        Sto::abort();
-      }
+      // Callback false is a successful early stop, so a record conflict must
+      // unwind explicitly. atomicRead already performed native cleanup.
+      if (!atomicRead(e, v, val))
+        propagate_atomic_read_conflict();
       item.observe(tversion_type(v));
 
       if (!TThread::is_multiversion())
@@ -537,9 +569,8 @@ protected:
       value_type stack_val;
       value_type& val = va ? *(*va)() : stack_val;
       Version v;
-      if(!atomicRead(e, v, val)){
-        Sto::abort();
-      }
+      if (!atomicRead(e, v, val))
+        propagate_atomic_read_conflict();
       item.observe(tversion_type(v));
 
       if (!TThread::is_multiversion())
@@ -730,7 +761,8 @@ public:
     if (!valid) {
       return false;
     }
-    return TransactionTid::check_version(e->version(), read_version);
+    return TransactionTid::check_version(
+        TransactionTid::atomic_load(e->version()), read_version);
   }
 
   #define RESET_NODE_BY_E(e) \
@@ -741,19 +773,21 @@ public:
   void install(TransItem& item, Transaction& t) override {
     assert(!is_inter(item));
     versioned_value* e = item.key<versioned_value*>();
-    assert(is_locked(e->version()));
+    assert(is_locked(TransactionTid::atomic_load(
+        e->version(), std::memory_order_relaxed)));
     bool isInsert = has_insert(item), isDelete = has_delete(item);
 
     if (isDelete) { // delete
-      // Update count at commit time (under lock), so no atomics needed.
+      // Update count at commit time.
       // insert-then-delete cancels out (net change = 0); plain delete decrements.
       if (!isInsert) {
-        size_count_--;
+        size_count_.fetch_sub(1, std::memory_order_relaxed);
       }
       if (!TThread::is_multiversion()) {
         if (!isInsert) { // update
-          assert(!(e->version() & invalid_bit));
-          e->version() |= invalid_bit;
+          assert(!(TransactionTid::atomic_load(
+              e->version(), std::memory_order_relaxed) & invalid_bit));
+          TransactionTid::atomic_fetch_or(e->version(), invalid_bit);
           fence();
         }
 
@@ -790,10 +824,11 @@ public:
     if (Opacity)  // false
       TransactionTid::set_version(e->version(), t.commit_tid());
     else if (isInsert) {  // insert
-      size_count_++;
-      Version v = e->version() & ~invalid_bit;
+      size_count_.fetch_add(1, std::memory_order_relaxed);
+      Version v = TransactionTid::atomic_load(
+          e->version(), std::memory_order_relaxed) & ~invalid_bit;
       fence();
-      e->version() = v;
+      TransactionTid::atomic_store(e->version(), v);
       if (TThread::is_multiversion())
         MultiVersionValue::mvInstall(isInsert, isDelete,
                                     "",
@@ -886,7 +921,7 @@ protected:
         // permanently poisoned tree entry when that exception reached the ABI.
         lock(e);
         // we had a weird race condition and now this element is gone. just abort at this point
-        if (e->version() & invalid_bit) {
+        if (TransactionTid::atomic_load(e->version()) & invalid_bit) {
           unlock(e);
           Sto::abort();
           return;
@@ -898,12 +933,14 @@ protected:
           unlock(e);
           throw;
         }
-        e->version() |= invalid_bit;
+        TransactionTid::atomic_fetch_or(e->version(), invalid_bit);
         // should be ok to unlock now because any attempted writes will be forced to abort
         unlock(e);
         // The copy was made while e carried its lock bit. Derive the replacement
         // version from the now-unlocked old entry and clear only invalid_bit.
-        new_location->version() = e->version() & ~invalid_bit;
+        TransactionTid::atomic_store(
+            new_location->version(),
+            TransactionTid::atomic_load(e->version()) & ~invalid_bit);
       } else {
         new_location = e->resizeIfNeeded(storage_value);
       }
@@ -1000,7 +1037,7 @@ protected:
 #endif
     {
       auto current_e = item.item().template key<versioned_value*>();
-      Version v = current_e->version();
+      Version v = TransactionTid::atomic_load(current_e->version());
       fence();
       item.observe(tversion_type(v));
     }
@@ -1059,7 +1096,7 @@ protected:
 
   bool validityCheck(const TransItem& item, versioned_value *e) const {
     bool v =  //likely(has_insert(item)) || !(e->version & invalid_bit);
-      likely(!(e->version() & invalid_bit)) ||
+      likely(!(TransactionTid::atomic_load(e->version()) & invalid_bit)) ||
       (readMyWritesEnabled() && has_insert(item));
     //Warning("validityCheck:%d,%d",!(e->version() & invalid_bit), has_insert(item));
     return v;
@@ -1089,7 +1126,7 @@ protected:
   }
 
   static void check_opacity(Version& v) {
-    Version v2 = v;
+    Version v2 = TransactionTid::atomic_load(v);
     fence();
     Sto::check_opacity(v2);
   }
@@ -1119,22 +1156,46 @@ protected:
 #endif
   }
 
+  template <typename PublishedValue>
+  static void assign_published_value(value_type& val, PublishedValue *e) {
+    assign_val(val, e->read_value());
+  }
+
+  static void assign_published_value(std::string& val,
+                                     versioned_str_struct *e) {
+    if (TThread::is_multiversion())
+      assign_val(val, e->read_value());
+    else
+      e->copy_value_atomic(val);
+  }
+
+  [[noreturn]] static void propagate_atomic_read_conflict() {
+    // atomicRead uses the point-read soft-abort contract. Callers whose return
+    // value already has a non-conflict meaning must translate that marker into
+    // control flow themselves and must not leave the TLS marker stale.
+    TThread::transget_without_throw = false;
+    throw Transaction::Abort();
+  }
+
   static bool atomicRead(versioned_value *e, Version& vers, value_type& val) {
-    Version v2;
+    Version before;
     do {
-      v2 = e->version();
-      if (is_locked(v2)){
-        Sto::abort_without_throw(); //Sto::abort();
-        TThread::transget_without_throw=true;
+      before = TransactionTid::atomic_load(e->version());
+      if (is_locked(before) || (before & invalid_bit)) {
+        Sto::abort_without_throw();
+        TThread::transget_without_throw = true;
         return false;
       }
-	
+
       fence();
-      assign_val(val, e->read_value());
+      // versioned_str_struct copies its published length and bytes through
+      // atomic_ref. The generic fallback retains the historical behavior for
+      // non-boundary boxes; Item 4's local profile always uses versioned_str.
+      assign_published_value(val, e);
       fence();
-      vers = e->version();
+      vers = TransactionTid::atomic_load(e->version());
       fence();
-    } while (vers != v2);
+    } while (vers != before);
     return true;
   }
 
@@ -1156,8 +1217,9 @@ protected:
   typedef Masstree::tcursor<table_params> cursor_type;
   typedef Masstree::leaf<table_params> leaf_type;
   table_type table_;
-  // @safe - approximate key count; updated at commit time (under lock), so no atomics needed.
-  size_t size_count_{0};
+  // @safe - approximate key count. Per-record locks do not serialize commits
+  // to different keys, so the table-wide counter itself must be atomic.
+  std::atomic<size_t> size_count_{0};
 };
 
 template <typename V, typename Box, bool Opacity>

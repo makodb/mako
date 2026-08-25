@@ -347,7 +347,10 @@ void reportPerf();
 
 struct __attribute__((aligned(128))) threadinfo_t {
     using epoch_type = TRcuSet::epoch_type;
-    epoch_type epoch;
+    // Published by the owning worker and sampled by the process-wide epoch
+    // advancer. This is deliberately the only cross-thread field in the
+    // worker's RCU state.
+    std::atomic<epoch_type> epoch;
     TRcuSet rcu_set;
     // XXX(NH): these should be vectors so multiple data structures can register
     // callbacks for these
@@ -371,10 +374,10 @@ public:
 
     static threadinfo_t tinfo[MAX_THREADS];
     static struct epoch_state {
-        epoch_type global_epoch; // != 0
-        epoch_type active_epoch; // no thread is before this epoch
-        TransactionTid::type recent_tid;
-        bool run;
+        std::atomic<epoch_type> global_epoch; // != 0
+        std::atomic<epoch_type> active_epoch; // no thread is before this epoch
+        std::atomic<TransactionTid::type> recent_tid;
+        std::atomic<bool> run;
     } global_epochs;
     typedef TransactionTid::type tid_type;
 
@@ -430,7 +433,7 @@ public:
         timestamp_exhausted,
     };
 private:
-    static TransactionTid::type _TID;
+    static std::atomic<TransactionTid::type> _TID;
 public:
 
     static std::function<void(threadinfo_t::epoch_type)> epoch_advance_callback;
@@ -460,23 +463,26 @@ public:
     template <typename T>
     static void rcu_delete(T* x) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, ObjectDestroyer<T>::destroy_and_free, x);
+        thr.rcu_set.add(thr.epoch.load(std::memory_order_relaxed),
+                        ObjectDestroyer<T>::destroy_and_free, x);
     }
     template <typename T>
     static void rcu_delete_array(T* x) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, ObjectDestroyer<T>::destroy_and_free_array, x);
+        thr.rcu_set.add(thr.epoch.load(std::memory_order_relaxed),
+                        ObjectDestroyer<T>::destroy_and_free_array, x);
     }
     static void rcu_free(void* ptr) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, ::free, ptr);
+        thr.rcu_set.add(thr.epoch.load(std::memory_order_relaxed), ::free, ptr);
     }
     static void rcu_call(void (*function)(void*), void* argument) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, function, argument);
+        thr.rcu_set.add(thr.epoch.load(std::memory_order_relaxed), function,
+                        argument);
     }
     static void rcu_quiesce() {
-        tinfo[TThread::id()].epoch = 0;
+        tinfo[TThread::id()].epoch.store(0, std::memory_order_seq_cst);
     }
 
 #if STO_PROFILE_COUNTERS
@@ -541,8 +547,18 @@ private:
         TThread::trans_nosend_abort = 0;
         //TThread::in_loading_phase = true;
         TThread::increment_id += 1;
-        thr.epoch = global_epochs.global_epoch;
-        thr.rcu_set.clean_until(global_epochs.active_epoch);
+        // Publishing an RCU participant must precede every protected tree
+        // access after start() returns. Sequential consistency also lets us
+        // detect an advancer that ran while this worker was publishing: in
+        // that case announce the newer epoch before entering the transaction.
+        epoch_type epoch;
+        do {
+            epoch = global_epochs.global_epoch.load(std::memory_order_seq_cst);
+            thr.epoch.store(epoch, std::memory_order_seq_cst);
+        } while (epoch != global_epochs.global_epoch.load(
+                              std::memory_order_seq_cst));
+        thr.rcu_set.clean_until(
+            global_epochs.active_epoch.load(std::memory_order_seq_cst));
         if (thr.trans_start_callback)
             thr.trans_start_callback();
         hash_base_ += tset_size_ + 1;
@@ -785,7 +801,7 @@ public:
 # if STO_SPIN_EXPBACKOFF
             if (item.has_read() || n == STO_SPIN_BOUND_WRITE) {
 #  if STO_DEBUG_ABORTS
-                abort_version_ = vers;
+                abort_version_ = TransactionTid::atomic_load(vers);
 #  endif
                 return false;
             }
@@ -795,7 +811,7 @@ public:
 # else
             if (item.has_read() || n == (1 << STO_SPIN_BOUND_WRITE)) {
 #  if STO_DEBUG_ABORTS
-                abort_version_ = vers;
+                abort_version_ = TransactionTid::atomic_load(vers);
 #  endif
                 return false;
             }
@@ -808,7 +824,7 @@ public:
     void check_opacity(TransItem& item, TransactionTid::type v) {
         assert(state_ <= s_committing_locked);
         if (!start_tid_)
-            start_tid_ = _TID;
+            start_tid_ = _TID.load(std::memory_order_acquire);
         if (!TransactionTid::try_check_opacity(start_tid_, v)
             && state_ < s_committing)
             hard_check_opacity(&item, v);
@@ -822,21 +838,22 @@ public:
     void check_opacity(TransactionTid::type v) {
         assert(state_ <= s_committing_locked);
         if (!start_tid_)
-            start_tid_ = _TID;
+            start_tid_ = _TID.load(std::memory_order_acquire);
         if (!TransactionTid::try_check_opacity(start_tid_, v)
             && state_ < s_committing)
             hard_check_opacity(nullptr, v);
     }
 
     void check_opacity() {
-        check_opacity(_TID);
+        check_opacity(_TID.load(std::memory_order_acquire));
     }
 
     // committing
     tid_type commit_tid() const {
         assert(state_ == s_committing_locked || state_ == s_committing);
         if (!commit_tid_)
-            commit_tid_ = fetch_and_add(&_TID, TransactionTid::increment_value);
+            commit_tid_ = _TID.fetch_add(TransactionTid::increment_value,
+                                         std::memory_order_acq_rel);
         return commit_tid_;
     }
 
@@ -1146,7 +1163,8 @@ public:
     }
 
     static TransactionTid::type recent_tid() {
-        return Transaction::global_epochs.recent_tid;
+        return Transaction::global_epochs.recent_tid.load(
+            std::memory_order_relaxed);
     }
 
     static TransactionTid::type initialized_tid() {

@@ -28,10 +28,12 @@ C++ STO/MassTrans engine, gives Rust a narrow C ABI and safe ownership layer,
 then uses that engine as the single-machine transactional cache in front of
 RocksDB. In the current slice RocksDB is an asynchronously updated black box;
 disk-sync policy and recovery of an unsynced tail are later work. The C ABI
-remains a draft until the Phase 1A-1D
-boundary gate is complete. Later milestones move Mako's distributed
-orchestration into Rust, then replace the local C++ engine only after its
-behavior is captured by an executable compatibility suite.
+remains a draft until both the executable Phase 1A-1D boundary gate is green
+and the remaining Phase 1C/1D ABI-design and freeze decisions are explicitly
+accepted. Passing the executable gate does not itself promote revision 0 to
+ABI v1. Later milestones move Mako's distributed orchestration into Rust, then
+replace the local C++ engine only after its behavior is captured by an
+executable compatibility suite.
 
 ## Decisions that should remain stable
 
@@ -134,13 +136,15 @@ The local cache protocol must not call every ordering value a "timestamp":
 
 **Draft revision policy.** The checked-in implementation reports
 `MAKO_LOCAL_ABI_VERSION == 0`. Revision 0 may add symbols, statuses, option
-fields, and capabilities while Phases 1A-1D are completed. Only the boundary
-gate below
-may promote the surface to ABI v1. After that promotion, exported symbols and
-numeric statuses are permanent reservations. `DUPLICATE_WRITE` is now a
-legacy/no-RYW result rather than part of the default profile, but its assigned
-number remains reserved. Semantic expansions are advertised by capability
-bits or a later ABI revision rather than silently changing v1.
+fields, and capabilities while Phases 1A-1D are completed. A green executable
+boundary gate below is necessary but not sufficient for ABI-v1 promotion: the
+remaining options, worker-context, output-rule, and process-lifetime design
+decisions in Phases 1C/1D must also be accepted in an explicit freeze review.
+After that promotion, exported symbols and numeric statuses are permanent
+reservations. `DUPLICATE_WRITE` is now a legacy/no-RYW result rather than part
+of the default profile, but its assigned number remains reserved. Semantic
+expansions are advertised by capability bits or a later ABI revision rather
+than silently changing v1.
 
 The first slice proves the boundary with the smallest useful transaction:
 
@@ -205,7 +209,10 @@ Current implementation status:
       [Mako local C ABI revision 0](../reference/mako-local-abi-v0.md), including
       the active/finished/quarantined/destroyed state model and the conservative
       one-shot destroy rule for `WORKER_POISONED` and terminal uncertainty.
-- [ ] Complete the contract gates below.
+- [ ] Record a green from-scratch run of the executable contract gates below.
+      The implementation and exact commands are documented at
+      [Mako local boundary gates](../mako-local-boundary-gates.md); do not check
+      this item merely because the test targets exist.
 
 ### 1B. Freeze local transaction semantics
 
@@ -368,8 +375,10 @@ gates are green:
 4. Fixed worker pools at 1, 4, and 16 threads pass conflict, abort, progress,
    and soak tests without leaked locks or ephemeral-thread churn.
 5. Direct C++, C ABI, and safe Rust benchmarks cover read-only, write-only,
-   RMW, transaction sizes 1/4/16/64, and low/high conflict rates. Wrapper tax
-   has a recorded same-host budget before it becomes a release gate.
+   RMW, transaction sizes 1/4/16/64, and low/high conflict rates. Every
+   low-contention configuration is recorded, per-workload median/maximum
+   wrapper tax has a same-host advisory budget, and every high-contention
+   write/RMW configuration proves it actually generated conflicts.
 6. Generated-binding or clean-regeneration checks, C11/C++ header probes, the
    Rust link probe, exported-symbol allowlist, ABI revision, and embedded build
    fingerprint all agree in a from-scratch required-native build. CI fails if
@@ -379,6 +388,13 @@ gates are green:
    one counter increment, and permanent worker rejection. No test may pass by
    ignoring a Drop error, retrying cleanup, reusing uncertain TLS state, or
    loading a stale native artifact.
+
+The implementation, reproducible commands, exact concurrency/benchmark
+methodology, retained artifacts, and execution status are maintained in
+[Mako local boundary gates](../mako-local-boundary-gates.md). Treat the
+executable gate as complete only when that validation record is entirely
+green. Even then, ABI revision 0 remains a draft until the explicit Phase
+1C/1D design/freeze work above is accepted.
 
 This intermediate boundary gate excludes RocksDB durability and eviction. It
 is not completion of Milestone 1; distributed routing, 2PC, replication, and a
@@ -434,10 +450,13 @@ boundaries in a dedicated native-hook profile. Eight recovery/replay boundaries
 are each interrupted on two consecutive fresh-process restarts. The native
 boundary now also has a process-isolated direct-C++/C-ABI/safe-Rust
 differential gate and an independent strict-serializability/opacity oracle.
-The remaining Phase 1A-1D sanitizer, concurrency, and performance gates and
-Phase 1F's application-aware mutation/history work remain open. Interruption
-inside RocksDB's WAL is deliberately not a milestone gate: RocksDB remains a
-black box.
+Item 4 now implements the remaining Phase 1A-1D sanitizer/Miri, fixed-worker
+concurrency, and relative-overhead gates. Their authoritative execution status
+is the validation record in
+[Mako local boundary gates](../mako-local-boundary-gates.md); they are not
+complete merely because the targets are present. Phase 1F's application-aware
+mutation/history work remains open independently. Interruption inside RocksDB's
+WAL is deliberately not a milestone gate: RocksDB remains a black box.
 
 1. **Prepare a detached permit before native commit.** Acquire one unit of
    bounded queue capacity and own every mutation byte, encoded-record buffer,
@@ -703,9 +722,12 @@ and cache exposure are complete for the RYW profile. The hook-enabled
 fresh-process suite now exercises fifteen write-path and eight repeated
 recovery boundaries. The in-memory applied watermark is now explicit and
 advances only after a successful ordered backend call. Item 3's native
-history oracle is complete; the boundary sanitizer, concurrency, and overhead
-gates plus Phase 1F's mutation and application-aware history checks remain
-open. Inside-RocksDB instrumentation is intentionally outside this milestone.
+history oracle is complete. Item 4's sanitizer/Miri, fixed-worker concurrency,
+and overhead implementations are complete; the linked
+[validation record](../mako-local-boundary-gates.md#validation-record) determines
+whether the executable gate has been accepted. Phase 1F's mutation and
+application-aware history checks remain open. Inside-RocksDB instrumentation
+is intentionally outside this milestone.
 
 1. The revision-0 operation/status contract and numeric reservations 0 through
    19 are now published and mechanically checked across the C header, C++
@@ -713,8 +735,9 @@ open. Inside-RocksDB instrumentation is intentionally outside this milestone.
    policy. Typed poison, independent TLS worker health, begin cleanup,
    one-shot cleanup, a monotonic quarantine counter, five native cleanup
    failpoints, and fake-ABI/Miri ownership coverage complete this item.
-   Retain draft revision `0` until the full boundary gate passes. Revisit the
-   conservative transaction budget only with safe pre-reservation.
+   Retain draft revision `0` through the full executable boundary gate and the
+   subsequent explicit Phase 1C/1D design/freeze review. Revisit the conservative
+   transaction budget only with safe pre-reservation.
 2. The C header now generates the raw Rust declarations. Strict C11/C++
    conformance probes, a Rust all-export link probe, an exact native symbol
    allowlist, and the source/configuration-derived fingerprint plus digest link
@@ -733,7 +756,19 @@ open. Inside-RocksDB instrumentation is intentionally outside this milestone.
    retain the corpus plus every available output/error for deterministic
    replay. An injected child-process divergence exercises the same comparison
    path.
-4. Run sanitizer, concurrency, and wrapper-overhead gates.
+4. The executable Item 4 gate now supplies pinned fake-ABI Miri; strict
+   ASan/UBSan integration and TSan with reviewed suppressions; exact
+   1/4/16-worker conflict, abort, progress, and soak coverage; and an
+   opt-in optimized direct-C++ -> raw-ABI -> safe-Rust overhead matrix. The
+   benchmark validates every configured key, requires at least one-percent
+   aggregate conflict rate
+   in each high-contention write/RMW configuration, records every
+   low-contention ratio plus its per-workload median/maximum, and applies the
+   initial `6.0x` ceiling only as a same-host advisory sanity check. Treat this
+   item as complete only when every row in the
+   [validation record](../mako-local-boundary-gates.md#validation-record) is
+   `PASS`. That completes the numbered executable Phase 1A-1D gate, not the
+   revision-0 design/freeze work, Phase 1F, or Milestone 1.
 5. Finish Phase 1F with cleanup/quarantine points, the mutation suite, and an
    application-aware full-history oracle. Keep the dedicated hook-enabled
    profile mandatory for native seam tests; the production-default build

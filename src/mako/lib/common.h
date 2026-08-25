@@ -4,6 +4,7 @@
 #include "lib/timestamp.h"
 
 #include <iostream>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
@@ -152,10 +153,14 @@ namespace mako
         uint32_t timestamp = 0;
         int16_t data_size = 0;
         char* node_bytes = encoded_value + encoded_size - BITS_OF_NODE;
-        std::memcpy(node_bytes + offsetof(Node, timestamp), &timestamp,
-                    sizeof(timestamp));
-        std::memcpy(node_bytes + offsetof(Node, data_size), &data_size,
-                    sizeof(data_size));
+        const char* timestamp_bytes = reinterpret_cast<const char*>(&timestamp);
+        for (size_t i = 0; i != sizeof(timestamp); ++i)
+            std::atomic_ref<char>(node_bytes[offsetof(Node, timestamp) + i])
+                .store(timestamp_bytes[i], std::memory_order_relaxed);
+        const char* size_bytes = reinterpret_cast<const char*>(&data_size);
+        for (size_t i = 0; i != sizeof(data_size); ++i)
+            std::atomic_ref<char>(node_bytes[offsetof(Node, data_size) + i])
+                .store(size_bytes[i], std::memory_order_relaxed);
     }
 
     inline void ResetEncodedMetadata(char* encoded_value, size_t encoded_size) {

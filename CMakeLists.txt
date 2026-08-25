@@ -769,6 +769,41 @@ if(DEFINED ENV{MAKO_FUZZER} AND "$ENV{MAKO_FUZZER}" STREQUAL "1")
     add_compile_options(-fsanitize=fuzzer-no-link)
 endif()
 
+# Native Rust test executables link libmako.a outside CMake. An instrumented
+# static archive does not carry its sanitizer runtime with it, so propagate the
+# exact CMake sanitizer set to Cargo's final Clang++ link. Keep this separate
+# from Rust's own Miri gate: Item 4 instruments the C++ integration boundary,
+# while Miri interprets the Rust-only fake-ABI ownership model.
+set(MAKO_LOCAL_SANITIZERS_ENABLED)
+set(MAKO_LOCAL_SANITIZER_RUNTIME_ENV)
+if(MAKO_ASAN_ENABLED)
+    list(APPEND MAKO_LOCAL_SANITIZERS_ENABLED address)
+    list(APPEND MAKO_LOCAL_SANITIZER_RUNTIME_ENV
+         "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1"
+         "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/src/mako/mako_local_lsan_suppressions.txt:print_suppressions=1")
+endif()
+if(MAKO_UBSAN_ENABLED)
+    list(APPEND MAKO_LOCAL_SANITIZERS_ENABLED undefined)
+    list(APPEND MAKO_LOCAL_SANITIZER_RUNTIME_ENV
+         "UBSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/src/masstree/ubsan_suppressions.txt:halt_on_error=1:print_stacktrace=1")
+endif()
+if(MAKO_TSAN_ENABLED)
+    list(APPEND MAKO_LOCAL_SANITIZERS_ENABLED thread)
+    list(APPEND MAKO_LOCAL_SANITIZER_RUNTIME_ENV
+         "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/src/masstree/tsan_suppressions.txt:halt_on_error=1")
+endif()
+if(MAKO_LOCAL_SANITIZERS_ENABLED)
+    list(JOIN MAKO_LOCAL_SANITIZERS_ENABLED "," MAKO_LOCAL_SANITIZER_LIST)
+    set(MAKO_LOCAL_SANITIZER_FLAG "-fsanitize=${MAKO_LOCAL_SANITIZER_LIST}")
+    set(MAKO_LOCAL_SANITIZER_RUSTFLAGS "$ENV{RUSTFLAGS}")
+    string(APPEND MAKO_LOCAL_SANITIZER_RUSTFLAGS
+           " -C linker=${CMAKE_CXX_COMPILER} -C link-arg=${MAKO_LOCAL_SANITIZER_FLAG}")
+    string(STRIP "${MAKO_LOCAL_SANITIZER_RUSTFLAGS}"
+           MAKO_LOCAL_SANITIZER_RUSTFLAGS)
+    message(STATUS
+        "mako-local sanitizer gate enabled: ${MAKO_LOCAL_SANITIZER_LIST}")
+endif()
+
 # Add RAFT_TEST_CORO flag if enabled
 if(RAFT_TEST)
   message(STATUS "Raft lab testing fiber enabled")
@@ -3025,6 +3060,30 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/mako
     )
 
+    # Process-isolated relative-overhead runner. Like the differential driver,
+    # direct MassTrans and the raw C ABI must execute in separate processes
+    # because they permanently claim different STO worker-runtime identities.
+    # The Rust integration test supplies the third (safe-wrapper) process and
+    # validates the complete benchmark protocol before calculating ratios.
+    add_executable(mako_local_overhead_driver
+        tests/mako_local_overhead_driver.cc)
+    target_link_libraries(mako_local_overhead_driver
+        mako
+        rrr
+        erpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(mako_local_overhead_driver PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+
     # The public local-transaction boundary must remain consumable as strict C.
     # Compile the C source in an object target so libmako's public C++ compile
     # options cannot leak into it; the final executable still uses the C++
@@ -3314,15 +3373,30 @@ if(BUILD_TESTS)
             ${MAKO_RUST_TOOLCHAIN_ENV}
             "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-cache")
 
+        # Miri is intentionally a Rust-only fake-ABI gate. The runner owns a
+        # dated nightly pin and fails loudly when that exact toolchain or Miri
+        # component is unavailable; this target must never degrade to `cargo
+        # test` or cross into the native C++ archive.
+        add_custom_target(run_mako_local_miri_tests
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "CARGO=${CARGO_EXECUTABLE}"
+                    "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-local-miri"
+                    bash "${CMAKE_SOURCE_DIR}/scripts/run_mako_local_miri.sh"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            COMMENT "Running pinned Miri safe-wrapper ownership gate"
+            VERBATIM
+        )
+
         add_custom_target(run_mako_local_rust_tests
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_LOCAL_CARGO_ENV}
-                    ${CARGO_EXECUTABLE} test -p mako-history --all-targets
+                    ${CARGO_EXECUTABLE} test --locked
+                    -p mako-history --all-targets
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_LOCAL_CARGO_ENV}
                     "MAKO_LOCAL_FAKE_ABI=1"
                     "MAKO_LOCAL_REQUIRE_NATIVE=0"
-                    ${CARGO_EXECUTABLE} test -p mako-local --lib
+                    ${CARGO_EXECUTABLE} test --locked -p mako-local --lib
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_LOCAL_CARGO_ENV}
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
@@ -3330,19 +3404,111 @@ if(BUILD_TESTS)
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
                     "MAKO_LOCAL_REQUIRE_DIFFERENTIAL=1"
                     "MAKO_LOCAL_DIFFERENTIAL_DRIVER=$<TARGET_FILE:mako_local_differential_driver>"
-                    ${CARGO_EXECUTABLE} test
+                    ${CARGO_EXECUTABLE} test --locked
                     -p mako-local -p mako-local-sys --all-targets
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_LOCAL_CARGO_ENV}
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
                     "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
-                    ${CARGO_EXECUTABLE} test -p mako-local --doc
+                    ${CARGO_EXECUTABLE} test --locked -p mako-local --doc
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
             DEPENDS mako mako_local_differential_driver
             COMMENT "Running safe Rust transaction-wrapper tests"
             VERBATIM
         )
+
+        # Cleanup-failure seams deliberately quarantine their sacrificial
+        # worker and retain uncertain native state. Keep this as a distinct
+        # hook-enabled functional profile rather than weakening the production
+        # ASan/LSan ownership baseline. Conditional target creation makes a
+        # missing -DMAKO_LOCAL_TEST_HOOKS=ON fail at target selection.
+        if(MAKO_LOCAL_TEST_HOOKS)
+            add_custom_target(run_mako_local_hook_tests
+                COMMAND ${CMAKE_CTEST_COMMAND}
+                        --test-dir ${CMAKE_BINARY_DIR} --verbose
+                        --output-on-failure --no-tests=error
+                        -R "^(MakoLocalAbiTests|MakoLocalAbiC11Probe|MakoLocalAbiCppConformance)$"
+                DEPENDS test_mako_local_abi test_mako_local_abi_c11
+                        test_mako_local_abi_cpp_conformance
+                        run_mako_local_rust_tests
+                        check_mako_local_build_fingerprint
+                        check_mako_local_abi_symbols
+                COMMENT
+                    "Running hook-enabled cleanup/quarantine boundary gate"
+                VERBATIM
+            )
+        endif()
+
+        # Item 4's benchmark is intentionally opt-in: it requires optimized
+        # C++ and Rust code, performs warmup plus repeated samples over the
+        # complete workload matrix, and records same-host artifacts. Ordinary
+        # correctness targets still compile its protocol tests but do not make
+        # noisy performance measurements.
+        add_custom_target(run_mako_local_overhead_benchmarks
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "${CMAKE_BINARY_DIR}/mako-local-overhead-artifacts"
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-local-overhead"
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    "MAKO_LOCAL_REQUIRE_OVERHEAD=1"
+                    "MAKO_LOCAL_OVERHEAD_DRIVER=$<TARGET_FILE:mako_local_overhead_driver>"
+                    "MAKO_LOCAL_OVERHEAD_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/mako-local-overhead-artifacts"
+                    ${CARGO_EXECUTABLE} test --locked --release
+                    -p mako-local --test overhead --
+                    --exact wrapper_overhead_gate --nocapture
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+            DEPENDS mako mako_local_overhead_driver
+                    check_mako_local_build_fingerprint
+                    check_mako_local_abi_symbols
+            COMMENT "Running optimized three-surface wrapper-overhead gate"
+            VERBATIM
+        )
+
+        if(MAKO_LOCAL_SANITIZERS_ENABLED)
+            set(MAKO_LOCAL_SANITIZER_CARGO_ENV
+                ${MAKO_RUST_TOOLCHAIN_ENV}
+                ${MAKO_LOCAL_SANITIZER_RUNTIME_ENV}
+                "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-local-sanitizer"
+                "RUSTFLAGS=${MAKO_LOCAL_SANITIZER_RUSTFLAGS}")
+
+            # Required-native Item 4 gate. The gtest exercises the C ABI
+            # directly. The Rust integration suite then drives the same
+            # instrumented archive through safe Rust and execs the direct-C++
+            # and raw-C-ABI differential children. Sanitizer suppressions are
+            # restricted to the reviewed engine/process-lifetime lists above,
+            # and any other report terminates the gate.
+            add_custom_target(run_mako_local_sanitizer_tests
+                COMMAND ${CMAKE_COMMAND} -E env
+                        ${MAKO_LOCAL_SANITIZER_RUNTIME_ENV}
+                        ${CMAKE_CTEST_COMMAND}
+                        --test-dir ${CMAKE_BINARY_DIR} --verbose
+                        --output-on-failure --no-tests=error
+                        -R "^(MakoLocalAbiTests|MakoLocalAbiC11Probe|MakoLocalAbiCppConformance)$"
+                COMMAND ${CMAKE_COMMAND} -E env
+                        ${MAKO_LOCAL_SANITIZER_CARGO_ENV}
+                        "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                        "MAKO_LOCAL_FAKE_ABI=0"
+                        "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                        "MAKO_LOCAL_REQUIRE_DIFFERENTIAL=1"
+                        "MAKO_LOCAL_DIFFERENTIAL_DRIVER=$<TARGET_FILE:mako_local_differential_driver>"
+                        ${CARGO_EXECUTABLE} test --locked
+                        -p mako-local -p mako-local-sys --all-targets --
+                        --test-threads=1 --nocapture
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+                DEPENDS test_mako_local_abi test_mako_local_abi_c11
+                        test_mako_local_abi_cpp_conformance
+                        mako_local_differential_driver
+                        check_mako_local_build_fingerprint
+                        check_mako_local_abi_symbols
+                COMMENT
+                    "Running required-native mako-local sanitizer boundary gate"
+                VERBATIM
+            )
+        endif()
 
         add_custom_target(run_mako_cache_rust_tests
             COMMAND ${CMAKE_COMMAND} -E env

@@ -834,6 +834,15 @@ fn run_with_input(command: &mut Command, input: &[u8]) -> Result<Output, String>
 
 fn checked_stdout(label: &str, output: Output) -> Result<Vec<u8>, String> {
     if output.status.success() {
+        // Sanitizer suppression summaries are emitted on stderr even for a
+        // successful child. Relay them so `cargo test -- --nocapture` retains
+        // the reviewed LSan root counts in the gate transcript.
+        if !output.stderr.is_empty() {
+            eprintln!(
+                "--- {label} stderr ---\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         Ok(output.stdout)
     } else {
         Err(format!(

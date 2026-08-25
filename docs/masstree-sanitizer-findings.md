@@ -1,22 +1,32 @@
 # Masstree — Sanitizer Findings Report
 
 Surfaced by Tier 3.1 of `docs/masstree-test-plan.md`. Each finding is
-documented in enough detail that the user can decide whether it is an
-actual bug or an intentional pattern. No fixes have been applied; the
-items below are all currently silenced by the suppressions files in
-`src/masstree/{ubsan,tsan}_suppressions.txt`.
+documented in enough detail to distinguish an actual bug from an intentional
+engine pattern. Findings 1–4 remain reviewed engine suppressions. The real
+Mako races in Findings 5, 9, 11, 12, and 13 were fixed with explicit atomics
+and ordering and are not suppressed. The invalid RCU callback discriminator in
+Finding 10 was also fixed rather than suppressed.
 
 ## TL;DR
 
 | # | Sanitizer | Location | Class | My read |
 |---|---|---|---|---|
 | 1 | UBSan | `src/masstree/kpermuter.hh:128` | shift-exponent ≥ width | **likely benign** on x86 — value is consumed by a mask whose unused-bit branch is never taken, but the UB is real per the C++ memory model |
-| 2 | UBSan | `src/masstree/string_slice.hh:52,83,87,158,159` | unaligned 8-byte load | **intentional perf trick**, gated by `HAVE_UNALIGNED_ACCESS`; UB per spec, safe on x86_64 |
+| 2 | UBSan | `src/masstree/string_slice.hh:52,83,87` | unaligned 8-byte load | **intentional perf trick**, gated by `HAVE_UNALIGNED_ACCESS`; UB per spec, safe on x86_64 |
 | 3 | UBSan | `src/masstree/masstree_struct.hh:156` (via line 661) | array index from stale read inside optimistic retry | **intentional lock-free pattern**; value is discarded by the surrounding version-check retry |
 | 4 | TSan | `src/masstree/*` (~1,500 distinct call sites) | racy reads of node fields under optimistic concurrency | **intentional lock-free pattern**; safety is via Masstree's version-counter retry, not via `std::atomic` ordering |
-| 5 | TSan | `src/mako/spinlock.h:23,40` | race on `volatile uint32_t value` | **the only finding that looks like a real bug** — plain `volatile` is not a substitute for `std::atomic<uint32_t>` under the C++11+ memory model |
+| 5 | TSan | `src/mako/spinlock.h:23,40` | race on `volatile uint32_t value` | **fixed** — the lock now uses `std::atomic<uint32_t>` with acquire/release ordering |
+| 6 | native stress | Mako's `concurrent_btree` thread registration | process-lifetime attachment-ID exhaustion | **graceful-fail path landed**; this is a Mako allocator constraint, not a pure-Masstree defect |
+| 7 | ASan | `src/masstree/string_slice.hh:158–159` (old lines) | short-key read past exact caller allocation | **fixed** — equality now copies exactly the declared key length |
+| 8 | LSan | local-boundary TLS and table setup | two process-lifetime ownership categories | **reviewed** — three root-frame patterns only; leak detection remains enabled and fatal elsewhere |
+| 9 | TSan | `src/mako/sto/Transaction.{hh,cc}` | plain shared epoch and transaction clocks | **fixed** — participant epochs, epoch watermarks, and `_TID` now use lock-free atomics with explicit ordering |
+| 10 | UBSan | `src/masstree/kvthread.hh:305,360,375` (old lines) | out-of-range enum used as the RCU callback discriminator | **fixed** — the callback sentinel is now a named negative `memtag` enumerator |
+| 11 | TSan | `src/mako/sto/Interface.hh` and `MassTrans.hh` | mixed plain and atomic access to the STO version/lock word | **fixed** — layout-preserving `atomic_ref` operations now cover lock transitions and every MassTrans version access |
+| 12 | TSan | `src/masstree/kvthread.{hh,cc}` | plain RCU participant epoch and racy one-time setup | **fixed** — layout-preserving atomic publication/scan with epoch revalidation, plus `call_once` setup |
+| 13 | C++ memory-model audit / TSan | `src/mako/sto/stuffed_str.hh`, `MassTrans.hh`, and encoded metadata reset | optimistic copy of concurrently published plain payload bytes | **fixed for the local single-version boundary** — atomic size/byte access plus a release/acquire fence pair makes version retry formally snapshot-safe |
 
-ASan: zero findings across all three test binaries.
+The current ASan boundary gate is clean after Finding 7's fix and Finding 8's
+narrow process-lifetime suppressions.
 
 ---
 
@@ -76,8 +86,10 @@ the masking, so this is the part that warrants a second look).
 
 ## Finding 2 — `string_slice` unaligned 8-byte loads
 
-**Where**: `src/masstree/string_slice.hh:52, 83, 87, 158, 159` (and
-likely more under richer workloads).
+**Where**: `src/masstree/string_slice.hh:52, 83, 87` (and likely more
+under richer workloads). The former equality loads at old lines 158–159 were
+fixed separately as Finding 7 because they also crossed the public ABI's
+exact-length allocation boundary.
 
 ```cpp
 #if HAVE_UNALIGNED_ACCESS
@@ -305,7 +317,7 @@ the compiler from optimizing away or coalescing the access, but it
 does not impose any memory ordering and does not establish a
 happens-before edge with concurrent accesses on the same object.
 
-The current implementation relies on:
+The original implementation relied on:
 - `__sync_bool_compare_and_swap` for the actual mutual exclusion
   (this is fine — it's an atomic builtin).
 - `COMPILER_MEMORY_FENCE` for ordering around the critical section
@@ -330,9 +342,9 @@ std::atomic<uint32_t> value{0};
 // unlock:  value.store(0, memory_order_release);
 ```
 
-It is suppressed in `src/masstree/tsan_suppressions.txt` by
-`race:spinlock::lock` / `race:spinlock::unlock` because chasing it
-inside Tier 3.1 was out of scope.
+The initial Tier 3.1 run temporarily suppressed
+`race:spinlock::lock` / `race:spinlock::unlock`. The landed atomic fix removed
+both entries; the current strict gate does not suppress Finding 5.
 
 ---
 
@@ -341,13 +353,12 @@ inside Tier 3.1 was out of scope.
 - **Findings 1–4 are all "UB per the C++ memory model that happens to
   work on x86."** Whether to fix any of them is a portability and
   hygiene call, not a correctness call on current hardware.
-- **Finding 5 is a real concurrency bug** on any non-TSO architecture
-  and a "works by accident" pattern on x86. Worth investigating
-  whether `spinlock` is on a hot enough path that the relaxed-atomic
-  rewrite needs benchmarking before/after.
+- **Finding 5 was a real concurrency bug** on non-TSO architectures and a
+  "works by accident" pattern on x86. The atomic acquire/release rewrite is
+  now in the tested implementation.
 - **None of the five findings affected the test suite's pass rate**
-  (113/113 passed under each sanitizer once the suppressions were in
-  place). They were all surfaced as out-of-band warnings.
+  (113/113 passed under each sanitizer once Findings 1–4 were suppressed and
+  Finding 5 was fixed). They were originally surfaced as out-of-band warnings.
 
 ---
 
@@ -513,3 +524,256 @@ The minimum-effort interim mitigation is to bump `NMAXCORES`
 but that just kicks the can — any consumer with >512 unique
 thread lifetimes still hits it. The freelist fix is roughly 20
 lines and should be the actual landing.
+
+---
+
+## Finding 7 — exact-length short-key equality read — **FIXED**
+
+The first required-native ASan boundary run found an 8-byte load in
+`string_slice::equals_sloppy()` even when the remaining key suffix was shorter
+than 8 bytes. Masstree-internal callers often happen to provide padding, but
+the public C ABI promises that callers need allocate only the declared key
+bytes. Reading beyond such an exact allocation is therefore a real boundary
+bug, independent of whether the CPU tolerates unaligned loads.
+
+`equals_sloppy()` now zero-initializes two unsigned words, copies exactly
+`len` bytes from each caller buffer, and compares the words. The full-width
+case can still compile to a native load, while short and unaligned buffers are
+defined by the C++ object model. The native ABI suite includes
+`ExactLengthCallerKeyRequiresNoMasstreePadding`, which allocates exactly 17 key
+bytes and performs committed put/remove transactions without hidden suffix
+storage. All 39 native boundary tests pass with ASan after this change.
+
+---
+
+## Finding 8 — revision-0 process-lifetime ownership under LSan — **reviewed**
+
+Leak detection remains active with `detect_leaks=1`, and ASan/LSan abort on an
+unsuppressed finding. Revision 0 intentionally lacks two teardown mechanisms:
+
+1. STO has no safe detach/recycle operation for a retired worker's TLS
+   transaction arena.
+2. MassTrans table and epoch state cannot be reclaimed until a tested global
+   RCU-quiescence protocol exists.
+
+`src/mako/mako_local_lsan_suppressions.txt` therefore contains three narrow
+root-frame patterns for exactly those two ownership categories:
+`Sto::transaction`, `mako_local_table_open`, and
+`DirectRunner::DirectRunner`. The third pattern is test-specific: the
+differential control must instantiate MassTrans directly, so its table
+allocation deliberately does not cross the public C-ABI table-open frame.
+Leaks rooted anywhere else remain fatal.
+
+The discovery run recorded these exact baselines:
+
+| Process and root frame | Root allocations / bytes | Transitively retained allocations / bytes | Total reviewed footprint |
+| --- | ---: | ---: | ---: |
+| 39-test native C-ABI process, `Sto::transaction` | 3 / 94,104 | 2 / 8,208 | 5 / 102,312 |
+| 39-test native C-ABI process, `mako_local_table_open` | 37 / 2,368 | 0 / 0 | 37 / 2,368 |
+| Direct-C++ differential child, `DirectRunner::DirectRunner` | 18 / 1,152 | 14 / 672 | 32 / 1,824 |
+
+Thus the native C-ABI test process retained 42 allocations / 104,680 bytes,
+and the direct differential child retained 32 allocations / 1,824 bytes. LSan's
+passing suppression report lists root statistics (3 / 94,104 and 37 / 2,368
+for the native process); the transitively retained rows come from the original
+unsuppressed reports. These counts are a review baseline, not a license for
+unbounded growth: a changed count must be investigated and the validation
+record updated deliberately.
+
+---
+
+## Finding 9 — STO epoch and transaction clocks — **FIXED**
+
+The strict local-boundary TSan run reported the epoch advancer reading
+`threadinfo_t::epoch` in `Transaction::epoch_advancer()` while a worker wrote
+the same slot in `Transaction::start()`. That field was a plain `uint64_t`, so
+the race was undefined behavior rather than an intentional Masstree
+version-and-retry read.
+
+The audit also found the races that the first fatal report masked:
+
+- the advancer writes `global_epoch` and `active_epoch` while workers read
+  them at transaction start;
+- the advancer publishes `recent_tid`; and
+- commits increment `_TID` while transaction start, opacity checks, and the
+  advancer read it.
+
+All participant and process-wide clock fields now use lock-free
+`std::atomic<uint64_t>`. Worker entry and advancer scans use sequentially
+consistent operations: a worker publishes its participant epoch, then checks
+the global epoch again and republishes if an advancer ran in between. Thus a
+worker cannot be descheduled after taking an old global snapshot and later
+enter protected tree code with an epoch already below the active watermark.
+The ordered participant store also prevents subsequent protected loads from
+passing the publication on Store→Load-reordering hardware. Quiescence and the
+global/active watermark handoff use the same total order. Calling-worker reads
+used only to tag an RCU callback remain relaxed. `_TID` allocation uses an
+acquire/release `fetch_add`, and opacity snapshots use acquire loads. The
+advancer carries each atomic value in a local so one scan cannot mix multiple
+observations of the same participant.
+
+The supported x86_64 build asserts that both 64-bit atomic types are always
+lock-free and that each `threadinfo_t` remains an isolated multiple of a
+128-byte cache slot (profiling builds may need more than one slot). The
+correctness boundary adds one ordered participant publication per transaction
+start, plus a retry only if the 100 ms advancer overlaps entry. Item 4 records
+absolute engine timings as a diagnostic; its wrapper-relative ratios do not
+prove that this internal engine change has zero regression. No TSan suppression
+was added for this finding.
+
+---
+
+## Finding 10 — RCU callback `memtag` sentinel — **FIXED**
+
+The strict local-boundary UBSan run reported a load of `0xffffffff` as an
+invalid `memtag` while an abort removed an empty Masstree leaf. Normal
+deferred allocations and deferred callbacks share `threadinfo`'s limbo
+queue. The callback path historically distinguished the two with
+`memtag(-1)`, but `memtag` declared only nonnegative enumerators. Clang
+therefore gave the enum an unsigned value domain, making the sentinel invalid
+when it was passed into `limbo_group::push_back()` and again when reclamation
+read it.
+
+`memtag_rcu_callback = -1` is now a named enumerator, and both registration
+and reclamation use that value. This preserves the existing RCU protocol and
+branching: a callback is still queued at the current epoch, then invoked only
+after the normal grace period. Size and alignment assertions keep `memtag`
+int-sized and int-aligned, preserving the limbo-record layout; the highest
+synthetic pool tag remains in the enum's valid range. The focused Masstree
+internals regression registers a self-deallocating callback, advances the
+epoch through reclamation, and verifies exactly one invocation. No UBSan
+suppression was added.
+
+---
+
+## Finding 11 — STO version/lock word — **FIXED**
+
+After Finding 9 stopped being the first fatal TSan report, the strict native
+boundary run reached two commits contending on one MassTrans value. One worker
+read the value's version in `TransactionTid::try_lock()` while the lock owner
+wrote the next nonopaque version in `inc_nonopaque_version()`. The compare and
+swap used a legacy atomic intrinsic, but the surrounding loads and stores were
+plain `uint64_t` accesses. Mixing those access modes is a real C++ data race.
+
+Changing the stored type would alter `stuffed_str`'s packed allocation layout,
+so the fix uses lock-free `std::atomic_ref<uint64_t>` over the existing aligned
+word. All shared `TransactionTid` primitives now use atomic loads,
+compare-exchange, fetch operations, and release stores rather than mixing a
+legacy CAS with plain access. The MassTrans paths that formerly read, assigned,
+or set the invalid bit directly use the same helpers, including relocation and
+version-copy paths. `stuffed_str` also takes an atomic snapshot when a resized
+allocation inherits the leading version word.
+
+This finding is deliberately scoped to MassTrans's raw version/lock word.
+Finding 13 separately closes the optimistic payload-copy race for the local
+single-version boundary; keeping the two findings separate records why an
+atomic version word alone was insufficient.
+
+The same local-boundary audit found a separate table-wide race before it could
+become the next report: `size_count_` was a plain counter updated while holding
+different per-record locks. Commits to different keys therefore did not
+serialize it. It is now an atomic approximate counter with relaxed updates and
+loads; no ordering decision depends on its value.
+
+Compile-time checks require lock-free 64-bit `atomic_ref`, verify its required
+alignment, and ensure the empty derived wrapper adds no size or alignment to
+the packed `versioned_str` allocation. The focused
+`VersionWordContentionUsesAtomicLockTransitions` regression
+runs two threads through 20,000 lock/version/unlock transitions and verifies
+both ownership and the exact final version. The existing same-key transaction
+conflict test exercises the complete MassTrans commit path. No TSan suppression
+was added for this finding.
+
+---
+
+## Finding 12 — Masstree RCU participant epoch — **FIXED**
+
+After the version-word fix let the strict boundary run proceed, TSan reported
+`threadinfo::hard_rcu_quiesce()` reading a worker's `gc_epoch_` while that
+worker cleared the same word in `rcu_stop()`. The word advertises a nonzero RCU
+read-side epoch, or zero when the worker is quiescent. A reclaimer scans every
+registered thread and frees limbo entries older than the oldest advertised
+epoch. This was therefore both a C++ data race and a possible premature-free
+bug, not part of Masstree's version-checked optimistic-read pattern.
+
+Changing the field type would make the existing raw-zero initialization and
+cache-line layout more invasive. Instead, short-lived
+`std::atomic_ref<mrcu_epoch_type>` operations now cover every executable access
+to the naturally aligned raw word. Entry takes a sequentially consistent
+context-epoch snapshot, publishes it with a sequentially consistent store,
+then rechecks and republishes if the epoch advanced in between. Reclaimer peer
+scans use the same total order. This prevents both protected loads from moving
+before participant publication and a paused worker from later entering with an
+epoch the reclaimer has already passed. Exit clears the participant with a
+release store after all protected accesses; owner-only arithmetic uses relaxed
+loads.
+
+The context epoch load, store, and increment operations are now sequentially
+consistent so the snapshot/publish/recheck protocol and reclaimer scans share
+one ordering. Compile-time checks require a lock-free 64-bit `atomic_ref` and
+sufficient natural alignment. The only plain initialization is the
+constructor's `memset`, before the `threadinfo` is registered or published;
+threadinfo objects are process-lifetime. The legacy `epoch_ref()` escape hatch
+has no in-tree callers and is outside this boundary profile.
+
+The same audit found that `threadinfo::make()` used a plain function-static
+flag to guard assertion-only allocator setup. Concurrent attachers could race
+on that flag and observe `no_pool_value` before initialization completed. A
+function-static `std::once_flag` now publishes the setup and makes every caller
+wait for its completion. The existing concurrent threadinfo/RCU internals tests
+and the strict multi-worker local-boundary test exercise these paths. No TSan
+suppression was added for either repair.
+
+---
+
+## Finding 13 — local single-version published payload — **FIXED**
+
+After Finding 11 made every version/lock-word access atomic, the local
+single-version reader still copied a published `stuffed_str` through plain
+size and byte accesses while the lock owner installed a new value. A version
+check before and after the copy detects overlap algorithmically, but mixed
+plain reads and writes are a C++ data race. Merely changing the bytes to
+relaxed atomics would remove that race without completing the proof: on a weak
+memory execution a reader could observe some new bytes while both version
+loads still observed the old word, then accept a torn snapshot.
+
+Published length and payload bytes now use layout-preserving
+`std::atomic_ref<uint32_t>` and `std::atomic_ref<char>`. After acquiring the
+record lock and before its first payload store, the writer executes a release
+fence. After all payload loads and before MassTrans's final version load, the
+reader executes an acquire fence. If any relaxed size or byte load observes a
+post-fence writer store, fence-to-fence synchronization orders the writer's
+lock transition before the reader's final version load. That load must then
+observe the lock or a later committed version, so the mixed copy is rejected
+and retried. If no new store was observed, returning the old snapshot remains
+legal. The writer publishes length last; grow/shrink copies stay within the
+allocation's immutable capacity.
+
+Mako's in-place reset of the encoded timestamp and size metadata now uses the
+same atomic byte access mode. Those stores are sequenced after the payload
+writer's release fence and are therefore covered by the same retry proof.
+Diagnostic copies use the atomic helper as well. Compile-time assertions
+require lock-free atomic byte, length, and version operations and preserve the
+packed allocation's size and alignment.
+
+The read side rejects both locked and invalid records. Forward/reverse scan
+callbacks and the replay comparator translate an optimistic-read conflict
+into explicit transaction control flow instead of falling through with an
+uninitialized version or confusing conflict with a normal early stop/false
+predicate. A false comparator observes the exact version whose payload it
+examined; the current transaction's own linked invalid insert remains a
+private RYW special case and needs no published observation.
+
+Coverage has two layers. A hook-only, one-shot midpoint seam deterministically
+copies half of value A, lets a writer commit same-sized value B, then proves
+the reader retries and returns exactly B. The hook-free stress alternates a
+64-KiB value with a 1,023-byte value under one writer and four readers, checking
+both bytes and length. Separate parked-lock tests cover both scan directions,
+comparator false-predicate validation, own-insert composition, explicit
+conflict propagation, and immediate worker reuse.
+
+This repair is intentionally scoped to the local ABI's non-multiversion
+`versioned_str_struct` path. Private invalid RYW values are owned by one
+transaction, while legacy generic boxes and Mako's external multiversion
+payload representation retain their existing protocols and are not claimed
+by this finding. No sanitizer suppression was added.

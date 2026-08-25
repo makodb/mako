@@ -63,17 +63,17 @@ public:
     // Epoch management
     // @unsafe { std::atomic::load is not borrow-checked }
     mrcu_epoch_type get_epoch() const {
-        return epoch_.load(std::memory_order_acquire);
+        return epoch_.load(std::memory_order_seq_cst);
     }
 
     // @unsafe { std::atomic::store is not borrow-checked }
     void set_epoch(mrcu_epoch_type e) {
-        epoch_.store(e, std::memory_order_release);
+        epoch_.store(e, std::memory_order_seq_cst);
     }
 
     // @unsafe { std::atomic::fetch_add is not borrow-checked }
     void increment_epoch(mrcu_epoch_type delta = 2) {
-        epoch_.fetch_add(delta, std::memory_order_acq_rel);
+        epoch_.fetch_add(delta, std::memory_order_seq_cst);
     }
 
     // @unsafe { Returns volatile reference for legacy code patterns, bypasses safety }

@@ -162,7 +162,7 @@ UBSAN_OPTIONS="suppressions=$(realpath ../src/masstree/ubsan_suppressions.txt):h
 mkdir build_tsan && cd build_tsan
 MAKO_TSAN=1 cmake .. -GNinja
 ninja test_masstree test_masstree_property test_masstree_concurrent
-TSAN_OPTIONS="suppressions=$(realpath ../src/masstree/tsan_suppressions.txt):halt_on_error=0" \
+TSAN_OPTIONS="suppressions=$(realpath ../src/masstree/tsan_suppressions.txt):halt_on_error=1" \
   ./test_masstree_concurrent
 ```
 
@@ -183,13 +183,20 @@ deadlocks at startup. `MAKO_UBSAN` is compatible with jemalloc.
      surrounding version check, but UBSan sees the intermediate access.
 - `src/masstree/tsan_suppressions.txt` — Masstree's optimistic
   version-counter machinery does intentional racy reads validated by
-  retry. Suppressed at the source-file granularity. Also suppresses
-  the pre-existing `src/mako/spinlock.h` plain-int spinlock (real bug
-  in the surrounding mako code, separate fix).
+  retry. Suppressed at the source-file granularity. Mako's former
+  plain-state spinlock race, STO's shared epoch-clock races, and MassTrans's
+  mixed-access version words are fixed with atomics and are not suppressed.
+  The local single-version payload uses atomic length/byte access plus a
+  release/acquire fence pair, so its optimistic version retry is also legal
+  under the C++ memory model and needs no suppression.
+  Masstree's RCU participant epoch publication/scanning is likewise fixed with
+  ordered `atomic_ref` operations, and concurrent threadinfo setup uses
+  `call_once`; neither repair has a suppression.
 
 **Status**: ASan clean (0 findings). UBSan and TSan clean after the
-suppressions above are applied. CI integration (separate jobs per
-sanitizer) is the remaining piece.
+suppressions above are applied. The local transaction boundary now has
+separate strict ASan, UBSan, and TSan CI jobs; extending that matrix to every
+standalone Masstree Tier 3 binary remains separate work.
 
 ### 3.2 Linearizability check
 

@@ -1,6 +1,16 @@
 #pragma once
+#include <atomic>
+#include <string>
 #include "string_base.hh"
 #include <new>
+
+static_assert(std::atomic_ref<char>::is_always_lock_free,
+              "MassTrans string payload bytes must be lock-free atomics");
+static_assert(std::atomic_ref<uint32_t>::is_always_lock_free,
+              "MassTrans string payload lengths must be lock-free atomics");
+static_assert(alignof(uint32_t) >=
+                  std::atomic_ref<uint32_t>::required_alignment,
+              "MassTrans string lengths must satisfy atomic_ref alignment");
 
 template <typename Stuff> 
 // Stuff -> uint64_t
@@ -8,6 +18,21 @@ template <typename Stuff>
 class stuffed_str {
 public:
   typedef Stuff stuff_type;
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  using test_copy_midpoint_hook = void (*)(void*) noexcept;
+
+  static void test_set_copy_midpoint_hook(test_copy_midpoint_hook hook,
+                                          void* context) noexcept {
+    test_copy_midpoint_context_ = context;
+    test_copy_midpoint_hook_ = hook;
+  }
+
+  static void test_clear_copy_midpoint_hook() noexcept {
+    test_copy_midpoint_hook_ = nullptr;
+    test_copy_midpoint_context_ = nullptr;
+  }
+#endif
 
   struct StandardMalloc {
     void *operator()(size_t s) {
@@ -72,7 +97,10 @@ public:
     if (likely(!needs_resize(len))) {
       return this;
     }
-    return stuffed_str::make(buf_, size_, len, stuff_, m);
+    std::string snapshot;
+    copy_payload_atomic(snapshot);
+    return stuffed_str::make(snapshot.data(), static_cast<int>(snapshot.size()), len,
+                             load_stuff(), m);
   }
 
   // returns NULL if replacement could happen without a new malloc, otherwise returns new stuffed_str*
@@ -80,12 +108,20 @@ public:
   template <typename Malloc = StandardMalloc>
   stuffed_str* replace(const char *str, int len, Malloc m = Malloc()) {
     if (likely(!needs_resize(len))) {
-      size_ = len;
-      memcpy(buf_, str, len);
+      // Published single-version values are read optimistically. Atomic byte
+      // accesses make a concurrent copy legal. The release fence follows the
+      // record-lock transition and precedes every payload store; paired with
+      // copy_payload_atomic's acquire fence, observing any new byte forces the
+      // reader's final version load to observe the lock or newer version.
+      std::atomic_thread_fence(std::memory_order_release);
+      for (int i = 0; i != len; ++i)
+        std::atomic_ref<char>(buf_[i]).store(str[i],
+                                             std::memory_order_relaxed);
+      store_size(len, std::memory_order_release);
       return this;
     }
     //std::cerr << "this should never happen, since we do it resizeIfNeeded func" << std::endl;
-    return stuffed_str::make(str, len, size_for(len), stuff_, m);
+    return stuffed_str::make(str, len, size_for(len), load_stuff(), m);
   }
 
   void modifyData(char* p){
@@ -97,12 +133,41 @@ public:
     // return buf_;
   }
   
-  int length() {
-    return size_;
+  int length() const {
+    return static_cast<int>(load_size(std::memory_order_acquire));
   }
 
   void set_length(int ss) {
-    size_ = ss;
+    store_size(ss, std::memory_order_release);
+  }
+
+  void copy_payload_atomic(std::string& out) const {
+    const uint32_t length = load_size(std::memory_order_acquire);
+    assert(length <= capacity_);
+    out.resize(length);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    const uint32_t midpoint = length / 2;
+    for (uint32_t i = 0; i != midpoint; ++i)
+      out[i] = std::atomic_ref<char>(const_cast<char&>(buf_[i]))
+                   .load(std::memory_order_relaxed);
+    // Consume the thread-local hook before invoking it so a version retry
+    // cannot park twice. This seam exists only in hook-enabled boundary tests.
+    const test_copy_midpoint_hook hook = test_copy_midpoint_hook_;
+    void* const context = test_copy_midpoint_context_;
+    test_clear_copy_midpoint_hook();
+    if (hook != nullptr)
+      hook(context);
+    for (uint32_t i = midpoint; i != length; ++i)
+      out[i] = std::atomic_ref<char>(const_cast<char&>(buf_[i]))
+                   .load(std::memory_order_relaxed);
+#else
+    for (uint32_t i = 0; i != length; ++i)
+      out[i] = std::atomic_ref<char>(const_cast<char&>(buf_[i]))
+                   .load(std::memory_order_relaxed);
+#endif
+    // If any size/payload load read a store sequenced after replace's release
+    // fence, synchronize before MassTrans performs its final version load.
+    std::atomic_thread_fence(std::memory_order_acquire);
   }
   
   int capacity() {
@@ -114,10 +179,29 @@ public:
   }
 
   Stuff stuff() const {
-    return stuff_;
+    return load_stuff();
   }
 
 private:
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  inline static thread_local test_copy_midpoint_hook
+      test_copy_midpoint_hook_ = nullptr;
+  inline static thread_local void* test_copy_midpoint_context_ = nullptr;
+#endif
+
+  uint32_t load_size(std::memory_order order) const {
+    return std::atomic_ref<uint32_t>(const_cast<uint32_t&>(size_)).load(order);
+  }
+
+  void store_size(uint32_t size, std::memory_order order) {
+    std::atomic_ref<uint32_t>(size_).store(size, order);
+  }
+
+  Stuff load_stuff() const {
+    return std::atomic_ref<Stuff>(const_cast<Stuff&>(stuff_))
+        .load(std::memory_order_acquire);
+  }
+
   stuffed_str(const Stuff& stuff, uint32_t size, uint32_t capacity, const char *buf) :
     stuff_(stuff), size_(size), capacity_(capacity) {
     memcpy(buf_, buf, size);

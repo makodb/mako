@@ -393,6 +393,27 @@ phantom conflicts; synthetic negative histories prove the checker rejects
 cycles, stale real-time reads, invalid phantoms, and non-opaque aborted/live
 observations without assuming commit response order.
 
+Memory/thread-safety, fixed-worker concurrency, and relative wrapper overhead
+are specified separately in
+[Mako local boundary gates](../mako-local-boundary-gates.md). That gate runs
+the fake-ABI Rust ownership model under pinned Miri; drives the native boundary
+under ASan, UBSan, and strict TSan with reviewed engine suppressions; and checks
+exact 1-, 4-, and 16-thread worker-pool progress. Its opt-in Release benchmark
+runs process-isolated direct C++, raw C ABI, and safe Rust surfaces in that
+fixed order. Each surface consumes an asserted 97 process-lifetime STO
+attachment IDs, requires at least a one-percent aggregate conflict rate in
+every measured high-contention write/RMW configuration, validates every
+configured key, and records every low-contention ratio plus per-workload
+median/maximum. These measurements use an initial same-host `6.0x` advisory
+ceiling. Configured-key validation is not a claim about whole-table
+cardinality.
+
+The linked validation record, rather than the presence of these targets,
+determines whether Item 4's executable gate has passed. A green record does not
+freeze this revision-0 contract or promote it to ABI v1; the unresolved Phase
+1C/1D design choices still require an explicit freeze review, and Phase 1F and
+Milestone 1 remain separate.
+
 ## Quarantine diagnostics and cleanup-failure tests
 
 Revision 0 represents **Q** explicitly. A caught native cleanup failure marks

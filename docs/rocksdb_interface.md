@@ -181,7 +181,7 @@ None of these have workarounds. `NotSupported` is the honest answer for all thre
 | `ReverseScan` | Reverse range scan descending; returns `NotSupported` if `num_shards > 1` | No stateful iterator; cross-shard not yet implemented | Same as Scan |
 | `Exists` | Check key presence without reading value | Does a full Get internally; no bloom-filter hint | Chosen over a separate existence flag to reuse the OCC read-set tracking already done by Get |
 | `Insert` | Insert only if key absent | Aborts transaction on duplicate | Uses `transInsert` instead of `transPut` — non-obvious distinction; `transInsert` registers the key in the OCC write-set so a concurrent insert on the same key causes abort rather than silent overwrite |
-| `GetApproximateSize` | Approximate key count for the local shard | Local shard only; count may be stale | Counter updated under lock in `install()` (commit phase) rather than atomics in the hot path, as reviewer noted atomics are too expensive for an approximate metric |
+| `GetApproximateSize` | Approximate key count for the local shard | Local shard only; count may be stale | Commit-time `install()` updates a relaxed atomic counter; different-key commits hold different record locks, so a plain table-wide counter would race |
 
 ### ITable non-transactional methods (2026-07)
 
@@ -412,7 +412,11 @@ virtual Status GetApproximateSize(size_t* size) = 0;
 
 Return an approximate count of keys in the **local shard** of this table. Does not require a transaction handle.
 
-The count is tracked via a plain `size_t` updated under lock in the commit phase (`install()`). Only reflects data in the local shard — for a cluster-wide count, a remote RPC scan would be needed (not yet implemented).
+The count is tracked by a relaxed atomic updated in the commit phase
+(`install()`). Per-record locks do not serialize commits to different keys, so
+the table-wide counter cannot be plain storage. It reflects only data in the
+local shard; a cluster-wide count would require a remote aggregation path (not
+yet implemented).
 
 **Returns:** `Status::OK()` with `*size` set to the approximate local key count.
 
