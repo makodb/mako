@@ -116,9 +116,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mako-history"
+version = "0.1.0"
+
+[[package]]
 name = "mako-local"
 version = "0.1.0"
 dependencies = [
+ "mako-history",
  "mako-local-sys",
 ]
 

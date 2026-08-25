@@ -10,6 +10,7 @@
 resolver = "2"
 members = [
     "mako-cache",
+    "mako-history",
     "mako-local",
     "mako-local-sys",
     "mrx",

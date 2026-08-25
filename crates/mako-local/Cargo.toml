@@ -9,3 +9,6 @@ publish = false
 
 [dependencies]
 mako-local-sys = { path = "../mako-local-sys" }
+
+[dev-dependencies]
+mako-history = { path = "../mako-history" }

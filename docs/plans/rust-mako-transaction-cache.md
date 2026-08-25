@@ -431,10 +431,13 @@ scan read-your-writes and its C ABI, safe Rust, and cache integration slice are
 complete. The fresh-process SIGKILL gate now covers nine outer/Rocks-wrapper
 write-path boundaries in the production-default profile and all fifteen named
 boundaries in a dedicated native-hook profile. Eight recovery/replay boundaries
-are each interrupted on two consecutive fresh-process restarts. The remaining
-ABI boundary gates and Phase 1F's mutation and history-oracle work remain
-open. Interruption inside RocksDB's WAL is deliberately not a milestone gate:
-RocksDB remains a black box.
+are each interrupted on two consecutive fresh-process restarts. The native
+boundary now also has a process-isolated direct-C++/C-ABI/safe-Rust
+differential gate and an independent strict-serializability/opacity oracle.
+The remaining Phase 1A-1D sanitizer, concurrency, and performance gates and
+Phase 1F's application-aware mutation/history work remain open. Interruption
+inside RocksDB's WAL is deliberately not a milestone gate: RocksDB remains a
+black box.
 
 1. **Prepare a detached permit before native commit.** Acquire one unit of
    bounded queue capacity and own every mutation byte, encoded-record buffer,
@@ -699,9 +702,10 @@ Transactional scan chunks, scan read-your-writes, and their C ABI, safe Rust,
 and cache exposure are complete for the RYW profile. The hook-enabled
 fresh-process suite now exercises fifteen write-path and eight repeated
 recovery boundaries. The in-memory applied watermark is now explicit and
-advances only after a successful ordered backend call. Mutation,
-sanitizer, and history-oracle checks remain open;
-inside-RocksDB instrumentation is intentionally outside this milestone.
+advances only after a successful ordered backend call. Item 3's native
+history oracle is complete; the boundary sanitizer, concurrency, and overhead
+gates plus Phase 1F's mutation and application-aware history checks remain
+open. Inside-RocksDB instrumentation is intentionally outside this milestone.
 
 1. The revision-0 operation/status contract and numeric reservations 0 through
    19 are now published and mechanically checked across the C header, C++
@@ -715,8 +719,20 @@ inside-RocksDB instrumentation is intentionally outside this milestone.
    conformance probes, a Rust all-export link probe, an exact native symbol
    allowlist, and the source/configuration-derived fingerprint plus digest link
    anchor complete this item in both production and hook-enabled profiles.
-3. Build the three-way deterministic differential harness and the independent
-   full-history real-time/opacity oracle.
+3. The three-way deterministic differential harness and independent
+   full-history real-time/opacity oracle complete this item. The gate replays
+   one binary-safe corpus through direct MassTrans C++, the raw C ABI, and the
+   safe Rust API in isolated processes; it compares every observation and
+   final table state. Seeded and crafted coverage includes point operations,
+   aborts, RYW, bounded/unbounded scans in both directions, scan chunking, and
+   maximum-sized binary keys. The independent model does not use Silo or Mako
+   timestamps and proves that commit response order is not assumed to be the
+   serialization order. Native forced RW, WW, and phantom schedules run in
+   both advertised non-opaque and opaque profiles. Comparison mismatches retain
+   their exact corpus and all three transcripts; earlier process failures
+   retain the corpus plus every available output/error for deterministic
+   replay. An injected child-process divergence exercises the same comparison
+   path.
 4. Run sanitizer, concurrency, and wrapper-overhead gates.
 5. Finish Phase 1F with cleanup/quarantine points, the mutation suite, and an
    application-aware full-history oracle. Keep the dedicated hook-enabled

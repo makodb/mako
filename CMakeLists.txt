@@ -3002,6 +3002,29 @@ if(BUILD_TESTS)
     )
     add_test(NAME MakoLocalAbiTests COMMAND test_mako_local_abi)
 
+    # Process-isolated differential runner. Direct MassTrans and the local C
+    # ABI permanently claim different STO worker-runtime identities, so the
+    # Rust orchestrator execs this binary once per mode and feeds both the
+    # exact same binary-safe transaction corpus.
+    add_executable(mako_local_differential_driver
+        tests/mako_local_differential_driver.cc)
+    target_link_libraries(mako_local_differential_driver
+        mako
+        rrr
+        erpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(mako_local_differential_driver PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+
     # The public local-transaction boundary must remain consumable as strict C.
     # Compile the C source in an object target so libmako's public C++ compile
     # options cannot leak into it; the final executable still uses the C++
@@ -3294,6 +3317,9 @@ if(BUILD_TESTS)
         add_custom_target(run_mako_local_rust_tests
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_LOCAL_CARGO_ENV}
+                    ${CARGO_EXECUTABLE} test -p mako-history --all-targets
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
                     "MAKO_LOCAL_FAKE_ABI=1"
                     "MAKO_LOCAL_REQUIRE_NATIVE=0"
                     ${CARGO_EXECUTABLE} test -p mako-local --lib
@@ -3302,6 +3328,8 @@ if(BUILD_TESTS)
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
                     "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    "MAKO_LOCAL_REQUIRE_DIFFERENTIAL=1"
+                    "MAKO_LOCAL_DIFFERENTIAL_DRIVER=$<TARGET_FILE:mako_local_differential_driver>"
                     ${CARGO_EXECUTABLE} test
                     -p mako-local -p mako-local-sys --all-targets
             COMMAND ${CMAKE_COMMAND} -E env
@@ -3311,7 +3339,7 @@ if(BUILD_TESTS)
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
                     ${CARGO_EXECUTABLE} test -p mako-local --doc
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
-            DEPENDS mako
+            DEPENDS mako mako_local_differential_driver
             COMMENT "Running safe Rust transaction-wrapper tests"
             VERBATIM
         )

@@ -363,6 +363,36 @@ returns that partial chunk with `OK`; the caller resumes after its final key.
 `done == 1` only when the engine proved the effective range exhausted, so a
 full chunk can conservatively require one final empty call.
 
+## Boundary correctness validation
+
+The required-native `run_mako_local_rust_tests` target includes two independent
+correctness gates. A process-isolated differential runner replays the same
+binary-safe transaction corpus through direct C++ MassTrans, the raw C ABI,
+and the safe Rust API, then compares every point/scan result and every final
+table state. The default corpus combines hand-written edge cases, stable seeded
+scripts, values larger than the initial scan arena, a maximum-sized key, and a
+range large enough to cross the 64-entry chunk boundary. It also runs a
+test-only child-process divergence through the production comparison function
+to prove that the gate detects it.
+
+`MAKO_LOCAL_DIFF_SEED=<u64>` replaces the standard generated seed set for a
+focused run. A comparison mismatch retains `corpus.txt` plus the direct, ABI,
+and safe transcripts in the reported artifact directory. An earlier process
+failure retains the corpus plus every output/error available at that point.
+`MAKO_LOCAL_DIFF_REPLAY=<path-to-corpus.txt>` replays the exact corpus and does
+not require the default multi-script coverage profile.
+
+The separate zero-dependency `mako-history` crate is an implementation-
+independent full-history oracle. It records invocation/response intervals and
+transaction boundaries, models exact binary point and range observations, and
+searches legal serial orders constrained by real-time precedence. Strict mode
+checks the committed projection. When the linked ABI advertises opacity, the
+native gate additionally checks every response-bearing prefix with aborted and
+in-flight transactions. Deterministic native schedules cover RW, WW, and
+phantom conflicts; synthetic negative histories prove the checker rejects
+cycles, stale real-time reads, invalid phantoms, and non-opaque aborted/live
+observations without assuming commit response order.
+
 ## Quarantine diagnostics and cleanup-failure tests
 
 Revision 0 represents **Q** explicitly. A caught native cleanup failure marks
