@@ -199,6 +199,10 @@ Current implementation status:
 - [x] Explicit 1 KiB table/key and 1 MiB value limits, plus a key-weighted
       512-item transaction budget that returns terminal `TXN_TOO_LARGE` before
       STO can allocate beyond its embedded transaction set or hit its assert.
+- [x] Publish the revision-0 operation/status and ownership contract at
+      [Mako local C ABI revision 0](../reference/mako-local-abi-v0.md), including
+      the active/finished/quarantined/destroyed state model and the conservative
+      one-shot destroy rule for `INTERNAL`.
 - [ ] Complete the contract gates below.
 
 ### 1B. Freeze local transaction semantics
@@ -256,18 +260,23 @@ declared profile.
   `TXN_TOO_LARGE` is already a recoverable
   terminal error: draft point transactions use a conservative 512-item
   key-weighted budget and never reach STO's 32,768-item hard assertion.
-- Numeric table IDs are unique within a database. Pin the remaining behavior
-  for empty names and concurrent opens. Closing the
+- Numeric table IDs are unique within a database. The revision-0 reference now
+  specifies empty names and serialized concurrent opens; add the remaining
+  direct concurrency coverage. Closing the
   in-memory facade is not persistence: a later `db_open` starts a new logical
   database even though old native table allocations remain process-lifetime.
-- Publish a normative operation/status state table. For every function and
-  status it specifies initialized outputs and ownership, whether the
-  transaction remains active, finishes normally, or poisons its worker, and
-  whether destroy is still required. In particular, `DUPLICATE_WRITE` and
-  `BUFFER_TOO_SMALL` are nonterminal, while an operation-level `CONFLICT`,
-  `TXN_TOO_LARGE`, `OUT_OF_MEMORY`, or `INTERNAL` is terminal. The Rust status
-  mapping is derived from or checked against this table; it must not rely on an
-  undocumented hard-coded list.
+- [x] Publish a normative revision-0 operation/status state table. The
+      [reference contract](../reference/mako-local-abi-v0.md) covers every
+      export and status, output initialization and ownership, transaction
+      disposition, worker health, and destroy requirements. It records the
+      current conditional all-output-pointer rule and requires both scan
+      feature bits before a raw scan call.
+- [x] Generate Rust status identity from the header's canonical manifest and
+      exhaustively classify every generated status for ordinary operations and
+      commit disposition. Required-native open also checks every linked status
+      message, so a stale C++ catalog is rejected rather than silently mapped.
+- [ ] Add fake-ABI coverage for every active, finished, and quarantined
+      transition and for malformed successful outputs.
 - Add a stable engine/build identifier and reserve sized option structs before
   ABI v1 is declared frozen, so later limits and durability modes can be
   negotiated without changing existing function signatures. CMake must also
@@ -286,12 +295,19 @@ declared profile.
   worker context. Either way, test attachment, wrong-thread calls, nested
   begin, post-terminal calls, database-close-while-busy, and the 460-thread
   limit in isolated subprocesses.
-- Keep all outputs initialized on failure.
-- Define cleanup failure conservatively. If native abort or destroy cannot
-  prove cleanup complete, retain every potentially referenced allocation,
-  mark the attached worker poisoned, reject all later transactions on it, and
-  expose the poison through a typed status, health check, and diagnostic
-  counter. Never silently reuse uncertain STO TLS state.
+- [x] Specify revision 0's conditional output rule: after every required output
+      pointer has been validated, initialize every scalar output before later
+      validation. If a multi-output call receives a partially null output set,
+      it writes none of that set. Decide before ABI v1 whether to retain this
+      rule or initialize each non-null member of an invalid set independently.
+- [ ] Define cleanup failure conservatively beyond the current live-handle
+      path. If native abort or destroy cannot prove cleanup complete, retain
+      every potentially referenced allocation, mark the attached worker
+      poisoned, reject all later transactions on it, and expose the poison
+      through a typed status, health check, and diagnostic counter. The
+      revision-0 reference specifies conservative caller behavior for today's
+      overloaded `INTERNAL` and identifies the begin-cleanup gap; never silently
+      reuse uncertain STO TLS state.
 - Specify process-lifetime table/epoch behavior. Add ordinary teardown only
   after a tested RCU quiescence protocol exists.
 
@@ -674,10 +690,13 @@ advances only after a successful ordered backend call. Mutation,
 cleanup-quarantine, and history-oracle checks remain open; inside-RocksDB
 instrumentation is intentionally outside this milestone.
 
-1. Finish the remaining ABI-freeze work: publish the normative operation/status
-   state table, reserve every existing status number, and retain draft revision
-   `0` until the full boundary gate passes. Revisit the conservative transaction
-   budget only with safe pre-reservation.
+1. The revision-0 operation/status contract and numeric reservations 0 through
+   18 are now published and mechanically checked across the C header, C++
+   diagnostics, raw Rust declarations, and exhaustive safe-Rust lifecycle
+   policy. Finish the remaining ABI-freeze work by adding typed poison,
+   worker-health, begin-cleanup, fake-ABI, and diagnostic-counter coverage.
+   Retain draft revision `0` until the full boundary gate passes. Revisit the
+   conservative transaction budget only with safe pre-reservation.
 2. Generate or mechanically verify the Rust declarations from the C header,
    then add the symbol, build-fingerprint, and cleanup-quarantine failpoint
    gates.

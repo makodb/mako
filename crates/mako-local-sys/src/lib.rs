@@ -35,26 +35,7 @@ pub const MAKO_LOCAL_TXN_ITEM_BUDGET: usize = 512;
 /// Largest base timestamp in Mako's legacy one-digit-term u32 encoding.
 pub const MAKO_LOCAL_MAX_MAKO_TIMESTAMP: u32 = (u32::MAX - 9) / 10;
 
-pub const MAKO_LOCAL_OK: c_int = 0;
-pub const MAKO_LOCAL_CONFLICT: c_int = 1;
-pub const MAKO_LOCAL_NOT_ATTACHED: c_int = 2;
-pub const MAKO_LOCAL_WRONG_THREAD: c_int = 3;
-pub const MAKO_LOCAL_TXN_ALREADY_ACTIVE: c_int = 4;
-pub const MAKO_LOCAL_TXN_FINISHED: c_int = 5;
-pub const MAKO_LOCAL_WRONG_DB_OR_TABLE: c_int = 6;
-pub const MAKO_LOCAL_INVALID_ARGUMENT: c_int = 7;
-pub const MAKO_LOCAL_THREAD_LIMIT: c_int = 8;
-pub const MAKO_LOCAL_BUSY: c_int = 9;
-pub const MAKO_LOCAL_OUT_OF_MEMORY: c_int = 10;
-pub const MAKO_LOCAL_INTERNAL: c_int = 11;
-/// Reserved assigned status used by legacy/no-RYW engines.
-pub const MAKO_LOCAL_DUPLICATE_WRITE: c_int = 12;
-pub const MAKO_LOCAL_TXN_TOO_LARGE: c_int = 13;
-pub const MAKO_LOCAL_VALUE_TOO_LARGE: c_int = 14;
-pub const MAKO_LOCAL_COMMIT_HOOK_REJECTED: c_int = 15;
-pub const MAKO_LOCAL_TIMESTAMP_EXHAUSTED: c_int = 16;
-pub const MAKO_LOCAL_BUFFER_TOO_SMALL: c_int = 17;
-pub const MAKO_LOCAL_FEATURE_UNAVAILABLE: c_int = 18;
+include!(concat!(env!("OUT_DIR"), "/mako_local_statuses.rs"));
 
 /// One chunk request over the logical binary-key range `[lower, upper)`.
 ///
@@ -231,8 +212,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn status_values_are_distinct() {
-        let values = [
+    fn generated_statuses_are_dense_and_match_raw_constants() {
+        let raw_values = [
             MAKO_LOCAL_OK,
             MAKO_LOCAL_CONFLICT,
             MAKO_LOCAL_NOT_ATTACHED,
@@ -253,10 +234,23 @@ mod tests {
             MAKO_LOCAL_BUFFER_TOO_SMALL,
             MAKO_LOCAL_FEATURE_UNAVAILABLE,
         ];
-        for (i, a) in values.iter().enumerate() {
-            for b in &values[i + 1..] {
-                assert_ne!(a, b);
-            }
+
+        assert_eq!(ALL_KNOWN_STATUSES.len(), 19);
+        for (expected_code, status) in ALL_KNOWN_STATUSES.iter().copied().enumerate() {
+            let expected_code = expected_code as c_int;
+            assert_eq!(status.code(), expected_code);
+            assert_eq!(raw_values[expected_code as usize], expected_code);
+            assert_eq!(KnownStatus::from_code(expected_code), Some(status));
+            assert_eq!(KnownStatus::try_from(expected_code), Ok(status));
+            assert_eq!(c_int::from(status), expected_code);
+            assert!(!status.name().is_empty());
+            assert!(!status.c_symbol().is_empty());
+            assert!(!status.message().is_empty());
         }
+
+        assert_eq!(KnownStatus::from_code(-1), None);
+        assert_eq!(KnownStatus::from_code(19), None);
+        assert_eq!(KnownStatus::try_from(-1), Err(-1));
+        assert_eq!(KnownStatus::try_from(19), Err(19));
     }
 }

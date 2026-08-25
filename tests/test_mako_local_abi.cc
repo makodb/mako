@@ -7,6 +7,7 @@
 #include <atomic>
 #include <barrier>
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -323,6 +324,44 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
                                &result),
             MAKO_LOCAL_INVALID_ARGUMENT);
   EXPECT_EQ(result, 0);
+}
+
+TEST(MakoLocalAbiIdentity, FullStatusCatalogIsDenseAndStable) {
+  struct StatusEntry {
+    const char *name;
+    int value;
+    const char *message;
+  };
+
+#define MAKO_LOCAL_STATUS_ENTRY(short_name, c_symbol, message)                 \
+  {#short_name, c_symbol, message},
+  constexpr StatusEntry catalog[] = {
+      MAKO_LOCAL_FOR_EACH_STATUS(MAKO_LOCAL_STATUS_ENTRY)};
+#undef MAKO_LOCAL_STATUS_ENTRY
+
+  constexpr size_t catalog_size = sizeof(catalog) / sizeof(catalog[0]);
+  static_assert(catalog_size == 19);
+  std::array<bool, catalog_size> seen{};
+
+  for (size_t index = 0; index != catalog_size; ++index) {
+    const auto &entry = catalog[index];
+    EXPECT_EQ(entry.value, static_cast<int>(index))
+        << entry.name << " changed its assigned status number";
+    ASSERT_GE(entry.value, 0) << entry.name;
+    ASSERT_LT(static_cast<size_t>(entry.value), catalog_size) << entry.name;
+    EXPECT_FALSE(seen[entry.value])
+        << entry.name << " duplicates status " << entry.value;
+    seen[entry.value] = true;
+    EXPECT_STREQ(mako_local_status_string(entry.value), entry.message)
+        << entry.name;
+  }
+  for (size_t value = 0; value != seen.size(); ++value)
+    EXPECT_TRUE(seen[value]) << "missing status " << value;
+
+  EXPECT_STREQ(mako_local_status_string(-1), "unknown mako-local status");
+  EXPECT_STREQ(mako_local_status_string(static_cast<int>(catalog_size)),
+               "unknown mako-local status");
+  EXPECT_STREQ(mako_local_status_string(INT_MAX), "unknown mako-local status");
 }
 
 TEST(MakoLocalAbiIdentity, RecoveryLeavesTheFinalTimestampMintable) {
@@ -694,6 +733,142 @@ TEST_F(LocalAbiTest, OversizedInputsAreNonterminalAndLeaveOutputsInitialized) {
   // VALUE_TOO_LARGE is validation-only: no native operation ran and the
   // transaction remains usable.
   EXPECT_EQ(put(txn, primary, "after-large", "works", &created),
+            MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, PointFailuresOverwriteEveryValidOutputSentinel) {
+  auto *txn = begin();
+  const auto *key = reinterpret_cast<const uint8_t *>("key");
+  const auto *value = reinterpret_cast<const uint8_t *>("value");
+
+  auto *bytes = reinterpret_cast<uint8_t *>(uintptr_t{1});
+  size_t value_len = std::numeric_limits<size_t>::max();
+  uint8_t found = UINT8_MAX;
+  EXPECT_EQ(
+      mako_local_txn_get(txn, nullptr, key, 3, &bytes, &value_len, &found),
+      MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(bytes, nullptr);
+  EXPECT_EQ(value_len, 0U);
+  EXPECT_EQ(found, 0U);
+
+  uint8_t changed = UINT8_MAX;
+  EXPECT_EQ(mako_local_txn_put(txn, nullptr, key, 3, value, 5, &changed),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(changed, 0U);
+
+  changed = UINT8_MAX;
+  EXPECT_EQ(mako_local_txn_insert(txn, nullptr, key, 3, value, 5, &changed),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(changed, 0U);
+
+  changed = UINT8_MAX;
+  EXPECT_EQ(mako_local_txn_remove(txn, nullptr, key, 3, &changed),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(changed, 0U);
+
+  // Invalid-argument failures are nonterminal when native state was not
+  // touched, so the same transaction must remain usable.
+  ASSERT_EQ(put(txn, primary, "after-output-failures", "works"), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, PartiallyNullOutputSetsLeaveEveryOtherSentinelUntouched) {
+  auto *txn = begin();
+  const auto *key = reinterpret_cast<const uint8_t *>("key");
+
+  for (size_t missing = 0; missing != 3; ++missing) {
+    SCOPED_TRACE(::testing::Message() << "get missing output " << missing);
+    auto *bytes = reinterpret_cast<uint8_t *>(uintptr_t{1});
+    size_t value_len = std::numeric_limits<size_t>::max();
+    uint8_t found = UINT8_MAX;
+    EXPECT_EQ(mako_local_txn_get(txn, primary, key, 3,
+                                 missing == 0 ? nullptr : &bytes,
+                                 missing == 1 ? nullptr : &value_len,
+                                 missing == 2 ? nullptr : &found),
+              MAKO_LOCAL_INVALID_ARGUMENT);
+    if (missing != 0)
+      EXPECT_EQ(bytes, reinterpret_cast<uint8_t *>(uintptr_t{1}));
+    if (missing != 1)
+      EXPECT_EQ(value_len, std::numeric_limits<size_t>::max());
+    if (missing != 2)
+      EXPECT_EQ(found, UINT8_MAX);
+  }
+
+  const mako_local_scan_options options{
+      MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE, 0, nullptr, 0,
+      nullptr, 0, nullptr, 0};
+  mako_local_scan_entry descriptor{};
+  uint8_t arena[1]{};
+  for (const bool reverse : {false, true}) {
+    for (size_t missing = 0; missing != 4; ++missing) {
+      SCOPED_TRACE(::testing::Message()
+                   << (reverse ? "reverse" : "forward")
+                   << " scan missing output " << missing);
+      size_t count = std::numeric_limits<size_t>::max();
+      size_t used = std::numeric_limits<size_t>::max();
+      size_t required = std::numeric_limits<size_t>::max();
+      uint8_t done = UINT8_MAX;
+      const int status =
+          reverse
+              ? mako_local_txn_rscan_chunk(
+                    txn, primary, &options, &descriptor, 1, arena,
+                    sizeof(arena), missing == 0 ? nullptr : &count,
+                    missing == 1 ? nullptr : &used,
+                    missing == 2 ? nullptr : &required,
+                    missing == 3 ? nullptr : &done)
+              : mako_local_txn_scan_chunk(
+                    txn, primary, &options, &descriptor, 1, arena,
+                    sizeof(arena), missing == 0 ? nullptr : &count,
+                    missing == 1 ? nullptr : &used,
+                    missing == 2 ? nullptr : &required,
+                    missing == 3 ? nullptr : &done);
+      EXPECT_EQ(status, MAKO_LOCAL_INVALID_ARGUMENT);
+      if (missing != 0)
+        EXPECT_EQ(count, std::numeric_limits<size_t>::max());
+      if (missing != 1)
+        EXPECT_EQ(used, std::numeric_limits<size_t>::max());
+      if (missing != 2)
+        EXPECT_EQ(required, std::numeric_limits<size_t>::max());
+      if (missing != 3)
+        EXPECT_EQ(done, UINT8_MAX);
+    }
+  }
+
+  ASSERT_EQ(put(txn, primary, "after-partial-null-outputs", "works"),
+            MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, BothScanDirectionsOverwriteEveryValidOutputSentinel) {
+  auto *txn = begin();
+  const mako_local_scan_options invalid_options{};
+  mako_local_scan_entry descriptor{UINT32_MAX, UINT32_MAX, UINT32_MAX,
+                                   UINT32_MAX};
+  uint8_t arena[1]{UINT8_MAX};
+
+  for (const bool reverse : {false, true}) {
+    size_t count = std::numeric_limits<size_t>::max();
+    size_t used = std::numeric_limits<size_t>::max();
+    size_t required = std::numeric_limits<size_t>::max();
+    uint8_t done = UINT8_MAX;
+    const int status =
+        reverse
+            ? mako_local_txn_rscan_chunk(txn, primary, &invalid_options,
+                                         &descriptor, 1, arena, sizeof(arena),
+                                         &count, &used, &required, &done)
+            : mako_local_txn_scan_chunk(txn, primary, &invalid_options,
+                                        &descriptor, 1, arena, sizeof(arena),
+                                        &count, &used, &required, &done);
+    EXPECT_EQ(status, MAKO_LOCAL_INVALID_ARGUMENT)
+        << (reverse ? "reverse" : "forward");
+    EXPECT_EQ(count, 0U);
+    EXPECT_EQ(used, 0U);
+    EXPECT_EQ(required, 0U);
+    EXPECT_EQ(done, 0U);
+  }
+
+  ASSERT_EQ(put(txn, primary, "after-scan-output-failures", "works"),
             MAKO_LOCAL_OK);
   commit_and_destroy(txn);
 }

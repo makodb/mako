@@ -20,6 +20,9 @@
  *   mako_local_db_close() frees the facade handles but deliberately does not
  *   pretend it can reclaim a live Masstree safely without a process-wide RCU
  *   quiescence protocol.
+ *
+ * The normative revision-0 operation, ownership, and lifecycle matrix lives
+ * in docs/reference/mako-local-abi-v0.md in the Mako source tree.
  */
 
 #ifndef MAKO_LOCAL_ABI_H
@@ -67,6 +70,7 @@ extern "C" {
 
 /* Draft status numbers. Assigned numbers are never renumbered within this
  * revision. A missing key is OK with found_out == 0; it is not a conflict. */
+/* MAKO_LOCAL_STATUS_DEFINITIONS_BEGIN */
 #define MAKO_LOCAL_OK 0
 #define MAKO_LOCAL_CONFLICT 1
 #define MAKO_LOCAL_NOT_ATTACHED 2
@@ -78,7 +82,9 @@ extern "C" {
 #define MAKO_LOCAL_THREAD_LIMIT 8
 #define MAKO_LOCAL_BUSY 9
 #define MAKO_LOCAL_OUT_OF_MEMORY 10
-#define MAKO_LOCAL_INTERNAL 11 /* catchable C++ failure; assertions may abort */
+/* Internal failure, invariant violation, or cleanup-uncertain native state;
+ * assertions may still abort the process. */
+#define MAKO_LOCAL_INTERNAL 11
 /* Retained at its assigned number for old/no-RYW engines. Current RYW builds
  * compose repeated same-key mutations and do not return this status. */
 #define MAKO_LOCAL_DUPLICATE_WRITE 12
@@ -88,6 +94,42 @@ extern "C" {
 #define MAKO_LOCAL_TIMESTAMP_EXHAUSTED 16
 #define MAKO_LOCAL_BUFFER_TOO_SMALL 17
 #define MAKO_LOCAL_FEATURE_UNAVAILABLE 18
+/* MAKO_LOCAL_STATUS_DEFINITIONS_END */
+
+/* Canonical status identity table. Consumers may define X(short_name,
+ * c_symbol, message) and expand this macro to derive status-dependent code. */
+/* MAKO_LOCAL_STATUS_MANIFEST_BEGIN */
+#define MAKO_LOCAL_FOR_EACH_STATUS(X)                                      \
+  X(OK, MAKO_LOCAL_OK, "ok")                                               \
+  X(CONFLICT, MAKO_LOCAL_CONFLICT, "transaction conflict")                 \
+  X(NOT_ATTACHED, MAKO_LOCAL_NOT_ATTACHED, "thread not attached")          \
+  X(WRONG_THREAD, MAKO_LOCAL_WRONG_THREAD,                                 \
+    "transaction used from wrong thread")                                 \
+  X(TXN_ALREADY_ACTIVE, MAKO_LOCAL_TXN_ALREADY_ACTIVE,                     \
+    "transaction already active")                                         \
+  X(TXN_FINISHED, MAKO_LOCAL_TXN_FINISHED, "transaction already finished") \
+  X(WRONG_DB_OR_TABLE, MAKO_LOCAL_WRONG_DB_OR_TABLE,                       \
+    "table belongs to another database")                                  \
+  X(INVALID_ARGUMENT, MAKO_LOCAL_INVALID_ARGUMENT, "invalid argument")     \
+  X(THREAD_LIMIT, MAKO_LOCAL_THREAD_LIMIT, "STO thread limit exhausted")   \
+  X(BUSY, MAKO_LOCAL_BUSY, "resource busy")                                \
+  X(OUT_OF_MEMORY, MAKO_LOCAL_OUT_OF_MEMORY, "out of memory")              \
+  X(INTERNAL, MAKO_LOCAL_INTERNAL, "internal or uncertain native state")   \
+  X(DUPLICATE_WRITE, MAKO_LOCAL_DUPLICATE_WRITE,                           \
+    "second mutation of one key is not supported")                        \
+  X(TXN_TOO_LARGE, MAKO_LOCAL_TXN_TOO_LARGE,                               \
+    "transaction exceeds the draft item budget")                          \
+  X(VALUE_TOO_LARGE, MAKO_LOCAL_VALUE_TOO_LARGE,                           \
+    "table name, key, or value exceeds the draft byte limit")             \
+  X(COMMIT_HOOK_REJECTED, MAKO_LOCAL_COMMIT_HOOK_REJECTED,                 \
+    "post-validation commit hook rejected transaction")                   \
+  X(TIMESTAMP_EXHAUSTED, MAKO_LOCAL_TIMESTAMP_EXHAUSTED,                   \
+    "Mako logical timestamp exhausted")                                   \
+  X(BUFFER_TOO_SMALL, MAKO_LOCAL_BUFFER_TOO_SMALL,                         \
+    "caller scan arena is too small for the next entry")                  \
+  X(FEATURE_UNAVAILABLE, MAKO_LOCAL_FEATURE_UNAVAILABLE,                   \
+    "requested native feature is unavailable")
+/* MAKO_LOCAL_STATUS_MANIFEST_END */
 
 typedef struct mako_local_db mako_local_db;
 typedef struct mako_local_table mako_local_table;
@@ -215,6 +257,12 @@ int mako_local_txn_begin(mako_local_db *db, mako_local_txn **out)
  * with mako_local_bytes_free(). put reports whether it created the key;
  * insert is put-if-absent; remove reports whether a live key existed.
  *
+ * Each function validates its complete required output-pointer set before
+ * writing any member of that set. Once the set is valid, every scalar output
+ * is zero/null-initialized before further validation and remains initialized
+ * on error. If any required output pointer is NULL, no output in that set is
+ * guaranteed to be written.
+ *
  * Keys and values are bounded by MAKO_LOCAL_MAX_{KEY,VALUE}_BYTES. An oversized
  * input returns nonterminal MAKO_LOCAL_VALUE_TOO_LARGE. Exceeding the weighted
  * transaction budget aborts the transaction and returns terminal
@@ -286,8 +334,11 @@ int mako_local_txn_rscan_chunk(
 /* Commit/abort end the transaction but retain the small opaque handle so the
  * caller can inspect the status safely. destroy frees it; destroying an active
  * transaction first aborts it. If native abort cleanup fails, the handle,
- * buffers, database accounting, and worker are permanently quarantined:
- * every later operation returns INTERNAL and nothing retries partial cleanup. */
+ * buffers, database accounting, and owner worker are permanently quarantined.
+ * A well-formed owner-thread transaction call then reports INTERNAL after its
+ * ordinary argument validation. Call destroy exactly once: INTERNAL confirms
+ * quarantine, after which the caller must neither retry cleanup nor reuse the
+ * worker. See the normative revision-0 matrix for the full state contract. */
 int mako_local_txn_commit(mako_local_txn *txn) MAKO_LOCAL_NOEXCEPT;
 /* The hook variant preserves the old commit lifecycle but provides the exact
  * Mako timestamp seam needed by a transactional write-back cache. Native code

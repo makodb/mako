@@ -24,7 +24,7 @@
 #![warn(missing_docs)]
 
 use std::cell::Cell;
-use std::ffi::c_void;
+use std::ffi::{c_void, CStr};
 use std::fmt;
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
@@ -57,7 +57,7 @@ pub enum Error {
     Busy,
     /// Native allocation, or a fallible allocation needed by this wrapper, failed.
     OutOfMemory,
-    /// A catchable C++ exception was contained at the boundary.
+    /// Native state failed, violated an invariant, or became cleanup-uncertain.
     Internal,
     /// The linked legacy/no-RYW engine cannot compose two writes to one key.
     DuplicateWrite,
@@ -94,6 +94,11 @@ pub enum Error {
         /// Size reported by the linked native library.
         found: usize,
     },
+    /// The generated Rust status catalog and linked native catalog disagree.
+    AbiStatusCatalogMismatch {
+        /// Status whose canonical identity or diagnostic did not match.
+        status: i32,
+    },
     /// The native library returned a status unknown to this crate.
     UnknownStatus(i32),
 }
@@ -116,7 +121,7 @@ impl fmt::Display for Error {
             ),
             Self::Busy => write!(f, "native resource is busy"),
             Self::OutOfMemory => write!(f, "native or wrapper allocation failed"),
-            Self::Internal => write!(f, "the local ABI contained a C++ failure"),
+            Self::Internal => write!(f, "the local ABI entered an internal or uncertain state"),
             Self::DuplicateWrite => write!(
                 f,
                 "the linked engine requires read-your-writes support to mutate one key twice"
@@ -151,6 +156,10 @@ impl fmt::Display for Error {
             } => write!(
                 f,
                 "mako-local ABI layout mismatch for {structure}: Rust expects {expected} bytes, linked C++ reports {found}"
+            ),
+            Self::AbiStatusCatalogMismatch { status } => write!(
+                f,
+                "mako-local ABI status catalog mismatch at status {status}"
             ),
             Self::UnknownStatus(status) => {
                 write!(f, "mako-local returned unknown status {status}")
@@ -403,75 +412,120 @@ fn verify_abi() -> Result<()> {
             });
         }
     }
+
+    for native_status in sys::ALL_KNOWN_STATUSES {
+        let code = native_status.code();
+        // SAFETY: the native function returns a static NUL-terminated string
+        // for every integer. A null pointer is still treated as ABI drift.
+        let message = unsafe { sys::mako_local_status_string(code) };
+        if message.is_null()
+            // SAFETY: non-null native status strings have static lifetime.
+            || unsafe { CStr::from_ptr(message) }.to_bytes() != native_status.message().as_bytes()
+        {
+            return Err(Error::AbiStatusCatalogMismatch { status: code });
+        }
+    }
     Ok(())
 }
 
 fn status(code: i32) -> Result<()> {
-    match code {
-        sys::MAKO_LOCAL_OK => Ok(()),
-        sys::MAKO_LOCAL_CONFLICT => Err(Error::Conflict),
-        sys::MAKO_LOCAL_NOT_ATTACHED => Err(Error::NotAttached),
-        sys::MAKO_LOCAL_WRONG_THREAD => Err(Error::WrongThread),
-        sys::MAKO_LOCAL_TXN_ALREADY_ACTIVE => Err(Error::TransactionAlreadyActive),
-        sys::MAKO_LOCAL_TXN_FINISHED => Err(Error::TransactionFinished),
-        sys::MAKO_LOCAL_WRONG_DB_OR_TABLE => Err(Error::WrongDatabaseOrTable),
-        sys::MAKO_LOCAL_INVALID_ARGUMENT => Err(Error::InvalidArgument),
-        sys::MAKO_LOCAL_THREAD_LIMIT => Err(Error::ThreadLimit),
-        sys::MAKO_LOCAL_BUSY => Err(Error::Busy),
-        sys::MAKO_LOCAL_OUT_OF_MEMORY => Err(Error::OutOfMemory),
-        sys::MAKO_LOCAL_INTERNAL => Err(Error::Internal),
-        sys::MAKO_LOCAL_DUPLICATE_WRITE => Err(Error::DuplicateWrite),
-        sys::MAKO_LOCAL_TXN_TOO_LARGE => Err(Error::TransactionTooLarge),
-        sys::MAKO_LOCAL_VALUE_TOO_LARGE => Err(Error::ValueTooLarge),
-        sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED => Err(Error::CommitHookRejected),
-        sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED => Err(Error::TimestampExhausted),
-        sys::MAKO_LOCAL_BUFFER_TOO_SMALL => Err(Error::BufferTooSmall),
-        sys::MAKO_LOCAL_FEATURE_UNAVAILABLE => Err(Error::FeatureUnavailable),
-        other => Err(Error::UnknownStatus(other)),
+    match sys::KnownStatus::from_code(code) {
+        Some(known) => known_status(known),
+        None => Err(Error::UnknownStatus(code)),
     }
 }
 
-fn operation_is_terminal(code: i32) -> bool {
-    match code {
-        sys::MAKO_LOCAL_CONFLICT
-        | sys::MAKO_LOCAL_OUT_OF_MEMORY
-        | sys::MAKO_LOCAL_INTERNAL
-        | sys::MAKO_LOCAL_TXN_TOO_LARGE
-        | sys::MAKO_LOCAL_TXN_FINISHED => true,
-        sys::MAKO_LOCAL_OK
-        | sys::MAKO_LOCAL_NOT_ATTACHED
-        | sys::MAKO_LOCAL_WRONG_THREAD
-        | sys::MAKO_LOCAL_TXN_ALREADY_ACTIVE
-        | sys::MAKO_LOCAL_WRONG_DB_OR_TABLE
-        | sys::MAKO_LOCAL_INVALID_ARGUMENT
-        | sys::MAKO_LOCAL_THREAD_LIMIT
-        | sys::MAKO_LOCAL_BUSY
-        | sys::MAKO_LOCAL_DUPLICATE_WRITE
-        | sys::MAKO_LOCAL_VALUE_TOO_LARGE
-        | sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED
-        | sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED
-        | sys::MAKO_LOCAL_BUFFER_TOO_SMALL
-        | sys::MAKO_LOCAL_FEATURE_UNAVAILABLE => false,
-        // A future operation status has no known lifecycle contract. Never
-        // let callers commit a handle whose native state may already be
-        // terminal or uncertain.
-        _ => true,
+fn known_status(status: sys::KnownStatus) -> Result<()> {
+    match status {
+        sys::KnownStatus::Ok => Ok(()),
+        sys::KnownStatus::Conflict => Err(Error::Conflict),
+        sys::KnownStatus::NotAttached => Err(Error::NotAttached),
+        sys::KnownStatus::WrongThread => Err(Error::WrongThread),
+        sys::KnownStatus::TxnAlreadyActive => Err(Error::TransactionAlreadyActive),
+        sys::KnownStatus::TxnFinished => Err(Error::TransactionFinished),
+        sys::KnownStatus::WrongDbOrTable => Err(Error::WrongDatabaseOrTable),
+        sys::KnownStatus::InvalidArgument => Err(Error::InvalidArgument),
+        sys::KnownStatus::ThreadLimit => Err(Error::ThreadLimit),
+        sys::KnownStatus::Busy => Err(Error::Busy),
+        sys::KnownStatus::OutOfMemory => Err(Error::OutOfMemory),
+        sys::KnownStatus::Internal => Err(Error::Internal),
+        sys::KnownStatus::DuplicateWrite => Err(Error::DuplicateWrite),
+        sys::KnownStatus::TxnTooLarge => Err(Error::TransactionTooLarge),
+        sys::KnownStatus::ValueTooLarge => Err(Error::ValueTooLarge),
+        sys::KnownStatus::CommitHookRejected => Err(Error::CommitHookRejected),
+        sys::KnownStatus::TimestampExhausted => Err(Error::TimestampExhausted),
+        sys::KnownStatus::BufferTooSmall => Err(Error::BufferTooSmall),
+        sys::KnownStatus::FeatureUnavailable => Err(Error::FeatureUnavailable),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperationEffect {
+    Active,
+    Finished,
+    Uncertain,
+}
+
+fn operation_effect(code: i32) -> OperationEffect {
+    let Some(status) = sys::KnownStatus::from_code(code) else {
+        return OperationEffect::Uncertain;
+    };
+    match status {
+        sys::KnownStatus::Ok
+        | sys::KnownStatus::WrongThread
+        | sys::KnownStatus::WrongDbOrTable
+        | sys::KnownStatus::InvalidArgument
+        | sys::KnownStatus::DuplicateWrite
+        | sys::KnownStatus::ValueTooLarge
+        | sys::KnownStatus::BufferTooSmall => OperationEffect::Active,
+        sys::KnownStatus::Conflict
+        | sys::KnownStatus::OutOfMemory
+        | sys::KnownStatus::TxnTooLarge => OperationEffect::Finished,
+        // These statuses are either cleanup-uncertain or outside the point and
+        // scan operation contract. Fail closed if a linked implementation
+        // returns one through that surface.
+        sys::KnownStatus::NotAttached
+        | sys::KnownStatus::TxnAlreadyActive
+        | sys::KnownStatus::TxnFinished
+        | sys::KnownStatus::ThreadLimit
+        | sys::KnownStatus::Busy
+        | sys::KnownStatus::Internal
+        | sys::KnownStatus::CommitHookRejected
+        | sys::KnownStatus::TimestampExhausted
+        | sys::KnownStatus::FeatureUnavailable => OperationEffect::Uncertain,
     }
 }
 
 fn commit_disposition(code: i32) -> CommitDisposition {
-    match code {
-        sys::MAKO_LOCAL_OK => CommitDisposition::Committed,
-        sys::MAKO_LOCAL_CONFLICT => CommitDisposition::Aborted(Error::Conflict),
-        sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED => {
+    let Some(status) = sys::KnownStatus::from_code(code) else {
+        return CommitDisposition::Unknown(Error::UnknownStatus(code));
+    };
+    match status {
+        sys::KnownStatus::Ok => CommitDisposition::Committed,
+        sys::KnownStatus::Conflict => CommitDisposition::Aborted(Error::Conflict),
+        sys::KnownStatus::CommitHookRejected => {
             CommitDisposition::Aborted(Error::CommitHookRejected)
         }
-        sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED => {
+        sys::KnownStatus::TimestampExhausted => {
             CommitDisposition::Aborted(Error::TimestampExhausted)
         }
-        other => {
-            CommitDisposition::Unknown(status(other).expect_err("non-success native commit status"))
-        }
+        sys::KnownStatus::NotAttached
+        | sys::KnownStatus::WrongThread
+        | sys::KnownStatus::TxnAlreadyActive
+        | sys::KnownStatus::TxnFinished
+        | sys::KnownStatus::WrongDbOrTable
+        | sys::KnownStatus::InvalidArgument
+        | sys::KnownStatus::ThreadLimit
+        | sys::KnownStatus::Busy
+        | sys::KnownStatus::OutOfMemory
+        | sys::KnownStatus::Internal
+        | sys::KnownStatus::DuplicateWrite
+        | sys::KnownStatus::TxnTooLarge
+        | sys::KnownStatus::ValueTooLarge
+        | sys::KnownStatus::BufferTooSmall
+        | sys::KnownStatus::FeatureUnavailable => CommitDisposition::Unknown(
+            known_status(status).expect_err("a non-success native status has a typed error"),
+        ),
     }
 }
 
@@ -963,10 +1017,10 @@ impl<'db> Transaction<'db> {
     }
 
     fn operation_status(&mut self, code: i32) -> Result<()> {
-        // The native facade aborts and finishes an operation that encounters
-        // these terminal failures. Value-too-large is checked before native
-        // mutation and, like other contract errors, leaves it abortable.
-        if operation_is_terminal(code) {
+        // A finished or terminal-uncertain native transaction must never be
+        // used for another operation or commit. Drop still calls destroy once,
+        // which either frees a clean terminal facade or observes quarantine.
+        if operation_effect(code) != OperationEffect::Active {
             self.active = false;
         }
         status(code)
@@ -1186,6 +1240,14 @@ impl<'db> Transaction<'db> {
             .raw
             .take()
             .expect("transaction handle already consumed");
+        if !self.active {
+            // A prior terminal operation may already have finished or
+            // quarantined native state. In particular, never retry abort after
+            // INTERNAL: the ABI permits only the one-shot destroy probe.
+            let destroy = unsafe { sys::mako_local_txn_destroy(raw.as_ptr()) };
+            status(destroy)?;
+            return Err(Error::TransactionFinished);
+        }
         self.active = false;
         // SAFETY: handle is live, active, and thread-affine by type.
         let abort = unsafe { sys::mako_local_txn_abort(raw.as_ptr()) };
@@ -1367,7 +1429,9 @@ mod tests {
             ),
         ];
 
-        for (code, expected) in cases {
+        assert_eq!(cases.len(), sys::ALL_KNOWN_STATUSES.len());
+        for ((code, expected), known) in cases.into_iter().zip(sys::ALL_KNOWN_STATUSES) {
+            assert_eq!(code, known.code(), "{}", known.c_symbol());
             assert_eq!(status(code), expected, "status {code}");
         }
         assert_eq!(status(-1), Err(Error::UnknownStatus(-1)));
@@ -1375,54 +1439,70 @@ mod tests {
     }
 
     #[test]
-    fn terminal_operation_statuses_match_native_lifecycle_contract() {
-        for code in [
-            sys::MAKO_LOCAL_CONFLICT,
-            sys::MAKO_LOCAL_OUT_OF_MEMORY,
-            sys::MAKO_LOCAL_INTERNAL,
-            sys::MAKO_LOCAL_TXN_TOO_LARGE,
-            sys::MAKO_LOCAL_TXN_FINISHED,
-        ] {
-            assert!(operation_is_terminal(code), "status {code}");
+    fn every_status_has_an_explicit_operation_lifecycle() {
+        for status in sys::ALL_KNOWN_STATUSES {
+            let expected = match status {
+                sys::KnownStatus::Ok
+                | sys::KnownStatus::WrongThread
+                | sys::KnownStatus::WrongDbOrTable
+                | sys::KnownStatus::InvalidArgument
+                | sys::KnownStatus::DuplicateWrite
+                | sys::KnownStatus::ValueTooLarge
+                | sys::KnownStatus::BufferTooSmall => OperationEffect::Active,
+                sys::KnownStatus::Conflict
+                | sys::KnownStatus::OutOfMemory
+                | sys::KnownStatus::TxnTooLarge => OperationEffect::Finished,
+                sys::KnownStatus::NotAttached
+                | sys::KnownStatus::TxnAlreadyActive
+                | sys::KnownStatus::TxnFinished
+                | sys::KnownStatus::ThreadLimit
+                | sys::KnownStatus::Busy
+                | sys::KnownStatus::Internal
+                | sys::KnownStatus::CommitHookRejected
+                | sys::KnownStatus::TimestampExhausted
+                | sys::KnownStatus::FeatureUnavailable => OperationEffect::Uncertain,
+            };
+            assert_eq!(operation_effect(status.code()), expected, "{status:?}");
         }
-
-        assert!(!operation_is_terminal(sys::MAKO_LOCAL_VALUE_TOO_LARGE));
-        assert!(!operation_is_terminal(sys::MAKO_LOCAL_DUPLICATE_WRITE));
-        assert!(!operation_is_terminal(sys::MAKO_LOCAL_INVALID_ARGUMENT));
-        assert!(!operation_is_terminal(sys::MAKO_LOCAL_BUFFER_TOO_SMALL));
-        assert!(!operation_is_terminal(sys::MAKO_LOCAL_FEATURE_UNAVAILABLE));
-        assert!(operation_is_terminal(-1));
-        assert!(operation_is_terminal(i32::MAX));
+        assert_eq!(operation_effect(-1), OperationEffect::Uncertain);
+        assert_eq!(operation_effect(i32::MAX), OperationEffect::Uncertain);
     }
 
     #[test]
-    fn detailed_commit_only_calls_a_definite_conflict_aborted() {
-        assert_eq!(
-            commit_disposition(sys::MAKO_LOCAL_OK),
-            CommitDisposition::Committed
-        );
-        assert_eq!(
-            commit_disposition(sys::MAKO_LOCAL_CONFLICT),
-            CommitDisposition::Aborted(Error::Conflict)
-        );
-        assert_eq!(
-            commit_disposition(sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED),
-            CommitDisposition::Aborted(Error::CommitHookRejected)
-        );
-        assert_eq!(
-            commit_disposition(sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED),
-            CommitDisposition::Aborted(Error::TimestampExhausted)
-        );
-        for code in [
-            sys::MAKO_LOCAL_OUT_OF_MEMORY,
-            sys::MAKO_LOCAL_INTERNAL,
-            sys::MAKO_LOCAL_TXN_FINISHED,
-            -1,
-        ] {
-            assert!(
-                matches!(commit_disposition(code), CommitDisposition::Unknown(_)),
-                "commit status {code} must pin a durability obligation"
-            );
+    fn every_status_has_an_explicit_commit_disposition() {
+        for status in sys::ALL_KNOWN_STATUSES {
+            let expected = match status {
+                sys::KnownStatus::Ok => CommitDisposition::Committed,
+                sys::KnownStatus::Conflict => CommitDisposition::Aborted(Error::Conflict),
+                sys::KnownStatus::CommitHookRejected => {
+                    CommitDisposition::Aborted(Error::CommitHookRejected)
+                }
+                sys::KnownStatus::TimestampExhausted => {
+                    CommitDisposition::Aborted(Error::TimestampExhausted)
+                }
+                sys::KnownStatus::NotAttached
+                | sys::KnownStatus::WrongThread
+                | sys::KnownStatus::TxnAlreadyActive
+                | sys::KnownStatus::TxnFinished
+                | sys::KnownStatus::WrongDbOrTable
+                | sys::KnownStatus::InvalidArgument
+                | sys::KnownStatus::ThreadLimit
+                | sys::KnownStatus::Busy
+                | sys::KnownStatus::OutOfMemory
+                | sys::KnownStatus::Internal
+                | sys::KnownStatus::DuplicateWrite
+                | sys::KnownStatus::TxnTooLarge
+                | sys::KnownStatus::ValueTooLarge
+                | sys::KnownStatus::BufferTooSmall
+                | sys::KnownStatus::FeatureUnavailable => CommitDisposition::Unknown(
+                    known_status(status).expect_err("non-success status has a typed error"),
+                ),
+            };
+            assert_eq!(commit_disposition(status.code()), expected, "{status:?}");
         }
+        assert_eq!(
+            commit_disposition(-1),
+            CommitDisposition::Unknown(Error::UnknownStatus(-1))
+        );
     }
 }

@@ -520,32 +520,10 @@ size_t mako_local_scan_entry_size(void) noexcept {
 
 const char *mako_local_status_string(int status) noexcept {
   switch (status) {
-    case MAKO_LOCAL_OK: return "ok";
-    case MAKO_LOCAL_CONFLICT: return "transaction conflict";
-    case MAKO_LOCAL_NOT_ATTACHED: return "thread not attached";
-    case MAKO_LOCAL_WRONG_THREAD: return "transaction used from wrong thread";
-    case MAKO_LOCAL_TXN_ALREADY_ACTIVE: return "transaction already active";
-    case MAKO_LOCAL_TXN_FINISHED: return "transaction already finished";
-    case MAKO_LOCAL_WRONG_DB_OR_TABLE: return "table belongs to another database";
-    case MAKO_LOCAL_INVALID_ARGUMENT: return "invalid argument";
-    case MAKO_LOCAL_THREAD_LIMIT: return "STO thread limit exhausted";
-    case MAKO_LOCAL_BUSY: return "resource busy";
-    case MAKO_LOCAL_OUT_OF_MEMORY: return "out of memory";
-    case MAKO_LOCAL_INTERNAL: return "contained C++ failure";
-    case MAKO_LOCAL_DUPLICATE_WRITE:
-      return "second mutation of one key is not supported";
-    case MAKO_LOCAL_TXN_TOO_LARGE:
-      return "transaction exceeds the draft item budget";
-    case MAKO_LOCAL_VALUE_TOO_LARGE:
-      return "table name, key, or value exceeds the draft byte limit";
-    case MAKO_LOCAL_COMMIT_HOOK_REJECTED:
-      return "post-validation commit hook rejected transaction";
-    case MAKO_LOCAL_TIMESTAMP_EXHAUSTED:
-      return "Mako logical timestamp exhausted";
-    case MAKO_LOCAL_BUFFER_TOO_SMALL:
-      return "caller scan arena is too small for the next entry";
-    case MAKO_LOCAL_FEATURE_UNAVAILABLE:
-      return "requested native feature is unavailable";
+#define MAKO_LOCAL_STATUS_CASE(short_name, c_symbol, message) \
+  case c_symbol: return message;
+    MAKO_LOCAL_FOR_EACH_STATUS(MAKO_LOCAL_STATUS_CASE)
+#undef MAKO_LOCAL_STATUS_CASE
     default: return "unknown mako-local status";
   }
 }

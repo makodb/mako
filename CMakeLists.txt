@@ -2912,6 +2912,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME MakoLocalAbiTests COMMAND test_mako_local_abi)
 
+    # The public local-transaction boundary must remain consumable as pure C,
+    # and every draft status number is an ABI reservation.
+    add_executable(test_mako_local_abi_c11 tests/test_mako_local_abi_c11.c)
+    set_target_properties(test_mako_local_abi_c11 PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    target_include_directories(test_mako_local_abi_c11 PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+    add_test(NAME MakoLocalAbiC11Probe COMMAND test_mako_local_abi_c11)
+
     if (TARGET mrxffi)
         # Differential: drive the C++ cache and the Rust cache with the
         # same operation stream and require identical observable
@@ -3147,6 +3161,7 @@ if(BUILD_TESTS)
         DEPENDS test_silo_varint test_silo_rcu_thread test_silo_allocator_tuple 
                 test_silo_runtime test_silo_multi_site_stress
                 test_silo_nontxn_api test_kv_backends test_mako_local_abi
+                test_mako_local_abi_c11
                 test_sto_transaction test_sto_transaction_real
         COMMENT "Running all Silo/STO tests"
         VERBATIM
