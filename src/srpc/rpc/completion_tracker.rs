@@ -1,0 +1,319 @@
+// Canonical Rust source for the srpc.completion_tracker module.
+// Compiled directly by rustc and translated by rusty-cpp crate mode.
+use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::sync::Mutex;
+
+#[repr(C)]
+#[cfg_attr(not(any()), derive(Clone, Copy))]
+pub struct CompletionTrackerConfig {
+    pub ttl_ms: u64,
+    pub max_entries: usize,
+    pub enabled: bool,
+}
+
+impl CompletionTrackerConfig {
+    pub fn new() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {
+            ttl_ms: 60000u64,
+            max_entries: 100000usize,
+            enabled: true,
+        }
+    }
+
+    pub fn defaults() -> CompletionTrackerConfig {
+        CompletionTrackerConfig::new()
+    }
+
+    pub fn small() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {
+            ttl_ms: 30000u64,
+            max_entries: 10000usize,
+            enabled: true,
+        }
+    }
+
+    pub fn large() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {
+            ttl_ms: 300000u64,
+            max_entries: 1000000usize,
+            enabled: true,
+        }
+    }
+
+    pub fn disabled() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {
+            ttl_ms: 60000u64,
+            max_entries: 100000usize,
+            enabled: false,
+        }
+    }
+}
+
+#[repr(C)]
+pub struct CompletedEntry {
+    pub xid: i64,
+    pub timestamp_ms: u64,
+}
+
+impl CompletedEntry {
+    pub fn new(x: i64, ts: u64) -> CompletedEntry {
+        CompletedEntry { xid: x, timestamp_ms: ts }
+    }
+
+    pub fn is_expired(&self, current_time_ms: u64, ttl_ms: u64) -> bool {
+        if ttl_ms == 0u64 { return false; }
+        current_time_ms > self.timestamp_ms.wrapping_add(ttl_ms)
+    }
+}
+
+#[repr(C)]
+pub struct CompletionTracker {
+    pub config_: Mutex<CompletionTrackerConfig>,
+    pub lru_list_: Mutex<VecDeque<CompletedEntry>>,
+    pub completed_set_: Mutex<HashSet<i64>>,
+    pub total_tracked_: AtomicU64,
+    pub queries_: AtomicU64,
+    pub query_hits_: AtomicU64,
+    pub evictions_: AtomicU64,
+}
+
+impl CompletionTracker {
+    pub fn new() -> CompletionTracker {
+        CompletionTracker {
+            config_: Mutex::new(CompletionTrackerConfig::defaults()),
+            lru_list_: Mutex::<VecDeque<CompletedEntry>>::new(VecDeque::<CompletedEntry>::new()),
+            completed_set_: Mutex::<HashSet<i64>>::new(HashSet::<i64>::new()),
+            total_tracked_: AtomicU64::new(0u64),
+            queries_: AtomicU64::new(0u64),
+            query_hits_: AtomicU64::new(0u64),
+            evictions_: AtomicU64::new(0u64),
+        }
+    }
+
+    pub fn with_config(config: self::CompletionTrackerConfig) -> CompletionTracker {
+        CompletionTracker {
+            config_: Mutex::new(config),
+            lru_list_: Mutex::<VecDeque<CompletedEntry>>::new(VecDeque::<CompletedEntry>::new()),
+            completed_set_: Mutex::<HashSet<i64>>::new(HashSet::<i64>::new()),
+            total_tracked_: AtomicU64::new(0u64),
+            queries_: AtomicU64::new(0u64),
+            query_hits_: AtomicU64::new(0u64),
+            evictions_: AtomicU64::new(0u64),
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        let guard = self.config_.lock().unwrap();
+        guard.enabled
+    }
+
+    pub fn config(&self) -> CompletionTrackerConfig {
+        let guard = self.config_.lock().unwrap();
+        *guard
+    }
+
+    pub fn set_config(&mut self, config: self::CompletionTrackerConfig) {
+        let mut guard = self.config_.lock().unwrap();
+        *guard = config;
+    }
+
+    #[allow(clippy::len_zero)]
+    pub fn mark_completed(&mut self, xid: i64, current_time_ms: u64) {
+        let cfg = self.config();
+        if !cfg.enabled {
+            return;
+        }
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        if set_guard.contains(&xid) {
+            return;
+        }
+        let mut list_guard = self.lru_list_.lock().unwrap();
+        while list_guard.len() >= cfg.max_entries && list_guard.len() > 0usize {
+            // Loop condition guarantees non-empty; VecDeque::back()
+            // returns Option<&T> in real Rust.
+            let oldest_xid: i64 = list_guard.back().unwrap().xid;
+            set_guard.remove(&oldest_xid);
+            list_guard.pop_back();
+            self.evictions_.fetch_add(1u64, Ordering::Relaxed);
+        }
+        list_guard.push_front(CompletedEntry::new(xid, current_time_ms));
+        set_guard.insert(xid);
+        self.total_tracked_.fetch_add(1u64, Ordering::Relaxed);
+    }
+
+    pub fn is_completed(&mut self, xid: i64, current_time_ms: u64) -> bool {
+        let cfg = self.config();
+        self.queries_.fetch_add(1u64, Ordering::Relaxed);
+        if !cfg.enabled {
+            return false;
+        }
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        if !set_guard.contains(&xid) {
+            return false;
+        }
+        let mut list_guard = self.lru_list_.lock().unwrap();
+        let mut i: usize = 0;
+        while i < list_guard.len() {
+            if list_guard[i].xid == xid {
+                if list_guard[i].is_expired(current_time_ms, cfg.ttl_ms) {
+                    set_guard.remove(&xid);
+                    list_guard.remove(i);
+                    return false;
+                }
+                self.query_hits_.fetch_add(1u64, Ordering::Relaxed);
+                return true;
+            }
+            i += 1usize;
+        }
+        false
+    }
+
+    pub fn remove(&mut self, xid: i64) -> bool {
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        if !set_guard.contains(&xid) {
+            return false;
+        }
+        set_guard.remove(&xid);
+        let mut list_guard = self.lru_list_.lock().unwrap();
+        let mut i: usize = 0;
+        while i < list_guard.len() {
+            if list_guard[i].xid == xid {
+                list_guard.remove(i);
+                return true;
+            }
+            i += 1usize;
+        }
+        true
+    }
+
+    pub fn clear(&mut self) {
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        let mut list_guard = self.lru_list_.lock().unwrap();
+        set_guard.clear();
+        list_guard.clear();
+    }
+
+    pub fn size(&self) -> usize {
+        let guard = self.completed_set_.lock().unwrap();
+        guard.len()
+    }
+
+    pub fn total_tracked(&self) -> u64 {
+        self.total_tracked_.load(Ordering::Relaxed)
+    }
+
+    pub fn queries(&self) -> u64 {
+        self.queries_.load(Ordering::Relaxed)
+    }
+
+    pub fn query_hits(&self) -> u64 {
+        self.query_hits_.load(Ordering::Relaxed)
+    }
+
+    pub fn hit_rate(&self) -> f64 {
+        let q: u64 = self.queries_.load(Ordering::Relaxed);
+        if q == 0u64 {
+            return 0.0f64;
+        }
+        (self.query_hits_.load(Ordering::Relaxed) as f64) / (q as f64)
+    }
+
+    pub fn evictions(&self) -> u64 {
+        self.evictions_.load(Ordering::Relaxed)
+    }
+
+    pub fn reset_stats(&mut self) {
+        self.total_tracked_.store(0u64, Ordering::Relaxed);
+        self.queries_.store(0u64, Ordering::Relaxed);
+        self.query_hits_.store(0u64, Ordering::Relaxed);
+        self.evictions_.store(0u64, Ordering::Relaxed);
+    }
+
+    pub fn evict_expired(&mut self, current_time_ms: u64) -> usize {
+        let cfg = self.config();
+        if !cfg.enabled || cfg.ttl_ms == 0u64 {
+            return 0usize;
+        }
+        let mut set_guard = self.completed_set_.lock().unwrap();
+        let mut list_guard = self.lru_list_.lock().unwrap();
+        let mut evicted: usize = 0;
+        let mut i: usize = 0;
+        while i < list_guard.len() {
+            if list_guard[i].is_expired(current_time_ms, cfg.ttl_ms) {
+                let xid: i64 = list_guard[i].xid;
+                set_guard.remove(&xid);
+                list_guard.remove(i);
+                evicted += 1usize;
+            } else {
+                i += 1usize;
+            }
+        }
+        self.evictions_.fetch_add(evicted as u64, Ordering::Relaxed);
+        evicted
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum CompletionStatus {
+    NOT_FOUND = 0,
+    COMPLETED = 1,
+    COMPLETED_WITH_ERROR = 2,
+    EXPIRED = 3,
+}
+
+#[repr(C)]
+pub struct CompletionQueryResult {
+    pub status: CompletionStatus,
+    pub error_code: i32,
+    pub has_cached_response: bool,
+}
+
+impl CompletionQueryResult {
+    pub fn new() -> CompletionQueryResult {
+        CompletionQueryResult {
+            status: CompletionStatus::NOT_FOUND,
+            error_code: 0i32,
+            has_cached_response: false,
+        }
+    }
+
+    pub fn not_found() -> CompletionQueryResult {
+        CompletionQueryResult::new()
+    }
+
+    pub fn completed(err_code: i32, has_response: bool) -> CompletionQueryResult {
+        let s: CompletionStatus = if err_code == 0i32 {
+            CompletionStatus::COMPLETED
+        } else {
+            CompletionStatus::COMPLETED_WITH_ERROR
+        };
+        CompletionQueryResult { status: s, error_code: err_code, has_cached_response: has_response }
+    }
+
+    pub fn expired() -> CompletionQueryResult {
+        CompletionQueryResult {
+            status: CompletionStatus::EXPIRED,
+            error_code: 0i32,
+            has_cached_response: false,
+        }
+    }
+
+    pub fn is_completed(&self) -> bool {
+        self.status == CompletionStatus::COMPLETED || self.status == CompletionStatus::COMPLETED_WITH_ERROR
+    }
+}
+
+#[allow(unreachable_patterns)]
+pub fn completion_status_to_string(status: CompletionStatus) -> &'static str {
+    match status {
+        CompletionStatus::NOT_FOUND => "NOT_FOUND",
+        CompletionStatus::COMPLETED => "COMPLETED",
+        CompletionStatus::COMPLETED_WITH_ERROR => "COMPLETED_WITH_ERROR",
+        CompletionStatus::EXPIRED => "EXPIRED",
+        _ => "UNKNOWN",
+    }
+}
