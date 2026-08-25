@@ -67,7 +67,6 @@ void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
 void add_log_to_nc(const char*, int, uint32_t, int);
 void wait_for_submit(uint32_t);
-bool wait_for_submit_for(uint32_t, uint64_t timeout_ms);
 void pre_shutdown_step();
 int get_epoch();
 void set_epoch(int epoch);

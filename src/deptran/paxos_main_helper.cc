@@ -715,48 +715,6 @@ void wait_for_submit(uint32_t par_id) {
         worker->WaitForSubmit();
     }
 }
-
-bool wait_for_submit_for(uint32_t par_id, uint64_t timeout_ms) {
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(timeout_ms);
-    int total_submits = 0;
-    bool found_leader = false;
-
-    auto wait_until_deadline = [&deadline](PaxosWorker& worker) {
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= deadline) {
-            return worker.n_current.load() >= worker.n_tot.load();
-        }
-        return worker.WaitForSubmitFor(
-            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now));
-    };
-
-    for (auto& worker : pxs_workers_g) {
-        if (!worker->IsPartition(par_id)) continue;
-        bool is_leader = false;
-        {
-            std::lock_guard<std::recursive_mutex> lock(worker->election_state_lock);
-            is_leader = worker->is_leader;
-        }
-        if (!is_leader) continue;
-        found_leader = true;
-        if (!wait_until_deadline(*worker)) return false;
-        total_submits = worker->n_tot.load();
-    }
-
-    if (!found_leader) {
-        Log_error("wait_for_submit_for: no leader worker for partition {}", par_id);
-        return false;
-    }
-
-    for (auto& worker : pxs_workers_g) {
-        if (!worker->IsPartition(par_id)) continue;
-        worker->n_tot = total_submits;
-        if (!wait_until_deadline(*worker)) return false;
-    }
-    return true;
-}
-
 void pre_shutdown_step(){
     Log_info("shutdown Server Control Service after task finish total submit {}", (int)submit_tot);
     for (auto& worker : pxs_workers_g) {

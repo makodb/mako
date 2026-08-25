@@ -194,7 +194,6 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     // the thread ID changes with each par_id. Sync Transaction's threadid_.
     Sto::update_threadid();
     bool noops = false;
-    bool ending = false;
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
       status = mako::PaxosStatus::STATUS_REPLAY_DONE;
@@ -208,7 +207,6 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     // ending of Paxos group
     if (len==0) {
       Warning("Recieved a zero length log");
-      ending = true;
       status = mako::PaxosStatus::STATUS_ENDING;
       // update the timestamp for this Paxos stream so that not blocking other Paxos streams
       uint32_t min_so_far = numeric_limits<uint32_t>::max();
@@ -216,6 +214,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
 #ifndef DISABLE_DISK
       sync_util::sync_logger::disk_timestamp_[par_id].store(min_so_far, memory_order_release) ;
 #endif
+      benchConfig.incrementEndReceived();
     }
 
     // deal with Paxos log
@@ -316,14 +315,6 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
             break ;
           }
         }
-    }
-
-    // Publish END only after this partition's terminal callback has raised
-    // its watermark and drained every newly eligible queued record. This
-    // makes the all-END counter a post-application barrier rather than merely
-    // an indication that terminal callbacks have started.
-    if (ending) {
-      benchConfig.incrementEndReceived();
     }
 
     // wait for all worker threads replay DONE
@@ -520,21 +511,9 @@ static void wait_for_termination()
   }
   int wait_count = 0;
 
-  // Every Paxos partition has its own replay watermark. Waiting for only the
-  // first END can strand the other partitions' tails when the leader tears
-  // down. Keep the established first-END behavior for other engines; their
-  // shutdown/replication barriers are independent of this Paxos fix.
-  const int expected_end_count = static_cast<int>(benchConfig.getNthreads());
-  const bool require_all_end_signals = janus::is_using_paxos();
-  auto waiting_for_end = [&]() {
-    if (require_all_end_signals) {
-      return benchConfig.getEndReceived() < expected_end_count &&
-             benchConfig.getEndReceivedLeader() < expected_end_count;
-    }
-    return benchConfig.getEndReceived() == 0 &&
-           benchConfig.getEndReceivedLeader() == 0;
-  };
-  while (waiting_for_end()) {
+  // in case, the Paxos streams on other side is terminated,
+  // not need for all no-ops for the final termination
+  while (!(benchConfig.getEndReceived() > 0 || benchConfig.getEndReceivedLeader() > 0)) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
     wait_count++;
 
@@ -553,34 +532,19 @@ static void wait_for_termination()
               isLearner ? "Learner" : "Follower", max_wait_seconds);
       break;
     }
+    //if (benchConfig.getEndReceived() > 0) {std::quick_exit( EXIT_SUCCESS );}
   }
 
-  int observed_end_count = benchConfig.getEndReceived();
-  if (benchConfig.getEndReceivedLeader() > observed_end_count) {
-    observed_end_count = benchConfig.getEndReceivedLeader();
-  }
-  if (observed_end_count >= expected_end_count) {
-    Notice("%s received all end signals: %d/%d ended\n",
-           isLearner ? "learner" : "follower", observed_end_count,
-           expected_end_count);
-  } else if (require_all_end_signals) {
-    Warning("%s received incomplete end signals: %d/%d ended",
-            isLearner ? "learner" : "follower", observed_end_count,
-            expected_end_count);
-  } else {
-    Notice("%s received end signal: %d/%d ended\n",
-           isLearner ? "learner" : "follower", observed_end_count,
-           expected_end_count);
-  }
-
-  // Allow replay activity to settle before tearing down. Each END callback
-  // raises its partition watermark and synchronously replays eligible queued
-  // entries; for Paxos, the all-END barrier above ensures every partition has
-  // reached that terminal path. Also keep printing the counter: the CI harness reads
+  // Drain the replay backlog before tearing down. The loop above exits on
+  // the FIRST partition's END marker, but each partition replays
+  // synchronously inside its own delivery callback — the other partitions'
+  // batch tails may still be undelivered (on throttled CI runners,
+  // hundreds of batches), and watermark-parked entries drain on later
+  // deliveries. Also keep printing the counter: the CI harness reads
   // "replay_batch:N" from this log, and going silent here made it
   // snapshot a stale mid-lag value (the shard1Replication mako-dev flake).
-  // Exit once the counter stops advancing for a few seconds or the overall
-  // budget runs out. Stability is reported separately from END completeness.
+  // Exit once the counter stops advancing for a few seconds (drained or
+  // genuinely stuck) or the overall budget runs out.
   int drain_stall_limit = 5;
   if (const char* env = getenv("MAKO_FOLLOWER_DRAIN_STALL_SECONDS")) {
     char* endptr = nullptr;
@@ -619,7 +583,7 @@ static void wait_for_termination()
            benchConfig.getEndReceived(), benchConfig.getNthreads(),
            rb, drain_stall, drain_time);
     if (drain_stall >= drain_stall_limit) {
-      Notice("%s replay stable: replay_batch:%d stable for %ds after %ds\n",
+      Notice("%s replay drained: replay_batch:%d stable for %ds after %ds\n",
              isLearner ? "learner" : "follower", rb, drain_stall, drain_time);
       break;
     }
@@ -994,30 +958,18 @@ static void send_end_signal() {
     for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++)
         add_log_to_nc((char *)endLogInd.c_str(), 0, i);
 
-    // Paxos terminal batches make a bounded wait for the existing Decide
-    // quorum before their submit completion fires. Flush every partition
-    // against one shared deadline so normal shutdown does not race queued ENDs.
-    // This is best-effort: an unavailable quorum must not make shutdown fatal.
-    if (janus::is_using_paxos()) {
-      constexpr auto kEndFlushTimeout = std::chrono::seconds(35);
-      const auto deadline = std::chrono::steady_clock::now() + kEndFlushTimeout;
-      for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= deadline) {
-          Warning("timed out flushing Paxos END submissions at partition %d", i);
-          break;
-        }
-        const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - now).count();
-        if (!paxos_impl::wait_for_submit_for(
-                i, static_cast<uint64_t>(remaining_ms))) {
-          Warning("failed to flush Paxos END submission for partition %d; "
-                  "continuing shutdown", i);
-          break;
-        }
-      }
-      Notice("Leader finished bounded Paxos END submission flush");
-    }
+    // vector<std::thread> wait_threads;
+    // for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++)
+    // {
+    //     wait_threads.push_back(std::thread([i]() {
+    //        std::cout << "starting wait for par_id: " << i << std::endl;
+    //        wait_for_submit(i);
+    //     }));
+    // }
+    // for (auto &th : wait_threads)
+    // {
+    //     th.join();
+    // }
   }
 }
 

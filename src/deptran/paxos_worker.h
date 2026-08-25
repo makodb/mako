@@ -401,7 +401,6 @@ public:
   // signature in deptran/scheduler.h).
   int Next(int, janus::Command);
   void WaitForSubmit();
-  bool WaitForSubmitFor(std::chrono::milliseconds timeout);
   void WaitForNoops();
   void IncSubmit();
   void BulkSubmit(const vector<shared_ptr<Coordinator>>&);
