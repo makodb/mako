@@ -542,7 +542,7 @@ case can still compile to a native load, while short and unaligned buffers are
 defined by the C++ object model. The native ABI suite includes
 `ExactLengthCallerKeyRequiresNoMasstreePadding`, which allocates exactly 17 key
 bytes and performs committed put/remove transactions without hidden suffix
-storage. All 39 native boundary tests pass with ASan after this change.
+storage. All 40 native boundary tests pass with ASan after this change.
 
 ---
 
@@ -564,20 +564,21 @@ differential control must instantiate MassTrans directly, so its table
 allocation deliberately does not cross the public C-ABI table-open frame.
 Leaks rooted anywhere else remain fatal.
 
-The discovery run recorded these exact baselines:
+The accepted Item 4 ASan run recorded exact suppression-table rows for every
+process that retained reviewed state. The native 40-test process reported
+`Sto::transaction` 8 / 250,944 bytes and `mako_local_table_open` 38 / 2,432
+bytes. The direct and injected-direct differential children each reported
+`DirectRunner::DirectRunner` 32 / 1,824 bytes; the raw child reported table
+32 / 1,824; and the safe child reported transaction 1 / 31,368 plus table
+32 / 1,824. History reported transaction 4 / 125,472 plus table 3 / 192;
+transactions reported 23 / 721,464 plus 26 / 1,584; and fixed workers reported
+22 / 690,096 plus 6 / 336. The complete table and transcript hashes live in
+the [boundary validation record](mako-local-boundary-gates.md#validation-record).
 
-| Process and root frame | Root allocations / bytes | Transitively retained allocations / bytes | Total reviewed footprint |
-| --- | ---: | ---: | ---: |
-| 39-test native C-ABI process, `Sto::transaction` | 3 / 94,104 | 2 / 8,208 | 5 / 102,312 |
-| 39-test native C-ABI process, `mako_local_table_open` | 37 / 2,368 | 0 / 0 | 37 / 2,368 |
-| Direct-C++ differential child, `DirectRunner::DirectRunner` | 18 / 1,152 | 14 / 672 | 32 / 1,824 |
-
-Thus the native C-ABI test process retained 42 allocations / 104,680 bytes,
-and the direct differential child retained 32 allocations / 1,824 bytes. LSan's
-passing suppression report lists root statistics (3 / 94,104 and 37 / 2,368
-for the native process); the transitively retained rows come from the original
-unsuppressed reports. These counts are a review baseline, not a license for
-unbounded growth: a changed count must be investigated and the validation
+The native delta from the preceding 39-test discovery baseline is exactly the
+new concurrent-payload fixture: one 64-byte table row plus five 31,368-byte
+worker transaction rows. These counts are a review baseline, not a license for
+unbounded growth; a changed count must be investigated and the validation
 record updated deliberately.
 
 ---

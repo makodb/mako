@@ -88,15 +88,27 @@ reclaimed without global RCU quiescence. The direct control necessarily
 bypasses the C ABI, hence the second table-allocation frame. No general engine,
 allocator, source-file, or test-binary suppression is permitted.
 
-The reviewed discovery baseline is exact: the 39-test native C-ABI process
-reported 3 `Sto::transaction` roots / 94,104 bytes, 2 transitively retained
-transaction buffers / 8,208 bytes, and 37 `mako_local_table_open` roots / 2,368
-bytes—42 allocations / 104,680 bytes total. The direct-C++ differential child
-reported 18 table roots / 1,152 bytes and 14 retained name buffers / 672 bytes—
-32 allocations / 1,824 bytes total. A passing LSan suppression summary prints
-root counts/bytes; retain it with the validation record and investigate any
-change before updating this baseline. Allocations rooted at any other frame
-remain fatal.
+The accepted ASan run on candidate `5a3dd3eaf` retained the following exact
+LSan suppression-table rows. These are the rows printed by LSan, not total
+process allocation counts:
+
+| Process | `Sto::transaction` | `mako_local_table_open` | `DirectRunner::DirectRunner` |
+| --- | ---: | ---: | ---: |
+| 40-test native C-ABI process | 8 / 250,944 bytes | 38 / 2,432 bytes | — |
+| Differential direct-C++ child | — | — | 32 / 1,824 bytes |
+| Differential raw-ABI child | — | 32 / 1,824 bytes | — |
+| Differential safe-Rust child | 1 / 31,368 bytes | 32 / 1,824 bytes | — |
+| Injected-divergence direct child | — | — | 32 / 1,824 bytes |
+| History-oracle process | 4 / 125,472 bytes | 3 / 192 bytes | — |
+| Transactions process | 23 / 721,464 bytes | 26 / 1,584 bytes | — |
+| Fixed-worker process | 22 / 690,096 bytes | 6 / 336 bytes | — |
+
+Relative to the preceding 39-test discovery run, the native process gained
+exactly one 64-byte table row and five 31,368-byte transaction rows: the new
+concurrent-payload fixture plus its writer and four readers. The direct-C++
+row remains 32 / 1,824 bytes. Any future drift requires investigation and a
+deliberate update to this record. Allocations rooted at any other frame remain
+fatal.
 
 Published single-version values use layout-preserving atomic size and byte
 access. A release fence after record-lock acquisition precedes every payload
@@ -209,27 +221,28 @@ only.
 
 ## Validation record
 
-Item 4 is complete only when every row below is `PASS` from the same candidate
-source state. A missing or skipped gate is not a pass, and neither is a failure
-hidden by a new or ad hoc sanitizer suppression. Record the date,
-host/toolchain identity, and artifact path or concise result before changing
-the roadmap item to complete.
+Item 4 was accepted only after every row below passed from the same candidate
+source state. No failure was hidden by a new or ad hoc sanitizer suppression.
 
-Candidate source: `<fill before declaring Item 4 complete>`  
-Validation date and host: `<fill before declaring Item 4 complete>`
+Candidate source: `5a3dd3eaf5cb3b9c57de37b20879a71c53cf9a30`
+
+Validation date and host: 2026-08-25, `zoo-005`, Linux
+`7.0.14-5-pve` x86_64
+
+Toolchains: Clang 21.1.8; Rust/Cargo 1.97.1; pinned Miri and Rust TSan
+`nightly-2026-08-12` (`rustc 1.99.0-nightly`, Miri 0.1.0)
 
 | Gate | Reproducible command | Result | Evidence |
 | --- | --- | --- | --- |
-| Rust ownership under Miri | `./scripts/run_mako_local_miri.sh` | `PENDING` | Pinned `nightly-2026-08-12`; record the test count/result. |
-| C++/C/Rust under ASan | `BUILD_DIR=build-mako-local-asan MAKO_LOCAL_SANITIZER=asan ./ci/ci.sh makoLocalSanitizerGates` | `PENDING` | Record `MakoLocalAbiTests` and required-native Cargo results. |
-| C++/C/Rust under UBSan | `BUILD_DIR=build-mako-local-ubsan MAKO_LOCAL_SANITIZER=ubsan ./ci/ci.sh makoLocalSanitizerGates` | `PENDING` | Record `MakoLocalAbiTests` and required-native Cargo results. |
-| C++/C/Rust under TSan | `BUILD_DIR=build-mako-local-tsan MAKO_LOCAL_SANITIZER=tsan ./ci/ci.sh makoLocalSanitizerGates` | `PENDING` | Record the strict run and reviewed suppression file used. |
-| Hook-enabled native seams | `BUILD_DIR=build-mako-local-hooks ./ci/ci.sh makoLocalHookGates` | `PENDING` | Record the native test count, five cleanup failpoints, midpoint payload retry, locked scans, comparator conflict, C11/C++ probes, and required-native Rust result. |
-| Fixed pools 1/4/16 | Isolated `worker_pools` command above | `PENDING` | Record completion time and each pool's progress/conflict/abort result. |
-| Release overhead matrix | `cmake --build build_item4 --target run_mako_local_overhead_benchmarks` | `PENDING` | Link the retained transcripts and record both hop summaries. |
-| Required-native boundary suite | `cmake --build build_item4 --target run_mako_local_rust_tests` | `PENDING` | Record differential/history/binding/fingerprint result. |
+| Rust ownership under Miri | `./scripts/run_mako_local_miri.sh` | `PASS` | 7/7 under the dated pin; `build_item4_final/item4-miri-final-v2.log` (`sha256:7eb1550f06927080419aaf631ef4d338c7e8e77ebc209be6a3f1f37b71a80bc4`). |
+| C++/C/Rust under ASan | `BUILD_DIR=build-mako-local-asan MAKO_LOCAL_SANITIZER=asan ./ci/ci.sh makoLocalSanitizerGates` | `PASS` | Native 40/40, CTest 3/3, Rust 41 passed + 1 intentional role ignored, no unsuppressed finding, and all 13 retained rows recorded above; `build_item4_gate_probe_asan/item4-asan-final-v2.log` (`sha256:e8fbf78832cd1a5c86b951ae07c59989387537af8e11eb10b686e8ebcd6bbbad`). |
+| C++/C/Rust under UBSan | `BUILD_DIR=build-mako-local-ubsan MAKO_LOCAL_SANITIZER=ubsan ./ci/ci.sh makoLocalSanitizerGates` | `PASS` | Native 40/40, CTest 3/3, Rust 41 + 1 ignored, zero diagnostics; focused RCU callback/memtag regression 1/1; `build_item4_gate_ubsan/item4-ubsan-final-v2.log` (`sha256:ba8a2edc6e14f716ccdebd7a6e9f93634974b19cecce95500e0414f2e34ffaa5`). |
+| C++/C/Rust under TSan | `BUILD_DIR=build-mako-local-tsan MAKO_LOCAL_SANITIZER=tsan ./ci/ci.sh makoLocalSanitizerGates` | `PASS` | Native 40/40, CTest 3/3, fully instrumented Rust/std/libtest 41 + 1 ignored, zero warnings; 270 matches from the reviewed Masstree list; `build_item4_gate_tsan/item4-tsan-final-v2.log` (`sha256:4b5961f4a9184ec67341ec7d3cde6f93480fbcf1ef44ea462e813cf284f0eebc`). |
+| Hook-enabled native seams | `BUILD_DIR=build-mako-local-hooks ./ci/ci.sh makoLocalHookGates` | `PASS` | Native 48/48, CTest 3/3, Rust 41 + 1 ignored; all five cleanup failpoints plus midpoint-copy, locked-scan, and comparator seams passed; `build_item4_hooks/item4-hook-gate-final-v2.log` (`sha256:2add4b4d55a38bbcdb340cffa1a1e30da183b23faa25f738f769eb41a030cbce`). |
+| Fixed pools 1/4/16 | Isolated `worker_pools` command above | `PASS` | Exact stable pools completed conflict/abort/recovery/soak with retry counts `(0, 18, 1503)`; `build_item4_final/item4-worker-pools-final-v2.log` (`sha256:92d3c381a42a808fa46cd264f4c5e500d05a161d1ade358dc9b0013a63c754e2`). |
+| Release overhead matrix | `cmake --build build_item4 --target run_mako_local_overhead_benchmarks` | `PASS` | ABI/direct aggregate median 1.468411x, maximum 3.522749x; safe/ABI aggregate median 0.848936x, maximum 1.744112x; all high-contention write/RMW rates exceeded 1%; artifacts in `build_item4_final/mako-local-overhead-artifacts/mako-local-overhead-2287216-0/`; log `sha256:499f2e6eb8653e0284453729e050a2b710f0bd7e46538acdbee1c5ec992e04d7`. |
+| Required-native boundary suite | `cmake --build build_item4 --target run_mako_local_rust_tests` | `PASS` | History 12/12, fake-ABI 7/7, required-native 41 + 1 ignored, docs 4/4; 32-symbol allowlist and hook-off fingerprint `0fdce521373a479105052c672e2b2fd2f66a780abb07177a50c56d3b2596b11a` verified; logs `sha256:3b1a2425ec172b399290052a5d15f7a57acc6a32fa6ee587a8878b8a711c650a` and `sha256:c1c0d4882e485d7b43c02e3b6f48e237482ce8d6fca431e47155c4cd6c7adfc3`. |
 
-When all rows are green, replace the placeholders with the observed results.
-That records completion of Item 4 and the executable boundary gate only; the
-ABI remains revision 0 until the separate design/freeze work is explicitly
-accepted.
+This all-green record completes Item 4 and the executable Phase 1A-1D boundary
+gate only. The ABI remains revision 0 until the separate design/freeze work is
+explicitly accepted.

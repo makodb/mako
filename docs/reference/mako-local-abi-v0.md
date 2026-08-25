@@ -408,11 +408,10 @@ median/maximum. These measurements use an initial same-host `6.0x` advisory
 ceiling. Configured-key validation is not a claim about whole-table
 cardinality.
 
-The linked validation record, rather than the presence of these targets,
-determines whether Item 4's executable gate has passed. A green record does not
-freeze this revision-0 contract or promote it to ABI v1; the unresolved Phase
-1C/1D design choices still require an explicit freeze review, and Phase 1F and
-Milestone 1 remain separate.
+The linked validation record accepted Item 4 on candidate `5a3dd3eaf` on
+2026-08-25. That green record does not freeze this revision-0 contract or
+promote it to ABI v1; the unresolved Phase 1C/1D design choices still require
+an explicit freeze review, and Phase 1F and Milestone 1 remain separate.
 
 ## Quarantine diagnostics and cleanup-failure tests
 

@@ -209,10 +209,10 @@ Current implementation status:
       [Mako local C ABI revision 0](../reference/mako-local-abi-v0.md), including
       the active/finished/quarantined/destroyed state model and the conservative
       one-shot destroy rule for `WORKER_POISONED` and terminal uncertainty.
-- [ ] Record a green from-scratch run of the executable contract gates below.
-      The implementation and exact commands are documented at
-      [Mako local boundary gates](../mako-local-boundary-gates.md); do not check
-      this item merely because the test targets exist.
+- [x] Record a green from-scratch run of the executable contract gates below.
+      Candidate `5a3dd3eaf` passed every row on 2026-08-25; the implementation,
+      exact commands, and retained evidence are documented at
+      [Mako local boundary gates](../mako-local-boundary-gates.md).
 
 ### 1B. Freeze local transaction semantics
 
@@ -450,13 +450,13 @@ boundaries in a dedicated native-hook profile. Eight recovery/replay boundaries
 are each interrupted on two consecutive fresh-process restarts. The native
 boundary now also has a process-isolated direct-C++/C-ABI/safe-Rust
 differential gate and an independent strict-serializability/opacity oracle.
-Item 4 now implements the remaining Phase 1A-1D sanitizer/Miri, fixed-worker
-concurrency, and relative-overhead gates. Their authoritative execution status
-is the validation record in
-[Mako local boundary gates](../mako-local-boundary-gates.md); they are not
-complete merely because the targets are present. Phase 1F's application-aware
-mutation/history work remains open independently. Interruption inside RocksDB's
-WAL is deliberately not a milestone gate: RocksDB remains a black box.
+Item 4's remaining Phase 1A-1D sanitizer/Miri, fixed-worker concurrency, and
+relative-overhead gates passed on candidate `5a3dd3eaf` on 2026-08-25. The
+authoritative evidence is the validation record in
+[Mako local boundary gates](../mako-local-boundary-gates.md). Phase 1F's
+application-aware mutation/history work remains open independently.
+Interruption inside RocksDB's WAL is deliberately not a milestone gate:
+RocksDB remains a black box.
 
 1. **Prepare a detached permit before native commit.** Acquire one unit of
    bounded queue capacity and own every mutation byte, encoded-record buffer,
@@ -723,11 +723,10 @@ fresh-process suite now exercises fifteen write-path and eight repeated
 recovery boundaries. The in-memory applied watermark is now explicit and
 advances only after a successful ordered backend call. Item 3's native
 history oracle is complete. Item 4's sanitizer/Miri, fixed-worker concurrency,
-and overhead implementations are complete; the linked
-[validation record](../mako-local-boundary-gates.md#validation-record) determines
-whether the executable gate has been accepted. Phase 1F's mutation and
-application-aware history checks remain open. Inside-RocksDB instrumentation
-is intentionally outside this milestone.
+and overhead gate was accepted on candidate `5a3dd3eaf`; the linked
+[validation record](../mako-local-boundary-gates.md#validation-record) retains
+the evidence. Phase 1F's mutation and application-aware history checks remain
+open. Inside-RocksDB instrumentation is intentionally outside this milestone.
 
 1. The revision-0 operation/status contract and numeric reservations 0 through
    19 are now published and mechanically checked across the C header, C++
@@ -764,11 +763,11 @@ is intentionally outside this milestone.
    aggregate conflict rate
    in each high-contention write/RMW configuration, records every
    low-contention ratio plus its per-workload median/maximum, and applies the
-   initial `6.0x` ceiling only as a same-host advisory sanity check. Treat this
-   item as complete only when every row in the
-   [validation record](../mako-local-boundary-gates.md#validation-record) is
-   `PASS`. That completes the numbered executable Phase 1A-1D gate, not the
-   revision-0 design/freeze work, Phase 1F, or Milestone 1.
+   initial `6.0x` ceiling only as a same-host advisory sanity check. Every row
+   in the [validation record](../mako-local-boundary-gates.md#validation-record)
+   passed on candidate `5a3dd3eaf` on 2026-08-25. That completes the numbered
+   executable Phase 1A-1D gate, not the revision-0 design/freeze work, Phase
+   1F, or Milestone 1.
 5. Finish Phase 1F with cleanup/quarantine points, the mutation suite, and an
    application-aware full-history oracle. Keep the dedicated hook-enabled
    profile mandatory for native seam tests; the production-default build
