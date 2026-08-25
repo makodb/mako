@@ -137,6 +137,32 @@ foreach(_rusty_port_target IN ITEMS
     endif()
 endforeach()
 
+# `-march=native` is NOT a performance knob here: it is an ABI/PCM
+# compatibility requirement.  Every rusty-cpp port target is compiled
+# `-O3 -DNDEBUG -march=native` (third-party/rusty-cpp/CMakeLists.txt:90 for
+# vec_port, :278 std_port, :550 rusty, and 16 more -- 19 targets in all),
+# and Clang refuses to
+# load a BMI whose target-feature set differs from the importing translation
+# unit's:
+#
+#   error: precompiled file '.../vec_port.vec.pcm' was compiled with the
+#          target feature '+64bit' but the current translation unit is not
+#
+# Without this flag every srpc module unit that imports a port BMI fails that
+# check (7 targets / 133 errors, zero of them real source errors).  Two other
+# places in this file already carry the same flag for exactly this reason --
+# the fallback `rusty` umbrella below and `--cxx-flag=-march=native` in the
+# Goal-0 gate's direct module commands, whose comment states the rule
+# verbatim -- but the `srpc` target itself, which imports the very same BMIs,
+# was never given it.  Downstream Mako compiles these same sources with
+# `-march=native` applied globally (mako CMakeLists.txt:663), which is why the
+# defect is invisible there and only bites the standalone build.
+#
+# Caveat, deliberately accepted: `-march=native` bakes in *this* machine's
+# feature set, so a build tree (and the BMIs in it) is not portable to a host
+# with a different CPU.  That is already true of this tree via the rusty-cpp
+# ports, so the flag adds no new constraint; making it portable means giving
+# rusty-cpp an explicit `-march=` baseline, which is a change in that repo.
 set(BENCH_CXXFLAGS
     -w
     -Wreturn-type
@@ -147,6 +173,7 @@ set(BENCH_CXXFLAGS
     -O2
     -g
     -fno-omit-frame-pointer
+    -march=native
 )
 
 # srpc: STATIC library compiled from the remaining NATIVE units (C++, C, ASM).
@@ -935,12 +962,24 @@ if(SRPC_RUNTIME_BATTERY_AVAILABLE)
     # CMake 4.4 cannot collate their dyndep: their link closure contains both
     # `srpc` (whose module reference map resolves `std` to
     # @cmake_cxx_std@synth_0) and the plain rusty/port targets (which resolve
-    # `std` to @synth_1, because they compile -O3 -march=native).  That is a
-    # hard "Disagreement of the location of the 'std' module" error, and
-    # neither side of the divergence may be flattened: the ports really are
-    # built -march=native, and srpc's flags produce the gated production ABI.
-    # So the battery opts out of the scanner and is handed the exact module
-    # map srpc itself was built against; see scripts/emit_module_map.py.
+    # `std` to @synth_1).  That is a hard "Disagreement of the location of the
+    # 'std' module" error, and neither side of the divergence may be
+    # flattened: srpc's flags produce the gated production ABI, and the ports'
+    # flags are rusty-cpp's, in a different repository.  So the battery opts
+    # out of the scanner and is handed the exact module map srpc itself was
+    # built against; see scripts/emit_module_map.py.
+    #
+    # NOTE (still true after BENCH_CXXFLAGS gained -march=native): the split is
+    # NOT caused by -march.  Both sides carry it now, and CMake 4.4.0 still
+    # synthesises two std variants, because the rest of the settings signature
+    # differs.  Measured from the generated build.ninja:
+    #     synth_0 (srpc):  ... -w -Wreturn-type -MD -MP -DRUSTYCPP_DISABLE_ARC_LOG
+    #                          -DREUSE_FIBER -O2 -g -fno-omit-frame-pointer -march=native
+    #     synth_1 (ports): ... -O3 -DNDEBUG -march=native
+    # srpc -> @cmake_cxx_std@synth_0 and rusty/vec_port -> @synth_1 both before
+    # and after the flag change, so this workaround stays necessary.  (Under
+    # the pinned CMake 4.3.4 there is a single __cmake_cxx_std_23 target and no
+    # synth split at all; the modmap is then simply redundant, not wrong.)
     set(SRPC_BATTERY_MODMAP
         ${CMAKE_CURRENT_BINARY_DIR}/goal0-battery-modules.modmap)
     add_custom_command(

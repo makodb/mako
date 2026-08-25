@@ -7,12 +7,18 @@ Why this exists
 The battery's test programs are the first *pure consumers* of srpc's C++23
 named modules: unlike `srpc` itself they provide no module of their own.  With
 CMake 4.4's `CXX_MODULE_STD` support that turns out to be a build-graph dead
-end.  `srpc` compiles with the project's BENCH_CXXFLAGS while the vendored
-rusty-cpp port libraries compile with `-O3 -DNDEBUG -march=native`, so CMake
-synthesises two `std` variants (`@cmake_cxx_std@synth_0` and `@synth_1`) and
-re-synthesises the port BMIs for `srpc` (`rusty@synth_0`, `vec_port@synth_0`,
-...).  A module-providing target only ever sees one consistent set, but a
-consumer executable's link closure contains BOTH `srpc` (whose module reference
+end.  `srpc` compiles with the project's BENCH_CXXFLAGS (`-w -Wreturn-type -MD
+-MP -DRUSTYCPP_DISABLE_ARC_LOG -DREUSE_FIBER -O2 -g -fno-omit-frame-pointer
+-march=native`) while the vendored rusty-cpp port libraries compile with `-O3
+-DNDEBUG -march=native`, so CMake synthesises two `std` variants
+(`@cmake_cxx_std@synth_0` and `@synth_1`) and re-synthesises the port BMIs for
+`srpc` (`rusty@synth_0`, `vec_port@synth_0`, ...).  The shared `-march=native`
+is not what splits them -- BENCH_CXXFLAGS carries it precisely so that srpc's
+own module units can import the ports' `-march=native` BMIs at all -- the split
+comes from the remaining settings-signature difference (`-O3 -DNDEBUG` vs
+srpc's `-O2 -g` plus its warning, dependency and define flags).  A
+module-providing target only ever sees one consistent set, but a consumer
+executable's link closure contains BOTH `srpc` (whose module reference
 map resolves `std` to synth_0) and the plain `rusty`/`*_port` targets (which
 resolve `std` to synth_1).  CMake's dyndep collation then fails with
 
@@ -21,8 +27,9 @@ resolve `std` to synth_1).  CMake's dyndep collation then fails with
     Location B: 'CMakeFiles/@cmake_cxx_std@synth_0.dir/....bmi' via by-name.
 
 The fix must not touch the production module graph: the flag divergence is
-deliberate (the ports really are built `-march=native`, and `srpc`'s ABI is the
-gated artifact).  So the battery targets opt out of CMake's scanner
+deliberate (the ports' flags are rusty-cpp's, in a different repository, and
+`srpc`'s flags produce the gated ABI artifact).  So the battery targets opt out
+of CMake's scanner
 (`CXX_SCAN_FOR_MODULES OFF`) and are handed the *exact* module map that `srpc`
 itself was built against.  That map is authoritative rather than
 reconstructed: it is read straight out of `CMakeFiles/srpc.dir/CXXModules.json`,
