@@ -177,7 +177,9 @@ Current implementation status:
 - [x] `mako-local-sys` raw declarations.
 - [x] Safe `mako-local` ownership layer; `LocalDb`/`Table` are shareable and
       `Transaction` is structurally `!Send + !Sync` with abort-on-drop on the
-      normal cleanup path. Cleanup-failure quarantine remains a contract gate.
+      normal cleanup path. Typed cleanup failure permanently quarantines the
+      worker and remains observable through `WorkerHealth` and the process
+      counter even though Rust `Drop` cannot return it.
 - [x] Initial C++ and Rust tests for multi-key/multi-table commit, abort,
       missing versus empty, binary bytes, verb results, nested begin,
       wrong-thread use, finished handles, and deterministic conflict.
@@ -202,7 +204,7 @@ Current implementation status:
 - [x] Publish the revision-0 operation/status and ownership contract at
       [Mako local C ABI revision 0](../reference/mako-local-abi-v0.md), including
       the active/finished/quarantined/destroyed state model and the conservative
-      one-shot destroy rule for `INTERNAL`.
+      one-shot destroy rule for `WORKER_POISONED` and terminal uncertainty.
 - [ ] Complete the contract gates below.
 
 ### 1B. Freeze local transaction semantics
@@ -275,7 +277,7 @@ declared profile.
       exhaustively classify every generated status for ordinary operations and
       commit disposition. Required-native open also checks every linked status
       message, so a stale C++ catalog is rejected rather than silently mapped.
-- [ ] Add fake-ABI coverage for every active, finished, and quarantined
+- [x] Add fake-ABI coverage for every active, finished, and quarantined
       transition and for malformed successful outputs.
 - Add a stable engine/build identifier and reserve sized option structs before
   ABI v1 is declared frozen, so later limits and durability modes can be
@@ -300,14 +302,15 @@ declared profile.
       validation. If a multi-output call receives a partially null output set,
       it writes none of that set. Decide before ABI v1 whether to retain this
       rule or initialize each non-null member of an invalid set independently.
-- [ ] Define cleanup failure conservatively beyond the current live-handle
+- [x] Define cleanup failure conservatively beyond the live-handle
       path. If native abort or destroy cannot prove cleanup complete, retain
       every potentially referenced allocation, mark the attached worker
       poisoned, reject all later transactions on it, and expose the poison
-      through a typed status, health check, and diagnostic counter. The
-      revision-0 reference specifies conservative caller behavior for today's
-      overloaded `INTERNAL` and identifies the begin-cleanup gap; never silently
-      reuse uncertain STO TLS state.
+      through status 19, a TLS health check, and a monotonic diagnostic counter.
+      Failed begin cleanup installs the same independent TLS quarantine even
+      though no facade is returned. Five test-only cleanup boundaries cover
+      begin, terminal operations, commit, explicit abort, and active destroy;
+      never silently reuse uncertain STO TLS state.
 - Specify process-lifetime table/epoch behavior. Add ordinary teardown only
   after a tested RCU quiescence protocol exists.
 
@@ -318,12 +321,17 @@ declared profile.
   exposure through `mako-cache`.
 - Add compile-fail tests proving a transaction cannot move threads, outlive
   its database, or be held in a spawned async task.
-- Unit-test the generated/verified status mapping and abort-on-drop against a
+- [x] Unit-test the generated/verified status mapping and abort-on-drop against a
   fake ABI so Miri can exercise the ownership logic without C++. The fake must
   cover every active, terminal, and poisoned transition in the normative state
   table. An unknown future status returned during an active transaction is
-  terminal-uncertain: the wrapper quarantines the worker rather than assuming
-  the transaction can continue.
+  terminal-uncertain: the wrapper ends local use of the transaction, performs
+  one destroy probe, and gates every later safe table-open or transaction-begin
+  admission through mandatory re-attach. Re-attach checks the same
+  authoritative native TLS quarantine flag as the health query, so it permits
+  reuse only while the worker remains healthy. Every revision-0 status
+  extension must preserve the invariant that cleanup which cannot be proved
+  complete sets that quarantine before return.
 - Offer a fixed-worker adapter for async applications; do not mark the native
   transaction `Send` as a convenience. Because Rust `Drop` cannot return an
   error, the adapter owns worker health: an abort/destroy failure quarantines
@@ -362,9 +370,10 @@ gates are green:
    Rust link probe, exported-symbol allowlist, ABI revision, and embedded build
    fingerprint all agree in a from-scratch required-native build. CI fails if
    Cargo is unavailable or native tests are skipped.
-7. Failpoints at every abort, commit-cleanup, and destroy boundary demonstrate
-   either complete cleanup and worker reuse or deterministic quarantine. No
-   test may pass by ignoring a Drop error, reusing uncertain TLS state, or
+7. The five native cleanup failpoints at begin, terminal operation, commit,
+   explicit abort, and active destroy demonstrate deterministic quarantine,
+   one counter increment, and permanent worker rejection. No test may pass by
+   ignoring a Drop error, retrying cleanup, reusing uncertain TLS state, or
    loading a stale native artifact.
 
 This intermediate boundary gate excludes RocksDB durability and eviction. It
@@ -687,19 +696,19 @@ and cache exposure are complete for the RYW profile. The hook-enabled
 fresh-process suite now exercises fifteen write-path and eight repeated
 recovery boundaries. The in-memory applied watermark is now explicit and
 advances only after a successful ordered backend call. Mutation,
-cleanup-quarantine, and history-oracle checks remain open; inside-RocksDB
-instrumentation is intentionally outside this milestone.
+declaration/fingerprint, sanitizer, and history-oracle checks remain open;
+inside-RocksDB instrumentation is intentionally outside this milestone.
 
 1. The revision-0 operation/status contract and numeric reservations 0 through
-   18 are now published and mechanically checked across the C header, C++
+   19 are now published and mechanically checked across the C header, C++
    diagnostics, raw Rust declarations, and exhaustive safe-Rust lifecycle
-   policy. Finish the remaining ABI-freeze work by adding typed poison,
-   worker-health, begin-cleanup, fake-ABI, and diagnostic-counter coverage.
+   policy. Typed poison, independent TLS worker health, begin cleanup,
+   one-shot cleanup, a monotonic quarantine counter, five native cleanup
+   failpoints, and fake-ABI/Miri ownership coverage complete this item.
    Retain draft revision `0` until the full boundary gate passes. Revisit the
    conservative transaction budget only with safe pre-reservation.
 2. Generate or mechanically verify the Rust declarations from the C header,
-   then add the symbol, build-fingerprint, and cleanup-quarantine failpoint
-   gates.
+   then add the symbol and build-fingerprint gates.
 3. Build the three-way deterministic differential harness and the independent
    full-history real-time/opacity oracle.
 4. Run sanitizer, concurrency, and wrapper-overhead gates.

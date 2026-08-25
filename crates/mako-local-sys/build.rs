@@ -9,7 +9,7 @@ const DEFINITIONS_END: &str = "/* MAKO_LOCAL_STATUS_DEFINITIONS_END */";
 const MANIFEST_BEGIN: &str = "/* MAKO_LOCAL_STATUS_MANIFEST_BEGIN */";
 const MANIFEST_END: &str = "/* MAKO_LOCAL_STATUS_MANIFEST_END */";
 
-const ABI_V0_STATUS_NAMES: [&str; 19] = [
+const ABI_V0_STATUS_NAMES: [&str; 20] = [
     "OK",
     "CONFLICT",
     "NOT_ATTACHED",
@@ -29,6 +29,7 @@ const ABI_V0_STATUS_NAMES: [&str; 19] = [
     "TIMESTAMP_EXHAUSTED",
     "BUFFER_TOO_SMALL",
     "FEATURE_UNAVAILABLE",
+    "WORKER_POISONED",
 ];
 
 #[derive(Debug)]

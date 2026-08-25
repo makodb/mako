@@ -63,6 +63,56 @@ static_assert(MAKO_LOCAL_MAX_MAKO_TIMESTAMP ==
 
 thread_local bool local_attached = false;
 thread_local mako_local_txn *local_active_txn = nullptr;
+thread_local bool local_worker_poisoned = false;
+std::atomic<uint64_t> quarantined_worker_count{0};
+
+enum class cleanup_boundary : uint32_t {
+  begin = MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN,
+  operation = MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION,
+  commit = MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT,
+  abort = MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT,
+  destroy = MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY,
+};
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+thread_local uint32_t local_test_cleanup_failure = 0;
+
+bool cleanup_failure_armed(cleanup_boundary boundary) noexcept {
+  return local_test_cleanup_failure == static_cast<uint32_t>(boundary);
+}
+
+bool arm_native_cleanup_failure_if_requested(
+    cleanup_boundary boundary) noexcept {
+  if (!cleanup_failure_armed(boundary)) return false;
+  local_test_cleanup_failure = 0;
+  Transaction::test_fail_next_cleanup();
+  return true;
+}
+
+class operation_cleanup_failure_scope {
+ public:
+  operation_cleanup_failure_scope() noexcept
+      : armed_(arm_native_cleanup_failure_if_requested(
+            cleanup_boundary::operation)) {}
+
+  ~operation_cleanup_failure_scope() {
+    if (armed_ && Transaction::test_cancel_fail_next_cleanup()) {
+      // No native stop() was entered. Restore the public boundary arm so a
+      // later operation that actually cleans up remains the matching call.
+      local_test_cleanup_failure =
+          static_cast<uint32_t>(cleanup_boundary::operation);
+    }
+  }
+
+  operation_cleanup_failure_scope(const operation_cleanup_failure_scope &) =
+      delete;
+  operation_cleanup_failure_scope &operator=(
+      const operation_cleanup_failure_scope &) = delete;
+
+ private:
+  bool armed_;
+};
+#endif
 
 bool valid_slice(const uint8_t *p, size_t n) {
   return p != nullptr || n == 0;
@@ -78,7 +128,7 @@ bool on_owner_thread(const mako_local_txn *txn) {
   return txn->owner_thread == std::this_thread::get_id();
 }
 
-void finish_txn(mako_local_txn *txn) {
+void finish_txn(mako_local_txn *txn) noexcept {
   if (!txn->active) return;
   txn->active = false;
   txn->poisoned = false;
@@ -89,18 +139,45 @@ void finish_txn(mako_local_txn *txn) {
   txn->mutated_keys.clear();
 }
 
-bool abort_and_finish(mako_local_txn *txn) {
+void poison_worker(mako_local_txn *txn) noexcept {
+  if (txn != nullptr) txn->poisoned = true;
+  if (local_worker_poisoned) return;
+  local_worker_poisoned = true;
+  quarantined_worker_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+int poison_transaction(mako_local_txn *txn) noexcept {
+  poison_worker(txn);
+  return MAKO_LOCAL_WORKER_POISONED;
+}
+
+bool abort_and_finish(mako_local_txn *txn,
+                      cleanup_boundary boundary) noexcept {
   if (!txn->active) return true;
-  // Transaction::stop() has no cleanup progress record. Retrying after a
-  // partial exception could double-unlock or remove an inserted tuple twice.
-  if (txn->poisoned) return false;
+  if (txn->poisoned || local_worker_poisoned) return false;
+  // The marker proves stop() was entered but did not publish terminal state.
+  // It deliberately does not describe partial progress, so the only safe
+  // action is quarantine; retrying could double-unlock or clean a tuple twice.
+  if (Sto::cleanup_in_progress()) {
+    poison_worker(txn);
+    return false;
+  }
   try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    // Some MassTrans conflict paths have already completed native abort before
+    // returning control to the facade. Do not consume a stop-entry failpoint
+    // when there is no native cleanup left to enter.
+    if (Sto::in_progress())
+      arm_native_cleanup_failure_if_requested(boundary);
+#else
+    (void)boundary;
+#endif
     Sto::silent_abort();
   } catch (...) {
     // Native cleanup may still retain StringWrapper pointers. Quarantine the
     // transaction and worker rather than freeing those buffers or pretending
     // the TLS transaction can be reused safely.
-    txn->poisoned = true;
+    poison_worker(txn);
     return false;
   }
   finish_txn(txn);
@@ -110,15 +187,49 @@ bool abort_and_finish(mako_local_txn *txn) {
 int check_txn(mako_local_txn *txn, mako_local_table *table = nullptr) {
   if (txn == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
   if (!on_owner_thread(txn)) return MAKO_LOCAL_WRONG_THREAD;
+  if (txn->poisoned || local_worker_poisoned)
+    return MAKO_LOCAL_WORKER_POISONED;
   if (!txn->active || local_active_txn != txn) return MAKO_LOCAL_TXN_FINISHED;
-  if (txn->poisoned) return MAKO_LOCAL_INTERNAL;
   if (table != nullptr && table->owner != txn->owner)
     return MAKO_LOCAL_WRONG_DB_OR_TABLE;
   return MAKO_LOCAL_OK;
 }
 
 int operation_abort(mako_local_txn *txn, int status) {
-  return abort_and_finish(txn) ? status : MAKO_LOCAL_INTERNAL;
+  return abort_and_finish(txn, cleanup_boundary::operation)
+             ? status
+             : MAKO_LOCAL_WORKER_POISONED;
+}
+
+int operation_exception(mako_local_txn *txn, int status) noexcept {
+  if (Sto::cleanup_in_progress()) return poison_transaction(txn);
+  if (!Sto::in_progress()) {
+    // A native Sto::abort() completed and threw only its control-flow Abort.
+    // Publish the facade/accounting transition without entering cleanup again.
+    finish_txn(txn);
+    return status;
+  }
+  return operation_abort(txn, status);
+}
+
+void account_begin_txn(mako_local_txn *txn) noexcept {
+  if (local_active_txn == txn) return;
+  local_active_txn = txn;
+  txn->owner->active_txns.fetch_add(1, std::memory_order_acq_rel);
+}
+
+int cleanup_failed_begin(mako_local_txn *txn, int original_status) noexcept {
+  if (txn == nullptr) return original_status;
+
+  // Publish a private quarantine anchor before cleanup. On success finish_txn
+  // removes this accounting again; on failure the facade, database charge,
+  // native TLS, and every potentially referenced allocation remain live even
+  // though the public begin output stays null.
+  account_begin_txn(txn);
+  if (!abort_and_finish(txn, cleanup_boundary::begin))
+    return MAKO_LOCAL_WORKER_POISONED;
+  delete txn;
+  return original_status;
 }
 
 constexpr size_t kMasstreeSliceBytes = sizeof(uint64_t);
@@ -373,6 +484,9 @@ int scan_chunk_impl(
   }
 
   try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    operation_cleanup_failure_scope cleanup_failure_scope;
+#endif
     if (txn->item_budget_used > MAKO_LOCAL_TXN_ITEM_BUDGET)
       return operation_abort(txn, MAKO_LOCAL_TXN_TOO_LARGE);
     size_t remaining_items =
@@ -411,11 +525,11 @@ int scan_chunk_impl(
     *done_out = collector.stopped_early ? 0 : 1;
     return MAKO_LOCAL_OK;
   } catch (const Transaction::Abort &) {
-    return operation_abort(txn, MAKO_LOCAL_CONFLICT);
+    return operation_exception(txn, MAKO_LOCAL_CONFLICT);
   } catch (const std::bad_alloc &) {
-    return operation_abort(txn, MAKO_LOCAL_OUT_OF_MEMORY);
+    return operation_exception(txn, MAKO_LOCAL_OUT_OF_MEMORY);
   } catch (...) {
-    return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+    return operation_exception(txn, MAKO_LOCAL_INTERNAL);
   }
 }
 
@@ -505,7 +619,8 @@ uint64_t mako_local_feature_bits(void) noexcept {
   features |= MAKO_LOCAL_FEATURE_OPACITY;
 #endif
 #if defined(MAKO_LOCAL_TEST_HOOKS)
-  features |= MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER;
+  features |= MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER |
+              MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES;
 #endif
   return features;
 }
@@ -528,6 +643,15 @@ const char *mako_local_status_string(int status) noexcept {
   }
 }
 
+int mako_local_worker_health(void) noexcept {
+  if (local_worker_poisoned) return MAKO_LOCAL_WORKER_POISONED;
+  return local_attached ? MAKO_LOCAL_OK : MAKO_LOCAL_NOT_ATTACHED;
+}
+
+uint64_t mako_local_quarantined_worker_count(void) noexcept {
+  return quarantined_worker_count.load(std::memory_order_relaxed);
+}
+
 int mako_local_advance_mako_timestamp_past(uint32_t observed) noexcept {
   if (observed == 0) return MAKO_LOCAL_INVALID_ARGUMENT;
   return Transaction::advance_mako_timestamp_past(observed)
@@ -536,6 +660,7 @@ int mako_local_advance_mako_timestamp_past(uint32_t observed) noexcept {
 }
 
 int mako_local_thread_attach(void) noexcept {
+  if (local_worker_poisoned) return MAKO_LOCAL_WORKER_POISONED;
   if (local_attached) return MAKO_LOCAL_OK;
   try {
     // Do not replace native thread state underneath a live Mako transaction.
@@ -606,6 +731,33 @@ int mako_local_test_clear_commit_observer(void) noexcept {
   Transaction::clear_test_commit_observer();
   local_test_commit_observer_bridge.observer = nullptr;
   local_test_commit_observer_bridge.context = nullptr;
+  return MAKO_LOCAL_OK;
+#else
+  return MAKO_LOCAL_FEATURE_UNAVAILABLE;
+#endif
+}
+
+int mako_local_test_arm_cleanup_failure(uint32_t boundary) noexcept {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  if (boundary < MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN ||
+      boundary > MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY)
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  if (!local_attached) return MAKO_LOCAL_NOT_ATTACHED;
+  if (local_worker_poisoned) return MAKO_LOCAL_WORKER_POISONED;
+  if (local_test_cleanup_failure != 0) return MAKO_LOCAL_BUSY;
+  local_test_cleanup_failure = boundary;
+  return MAKO_LOCAL_OK;
+#else
+  (void)boundary;
+  return MAKO_LOCAL_FEATURE_UNAVAILABLE;
+#endif
+}
+
+int mako_local_test_clear_cleanup_failure(void) noexcept {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  if (!local_attached) return MAKO_LOCAL_NOT_ATTACHED;
+  if (local_worker_poisoned) return MAKO_LOCAL_WORKER_POISONED;
+  local_test_cleanup_failure = 0;
   return MAKO_LOCAL_OK;
 #else
   return MAKO_LOCAL_FEATURE_UNAVAILABLE;
@@ -699,8 +851,9 @@ int mako_local_txn_begin(mako_local_db *db, mako_local_txn **out) noexcept {
   *out = nullptr;
   if (db == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
   if (!local_attached) return MAKO_LOCAL_NOT_ATTACHED;
+  if (local_worker_poisoned) return MAKO_LOCAL_WORKER_POISONED;
   if (local_active_txn != nullptr)
-    return local_active_txn->poisoned ? MAKO_LOCAL_INTERNAL
+    return local_active_txn->poisoned ? MAKO_LOCAL_WORKER_POISONED
                                       : MAKO_LOCAL_TXN_ALREADY_ACTIVE;
   if (Sto::in_progress())
     return MAKO_LOCAL_TXN_ALREADY_ACTIVE;
@@ -710,18 +863,17 @@ int mako_local_txn_begin(mako_local_db *db, mako_local_txn **out) noexcept {
     txn = new mako_local_txn{db, std::this_thread::get_id(), true, false, 0,
                              {}, {}};
     Sto::start_transaction();
-    local_active_txn = txn;
-    db->active_txns.fetch_add(1, std::memory_order_acq_rel);
+    account_begin_txn(txn);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (cleanup_failure_armed(cleanup_boundary::begin))
+      return cleanup_failed_begin(txn, MAKO_LOCAL_INTERNAL);
+#endif
     *out = txn;
     return MAKO_LOCAL_OK;
   } catch (const std::bad_alloc &) {
-    if (txn != nullptr) delete txn;
-    try { Sto::silent_abort(); } catch (...) {}
-    return MAKO_LOCAL_OUT_OF_MEMORY;
+    return cleanup_failed_begin(txn, MAKO_LOCAL_OUT_OF_MEMORY);
   } catch (...) {
-    if (txn != nullptr) delete txn;
-    try { Sto::silent_abort(); } catch (...) {}
-    return MAKO_LOCAL_INTERNAL;
+    return cleanup_failed_begin(txn, MAKO_LOCAL_INTERNAL);
   }
 }
 
@@ -742,6 +894,9 @@ int mako_local_txn_get(mako_local_txn *txn, mako_local_table *table,
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    operation_cleanup_failure_scope cleanup_failure_scope;
+#endif
     const int reserved = reserve_item_budget(txn, 1);
     if (reserved != MAKO_LOCAL_OK) return reserved;
     std::string value;
@@ -763,11 +918,11 @@ int mako_local_txn_get(mako_local_txn *txn, mako_local_table *table,
     *found_out = 1;
     return MAKO_LOCAL_OK;
   } catch (const Transaction::Abort &) {
-    return operation_abort(txn, MAKO_LOCAL_CONFLICT);
+    return operation_exception(txn, MAKO_LOCAL_CONFLICT);
   } catch (const std::bad_alloc &) {
-    return operation_abort(txn, MAKO_LOCAL_OUT_OF_MEMORY);
+    return operation_exception(txn, MAKO_LOCAL_OUT_OF_MEMORY);
   } catch (...) {
-    return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+    return operation_exception(txn, MAKO_LOCAL_INTERNAL);
   }
 }
 
@@ -787,6 +942,9 @@ int mako_local_txn_put(mako_local_txn *txn, mako_local_table *table,
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    operation_cleanup_failure_scope cleanup_failure_scope;
+#endif
 #if !READ_MY_WRITES
     auto &mutations = txn->mutated_keys[table];
     const std::string mutation_key(
@@ -807,11 +965,11 @@ int mako_local_txn_put(mako_local_txn *txn, mako_local_table *table,
     *created_out = existed ? 0 : 1;
     return MAKO_LOCAL_OK;
   } catch (const Transaction::Abort &) {
-    return operation_abort(txn, MAKO_LOCAL_CONFLICT);
+    return operation_exception(txn, MAKO_LOCAL_CONFLICT);
   } catch (const std::bad_alloc &) {
-    return operation_abort(txn, MAKO_LOCAL_OUT_OF_MEMORY);
+    return operation_exception(txn, MAKO_LOCAL_OUT_OF_MEMORY);
   } catch (...) {
-    return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+    return operation_exception(txn, MAKO_LOCAL_INTERNAL);
   }
 }
 
@@ -831,6 +989,9 @@ int mako_local_txn_insert(mako_local_txn *txn, mako_local_table *table,
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    operation_cleanup_failure_scope cleanup_failure_scope;
+#endif
 #if !READ_MY_WRITES
     auto &mutations = txn->mutated_keys[table];
     const std::string mutation_key(
@@ -851,11 +1012,11 @@ int mako_local_txn_insert(mako_local_txn *txn, mako_local_table *table,
     *inserted_out = existed ? 0 : 1;
     return MAKO_LOCAL_OK;
   } catch (const Transaction::Abort &) {
-    return operation_abort(txn, MAKO_LOCAL_CONFLICT);
+    return operation_exception(txn, MAKO_LOCAL_CONFLICT);
   } catch (const std::bad_alloc &) {
-    return operation_abort(txn, MAKO_LOCAL_OUT_OF_MEMORY);
+    return operation_exception(txn, MAKO_LOCAL_OUT_OF_MEMORY);
   } catch (...) {
-    return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+    return operation_exception(txn, MAKO_LOCAL_INTERNAL);
   }
 }
 
@@ -872,6 +1033,9 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    operation_cleanup_failure_scope cleanup_failure_scope;
+#endif
 #if !READ_MY_WRITES
     auto &mutations = txn->mutated_keys[table];
     const std::string mutation_key(
@@ -888,11 +1052,11 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
     *existed_out = existed ? 1 : 0;
     return MAKO_LOCAL_OK;
   } catch (const Transaction::Abort &) {
-    return operation_abort(txn, MAKO_LOCAL_CONFLICT);
+    return operation_exception(txn, MAKO_LOCAL_CONFLICT);
   } catch (const std::bad_alloc &) {
-    return operation_abort(txn, MAKO_LOCAL_OUT_OF_MEMORY);
+    return operation_exception(txn, MAKO_LOCAL_OUT_OF_MEMORY);
   } catch (...) {
-    return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+    return operation_exception(txn, MAKO_LOCAL_INTERNAL);
   }
 }
 
@@ -926,15 +1090,17 @@ int mako_local_txn_commit(mako_local_txn *txn) noexcept {
   const int checked = check_txn(txn);
   if (checked != MAKO_LOCAL_OK) return checked;
   try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
+#endif
     const bool committed = Sto::try_commit_no_paxos();
     finish_txn(txn);
     return committed ? MAKO_LOCAL_OK : MAKO_LOCAL_CONFLICT;
-  } catch (const Transaction::Abort &) {
-    return operation_abort(txn, MAKO_LOCAL_CONFLICT);
-  } catch (const std::bad_alloc &) {
-    return operation_abort(txn, MAKO_LOCAL_OUT_OF_MEMORY);
   } catch (...) {
-    return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+    // try_commit() may have thrown from Transaction::stop() after an unknown
+    // amount of unlock/cleanup progress. Retrying abort here could double
+    // unlock or clean an installed tuple twice.
+    return poison_transaction(txn);
   }
 }
 
@@ -949,6 +1115,9 @@ int mako_local_txn_commit_with_hook(
   Transaction::preinstall_failure failure =
       Transaction::preinstall_failure::none;
   try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
+#endif
     const bool committed = Sto::try_commit_no_paxos(
         invoke_post_validate_hook, &bridge, &failure);
     finish_txn(txn);
@@ -961,35 +1130,35 @@ int mako_local_txn_commit_with_hook(
       case Transaction::preinstall_failure::none:
         return MAKO_LOCAL_CONFLICT;
     }
-  } catch (const Transaction::Abort &) {
-    return operation_abort(txn, MAKO_LOCAL_CONFLICT);
-  } catch (const std::bad_alloc &) {
-    return operation_abort(txn, MAKO_LOCAL_OUT_OF_MEMORY);
   } catch (...) {
-    return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+    return poison_transaction(txn);
   }
-  return operation_abort(txn, MAKO_LOCAL_INTERNAL);
+  return poison_transaction(txn);
 }
 
 int mako_local_txn_abort(mako_local_txn *txn) noexcept {
   const int checked = check_txn(txn);
   if (checked != MAKO_LOCAL_OK) return checked;
-  return abort_and_finish(txn) ? MAKO_LOCAL_OK : MAKO_LOCAL_INTERNAL;
+  return abort_and_finish(txn, cleanup_boundary::abort)
+             ? MAKO_LOCAL_OK
+             : MAKO_LOCAL_WORKER_POISONED;
 }
 
 int mako_local_txn_destroy(mako_local_txn *txn) noexcept {
   if (txn == nullptr) return MAKO_LOCAL_OK;
   if (!on_owner_thread(txn)) return MAKO_LOCAL_WRONG_THREAD;
   try {
+    if (txn->poisoned) return MAKO_LOCAL_WORKER_POISONED;
     if (txn->active) {
       const int checked = check_txn(txn);
       if (checked != MAKO_LOCAL_OK) return checked;
     }
-    if (!abort_and_finish(txn)) return MAKO_LOCAL_INTERNAL;
+    if (!abort_and_finish(txn, cleanup_boundary::destroy))
+      return MAKO_LOCAL_WORKER_POISONED;
     delete txn;
     return MAKO_LOCAL_OK;
   } catch (...) {
-    return MAKO_LOCAL_INTERNAL;
+    return poison_transaction(txn);
   }
 }
 

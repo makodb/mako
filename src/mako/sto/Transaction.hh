@@ -378,6 +378,11 @@ public:
     } global_epochs;
     typedef TransactionTid::type tid_type;
 
+    // True after stop() begins and until every unlock, item cleanup, end
+    // callback, and terminal-state publication has completed. If stop unwinds,
+    // the marker remains set so an adapter cannot retry partial cleanup.
+    static bool cleanup_in_progress() noexcept;
+
     // Optional durability seam for local transactional caches. The callback
     // runs after every read/predicate validation has succeeded, but before the
     // first write is installed. It may enter a bounded in-memory critical
@@ -410,6 +415,13 @@ public:
     static bool test_commit_observer_registered() noexcept;
     static void notify_test_commit_observer(test_commit_phase phase,
                                             uint32_t mako_timestamp) noexcept;
+
+    // Make this thread's next stop() fail before its first cleanup action.
+    // The flag is consumed at stop entry and exists only in hook-enabled test
+    // profiles, so production transaction paths contain no failpoint branch.
+    static void test_fail_next_cleanup() noexcept;
+    // Cancel an unconsumed stop-entry failure. Returns true iff one was armed.
+    static bool test_cancel_fail_next_cleanup() noexcept;
 #endif
 
     enum class preinstall_failure : uint8_t {
@@ -997,6 +1009,10 @@ public:
     static bool in_progress() {
         return TThread::mode() == 1 ||
                     (TThread::mode() == 0 && TThread::txn && TThread::txn->in_progress());
+    }
+
+    static bool cleanup_in_progress() noexcept {
+        return Transaction::cleanup_in_progress();
     }
 
     static void abort() {

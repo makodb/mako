@@ -17,6 +17,7 @@ pub const MAKO_LOCAL_FEATURE_OPACITY: u64 = 1 << 2;
 pub const MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS: u64 = 1 << 3;
 pub const MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES: u64 = 1 << 4;
 pub const MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER: u64 = 1 << 5;
+pub const MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES: u64 = 1 << 6;
 
 pub const MAKO_LOCAL_TEST_COMMIT_WRITESET_LOCKED: u32 = 1;
 pub const MAKO_LOCAL_TEST_COMMIT_MAKO_TIMESTAMP_ALLOCATED: u32 = 2;
@@ -24,6 +25,12 @@ pub const MAKO_LOCAL_TEST_COMMIT_LOCAL_VALIDATION_COMPLETE: u32 = 3;
 pub const MAKO_LOCAL_TEST_COMMIT_PREINSTALL_ACCEPTED: u32 = 4;
 pub const MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED: u32 = 5;
 pub const MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED: u32 = 6;
+
+pub const MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN: u32 = 1;
+pub const MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION: u32 = 2;
+pub const MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT: u32 = 3;
+pub const MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT: u32 = 4;
+pub const MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY: u32 = 5;
 
 pub const MAKO_LOCAL_SCAN_HAS_UPPER: u32 = 1 << 0;
 pub const MAKO_LOCAL_SCAN_HAS_RESUME: u32 = 1 << 1;
@@ -115,11 +122,15 @@ extern "C" {
     pub fn mako_local_scan_entry_size() -> usize;
     pub fn mako_local_status_string(status: c_int) -> *const c_char;
     pub fn mako_local_thread_attach() -> c_int;
+    pub fn mako_local_worker_health() -> c_int;
+    pub fn mako_local_quarantined_worker_count() -> u64;
     pub fn mako_local_test_set_commit_observer(
         observer: mako_local_test_commit_observer,
         context: *mut c_void,
     ) -> c_int;
     pub fn mako_local_test_clear_commit_observer() -> c_int;
+    pub fn mako_local_test_arm_cleanup_failure(boundary: u32) -> c_int;
+    pub fn mako_local_test_clear_cleanup_failure() -> c_int;
     pub fn mako_local_advance_mako_timestamp_past(observed: u32) -> c_int;
 
     pub fn mako_local_db_open(out: *mut *mut mako_local_db) -> c_int;
@@ -233,9 +244,10 @@ mod tests {
             MAKO_LOCAL_TIMESTAMP_EXHAUSTED,
             MAKO_LOCAL_BUFFER_TOO_SMALL,
             MAKO_LOCAL_FEATURE_UNAVAILABLE,
+            MAKO_LOCAL_WORKER_POISONED,
         ];
 
-        assert_eq!(ALL_KNOWN_STATUSES.len(), 19);
+        assert_eq!(ALL_KNOWN_STATUSES.len(), 20);
         for (expected_code, status) in ALL_KNOWN_STATUSES.iter().copied().enumerate() {
             let expected_code = expected_code as c_int;
             assert_eq!(status.code(), expected_code);
@@ -249,8 +261,8 @@ mod tests {
         }
 
         assert_eq!(KnownStatus::from_code(-1), None);
-        assert_eq!(KnownStatus::from_code(19), None);
+        assert_eq!(KnownStatus::from_code(20), None);
         assert_eq!(KnownStatus::try_from(-1), Err(-1));
-        assert_eq!(KnownStatus::try_from(19), Err(19));
+        assert_eq!(KnownStatus::try_from(20), Err(20));
     }
 }

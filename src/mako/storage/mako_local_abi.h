@@ -53,6 +53,10 @@ extern "C" {
 /* Test-only; absent from production builds unless MAKO_LOCAL_TEST_HOOKS was
  * explicitly enabled at configure time. */
 #define MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER (UINT64_C(1) << 5)
+/* Test-only deterministic native-cleanup failures. Production builds retain
+ * the symbols below as FEATURE_UNAVAILABLE stubs but omit every hot-path
+ * branch. */
+#define MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES (UINT64_C(1) << 6)
 
 /* Draft input and transaction limits. The weighted transaction budget is one
  * item for get/remove and 4 + ceil(key_len / 8) for put/insert. Keeping it at
@@ -82,8 +86,9 @@ extern "C" {
 #define MAKO_LOCAL_THREAD_LIMIT 8
 #define MAKO_LOCAL_BUSY 9
 #define MAKO_LOCAL_OUT_OF_MEMORY 10
-/* Internal failure, invariant violation, or cleanup-uncertain native state;
- * assertions may still abort the process. */
+/* Internal failure or invariant violation. Lifecycle and commit visibility are
+ * operation-specific; cleanup uncertainty itself is WORKER_POISONED.
+ * Assertions may still abort the process. */
 #define MAKO_LOCAL_INTERNAL 11
 /* Retained at its assigned number for old/no-RYW engines. Current RYW builds
  * compose repeated same-key mutations and do not return this status. */
@@ -94,6 +99,9 @@ extern "C" {
 #define MAKO_LOCAL_TIMESTAMP_EXHAUSTED 16
 #define MAKO_LOCAL_BUFFER_TOO_SMALL 17
 #define MAKO_LOCAL_FEATURE_UNAVAILABLE 18
+/* Native cleanup could not be proved complete. The calling worker is
+ * permanently transaction-unusable and must be retired. */
+#define MAKO_LOCAL_WORKER_POISONED 19
 /* MAKO_LOCAL_STATUS_DEFINITIONS_END */
 
 /* Canonical status identity table. Consumers may define X(short_name,
@@ -114,7 +122,8 @@ extern "C" {
   X(THREAD_LIMIT, MAKO_LOCAL_THREAD_LIMIT, "STO thread limit exhausted")   \
   X(BUSY, MAKO_LOCAL_BUSY, "resource busy")                                \
   X(OUT_OF_MEMORY, MAKO_LOCAL_OUT_OF_MEMORY, "out of memory")              \
-  X(INTERNAL, MAKO_LOCAL_INTERNAL, "internal or uncertain native state")   \
+  X(INTERNAL, MAKO_LOCAL_INTERNAL,                                         \
+    "internal native failure or invariant violation")                     \
   X(DUPLICATE_WRITE, MAKO_LOCAL_DUPLICATE_WRITE,                           \
     "second mutation of one key is not supported")                        \
   X(TXN_TOO_LARGE, MAKO_LOCAL_TXN_TOO_LARGE,                               \
@@ -128,7 +137,9 @@ extern "C" {
   X(BUFFER_TOO_SMALL, MAKO_LOCAL_BUFFER_TOO_SMALL,                         \
     "caller scan arena is too small for the next entry")                  \
   X(FEATURE_UNAVAILABLE, MAKO_LOCAL_FEATURE_UNAVAILABLE,                   \
-    "requested native feature is unavailable")
+    "requested native feature is unavailable")                            \
+  X(WORKER_POISONED, MAKO_LOCAL_WORKER_POISONED,                           \
+    "worker poisoned by uncertain native cleanup")
 /* MAKO_LOCAL_STATUS_MANIFEST_END */
 
 typedef struct mako_local_db mako_local_db;
@@ -187,6 +198,16 @@ typedef int (*mako_local_post_validate_hook)(void *context,
 #define MAKO_LOCAL_TEST_COMMIT_FIRST_WRITE_INSTALLED UINT32_C(5)
 #define MAKO_LOCAL_TEST_COMMIT_ALL_WRITES_INSTALLED UINT32_C(6)
 
+/* Test-only one-shot cleanup boundaries. Arming one boundary makes the next
+ * matching native Transaction::stop() throw at entry, before cleanup makes
+ * any progress. BEGIN also forces a post-start begin failure so that its
+ * otherwise exceptional cleanup path is exercised. */
+#define MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN UINT32_C(1)
+#define MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION UINT32_C(2)
+#define MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT UINT32_C(3)
+#define MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT UINT32_C(4)
+#define MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY UINT32_C(5)
+
 typedef void (*mako_local_test_commit_observer)(void *context,
                                                 uint32_t phase,
                                                 uint32_t mako_timestamp);
@@ -201,8 +222,16 @@ size_t mako_local_scan_entry_size(void) MAKO_LOCAL_NOEXCEPT;
 const char *mako_local_status_string(int status) MAKO_LOCAL_NOEXCEPT;
 
 /* Attach the calling OS thread to the shared native-Mako STO runtime.
- * Idempotent on a thread; returns BUSY if another adapter owns the worker. */
+ * Idempotent on a healthy thread; returns BUSY if another adapter owns the
+ * worker and WORKER_POISONED after uncertain cleanup. */
 int mako_local_thread_attach(void) MAKO_LOCAL_NOEXCEPT;
+
+/* Health of the calling OS thread. This does not report transaction
+ * availability: a healthy worker with an active transaction still returns
+ * OK. The process-global counter is monotonic and increments exactly once for
+ * every worker that transitions to WORKER_POISONED. */
+int mako_local_worker_health(void) MAKO_LOCAL_NOEXCEPT;
+uint64_t mako_local_quarantined_worker_count(void) MAKO_LOCAL_NOEXCEPT;
 
 /* Install or clear a test-only observer for commits performed by this attached
  * OS thread. The callback and context are borrowed until clear returns. The
@@ -223,6 +252,14 @@ int mako_local_test_set_commit_observer(
     mako_local_test_commit_observer observer, void *context)
     MAKO_LOCAL_NOEXCEPT;
 int mako_local_test_clear_commit_observer(void) MAKO_LOCAL_NOEXCEPT;
+
+/* Arm or clear one deterministic, thread-local cleanup failure. A second arm
+ * before the matching boundary is consumed returns BUSY. Both functions are
+ * FEATURE_UNAVAILABLE unless MAKO_LOCAL_TEST_HOOKS is enabled. Clear cannot
+ * recover a quarantined worker and returns WORKER_POISONED there. */
+int mako_local_test_arm_cleanup_failure(uint32_t boundary)
+    MAKO_LOCAL_NOEXCEPT;
+int mako_local_test_clear_cleanup_failure(void) MAKO_LOCAL_NOEXCEPT;
 
 /* Atomically ensure every subsequently minted Mako logical timestamp is
  * greater than `observed`. The argument must be a nonzero timestamp previously
@@ -314,8 +351,8 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
  * before further validation. On any non-OK status other than
  * BUFFER_TOO_SMALL, they remain zero. Buffer contents outside the reported
  * entry/byte counts are unspecified. BUFFER_TOO_SMALL does not end the
- * transaction; CONFLICT, TXN_TOO_LARGE, OUT_OF_MEMORY, and INTERNAL follow the
- * point-operation terminal cleanup contract. */
+ * transaction; CONFLICT, TXN_TOO_LARGE, OUT_OF_MEMORY, INTERNAL, and
+ * WORKER_POISONED follow the point-operation terminal cleanup contract. */
 int mako_local_txn_scan_chunk(
     mako_local_txn *txn, mako_local_table *table,
     const mako_local_scan_options *options,
@@ -335,10 +372,12 @@ int mako_local_txn_rscan_chunk(
  * caller can inspect the status safely. destroy frees it; destroying an active
  * transaction first aborts it. If native abort cleanup fails, the handle,
  * buffers, database accounting, and owner worker are permanently quarantined.
- * A well-formed owner-thread transaction call then reports INTERNAL after its
- * ordinary argument validation. Call destroy exactly once: INTERNAL confirms
- * quarantine, after which the caller must neither retry cleanup nor reuse the
- * worker. See the normative revision-0 matrix for the full state contract. */
+ * A well-formed owner-thread transaction call then reports WORKER_POISONED
+ * after its ordinary argument validation. Call destroy exactly once after an
+ * operation first reports cleanup uncertainty: WORKER_POISONED confirms
+ * quarantine without retrying native cleanup. The caller must not call again
+ * or reuse the worker. See the normative revision-0 matrix for the full state
+ * contract. */
 int mako_local_txn_commit(mako_local_txn *txn) MAKO_LOCAL_NOEXCEPT;
 /* The hook variant preserves the old commit lifecycle but provides the exact
  * Mako timestamp seam needed by a transactional write-back cache. Native code

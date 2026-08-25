@@ -57,13 +57,25 @@ __thread Transaction *TThread::txn = nullptr;
 __thread mako::ShardClient *TThread::sclient = nullptr;
 __thread HashWrapper *TThread::tprops = nullptr;
 std::function<void(threadinfo_t::epoch_type)> Transaction::epoch_advance_callback;
-#if defined(MAKO_LOCAL_TEST_HOOKS)
 namespace {
+thread_local bool local_transaction_cleanup_in_progress = false;
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
 thread_local Transaction::test_commit_observer local_test_commit_observer =
     nullptr;
 thread_local void* local_test_commit_observer_context = nullptr;
+thread_local bool local_test_fail_next_cleanup = false;
+
+struct test_cleanup_failure {};
+#endif
 }  // namespace
 
+// @safe: reads the calling worker's cleanup-progress witness.
+bool Transaction::cleanup_in_progress() noexcept {
+    return local_transaction_cleanup_in_progress;
+}
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
 // @unsafe: stores a caller-borrowed callback and opaque context in thread-local
 // state; their lifetime must cover every observed synchronous commit callback.
 void Transaction::set_test_commit_observer(
@@ -90,6 +102,18 @@ void Transaction::notify_test_commit_observer(
     const auto observer = local_test_commit_observer;
     if (observer != nullptr)
         observer(local_test_commit_observer_context, phase, mako_timestamp);
+}
+
+// @safe: arms one thread-local, one-shot branch at Transaction::stop entry.
+void Transaction::test_fail_next_cleanup() noexcept {
+    local_test_fail_next_cleanup = true;
+}
+
+// @safe: clears only a failure that stop() has not consumed yet.
+bool Transaction::test_cancel_fail_next_cleanup() noexcept {
+    const bool was_armed = local_test_fail_next_cleanup;
+    local_test_fail_next_cleanup = false;
+    return was_armed;
 }
 #endif
 #if defined(SIMPLE_WORKLOAD)
@@ -293,6 +317,16 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
 
 // @unsafe: manipulates transaction items with unlock and cleanup operations
 void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
+    // This marker is a production safety witness, not only test machinery.
+    // It is deliberately cleared only after native cleanup publishes terminal
+    // state. Any exception leaves it set and forbids cleanup re-entry.
+    local_transaction_cleanup_in_progress = true;
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (local_test_fail_next_cleanup) {
+        local_test_fail_next_cleanup = false;
+        throw test_cleanup_failure{};
+    }
+#endif
     if (!committed) {
         TXP_INCREMENT(txp_total_aborts);
 #if STO_DEBUG_ABORTS
@@ -371,6 +405,7 @@ after_unlock:
         thr.trans_end_callback();
     // XXX should reset trans_end_callback after calling it...
     state_ = s_aborted + committed;
+    local_transaction_cleanup_in_progress = false;
 }
 
 // @safe

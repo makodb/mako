@@ -9,8 +9,17 @@ use std::path::{Path, PathBuf};
 fn main() {
     println!("cargo:rerun-if-env-changed=MAKO_BUILD_DIR");
     println!("cargo:rerun-if-env-changed=MAKO_LOCAL_REQUIRE_NATIVE");
+    println!("cargo:rerun-if-env-changed=MAKO_LOCAL_FAKE_ABI");
     println!("cargo:rerun-if-env-changed=LIBCXX_DIR");
     println!("cargo:rustc-check-cfg=cfg(have_mako)");
+
+    if fake_abi_requested() {
+        assert!(
+            !native_is_required(),
+            "MAKO_LOCAL_FAKE_ABI=1 and MAKO_LOCAL_REQUIRE_NATIVE=1 are mutually exclusive"
+        );
+        return;
+    }
 
     let Some(build) = find_build_dir() else {
         if native_is_required() || std::env::var_os("MAKO_BUILD_DIR").is_some() {
@@ -99,6 +108,10 @@ fn find_build_dir() -> Option<PathBuf> {
 
 fn native_is_required() -> bool {
     std::env::var("MAKO_LOCAL_REQUIRE_NATIVE").is_ok_and(|value| value == "1")
+}
+
+fn fake_abi_requested() -> bool {
+    std::env::var("MAKO_LOCAL_FAKE_ABI").is_ok_and(|value| value == "1")
 }
 
 fn reject_stale_archive(build: &Path) {

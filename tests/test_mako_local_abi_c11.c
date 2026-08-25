@@ -25,6 +25,7 @@
 #define MAKO_LOCAL_GOLDEN_MAKO_LOCAL_TIMESTAMP_EXHAUSTED 16
 #define MAKO_LOCAL_GOLDEN_MAKO_LOCAL_BUFFER_TOO_SMALL 17
 #define MAKO_LOCAL_GOLDEN_MAKO_LOCAL_FEATURE_UNAVAILABLE 18
+#define MAKO_LOCAL_GOLDEN_MAKO_LOCAL_WORKER_POISONED 19
 
 #define MAKO_LOCAL_ASSERT_GOLDEN(short_name, c_symbol, message)                \
   _Static_assert((c_symbol) == MAKO_LOCAL_GOLDEN_##c_symbol,                   \
@@ -39,7 +40,7 @@ enum {
 };
 #undef MAKO_LOCAL_COUNT_STATUS
 
-_Static_assert(mako_local_status_manifest_count == 19,
+_Static_assert(mako_local_status_manifest_count == 20,
                "mako-local status catalog size changed");
 
 #define MAKO_LOCAL_STATUS_VALUE(short_name, c_symbol, message) c_symbol,

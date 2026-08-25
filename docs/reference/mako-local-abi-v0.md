@@ -26,6 +26,7 @@ defines these feature bits:
 | `MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS` | Forward and reverse scans participate in the transaction. |
 | `MAKO_LOCAL_FEATURE_SCAN_READ_MY_WRITES` | Scans merge the transaction's staged point mutations. |
 | `MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER` | The test-only commit-observer functions are available. |
+| `MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES` (bit 6) | The test-only cleanup-failure arm and clear functions are available. |
 
 Raw callers may call `mako_local_txn_scan_chunk()` or
 `mako_local_txn_rscan_chunk()` only when both
@@ -35,9 +36,11 @@ exist in a profile that omits those bits; calling them in that profile is
 outside the contract and is not required to return
 `MAKO_LOCAL_FEATURE_UNAVAILABLE`.
 
-The commit-observer functions are usable only when their feature bit is
-present. In a build without the bit, both functions return
-`MAKO_LOCAL_FEATURE_UNAVAILABLE` before validating their arguments.
+The commit-observer and cleanup-failure functions are usable only when their
+respective feature bit is present. In a build without the corresponding bit,
+the functions return `MAKO_LOCAL_FEATURE_UNAVAILABLE` before validating their
+arguments. Test-only symbols remain exported in production profiles so link
+identity does not depend on whether either test feature was compiled in.
 
 ## Transaction states and worker health
 
@@ -47,15 +50,23 @@ The operation tables use the following state notation:
 | --- | --- | --- | --- |
 | **A** | The transaction is active. | The owner worker is healthy but occupied by this transaction. | The handle must eventually be committed, aborted, or destroyed. |
 | **F** | The transaction has finished. Native transaction TLS and database active-transaction accounting were released. | The owner worker is healthy and may begin another transaction. | The small facade handle is still live and must be destroyed on its owner thread. |
-| **Q** | Native abort cleanup could not be proved complete. The transaction, referenced buffers, TLS ownership, and database accounting are retained. | The owner worker is transaction-unusable and must be retired. Nontransactional calls are not a health check. | Call destroy once as described below; after it reports `INTERNAL`, do not retry and do not dereference the handle. |
+| **Q** | Native transaction or facade cleanup could not be proved complete. Every facade, referenced buffer, TLS owner, and database-accounting reference that might still be live is retained. A failed begin can enter **Q** without returning a facade. | An independent TLS quarantine marker makes the owner worker permanently transaction-unusable. Retire it. | If a facade was returned, call destroy once as described below; after destroy reports `WORKER_POISONED`, do not retry or dereference it. A failed begin returns no handle to destroy. |
 | **D** | The facade handle was destroyed. | The worker health is whatever the preceding state established. | The pointer is invalid and must not be used again. |
 
 Only a properly formed call on the owner thread is guaranteed to surface a
-pre-existing **Q** state as `MAKO_LOCAL_INTERNAL`. Argument and output-pointer
+pre-existing **Q** state as `MAKO_LOCAL_WORKER_POISONED`. Argument and output-pointer
 validation may run first and return `INVALID_ARGUMENT` or `VALUE_TOO_LARGE`.
-`mako_local_thread_attach()` is idempotent and also returns `OK` on an already
-attached quarantined worker. These calls are therefore not worker-health
-probes.
+`mako_local_thread_attach()` returns `WORKER_POISONED` rather than its normal
+idempotent `OK` on an already attached quarantined worker. The authoritative
+probe is `mako_local_worker_health()`: it returns `NOT_ATTACHED`, `OK`, or
+`WORKER_POISONED` for the calling OS worker. `OK` means healthy, not idle; an
+active healthy transaction can still make a later begin return
+`TXN_ALREADY_ACTIVE`.
+
+The safe Rust `worker_health()` maps these three expected C statuses to
+`WorkerHealth::{NotAttached, Healthy, Poisoned}`. Its error channel is reserved
+for ABI drift or a status outside this query's contract, so callers cannot
+accidentally treat “not attached” or “poisoned” as an uninspected generic error.
 
 ### Terminal operation rule
 
@@ -67,8 +78,11 @@ For `get`, `put`, `insert`, `remove`, and both scan directions:
 - An operation-level `CONFLICT`, `TXN_TOO_LARGE`, or `OUT_OF_MEMORY` is
   returned only after native abort cleanup succeeded. It transitions **A** to
   **F**.
-- An operation-level `INTERNAL` is terminal-uncertain. It can mean cleanup
-  succeeded (**F**), cleanup failed (**Q**), or the handle was already **Q**.
+- An operation-level `INTERNAL` is terminal, but native abort cleanup
+  succeeded: **A** transitions to **F**. The underlying failure remains an
+  internal error even though the worker is reusable after facade destruction.
+- `WORKER_POISONED` means cleanup could not be proved complete or the worker
+  was already quarantined: **A** transitions to **Q**, or remains **Q**.
 - `TXN_FINISHED` means the handle was already finished or does not match the
   worker's active TLS transaction; it does not reactivate it.
 
@@ -76,23 +90,27 @@ Every non-null transaction handle remains caller-managed until it reaches
 **D** or is abandoned after the one-shot **Q** procedure. An operation that
 transitions to **F** does not itself free the handle.
 
-### Destroy exactly once after terminal uncertainty
+### Destroy exactly once after terminal failure
 
-After an operation or commit returns `INTERNAL`, the owner thread must call
-`mako_local_txn_destroy()` exactly once:
+After a terminal operation returns `INTERNAL`, or any transaction call returns
+`WORKER_POISONED`, the owner thread must call `mako_local_txn_destroy()` exactly
+once if it has a non-null facade:
 
 - `OK` means the handle was cleanly finished and is now **D**. The worker is
-  reusable.
-- `INTERNAL` means **Q**. The implementation deliberately retains the handle
-  and everything native cleanup might still reference. Do not retry abort or
-  destroy, do not submit another transaction to that worker, and do not close
-  the owning database expecting `BUSY` to clear.
+  reusable when `mako_local_worker_health()` also returns `OK`.
+- `WORKER_POISONED` means **Q**. The implementation deliberately retains the
+  handle and everything native cleanup might still reference. Do not retry
+  abort or destroy, do not submit another transaction to that worker, and do
+  not close the owning database expecting `BUSY` to clear.
 - `WRONG_THREAD` means the probe was made on the wrong thread and did not
   determine health. Arrange one destroy call on the owner thread.
 
 The same no-retry rule applies when `mako_local_txn_abort()` directly returns
-`INTERNAL`. `mako_local_txn_destroy()` on a healthy active transaction performs
-the abort itself; an `OK` return consumes the handle.
+`WORKER_POISONED`, or when the first call to `mako_local_txn_destroy()` itself
+returns it. `mako_local_txn_destroy()` on a healthy active transaction performs
+the abort itself; an `OK` return consumes the handle. A begin that returns
+`WORKER_POISONED` initializes its output to null and has no caller-owned handle;
+retire the worker without calling destroy.
 
 ## Status registry
 
@@ -113,7 +131,7 @@ operation-level `OUT_OF_MEMORY` is terminal. Use the operation matrix below.
 | 8 | `MAKO_LOCAL_THREAD_LIMIT` | The fixed process-wide STO thread-ID space is exhausted. |
 | 9 | `MAKO_LOCAL_BUSY` | A resource cannot currently be claimed or closed. |
 | 10 | `MAKO_LOCAL_OUT_OF_MEMORY` | A caught allocation failure occurred. Its lifecycle effect is operation-specific. |
-| 11 | `MAKO_LOCAL_INTERNAL` | Native state failed, violated an invariant, or is cleanup-uncertain. Its lifecycle effect is operation-specific. |
+| 11 | `MAKO_LOCAL_INTERNAL` | Native state failed or violated an invariant. Transaction disposition and commit visibility remain operation-specific. |
 | 12 | `MAKO_LOCAL_DUPLICATE_WRITE` | A legacy/no-RYW engine rejected a repeated mutation. Current RYW profiles compose it instead. |
 | 13 | `MAKO_LOCAL_TXN_TOO_LARGE` | The weighted transaction item budget was exceeded. On a transaction operation this is terminal. |
 | 14 | `MAKO_LOCAL_VALUE_TOO_LARGE` | A table name, key, value, or scan bound exceeded its revision-0 limit. |
@@ -121,19 +139,27 @@ operation-level `OUT_OF_MEMORY` is terminal. Use the operation matrix below.
 | 16 | `MAKO_LOCAL_TIMESTAMP_EXHAUSTED` | No representable Mako logical timestamp remained for the requested operation. |
 | 17 | `MAKO_LOCAL_BUFFER_TOO_SMALL` | The scan arena cannot hold the next live entry. The transaction remains active. |
 | 18 | `MAKO_LOCAL_FEATURE_UNAVAILABLE` | A negotiated optional function is unavailable in this build. |
+| 19 | `MAKO_LOCAL_WORKER_POISONED` | Native cleanup could not be proved complete. The calling transaction worker is permanently quarantined. |
 
 `mako_local_status_string()` returns diagnostics only. Callers must branch on
 the integer status, not on the English string.
 
 Because revision 0 may grow, a future unknown status returned while a
 transaction might be active is terminal-uncertain. Do not attempt commit. Apply
-the same one-shot owner-thread destroy procedure as for `INTERNAL`, and retire
-the worker if cleanup cannot be proved.
+the same one-shot owner-thread destroy procedure as for `WORKER_POISONED`, and
+retire the worker if cleanup cannot be proved. Every revision-0 extension must
+set the authoritative TLS quarantine before returning whenever cleanup is not
+proved complete. The safe Rust entry points call `mako_local_thread_attach()`
+again before every later table-open or transaction-begin admission; on an
+already attached worker, that is an enforcement gate over the same quarantine
+flag exposed by `mako_local_worker_health()`.
 
 ## Threading and lifetimes
 
 - Call `mako_local_thread_attach()` once on every long-lived worker that will
-  open tables or run transactions. Repeated calls on that worker are harmless.
+  open tables or run transactions. Repeated calls on a healthy worker are
+  harmless. A quarantined worker instead returns `WORKER_POISONED` and can
+  never be reattached or reset.
 - An OS thread may have at most one active transaction. A transaction must be
   operated, committed or aborted, and destroyed on the exact OS thread that
   began it.
@@ -154,6 +180,9 @@ the worker if cleanup cannot be proved.
   facade's tables.
 - A **Q** transaction retains database active-transaction accounting, so
   `db_close` continues to return `BUSY`. This is intentional containment.
+- Quarantine is stored independently of a transaction facade in TLS. It
+  therefore survives a failed begin that returned no handle and remains
+  observable until the worker thread is retired.
 
 ## Output initialization and ownership
 
@@ -183,12 +212,19 @@ On a successful found `txn_get`, `value_out` is allocated by the ABI and must
 be released exactly once with `mako_local_bytes_free()`. A found empty value is
 distinct from absence: it has `found_out == 1`, length zero, and a non-null
 allocation that must be freed. `mako_local_bytes_free(NULL)` is valid.
+On successful absence the pointer and length are zero, and `found_out == 0`.
+Every successful boolean byte from get, put, insert, remove, or scan is exactly
+zero or one; other byte values are malformed ABI output rather than truthy
+values. A returned point-value length never exceeds
+`MAKO_LOCAL_MAX_VALUE_BYTES`.
 
 Scan descriptors and bytes are written into caller-owned arrays. Native code
 retains neither. Only `entry_count_out` descriptors and `arena_used_out` bytes
 are initialized results; all other buffer contents are unspecified. On
 `BUFFER_TOO_SMALL`, count, used, and `done` remain zero and
-`arena_required_out` is the exact bytes required by the first live entry.
+`arena_required_out` is the exact bytes required by the first live entry. On
+`OK`, `arena_required_out` is zero, counts do not exceed their supplied
+capacities, and every reported descriptor slice lies within `arena_used_out`.
 
 The string from `mako_local_status_string()` is static and must not be freed.
 The post-validation hook context is borrowed only during the synchronous
@@ -221,9 +257,13 @@ change unless the row states otherwise.
 | `mako_local_scan_options_size` | Returns `MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE`. | Scalar result; no ownership or transaction effect. |
 | `mako_local_scan_entry_size` | Returns `sizeof(mako_local_scan_entry)`. | Scalar result; no ownership or transaction effect. |
 | `mako_local_status_string` | Returns a known static string or the static unknown-status string. | Never caller-owned; no transaction effect. |
-| `mako_local_thread_attach` | `OK`, `BUSY`, `THREAD_LIMIT`, `OUT_OF_MEMORY`, `INTERNAL`. | `OK` attaches or is idempotent. A failed attempt creates no transaction. Because runtime claim and ID reservation can precede later initialization, a failed worker must not switch adapters; retire it after unrecoverable failure. This function is not a **Q** health check. |
+| `mako_local_thread_attach` | `OK`, `BUSY`, `THREAD_LIMIT`, `OUT_OF_MEMORY`, `INTERNAL`, `WORKER_POISONED`. | `OK` attaches or is idempotent only while healthy. `WORKER_POISONED` is a permanent rejection. A failed initial attempt creates no transaction. Because runtime claim and ID reservation can precede later initialization, a failed worker must not switch adapters; retire it after unrecoverable failure. |
+| `mako_local_worker_health` | `OK`, `NOT_ATTACHED`, `WORKER_POISONED`. | Reports the calling OS worker's TLS state. `OK` means attached and healthy even when an **A** transaction occupies it. `WORKER_POISONED` is permanent. No transaction transition. |
+| `mako_local_quarantined_worker_count` | Returns a `uint64_t` count. | Process-wide monotonic diagnostic count of workers that entered **Q**. One worker increments it at most once; reads do not alter health or transaction state. |
 | `mako_local_test_set_commit_observer` | With the feature: `OK`, `INVALID_ARGUMENT`, `NOT_ATTACHED`, `BUSY`. Without it: `FEATURE_UNAVAILABLE`. | On `OK`, borrows callback/context in this worker's TLS until clear. No transaction transition; setting during an active transaction does not itself end it. |
 | `mako_local_test_clear_commit_observer` | With the feature: `OK`, `NOT_ATTACHED`. Without it: `FEATURE_UNAVAILABLE`. | `OK` is idempotent and ends any callback/context borrow. No transaction transition. |
+| `mako_local_test_arm_cleanup_failure` | With the feature: `OK`, `INVALID_ARGUMENT`, `NOT_ATTACHED`, `BUSY`, `WORKER_POISONED`. Without it: `FEATURE_UNAVAILABLE`. | Arms one valid `MAKO_LOCAL_CLEANUP_BOUNDARY_*` value in the calling worker's TLS. A second arm before consumption or clear is `BUSY`. The next matching cleanup consumes the arm before forcing a native cleanup exception. No ordinary transaction transition occurs merely by arming. |
+| `mako_local_test_clear_cleanup_failure` | With the feature: `OK`, `NOT_ATTACHED`, `WORKER_POISONED`. Without it: `FEATURE_UNAVAILABLE`. | Clears an unconsumed arm and is otherwise idempotent. It cannot recover or make reusable a poisoned worker. |
 | `mako_local_advance_mako_timestamp_past` | `OK`, `INVALID_ARGUMENT`, `TIMESTAMP_EXHAUSTED`. | Zero is invalid. A successful call monotonically advances the process clock; smaller observations do not move it backward. The requirement that the value came from a prior hook is a caller precondition, not provenance checked by v0. No transaction effect. |
 | `mako_local_db_open` | `OK`, `INVALID_ARGUMENT`, `OUT_OF_MEMORY`, `INTERNAL`. | Once `out` is validated, it is null on every error. `OK` returns a caller-owned database facade requiring `db_close`. Attachment is not required. |
 | `mako_local_db_close` | `OK`, `BUSY`, `INTERNAL`; null is `OK`. | `OK` consumes the facade. `BUSY` retains it and is retryable after healthy active transactions finish. On `INTERNAL`, v0 cannot make destruction retry-safe: abandon the pointer without dereferencing or retrying it. No worker-health transition. |
@@ -245,22 +285,32 @@ destroy should be retried.
 
 | Export | Possible statuses | Outputs and ownership | Transaction disposition, destroy, and worker health |
 | --- | --- | --- | --- |
-| `mako_local_txn_begin` | `OK`, `INVALID_ARGUMENT`, `NOT_ATTACHED`, `TXN_ALREADY_ACTIVE`, `OUT_OF_MEMORY`, `INTERNAL`. | Once `out` is validated, it is null on every error. `OK` returns a new facade. | `OK`: **A**, destroy yes. `TXN_ALREADY_ACTIVE`: the existing ambient transaction is unchanged; no new handle. `INTERNAL` can also report an existing **Q** transaction. A caught begin failure returns no handle; see the begin-cleanup limitation below. |
-| `mako_local_txn_get` | `OK`, `INVALID_ARGUMENT`, `VALUE_TOO_LARGE`, `WRONG_THREAD`, `TXN_FINISHED`, `WRONG_DB_OR_TABLE`, `CONFLICT`, `TXN_TOO_LARGE`, `OUT_OF_MEMORY`, `INTERNAL`. | The three outputs follow conditional all-pointer initialization. `OK` reports absent as null/zero/zero, or returns ABI-owned bytes with `found=1`. | `OK` and precondition errors: **A** remains **A**. `CONFLICT`, `TXN_TOO_LARGE`, `OUT_OF_MEMORY`: **A** to **F**. `INTERNAL`: **F** or **Q**. `TXN_FINISHED`: already **F** or TLS mismatch. Destroy yes. |
+| `mako_local_txn_begin` | `OK`, `INVALID_ARGUMENT`, `NOT_ATTACHED`, `TXN_ALREADY_ACTIVE`, `OUT_OF_MEMORY`, `INTERNAL`, `WORKER_POISONED`. | Once `out` is validated, it is null on every error. `OK` returns a new facade. | `OK`: **A**, destroy yes. `TXN_ALREADY_ACTIVE`: an existing healthy ambient transaction is unchanged; no new handle. A caught begin failure returns its original status only after native cleanup completed. Cleanup uncertainty or a pre-existing TLS quarantine returns `WORKER_POISONED`, leaves `out` null, retains an internal quarantine anchor, and requires worker retirement without a destroy call. |
+| `mako_local_txn_get` | `OK`, `INVALID_ARGUMENT`, `VALUE_TOO_LARGE`, `WRONG_THREAD`, `TXN_FINISHED`, `WRONG_DB_OR_TABLE`, `CONFLICT`, `TXN_TOO_LARGE`, `OUT_OF_MEMORY`, `INTERNAL`, `WORKER_POISONED`. | The three outputs follow conditional all-pointer initialization. `OK` reports absent as null/zero/zero, or returns ABI-owned bytes with `found=1`. | `OK` and precondition errors: **A** remains **A**. `CONFLICT`, `TXN_TOO_LARGE`, `OUT_OF_MEMORY`, and `INTERNAL`: **A** to **F** after successful cleanup. `WORKER_POISONED`: **A** to **Q** or already **Q**. `TXN_FINISHED`: already **F** or TLS mismatch. Destroy yes for every returned facade. |
 | `mako_local_txn_put` | The `get` status set, plus `DUPLICATE_WRITE` in a legacy/no-RYW build. | `created_out` is zero after pointer validation and on every error; `OK` sets whether a key was created. No returned allocation. | `OK`, `DUPLICATE_WRITE`, and precondition errors leave **A**. Terminal statuses follow the terminal operation rule. Destroy yes. |
 | `mako_local_txn_insert` | The `get` status set, plus `DUPLICATE_WRITE` in a legacy/no-RYW build. | `inserted_out` is zero after pointer validation and on every error; `OK` sets whether insertion occurred. No returned allocation. | `OK`, `DUPLICATE_WRITE`, and precondition errors leave **A**. Terminal statuses follow the terminal operation rule. Destroy yes. |
 | `mako_local_txn_remove` | The `get` status set, plus `DUPLICATE_WRITE` in a legacy/no-RYW build. | `existed_out` is zero after pointer validation and on every error; `OK` sets whether a live key existed. No returned allocation. | `OK`, `DUPLICATE_WRITE`, and precondition errors leave **A**. Terminal statuses follow the terminal operation rule. Destroy yes. |
-| `mako_local_txn_scan_chunk` | `OK`, `BUFFER_TOO_SMALL`, `INVALID_ARGUMENT`, `VALUE_TOO_LARGE`, `WRONG_THREAD`, `TXN_FINISHED`, `WRONG_DB_OR_TABLE`, `CONFLICT`, `TXN_TOO_LARGE`, `OUT_OF_MEMORY`, `INTERNAL`. | The four scalar outputs follow conditional all-pointer initialization. `OK` reports caller-owned descriptor/arena extents; `BUFFER_TOO_SMALL` sets only exact required bytes. | Requires both scan feature bits. `OK`, `BUFFER_TOO_SMALL`, and precondition errors leave **A**. Terminal statuses follow the terminal operation rule. Destroy yes. |
+| `mako_local_txn_scan_chunk` | `OK`, `BUFFER_TOO_SMALL`, `INVALID_ARGUMENT`, `VALUE_TOO_LARGE`, `WRONG_THREAD`, `TXN_FINISHED`, `WRONG_DB_OR_TABLE`, `CONFLICT`, `TXN_TOO_LARGE`, `OUT_OF_MEMORY`, `INTERNAL`, `WORKER_POISONED`. | The four scalar outputs follow conditional all-pointer initialization. `OK` reports caller-owned descriptor/arena extents; `BUFFER_TOO_SMALL` sets only exact required bytes. | Requires both scan feature bits. `OK`, `BUFFER_TOO_SMALL`, and precondition errors leave **A**. Terminal statuses follow the terminal operation rule. Destroy yes. |
 | `mako_local_txn_rscan_chunk` | Same status set as `mako_local_txn_scan_chunk`. | Same output and ownership rule, with descending results over the same `[lower, upper)` set. | Requires both scan feature bits. Same lifecycle as forward scan. Destroy yes. |
-| `mako_local_txn_commit` | `OK`, `CONFLICT`, `INVALID_ARGUMENT`, `WRONG_THREAD`, `TXN_FINISHED`, `OUT_OF_MEMORY`, `INTERNAL`. | No output pointer. | On a valid active call, `OK` is **F** and definitely committed; `CONFLICT` is **F** and definitely aborted. `OUT_OF_MEMORY` is **F** after cleanup, but commit visibility is conservatively unknown. `INTERNAL` is **F** or **Q** and visibility is unknown. Precondition errors do not attempt a commit. Destroy yes. |
-| `mako_local_txn_commit_with_hook` | The ordinary commit set, plus `COMMIT_HOOK_REJECTED` and `TIMESTAMP_EXHAUSTED`. A null hook is `INVALID_ARGUMENT`. | The hook/context are synchronously borrowed. A write transaction calls the hook at most once with its nonzero Mako timestamp; a read-only or conflicting transaction does not. | `OK`: **F**, definitely committed. `CONFLICT`, `COMMIT_HOOK_REJECTED`, and `TIMESTAMP_EXHAUSTED`: **F**, definitely aborted. A null hook leaves **A**. `OUT_OF_MEMORY`/`INTERNAL` follow ordinary commit. Destroy yes. |
-| `mako_local_txn_abort` | `OK`, `INVALID_ARGUMENT`, `WRONG_THREAD`, `TXN_FINISHED`, `INTERNAL`. | No output pointer. | Valid `OK`: **A** to **F**, definitely aborted. `INTERNAL`: **Q** or already **Q**; use the one-shot destroy rule. `WRONG_THREAD` leaves owner state unchanged. `TXN_FINISHED` was already **F** or mismatched. Destroy yes. |
-| `mako_local_txn_destroy` | `OK`, `WRONG_THREAD`, `TXN_FINISHED`, `INTERNAL`; null is `OK`. | No output pointer. | Null or healthy non-null `OK`: **D**; an **A** transaction is aborted first. `WRONG_THREAD` retains the handle and owner state. An ordinary **F** handle destroys with `OK`; `TXN_FINISHED` here denotes an active/TLS mismatch and retains it. `INTERNAL` denotes **Q** for caller purposes: retain native allocations, retire worker, and do not call again. |
+| `mako_local_txn_commit` | `OK`, `CONFLICT`, `INVALID_ARGUMENT`, `WRONG_THREAD`, `TXN_FINISHED`, `WORKER_POISONED`. | No output pointer. | On a valid active call, `OK` is **F** and definitely committed; `CONFLICT` is **F** and definitely aborted. Any contained exception from native commit can have unknown cleanup progress and therefore returns `WORKER_POISONED`: **Q**, visibility unknown. Precondition errors do not attempt a commit. Destroy yes. |
+| `mako_local_txn_commit_with_hook` | The ordinary commit set, plus `COMMIT_HOOK_REJECTED` and `TIMESTAMP_EXHAUSTED`. A null hook is `INVALID_ARGUMENT`. | The hook/context are synchronously borrowed. A write transaction calls the hook at most once with its nonzero Mako timestamp; a read-only or conflicting transaction does not. | `OK`: **F**, definitely committed. `CONFLICT`, `COMMIT_HOOK_REJECTED`, and `TIMESTAMP_EXHAUSTED`: **F**, definitely aborted. A null hook leaves **A**. `WORKER_POISONED` follows ordinary commit. Destroy yes. |
+| `mako_local_txn_abort` | `OK`, `INVALID_ARGUMENT`, `WRONG_THREAD`, `TXN_FINISHED`, `WORKER_POISONED`. | No output pointer. | Valid `OK`: **A** to **F**, definitely aborted. `WORKER_POISONED`: **A** to **Q** or already **Q**; use the one-shot destroy rule. `WRONG_THREAD` leaves owner state unchanged. `TXN_FINISHED` was already **F** or mismatched. Destroy yes. |
+| `mako_local_txn_destroy` | `OK`, `WRONG_THREAD`, `TXN_FINISHED`, `WORKER_POISONED`; null is `OK`. | No output pointer. | Null or healthy non-null `OK`: **D**; an **A** transaction is aborted first. `WRONG_THREAD` retains the handle and owner state. An ordinary **F** handle destroys with `OK`; `TXN_FINISHED` here denotes an active/TLS mismatch and retains it. `WORKER_POISONED` denotes **Q**: retain native allocations, retire worker, and do not call again. |
 
 For point and scan precondition statuses, “**A** remains **A**” assumes the
 caller supplied a valid active handle. A null handle creates no state; a
 wrong-thread call leaves the transaction unchanged on its owner worker; and a
 call on an already-finished facade cannot make it active again.
+
+Commit disposition and facade cleanup are independent results. The status from
+`mako_local_txn_commit()` or `mako_local_txn_commit_with_hook()` establishes
+the disposition in the matrix above; the later destroy status cannot rewrite
+it. In particular, commit `OK` followed by destroy `WORKER_POISONED` is still
+definitely committed, while `CONFLICT` followed by destroy
+`WORKER_POISONED` is still definitely aborted. A safe wrapper must preserve
+both results, as `CommitReport` does, rather than replacing the commit status
+with the cleanup status. If the commit call itself returns `WORKER_POISONED`,
+visibility is unknown and the durability obligation must remain pinned.
 
 `mako_local_txn_commit_with_hook()` contains a C++ exception thrown by a raw
 C++ callback and treats it as rejection. A safe language trampoline must also
@@ -287,22 +337,38 @@ returns that partial chunk with `OK`; the caller resumes after its final key.
 `done == 1` only when the engine proved the effective range exhausted, so a
 full chunk can conservatively require one final empty call.
 
-## Revision-0 quarantine limitations and deferred diagnostics
+## Quarantine diagnostics and cleanup-failure tests
 
-The current live-handle cleanup path implements **Q** conservatively: a caught
-native abort-cleanup failure marks the facade poisoned and retains its buffers,
-TLS ownership, and database accounting. Public revision 0 exposes that state
-only as `MAKO_LOCAL_INTERNAL`, and the one-shot destroy result is the only
-current distinction between clean **F** and **Q**.
+Revision 0 represents **Q** explicitly. A caught native cleanup failure marks
+both any live facade and an independent TLS worker flag, returns
+`MAKO_LOCAL_WORKER_POISONED`, and retains everything cleanup might still
+reference. `mako_local_worker_health()` exposes that TLS state even when a
+failed begin returned no facade. `mako_local_quarantined_worker_count()` is a
+process-wide monotonic diagnostic: the first quarantine transition on a worker
+increments it once, and repeated probes or cleanup attempts cannot increment it
+again. Neither API recovers a worker; retirement is the only valid response.
 
-Revision 0 does **not** yet provide:
+The test-only cleanup surface uses these stable boundary values:
 
-- a poison-specific public status;
-- a worker-health query;
-- a quarantine diagnostic counter;
-- a fixed-worker adapter that removes a poisoned worker from service; or
-- fake-ABI execution of every active, finished, quarantined, and malformed
-  output transition.
+| Value | Boundary | Injected path |
+| ---: | --- | --- |
+| 1 | `MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN` | After native begin startup, force the exceptional begin-cleanup path. |
+| 2 | `MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION` | Cleanup after a terminal point or scan operation. |
+| 3 | `MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT` | Cleanup performed inside native commit. |
+| 4 | `MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT` | Cleanup requested by explicit abort. |
+| 5 | `MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY` | Abort cleanup initiated by destroying an active facade. Destroying an already-finished healthy facade performs no native cleanup and does not consume this arm. |
+
+With `MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES`,
+`mako_local_test_arm_cleanup_failure()` arms exactly one boundary in the
+calling worker's TLS. The next matching boundary consumes the arm before
+forcing `Transaction::stop()` to throw at entry, so no test relies on an
+unknown partial-cleanup position. A different boundary does not consume it;
+a second arm is `BUSY` until it is consumed or
+`mako_local_test_clear_cleanup_failure()` clears it. Tests that trigger
+quarantine must use a sacrificial OS worker and must not attempt to recover or
+reuse its TLS state. Without the feature, both control functions are
+`FEATURE_UNAVAILABLE` stubs and production cleanup paths contain no failpoint
+branch.
 
 Status identity is mechanically synchronized today. The C header's canonical
 manifest generates C++ diagnostics and the raw Rust `KnownStatus` catalog; the
@@ -312,15 +378,17 @@ also compares every linked diagnostic with the manifest. The per-operation
 matrix in this document remains the normative explanation of when each status
 is permitted and how ownership changes.
 
-There is also one narrower begin path that cannot yet uphold the full **Q**
-model. If `mako_local_txn_begin()` throws after native transaction startup, it
-makes a best-effort native abort but returns no facade. A failure of that abort
-is not separately reported or recorded as a poisoned ABI handle. Consequently,
-a caller that receives `OUT_OF_MEMORY` or `INTERNAL` from begin cannot prove
-the worker reusable and should retire that worker under revision 0. Adding an
-explicit worker poison marker and deterministic begin/abort/destroy failpoint
-coverage remains an ABI-freeze gate.
+The safe Rust ownership layer is also executed against a fake ABI without C++.
+That suite covers every active, finished, quarantined, and destroyed transition;
+unknown terminal statuses; one-shot abort and destroy behavior; commit
+disposition independent of cleanup; and malformed successful point and scan
+outputs before any reported native length is trusted. This Rust-only suite
+passes under Miri as the ownership and output-validation gate. Native failpoint
+tests are separate and prove that the real C++ boundary produces the same
+quarantine and diagnostic behavior.
 
-These diagnostics may be added while the ABI reports revision 0. They are
-required before promoting this surface to ABI v1; this document does not claim
-that the rest of Phase 1C is complete.
+The fixed-worker async adapter that removes a poisoned worker from service is
+still deferred. The typed status, health query, counter, begin-cleanup anchor,
+and test coverage make that policy implementable without weakening the current
+thread-affine API. This document does not claim that the rest of Phase 1C is
+complete or that the surface is ready for promotion to ABI v1.

@@ -94,6 +94,7 @@ class LocalAbiTest : public ::testing::Test {
   void TearDown() override {
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     EXPECT_EQ(mako_local_test_clear_commit_observer(), MAKO_LOCAL_OK);
+    EXPECT_EQ(mako_local_test_clear_cleanup_failure(), MAKO_LOCAL_OK);
 #endif
     if (txn_for_cleanup != nullptr) {
       EXPECT_EQ(mako_local_txn_destroy(txn_for_cleanup), MAKO_LOCAL_OK);
@@ -264,11 +265,18 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
 #endif
 #if defined(MAKO_LOCAL_TEST_HOOKS)
   EXPECT_NE(features & MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER, 0U);
+  EXPECT_NE(features & MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES, 0U);
 #else
   EXPECT_EQ(features & MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER, 0U);
+  EXPECT_EQ(features & MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES, 0U);
   EXPECT_EQ(mako_local_test_set_commit_observer(record_commit_phase, nullptr),
             MAKO_LOCAL_FEATURE_UNAVAILABLE);
   EXPECT_EQ(mako_local_test_clear_commit_observer(),
+            MAKO_LOCAL_FEATURE_UNAVAILABLE);
+  EXPECT_EQ(mako_local_test_arm_cleanup_failure(
+                MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN),
+            MAKO_LOCAL_FEATURE_UNAVAILABLE);
+  EXPECT_EQ(mako_local_test_clear_cleanup_failure(),
             MAKO_LOCAL_FEATURE_UNAVAILABLE);
 #endif
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_OK), "ok");
@@ -291,6 +299,9 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   static_assert(MAKO_LOCAL_FEATURE_UNAVAILABLE == 18);
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_FEATURE_UNAVAILABLE),
                "requested native feature is unavailable");
+  static_assert(MAKO_LOCAL_WORKER_POISONED == 19);
+  EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_WORKER_POISONED),
+               "worker poisoned by uncertain native cleanup");
   static_assert(sizeof(mako_local_scan_entry) == 4 * sizeof(uint32_t));
   EXPECT_EQ(mako_local_scan_options_size(),
             MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE);
@@ -340,7 +351,7 @@ TEST(MakoLocalAbiIdentity, FullStatusCatalogIsDenseAndStable) {
 #undef MAKO_LOCAL_STATUS_ENTRY
 
   constexpr size_t catalog_size = sizeof(catalog) / sizeof(catalog[0]);
-  static_assert(catalog_size == 19);
+  static_assert(catalog_size == 20);
   std::array<bool, catalog_size> seen{};
 
   for (size_t index = 0; index != catalog_size; ++index) {
@@ -362,6 +373,28 @@ TEST(MakoLocalAbiIdentity, FullStatusCatalogIsDenseAndStable) {
   EXPECT_STREQ(mako_local_status_string(static_cast<int>(catalog_size)),
                "unknown mako-local status");
   EXPECT_STREQ(mako_local_status_string(INT_MAX), "unknown mako-local status");
+}
+
+TEST(MakoLocalAbiIdentity, WorkerHealthIsThreadLocalAndNonMutating) {
+  const uint64_t quarantined_before =
+      mako_local_quarantined_worker_count();
+  int health_before = MAKO_LOCAL_INTERNAL;
+  int attach = MAKO_LOCAL_INTERNAL;
+  int health_after = MAKO_LOCAL_INTERNAL;
+  int attach_again = MAKO_LOCAL_INTERNAL;
+  std::thread worker([&] {
+    health_before = mako_local_worker_health();
+    attach = mako_local_thread_attach();
+    health_after = mako_local_worker_health();
+    attach_again = mako_local_thread_attach();
+  });
+  worker.join();
+
+  EXPECT_EQ(health_before, MAKO_LOCAL_NOT_ATTACHED);
+  EXPECT_EQ(attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(health_after, MAKO_LOCAL_OK);
+  EXPECT_EQ(attach_again, MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_local_quarantined_worker_count(), quarantined_before);
 }
 
 TEST(MakoLocalAbiIdentity, RecoveryLeavesTheFinalTimestampMintable) {
@@ -469,6 +502,315 @@ TEST_F(LocalAbiTest, HookRejectionAndExceptionDefinitelyAbortBeforeInstall) {
 }
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
+struct CleanupFailureResult {
+  int health_before = MAKO_LOCAL_INTERNAL;
+  int attach = MAKO_LOCAL_INTERNAL;
+  int db_open = MAKO_LOCAL_INTERNAL;
+  int table_open = MAKO_LOCAL_INTERNAL;
+  int begin = MAKO_LOCAL_INTERNAL;
+  int setup = MAKO_LOCAL_INTERNAL;
+  int invalid_arm = MAKO_LOCAL_INTERNAL;
+  int arm = MAKO_LOCAL_INTERNAL;
+  int second_arm = MAKO_LOCAL_INTERNAL;
+  int boundary_status = MAKO_LOCAL_INTERNAL;
+  int destroy_probe = MAKO_LOCAL_INTERNAL;
+  int health_after = MAKO_LOCAL_INTERNAL;
+  int health_again = MAKO_LOCAL_INTERNAL;
+  int attach_after = MAKO_LOCAL_INTERNAL;
+  int arm_after = MAKO_LOCAL_INTERNAL;
+  int begin_after = MAKO_LOCAL_INTERNAL;
+  int clear = MAKO_LOCAL_INTERNAL;
+  int close = MAKO_LOCAL_INTERNAL;
+  bool boundary_begin_out_was_null = false;
+  bool operation_outputs_were_zeroed = false;
+  bool begin_after_out_was_null = false;
+};
+
+CleanupFailureResult run_cleanup_failure(uint32_t boundary) {
+  CleanupFailureResult result;
+  std::thread worker([&] {
+    result.health_before = mako_local_worker_health();
+    result.attach = mako_local_thread_attach();
+
+    mako_local_db *db = nullptr;
+    if (result.attach == MAKO_LOCAL_OK)
+      result.db_open = mako_local_db_open(&db);
+    mako_local_table *table = nullptr;
+    if (result.db_open == MAKO_LOCAL_OK) {
+      const std::string name = "cleanup-failure-" +
+                               std::to_string(boundary);
+      result.table_open = mako_local_table_open(
+          db, reinterpret_cast<const uint8_t *>(name.data()), name.size(),
+          next_table_id.fetch_add(1), &table);
+    }
+
+    mako_local_txn *txn = nullptr;
+    std::atomic<bool> conflict_writer_parked{false};
+    std::atomic<bool> conflict_writer_release{false};
+    std::atomic<bool> conflict_writer_done{false};
+    struct ConflictWriterResult {
+      int attach = MAKO_LOCAL_INTERNAL;
+      int observer = MAKO_LOCAL_INTERNAL;
+      int begin = MAKO_LOCAL_INTERNAL;
+      int put = MAKO_LOCAL_INTERNAL;
+      int commit = MAKO_LOCAL_INTERNAL;
+      int destroy = MAKO_LOCAL_INTERNAL;
+      int clear_observer = MAKO_LOCAL_INTERNAL;
+    } conflict_writer_result;
+    ParkingCommitObserver conflict_writer_observer{
+        {}, &conflict_writer_parked, &conflict_writer_release};
+    std::thread conflict_writer;
+
+    if (boundary == MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN) {
+      result.invalid_arm = mako_local_test_arm_cleanup_failure(0);
+      result.arm = mako_local_test_arm_cleanup_failure(boundary);
+      result.second_arm = mako_local_test_arm_cleanup_failure(boundary);
+      txn = reinterpret_cast<mako_local_txn *>(uintptr_t{1});
+      if (result.table_open == MAKO_LOCAL_OK)
+        result.boundary_status = mako_local_txn_begin(db, &txn);
+      result.boundary_begin_out_was_null = txn == nullptr;
+      result.begin = result.boundary_status;
+      result.setup = MAKO_LOCAL_OK;
+    } else {
+      result.setup = result.table_open;
+      if (boundary == MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION &&
+          result.setup == MAKO_LOCAL_OK) {
+        // Seed a stable value before the victim transaction observes it.
+        // The second writer then parks with this key's native write lock held,
+        // forcing MassTrans::transGet -> Sto::abort_without_throw -> stop().
+        // This exercises engine-internal cleanup, not a facade budget check.
+        mako_local_txn *seed = nullptr;
+        result.setup = mako_local_txn_begin(db, &seed);
+        uint8_t created = 0;
+        if (result.setup == MAKO_LOCAL_OK)
+          result.setup = mako_local_txn_put(
+              seed, table,
+              reinterpret_cast<const uint8_t *>("operation-conflict"), 18,
+              reinterpret_cast<const uint8_t *>("initial"), 7, &created);
+        if (result.setup == MAKO_LOCAL_OK)
+          result.setup = mako_local_txn_commit(seed);
+        if (seed != nullptr) {
+          const int seed_destroy = mako_local_txn_destroy(seed);
+          if (result.setup == MAKO_LOCAL_OK) result.setup = seed_destroy;
+        }
+      }
+
+      if (result.setup == MAKO_LOCAL_OK)
+        result.begin = mako_local_txn_begin(db, &txn);
+      if (result.begin == MAKO_LOCAL_OK) {
+        if (boundary == MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION) {
+          uint8_t *value = nullptr;
+          size_t value_len = 0;
+          uint8_t found = 0;
+          result.setup = mako_local_txn_get(
+              txn, table,
+              reinterpret_cast<const uint8_t *>("operation-conflict"), 18,
+              &value, &value_len, &found);
+          if (result.setup == MAKO_LOCAL_OK &&
+              (found != 1 || value == nullptr || value_len != 7 ||
+               std::string(reinterpret_cast<const char *>(value), value_len) !=
+                   "initial")) {
+            result.setup = MAKO_LOCAL_INTERNAL;
+          }
+          mako_local_bytes_free(value);
+
+          if (result.setup == MAKO_LOCAL_OK) {
+            conflict_writer = std::thread([&] {
+              conflict_writer_result.attach = mako_local_thread_attach();
+              if (conflict_writer_result.attach == MAKO_LOCAL_OK) {
+                conflict_writer_result.observer =
+                    mako_local_test_set_commit_observer(
+                        park_after_writeset_lock, &conflict_writer_observer);
+              }
+              mako_local_txn *writer_txn = nullptr;
+              if (conflict_writer_result.observer == MAKO_LOCAL_OK) {
+                conflict_writer_result.begin =
+                    mako_local_txn_begin(db, &writer_txn);
+              }
+              uint8_t writer_created = 0;
+              if (conflict_writer_result.begin == MAKO_LOCAL_OK) {
+                conflict_writer_result.put = mako_local_txn_put(
+                    writer_txn, table,
+                    reinterpret_cast<const uint8_t *>("operation-conflict"),
+                    18, reinterpret_cast<const uint8_t *>("updated"), 7,
+                    &writer_created);
+              }
+              if (conflict_writer_result.put == MAKO_LOCAL_OK) {
+                conflict_writer_result.commit =
+                    mako_local_txn_commit(writer_txn);
+              }
+              if (writer_txn != nullptr) {
+                conflict_writer_result.destroy =
+                    mako_local_txn_destroy(writer_txn);
+              }
+              if (conflict_writer_result.observer == MAKO_LOCAL_OK) {
+                conflict_writer_result.clear_observer =
+                    mako_local_test_clear_commit_observer();
+              }
+              conflict_writer_done.store(true, std::memory_order_release);
+            });
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::seconds(5);
+            while (!conflict_writer_parked.load(std::memory_order_acquire) &&
+                   !conflict_writer_done.load(std::memory_order_acquire) &&
+                   std::chrono::steady_clock::now() < deadline) {
+              std::this_thread::yield();
+            }
+            if (!conflict_writer_parked.load(std::memory_order_acquire)) {
+              result.setup = MAKO_LOCAL_INTERNAL;
+              conflict_writer_release.store(true, std::memory_order_release);
+            }
+          }
+        } else {
+          uint8_t created = 0;
+          result.setup = mako_local_txn_put(
+              txn, table, reinterpret_cast<const uint8_t *>("key"), 3,
+              reinterpret_cast<const uint8_t *>("value"), 5, &created);
+        }
+      }
+
+      result.invalid_arm = mako_local_test_arm_cleanup_failure(0);
+      result.arm = mako_local_test_arm_cleanup_failure(boundary);
+      result.second_arm = mako_local_test_arm_cleanup_failure(boundary);
+      if (result.setup == MAKO_LOCAL_OK) {
+        switch (boundary) {
+          case MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION: {
+            auto *const sentinel =
+                reinterpret_cast<uint8_t *>(uintptr_t{1});
+            uint8_t *value = sentinel;
+            size_t value_len = std::numeric_limits<size_t>::max();
+            uint8_t found = 99;
+            result.boundary_status = mako_local_txn_get(
+                txn, table,
+                reinterpret_cast<const uint8_t *>("operation-conflict"), 18,
+                &value, &value_len, &found);
+            result.operation_outputs_were_zeroed =
+                value == nullptr && value_len == 0 && found == 0;
+            if (value != sentinel) mako_local_bytes_free(value);
+            break;
+          }
+          case MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT:
+            result.boundary_status = mako_local_txn_commit(txn);
+            break;
+          case MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT:
+            result.boundary_status = mako_local_txn_abort(txn);
+            break;
+          case MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY:
+            result.boundary_status = mako_local_txn_destroy(txn);
+            break;
+          default:
+            result.boundary_status = MAKO_LOCAL_INVALID_ARGUMENT;
+            break;
+        }
+      }
+
+      if (conflict_writer.joinable()) {
+        conflict_writer_release.store(true, std::memory_order_release);
+        conflict_writer.join();
+        constexpr int expected_writer_statuses[] = {
+            MAKO_LOCAL_OK, MAKO_LOCAL_OK, MAKO_LOCAL_OK, MAKO_LOCAL_OK,
+            MAKO_LOCAL_OK, MAKO_LOCAL_OK, MAKO_LOCAL_OK};
+        const int actual_writer_statuses[] = {
+            conflict_writer_result.attach,
+            conflict_writer_result.observer,
+            conflict_writer_result.begin,
+            conflict_writer_result.put,
+            conflict_writer_result.commit,
+            conflict_writer_result.destroy,
+            conflict_writer_result.clear_observer};
+        for (size_t i = 0; i != std::size(expected_writer_statuses); ++i) {
+          if (result.setup == MAKO_LOCAL_OK &&
+              actual_writer_statuses[i] != expected_writer_statuses[i]) {
+            result.setup = actual_writer_statuses[i];
+          }
+        }
+      }
+      if (boundary != MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY && txn != nullptr)
+        result.destroy_probe = mako_local_txn_destroy(txn);
+    }
+
+    result.health_after = mako_local_worker_health();
+    result.health_again = mako_local_worker_health();
+    result.attach_after = mako_local_thread_attach();
+    result.arm_after = mako_local_test_arm_cleanup_failure(boundary);
+    auto *after = reinterpret_cast<mako_local_txn *>(uintptr_t{1});
+    result.begin_after = mako_local_txn_begin(db, &after);
+    result.begin_after_out_was_null = after == nullptr;
+    result.clear = mako_local_test_clear_cleanup_failure();
+    result.close = mako_local_db_close(db);
+
+    // `db`, its facade transaction, and native TLS are intentionally retained:
+    // this sacrificial worker has demonstrated quarantine and must never run
+    // native cleanup again.
+  });
+  worker.join();
+  return result;
+}
+
+TEST(MakoLocalAbiCleanupFailure,
+     EveryNativeCleanupBoundaryQuarantinesExactlyOnce) {
+  constexpr std::array<uint32_t, 5> boundaries{
+      MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN,
+      MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION,
+      MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT,
+      MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT,
+      MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY,
+  };
+  const uint64_t quarantined_before =
+      mako_local_quarantined_worker_count();
+
+  for (size_t i = 0; i != boundaries.size(); ++i) {
+    const uint32_t boundary = boundaries[i];
+    SCOPED_TRACE(boundary);
+    const CleanupFailureResult result = run_cleanup_failure(boundary);
+    EXPECT_EQ(result.health_before, MAKO_LOCAL_NOT_ATTACHED);
+    EXPECT_EQ(result.attach, MAKO_LOCAL_OK);
+    EXPECT_EQ(result.db_open, MAKO_LOCAL_OK);
+    EXPECT_EQ(result.table_open, MAKO_LOCAL_OK);
+    EXPECT_EQ(result.setup, MAKO_LOCAL_OK);
+    EXPECT_EQ(result.invalid_arm, MAKO_LOCAL_INVALID_ARGUMENT);
+    EXPECT_EQ(result.arm, MAKO_LOCAL_OK);
+    EXPECT_EQ(result.second_arm, MAKO_LOCAL_BUSY);
+    EXPECT_EQ(result.boundary_status, MAKO_LOCAL_WORKER_POISONED);
+    if (boundary == MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN) {
+      EXPECT_TRUE(result.boundary_begin_out_was_null);
+    } else {
+      EXPECT_EQ(result.begin, MAKO_LOCAL_OK);
+    }
+    if (boundary == MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION)
+      EXPECT_TRUE(result.operation_outputs_were_zeroed);
+    if (boundary != MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN &&
+        boundary != MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY) {
+      EXPECT_EQ(result.destroy_probe, MAKO_LOCAL_WORKER_POISONED);
+    }
+    EXPECT_EQ(result.health_after, MAKO_LOCAL_WORKER_POISONED);
+    EXPECT_EQ(result.health_again, MAKO_LOCAL_WORKER_POISONED);
+    EXPECT_EQ(result.attach_after, MAKO_LOCAL_WORKER_POISONED);
+    EXPECT_EQ(result.arm_after, MAKO_LOCAL_WORKER_POISONED);
+    EXPECT_EQ(result.begin_after, MAKO_LOCAL_WORKER_POISONED);
+    EXPECT_TRUE(result.begin_after_out_was_null);
+    EXPECT_EQ(result.clear, MAKO_LOCAL_WORKER_POISONED);
+    EXPECT_EQ(result.close, MAKO_LOCAL_BUSY);
+    EXPECT_EQ(mako_local_quarantined_worker_count(),
+              quarantined_before + i + 1);
+  }
+}
+
+TEST_F(LocalAbiTest, CleanupFailureArmCanBeClearedWithoutPoisoning) {
+  const uint64_t quarantined_before = mako_local_quarantined_worker_count();
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "clear-cleanup-failure", "value"),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(mako_local_test_arm_cleanup_failure(
+                MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT),
+            MAKO_LOCAL_OK);
+  ASSERT_EQ(mako_local_test_clear_cleanup_failure(), MAKO_LOCAL_OK);
+  abort_and_destroy(txn);
+
+  EXPECT_EQ(mako_local_worker_health(), MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_local_quarantined_worker_count(), quarantined_before);
+}
+
 TEST_F(LocalAbiTest,
        TestCommitObserverReportsOrderedSeamsAndCanBeCleared) {
   ASSERT_NE(mako_local_feature_bits() &

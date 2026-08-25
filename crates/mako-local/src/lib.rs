@@ -34,8 +34,16 @@ use std::rc::Rc;
 
 use mako_local_sys as sys;
 
+#[cfg(not(test))]
+use mako_local_sys as abi;
+#[cfg(test)]
+mod fake_abi;
+#[cfg(test)]
+use fake_abi as abi;
+
 /// A failure reported by the native local transaction boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Error {
     /// Optimistic validation or write locking rejected the transaction.
     Conflict,
@@ -57,8 +65,11 @@ pub enum Error {
     Busy,
     /// Native allocation, or a fallible allocation needed by this wrapper, failed.
     OutOfMemory,
-    /// Native state failed, violated an invariant, or became cleanup-uncertain.
+    /// Native state failed or violated an invariant. On commit, visibility may
+    /// consequently be uncertain.
     Internal,
+    /// Native cleanup could not be proved complete, so this worker is retired.
+    WorkerPoisoned,
     /// The linked legacy/no-RYW engine cannot compose two writes to one key.
     DuplicateWrite,
     /// The transaction exceeded a native item or write-set limit and was aborted.
@@ -121,7 +132,11 @@ impl fmt::Display for Error {
             ),
             Self::Busy => write!(f, "native resource is busy"),
             Self::OutOfMemory => write!(f, "native or wrapper allocation failed"),
-            Self::Internal => write!(f, "the local ABI entered an internal or uncertain state"),
+            Self::Internal => write!(f, "the local ABI reported an internal failure"),
+            Self::WorkerPoisoned => write!(
+                f,
+                "native transaction cleanup is uncertain and this worker is quarantined"
+            ),
             Self::DuplicateWrite => write!(
                 f,
                 "the linked engine requires read-your-writes support to mutate one key twice"
@@ -324,6 +339,12 @@ impl Features {
         self.0 & sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER != 0
     }
 
+    /// Deterministic native cleanup-failure injection is compiled in for tests.
+    #[doc(hidden)]
+    pub const fn test_cleanup_failures(self) -> bool {
+        self.0 & sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES != 0
+    }
+
     /// Raw ABI feature bits, including future bits unknown to this crate.
     pub const fn bits(self) -> u64 {
         self.0
@@ -334,7 +355,7 @@ impl Features {
 pub fn features() -> Result<Features> {
     verify_abi()?;
     // SAFETY: pure ABI identity accessor.
-    Ok(Features(unsafe { sys::mako_local_feature_bits() }))
+    Ok(Features(unsafe { abi::mako_local_feature_bits() }))
 }
 
 /// Install a test-only synchronous commit observer on the current attached
@@ -357,7 +378,7 @@ pub fn install_test_commit_observer(observer: TestCommitObserver) -> Result<()> 
         // SAFETY: the trampoline and its null context are static. Native stores
         // them only in this thread's TLS until the paired clear call.
         status(unsafe {
-            sys::mako_local_test_set_commit_observer(
+            abi::mako_local_test_set_commit_observer(
                 Some(test_commit_observer_trampoline),
                 std::ptr::null_mut(),
             )
@@ -375,14 +396,85 @@ pub fn install_test_commit_observer(observer: TestCommitObserver) -> Result<()> 
 pub fn clear_test_commit_observer() -> Result<()> {
     verify_abi()?;
     // SAFETY: registration is thread-local and native clear is idempotent.
-    status(unsafe { sys::mako_local_test_clear_commit_observer() })?;
+    status(unsafe { abi::mako_local_test_clear_commit_observer() })?;
     TEST_COMMIT_OBSERVER.with(|slot| slot.set(None));
     Ok(())
 }
 
+/// Native cleanup boundary targeted by the deterministic test failpoint.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TestCleanupBoundary {
+    /// Cleanup after transaction startup fails.
+    Begin = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN,
+    /// Cleanup after a point or scan operation fails.
+    Operation = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION,
+    /// Cleanup after commit fails.
+    Commit = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT,
+    /// Explicit or drop-driven abort cleanup fails.
+    Abort = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT,
+    /// Final facade destruction fails.
+    Destroy = sys::MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY,
+}
+
+/// Arm a one-shot native cleanup failure on the current worker.
+#[doc(hidden)]
+pub fn arm_test_cleanup_failure(boundary: TestCleanupBoundary) -> Result<()> {
+    verify_abi()?;
+    // SAFETY: scalar-only test control; native state is thread-local.
+    status(unsafe { abi::mako_local_test_arm_cleanup_failure(boundary as u32) })
+}
+
+/// Clear any unconsumed cleanup failure on the current worker.
+#[doc(hidden)]
+pub fn clear_test_cleanup_failure() -> Result<()> {
+    verify_abi()?;
+    // SAFETY: scalar-only idempotent test control.
+    status(unsafe { abi::mako_local_test_clear_cleanup_failure() })
+}
+
+/// Health of the current OS worker's native transaction runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "poisoned workers must be retired"]
+pub enum WorkerHealth {
+    /// This worker has not been attached to the local STO runtime.
+    NotAttached,
+    /// The worker is attached and remains safe for transactions.
+    Healthy,
+    /// Cleanup is uncertain and the worker must be retired permanently.
+    Poisoned,
+}
+
+/// Query the current OS worker's native transaction health.
+///
+/// Unlike ordinary operations, the two expected negative states are returned
+/// as values. `Err` is reserved for ABI drift or a status outside the health
+/// query's contract.
+pub fn worker_health() -> Result<WorkerHealth> {
+    verify_abi()?;
+    // SAFETY: scalar-only thread-local health query.
+    let code = unsafe { abi::mako_local_worker_health() };
+    match sys::KnownStatus::from_code(code) {
+        Some(sys::KnownStatus::Ok) => Ok(WorkerHealth::Healthy),
+        Some(sys::KnownStatus::NotAttached) => Ok(WorkerHealth::NotAttached),
+        Some(sys::KnownStatus::WorkerPoisoned) => Ok(WorkerHealth::Poisoned),
+        Some(status) => Err(known_status(status)
+            .expect_err("only native success maps to Ok, and it was handled above")),
+        None => Err(Error::UnknownStatus(code)),
+    }
+}
+
+/// Return the process-wide number of workers quarantined by uncertain cleanup.
+pub fn quarantined_worker_count() -> Result<u64> {
+    verify_abi()?;
+    // SAFETY: pure atomic diagnostic accessor.
+    Ok(unsafe { abi::mako_local_quarantined_worker_count() })
+}
+
 fn verify_abi() -> Result<()> {
     // SAFETY: pure ABI identity accessor.
-    let found = unsafe { sys::mako_local_abi_version() };
+    let found = unsafe { abi::mako_local_abi_version() };
     if found != sys::MAKO_LOCAL_ABI_VERSION {
         return Err(Error::AbiMismatch {
             expected: sys::MAKO_LOCAL_ABI_VERSION,
@@ -395,13 +487,13 @@ fn verify_abi() -> Result<()> {
             "mako_local_scan_options",
             sys::MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE as usize,
             // SAFETY: pure ABI identity accessor.
-            unsafe { sys::mako_local_scan_options_size() },
+            unsafe { abi::mako_local_scan_options_size() },
         ),
         (
             "mako_local_scan_entry",
             std::mem::size_of::<sys::mako_local_scan_entry>(),
             // SAFETY: pure ABI identity accessor.
-            unsafe { sys::mako_local_scan_entry_size() },
+            unsafe { abi::mako_local_scan_entry_size() },
         ),
     ] {
         if expected != found {
@@ -417,7 +509,7 @@ fn verify_abi() -> Result<()> {
         let code = native_status.code();
         // SAFETY: the native function returns a static NUL-terminated string
         // for every integer. A null pointer is still treated as ABI drift.
-        let message = unsafe { sys::mako_local_status_string(code) };
+        let message = unsafe { abi::mako_local_status_string(code) };
         if message.is_null()
             // SAFETY: non-null native status strings have static lifetime.
             || unsafe { CStr::from_ptr(message) }.to_bytes() != native_status.message().as_bytes()
@@ -449,6 +541,7 @@ fn known_status(status: sys::KnownStatus) -> Result<()> {
         sys::KnownStatus::Busy => Err(Error::Busy),
         sys::KnownStatus::OutOfMemory => Err(Error::OutOfMemory),
         sys::KnownStatus::Internal => Err(Error::Internal),
+        sys::KnownStatus::WorkerPoisoned => Err(Error::WorkerPoisoned),
         sys::KnownStatus::DuplicateWrite => Err(Error::DuplicateWrite),
         sys::KnownStatus::TxnTooLarge => Err(Error::TransactionTooLarge),
         sys::KnownStatus::ValueTooLarge => Err(Error::ValueTooLarge),
@@ -463,6 +556,7 @@ fn known_status(status: sys::KnownStatus) -> Result<()> {
 enum OperationEffect {
     Active,
     Finished,
+    Quarantined,
     Uncertain,
 }
 
@@ -480,7 +574,8 @@ fn operation_effect(code: i32) -> OperationEffect {
         | sys::KnownStatus::BufferTooSmall => OperationEffect::Active,
         sys::KnownStatus::Conflict
         | sys::KnownStatus::OutOfMemory
-        | sys::KnownStatus::TxnTooLarge => OperationEffect::Finished,
+        | sys::KnownStatus::TxnTooLarge
+        | sys::KnownStatus::Internal => OperationEffect::Finished,
         // These statuses are either cleanup-uncertain or outside the point and
         // scan operation contract. Fail closed if a linked implementation
         // returns one through that surface.
@@ -489,10 +584,10 @@ fn operation_effect(code: i32) -> OperationEffect {
         | sys::KnownStatus::TxnFinished
         | sys::KnownStatus::ThreadLimit
         | sys::KnownStatus::Busy
-        | sys::KnownStatus::Internal
         | sys::KnownStatus::CommitHookRejected
         | sys::KnownStatus::TimestampExhausted
         | sys::KnownStatus::FeatureUnavailable => OperationEffect::Uncertain,
+        sys::KnownStatus::WorkerPoisoned => OperationEffect::Quarantined,
     }
 }
 
@@ -523,7 +618,8 @@ fn commit_disposition(code: i32) -> CommitDisposition {
         | sys::KnownStatus::TxnTooLarge
         | sys::KnownStatus::ValueTooLarge
         | sys::KnownStatus::BufferTooSmall
-        | sys::KnownStatus::FeatureUnavailable => CommitDisposition::Unknown(
+        | sys::KnownStatus::FeatureUnavailable
+        | sys::KnownStatus::WorkerPoisoned => CommitDisposition::Unknown(
             known_status(status).expect_err("a non-success native status has a typed error"),
         ),
     }
@@ -540,12 +636,12 @@ fn commit_disposition(code: i32) -> CommitDisposition {
 pub fn advance_mako_timestamp_past(observed: MakoTimestamp) -> Result<()> {
     verify_abi()?;
     // SAFETY: scalar-only process-global monotonic operation.
-    status(unsafe { sys::mako_local_advance_mako_timestamp_past(observed.get()) })
+    status(unsafe { abi::mako_local_advance_mako_timestamp_past(observed.get()) })
 }
 
 fn attach_current_thread() -> Result<()> {
     // SAFETY: no pointer arguments; native side is idempotent per OS thread.
-    status(unsafe { sys::mako_local_thread_attach() })
+    status(unsafe { abi::mako_local_thread_attach() })
 }
 
 /// A local in-memory Mako database using the C++ STO/MassTrans engine.
@@ -571,7 +667,7 @@ impl LocalDb {
         attach_current_thread()?;
         let mut raw = std::ptr::null_mut();
         // SAFETY: `raw` is a valid out-pointer and is checked before use.
-        status(unsafe { sys::mako_local_db_open(&mut raw) })?;
+        status(unsafe { abi::mako_local_db_open(&mut raw) })?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
         Ok(Self { raw })
     }
@@ -588,7 +684,7 @@ impl LocalDb {
         // SAFETY: database is live; name is borrowed for this call only; raw
         // is a valid out-pointer. Native code copies the name.
         status(unsafe {
-            sys::mako_local_table_open(
+            abi::mako_local_table_open(
                 self.raw.as_ptr(),
                 name.as_ptr(),
                 name.len(),
@@ -611,7 +707,7 @@ impl LocalDb {
         attach_current_thread()?;
         let mut raw = std::ptr::null_mut();
         // SAFETY: database is live and raw is a valid out-pointer.
-        status(unsafe { sys::mako_local_txn_begin(self.raw.as_ptr(), &mut raw) })?;
+        status(unsafe { abi::mako_local_txn_begin(self.raw.as_ptr(), &mut raw) })?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
         Ok(Transaction {
             raw: Some(raw),
@@ -633,7 +729,7 @@ impl LocalDb {
         let this = std::mem::ManuallyDrop::new(self);
         // SAFETY: consuming `self` makes this the facade handle's final use.
         // ManuallyDrop prevents a second close regardless of the status.
-        status(unsafe { sys::mako_local_db_close(this.raw.as_ptr()) })
+        status(unsafe { abi::mako_local_db_close(this.raw.as_ptr()) })
     }
 }
 
@@ -642,7 +738,7 @@ impl Drop for LocalDb {
         // SAFETY: this is the unique facade handle returned by open. If a
         // transaction was deliberately forgotten, native close returns BUSY
         // without freeing anything; leaking is required for memory safety.
-        let _ = unsafe { sys::mako_local_db_close(self.raw.as_ptr()) };
+        let _ = unsafe { abi::mako_local_db_close(self.raw.as_ptr()) };
     }
 }
 
@@ -670,7 +766,7 @@ impl Table<'_> {
     /// Stable table identifier supplied at open.
     pub fn id(&self) -> u64 {
         // SAFETY: table handle remains live through its database borrow.
-        unsafe { sys::mako_local_table_id(self.raw.as_ptr()) }
+        unsafe { abi::mako_local_table_id(self.raw.as_ptr()) }
     }
 }
 
@@ -783,23 +879,10 @@ impl<'txn, 'db> Scan<'txn, 'db> {
         })
     }
 
-    fn poison(&mut self) {
-        if !self.transaction.active {
-            return;
-        }
-        if let Some(raw) = self.transaction.raw {
-            // SAFETY: Scan's exclusive transaction borrow proves the live
-            // thread-affine handle cannot be used concurrently. A wrapper-side
-            // failure must abort so incomplete results cannot later commit.
-            let _ = unsafe { sys::mako_local_txn_abort(raw.as_ptr()) };
-        }
-        self.transaction.active = false;
-    }
-
     fn fail<T>(&mut self, error: Error) -> Result<T> {
-        self.poison();
+        let result = self.transaction.fail_closed(error);
         self.done = true;
-        Err(error)
+        result
     }
 
     fn grow_arena(&mut self, required: usize) -> Result<()> {
@@ -874,7 +957,7 @@ impl<'txn, 'db> Scan<'txn, 'db> {
             // supplied descriptor and arena capacities and retains nothing.
             let code = unsafe {
                 match self.direction {
-                    ScanDirection::Forward => sys::mako_local_txn_scan_chunk(
+                    ScanDirection::Forward => abi::mako_local_txn_scan_chunk(
                         raw,
                         self.table.raw.as_ptr(),
                         &options,
@@ -887,7 +970,7 @@ impl<'txn, 'db> Scan<'txn, 'db> {
                         &mut arena_required,
                         &mut done,
                     ),
-                    ScanDirection::Reverse => sys::mako_local_txn_rscan_chunk(
+                    ScanDirection::Reverse => abi::mako_local_txn_rscan_chunk(
                         raw,
                         self.table.raw.as_ptr(),
                         &options,
@@ -920,6 +1003,7 @@ impl<'txn, 'db> Scan<'txn, 'db> {
             }
             if entry_count > self.entries.len()
                 || arena_used > self.arena.len()
+                || arena_required != 0
                 || done > 1
                 || (entry_count == 0 && done == 0)
             {
@@ -1026,6 +1110,31 @@ impl<'db> Transaction<'db> {
         status(code)
     }
 
+    fn abort_after_wrapper_failure(&mut self) -> Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+        let cleanup = if let Some(raw) = self.raw {
+            // SAFETY: the wrapper holds the unique, live, thread-affine
+            // transaction facade. Malformed native output must never be
+            // allowed to reach commit; Drop performs the one later destroy.
+            status(unsafe { abi::mako_local_txn_abort(raw.as_ptr()) })
+        } else {
+            Ok(())
+        };
+        // The abort call is terminal whether cleanup completed or quarantined
+        // the worker. Drop must only perform the one-shot destroy probe.
+        self.active = false;
+        cleanup
+    }
+
+    fn fail_closed<T>(&mut self, error: Error) -> Result<T> {
+        match self.abort_after_wrapper_failure() {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(cleanup),
+        }
+    }
+
     /// Scan `[lower, upper)` in ascending binary-key order.
     ///
     /// `None` for `upper` means the range is unbounded above. Earlier staged
@@ -1061,7 +1170,7 @@ impl<'db> Transaction<'db> {
         // SAFETY: all slices remain valid for the call, out-pointers are live,
         // and the native result is copied before being freed below.
         let code = unsafe {
-            sys::mako_local_txn_get(
+            abi::mako_local_txn_get(
                 self.active_raw()?,
                 table.raw.as_ptr(),
                 key.as_ptr(),
@@ -1073,13 +1182,26 @@ impl<'db> Transaction<'db> {
         };
         let owned = ForeignBytes(bytes);
         self.operation_status(code)?;
-        if found == 0 {
-            return Ok(None);
+        if found > 1 || len > MAX_VALUE_BYTES {
+            return self.fail_closed(Error::Internal);
         }
-        let bytes = NonNull::new(owned.0).ok_or(Error::Internal)?;
+        if found == 0 {
+            return if owned.0.is_null() && len == 0 {
+                Ok(None)
+            } else {
+                self.fail_closed(Error::Internal)
+            };
+        }
+        let Some(bytes) = NonNull::new(owned.0) else {
+            return self.fail_closed(Error::Internal);
+        };
         // SAFETY: native get allocated at least one byte and reports the
         // initialized payload length; ForeignBytes keeps it live through copy.
-        let result = unsafe { std::slice::from_raw_parts(bytes.as_ptr(), len) }.to_vec();
+        let borrowed = unsafe { std::slice::from_raw_parts(bytes.as_ptr(), len) };
+        let result = match copy_scan_bytes(borrowed) {
+            Ok(result) => result,
+            Err(error) => return self.fail_closed(error),
+        };
         Ok(Some(result))
     }
 
@@ -1090,7 +1212,7 @@ impl<'db> Transaction<'db> {
         // SAFETY: input slices live through the call. C++ copies/encodes the
         // value into transaction-owned stable storage before returning.
         let code = unsafe {
-            sys::mako_local_txn_put(
+            abi::mako_local_txn_put(
                 self.active_raw()?,
                 table.raw.as_ptr(),
                 key.as_ptr(),
@@ -1101,6 +1223,9 @@ impl<'db> Transaction<'db> {
             )
         };
         self.operation_status(code)?;
+        if created > 1 {
+            return self.fail_closed(Error::Internal);
+        }
         Ok(created != 0)
     }
 
@@ -1110,7 +1235,7 @@ impl<'db> Transaction<'db> {
         let mut inserted = 0u8;
         // SAFETY: same ownership contract as put.
         let code = unsafe {
-            sys::mako_local_txn_insert(
+            abi::mako_local_txn_insert(
                 self.active_raw()?,
                 table.raw.as_ptr(),
                 key.as_ptr(),
@@ -1121,6 +1246,9 @@ impl<'db> Transaction<'db> {
             )
         };
         self.operation_status(code)?;
+        if inserted > 1 {
+            return self.fail_closed(Error::Internal);
+        }
         Ok(inserted != 0)
     }
 
@@ -1130,7 +1258,7 @@ impl<'db> Transaction<'db> {
         let mut existed = 0u8;
         // SAFETY: key slice lives through the call and existed is writable.
         let code = unsafe {
-            sys::mako_local_txn_remove(
+            abi::mako_local_txn_remove(
                 self.active_raw()?,
                 table.raw.as_ptr(),
                 key.as_ptr(),
@@ -1139,6 +1267,9 @@ impl<'db> Transaction<'db> {
             )
         };
         self.operation_status(code)?;
+        if existed > 1 {
+            return self.fail_closed(Error::Internal);
+        }
         Ok(existed != 0)
     }
 
@@ -1166,7 +1297,7 @@ impl<'db> Transaction<'db> {
     pub fn commit_report(self) -> CommitReport {
         self.finish_commit(|raw| {
             // SAFETY: handle is live, active, and cannot have moved threads.
-            unsafe { sys::mako_local_txn_commit(raw) }
+            unsafe { abi::mako_local_txn_commit(raw) }
         })
     }
 
@@ -1196,7 +1327,7 @@ impl<'db> Transaction<'db> {
             // SAFETY: native invokes the callback synchronously at most once
             // and does not retain the stack context after returning.
             unsafe {
-                sys::mako_local_txn_commit_with_hook(
+                abi::mako_local_txn_commit_with_hook(
                     raw,
                     Some(post_validate_trampoline::<F>),
                     std::ptr::from_mut(&mut state).cast::<c_void>(),
@@ -1217,7 +1348,7 @@ impl<'db> Transaction<'db> {
             // An earlier terminal operation may have ended or quarantined
             // native state. Destroy frees a clean terminal handle or reports
             // quarantine, but commit must never touch either state.
-            let destroy = unsafe { sys::mako_local_txn_destroy(raw.as_ptr()) };
+            let destroy = unsafe { abi::mako_local_txn_destroy(raw.as_ptr()) };
             return CommitReport {
                 disposition: CommitDisposition::Aborted(Error::TransactionFinished),
                 cleanup: status(destroy),
@@ -1226,7 +1357,7 @@ impl<'db> Transaction<'db> {
         self.active = false;
         let commit = native_commit(raw.as_ptr());
         // SAFETY: commit is terminal; destroy only frees the facade handle.
-        let destroy = unsafe { sys::mako_local_txn_destroy(raw.as_ptr()) };
+        let destroy = unsafe { abi::mako_local_txn_destroy(raw.as_ptr()) };
         let disposition = commit_disposition(commit);
         CommitReport {
             disposition,
@@ -1244,15 +1375,15 @@ impl<'db> Transaction<'db> {
             // A prior terminal operation may already have finished or
             // quarantined native state. In particular, never retry abort after
             // INTERNAL: the ABI permits only the one-shot destroy probe.
-            let destroy = unsafe { sys::mako_local_txn_destroy(raw.as_ptr()) };
+            let destroy = unsafe { abi::mako_local_txn_destroy(raw.as_ptr()) };
             status(destroy)?;
             return Err(Error::TransactionFinished);
         }
         self.active = false;
         // SAFETY: handle is live, active, and thread-affine by type.
-        let abort = unsafe { sys::mako_local_txn_abort(raw.as_ptr()) };
+        let abort = unsafe { abi::mako_local_txn_abort(raw.as_ptr()) };
         // SAFETY: abort is terminal.
-        let destroy = unsafe { sys::mako_local_txn_destroy(raw.as_ptr()) };
+        let destroy = unsafe { abi::mako_local_txn_destroy(raw.as_ptr()) };
         status(abort)?;
         status(destroy)
     }
@@ -1310,10 +1441,10 @@ impl Drop for Transaction<'_> {
         };
         if self.active {
             // SAFETY: !Send keeps Drop on the creator thread in safe Rust.
-            let _ = unsafe { sys::mako_local_txn_abort(raw.as_ptr()) };
+            let _ = unsafe { abi::mako_local_txn_abort(raw.as_ptr()) };
         }
         // SAFETY: handle is no longer used after this call.
-        let _ = unsafe { sys::mako_local_txn_destroy(raw.as_ptr()) };
+        let _ = unsafe { abi::mako_local_txn_destroy(raw.as_ptr()) };
     }
 }
 
@@ -1323,7 +1454,7 @@ impl Drop for ForeignBytes {
     fn drop(&mut self) {
         // SAFETY: null is accepted; any non-null pointer came from native get
         // and is freed exactly once by this guard.
-        unsafe { sys::mako_local_bytes_free(self.0.cast::<c_void>()) };
+        unsafe { abi::mako_local_bytes_free(self.0.cast::<c_void>()) };
     }
 }
 
@@ -1379,6 +1510,28 @@ mod tests {
         assert_eq!(TestCommitPhase::from_raw(u32::MAX), None);
         assert!(Features(sys::MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER).test_commit_observer());
         assert!(!Features(0).test_commit_observer());
+        assert!(Features(sys::MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES).test_cleanup_failures());
+        assert!(!Features(0).test_cleanup_failures());
+        assert_eq!(
+            TestCleanupBoundary::Begin as u32,
+            sys::MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN
+        );
+        assert_eq!(
+            TestCleanupBoundary::Operation as u32,
+            sys::MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION
+        );
+        assert_eq!(
+            TestCleanupBoundary::Commit as u32,
+            sys::MAKO_LOCAL_CLEANUP_BOUNDARY_COMMIT
+        );
+        assert_eq!(
+            TestCleanupBoundary::Abort as u32,
+            sys::MAKO_LOCAL_CLEANUP_BOUNDARY_ABORT
+        );
+        assert_eq!(
+            TestCleanupBoundary::Destroy as u32,
+            sys::MAKO_LOCAL_CLEANUP_BOUNDARY_DESTROY
+        );
     }
 
     #[test]
@@ -1427,6 +1580,7 @@ mod tests {
                 sys::MAKO_LOCAL_FEATURE_UNAVAILABLE,
                 Err(Error::FeatureUnavailable),
             ),
+            (sys::MAKO_LOCAL_WORKER_POISONED, Err(Error::WorkerPoisoned)),
         ];
 
         assert_eq!(cases.len(), sys::ALL_KNOWN_STATUSES.len());
@@ -1451,16 +1605,17 @@ mod tests {
                 | sys::KnownStatus::BufferTooSmall => OperationEffect::Active,
                 sys::KnownStatus::Conflict
                 | sys::KnownStatus::OutOfMemory
-                | sys::KnownStatus::TxnTooLarge => OperationEffect::Finished,
+                | sys::KnownStatus::TxnTooLarge
+                | sys::KnownStatus::Internal => OperationEffect::Finished,
                 sys::KnownStatus::NotAttached
                 | sys::KnownStatus::TxnAlreadyActive
                 | sys::KnownStatus::TxnFinished
                 | sys::KnownStatus::ThreadLimit
                 | sys::KnownStatus::Busy
-                | sys::KnownStatus::Internal
                 | sys::KnownStatus::CommitHookRejected
                 | sys::KnownStatus::TimestampExhausted
                 | sys::KnownStatus::FeatureUnavailable => OperationEffect::Uncertain,
+                sys::KnownStatus::WorkerPoisoned => OperationEffect::Quarantined,
             };
             assert_eq!(operation_effect(status.code()), expected, "{status:?}");
         }
@@ -1494,7 +1649,8 @@ mod tests {
                 | sys::KnownStatus::TxnTooLarge
                 | sys::KnownStatus::ValueTooLarge
                 | sys::KnownStatus::BufferTooSmall
-                | sys::KnownStatus::FeatureUnavailable => CommitDisposition::Unknown(
+                | sys::KnownStatus::FeatureUnavailable
+                | sys::KnownStatus::WorkerPoisoned => CommitDisposition::Unknown(
                     known_status(status).expect_err("non-success status has a typed error"),
                 ),
             };
