@@ -1,0 +1,18 @@
+[package]
+name = "srpc"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+members = ["rusty-cpp-markers", "rusty-rustc"]
+resolver = "2"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+rusty = { path = "rusty-rustc" }
+
+[lints.rust]
+unsafe_code = "deny"
