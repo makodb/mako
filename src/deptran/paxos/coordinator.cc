@@ -222,6 +222,14 @@ void BulkCoordinatorMultiPaxos::Commit() {
     // overload handles the cast.
     const auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
     verify(cmd_temp1.is_some());
+    bool terminal_batch = false;
+    for (const auto& command : cmd_temp1.unwrap()->cmds) {
+      const auto entry = marshallable_cast<LogEntry>(*command);
+      if (entry.is_some() && entry.unwrap()->length == 0) {
+        terminal_batch = true;
+        break;
+      }
+    }
     // Fill-then-wrap: build the payload as a local, wrap once complete.
     PaxosPrepCmd prep_cmd;
     prep_cmd.slots = cmd_temp1.unwrap()->slots;
@@ -231,11 +239,27 @@ void BulkCoordinatorMultiPaxos::Commit() {
 
     auto ess_cc = es_cc;
     // Log_info("About to call BroadcastBulkDecide from Commit()");
-    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, std::move(commit_cmd), [ess_cc](ballot_t ballot, int valid){
-      if(!valid){
-        ess_cc->step_down(ballot);
+    auto sp_quorum = commo()->BroadcastBulkDecide(
+        par_id_, std::move(commit_cmd),
+        [ess_cc](ballot_t ballot, int valid) {
+          if (!valid) {
+            ess_cc->step_down(ballot);
+          }
+        });
+    if (terminal_batch) {
+      // Normal batches keep their asynchronous decide path. For END, make a
+      // bounded best-effort wait for the existing Paxos quorum before the
+      // submit is reported complete. Do not require every replica: a missing
+      // follower must not turn graceful shutdown into a liveness failure.
+      constexpr uint64_t kTerminalDecideTimeoutUs = 30'000'000;
+      sp_quorum->wait_timeout(kTerminalDecideTimeoutUs);
+      if (!sp_quorum->yes()) {
+        Log_warn("terminal BulkDecide did not reach quorum for partition {} "
+                 "within 30s (yes={}, no={}, required={}); continuing shutdown",
+                 par_id_, sp_quorum->q().n_voted_yes_.get(),
+                 sp_quorum->q().n_voted_no_.get(), sp_quorum->q().quorum_);
       }
-    });
+    }
     // Log_info("Called BroadcastBulkDecide from Commit()");
     // it's not necessary to wait for a majority of commits
   //   sp_quorum->wait();

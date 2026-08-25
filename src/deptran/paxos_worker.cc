@@ -271,8 +271,13 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
     coord->loc_id_ = site_info_->locale_id;
 
     coord->BulkSubmit(sp_m, [this, cnt]() {
-      this->n_current += cnt;
-      if(this->n_current >= this->n_tot)this->finish_cond.notify_all();
+      {
+        // Pair the predicate update with the waiter's mutex so completion
+        // cannot race between its predicate check and wait_for parking.
+        std::lock_guard<std::mutex> lock(this->finish_mutex);
+        this->n_current += cnt;
+      }
+      this->finish_cond.notify_all();
     });
 }
 
@@ -461,6 +466,18 @@ void PaxosWorker::WaitForSubmit() {
     }
   }
   Log_debug("finish task.");
+}
+
+bool PaxosWorker::WaitForSubmitFor(std::chrono::milliseconds timeout) {
+  std::unique_lock<std::mutex> lock(finish_mutex);
+  const bool finished = finish_cond.wait_for(lock, timeout, [this]() {
+    return n_current.load() >= n_tot.load();
+  });
+  if (!finished) {
+    Log_error("timed out waiting for Paxos submissions: n_tot={}, n_current={}",
+              n_tot.load(), n_current.load());
+  }
+  return finished;
 }
 
 void PaxosWorker::InitQueueRead(){

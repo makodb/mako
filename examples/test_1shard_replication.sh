@@ -4,7 +4,8 @@
 # Each shard should:
 # 1. Show "agg_persist_throughput" keyword
 # 2. Have NewOrder_remote_abort_ratio < 20%, or N/A when no remote txns occur
-# 3. Followers drain and replay the leader's log (> MAKO_REPLAY_BATCH_MIN batches)
+# 3. The follower receives END from every partition and replays the leader's
+#    log (> MAKO_REPLAY_BATCH_MIN batches; default 0 requires one batch)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
@@ -159,52 +160,59 @@ if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     timed_out=1
 fi
 
-# Give the follower a grace window to DRAIN REPLAY LAG before we kill
-# it: the leader finishing does not mean p1 has consumed the log tail,
-# and killing mid-lag snapshots an arbitrary replay_batch count (CI
-# saw 256/478 vs the >500 check on slow shared runners — the check's
-# intent is "replication works", not "follower keeps up in real
-# time"). Progress-aware: keep waiting while the counter still
-# advances (throttled CI replays a few batches/sec, so a fixed budget
-# races the backlog size), stop early once it clears the threshold,
-# and bail if it stalls — frozen means drained-or-stuck, and waiting
-# longer can't change the verdict. wait_for_termination (mako.hh) now
-# keeps logging replay_batch while draining, so a stall is a real
-# signal, not the logger going silent.
+# Give the follower a grace window to receive every partition's END and
+# demonstrate replay before we kill it. replay_batch volume depends on runner
+# scheduling and the leader's batch production, so completion and liveness are
+# separate invariants: all ENDs plus positive progress. An explicit
+# MAKO_REPLAY_BATCH_MIN can still impose a higher floor for targeted stress runs.
 log_p1_drain="${script_name}_shard0-p1-$trd.log"
 drain_budget="${MAKO_REPLAY_DRAIN_SECONDS:-240}"
 drain_stall_budget="${MAKO_REPLAY_DRAIN_STALL_SECONDS:-20}"
-# Threshold on the follower's replay_batch counter. Intent: "replication
-# works", not a throughput bar — now that the follower drains its backlog
-# before teardown, the counter converges to the LEADER's total batch
-# production, which under the CI CPU throttle has been observed as low as
-# ~530 (green runs: 529/766). 500 left no margin for slower runners; 200
-# still requires substantial replay while tolerating leader-side variance.
-replay_min="${MAKO_REPLAY_BATCH_MIN:-200}"
-drained=0
+end_wait_budget="${MAKO_REPLAY_END_WAIT_SECONDS:-45}"
+if ! [[ "$end_wait_budget" =~ ^[0-9]+$ ]] || [ "$end_wait_budget" -le 0 ]; then
+    echo "Warning: MAKO_REPLAY_END_WAIT_SECONDS='${end_wait_budget}' is invalid; using default 45s"
+    end_wait_budget=45
+fi
+# The strict-greater-than check makes the default require at least one batch.
+replay_min="${MAKO_REPLAY_BATCH_MIN:-0}"
+if ! [[ "$replay_min" =~ ^[0-9]+$ ]]; then
+    echo "Warning: MAKO_REPLAY_BATCH_MIN='${replay_min}' is invalid; using default 0"
+    replay_min=0
+fi
+end_marker="follower received all end signals: ${trd}/${trd} ended"
+follower_complete=0
 last_rb=""
 stall=0
 for ((i = 0; i < drain_budget; i++)); do
     rb=$(grep "replay_batch:" "$log_p1_drain" 2>/dev/null | tail -1 | sed -n 's/.*replay_batch:\([0-9]*\).*/\1/p')
-    if [ -n "$rb" ] && [ "$rb" -gt "$replay_min" ]; then
-        echo "Follower replay drained: replay_batch=$rb after ${i}s"
-        drained=1
+    all_ends=0
+    if grep -Fq "$end_marker" "$log_p1_drain" 2>/dev/null; then
+        all_ends=1
+    fi
+    if [ "$all_ends" -eq 1 ] && [ -n "$rb" ] && [ "$rb" -gt "$replay_min" ]; then
+        echo "Follower complete: all ${trd} ENDs received, replay_batch=$rb after ${i}s"
+        follower_complete=1
         break
     fi
-    if [ -n "$rb" ] && [ "$rb" != "$last_rb" ]; then
-        last_rb="$rb"
-        stall=0
-    else
-        stall=$((stall + 1))
-    fi
-    if [ "$stall" -ge "$drain_stall_budget" ]; then
-        echo "Note: follower replay stalled at ${rb:-none} for ${drain_stall_budget}s (${i}s total) - giving up drain"
+    if [ "$all_ends" -eq 1 ]; then
+        if [ -n "$rb" ] && [ "$rb" != "$last_rb" ]; then
+            last_rb="$rb"
+            stall=0
+        else
+            stall=$((stall + 1))
+        fi
+        if [ "$stall" -ge "$drain_stall_budget" ]; then
+            echo "Note: follower replay stalled at ${rb:-none} after all ENDs for ${drain_stall_budget}s (${i}s total)"
+            break
+        fi
+    elif [ "$i" -ge "$end_wait_budget" ]; then
+        echo "Note: follower did not receive all ${trd} ENDs within ${end_wait_budget}s"
         break
     fi
     sleep 1
 done
-if [ "$drained" -eq 0 ] && [ "$stall" -lt "$drain_stall_budget" ]; then
-    echo "Note: follower replay still below threshold after ${drain_budget}s grace (last: ${rb:-none})"
+if [ "$follower_complete" -eq 0 ] && [ "$i" -ge "$drain_budget" ]; then
+    echo "Note: follower did not complete after ${drain_budget}s grace (last replay_batch: ${rb:-none})"
 fi
 
 # Graceful shutdown: SIGTERM first
@@ -302,6 +310,13 @@ if [ ! -f "$log_p1" ]; then
     echo "  ✗ $log_p1 file not found"
     failed=1
 else
+    if grep -Fq "$end_marker" "$log_p1" 2>/dev/null; then
+        echo "  ✓ Received END from all $trd partitions"
+    else
+        echo "  ✗ Did not receive END from all $trd partitions"
+        failed=1
+    fi
+
     # Get the last occurrence of replay_batch
     last_replay_batch=$(grep "replay_batch:" "$log_p1" | tail -1)
     
@@ -317,13 +332,13 @@ else
             echo "    Last line: $last_replay_batch"
             failed=1
         else
-            # The test verifies replication is working, not exact batch count.
-            # Threshold rationale at the drain loop above (default 200,
-            # override via MAKO_REPLAY_BATCH_MIN).
-            if [ "$replay_count" -gt "${replay_min:-200}" ]; then
-                echo "  ✓ replay_batch: $replay_count (> ${replay_min:-200})"
+            # Positive replay proves the follower consumed leader log data.
+            # Batch volume is scheduling-dependent; callers may opt into a
+            # higher floor with MAKO_REPLAY_BATCH_MIN.
+            if [ "$replay_count" -gt "$replay_min" ]; then
+                echo "  ✓ replay_batch: $replay_count (> $replay_min)"
             else
-                echo "  ✗ replay_batch: $replay_count (should be > ${replay_min:-200})"
+                echo "  ✗ replay_batch: $replay_count (should be > $replay_min)"
                 failed=1
             fi
         fi
