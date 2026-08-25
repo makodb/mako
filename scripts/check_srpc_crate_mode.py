@@ -13173,7 +13173,7 @@ def compile_module(
 
 
 # Plain-C kernels compiled into libsrpc.a (see the "Goal-0 C demotion" block in
-# src/srpc_build/CMakeLists.txt) plus srpc.epoll_wrapper's platform
+# src/srpc-cmake/CMakeLists.txt) plus srpc.epoll_wrapper's platform
 # implementation unit. They are not crate outputs, so the generated lane has to
 # build them itself to link the same closure production does.
 # base/srpc_base.c, misc/srpc_rand.c, misc/srpc_timing.c and rpc/srpc_net.c are

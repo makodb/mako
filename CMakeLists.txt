@@ -315,7 +315,7 @@ add_custom_command(
 add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 
 # srpc module files and the `srpc` target are defined in
-# src/srpc_build/CMakeLists.txt.
+# src/srpc-cmake/CMakeLists.txt.
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Mako targets Clang 22.x (see the rationale at CMakeLists.txt:19 and the
@@ -908,10 +908,10 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so")
 endif()
 
 # Build and export srpc target wiring from a dedicated CMakeLists.
-# The glue lives in src/srpc_build so that src/srpc itself holds only the
+# The glue lives in src/srpc-cmake so that src/srpc itself holds only the
 # vendored srpc tree; the explicit binary directory keeps every generated
 # artifact under <build>/src/srpc exactly where it has always been.
-add_subdirectory(src/srpc_build src/srpc)
+add_subdirectory(src/srpc-cmake src/srpc)
 # Build and export masstree-specific test wiring from a dedicated CMakeLists.
 add_subdirectory(src/masstree)
 

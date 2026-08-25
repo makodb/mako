@@ -1003,7 +1003,7 @@ class CheckedInCanaryTests(unittest.TestCase):
 
     def test_cmake_provider_inventory_matches_the_canonical_manifest(self) -> None:
         modules = DRIVER.load_manifest(CRATE, CRATE / "rust-modules.toml")
-        cmake = (REPOSITORY / "src/srpc_build/CMakeLists.txt").read_text(
+        cmake = (REPOSITORY / "src/srpc-cmake/CMakeLists.txt").read_text(
             encoding="utf-8"
         )
         match = re.search(
@@ -1078,7 +1078,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertEqual(
             DRIVER.load_flat_import_namespace(CRATE, manifest), "srpc"
         )
-        cmake = (REPOSITORY / "src/srpc_build/CMakeLists.txt").read_text(
+        cmake = (REPOSITORY / "src/srpc-cmake/CMakeLists.txt").read_text(
             encoding="utf-8"
         )
         self.assertIn("--flat-import-namespace srpc", cmake)
@@ -2970,7 +2970,7 @@ class CrateModeGateTests(unittest.TestCase):
             self.assertTrue(Path(command[2]).is_absolute())
 
     def test_cmake_crate_invocation_uses_an_absolute_manifest_variable(self) -> None:
-        cmake = (REPOSITORY / "src/srpc_build/CMakeLists.txt").read_text(
+        cmake = (REPOSITORY / "src/srpc-cmake/CMakeLists.txt").read_text(
             encoding="utf-8"
         )
         self.assertIn(

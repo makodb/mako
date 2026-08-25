@@ -20,7 +20,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORKTREE = SCRIPT_DIR.parent
 
-# Files in SRPC_BORROW_SRC (per src/srpc_build/CMakeLists.txt).
+# Files in SRPC_BORROW_SRC (per src/srpc-cmake/CMakeLists.txt).
 FILES = [
     "src/srpc/base/logging.cpp",
     "src/srpc/base/misc.cpp", "src/srpc/base/threading.cpp",

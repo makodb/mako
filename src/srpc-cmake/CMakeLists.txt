@@ -7,7 +7,7 @@
 # so the tree can be resynced -- or swapped for a submodule -- without a merge.
 #
 # The root `CMakeLists.txt` adds this directory with an explicit binary
-# directory (`add_subdirectory(src/srpc_build src/srpc)`), so every generated
+# directory (`add_subdirectory(src/srpc-cmake src/srpc)`), so every generated
 # artifact still lands under `<build>/src/srpc/...` exactly as before; only the
 # *source* directory moved. Because of that, `CMAKE_CURRENT_SOURCE_DIR` no
 # longer names the srpc sources: use `SRPC_SOURCE_DIR` for anything that lives in
