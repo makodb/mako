@@ -286,6 +286,32 @@ compile() {
     bash ./src/mako/update_config.sh
 }
 
+# The Rust/C transaction boundary is a required-native gate: a compile-only
+# Cargo fallback, a missing native archive, or a skipped C/C++ probe must fail
+# CI instead of silently reducing coverage.
+run_mako_local_abi_gates() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh makoLocalAbiGates"
+    echo "========================================="
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" --target \
+        check_mako_local_build_fingerprint \
+        test_mako_local_abi_c11 \
+        test_mako_local_abi_cpp_conformance \
+        run_mako_local_rust_tests
+    local boundary_test
+    for boundary_test in \
+        MakoLocalAbiC11Probe \
+        MakoLocalAbiCppConformance \
+        MakoLocalAbiSymbols \
+        MakoLocalAbiSymbolCheckerUnit \
+        MakoLocalBuildFingerprintUnit
+    do
+        ctest --test-dir "${BUILD_DIR}" --output-on-failure \
+            --no-tests=error -R "^${boundary_test}$"
+    done
+}
+
 # Function 2: Run simple transaction test
 run_simple_transaction() {
     echo "========================================="
@@ -740,6 +766,9 @@ case "${1:-}" in
     compile)
         compile
         ;;
+    makoLocalAbiGates)
+        run_mako_local_abi_gates
+        ;;
     cleanup)
        cleanup
         ;;
@@ -809,6 +838,7 @@ case "${1:-}" in
     all)
         # Run all steps in sequence
         compile
+        run_mako_local_abi_gates
         run_rrr_unit_tests
         run_simple_transaction
         run_client_server_test
@@ -841,7 +871,7 @@ case "${1:-}" in
         echo "Error: Unknown CI test target '${1:-}'"
         echo ""
         echo "Supported targets:"
-        echo "  compile, cleanup, simpleTransaction, simplePaxos,"
+        echo "  compile, makoLocalAbiGates, cleanup, simpleTransaction, simplePaxos,"
         echo "  shardNoReplication, shardNoReplicationErpc,"
         echo "  shard1Replication, shard2Replication, shard2ReplicationErpc,"
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"

@@ -14,9 +14,32 @@ for the duration of the call and the implementation retains no caller pointer.
 
 ## Capability negotiation
 
-A caller must check `mako_local_abi_version()` and
-`mako_local_feature_bits()` before using an optional surface. Revision 0
-defines these feature bits:
+A required-native caller first identifies the linked engine. This implementation
+reports `MAKO_LOCAL_ENGINE_ID` (`mako-local/sto-masstrans`) from
+`mako_local_engine_id()`. `mako_local_build_fingerprint_size()` must equal
+`MAKO_LOCAL_BUILD_FINGERPRINT_SIZE` (32), and
+`mako_local_build_fingerprint()` returns exactly that many SHA-256 identity
+bytes. The engine-ID string and fingerprint bytes have process lifetime, are
+read-only, and must not be freed. The string is NUL-terminated; the fingerprint
+is a fixed-size binary value and is not a string.
+
+The fingerprint covers the canonical header, the configured source and
+compiler-dependency closure of every native static archive linked by
+`mako-local`, effective compile commands and relevant CMake configuration,
+generated configuration, compiler target/predefines/binary, and the linked
+libc++/libc++abi identities. It is a build-compatibility identity, not a
+durability checksum or an authentication primitive. Required-native Rust
+builds independently recompute it, embed the expected bytes, and reference a
+digest-named symbol in `libmako.a`; startup rejects a mismatched engine ID,
+size, or bytes. A selected CMake build tree must remain immutable for the
+duration of the Cargo link: the gate verifies all four archives before linking,
+and the digest anchor pins `libmako.a`, but external concurrent replacement of
+the separately linked dependency archives is outside the supported build
+protocol.
+
+After the identity handshake, a caller must check
+`mako_local_abi_version()` and `mako_local_feature_bits()` before using an
+optional surface. Revision 0 defines these feature bits:
 
 | Feature | Guarantee when present |
 | --- | --- |
@@ -252,6 +275,9 @@ change unless the row states otherwise.
 
 | Export | Possible result or status | Output, ownership, and state effect |
 | --- | --- | --- |
+| `mako_local_engine_id` | Returns `MAKO_LOCAL_ENGINE_ID`. | Static NUL-terminated string with process lifetime; never null, never caller-owned, and no transaction effect. |
+| `mako_local_build_fingerprint` | Returns the linked build's identity bytes. | Static read-only binary bytes with process lifetime; never null, never caller-owned, and no transaction effect. Read exactly the separately reported size. |
+| `mako_local_build_fingerprint_size` | Returns `MAKO_LOCAL_BUILD_FINGERPRINT_SIZE` (currently 32). | Scalar result; no ownership or transaction effect. |
 | `mako_local_abi_version` | Returns `MAKO_LOCAL_ABI_VERSION` (currently 0). | Scalar result; no ownership or transaction effect. |
 | `mako_local_feature_bits` | Returns the linked build's feature mask. | Scalar result; no ownership or transaction effect. |
 | `mako_local_scan_options_size` | Returns `MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE`. | Scalar result; no ownership or transaction effect. |
@@ -370,13 +396,23 @@ reuse its TLS state. Without the feature, both control functions are
 `FEATURE_UNAVAILABLE` stubs and production cleanup paths contain no failpoint
 branch.
 
-Status identity is mechanically synchronized today. The C header's canonical
-manifest generates C++ diagnostics and the raw Rust `KnownStatus` catalog; the
-safe Rust layer exhaustively classifies that generated enum for ordinary
-operation lifecycle and commit disposition. Required-native ABI verification
-also compares every linked diagnostic with the manifest. The per-operation
-matrix in this document remains the normative explanation of when each status
-is permitted and how ownership changes.
+The C header is the declaration source of truth. Pinned bindgen generation
+produces all raw Rust constants, layouts, callbacks, and function declarations;
+a checked inventory rejects an unexpected addition or omission. Strict C11 and
+C++ conformance translation units check every constant, layout, callback,
+signature, and C++ `noexcept` type. A Rust integration probe forces a link
+reference to every export, while the native symbol gate requires the exact
+allowlist plus one strong digest-named build anchor. These checks are mandatory
+in the required-native CMake/Cargo gate, and CMake configuration fails rather
+than silently skipping Rust when its test profile cannot find Cargo.
+
+Status identity is mechanically synchronized as part of that declaration
+pipeline. The C header's canonical manifest generates C++ diagnostics and the
+raw Rust `KnownStatus` catalog; the safe Rust layer exhaustively classifies that
+generated enum for ordinary operation lifecycle and commit disposition.
+Required-native ABI verification also compares every linked diagnostic with
+the manifest. The per-operation matrix in this document remains the normative
+explanation of when each status is permitted and how ownership changes.
 
 The safe Rust ownership layer is also executed against a fake ABI without C++.
 That suite covers every active, finished, quarantined, and destroyed transition;

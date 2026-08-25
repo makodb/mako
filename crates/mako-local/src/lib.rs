@@ -41,6 +41,30 @@ mod fake_abi;
 #[cfg(test)]
 use fake_abi as abi;
 
+#[cfg(all(not(test), have_mako))]
+mod identity_abi {
+    include!(concat!(env!("OUT_DIR"), "/mako_local_build_identity.rs"));
+}
+
+// Preserve the crate's compile-only mode when no CMake tree is available.
+// Programs cannot actually call the native API in that mode (the ordinary ABI
+// symbols are also absent), but cargo check and documentation remain useful.
+#[cfg(all(not(test), not(have_mako)))]
+mod identity_abi {
+    pub(super) const EXPECTED_ENGINE_ID: &[u8] = b"mako-local/sto-masstrans";
+    pub(super) const EXPECTED_BUILD_FINGERPRINT: [u8; 32] = [0; 32];
+
+    pub(super) unsafe fn require_build_anchor() {}
+}
+
+#[cfg(test)]
+mod identity_abi {
+    pub(super) const EXPECTED_ENGINE_ID: &[u8] = b"mako-local/sto-masstrans";
+    pub(super) const EXPECTED_BUILD_FINGERPRINT: [u8; 32] = [0x5a; 32];
+
+    pub(super) unsafe fn require_build_anchor() {}
+}
+
 /// A failure reported by the native local transaction boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -110,6 +134,17 @@ pub enum Error {
         /// Status whose canonical identity or diagnostic did not match.
         status: i32,
     },
+    /// The linked implementation is not the expected STO/MassTrans engine family.
+    AbiEngineMismatch,
+    /// The linked native build returned a fingerprint with the wrong byte length.
+    AbiBuildFingerprintSizeMismatch {
+        /// Number of SHA-256 bytes required by this crate.
+        expected: usize,
+        /// Number of bytes reported by the native library.
+        found: usize,
+    },
+    /// Current source/configuration and the linked native archive have different identities.
+    AbiBuildFingerprintMismatch,
     /// The native library returned a status unknown to this crate.
     UnknownStatus(i32),
 }
@@ -175,6 +210,18 @@ impl fmt::Display for Error {
             Self::AbiStatusCatalogMismatch { status } => write!(
                 f,
                 "mako-local ABI status catalog mismatch at status {status}"
+            ),
+            Self::AbiEngineMismatch => write!(
+                f,
+                "mako-local native engine identity does not match STO/MassTrans"
+            ),
+            Self::AbiBuildFingerprintSizeMismatch { expected, found } => write!(
+                f,
+                "mako-local native build fingerprint has {found} bytes; expected {expected}"
+            ),
+            Self::AbiBuildFingerprintMismatch => write!(
+                f,
+                "mako-local native archive does not match current source, configuration, and toolchain"
             ),
             Self::UnknownStatus(status) => {
                 write!(f, "mako-local returned unknown status {status}")
@@ -296,13 +343,13 @@ pub struct CommitReport {
 }
 
 /// Maximum table-name length accepted by the draft ABI.
-pub const MAX_TABLE_NAME_BYTES: usize = sys::MAKO_LOCAL_MAX_TABLE_NAME_BYTES;
+pub const MAX_TABLE_NAME_BYTES: usize = sys::MAKO_LOCAL_MAX_TABLE_NAME_BYTES as usize;
 /// Maximum key length accepted by the draft ABI.
-pub const MAX_KEY_BYTES: usize = sys::MAKO_LOCAL_MAX_KEY_BYTES;
+pub const MAX_KEY_BYTES: usize = sys::MAKO_LOCAL_MAX_KEY_BYTES as usize;
 /// Maximum value length accepted by the draft ABI.
-pub const MAX_VALUE_BYTES: usize = sys::MAKO_LOCAL_MAX_VALUE_BYTES;
+pub const MAX_VALUE_BYTES: usize = sys::MAKO_LOCAL_MAX_VALUE_BYTES as usize;
 /// Weighted native item budget for one draft transaction.
-pub const TRANSACTION_ITEM_BUDGET: usize = sys::MAKO_LOCAL_TXN_ITEM_BUDGET;
+pub const TRANSACTION_ITEM_BUDGET: usize = sys::MAKO_LOCAL_TXN_ITEM_BUDGET as usize;
 
 /// Compile-time behavior exposed by the linked C++ STO build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -472,7 +519,44 @@ pub fn quarantined_worker_count() -> Result<u64> {
     Ok(unsafe { abi::mako_local_quarantined_worker_count() })
 }
 
-fn verify_abi() -> Result<()> {
+/// Verifies that the generated declarations, linked native archive, engine
+/// family, build fingerprint, layouts, feature catalog, and status catalog all
+/// agree before native state is opened.
+///
+/// Normal database construction performs this handshake automatically. This
+/// entry point is public so deployment probes and ABI link tests can fail fast
+/// without allocating a database facade.
+pub fn verify_abi() -> Result<()> {
+    // SAFETY: the digest-named function is a no-op identity anchor. Calling it
+    // makes the linker require the archive whose fingerprint Cargo verified.
+    unsafe { identity_abi::require_build_anchor() };
+
+    // SAFETY: a conforming native identity accessor returns a process-lifetime
+    // NUL-terminated string. Null and mismatched values are rejected below.
+    let engine_id = unsafe { abi::mako_local_engine_id() };
+    if engine_id.is_null() {
+        return Err(Error::AbiEngineMismatch);
+    }
+    // SAFETY: guarded non-null and specified to have process lifetime.
+    let engine_id = unsafe { CStr::from_ptr(engine_id) }.to_bytes();
+
+    // SAFETY: scalar-only native build-identity accessor.
+    let fingerprint_size = unsafe { abi::mako_local_build_fingerprint_size() };
+    if fingerprint_size != identity_abi::EXPECTED_BUILD_FINGERPRINT.len() {
+        return validate_build_identity(engine_id, fingerprint_size, None);
+    }
+    // SAFETY: a conforming accessor returns fingerprint_size static bytes. A
+    // null result is rejected before constructing the slice.
+    let fingerprint = unsafe { abi::mako_local_build_fingerprint() };
+    let fingerprint = if fingerprint.is_null() {
+        None
+    } else {
+        // SAFETY: non-null and native promises that its reported static byte
+        // extent is readable. validate_build_identity checks that extent.
+        Some(unsafe { std::slice::from_raw_parts(fingerprint, fingerprint_size) })
+    };
+    validate_build_identity(engine_id, fingerprint_size, fingerprint)?;
+
     // SAFETY: pure ABI identity accessor.
     let found = unsafe { abi::mako_local_abi_version() };
     if found != sys::MAKO_LOCAL_ABI_VERSION {
@@ -516,6 +600,26 @@ fn verify_abi() -> Result<()> {
         {
             return Err(Error::AbiStatusCatalogMismatch { status: code });
         }
+    }
+    Ok(())
+}
+
+fn validate_build_identity(
+    engine_id: &[u8],
+    fingerprint_size: usize,
+    fingerprint: Option<&[u8]>,
+) -> Result<()> {
+    if engine_id != identity_abi::EXPECTED_ENGINE_ID {
+        return Err(Error::AbiEngineMismatch);
+    }
+    if fingerprint_size != identity_abi::EXPECTED_BUILD_FINGERPRINT.len() {
+        return Err(Error::AbiBuildFingerprintSizeMismatch {
+            expected: identity_abi::EXPECTED_BUILD_FINGERPRINT.len(),
+            found: fingerprint_size,
+        });
+    }
+    if fingerprint != Some(identity_abi::EXPECTED_BUILD_FINGERPRINT.as_slice()) {
+        return Err(Error::AbiBuildFingerprintMismatch);
     }
     Ok(())
 }
@@ -1472,6 +1576,40 @@ mod tests {
         );
         assert_eq!(MakoTimestamp::new(MAX_MAKO_TIMESTAMP + 1), None);
         assert_eq!(MakoTimestamp::new(u32::MAX), None);
+    }
+
+    #[test]
+    fn native_build_identity_is_checked_before_ordinary_abi_use() {
+        let expected = identity_abi::EXPECTED_BUILD_FINGERPRINT;
+        assert_eq!(
+            validate_build_identity(
+                identity_abi::EXPECTED_ENGINE_ID,
+                expected.len(),
+                Some(&expected)
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_build_identity(b"another-engine", expected.len(), Some(&expected)),
+            Err(Error::AbiEngineMismatch)
+        );
+        assert_eq!(
+            validate_build_identity(identity_abi::EXPECTED_ENGINE_ID, expected.len() - 1, None),
+            Err(Error::AbiBuildFingerprintSizeMismatch {
+                expected: expected.len(),
+                found: expected.len() - 1,
+            })
+        );
+        assert_eq!(
+            validate_build_identity(identity_abi::EXPECTED_ENGINE_ID, expected.len(), None),
+            Err(Error::AbiBuildFingerprintMismatch)
+        );
+        let mut wrong = expected;
+        wrong[0] ^= 0xff;
+        assert_eq!(
+            validate_build_identity(identity_abi::EXPECTED_ENGINE_ID, wrong.len(), Some(&wrong)),
+            Err(Error::AbiBuildFingerprintMismatch)
+        );
     }
 
     #[test]

@@ -40,6 +40,14 @@ extern "C" {
 
 #define MAKO_LOCAL_ABI_VERSION 0u
 
+/* Stable implementation-family identity and exact native-build identity.
+ * ENGINE_ID changes only when this boundary stops using the STO/MassTrans
+ * engine family. The 32-byte SHA-256 fingerprint changes whenever an input,
+ * generated configuration, effective compile command, compiler, target CPU,
+ * or C++ standard library used by that engine changes. */
+#define MAKO_LOCAL_ENGINE_ID "mako-local/sto-masstrans"
+#define MAKO_LOCAL_BUILD_FINGERPRINT_SIZE 32u
+
 /* Semantic guarantees of the linked draft engine. Point transactions are the
  * revision-0 baseline. A bit is absent until every exposed path implements the
  * guarantee; callers must not infer a capability from STO build flags. The
@@ -215,6 +223,12 @@ typedef void (*mako_local_test_commit_observer)(void *context,
 /* Identity and diagnostics. The returned status string is static. */
 uint32_t mako_local_abi_version(void) MAKO_LOCAL_NOEXCEPT;
 uint64_t mako_local_feature_bits(void) MAKO_LOCAL_NOEXCEPT;
+/* All three build-identity results have process lifetime. The fingerprint
+ * accessor returns exactly mako_local_build_fingerprint_size() bytes and never
+ * returns NULL in a conforming build. */
+const char *mako_local_engine_id(void) MAKO_LOCAL_NOEXCEPT;
+const uint8_t *mako_local_build_fingerprint(void) MAKO_LOCAL_NOEXCEPT;
+size_t mako_local_build_fingerprint_size(void) MAKO_LOCAL_NOEXCEPT;
 /* Required revision-0 options prefix size. This remains fixed when trailing
  * fields are appended to mako_local_scan_options. */
 size_t mako_local_scan_options_size(void) MAKO_LOCAL_NOEXCEPT;

@@ -90,6 +90,9 @@ jobs:
       - name: Compile
         run: ./ci/ci.sh compile
 
+      - name: Run tests - Mako local ABI boundary gates
+        run: ./ci/ci.sh makoLocalAbiGates
+
       - name: Run tests - RRR unit tests
         run: ./ci/ci.sh rrrTests
 

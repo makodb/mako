@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use bindgen::callbacks::{IntKind, ParseCallbacks, Token, TokenKind};
 
 const DEFINITIONS_BEGIN: &str = "/* MAKO_LOCAL_STATUS_DEFINITIONS_BEGIN */";
 const DEFINITIONS_END: &str = "/* MAKO_LOCAL_STATUS_DEFINITIONS_END */";
@@ -32,6 +34,51 @@ const ABI_V0_STATUS_NAMES: [&str; 20] = [
     "WORKER_POISONED",
 ];
 
+const ABI_V0_TYPE_NAMES: [&str; 7] = [
+    "mako_local_db",
+    "mako_local_post_validate_hook",
+    "mako_local_scan_entry",
+    "mako_local_scan_options",
+    "mako_local_table",
+    "mako_local_test_commit_observer",
+    "mako_local_txn",
+];
+
+const ABI_V0_EXPORT_NAMES: [&str; 32] = [
+    "mako_local_abi_version",
+    "mako_local_advance_mako_timestamp_past",
+    "mako_local_build_fingerprint",
+    "mako_local_build_fingerprint_size",
+    "mako_local_bytes_free",
+    "mako_local_db_close",
+    "mako_local_db_open",
+    "mako_local_engine_id",
+    "mako_local_feature_bits",
+    "mako_local_quarantined_worker_count",
+    "mako_local_scan_entry_size",
+    "mako_local_scan_options_size",
+    "mako_local_status_string",
+    "mako_local_table_id",
+    "mako_local_table_open",
+    "mako_local_test_arm_cleanup_failure",
+    "mako_local_test_clear_cleanup_failure",
+    "mako_local_test_clear_commit_observer",
+    "mako_local_test_set_commit_observer",
+    "mako_local_thread_attach",
+    "mako_local_txn_abort",
+    "mako_local_txn_begin",
+    "mako_local_txn_commit",
+    "mako_local_txn_commit_with_hook",
+    "mako_local_txn_destroy",
+    "mako_local_txn_get",
+    "mako_local_txn_insert",
+    "mako_local_txn_put",
+    "mako_local_txn_remove",
+    "mako_local_txn_rscan_chunk",
+    "mako_local_txn_scan_chunk",
+    "mako_local_worker_health",
+];
+
 #[derive(Debug)]
 struct ManifestRow {
     short_name: String,
@@ -48,9 +95,81 @@ struct Status {
     code: i32,
 }
 
+#[derive(Debug)]
+struct BindingCallbacks {
+    status_symbols: BTreeSet<String>,
+}
+
+impl ParseCallbacks for BindingCallbacks {
+    fn modify_macro(&self, name: &str, tokens: &mut Vec<Token>) {
+        if !name.starts_with("MAKO_LOCAL_") {
+            return;
+        }
+
+        // bindgen's integer-expression parser does not expand the UINT*_C
+        // helpers supplied by <stdint.h>. Rewrite only the tokens of our
+        // public macros; this affects generated Rust, never the C header seen
+        // by the native compiler.
+        let mut index = 0;
+        while index < tokens.len() {
+            if tokens[index].raw.as_ref() == b"UINT32_MAX" {
+                tokens[index] = literal_token(b"4294967295U");
+                index += 1;
+                continue;
+            }
+
+            let suffix = match tokens[index].raw.as_ref() {
+                b"UINT32_C" => Some(b"U".as_slice()),
+                b"UINT64_C" => Some(b"ULL".as_slice()),
+                _ => None,
+            };
+            let Some(suffix) = suffix else {
+                index += 1;
+                continue;
+            };
+            if index + 3 >= tokens.len()
+                || tokens[index + 1].raw.as_ref() != b"("
+                || tokens[index + 2].kind != TokenKind::Literal
+                || tokens[index + 3].raw.as_ref() != b")"
+            {
+                index += 1;
+                continue;
+            }
+
+            let mut value = tokens[index + 2].raw.to_vec();
+            value.extend_from_slice(suffix);
+            tokens.splice(
+                index..index + 4,
+                [Token {
+                    kind: TokenKind::Literal,
+                    raw: value.into_boxed_slice(),
+                }],
+            );
+            index += 1;
+        }
+    }
+
+    fn int_macro(&self, name: &str, _value: i64) -> Option<IntKind> {
+        if self.status_symbols.contains(name) {
+            return Some(IntKind::Int);
+        }
+        if name.starts_with("MAKO_LOCAL_FEATURE_") {
+            return Some(IntKind::U64);
+        }
+        name.starts_with("MAKO_LOCAL_").then_some(IntKind::U32)
+    }
+}
+
+fn literal_token(value: &[u8]) -> Token {
+    Token {
+        kind: TokenKind::Literal,
+        raw: value.to_owned().into_boxed_slice(),
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
-        panic!("mako-local-sys status generation failed: {error}");
+        panic!("mako-local-sys binding generation failed: {error}");
     }
 }
 
@@ -61,10 +180,12 @@ fn run() -> Result<(), String> {
     );
     let header = manifest_dir.join("../../src/mako/storage/mako_local_abi.h");
     println!("cargo:rerun-if-changed={}", header.display());
+    println!("cargo:rerun-if-env-changed=LIBCLANG_PATH");
 
     let source = fs::read_to_string(&header)
         .map_err(|error| format!("could not read {}: {error}", header.display()))?;
     verify_abi_version(&source)?;
+    verify_scan_options_v0_size(&source)?;
 
     let definition_region = marked_region(&source, DEFINITIONS_BEGIN, DEFINITIONS_END)?;
     let manifest_region = marked_region(&source, MANIFEST_BEGIN, MANIFEST_END)?;
@@ -72,11 +193,20 @@ fn run() -> Result<(), String> {
     let rows = parse_manifest(manifest_region)?;
     let statuses = validate_statuses(&definitions, rows)?;
 
-    let generated = generate_rust(&statuses);
     let out_dir = PathBuf::from(
         env::var_os("OUT_DIR").ok_or_else(|| "Cargo did not set OUT_DIR".to_owned())?,
     );
-    let destination = out_dir.join("mako_local_statuses.rs");
+    let target = env::var("TARGET").map_err(|_| "Cargo did not set TARGET".to_owned())?;
+
+    let bindings = generate_bindings(&header, &source, &target, &statuses)?;
+    write_generated(out_dir.join("mako_local_bindings.rs"), bindings)?;
+    write_generated(
+        out_dir.join("mako_local_statuses.rs"),
+        generate_rust(&statuses),
+    )
+}
+
+fn write_generated(destination: PathBuf, generated: String) -> Result<(), String> {
     fs::write(&destination, generated)
         .map_err(|error| format!("could not write {}: {error}", destination.display()))
 }
@@ -93,6 +223,240 @@ fn verify_abi_version(source: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn verify_scan_options_v0_size(source: &str) -> Result<(), String> {
+    const EXPECTED: &str = "#define MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE \
+        ((uint32_t)(offsetof(mako_local_scan_options, resume_len) + \
+        sizeof(((mako_local_scan_options *)0)->resume_len)))";
+    let declarations: Vec<_> = logical_preprocessor_lines(source)
+        .into_iter()
+        .map(|line| collapse_whitespace(&line))
+        .filter(|line| line.starts_with("#define MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE "))
+        .collect();
+    let expected = collapse_whitespace(EXPECTED);
+    if declarations.as_slice() != [expected.as_str()] {
+        return Err(format!(
+            "expected the revision-0 scan-options prefix to end at `resume_len`; \
+             expected `{expected}`, found {declarations:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn logical_preprocessor_lines(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut logical = String::new();
+    for raw_line in source.lines() {
+        let trimmed = raw_line.trim();
+        let (part, continued) = match trimmed.strip_suffix('\\') {
+            Some(part) => (part.trim_end(), true),
+            None => (trimmed, false),
+        };
+        if !logical.is_empty() {
+            logical.push(' ');
+        }
+        logical.push_str(part);
+        if !continued {
+            lines.push(std::mem::take(&mut logical));
+        }
+    }
+    if !logical.is_empty() {
+        lines.push(logical);
+    }
+    lines
+}
+
+fn collapse_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn generate_bindings(
+    header: &Path,
+    source: &str,
+    target: &str,
+    statuses: &[Status],
+) -> Result<String, String> {
+    let header = header
+        .to_str()
+        .ok_or_else(|| "mako-local header path is not valid UTF-8".to_owned())?;
+    let status_symbols = statuses
+        .iter()
+        .map(|status| status.c_symbol.clone())
+        .collect();
+    let generated = bindgen::Builder::default()
+        .header(header)
+        .clang_args(["-x", "c", "-std=c11"])
+        .clang_arg(format!("--target={target}"))
+        .allowlist_type("^mako_local_.*$")
+        .allowlist_function("^mako_local_.*$")
+        .allowlist_var("^MAKO_LOCAL_.*$")
+        .blocklist_var("^MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE$")
+        .use_core()
+        .ctypes_prefix("core::ffi")
+        .layout_tests(true)
+        .derive_default(true)
+        .no_default("^mako_local_(db|table|txn|scan_options)$")
+        .no_copy("^mako_local_(db|table|txn)$")
+        .no_debug("^mako_local_(db|table|txn)$")
+        .merge_extern_blocks(true)
+        // Track every transitive header and every bindgen-consumed environment
+        // variable (including target-specific BINDGEN_EXTRA_CLANG_ARGS), while
+        // retaining our ABI-specific macro callbacks below.
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .parse_callbacks(Box::new(BindingCallbacks { status_symbols }))
+        .generate()
+        .map_err(|error| format!("bindgen could not parse {header}: {error}"))?
+        .to_string();
+
+    finalize_bindings(source, generated)
+}
+
+fn finalize_bindings(source: &str, mut generated: String) -> Result<String, String> {
+    writeln!(generated).expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "/// Fixed revision-0 prefix size, derived from the header's verified last prefix field."
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "pub const MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE: u32 ="
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "    (core::mem::offset_of!(mako_local_scan_options, resume_len) +"
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(generated, "        core::mem::size_of::<usize>()) as u32;")
+        .expect("writing to a String cannot fail");
+
+    verify_generated_constants(source, &generated)?;
+    verify_generated_types(&generated)?;
+    let exports = verify_generated_exports(&generated)?;
+    append_link_probe(&mut generated, &exports);
+    Ok(generated)
+}
+
+fn verify_generated_constants(source: &str, generated: &str) -> Result<(), String> {
+    let expected = header_constant_names(source);
+    let actual = generated_item_names(generated, "pub const ");
+    if actual != expected {
+        return Err(set_mismatch("public constants", &expected, &actual));
+    }
+    Ok(())
+}
+
+fn header_constant_names(source: &str) -> BTreeSet<String> {
+    logical_preprocessor_lines(source)
+        .into_iter()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("#define ")?;
+            let mut fields = rest.split_whitespace();
+            let name = fields.next()?;
+            if !name.starts_with("MAKO_LOCAL_")
+                || name.contains('(')
+                || matches!(name, "MAKO_LOCAL_ABI_H" | "MAKO_LOCAL_NOEXCEPT")
+                || fields.next().is_none()
+            {
+                return None;
+            }
+            Some(name.to_owned())
+        })
+        .collect()
+}
+
+fn verify_generated_types(generated: &str) -> Result<(), String> {
+    let mut actual = generated_item_names(generated, "pub struct ");
+    actual.extend(generated_item_names(generated, "pub type "));
+    let expected = ABI_V0_TYPE_NAMES.into_iter().map(str::to_owned).collect();
+    if actual != expected {
+        return Err(set_mismatch("public types", &expected, &actual));
+    }
+    Ok(())
+}
+
+fn verify_generated_exports(generated: &str) -> Result<Vec<String>, String> {
+    let actual = generated_item_names(generated, "pub fn ");
+    let expected: BTreeSet<_> = ABI_V0_EXPORT_NAMES.into_iter().map(str::to_owned).collect();
+    if actual != expected {
+        return Err(set_mismatch("public functions", &expected, &actual));
+    }
+    Ok(actual.into_iter().collect())
+}
+
+fn generated_item_names(generated: &str, prefix: &str) -> BTreeSet<String> {
+    generated
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix(prefix)?;
+            let end = rest
+                .find(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                .unwrap_or(rest.len());
+            (end != 0).then(|| rest[..end].to_owned())
+        })
+        .collect()
+}
+
+fn set_mismatch(kind: &str, expected: &BTreeSet<String>, actual: &BTreeSet<String>) -> String {
+    let missing: Vec<_> = expected.difference(actual).collect();
+    let unexpected: Vec<_> = actual.difference(expected).collect();
+    format!("generated {kind} do not match ABI v0; missing {missing:?}, unexpected {unexpected:?}")
+}
+
+fn append_link_probe(generated: &mut String, exports: &[String]) {
+    writeln!(generated).expect("writing to a String cannot fail");
+    writeln!(generated, "/// Every public C export expected by ABI v0.")
+        .expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "pub const MAKO_LOCAL_EXPORT_NAMES: [&str; {}] = [",
+        exports.len()
+    )
+    .expect("writing to a String cannot fail");
+    for export in exports {
+        writeln!(generated, "    \"{export}\",").expect("writing to a String cannot fail");
+    }
+    writeln!(generated, "];\n").expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "/// References every public ABI symbol without calling it."
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(generated, "///").expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "/// Expanding this macro in a required-native test turns a missing"
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "/// archive export into a deterministic link failure."
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(generated, "#[macro_export]").expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "macro_rules! mako_local_link_probe_all_exports {{"
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(generated, "    () => {{{{").expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "        let symbols: [*const (); {}] = [",
+        exports.len()
+    )
+    .expect("writing to a String cannot fail");
+    for export in exports {
+        writeln!(generated, "            $crate::{export} as *const (),")
+            .expect("writing to a String cannot fail");
+    }
+    writeln!(generated, "        ];").expect("writing to a String cannot fail");
+    writeln!(generated, "        let _ = core::hint::black_box(symbols);")
+        .expect("writing to a String cannot fail");
+    writeln!(generated, "    }}}};").expect("writing to a String cannot fail");
+    writeln!(generated, "}}").expect("writing to a String cannot fail");
 }
 
 fn marked_region<'a>(source: &'a str, begin: &str, end: &str) -> Result<&'a str, String> {
@@ -538,16 +902,6 @@ fn generate_rust(statuses: &[Status]) -> String {
     writeln!(output, "        status.code()").expect("writing to a String cannot fail");
     writeln!(output, "    }}").expect("writing to a String cannot fail");
     writeln!(output, "}}").expect("writing to a String cannot fail");
-    writeln!(output).expect("writing to a String cannot fail");
-
-    for status in statuses {
-        writeln!(
-            output,
-            "pub const {}: core::ffi::c_int = KnownStatus::{}.code();",
-            status.c_symbol, status.rust_variant
-        )
-        .expect("writing to a String cannot fail");
-    }
     writeln!(output).expect("writing to a String cannot fail");
 
     writeln!(

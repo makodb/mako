@@ -15,6 +15,8 @@ use std::sync::OnceLock;
 
 use super::sys;
 
+static ENGINE_ID: &[u8] = b"mako-local/sto-masstrans\0";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Call {
     TableOpen,
@@ -210,6 +212,18 @@ pub(super) fn assert_drained() {
 
 pub(super) unsafe fn mako_local_abi_version() -> u32 {
     sys::MAKO_LOCAL_ABI_VERSION
+}
+
+pub(super) unsafe fn mako_local_engine_id() -> *const c_char {
+    ENGINE_ID.as_ptr().cast()
+}
+
+pub(super) unsafe fn mako_local_build_fingerprint() -> *const u8 {
+    super::identity_abi::EXPECTED_BUILD_FINGERPRINT.as_ptr()
+}
+
+pub(super) unsafe fn mako_local_build_fingerprint_size() -> usize {
+    super::identity_abi::EXPECTED_BUILD_FINGERPRINT.len()
 }
 
 pub(super) unsafe fn mako_local_feature_bits() -> u64 {

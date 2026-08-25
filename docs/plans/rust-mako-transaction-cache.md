@@ -185,10 +185,10 @@ Current implementation status:
       wrong-thread use, finished handles, and deterministic conflict.
 - [x] One process-wide STO thread-ID space and one dedicated MassTrans
       Masstree RCU context, with its epoch advanced by the shared runtime.
-- [x] Initial timestamp-based stale-artifact guard, exact CMake libc++
-      discovery, and a required-native CMake/Cargo test mode. The content
-      fingerprint and conformance gates in Phase 1C remain required because
-      timestamps alone are not proof of build identity.
+- [x] Replaced the initial timestamp-only stale-artifact guard with a
+      source/configuration-derived native fingerprint, exact CMake libc++
+      discovery, a digest-named archive anchor, and a required-native
+      CMake/Cargo test mode. Modification times remain advisory only.
 - [x] Repeated same-key point mutations on local single-version tables. A
       direct MassTrans matrix covers every three-operation combination of get,
       small/large put, small/large insert, and remove from present/absent state
@@ -279,20 +279,24 @@ declared profile.
       message, so a stale C++ catalog is rejected rather than silently mapped.
 - [x] Add fake-ABI coverage for every active, finished, and quarantined
       transition and for malformed successful outputs.
-- Add a stable engine/build identifier and reserve sized option structs before
-  ABI v1 is declared frozen, so later limits and durability modes can be
-  negotiated without changing existing function signatures. CMake must also
-  embed a content/configuration fingerprint covering the canonical header,
-  ABI implementation and transitive STO inputs, relevant compile definitions
-  such as RYW and opacity, compiler/standard-library identity, and generated
-  configuration. Cargo verifies that fingerprint and treats the existing
-  modification-time check as an advisory diagnostic only.
-- Make the C header the single source of truth for `mako-local-sys`: either
-  generate the Rust declarations or regenerate them in CI and require a clean
-  diff. Add C11 and C++ conformance translation units, a Rust link probe, and
-  an exported-symbol allowlist check. These gates must catch signature,
-  constant, calling-convention, feature-bit, and status-number drift even when
-  two artifacts happen to report the same revision number.
+- [x] Add a stable engine/build identifier. CMake embeds a
+      content/configuration fingerprint covering the canonical header, the
+      configured source and dependency closure of every linked native archive,
+      relevant compile definitions such as RYW and opacity,
+      compiler/standard-library identity, and generated configuration. Cargo
+      independently verifies that fingerprint and treats modification times
+      as advisory only; a digest-named link anchor prevents a manifest from
+      blessing a different archive.
+- Reserve a sized database/open options entry point before ABI v1 is declared
+  frozen, so later limits and durability modes can be negotiated without
+  changing existing function signatures. The existing scan options struct is
+  already sized, but `mako_local_db_open()` has no general options seam yet.
+- [x] Make the C header the single source of truth for `mako-local-sys` through
+      pinned build-time generation of every constant, type, callback, and
+      function declaration. Strict C11 and C++ conformance translation units,
+      a Rust all-export link probe, and an exact exported-symbol allowlist catch
+      signature, constant, `noexcept`/calling-convention, feature-bit, and
+      status-number drift even when artifacts report the same ABI revision.
 - Decide whether ABI v1 remains implicit TLS attachment or gains an opaque
   worker context. Either way, test attachment, wrong-thread calls, nested
   begin, post-terminal calls, database-close-while-busy, and the 460-thread
@@ -696,7 +700,7 @@ and cache exposure are complete for the RYW profile. The hook-enabled
 fresh-process suite now exercises fifteen write-path and eight repeated
 recovery boundaries. The in-memory applied watermark is now explicit and
 advances only after a successful ordered backend call. Mutation,
-declaration/fingerprint, sanitizer, and history-oracle checks remain open;
+sanitizer, and history-oracle checks remain open;
 inside-RocksDB instrumentation is intentionally outside this milestone.
 
 1. The revision-0 operation/status contract and numeric reservations 0 through
@@ -707,8 +711,10 @@ inside-RocksDB instrumentation is intentionally outside this milestone.
    failpoints, and fake-ABI/Miri ownership coverage complete this item.
    Retain draft revision `0` until the full boundary gate passes. Revisit the
    conservative transaction budget only with safe pre-reservation.
-2. Generate or mechanically verify the Rust declarations from the C header,
-   then add the symbol and build-fingerprint gates.
+2. The C header now generates the raw Rust declarations. Strict C11/C++
+   conformance probes, a Rust all-export link probe, an exact native symbol
+   allowlist, and the source/configuration-derived fingerprint plus digest link
+   anchor complete this item in both production and hook-enabled profiles.
 3. Build the three-way deterministic differential harness and the independent
    full-history real-time/opacity oracle.
 4. Run sanitizer, concurrency, and wrapper-overhead gates.

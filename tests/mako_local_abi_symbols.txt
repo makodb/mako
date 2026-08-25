@@ -1,0 +1,34 @@
+# Strong C text symbols exported by the revision-0 mako-local facade.
+# Keep this list sorted. The build-fingerprint anchor is checked separately.
+mako_local_abi_version
+mako_local_advance_mako_timestamp_past
+mako_local_build_fingerprint
+mako_local_build_fingerprint_size
+mako_local_bytes_free
+mako_local_db_close
+mako_local_db_open
+mako_local_engine_id
+mako_local_feature_bits
+mako_local_quarantined_worker_count
+mako_local_scan_entry_size
+mako_local_scan_options_size
+mako_local_status_string
+mako_local_table_id
+mako_local_table_open
+mako_local_test_arm_cleanup_failure
+mako_local_test_clear_cleanup_failure
+mako_local_test_clear_commit_observer
+mako_local_test_set_commit_observer
+mako_local_thread_attach
+mako_local_txn_abort
+mako_local_txn_begin
+mako_local_txn_commit
+mako_local_txn_commit_with_hook
+mako_local_txn_destroy
+mako_local_txn_get
+mako_local_txn_insert
+mako_local_txn_put
+mako_local_txn_remove
+mako_local_txn_rscan_chunk
+mako_local_txn_scan_chunk
+mako_local_worker_health

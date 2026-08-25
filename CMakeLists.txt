@@ -935,6 +935,44 @@ list(APPEND CFLAGS ${LIBEVENT_CFLAGS})
 list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
 list(APPEND CXXFLAGS -fno-omit-frame-pointer)
 
+# The Rust transaction facade must never link against a differently configured
+# native archive closure. Generate one identity translation unit from the
+# effective compile database and compile it as part of libmako, under the exact
+# same target settings as the facade.
+find_program(MAKO_LOCAL_PYTHON_EXECUTABLE NAMES python3 REQUIRED)
+set(MAKO_LOCAL_FINGERPRINT_SCRIPT
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mako_local_fingerprint.py")
+set(MAKO_LOCAL_BUILD_IDENTITY_CPP
+    "${CMAKE_BINARY_DIR}/generated/mako_local_build_identity.cc")
+set(MAKO_LOCAL_BUILD_MANIFEST
+    "${CMAKE_BINARY_DIR}/generated/mako_local_build_manifest.json")
+set(MAKO_LOCAL_BUILD_IDENTITY_DEPFILE
+    "${CMAKE_BINARY_DIR}/generated/mako_local_build_identity.d")
+add_custom_command(
+  OUTPUT
+    "${MAKO_LOCAL_BUILD_IDENTITY_CPP}"
+    "${MAKO_LOCAL_BUILD_MANIFEST}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/generated"
+  COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+          "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+          generate
+          --source-root "${CMAKE_CURRENT_SOURCE_DIR}"
+          --build-dir "${CMAKE_BINARY_DIR}"
+          --manifest "${MAKO_LOCAL_BUILD_MANIFEST}"
+          --cpp-out "${MAKO_LOCAL_BUILD_IDENTITY_CPP}"
+          --depfile "${MAKO_LOCAL_BUILD_IDENTITY_DEPFILE}"
+  DEPENDS
+    "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.cc"
+    "${CMAKE_BINARY_DIR}/compile_commands.json"
+    "${CMAKE_BINARY_DIR}/CMakeCache.txt"
+    "${MASSTREE_GENERATED_CONFIG_H}"
+  DEPFILE "${MAKO_LOCAL_BUILD_IDENTITY_DEPFILE}"
+  COMMENT "Generating source-derived mako-local native build identity"
+  VERBATIM
+)
+
 # Source files
 set(MAKO_SRCFILES
   "${W}/allocator.cc"
@@ -1000,6 +1038,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mtree_abi.cc"
   # Local STO/MassTrans transaction facade used by the Rust Mako port.
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.cc"
+  "${MAKO_LOCAL_BUILD_IDENTITY_CPP}"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
@@ -1457,6 +1496,51 @@ target_link_libraries(mako PUBLIC txlog_core_obj masstree)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
+# Enforce the public mako-local symbol boundary in every native build, not
+# only in profiles that happen to have the vendored GoogleTest checkout.
+# libmako contains many unrelated C++ template symbols, so the checker limits
+# itself to the exact mako_local_* namespace and binds its one internal anchor
+# to the digest recorded by the generated native-build manifest.
+add_custom_target(check_mako_local_abi_symbols ALL
+    COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/check_mako_local_symbols.py"
+            --nm "${CMAKE_NM}"
+            --archive "$<TARGET_FILE:mako>"
+            --allowlist
+              "${CMAKE_SOURCE_DIR}/tests/mako_local_abi_symbols.txt"
+            --manifest "${MAKO_LOCAL_BUILD_MANIFEST}"
+    DEPENDS
+        mako
+        "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+        "${CMAKE_SOURCE_DIR}/scripts/check_mako_local_symbols.py"
+        "${CMAKE_SOURCE_DIR}/tests/mako_local_abi_symbols.txt"
+        "${MAKO_LOCAL_BUILD_MANIFEST}"
+    COMMENT "Checking exact mako-local exported-symbol surface"
+    VERBATIM
+)
+
+# Content verification is deliberately always-run when this explicit boundary
+# gate is requested: source mtimes are not trusted. Keep it out of the default
+# ALL target because a complete compiler-dependency scan is intentionally much
+# heavier than the exported-symbol check.
+add_custom_target(check_mako_local_build_fingerprint
+    COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+            "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+            verify
+            --source-root "${CMAKE_SOURCE_DIR}"
+            --build-dir "${CMAKE_BINARY_DIR}"
+            --manifest "${MAKO_LOCAL_BUILD_MANIFEST}"
+    DEPENDS
+        mako
+        masstree
+        cluster
+        rrr
+        "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
+        "${MAKO_LOCAL_BUILD_MANIFEST}"
+    COMMENT "Verifying complete mako-local native content identity"
+    VERBATIM
+)
+
 # ============================================================================
 # BORROW CHECKER REGISTRATION SILO/STO
 # ============================================================================
@@ -1818,6 +1902,12 @@ else()
 endif()
 
 if(BUILD_TESTS)
+    if(NOT CARGO_EXECUTABLE)
+        message(FATAL_ERROR
+            "cargo is required when BUILD_TESTS is enabled: the mandatory "
+            "mako-local native Rust link and identity gates must not be skipped")
+    endif()
+
     # Common test include directories
     set(TEST_INCLUDE_DIRS
         src
@@ -2912,19 +3002,87 @@ if(BUILD_TESTS)
     )
     add_test(NAME MakoLocalAbiTests COMMAND test_mako_local_abi)
 
-    # The public local-transaction boundary must remain consumable as pure C,
-    # and every draft status number is an ABI reservation.
-    add_executable(test_mako_local_abi_c11 tests/test_mako_local_abi_c11.c)
-    set_target_properties(test_mako_local_abi_c11 PROPERTIES
+    # The public local-transaction boundary must remain consumable as strict C.
+    # Compile the C source in an object target so libmako's public C++ compile
+    # options cannot leak into it; the final executable still uses the C++
+    # linker because it intentionally references every native ABI export.
+    add_library(mako_local_abi_c11_probe OBJECT
+        tests/test_mako_local_abi_c11.c)
+    set_target_properties(mako_local_abi_c11_probe PROPERTIES
         C_STANDARD 11
         C_STANDARD_REQUIRED YES
         C_EXTENSIONS NO
     )
-    target_include_directories(test_mako_local_abi_c11 PRIVATE
+    target_compile_options(mako_local_abi_c11_probe PRIVATE
+        -Wall -Wextra -Werror -Wpedantic)
+    target_include_directories(mako_local_abi_c11_probe PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/mako
     )
+    add_executable(test_mako_local_abi_c11
+        $<TARGET_OBJECTS:mako_local_abi_c11_probe>)
+    set_target_properties(test_mako_local_abi_c11 PROPERTIES
+        LINKER_LANGUAGE CXX)
+    target_link_libraries(test_mako_local_abi_c11
+        mako
+        rrr
+        erpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
     add_test(NAME MakoLocalAbiC11Probe COMMAND test_mako_local_abi_c11)
+
+    # C++ adds the noexcept/calling-type checks that the C type system cannot
+    # express. This is also a complete link probe, independent of GoogleTest.
+    add_library(mako_local_abi_cpp_conformance_probe OBJECT
+        tests/test_mako_local_abi_cpp_conformance.cc)
+    target_compile_options(mako_local_abi_cpp_conformance_probe PRIVATE
+        -Wall -Wextra -Werror -Wpedantic)
+    target_include_directories(mako_local_abi_cpp_conformance_probe PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+    add_executable(test_mako_local_abi_cpp_conformance
+        $<TARGET_OBJECTS:mako_local_abi_cpp_conformance_probe>)
+    set_target_properties(test_mako_local_abi_cpp_conformance PROPERTIES
+        LINKER_LANGUAGE CXX)
+    target_link_libraries(test_mako_local_abi_cpp_conformance
+        mako
+        rrr
+        erpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    add_test(NAME MakoLocalAbiCppConformance
+        COMMAND test_mako_local_abi_cpp_conformance)
+
+    add_test(NAME MakoLocalAbiSymbols
+        COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/scripts/check_mako_local_symbols.py"
+                --nm "${CMAKE_NM}"
+                --archive "$<TARGET_FILE:mako>"
+                --allowlist
+                  "${CMAKE_SOURCE_DIR}/tests/mako_local_abi_symbols.txt"
+                --manifest "${MAKO_LOCAL_BUILD_MANIFEST}"
+    )
+    add_test(NAME MakoLocalAbiSymbolCheckerUnit
+        COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tests/test_mako_local_symbol_checker.py"
+    )
+    add_test(NAME MakoLocalBuildFingerprintUnit
+        COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/scripts/tests/test_mako_local_fingerprint.py"
+    )
 
     if (TARGET mrxffi)
         # Differential: drive the C++ cache and the Rust cache with the
@@ -3120,19 +3278,34 @@ if(BUILD_TESTS)
             list(APPEND MAKO_CACHE_NATIVE_CRASH_TEST_ENV
                  "MAKO_CACHE_REQUIRE_NATIVE_CRASH_HOOKS=1")
         endif()
+        set(MAKO_RUST_TOOLCHAIN_ENV
+            "PYTHON=${MAKO_LOCAL_PYTHON_EXECUTABLE}")
+        if(DEFINED ENV{LIBCLANG_PATH})
+            list(APPEND MAKO_RUST_TOOLCHAIN_ENV
+                 "LIBCLANG_PATH=$ENV{LIBCLANG_PATH}")
+        endif()
+        set(MAKO_LOCAL_CARGO_ENV
+            ${MAKO_RUST_TOOLCHAIN_ENV}
+            "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-local")
+        set(MAKO_CACHE_CARGO_ENV
+            ${MAKO_RUST_TOOLCHAIN_ENV}
+            "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-cache")
 
         add_custom_target(run_mako_local_rust_tests
             COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
                     "MAKO_LOCAL_FAKE_ABI=1"
                     "MAKO_LOCAL_REQUIRE_NATIVE=0"
                     ${CARGO_EXECUTABLE} test -p mako-local --lib
             COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
                     "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
                     ${CARGO_EXECUTABLE} test
                     -p mako-local -p mako-local-sys --all-targets
             COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
                     "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
@@ -3145,12 +3318,16 @@ if(BUILD_TESTS)
 
         add_custom_target(run_mako_cache_rust_tests
             COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_CACHE_CARGO_ENV}
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
                     ${MAKO_CACHE_NATIVE_CRASH_TEST_ENV}
                     ${CARGO_EXECUTABLE} test -p mako-cache --all-targets
             COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_CACHE_CARGO_ENV}
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
                     ${CARGO_EXECUTABLE} test -p mako-cache --doc
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
@@ -3168,14 +3345,23 @@ if(BUILD_TESTS)
                 test_silo_runtime test_silo_multi_site_stress
                 test_silo_nontxn_api test_kv_backends test_mako_local_abi
                 test_mako_local_abi_c11
+                test_mako_local_abi_cpp_conformance
+                check_mako_local_build_fingerprint
+                check_mako_local_abi_symbols
                 test_sto_transaction test_sto_transaction_real
         COMMENT "Running all Silo/STO tests"
         VERBATIM
     )
     if(TARGET run_mako_local_rust_tests)
+        add_dependencies(run_mako_local_rust_tests
+            check_mako_local_build_fingerprint
+            check_mako_local_abi_symbols)
         add_dependencies(run_silo_sto_tests run_mako_local_rust_tests)
     endif()
     if(TARGET run_mako_cache_rust_tests)
+        add_dependencies(run_mako_cache_rust_tests
+            check_mako_local_build_fingerprint
+            check_mako_local_abi_symbols)
         add_dependencies(run_silo_sto_tests run_mako_cache_rust_tests)
     endif()
 
