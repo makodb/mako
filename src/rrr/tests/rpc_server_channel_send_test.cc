@@ -114,8 +114,8 @@ class ServerChannelSendTest : public ::testing::Test {
         ctx_ = rusty::Some(make_test_ctx());
         // socket fd = -1: legacy path is unreachable (we never call
         // handle_read / handle_write); we only exercise reply().
-        sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
-            ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
+        sconn_ = rusty::Some(rusty::Arc<ServerConnection>::new_(ServerConnection::new_(
+            ctx_.as_ref().unwrap().clone(), /*socket=*/-1)));
     }
 
     void TearDown() override {
@@ -157,7 +157,7 @@ TEST_F(ServerChannelSendTest, ReplyCapturesFrameWithExpectedBody) {
     const auto& bytes = stub->captured().front();
 
     rrr::BufferSource src(bytes.data(), bytes.size());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
 
     v64 v_xid;
     v32 v_err;
@@ -189,7 +189,7 @@ TEST_F(ServerChannelSendTest, ReplyPropagatesErrorCode) {
     ASSERT_EQ(stub->count(), 1u);
     rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     v64 v_xid;
     v32 v_err;
     v64 v_instance;
@@ -220,7 +220,7 @@ TEST_F(ServerChannelSendTest, MultipleSequentialRepliesCaptureInOrder) {
     for (std::size_t i = 0; i < 5u; ++i) {
         rrr::BufferSource src(stub->captured()[i].data(),
                    stub->captured()[i].size());
-        rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+        rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
         v64 v_xid;
         v32 v_err;
         v64 v_instance;

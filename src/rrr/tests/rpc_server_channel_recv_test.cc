@@ -94,7 +94,7 @@ inline ChannelConnectionProxy make_stub_proxy(
 inline std::vector<std::uint8_t> build_request_frame(
         i64 xid, i32 rpc_id, const std::string& user = std::string()) {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(v64(xid), war);
     rrr::Serialize_::serialize(rpc_id, war);
     if (!user.empty()) rrr::Serialize_::serialize(user, war);
@@ -116,7 +116,7 @@ class RecordingService {
         last_rpc_id_ = rpc_id;
         last_xid_    = req->xid;
         std::string echo;
-        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy_buffer(&req->src));
         rrr::Deserialize_::deserialize(echo, __req_ar__);
         last_payload_ = echo;
         ++dispatch_count_;
@@ -193,8 +193,8 @@ class ServerChannelRecvTest : public ::testing::Test {
                 std::move(pending),
                 std::move(drop),
                 kFakeServerInstanceId)));
-        sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
-            ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
+        sconn_ = rusty::Some(rusty::Arc<ServerConnection>::new_(ServerConnection::new_(
+            ctx_.as_ref().unwrap().clone(), /*socket=*/-1)));
         // Wire `weak_self_` so the on_frame callback can upgrade.
         // Production goes through the listener accept path which
         // sets this; we set it manually here.
@@ -229,7 +229,7 @@ TEST_F(ServerChannelRecvTest, UnhandledRpcRepliesEnoent) {
     ASSERT_EQ(stub->count(), 1u);
     rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     v64 v_xid;
     v32 v_err;
     v64 v_inst;
@@ -256,7 +256,7 @@ TEST_F(ServerChannelRecvTest, HeartbeatRpcRepliesZero) {
     ASSERT_EQ(stub->count(), 1u);
     rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     v64 v_xid;
     v32 v_err;
     v64 v_inst;
@@ -277,7 +277,7 @@ TEST_F(ServerChannelRecvTest, MalformedFrameRepliesEinval) {
     mut_sconn().bind_channel(make_stub_proxy(stub));
 
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(v64(/*xid=*/55), war);  // only xid, no rpc_id
     std::vector<std::uint8_t> bytes(
         sink.bytes.data(), sink.bytes.data() + sink.bytes.len());
@@ -286,7 +286,7 @@ TEST_F(ServerChannelRecvTest, MalformedFrameRepliesEinval) {
     ASSERT_EQ(stub->count(), 1u);
     rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     v64 v_xid;
     v32 v_err;
     rrr::Deserialize_::deserialize(v_xid, rar);
@@ -327,8 +327,8 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
             std::move(pending),
             std::move(drop),
             kFakeServerInstanceId)));
-    sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
-        ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
+    sconn_ = rusty::Some(rusty::Arc<ServerConnection>::new_(ServerConnection::new_(
+        ctx_.as_ref().unwrap().clone(), /*socket=*/-1)));
     const_cast<ServerConnection&>(*sconn_.as_ref().unwrap().get())
         .install_self_weak_for_testing(rusty::sync::downgrade(sconn_.as_ref().unwrap()));
 
@@ -349,7 +349,7 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     ASSERT_EQ(stub->count(), 1u);
     rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     v64 v_xid;
     v32 v_err;
     v64 v_inst;

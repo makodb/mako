@@ -109,7 +109,7 @@ class ClientChannelSendTest : public ::testing::Test {
  protected:
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
-        conn_ = rusty::Some(rusty::Arc<ClientConnection>::make(poll_thread_.as_ref().unwrap().clone()));
+        conn_ = rusty::Some(rusty::Arc<ClientConnection>::new_(ClientConnection::new_(poll_thread_.as_ref().unwrap().clone())));
         stub_ = std::make_shared<CapturingChannelStub>();
         mut_conn().bind_channel(make_capture_proxy(stub_));
         // Drive the state machine to CONNECTED so request_via_channel's
@@ -157,7 +157,7 @@ TEST_F(ClientChannelSendTest, RequestRoutesFrameThroughChannel) {
 
     // Decode the captured body: [v64 xid][i32 rpc_id][i32 0xDEADBEEF].
     rrr::BufferSource src(frames[0].data(), frames[0].size());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
 
     v64 v_xid;
     i32 rpc_id;
@@ -208,7 +208,7 @@ TEST_F(ClientChannelSendTest, MultipleRequestsCaptureInOrder) {
     auto frames = stub_->captured();
     for (int i = 0; i < kCount; ++i) {
         rrr::BufferSource src(frames[i].data(), frames[i].size());
-        rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+        rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
         v64 v_xid;
         i32 rpc_id;
         i32 user_arg;

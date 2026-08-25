@@ -108,8 +108,8 @@ class ServerChannelCloseTest : public ::testing::Test {
  protected:
     void SetUp() override {
         ctx_ = rusty::Some(make_test_ctx());
-        sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
-            ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
+        sconn_ = rusty::Some(rusty::Arc<ServerConnection>::new_(ServerConnection::new_(
+            ctx_.as_ref().unwrap().clone(), /*socket=*/-1)));
         const_cast<ServerConnection&>(*sconn_.as_ref().unwrap().get())
             .install_self_weak_for_testing(rusty::sync::downgrade(sconn_.as_ref().unwrap()));
     }

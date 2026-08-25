@@ -11,13 +11,13 @@ using namespace rrr;
 
 void test_basic_integers() {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
 
     i32 val_in = 42;
     rrr::Serialize_::serialize(val_in, war);
 
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     i32 val_out;
     rrr::Deserialize_::deserialize(val_out, rar);
 
@@ -26,7 +26,7 @@ void test_basic_integers() {
 
 void test_multiple_integers() {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
 
     i8 i8_val = -128;
     i16 i16_val = -32768;
@@ -44,7 +44,7 @@ void test_multiple_integers() {
     i64 i64_out;
 
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     rrr::Deserialize_::deserialize(i8_out, rar);
     rrr::Deserialize_::deserialize(i16_out, rar);
     rrr::Deserialize_::deserialize(i32_out, rar);
@@ -58,13 +58,13 @@ void test_multiple_integers() {
 
 void test_strings() {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
 
     std::string str_in = "Hello, Marshal!";
     rrr::Serialize_::serialize(str_in, war);
 
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     std::string str_out;
     rrr::Deserialize_::deserialize(str_out, rar);
     
@@ -73,13 +73,13 @@ void test_strings() {
 
 void test_vectors() {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
 
     std::vector<int> vec_in = {1, 2, 3, 4, 5};
     rrr::Serialize_::serialize(vec_in, war);
 
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     std::vector<int> vec_out;
     rrr::Deserialize_::deserialize(vec_out, rar);
     
@@ -91,13 +91,13 @@ void test_vectors() {
 
 void test_maps() {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
 
     std::map<int, std::string> map_in = {{1, "one"}, {2, "two"}, {3, "three"}};
     rrr::Serialize_::serialize(map_in, war);
 
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     std::map<int, std::string> map_out;
     rrr::Deserialize_::deserialize(map_out, rar);
     
@@ -110,7 +110,7 @@ void test_maps() {
 
 void test_content_size() {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
 
     TEST_ASSERT_TRUE(sink.bytes.len() == 0);
     TEST_ASSERT_EQ(sink.bytes.len(), 0u);
@@ -124,7 +124,7 @@ void test_content_size() {
 
 void test_peek() {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
 
     i32 val1 = 100;
     i32 val2 = 200;
@@ -141,7 +141,7 @@ void test_peek() {
     TEST_ASSERT_EQ(peeked_val, val1);
 
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     i32 read_val1, read_val2;
     rrr::Deserialize_::deserialize(read_val1, rar);
     rrr::Deserialize_::deserialize(read_val2, rar);
@@ -152,7 +152,7 @@ void test_peek() {
 
 void test_large_data() {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
 
     const size_t large_size = 10000;
     std::vector<i32> large_vec;
@@ -163,7 +163,7 @@ void test_large_data() {
     rrr::Serialize_::serialize(large_vec, war);
 
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     std::vector<i32> large_vec_out;
     rrr::Deserialize_::deserialize(large_vec_out, rar);
     

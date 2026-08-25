@@ -328,33 +328,33 @@ TEST_F(FiberTest, SleepUntilFutureTime) {
 // =============================================================================
 
 TEST_F(FiberTest, PromiseGetFutureOnce) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     EXPECT_TRUE(future.valid());
 }
 
 TEST_F(FiberTest, PromiseGetFutureTwiceThrows) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     EXPECT_THROW(promise.get_future(), std::logic_error);
 }
 
 TEST_F(FiberTest, PromiseSetValueOnce) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     promise.set_value(42);
     EXPECT_TRUE(promise.is_ready());
 }
 
 TEST_F(FiberTest, PromiseSetValueTwiceThrows) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     promise.set_value(42);
     EXPECT_THROW(promise.set_value(100), std::logic_error);
 }
 
 TEST_F(FiberTest, FutureIsReadyAfterSet) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     EXPECT_FALSE(future.is_ready());
     promise.set_value(42);
@@ -362,7 +362,7 @@ TEST_F(FiberTest, FutureIsReadyAfterSet) {
 }
 
 TEST_F(FiberTest, FutureGetValueImmediate) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     promise.set_value(42);
 
@@ -371,7 +371,7 @@ TEST_F(FiberTest, FutureGetValueImmediate) {
 }
 
 TEST_F(FiberTest, FutureGetValueMultipleTimes) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     promise.set_value(42);
 
@@ -382,7 +382,7 @@ TEST_F(FiberTest, FutureGetValueMultipleTimes) {
 }
 
 TEST_F(FiberTest, FutureGetValueInFiber) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     int received_value = 0;
     auto reactor = Reactor::get_reactor();
@@ -402,7 +402,7 @@ TEST_F(FiberTest, FutureGetValueInFiber) {
 }
 
 TEST_F(FiberTest, FutureWaitForTimeout) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     bool ready = false;
     auto reactor = Reactor::get_reactor();
@@ -419,7 +419,7 @@ TEST_F(FiberTest, FutureWaitForTimeout) {
 }
 
 TEST_F(FiberTest, FutureWaitForReady) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
     promise.set_value(42);
 
@@ -429,13 +429,13 @@ TEST_F(FiberTest, FutureWaitForReady) {
 }
 
 TEST_F(FiberTest, DefaultFutureIsInvalid) {
-    FiberFuture<int> future;
+    auto future = FiberFuture<int>::default_();
     EXPECT_FALSE(future.valid());
     EXPECT_FALSE(future.is_ready());
 }
 
 TEST_F(FiberTest, MovedFromFutureIsInvalid) {
-    FiberPromise<int> promise;
+    auto promise = FiberPromise<int>::default_();
     auto future1 = promise.get_future();
     auto future2 = std::move(future1);
 
@@ -444,7 +444,7 @@ TEST_F(FiberTest, MovedFromFutureIsInvalid) {
 }
 
 TEST_F(FiberTest, MovedFromPromiseThrows) {
-    FiberPromise<int> promise1;
+    auto promise1 = FiberPromise<int>::default_();
     auto future = promise1.get_future();
     FiberPromise<int> promise2 = std::move(promise1);
 
@@ -473,14 +473,14 @@ TEST_F(FiberTest, MakeReadyFuture) {
 }
 
 TEST_F(FiberTest, FutureWithStringType) {
-    FiberPromise<std::string> promise;
+    auto promise = FiberPromise<std::string>::default_();
     auto future = promise.get_future();
     promise.set_value("hello world");
     EXPECT_EQ("hello world", future.get());
 }
 
 TEST_F(FiberTest, FutureWithVectorType) {
-    FiberPromise<std::vector<int>> promise;
+    auto promise = FiberPromise<std::vector<int>>::default_();
     auto future = promise.get_future();
     promise.set_value({1, 2, 3, 4, 5});
 

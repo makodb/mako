@@ -29,14 +29,18 @@
 
 #include <errno.h>
 
+#include <cstddef>
 #include <gtest/gtest.h>
 
 
 #include <fcntl.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <rusty/arc.hpp>
+#include <rusty/rusty.hpp>
 
 #include "../rrr.hpp"
 
@@ -49,6 +53,73 @@ import std;
 namespace rrr {
 namespace {
 
+// TcpConnection and TcpListener are consumed through Arc/proxy APIs, but the
+// concrete module types predate the canonical-Rust migration and are part of
+// the shipped C++ ABI.  Keep every historical boundary pinned: using fresh
+// mutex wrappers for fd/listener/inbound state shifts the callback fields and
+// breaks already-compiled consumers even when method symbols are unchanged.
+static_assert(sizeof(TcpConnection) == 344);
+static_assert(alignof(TcpConnection) == 8);
+static_assert(rusty::is_send<TcpConnection>::value);
+static_assert(rusty::is_sync<TcpConnection>::value);
+static_assert(offsetof(TcpConnection, fd_) == 0);
+static_assert(offsetof(TcpConnection, peer_address_) == 8);
+static_assert(offsetof(TcpConnection, outbound_high_water_) == 32);
+static_assert(offsetof(TcpConnection, outbound_) == 40);
+static_assert(offsetof(TcpConnection, inbound_) == 104);
+static_assert(offsetof(TcpConnection, closed_) == 152);
+static_assert(offsetof(TcpConnection, on_closed_fired_) == 153);
+static_assert(offsetof(TcpConnection, pending_write_update_) == 154);
+static_assert(offsetof(TcpConnection, poll_thread_) == 160);
+static_assert(offsetof(TcpConnection, on_frame_) == 176);
+static_assert(offsetof(TcpConnection, on_closed_) == 232);
+static_assert(offsetof(TcpConnection, on_error_) == 288);
+
+static_assert(sizeof(TcpListener) == 192);
+static_assert(alignof(TcpListener) == 8);
+static_assert(rusty::is_send<TcpListener>::value);
+static_assert(rusty::is_sync<TcpListener>::value);
+static_assert(offsetof(TcpListener, listener_) == 0);
+static_assert(offsetof(TcpListener, bound_address_) == 8);
+static_assert(offsetof(TcpListener, closed_) == 40);
+static_assert(offsetof(TcpListener, listened_) == 41);
+static_assert(offsetof(TcpListener, accept_callback_thread_) == 44);
+static_assert(offsetof(TcpListener, poll_thread_) == 48);
+static_assert(offsetof(TcpListener, self_weak_) == 64);
+static_assert(offsetof(TcpListener, on_accept_) == 80);
+static_assert(offsetof(TcpListener, on_error_) == 136);
+
+static_assert(sizeof(TcpFactory) == 16);
+static_assert(alignof(TcpFactory) == 8);
+static_assert(offsetof(TcpFactory, poll_thread_) == 0);
+static_assert(offsetof(TcpFactory, connect_timeout_ms_) == 8);
+
+int connect_to_listener(const std::string& address) {
+    const auto colon = address.rfind(':');
+    if (colon == std::string::npos) return -1;
+    const int port = std::atoi(address.c_str() + colon + 1);
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    sockaddr_in peer{};
+    peer.sin_family = AF_INET;
+    peer.sin_port = htons(static_cast<std::uint16_t>(port));
+    peer.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::connect(fd, reinterpret_cast<const sockaddr*>(&peer), sizeof(peer)) != 0) {
+        ::close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+template <typename Predicate>
+bool wait_until(Predicate&& predicate, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    return predicate();
+}
+
 class TcpConnectionTest : public ::testing::Test {
  protected:
     void SetUp() override {
@@ -58,7 +129,7 @@ class TcpConnectionTest : public ::testing::Test {
         ASSERT_EQ(0, set_nonblocking(sv[1]));
         conn_fd_ = sv[0];
         peer_fd_ = sv[1];
-        conn_ = rusty::Some(rusty::Arc<TcpConnection>::make(conn_fd_, "test-peer"));
+        conn_ = rusty::Some(rusty::Arc<TcpConnection>::new_(TcpConnection::new_(conn_fd_, "test-peer")));
     }
 
     void TearDown() override {
@@ -463,6 +534,86 @@ TEST_F(TcpConnectionTest, ChannelProxyForwardsAllOps) {
 
     // Frame delivery exercised separately (proxy paths are pure
     // forwarding to the same Arc).
+}
+
+TEST(TcpListenerConcurrencyTest, CloseWaitsForWholeAcceptDriverWithTwoReaders) {
+    auto listener = TcpListener::new_();
+    ASSERT_EQ(listener.listen("127.0.0.1:0"), ChannelError::None);
+
+    std::atomic<unsigned> callbacks_entered{0};
+    std::atomic<bool> release_first{false};
+    listener.set_on_accept(OnAcceptCallback::from_callable(
+        [&](ChannelConnectionProxy) {
+            const unsigned index =
+                callbacks_entered.fetch_add(1, std::memory_order_seq_cst);
+            if (index == 0) {
+                while (!release_first.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+            }
+        }));
+
+    const int client1 = connect_to_listener(listener.local_address());
+    ASSERT_GE(client1, 0);
+    std::thread reader1([&] { listener.handle_read(); });
+    const bool first_entered = wait_until(
+        [&] { return callbacks_entered.load(std::memory_order_acquire) >= 1; },
+        std::chrono::seconds(2));
+    if (!first_entered) {
+        release_first.store(true, std::memory_order_release);
+        reader1.join();
+        ::close(client1);
+        FAIL() << "first accept callback did not start";
+    }
+
+    const int client2 = connect_to_listener(listener.local_address());
+    if (client2 < 0) {
+        release_first.store(true, std::memory_order_release);
+        reader1.join();
+        ::close(client1);
+        FAIL() << "second client failed to connect";
+    }
+    bool reader2_result = true;
+    std::thread reader2([&] { reader2_result = listener.handle_read(); });
+    reader2.join();
+
+    std::atomic<unsigned> closes_done{0};
+    std::thread closer1([&] {
+        listener.close();
+        closes_done.fetch_add(1, std::memory_order_release);
+    });
+    const bool close_started = wait_until([&] { return listener.is_closed(); },
+                                          std::chrono::seconds(2));
+    if (!close_started) {
+        release_first.store(true, std::memory_order_release);
+        reader1.join();
+        closer1.join();
+        ::close(client1);
+        ::close(client2);
+        FAIL() << "close did not set the closed latch";
+    }
+
+    // A second close exercises the already-closed path; it must wait too.
+    std::thread closer2([&] {
+        listener.close();
+        closes_done.fetch_add(1, std::memory_order_release);
+    });
+    const bool a_close_returned_while_first_callback_was_live = wait_until(
+        [&] { return closes_done.load(std::memory_order_acquire) != 0; },
+        std::chrono::milliseconds(200));
+
+    release_first.store(true, std::memory_order_release);
+    reader1.join();
+    closer1.join();
+    closer2.join();
+    ::close(client1);
+    ::close(client2);
+
+    EXPECT_FALSE(reader2_result);
+    EXPECT_EQ(callbacks_entered.load(std::memory_order_seq_cst), 1u);
+    EXPECT_FALSE(a_close_returned_while_first_callback_was_live);
+    EXPECT_EQ(closes_done.load(std::memory_order_acquire), 2u);
+    EXPECT_EQ(listener.fd(), -1);
 }
 
 }  // namespace

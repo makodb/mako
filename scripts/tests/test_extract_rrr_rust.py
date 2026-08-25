@@ -18,6 +18,10 @@ from unittest import mock
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+# `src/rrr` is the vendored srpc tree. Every crate-relative label the
+# extraction driver owns resolves against this directory, exactly as it
+# resolves against the repository root in standalone srpc.
+CRATE = REPOSITORY / "src/rrr"
 DRIVER_PATH = REPOSITORY / "scripts/extract_rrr_rust.py"
 SPEC = importlib.util.spec_from_file_location("extract_rrr_rust", DRIVER_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -760,9 +764,7 @@ class CheckedInCanaryTests(unittest.TestCase):
             )
 
     def test_manifest_names_the_canonical_rust_sources(self) -> None:
-        modules = DRIVER.load_manifest(
-            REPOSITORY, REPOSITORY / "src/rrr/rust-modules.toml"
-        )
+        modules = DRIVER.load_manifest(CRATE, CRATE / "rust-modules.toml")
         self.assertEqual(
             [
                 (
@@ -777,233 +779,231 @@ class CheckedInCanaryTests(unittest.TestCase):
                 (
                     "rrr.basetypes",
                     "basetypes",
-                    "src/rrr/base/basetypes.rs",
-                    "src/rrr/base/basetypes.rs",
+                    "base/basetypes.rs",
+                    "base/basetypes.rs",
                 ),
                 (
                     "rrr.callback_wrapper",
                     "callback_wrapper",
-                    "src/rrr/base/callback_wrapper.rs",
-                    "src/rrr/base/callback_wrapper.rs",
+                    "base/callback_wrapper.rs",
+                    "base/callback_wrapper.rs",
                 ),
                 (
                     "rrr.internal_protocol",
                     "internal_protocol",
-                    "src/rrr/rpc/internal_protocol.rs",
-                    "src/rrr/rpc/internal_protocol.rs",
+                    "rpc/internal_protocol.rs",
+                    "rpc/internal_protocol.rs",
                 ),
                 (
                     "rrr.stat",
                     "stat",
-                    "src/rrr/misc/stat.rs",
-                    "src/rrr/misc/stat.rs",
+                    "misc/stat.rs",
+                    "misc/stat.rs",
                 ),
                 (
                     "rrr.errors",
                     "errors",
-                    "src/rrr/rpc/errors.rs",
-                    "src/rrr/rpc/errors.rs",
+                    "rpc/errors.rs",
+                    "rpc/errors.rs",
                 ),
                 (
                     "rrr.connection_metrics",
                     "connection_metrics",
-                    "src/rrr/rpc/connection_metrics.rs",
-                    "src/rrr/rpc/connection_metrics.rs",
+                    "rpc/connection_metrics.rs",
+                    "rpc/connection_metrics.rs",
                 ),
                 (
                     "rrr.completion_tracker",
                     "completion_tracker",
-                    "src/rrr/rpc/completion_tracker.rs",
-                    "src/rrr/rpc/completion_tracker.rs",
+                    "rpc/completion_tracker.rs",
+                    "rpc/completion_tracker.rs",
                 ),
                 (
                     "rrr.rand",
                     "rand",
-                    "src/rrr/misc/rand.rs",
-                    "src/rrr/misc/rand.rs",
+                    "misc/rand.rs",
+                    "misc/rand.rs",
                 ),
                 (
                     "rrr.request_options",
                     "request_options",
-                    "src/rrr/rpc/request_options.rs",
-                    "src/rrr/rpc/request_options.rs",
+                    "rpc/request_options.rs",
+                    "rpc/request_options.rs",
                 ),
                 (
                     "rrr.reconnect_policy",
                     "reconnect_policy",
-                    "src/rrr/rpc/reconnect_policy.rs",
-                    "src/rrr/rpc/reconnect_policy.rs",
+                    "rpc/reconnect_policy.rs",
+                    "rpc/reconnect_policy.rs",
                 ),
                 (
                     "rrr.circuit_breaker",
                     "circuit_breaker",
-                    "src/rrr/rpc/circuit_breaker.rs",
-                    "src/rrr/rpc/circuit_breaker.rs",
+                    "rpc/circuit_breaker.rs",
+                    "rpc/circuit_breaker.rs",
                 ),
                 (
                     "rrr.connection_state",
                     "connection_state",
-                    "src/rrr/rpc/connection_state.rs",
-                    "src/rrr/rpc/connection_state.rs",
+                    "rpc/connection_state.rs",
+                    "rpc/connection_state.rs",
                 ),
                 (
                     "rrr.heartbeat",
                     "heartbeat",
-                    "src/rrr/rpc/heartbeat.rs",
-                    "src/rrr/rpc/heartbeat.rs",
+                    "rpc/heartbeat.rs",
+                    "rpc/heartbeat.rs",
                 ),
                 (
                     "rrr.request_queue",
                     "request_queue",
-                    "src/rrr/rpc/request_queue.rs",
-                    "src/rrr/rpc/request_queue.rs",
+                    "rpc/request_queue.rs",
+                    "rpc/request_queue.rs",
                 ),
                 (
                     "rrr.load_balancer",
                     "load_balancer",
-                    "src/rrr/rpc/load_balancer.rs",
-                    "src/rrr/rpc/load_balancer.rs",
-                ),
-                (
-                    "rrr.debugging",
-                    "debugging",
-                    "src/rrr/base/debugging.rs",
-                    "src/rrr/base/debugging.rs",
-                ),
-                (
-                    "rrr.logging",
-                    "logging",
-                    "src/rrr/base/logging.rs",
-                    "src/rrr/base/logging.rs",
+                    "rpc/load_balancer.rs",
+                    "rpc/load_balancer.rs",
                 ),
                 (
                     "rrr.utils",
                     "utils",
-                    "src/rrr/rpc/utils.rs",
-                    "src/rrr/rpc/utils.rs",
+                    "rpc/utils.rs",
+                    "rpc/utils.rs",
                 ),
                 (
                     "rrr.frame_codec",
                     "frame_codec",
-                    "src/rrr/rpc/frame_codec.rs",
-                    "src/rrr/rpc/frame_codec.rs",
+                    "rpc/frame_codec.rs",
+                    "rpc/frame_codec.rs",
                 ),
                 (
                     "rrr.serializable",
                     "serializable",
-                    "src/rrr/misc/serializable.rs",
-                    "src/rrr/misc/serializable.rs",
+                    "misc/serializable.rs",
+                    "misc/serializable.rs",
                 ),
                 (
                     "rrr.serializable_envelope",
                     "serializable_envelope",
-                    "src/rrr/misc/serializable_envelope.rs",
-                    "src/rrr/misc/serializable_envelope.rs",
-                ),
-                (
-                    "rrr.epoll_wrapper",
-                    "epoll_wrapper",
-                    "src/rrr/reactor/epoll_wrapper.rs",
-                    "src/rrr/reactor/epoll_wrapper.rs",
-                ),
-                (
-                    "rrr.misc",
-                    "misc",
-                    "src/rrr/base/misc.rs",
-                    "src/rrr/base/misc.rs",
-                ),
-                (
-                    "rrr.pollable_proxy",
-                    "pollable_proxy",
-                    "src/rrr/rpc/pollable_proxy.rs",
-                    "src/rrr/rpc/pollable_proxy.rs",
-                ),
-                (
-                    "rrr.reactor",
-                    "reactor",
-                    "src/rrr/reactor/reactor.rs",
-                    "src/rrr/reactor/reactor.rs",
+                    "misc/serializable_envelope.rs",
+                    "misc/serializable_envelope.rs",
                 ),
                 (
                     "rrr.future",
                     "future",
-                    "src/rrr/reactor/future.rs",
-                    "src/rrr/reactor/future.rs",
+                    "reactor/future.rs",
+                    "reactor/future.rs",
+                ),
+                (
+                    "rrr.logging",
+                    "logging",
+                    "base/logging.rs",
+                    "base/logging.rs",
                 ),
                 (
                     "rrr.idempotency",
                     "idempotency",
-                    "src/rrr/rpc/idempotency.rs",
-                    "src/rrr/rpc/idempotency.rs",
+                    "rpc/idempotency.rs",
+                    "rpc/idempotency.rs",
                 ),
                 (
                     "rrr.fiber",
                     "fiber",
-                    "src/rrr/reactor/fiber.rs",
-                    "src/rrr/reactor/fiber.rs",
+                    "reactor/fiber.rs",
+                    "reactor/fiber.rs",
+                ),
+                (
+                    "rrr.misc",
+                    "misc",
+                    "base/misc.rs",
+                    "base/misc.rs",
                 ),
                 (
                     "rrr.channel",
                     "channel",
-                    "src/rrr/rpc/channel.rs",
-                    "src/rrr/rpc/channel.rs",
+                    "rpc/channel.rs",
+                    "rpc/channel.rs",
+                ),
+                (
+                    "rrr.epoll_wrapper",
+                    "epoll_wrapper",
+                    "reactor/epoll_wrapper.rs",
+                    "reactor/epoll_wrapper.rs",
+                ),
+                (
+                    "rrr.pollable_proxy",
+                    "pollable_proxy",
+                    "rpc/pollable_proxy.rs",
+                    "rpc/pollable_proxy.rs",
                 ),
                 (
                     "rrr.callbacks",
                     "callbacks",
-                    "src/rrr/rpc/callbacks.rs",
-                    "src/rrr/rpc/callbacks.rs",
+                    "rpc/callbacks.rs",
+                    "rpc/callbacks.rs",
                 ),
                 (
                     "rrr.inmemory_channel",
                     "inmemory_channel",
-                    "src/rrr/rpc/inmemory_channel.rs",
-                    "src/rrr/rpc/inmemory_channel.rs",
+                    "rpc/inmemory_channel.rs",
+                    "rpc/inmemory_channel.rs",
                 ),
                 (
                     "rrr.fiber_channel",
                     "fiber_channel",
-                    "src/rrr/rpc/fiber_channel.rs",
-                    "src/rrr/rpc/fiber_channel.rs",
+                    "rpc/fiber_channel.rs",
+                    "rpc/fiber_channel.rs",
                 ),
                 (
                     "rrr.threading",
                     "threading",
-                    "src/rrr/base/threading.rs",
-                    "src/rrr/base/threading.rs",
+                    "base/threading.rs",
+                    "base/threading.rs",
+                ),
+                (
+                    "rrr.debugging",
+                    "debugging",
+                    "base/debugging.rs",
+                    "base/debugging.rs",
                 ),
                 (
                     "rrr.any_message",
                     "any_message",
-                    "src/rrr/misc/any_message.rs",
-                    "src/rrr/misc/any_message.rs",
+                    "misc/any_message.rs",
+                    "misc/any_message.rs",
                 ),
                 (
                     "rrr.tcp_channel",
                     "tcp_channel",
-                    "src/rrr/rpc/tcp_channel.rs",
-                    "src/rrr/rpc/tcp_channel.rs",
+                    "rpc/tcp_channel.rs",
+                    "rpc/tcp_channel.rs",
+                ),
+                (
+                    "rrr.reactor",
+                    "reactor",
+                    "reactor/reactor.rs",
+                    "reactor/reactor.rs",
                 ),
                 (
                     "rrr.server",
                     "server",
-                    "src/rrr/rpc/server.rs",
-                    "src/rrr/rpc/server.rs",
+                    "rpc/server.rs",
+                    "rpc/server.rs",
                 ),
                 (
                     "rrr.client",
                     "client",
-                    "src/rrr/rpc/client.rs",
-                    "src/rrr/rpc/client.rs",
+                    "rpc/client.rs",
+                    "rpc/client.rs",
                 ),
             ],
         )
 
     def test_cmake_provider_inventory_matches_the_canonical_manifest(self) -> None:
-        modules = DRIVER.load_manifest(
-            REPOSITORY, REPOSITORY / "src/rrr/rust-modules.toml"
-        )
-        cmake = (REPOSITORY / "src/rrr/CMakeLists.txt").read_text(
+        modules = DRIVER.load_manifest(CRATE, CRATE / "rust-modules.toml")
+        cmake = (REPOSITORY / "src/rrr_build/CMakeLists.txt").read_text(
             encoding="utf-8"
         )
         match = re.search(
@@ -1039,12 +1039,11 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertEqual(
             cmake_relpaths,
             tuple(
-                module.canonical_source_label[len("src/rrr/") :]
-                for module in modules
+                module.canonical_source_label for module in modules
             ),
         )
         self.assertIn(
-            "${CMAKE_CURRENT_SOURCE_DIR}/${_RRR_GOAL0_RELPATH}",
+            "${RRR_SOURCE_DIR}/${_RRR_GOAL0_RELPATH}",
             cmake,
         )
         self.assertIn(
@@ -1052,8 +1051,8 @@ class CheckedInCanaryTests(unittest.TestCase):
             cmake,
         )
         for fragment in (
-            'set(RRR_GOAL0_TYPE_MAP\n    ${CMAKE_CURRENT_SOURCE_DIR}/rust-type-map.toml',
-            'set(RRR_GOAL0_CPP_MODULE_INDEX\n    ${CMAKE_CURRENT_SOURCE_DIR}/cpp-module-index.toml',
+            'set(RRR_GOAL0_TYPE_MAP\n    ${RRR_SOURCE_DIR}/rust-type-map.toml',
+            'set(RRR_GOAL0_CPP_MODULE_INDEX\n    ${RRR_SOURCE_DIR}/cpp-module-index.toml',
             '--type-map "${RRR_GOAL0_TYPE_MAP}"',
             '--cpp-module-index "${RRR_GOAL0_CPP_MODULE_INDEX}"',
             '"${RRR_GOAL0_TYPE_MAP}"',
@@ -1075,11 +1074,11 @@ class CheckedInCanaryTests(unittest.TestCase):
         change what the generated providers mean.
         """
 
-        manifest = REPOSITORY / "src/rrr/rust-modules.toml"
+        manifest = CRATE / "rust-modules.toml"
         self.assertEqual(
-            DRIVER.load_flat_import_namespace(REPOSITORY, manifest), "rrr"
+            DRIVER.load_flat_import_namespace(CRATE, manifest), "rrr"
         )
-        cmake = (REPOSITORY / "src/rrr/CMakeLists.txt").read_text(
+        cmake = (REPOSITORY / "src/rrr_build/CMakeLists.txt").read_text(
             encoding="utf-8"
         )
         self.assertIn("--flat-import-namespace rrr", cmake)
@@ -1091,7 +1090,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertIn("*flat_import_arguments,", gate)
         for source in (
             module.output
-            for module in DRIVER.load_manifest(REPOSITORY, manifest)
+            for module in DRIVER.load_manifest(CRATE, manifest)
         ):
             # The invariant is "no per-item MARKER", i.e. no
             # `#[cfg_attr(any(), cpp_import_namespace(...))]` attribute. Scan
@@ -1196,9 +1195,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         )
 
     def test_checked_in_modules_are_canonical_rust_sources(self) -> None:
-        modules = DRIVER.load_manifest(
-            REPOSITORY, REPOSITORY / "src/rrr/rust-modules.toml"
-        )
+        modules = DRIVER.load_manifest(CRATE, CRATE / "rust-modules.toml")
         # `src/rrr` is now srpc's tree byte for byte, so the two-line
         # "// Canonical Rust source for the rrr.X module." banner is gone from
         # the seventeen sources srpc never carried it on. Nothing is dropped:
@@ -1269,15 +1266,15 @@ class CheckedInCanaryTests(unittest.TestCase):
             # A canonical source lives at its layout-mirroring path, not in
             # src/. src/ holds only the generated crate index, and the census
             # rejects anything else that appears there.
-            source = root / "src/rrr/rpc/example.rs"
+            source = root / "rpc/example.rs"
             source.parent.mkdir(parents=True)
-            (root / "src/rrr/src").mkdir(parents=True)
+            (root / "src").mkdir(parents=True)
             original = b"pub fn canonical() -> i32 { 1 }\n"
             changed = b"pub fn canonical() -> i32 { 2 }\n"
             source.write_bytes(original)
             generated = [
                 DRIVER.GeneratedFile(
-                    output_label="src/rrr/rpc/example.rs",
+                    output_label="rpc/example.rs",
                     output=source,
                     content=original,
                     writable=False,
@@ -1291,19 +1288,17 @@ class CheckedInCanaryTests(unittest.TestCase):
             self.assertEqual(source.read_bytes(), changed)
 
     def test_lib_is_manifest_generated_and_census_has_no_orphans(self) -> None:
-        manifest = REPOSITORY / "src/rrr/rust-modules.toml"
-        modules = DRIVER.load_manifest(REPOSITORY, manifest)
-        expected_lib = DRIVER.render_lib(
-            "src/rrr/rust-modules.toml", manifest, modules
-        )
+        manifest = CRATE / "rust-modules.toml"
+        modules = DRIVER.load_manifest(CRATE, manifest)
+        expected_lib = DRIVER.render_lib("rust-modules.toml", manifest, modules)
         self.assertEqual(
             (REPOSITORY / "src/rrr/src/lib.rs").read_bytes(),
             expected_lib,
         )
         self.assertEqual(
-            DRIVER.rust_source_census(REPOSITORY),
+            DRIVER.rust_source_census(CRATE),
             {
-                "src/rrr/src/lib.rs",
+                "src/lib.rs",
             },
         )
 
@@ -1339,48 +1334,46 @@ class CheckedInCanaryTests(unittest.TestCase):
         #   (#[allow(unsafe_code)], #![allow(unsafe_code)], unsafe extern,
         #    unsafe fn, unsafe {, unsafe impl, unsafe trait)
         unsafe_census = {
-            "src/rrr/base/basetypes.rs": (10, 0, 1, 4, 9, 0, 0),
-            "src/rrr/base/callback_wrapper.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/internal_protocol.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/misc/stat.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/errors.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/connection_metrics.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/completion_tracker.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/misc/rand.rs": (3, 0, 1, 0, 2, 0, 0),
-            "src/rrr/rpc/request_options.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/reconnect_policy.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/circuit_breaker.rs": (2, 0, 1, 0, 1, 0, 0),
-            "src/rrr/rpc/connection_state.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/heartbeat.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/request_queue.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/load_balancer.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/base/debugging.rs": (4, 0, 1, 1, 8, 0, 0),
-            "src/rrr/base/logging.rs": (5, 0, 1, 2, 7, 0, 0),
-            "src/rrr/rpc/utils.rs": (5, 0, 1, 1, 5, 0, 0),
-            "src/rrr/rpc/frame_codec.rs": (5, 0, 0, 3, 4, 0, 0),
-            "src/rrr/misc/serializable.rs": (43, 0, 3, 14, 56, 0, 0),
-            "src/rrr/misc/serializable_envelope.rs": (8, 0, 0, 2, 16, 0, 0),
-            "src/rrr/reactor/epoll_wrapper.rs": (6, 0, 2, 0, 5, 0, 0),
-            "src/rrr/base/misc.rs": (5, 0, 1, 0, 2, 2, 2),
-            "src/rrr/rpc/pollable_proxy.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/reactor/reactor.rs": (0, 0, 3, 0, 66, 0, 0),
-            "src/rrr/reactor/future.rs": (3, 0, 0, 0, 3, 0, 0),
-            "src/rrr/rpc/idempotency.rs": (4, 0, 0, 0, 4, 0, 0),
-            "src/rrr/reactor/fiber.rs": (0, 1, 0, 0, 10, 0, 0),
-            "src/rrr/rpc/channel.rs": (2, 0, 0, 1, 0, 2, 2),
-            "src/rrr/rpc/callbacks.rs": (0, 0, 0, 0, 0, 0, 0),
-            "src/rrr/rpc/inmemory_channel.rs": (1, 1, 0, 3, 4, 1, 0),
-            "src/rrr/rpc/fiber_channel.rs": (0, 0, 0, 1, 7, 0, 0),
-            "src/rrr/base/threading.rs": (15, 0, 1, 13, 14, 0, 0),
-            "src/rrr/misc/any_message.rs": (1, 0, 0, 0, 8, 0, 0),
-            "src/rrr/rpc/tcp_channel.rs": (1, 0, 0, 6, 33, 5, 0),
-            "src/rrr/rpc/server.rs": (1, 1, 1, 7, 44, 4, 0),
-            "src/rrr/rpc/client.rs": (2, 1, 0, 2, 25, 2, 0),
+            "base/basetypes.rs": (10, 0, 1, 4, 9, 0, 0),
+            "base/callback_wrapper.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/internal_protocol.rs": (0, 0, 0, 0, 0, 0, 0),
+            "misc/stat.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/errors.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/connection_metrics.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/completion_tracker.rs": (0, 0, 0, 0, 0, 0, 0),
+            "misc/rand.rs": (3, 0, 1, 0, 2, 0, 0),
+            "rpc/request_options.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/reconnect_policy.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/circuit_breaker.rs": (2, 0, 1, 0, 1, 0, 0),
+            "rpc/connection_state.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/heartbeat.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/request_queue.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/load_balancer.rs": (0, 0, 0, 0, 0, 0, 0),
+            "base/debugging.rs": (4, 0, 1, 1, 8, 0, 0),
+            "base/logging.rs": (5, 0, 1, 2, 7, 0, 0),
+            "rpc/utils.rs": (5, 0, 1, 1, 5, 0, 0),
+            "rpc/frame_codec.rs": (5, 0, 0, 3, 4, 0, 0),
+            "misc/serializable.rs": (43, 0, 3, 14, 56, 0, 0),
+            "misc/serializable_envelope.rs": (8, 0, 0, 2, 16, 0, 0),
+            "reactor/epoll_wrapper.rs": (6, 0, 2, 0, 5, 0, 0),
+            "base/misc.rs": (5, 0, 1, 0, 2, 2, 2),
+            "rpc/pollable_proxy.rs": (0, 0, 0, 0, 0, 0, 0),
+            "reactor/reactor.rs": (0, 0, 3, 0, 66, 0, 0),
+            "reactor/future.rs": (3, 0, 0, 0, 3, 0, 0),
+            "rpc/idempotency.rs": (4, 0, 0, 0, 4, 0, 0),
+            "reactor/fiber.rs": (0, 1, 0, 0, 10, 0, 0),
+            "rpc/channel.rs": (2, 0, 0, 1, 0, 2, 2),
+            "rpc/callbacks.rs": (0, 0, 0, 0, 0, 0, 0),
+            "rpc/inmemory_channel.rs": (1, 1, 0, 3, 4, 1, 0),
+            "rpc/fiber_channel.rs": (0, 0, 0, 1, 7, 0, 0),
+            "base/threading.rs": (15, 0, 1, 13, 14, 0, 0),
+            "misc/any_message.rs": (1, 0, 0, 0, 8, 0, 0),
+            "rpc/tcp_channel.rs": (1, 0, 0, 6, 33, 5, 0),
+            "rpc/server.rs": (1, 1, 1, 7, 44, 4, 0),
+            "rpc/client.rs": (2, 1, 0, 2, 25, 2, 0),
         }
         measured = {}
-        for module in DRIVER.load_manifest(
-            REPOSITORY, REPOSITORY / "src/rrr/rust-modules.toml"
-        ):
+        for module in DRIVER.load_manifest(CRATE, CRATE / "rust-modules.toml"):
             text = module.output.read_text(encoding="utf-8")
             measured[module.output_label] = (
                 text.count("#[allow(unsafe_code"),
@@ -1595,7 +1588,7 @@ class DriverBehaviorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="rrr-extractor-test-")
         self.root = Path(self.temporary.name)
-        source_root = self.root / "src/rrr/rpc"
+        source_root = self.root / "rpc"
         source_root.mkdir(parents=True)
         self.interface = source_root / "example.cpp"
         self.interface.write_text(
@@ -1637,21 +1630,21 @@ class DriverBehaviorTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.manifest = self.root / "src/rrr/rust-extraction.toml"
+        self.manifest = self.root / "rust-extraction.toml"
         self.write_manifest(
             """\
             schema_version = 1
 
             [[module]]
             cpp_module = "rrr.example"
-            output = "src/rrr/src/example.rs"
+            output = "src/example.rs"
 
             [[module.input]]
-            source = "src/rrr/rpc/example.cpp"
+            source = "rpc/example.cpp"
             block_ids = ["example.2", "example.1"]
 
             [[module.input]]
-            source = "src/rrr/rpc/example_impl.cc"
+            source = "rpc/example_impl.cc"
             block_ids = ["example.impl"]
             """
         )
@@ -1712,7 +1705,7 @@ class DriverBehaviorTests(unittest.TestCase):
                 self.root,
                 modules,
                 executable,
-                "src/rrr/rust-extraction.toml",
+                "rust-extraction.toml",
                 self.manifest,
             )
 
@@ -1742,7 +1735,7 @@ class DriverBehaviorTests(unittest.TestCase):
                     "--block-id",
                     "example.1",
                     "--files",
-                    "src/rrr/rpc/example.cpp",
+                    "rpc/example.cpp",
                 ],
             )
             self.assertEqual(
@@ -1751,13 +1744,13 @@ class DriverBehaviorTests(unittest.TestCase):
                     "--block-id",
                     "example.impl",
                     "--files",
-                    "src/rrr/rpc/example_impl.cc",
+                    "rpc/example_impl.cc",
                 ],
             )
 
     def test_two_sources_are_concatenated_in_manifest_order(self) -> None:
         generated = self.generate()
-        module = generated_by_label(generated, "src/rrr/src/example.rs")
+        module = generated_by_label(generated, "src/example.rs")
         header, payload = split_generated(module.content)
         self.assertEqual(
             payload,
@@ -1779,7 +1772,7 @@ class DriverBehaviorTests(unittest.TestCase):
     def test_check_detects_drift_without_rewriting(self) -> None:
         generated = self.generate()
         DRIVER.apply_mode(self.root, generated, "write")
-        output = self.root / "src/rrr/src/example.rs"
+        output = self.root / "src/example.rs"
         output.write_text("tampered\n", encoding="utf-8")
 
         with self.assertRaisesRegex(DRIVER.ExtractionError, "stale"):
@@ -1789,7 +1782,7 @@ class DriverBehaviorTests(unittest.TestCase):
     def test_check_and_write_reject_orphan_rust_sources(self) -> None:
         generated = self.generate()
         DRIVER.apply_mode(self.root, generated, "write")
-        orphan = self.root / "src/rrr/src/orphan.rs"
+        orphan = self.root / "src/orphan.rs"
         orphan.write_text("parallel implementation\n", encoding="utf-8")
         for mode in ("check", "write"):
             with self.subTest(mode=mode):
@@ -1800,7 +1793,7 @@ class DriverBehaviorTests(unittest.TestCase):
     def test_check_rejects_stale_and_missing_generated_lib(self) -> None:
         generated = self.generate()
         DRIVER.apply_mode(self.root, generated, "write")
-        lib = generated_by_label(generated, "src/rrr/src/lib.rs")
+        lib = generated_by_label(generated, "src/lib.rs")
         lib.output.write_text("stale lib\n", encoding="utf-8")
         with self.assertRaisesRegex(DRIVER.ExtractionError, "stale"):
             DRIVER.apply_mode(self.root, generated, "check")
@@ -1811,9 +1804,9 @@ class DriverBehaviorTests(unittest.TestCase):
 
     def test_output_symlink_is_rejected_at_load_and_before_write(self) -> None:
         generated = self.generate()
-        output = self.root / "src/rrr/src/example.rs"
+        output = self.root / "src/example.rs"
         output.parent.mkdir(parents=True)
-        victim = self.root / "src/rrr/victim.rs"
+        victim = self.root / "victim.rs"
         victim.write_text("do not overwrite\n", encoding="utf-8")
         output.symlink_to("../victim.rs")
 
@@ -1836,11 +1829,11 @@ class DriverBehaviorTests(unittest.TestCase):
 
     def test_output_parent_symlink_is_rejected_at_load_and_before_census(self) -> None:
         generated = self.generate()
-        victim = self.root / "src/rrr/generated-victim"
+        victim = self.root / "generated-victim"
         victim.mkdir(parents=True)
         marker = victim / "marker"
         marker.write_text("do not touch\n", encoding="utf-8")
-        (self.root / "src/rrr/src").symlink_to(
+        (self.root / "src").symlink_to(
             victim, target_is_directory=True
         )
 
@@ -1856,13 +1849,13 @@ class DriverBehaviorTests(unittest.TestCase):
             ("input = []", "input must be a non-empty"),
             (
                 "[[module.input]]\n"
-                "source = \"src/rrr/rpc/example.cpp\"\n"
+                "source = \"rpc/example.cpp\"\n"
                 "block_ids = []",
                 "block_ids must be a non-empty",
             ),
             (
                 "[[module.input]]\n"
-                "source = \"src/rrr/rpc/example.cpp\"\n"
+                "source = \"rpc/example.cpp\"\n"
                 "block_ids = [\"example.1\", \"example.1\"]",
                 "contains duplicate",
             ),
@@ -1874,7 +1867,7 @@ class DriverBehaviorTests(unittest.TestCase):
                     schema_version = 1
                     [[module]]
                     cpp_module = "rrr.example"
-                    output = "src/rrr/src/example.rs"
+                    output = "src/example.rs"
                     {input_body}
                     """
                 )
@@ -1887,9 +1880,9 @@ class DriverBehaviorTests(unittest.TestCase):
             schema_version = 1
             [[module]]
             cpp_module = "rrr.lib"
-            output = "src/rrr/src/lib.rs"
+            output = "src/lib.rs"
             [[module.input]]
-            source = "src/rrr/rpc/example.cpp"
+            source = "rpc/example.cpp"
             block_ids = ["example.1"]
             """
         )
@@ -1900,22 +1893,22 @@ class DriverBehaviorTests(unittest.TestCase):
         cases = [
             (
                 "rrr.other",
-                "src/rrr/src/other.rs",
-                "src/rrr/rpc/example.cpp",
+                "src/other.rs",
+                "rpc/example.cpp",
                 "example.1",
                 "interface source .* must contain exactly",
             ),
             (
                 "rrr.example",
-                "src/rrr/src/wrong.rs",
-                "src/rrr/rpc/example.cpp",
+                "src/wrong.rs",
+                "rpc/example.cpp",
                 "example.1",
                 "output does not match cpp_module",
             ),
             (
                 "rrr.example",
-                "src/rrr/src/example.rs",
-                "src/rrr/rpc/example_impl.cc",
+                "src/example.rs",
+                "rpc/example_impl.cc",
                 "example.impl",
                 "interface source .* must contain exactly",
             ),
@@ -1937,7 +1930,7 @@ class DriverBehaviorTests(unittest.TestCase):
                     DRIVER.load_manifest(self.root, self.manifest)
 
     def test_manifest_restricts_sources_to_real_production_roots(self) -> None:
-        outside = self.root / "src/rrr/tests/example.cpp"
+        outside = self.root / "tests/example.cpp"
         outside.parent.mkdir(parents=True)
         outside.write_bytes(self.interface.read_bytes())
         self.write_manifest(
@@ -1945,9 +1938,9 @@ class DriverBehaviorTests(unittest.TestCase):
             schema_version = 1
             [[module]]
             cpp_module = "rrr.example"
-            output = "src/rrr/src/example.rs"
+            output = "src/example.rs"
             [[module.input]]
-            source = "src/rrr/tests/example.cpp"
+            source = "tests/example.cpp"
             block_ids = ["example.1"]
             """
         )
@@ -1955,13 +1948,13 @@ class DriverBehaviorTests(unittest.TestCase):
             DRIVER.load_manifest(self.root, self.manifest)
 
     def test_manifest_rejects_source_file_and_parent_symlinks(self) -> None:
-        source_link = self.root / "src/rrr/rpc/source_link.cpp"
+        source_link = self.root / "rpc/source_link.cpp"
         source_link.symlink_to("example.cpp")
-        parent_link = self.root / "src/rrr/base"
+        parent_link = self.root / "base"
         parent_link.symlink_to("rpc", target_is_directory=True)
         cases = [
-            "src/rrr/rpc/source_link.cpp",
-            "src/rrr/base/example.cpp",
+            "rpc/source_link.cpp",
+            "base/example.cpp",
         ]
         for source in cases:
             with self.subTest(source=source):
@@ -1970,7 +1963,7 @@ class DriverBehaviorTests(unittest.TestCase):
                     schema_version = 1
                     [[module]]
                     cpp_module = "rrr.example"
-                    output = "src/rrr/src/example.rs"
+                    output = "src/example.rs"
                     [[module.input]]
                     source = "{source}"
                     block_ids = ["example.1"]
@@ -1980,19 +1973,19 @@ class DriverBehaviorTests(unittest.TestCase):
                     DRIVER.load_manifest(self.root, self.manifest)
 
     def test_manifest_rejects_wrong_implementation_module(self) -> None:
-        wrong = self.root / "src/rrr/rpc/wrong_impl.cc"
+        wrong = self.root / "rpc/wrong_impl.cc"
         wrong.write_text("module rrr.other;\n", encoding="utf-8")
         self.write_manifest(
             """\
             schema_version = 1
             [[module]]
             cpp_module = "rrr.example"
-            output = "src/rrr/src/example.rs"
+            output = "src/example.rs"
             [[module.input]]
-            source = "src/rrr/rpc/example.cpp"
+            source = "rpc/example.cpp"
             block_ids = ["example.1"]
             [[module.input]]
-            source = "src/rrr/rpc/wrong_impl.cc"
+            source = "rpc/wrong_impl.cc"
             block_ids = ["wrong.1"]
             """
         )
@@ -2000,27 +1993,27 @@ class DriverBehaviorTests(unittest.TestCase):
             DRIVER.load_manifest(self.root, self.manifest)
 
     def test_manifest_rejects_duplicate_module_source_and_block_ownership(self) -> None:
-        other = self.root / "src/rrr/rpc/other.cpp"
+        other = self.root / "rpc/other.cpp"
         other.write_text("export module rrr.other;\n", encoding="utf-8")
         cases = [
             (
                 "rrr.example",
-                "src/rrr/src/example.rs",
-                "src/rrr/rpc/other.cpp",
+                "src/example.rs",
+                "rpc/other.cpp",
                 "other.1",
                 "duplicate cpp_module ownership",
             ),
             (
                 "rrr.other",
-                "src/rrr/src/other.rs",
-                "src/rrr/rpc/example.cpp",
+                "src/other.rs",
+                "rpc/example.cpp",
                 "other.1",
                 "duplicate source ownership",
             ),
             (
                 "rrr.other",
-                "src/rrr/src/other.rs",
-                "src/rrr/rpc/other.cpp",
+                "src/other.rs",
+                "rpc/other.cpp",
                 "example.1",
                 "block ID .* already owned",
             ),
@@ -2032,9 +2025,9 @@ class DriverBehaviorTests(unittest.TestCase):
                     schema_version = 1
                     [[module]]
                     cpp_module = "rrr.example"
-                    output = "src/rrr/src/example.rs"
+                    output = "src/example.rs"
                     [[module.input]]
-                    source = "src/rrr/rpc/example.cpp"
+                    source = "rpc/example.cpp"
                     block_ids = ["example.1"]
                     [[module]]
                     cpp_module = "{cpp_module}"
@@ -2977,20 +2970,20 @@ class CrateModeGateTests(unittest.TestCase):
             self.assertTrue(Path(command[2]).is_absolute())
 
     def test_cmake_crate_invocation_uses_an_absolute_manifest_variable(self) -> None:
-        cmake = (REPOSITORY / "src/rrr/CMakeLists.txt").read_text(
+        cmake = (REPOSITORY / "src/rrr_build/CMakeLists.txt").read_text(
             encoding="utf-8"
         )
         self.assertIn(
             'get_filename_component(\n'
             '    RRR_GOAL0_CRATE_MANIFEST\n'
-            '    "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"\n'
+            '    "${RRR_SOURCE_DIR}/Cargo.toml"\n'
             '    ABSOLUTE\n'
             ')',
             cmake,
         )
         self.assertIn('--crate "${RRR_GOAL0_CRATE_MANIFEST}"', cmake)
         self.assertNotIn(
-            '--crate "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"', cmake
+            '--crate "${RRR_SOURCE_DIR}/Cargo.toml"', cmake
         )
 
     def test_generated_gate_compiles_children_before_partial_root(self) -> None:
@@ -3010,26 +3003,26 @@ class CrateModeGateTests(unittest.TestCase):
             mock.Mock(cpp_module="rrr.heartbeat"),
             mock.Mock(cpp_module="rrr.request_queue"),
             mock.Mock(cpp_module="rrr.load_balancer"),
-            mock.Mock(cpp_module="rrr.debugging"),
-            mock.Mock(cpp_module="rrr.logging"),
             mock.Mock(cpp_module="rrr.utils"),
             mock.Mock(cpp_module="rrr.frame_codec"),
             mock.Mock(cpp_module="rrr.serializable"),
             mock.Mock(cpp_module="rrr.serializable_envelope"),
-            mock.Mock(cpp_module="rrr.epoll_wrapper"),
-            mock.Mock(cpp_module="rrr.misc"),
-            mock.Mock(cpp_module="rrr.pollable_proxy"),
-            mock.Mock(cpp_module="rrr.reactor"),
             mock.Mock(cpp_module="rrr.future"),
+            mock.Mock(cpp_module="rrr.logging"),
             mock.Mock(cpp_module="rrr.idempotency"),
             mock.Mock(cpp_module="rrr.fiber"),
+            mock.Mock(cpp_module="rrr.misc"),
             mock.Mock(cpp_module="rrr.channel"),
+            mock.Mock(cpp_module="rrr.epoll_wrapper"),
+            mock.Mock(cpp_module="rrr.pollable_proxy"),
             mock.Mock(cpp_module="rrr.callbacks"),
             mock.Mock(cpp_module="rrr.inmemory_channel"),
             mock.Mock(cpp_module="rrr.fiber_channel"),
             mock.Mock(cpp_module="rrr.threading"),
+            mock.Mock(cpp_module="rrr.debugging"),
             mock.Mock(cpp_module="rrr.any_message"),
             mock.Mock(cpp_module="rrr.tcp_channel"),
+            mock.Mock(cpp_module="rrr.reactor"),
             mock.Mock(cpp_module="rrr.server"),
             mock.Mock(cpp_module="rrr.client"),
         ]
@@ -3112,8 +3105,23 @@ class CrateModeGateTests(unittest.TestCase):
         ) -> Path:
             return Path(f"/{module_name}.o")
 
+        # crate_compile_order reads the generated units to learn the import
+        # graph, so the fixture has to supply one. Only the edge that actually
+        # reorders the schedule is modelled: `rrr.utils` imports `rrr.logging`,
+        # and under this (srpc-owned) manifest order `rrr.logging` is declared
+        # AFTER `rrr.utils`.
+        crate_imports = {"rrr.utils": ["rrr.logging"]}
         with tempfile.TemporaryDirectory(prefix="rrr-gate-children-test-") as temporary:
             output = Path(temporary)
+            for module in modules:
+                (output / f"{module.cpp_module}.cppm").write_text(
+                    "".join(
+                        f"import {name};\n"
+                        for name in crate_imports.get(module.cpp_module, ())
+                    )
+                    + f"export module {module.cpp_module};\n",
+                    encoding="utf-8",
+                )
             with mock.patch.object(
                 GATE, "require_cpp_surfaces"
             ), mock.patch.object(
@@ -3192,26 +3200,26 @@ class CrateModeGateTests(unittest.TestCase):
                 "rrr.heartbeat",
                 "rrr.request_queue",
                 "rrr.load_balancer",
-                "rrr.debugging",
                 "rrr.logging",
                 "rrr.utils",
                 "rrr.frame_codec",
                 "rrr.serializable",
                 "rrr.serializable_envelope",
-                "rrr.epoll_wrapper",
-                "rrr.misc",
-                "rrr.pollable_proxy",
-                "rrr.reactor",
                 "rrr.future",
                 "rrr.idempotency",
                 "rrr.fiber",
+                "rrr.misc",
                 "rrr.channel",
+                "rrr.epoll_wrapper",
+                "rrr.pollable_proxy",
                 "rrr.callbacks",
                 "rrr.inmemory_channel",
                 "rrr.fiber_channel",
                 "rrr.threading",
+                "rrr.debugging",
                 "rrr.any_message",
                 "rrr.tcp_channel",
+                "rrr.reactor",
                 "rrr.server",
                 "rrr.client",
                 "rrr",
@@ -3492,7 +3500,10 @@ class CrateModeGateTests(unittest.TestCase):
             GATE.extraction, "load_manifest", return_value=modules
         ) as load:
             self.assertEqual(GATE.load_owned_modules(root), modules)
-        load.assert_called_once_with(root, root / GATE.EXTRACTION_MANIFEST)
+        # Crate-relative: the manifest label resolves against the vendored
+        # srpc tree, not the repository root.
+        crate = GATE.extraction.crate_root(root)
+        load.assert_called_once_with(crate, crate / GATE.EXTRACTION_MANIFEST)
 
         with mock.patch.object(
             GATE.extraction,

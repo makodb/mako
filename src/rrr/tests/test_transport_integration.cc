@@ -10,7 +10,7 @@
 /***********************************************************************
  *
  * test_transport_integration.cc:
- *   Integration tests for the rrr/rpc transport backend (RrrRpcBackend)
+ *   Integration tests for the rrr/rpc transport (RrrRpcBackend)
  *   Tests actual network I/O and request/response cycles
  *
  *   This test uses the underlying rrr/rpc library directly to test

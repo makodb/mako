@@ -160,7 +160,7 @@ rusty::Arc<RpcServiceContext> make_test_rpc_context() {
 }  // namespace
 
 TEST(ServerApiSafetyTest, ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyCallback) {
-    ServerConnection sconn(make_test_rpc_context(), -1);
+    auto sconn = ServerConnection::new_(make_test_rpc_context(), -1);
     std::atomic<int> callback_count{0};
 
     EXPECT_EQ(sconn.run_async([&]() { callback_count.fetch_add(1); }), 0);
@@ -175,7 +175,7 @@ TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInline) {
     auto req = rusty::make_box<Request>();
     req->xid = 1;
 
-    auto sconn = rusty::Arc<ServerConnection>::make(make_test_rpc_context(), -1);
+    auto sconn = rusty::Arc<ServerConnection>::new_(ServerConnection::new_(make_test_rpc_context(), -1));
     auto weak_sconn = rusty::sync::downgrade(sconn);
 
     bool cleanup_called = false;

@@ -126,7 +126,7 @@ void run_in_fiber(F&& body) {
 
 TEST(FiberChannelTest, SendFrameForwardsToProxy) {
     auto stub = std::make_shared<FakeChannelStub>();
-    FiberChannel fc(make_fake_proxy(stub));
+    FiberChannel fc = FiberChannel::new_(make_fake_proxy(stub));
     fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     const std::uint8_t bytes[] = {0x01, 0x02, 0x03};
@@ -141,7 +141,7 @@ TEST(FiberChannelTest, SendFrameForwardsToProxy) {
 TEST(FiberChannelTest, SendFramePropagatesError) {
     auto stub = std::make_shared<FakeChannelStub>();
     stub->set_send_result(ChannelError::ConnectionReset);
-    FiberChannel fc(make_fake_proxy(stub));
+    FiberChannel fc = FiberChannel::new_(make_fake_proxy(stub));
     fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     const std::uint8_t b = 0xAB;
@@ -151,7 +151,7 @@ TEST(FiberChannelTest, SendFramePropagatesError) {
 
 TEST(FiberChannelTest, RecvFrameReturnsEnqueuedFrameImmediately) {
     auto stub = std::make_shared<FakeChannelStub>();
-    FiberChannel fc(make_fake_proxy(stub));
+    FiberChannel fc = FiberChannel::new_(make_fake_proxy(stub));
     fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     // Deliver a frame BEFORE the fiber waits — recv should return
@@ -175,7 +175,7 @@ TEST(FiberChannelTest, RecvFrameReturnsEnqueuedFrameImmediately) {
 
 TEST(FiberChannelTest, RecvFrameSuspendsThenWakesOnDelivery) {
     auto stub = std::make_shared<FakeChannelStub>();
-    FiberChannel fc(make_fake_proxy(stub));
+    FiberChannel fc = FiberChannel::new_(make_fake_proxy(stub));
     fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     int frames_received = 0;
@@ -219,7 +219,7 @@ TEST(FiberChannelTest, RecvFrameSuspendsThenWakesOnDelivery) {
 
 TEST(FiberChannelTest, RecvFrameReturnsNoneAfterClose) {
     auto stub = std::make_shared<FakeChannelStub>();
-    FiberChannel fc(make_fake_proxy(stub));
+    FiberChannel fc = FiberChannel::new_(make_fake_proxy(stub));
     fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     // Pre-close: the fiber should observe None on first recv.
@@ -236,7 +236,7 @@ TEST(FiberChannelTest, RecvFrameReturnsNoneAfterClose) {
 
 TEST(FiberChannelTest, RecvDrainsQueuedFramesBeforeReturningNone) {
     auto stub = std::make_shared<FakeChannelStub>();
-    FiberChannel fc(make_fake_proxy(stub));
+    FiberChannel fc = FiberChannel::new_(make_fake_proxy(stub));
     fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     // Pre-deliver three frames, then close. Recv should return all
@@ -273,7 +273,7 @@ TEST(FiberChannelTest, RecvDrainsQueuedFramesBeforeReturningNone) {
 
 TEST(FiberChannelTest, ParkedRecvWakesOnClose) {
     auto stub = std::make_shared<FakeChannelStub>();
-    FiberChannel fc(make_fake_proxy(stub));
+    FiberChannel fc = FiberChannel::new_(make_fake_proxy(stub));
     fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     bool got_none = false;
@@ -302,7 +302,7 @@ TEST(FiberChannelTest, ParkedRecvWakesOnClose) {
 
 TEST(FiberChannelTest, MultipleSequentialFramesCaptureInOrder) {
     auto stub = std::make_shared<FakeChannelStub>();
-    FiberChannel fc(make_fake_proxy(stub));
+    FiberChannel fc = FiberChannel::new_(make_fake_proxy(stub));
     fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     constexpr int kCount = 10;

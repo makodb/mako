@@ -1,3 +1,20 @@
+# Mako's build integration for the vendored srpc tree at `src/rrr`.
+#
+# This file deliberately lives OUTSIDE `src/rrr`. That directory is a verbatim
+# copy of the standalone srpc repository (https://github.com/stonysystems/srpc),
+# which ships its own top-level `CMakeLists.txt` describing the standalone
+# project. Keeping mako's glue here means `src/rrr` holds only srpc's content,
+# so the tree can be resynced -- or swapped for a submodule -- without a merge.
+#
+# The root `CMakeLists.txt` adds this directory with an explicit binary
+# directory (`add_subdirectory(src/rrr_build src/rrr)`), so every generated
+# artifact still lands under `<build>/src/rrr/...` exactly as before; only the
+# *source* directory moved. Because of that, `CMAKE_CURRENT_SOURCE_DIR` no
+# longer names the rrr sources: use `RRR_SOURCE_DIR` for anything that lives in
+# the vendored tree, and `CMAKE_CURRENT_BINARY_DIR` (unchanged) for build
+# outputs.
+set(RRR_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/rrr")
+
 # rrr: STATIC library compiled from .cpp/.cc implementation units.
 # Files migrated to C++23 named modules keep their .cpp/.cc extension
 # but are wired in via FILE_SET CXX_MODULES below (RRR_MODULE_SRC).
@@ -5,13 +22,13 @@
 # double-compile. Migration is incremental and measurement-gated — see
 # docs/dev/srpc_module_migration_plan.md.
 file(GLOB RRR_BENCH_SRC
-    "${CMAKE_CURRENT_SOURCE_DIR}/base/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/misc/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/rpc/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/reactor/*.cc"
+    "${RRR_SOURCE_DIR}/base/*.cpp"
+    "${RRR_SOURCE_DIR}/misc/*.cpp"
+    "${RRR_SOURCE_DIR}/rpc/*.cpp"
+    "${RRR_SOURCE_DIR}/reactor/*.cc"
     # fiber context-switch trampolines, real assembly (see top-level
     # CMakeLists enable_language(ASM))
-    "${CMAKE_CURRENT_SOURCE_DIR}/reactor/*.S"
+    "${RRR_SOURCE_DIR}/reactor/*.S"
 )
 
 # Remaining C++23 named-module interface units whose Rust is still embedded in
@@ -41,26 +58,26 @@ set(RRR_GOAL0_CANONICAL_MODULES
     heartbeat
     request_queue
     load_balancer
-    debugging
-    logging
     utils
     frame_codec
     serializable
     serializable_envelope
-    epoll_wrapper
-    misc
-    pollable_proxy
-    reactor
     future
+    logging
     idempotency
     fiber
+    misc
     channel
+    epoll_wrapper
+    pollable_proxy
     callbacks
     inmemory_channel
     fiber_channel
     threading
+    debugging
     any_message
     tcp_channel
+    reactor
     server
     client
 )
@@ -97,26 +114,26 @@ set(RRR_GOAL0_CANONICAL_SOURCE_RELPATH
     rpc/heartbeat.rs
     rpc/request_queue.rs
     rpc/load_balancer.rs
-    base/debugging.rs
-    base/logging.rs
     rpc/utils.rs
     rpc/frame_codec.rs
     misc/serializable.rs
     misc/serializable_envelope.rs
-    reactor/epoll_wrapper.rs
-    base/misc.rs
-    rpc/pollable_proxy.rs
-    reactor/reactor.rs
     reactor/future.rs
+    base/logging.rs
     rpc/idempotency.rs
     reactor/fiber.rs
+    base/misc.rs
     rpc/channel.rs
+    reactor/epoll_wrapper.rs
+    rpc/pollable_proxy.rs
     rpc/callbacks.rs
     rpc/inmemory_channel.rs
     rpc/fiber_channel.rs
     base/threading.rs
+    base/debugging.rs
     misc/any_message.rs
     rpc/tcp_channel.rs
+    reactor/reactor.rs
     rpc/server.rs
     rpc/client.rs
 )
@@ -128,47 +145,47 @@ foreach(_RRR_GOAL0_MODULE IN LISTS RRR_GOAL0_CANONICAL_MODULES)
 endforeach()
 foreach(_RRR_GOAL0_RELPATH IN LISTS RRR_GOAL0_CANONICAL_SOURCE_RELPATH)
     list(APPEND RRR_GOAL0_CANONICAL_RUST_SRC
-        ${CMAKE_CURRENT_SOURCE_DIR}/${_RRR_GOAL0_RELPATH})
+        ${RRR_SOURCE_DIR}/${_RRR_GOAL0_RELPATH})
 endforeach()
 
 set(RRR_GOAL0_RETIRED_CARRIER_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/basetypes.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/callback_wrapper.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/completion_tracker.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_options.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_queue.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
+    ${RRR_SOURCE_DIR}/base/basetypes.cpp
+    ${RRR_SOURCE_DIR}/base/callback_wrapper.cpp
+    ${RRR_SOURCE_DIR}/rpc/internal_protocol.cpp
+    ${RRR_SOURCE_DIR}/misc/stat.cpp
+    ${RRR_SOURCE_DIR}/rpc/errors.cpp
+    ${RRR_SOURCE_DIR}/rpc/connection_metrics.cpp
+    ${RRR_SOURCE_DIR}/rpc/completion_tracker.cpp
+    ${RRR_SOURCE_DIR}/misc/rand.cpp
+    ${RRR_SOURCE_DIR}/rpc/request_options.cpp
+    ${RRR_SOURCE_DIR}/rpc/reconnect_policy.cpp
+    ${RRR_SOURCE_DIR}/rpc/circuit_breaker.cpp
+    ${RRR_SOURCE_DIR}/rpc/connection_state.cpp
+    ${RRR_SOURCE_DIR}/rpc/heartbeat.cpp
+    ${RRR_SOURCE_DIR}/rpc/request_queue.cpp
+    ${RRR_SOURCE_DIR}/rpc/load_balancer.cpp
+    ${RRR_SOURCE_DIR}/rpc/utils.cpp
+    ${RRR_SOURCE_DIR}/rpc/frame_codec.cpp
+    ${RRR_SOURCE_DIR}/base/debugging.cpp
+    ${RRR_SOURCE_DIR}/base/logging.cpp
+    ${RRR_SOURCE_DIR}/base/misc.cpp
+    ${RRR_SOURCE_DIR}/base/threading.cpp
+    ${RRR_SOURCE_DIR}/misc/any_message.cpp
+    ${RRR_SOURCE_DIR}/misc/serializable.cpp
+    ${RRR_SOURCE_DIR}/misc/serializable_envelope.cpp
+    ${RRR_SOURCE_DIR}/reactor/epoll_wrapper.cc
+    ${RRR_SOURCE_DIR}/reactor/fiber.cpp
+    ${RRR_SOURCE_DIR}/reactor/future.cpp
+    ${RRR_SOURCE_DIR}/reactor/reactor.cpp
+    ${RRR_SOURCE_DIR}/rpc/callbacks.cpp
+    ${RRR_SOURCE_DIR}/rpc/channel.cpp
+    ${RRR_SOURCE_DIR}/rpc/client.cpp
+    ${RRR_SOURCE_DIR}/rpc/fiber_channel.cpp
+    ${RRR_SOURCE_DIR}/rpc/idempotency.cpp
+    ${RRR_SOURCE_DIR}/rpc/inmemory_channel.cpp
+    ${RRR_SOURCE_DIR}/rpc/pollable_proxy.cpp
+    ${RRR_SOURCE_DIR}/rpc/server.cpp
+    ${RRR_SOURCE_DIR}/rpc/tcp_channel.cpp
 )
 foreach(_RRR_GOAL0_CANONICAL_SOURCE IN LISTS RRR_GOAL0_CANONICAL_RUST_SRC)
     if(NOT EXISTS "${_RRR_GOAL0_CANONICAL_SOURCE}")
@@ -210,7 +227,7 @@ endif()
 # umbrella, not a production module provider.
 set(RRR_MODULE_SRC ${RRR_INLINE_MODULE_SRC} ${RRR_GOAL0_CRATE_CHILD_SRC})
 set(RRR_MODULE_BASE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${RRR_SOURCE_DIR}
     ${RRR_GOAL0_CRATE_CPP_DIR}
 )
 set_source_files_properties(${RRR_GOAL0_CRATE_CHILD_SRC}
@@ -238,7 +255,7 @@ endforeach()
 # Platform implementation units for rrr.epoll_wrapper (Rust std's
 # sys-module pattern): exactly one is compiled, selected below.
 list(REMOVE_ITEM RRR_BENCH_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
+    ${RRR_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
 
 set(RRR_CXXFLAGS ${BENCH_CXXFLAGS})
 
@@ -283,18 +300,18 @@ endif()
 # This separate executable pulls the real C archive and smoke-tests both seams
 # without introducing another generated provider into either comparison lane.
 add_library(rrr_goal0_rand_c_kernel STATIC EXCLUDE_FROM_ALL
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_rand.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_timing.c
+    ${RRR_SOURCE_DIR}/misc/srpc_rand.c
+    ${RRR_SOURCE_DIR}/misc/srpc_timing.c
 )
 target_include_directories(rrr_goal0_rand_c_kernel PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc
+    ${RRR_SOURCE_DIR}/misc
 )
 target_link_libraries(rrr_goal0_rand_c_kernel PUBLIC pthread)
 add_executable(rrr_goal0_rand_kernel_smoke EXCLUDE_FROM_ALL
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/rand_kernel_smoke.c
+    ${RRR_SOURCE_DIR}/tests/rand_kernel_smoke.c
 )
 target_include_directories(rrr_goal0_rand_kernel_smoke PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${RRR_SOURCE_DIR}
 )
 target_link_libraries(rrr_goal0_rand_kernel_smoke PRIVATE
     rrr_goal0_rand_c_kernel
@@ -313,14 +330,14 @@ if(NOT TARGET rrr)
     # plain C with C signatures (the crate's own extern-C kernels mirror
     # them); the C++ modules keep thin type-converting shims.
     target_sources(rrr PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_connect.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_server.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_net.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_timing.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_rand.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_io.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/base/srpc_base.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/srpc_fiber.c
+        ${RRR_SOURCE_DIR}/rpc/srpc_connect.c
+        ${RRR_SOURCE_DIR}/rpc/srpc_server.c
+        ${RRR_SOURCE_DIR}/rpc/srpc_net.c
+        ${RRR_SOURCE_DIR}/misc/srpc_timing.c
+        ${RRR_SOURCE_DIR}/misc/srpc_rand.c
+        ${RRR_SOURCE_DIR}/misc/srpc_io.c
+        ${RRR_SOURCE_DIR}/base/srpc_base.c
+        ${RRR_SOURCE_DIR}/reactor/srpc_fiber.c
     )
     # `src/compat` ships shims that fix third-party header gotchas
     # without modifying the submodule (e.g.
@@ -342,7 +359,7 @@ if(NOT TARGET rrr)
     )
     target_compile_options(rrr PUBLIC ${RRR_CXXFLAGS})
     target_link_libraries(rrr pthread rusty)
-    target_sources(rrr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
+    target_sources(rrr PRIVATE ${RRR_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
 
     # Remaining hand-authored RRR C++ module units for borrow checking. The
     # eighteen canonical Rust modules are checked by rustc and are not duplicated
@@ -429,14 +446,14 @@ add_custom_target(rrr_goal0_source_gate
         --locked
         --workspace
         --all-targets
-        --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+        --manifest-path "${RRR_SOURCE_DIR}/Cargo.toml"
     COMMAND
         "${RRR_CARGO_EXECUTABLE}"
         clippy
         --locked
         --workspace
         --all-targets
-        --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+        --manifest-path "${RRR_SOURCE_DIR}/Cargo.toml"
         --
         -D warnings
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
@@ -495,20 +512,20 @@ set(RRR_GOAL0_CRATE_GENERATED_OUTPUTS
     ${RRR_GOAL0_CRATE_CPP_DIR}/rusty_hand_slots.md
 )
 set(RRR_GOAL0_MODULE_PREAMBLE
-    ${CMAKE_CURRENT_SOURCE_DIR}/module-preambles.toml
+    ${RRR_SOURCE_DIR}/module-preambles.toml
 )
 set(RRR_GOAL0_TYPE_MAP
-    ${CMAKE_CURRENT_SOURCE_DIR}/rust-type-map.toml
+    ${RRR_SOURCE_DIR}/rust-type-map.toml
 )
 set(RRR_GOAL0_CPP_MODULE_INDEX
-    ${CMAKE_CURRENT_SOURCE_DIR}/cpp-module-index.toml
+    ${RRR_SOURCE_DIR}/cpp-module-index.toml
 )
 # Keep the crate manifest absolute at the process boundary. The crate
 # dependency validator deliberately resolves the exact local `rusty` facade;
 # an absolute entry manifest makes that walk independent of WORKING_DIRECTORY.
 get_filename_component(
     RRR_GOAL0_CRATE_MANIFEST
-    "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+    "${RRR_SOURCE_DIR}/Cargo.toml"
     ABSOLUTE
 )
 add_custom_command(
@@ -528,14 +545,14 @@ add_custom_command(
         rrr_goal0_transpiler_fingerprint
         "${RRR_GOAL0_TRANSPILER_FINGERPRINT}"
         "${RRR_GOAL0_CRATE_MANIFEST}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.lock"
-        "${CMAKE_CURRENT_SOURCE_DIR}/rusty-rustc/Cargo.toml"
-        "${CMAKE_CURRENT_SOURCE_DIR}/rusty-rustc/src/lib.rs"
-        "${CMAKE_CURRENT_SOURCE_DIR}/rust-modules.toml"
+        "${RRR_SOURCE_DIR}/Cargo.lock"
+        "${RRR_SOURCE_DIR}/rusty-rustc/Cargo.toml"
+        "${RRR_SOURCE_DIR}/rusty-rustc/src/lib.rs"
+        "${RRR_SOURCE_DIR}/rust-modules.toml"
         "${RRR_GOAL0_MODULE_PREAMBLE}"
         "${RRR_GOAL0_TYPE_MAP}"
         "${RRR_GOAL0_CPP_MODULE_INDEX}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/lib.rs"
+        "${RRR_SOURCE_DIR}/src/lib.rs"
         ${RRR_GOAL0_CANONICAL_RUST_SRC}
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Generating Goal-0 rrr crate C++ child modules"

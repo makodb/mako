@@ -25,7 +25,12 @@ DEFAULT_TRANSPILER = (
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
 REQUIRED_RUSTY_CPP_COMMIT = "a1f8fef85e8d43bb00f85f8ef32e5ecc69408642"
 EXTRACTION_DRIVER = "scripts/extract_rrr_rust.py"
-EXTRACTION_MANIFEST = "src/rrr/rust-modules.toml"
+# Crate-relative, like every other label the extraction driver owns: it
+# resolves against `extraction.crate_root(root)` (the vendored srpc tree at
+# `src/rrr`), not against the repository root. The three gate-owned emitter
+# inputs below stay repository-relative -- the gate passes them straight to the
+# transpiler as absolute paths.
+EXTRACTION_MANIFEST = "rust-modules.toml"
 MODULE_PREAMBLE = "src/rrr/module-preambles.toml"
 TYPE_MAP = "src/rrr/rust-type-map.toml"
 CPP_MODULE_INDEX = "src/rrr/cpp-module-index.toml"
@@ -9025,7 +9030,8 @@ def require_extraction_check(root: Path, transpiler: Path) -> None:
 
 def load_owned_modules(root: Path) -> list[extraction.ModuleEntry]:
     try:
-        modules = extraction.load_manifest(root, root / EXTRACTION_MANIFEST)
+        crate = extraction.crate_root(root)
+        modules = extraction.load_manifest(crate, crate / EXTRACTION_MANIFEST)
     except extraction.ExtractionError as exc:
         raise GateError(f"cannot load extraction ownership: {exc}") from exc
     actual = {module.cpp_module for module in modules}
@@ -13167,9 +13173,9 @@ def compile_module(
 
 
 # Plain-C kernels compiled into librrr.a (see the "Goal-0 C demotion" block in
-# src/rrr/CMakeLists.txt) plus rrr.epoll_wrapper's platform implementation
-# unit. They are not crate outputs, so the generated lane has to build them
-# itself to link the same closure production does.
+# src/rrr_build/CMakeLists.txt) plus rrr.epoll_wrapper's platform
+# implementation unit. They are not crate outputs, so the generated lane has to
+# build them itself to link the same closure production does.
 # base/srpc_base.c, misc/srpc_rand.c, misc/srpc_timing.c and rpc/srpc_net.c are
 # deliberately ABSENT: the importer defines its own observable stubs for the
 # seams in them that the runtime contracts pin (the rand draws, the clocks,
@@ -13339,6 +13345,60 @@ def resolve_prebuilt_module_dirs(root: Path, raw_roots: list[str]) -> list[Path]
     return sorted(directories)
 
 
+def crate_compile_order(
+    output: Path, modules: list[extraction.ModuleEntry]
+) -> list[extraction.ModuleEntry]:
+    """Manifest modules reordered so every child follows the ones it imports.
+
+    A generated child is a C++ named-module interface unit, so clang can only
+    precompile it once the BMIs of the crate modules it imports already exist.
+    The manifest is an OWNERSHIP record, not a build schedule: its row order
+    is srpc's, and mako's rusty-cpp pin does not have to produce the same
+    import graph srpc's does (`rrr.utils` imports `rrr.logging` here, and the
+    two sit in the opposite relative order upstream). Deriving the schedule
+    from what the generated units actually import keeps this gate correct for
+    any manifest order and any pin. Manifest order remains the stable
+    tie-break, so the schedule is still deterministic.
+    """
+
+    by_name = {module.cpp_module: module for module in modules}
+    dependencies = {}
+    for module in modules:
+        text = read_generated(
+            output / f"{module.cpp_module}.cppm",
+            f"module {module.cpp_module}",
+        )
+        imported = re.findall(
+            r"^(?:export )?import ([^;\n]+);[ \t]*$", text, re.MULTILINE
+        )
+        dependencies[module.cpp_module] = [
+            name for name in imported if name in by_name
+        ]
+
+    ordered: list[extraction.ModuleEntry] = []
+    placed: set[str] = set()
+    visiting: list[str] = []
+
+    def place(name: str) -> None:
+        if name in placed:
+            return
+        if name in visiting:
+            cycle = " -> ".join([*visiting[visiting.index(name) :], name])
+            raise GateError(
+                f"generated crate modules form an import cycle: {cycle}"
+            )
+        visiting.append(name)
+        for dependency in dependencies[name]:
+            place(dependency)
+        visiting.pop()
+        placed.add(name)
+        ordered.append(by_name[name])
+
+    for module in modules:
+        place(module.cpp_module)
+    return ordered
+
+
 def check_generated_output(
     *,
     root: Path,
@@ -13362,8 +13422,10 @@ def check_generated_output(
     # production target and this gate.
     with tempfile.TemporaryDirectory(prefix="rrr-crate-mode-compile-") as temporary:
         work = Path(temporary)
-        generated_objects = [
-            compile_module(
+        # Compile in import order (see crate_compile_order); keep the object
+        # list in manifest order so the link closure below is unchanged.
+        compiled = {
+            module.cpp_module: compile_module(
                 clang,
                 root,
                 include,
@@ -13373,8 +13435,9 @@ def check_generated_output(
                 cxx_flags,
                 prebuilt_module_dirs,
             )
-            for module in modules
-        ]
+            for module in crate_compile_order(output, modules)
+        }
+        generated_objects = [compiled[module.cpp_module] for module in modules]
         # Compile the partial umbrella only after every child BMI exists. It is
         # a syntax/import-closure proof, not a production provider or link input.
         compile_module(
@@ -13652,8 +13715,9 @@ def check(args: argparse.Namespace) -> None:
             prebuilt_module_dirs=prebuilt_module_dirs,
         )
     else:
+        crate = extraction.crate_root(root)
         flat_import_namespace = extraction.load_flat_import_namespace(
-            root, root / EXTRACTION_MANIFEST
+            crate, crate / EXTRACTION_MANIFEST
         )
         flat_import_arguments = (
             ["--flat-import-namespace", flat_import_namespace]

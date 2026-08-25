@@ -130,7 +130,7 @@ std::vector<std::uint8_t> make_response_body(
     i64 server_instance_id,
     const std::vector<std::uint8_t>& reply_payload) {
     rrr::BufferSink sink;
-    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy_buffer(&sink));
     rrr::Serialize_::serialize(v64(xid), war);
     rrr::Serialize_::serialize(v32(error_code), war);
     rrr::Serialize_::serialize(v64(server_instance_id), war);
@@ -146,7 +146,7 @@ std::vector<std::uint8_t> make_response_body(
 // asserts on failure.
 i64 decode_outbound_xid(const std::vector<std::uint8_t>& body) {
     rrr::BufferSource src(body.data(), body.size());
-    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy_buffer(&src));
     v64 v_xid;
     rrr::Deserialize_::deserialize(v_xid, rar);
     return v_xid.get();
@@ -177,8 +177,8 @@ class ClientChannelRecvTest : public ::testing::Test {
         // `emplace`/`reset` aren't on rusty::Option — assign
         // `rusty::Some(...)` / `rusty::None`.
         poll_thread_ = rusty::Some(PollThread::create());
-        conn_ = rusty::Some(rusty::Arc<ClientConnection>::make(
-            poll_thread_.as_ref().unwrap().clone()));
+        conn_ = rusty::Some(rusty::Arc<ClientConnection>::new_(ClientConnection::new_(
+            poll_thread_.as_ref().unwrap().clone())));
         // Production goes through `Client::connect` which wires the
         // weak self-pointer; the test constructs the connection
         // directly so we install it here. Without this, the recv-loop
@@ -238,7 +238,7 @@ TEST_F(ClientChannelRecvTest, ResponseFrameResolvesPendingFuture) {
     // Synthesize and deliver the response. Reply payload is a single
     // i32 = 0x12345678.
     rrr::BufferSink payload_sink;
-    rrr::BinaryWriteArchive payload_war(rrr::make_sink_proxy(&payload_sink));
+    rrr::BinaryWriteArchive payload_war(rrr::make_sink_proxy_buffer(&payload_sink));
     rrr::Serialize_::serialize(static_cast<i32>(0x12345678), payload_war);
     std::vector<std::uint8_t> reply_payload(
         payload_sink.bytes.data(),
@@ -303,7 +303,7 @@ TEST_F(ClientChannelRecvTest, MultipleResponsesResolveFuturesInOrder) {
     for (int i = 0; i < kCount; ++i) {
         const i64 xid = decode_outbound_xid(frames[i]);
         rrr::BufferSink payload_sink;
-        rrr::BinaryWriteArchive payload_war(rrr::make_sink_proxy(&payload_sink));
+        rrr::BinaryWriteArchive payload_war(rrr::make_sink_proxy_buffer(&payload_sink));
         rrr::Serialize_::serialize(static_cast<i32>(0xA000 + i), payload_war);
         std::vector<std::uint8_t> reply_payload(
             payload_sink.bytes.data(),

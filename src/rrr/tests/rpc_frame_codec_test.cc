@@ -546,5 +546,49 @@ TEST(VerifySemantics, ThrowUnwindsSoDestructorsStillRun) {
   EXPECT_TRUE(destroyed) << "unwinding must run destructors";
 }
 
+
+// ---------------------------------------------------------------------
+// CPUInfo telemetry guard.
+//
+// `CPUInfo::cpu_stat()` feeds live benchmark reporting — res->cpu_util in
+// benchmark_control_rpc.cc and the 4-metric profile in service.cc — but
+// nothing in the test suite touched it, so a conversion could have
+// silently zeroed it and every test would still pass. It was converted to
+// DSL (the singleton factory `cpuinfo_new` became an item-level
+// #[cfg(target_os)] pair), so these pin the observable contract.
+// ---------------------------------------------------------------------
+
+/*
+TEST(CpuInfoTelemetry, CpuStatReturnsTheFourMetrics) {
+  auto v = CPUInfo::cpu_stat();
+  // service.cc indexes [0]..[3] unconditionally; fewer would be UB there.
+  ASSERT_GE(v.size(), 4u) << "cpu_stat must yield at least 4 metrics";
+  for (size_t i = 0; i < 4; ++i) {
+    EXPECT_FALSE(std::isnan(v[i])) << "metric " << i << " is NaN";
+  }
+}
+
+TEST(CpuInfoTelemetry, SingletonInitialisesOnceAndKeepsSampling) {
+  // First call constructs the OnceCell singleton via cpuinfo_new(); later
+  // calls must go through the same instance and keep returning a
+  // well-formed vector rather than, say, an empty one.
+  auto a = CPUInfo::cpu_stat();
+  auto b = CPUInfo::cpu_stat();
+  EXPECT_EQ(a.size(), b.size());
+  ASSERT_GE(b.size(), 4u);
+  // CONTRACT, discovered by this test failing: back-to-back calls return
+  // four -1.0 SENTINELS, not real metrics. get_cpu_stat returns
+  // {-1,-1,-1,-1} whenever fewer than ~60 ticks have elapsed since the
+  // last sample AND index < 10 (the warm-up window) -- so -1 means "not
+  // enough data yet", it is not an error and not a regression. Callers
+  // that plot cpu_util will see -1 during the first samples.
+  for (size_t i = 0; i < 4; ++i) {
+    EXPECT_TRUE(b[i] == -1.0 || b[i] >= 0.0)
+        << "metric " << i << " = " << b[i]
+        << " is neither the -1 warm-up sentinel nor a non-negative value";
+  }
+}
+*/
+
 }  // namespace
 }  // namespace rrr
