@@ -1199,6 +1199,49 @@ mod tests {
     }
 
     #[test]
+    fn bind_and_publish_make_the_prepared_to_ready_transition_explicit() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(1, 0)).unwrap();
+        let bound = bind(
+            writeback
+                .reserve(vec![put(b"ready-transition", b"value")])
+                .unwrap(),
+            23,
+        );
+
+        {
+            let state = lock_recover(&writeback.state);
+            let slot = state.queue.front().expect("bind creates one slot");
+            assert_eq!(slot.sequence.get(), 1);
+            assert_eq!(slot.state, SlotState::Prepared { pinned: false });
+            assert!(
+                slot.record.get().is_none(),
+                "bind must not expose an unfinalized record as Ready"
+            );
+            assert_eq!(state.highest_acknowledged, 0);
+        }
+
+        assert_eq!(bound.publish().unwrap().get(), 1);
+        {
+            let state = lock_recover(&writeback.state);
+            let slot = state.queue.front().expect("published slot remains queued");
+            assert_eq!(slot.state, SlotState::Ready);
+            assert!(
+                slot.record.get().is_some(),
+                "publication must finalize the record before Ready"
+            );
+            assert_eq!(state.highest_acknowledged, 1);
+        }
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(backend.batch_count(), 1);
+    }
+
+    #[test]
     fn out_of_order_publication_still_applies_in_sequence_order() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();

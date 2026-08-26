@@ -196,7 +196,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       BUILD_DIR: build-mako-local-hooks
       CMAKE_BUILD_TYPE: RelWithDebInfo

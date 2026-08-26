@@ -7,12 +7,19 @@ description = "Transactional Mako write-back cache over RocksDB"
 license = "MIT"
 publish = false
 
+[features]
+# Test-only structural probes used by the Phase 1F mutation gate. Production
+# builds leave this disabled, so no probe or conditional branch is present in
+# the cache commit path.
+test-support = []
+
 [dependencies]
 mako-local = { path = "../mako-local" }
 mrx-core = { path = "../mrx-core" }
 mrx-rocks = { path = "../mrx-rocks" }
 
 [dev-dependencies]
+mako-history = { path = "../mako-history" }
 # Unit crash tests need deterministic wrapper-level RocksDB rendezvous points;
 # normal builds keep mrx-rocks' default, hook-free profile.
 mrx-rocks = { path = "../mrx-rocks", features = ["test-hooks"] }

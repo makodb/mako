@@ -46,10 +46,17 @@ use mrx_rocks::RocksBlobs;
 mod failpoint;
 mod record;
 mod runtime;
+/// Deterministic cache mutation controls used only by validation binaries.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod test_support;
 mod writeback;
 
 #[cfg(all(test, have_mako, have_rocksdb, target_family = "unix"))]
 mod crash_tests;
+
+#[cfg(all(test, have_mako))]
+mod application_history_tests;
 
 pub use mako_local::{Error as LocalError, MakoTimestamp};
 pub use mrx_rocks::Durability;
@@ -736,6 +743,9 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
             return finish_read_only(native);
         }
 
+        #[cfg(test)]
+        crate::failpoint::hit(crate::failpoint::Point::BeforeDetachedPreparation);
+
         // Preparation may allocate or wait for bounded capacity, so it must
         // finish before native Silo takes write locks.
         let mutations = extract_mutations(std::mem::take(&mut self.journal))?;
@@ -767,6 +777,8 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                 false
             }
         });
+        #[cfg(test)]
+        crate::failpoint::observe_post_native_commit();
         #[cfg(test)]
         if bound.is_some() {
             crate::failpoint::hit(crate::failpoint::Point::NativeCommittedBeforeReady);
@@ -1056,6 +1068,8 @@ fn replay_records(local: &LocalDb, records: &[CommitRecord]) -> Result<(), Error
             }
         }
         #[cfg(test)]
+        record_replayed_sequence(record.sequence());
+        #[cfg(test)]
         {
             records_replayed += 1;
             if records_replayed == replay_midpoint {
@@ -1067,17 +1081,63 @@ fn replay_records(local: &LocalDb, records: &[CommitRecord]) -> Result<(), Error
 }
 
 #[cfg(test)]
+thread_local! {
+    static RECOVERY_REPLAY_AUDIT: std::cell::RefCell<Option<Vec<u64>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+fn begin_replay_audit() {
+    RECOVERY_REPLAY_AUDIT.with(|audit| {
+        let previous = audit.replace(Some(Vec::new()));
+        assert!(previous.is_none(), "nested recovery replay audit");
+    });
+}
+
+#[cfg(test)]
+fn record_replayed_sequence(sequence: CommitSeq) {
+    RECOVERY_REPLAY_AUDIT.with(|audit| {
+        if let Some(sequences) = audit.borrow_mut().as_mut() {
+            sequences.push(sequence.get());
+        }
+    });
+}
+
+#[cfg(test)]
+fn finish_replay_audit() -> Vec<u64> {
+    RECOVERY_REPLAY_AUDIT.with(|audit| {
+        audit
+            .replace(None)
+            .expect("recovery replay audit was not active")
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[cfg(have_mako)]
     fn test_record(sequence: u64, timestamp: u32, key: &[u8]) -> CommitRecord {
-        crate::record::PreparedCommitRecord::prepare(
+        test_record_with_mutations(
+            sequence,
+            timestamp,
             vec![Mutation::Put {
                 table_id: DEFAULT_TABLE_ID,
                 key: key.to_vec(),
                 value: b"value".to_vec(),
             }],
+        )
+    }
+
+    #[cfg(have_mako)]
+    fn test_record_with_mutations(
+        sequence: u64,
+        timestamp: u32,
+        mutations: Vec<Mutation>,
+    ) -> CommitRecord {
+        crate::record::PreparedCommitRecord::prepare(
+            mutations,
             CacheOptions::default().writeback.max_record_bytes,
         )
         .unwrap()
@@ -1086,6 +1146,77 @@ mod tests {
             MakoTimestamp::new(timestamp).expect("test timestamp is nonzero"),
         )
         .finalize()
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn recovery_replays_each_cache_sequence_exactly_once_in_order() {
+        use std::sync::Arc;
+
+        use mrx_core::fakes::MemBlobs;
+
+        let put = |key: &[u8], value: &[u8]| Mutation::Put {
+            table_id: DEFAULT_TABLE_ID,
+            key: key.to_vec(),
+            value: value.to_vec(),
+        };
+        let delete = |key: &[u8]| Mutation::Delete {
+            table_id: DEFAULT_TABLE_ID,
+            key: key.to_vec(),
+        };
+        let backend = Arc::new(MemBlobs::new());
+        let records = [
+            test_record_with_mutations(
+                1,
+                301,
+                vec![
+                    put(b"phase1f/replay/chain", b"v1"),
+                    put(b"phase1f/replay/a", b"one"),
+                ],
+            ),
+            test_record_with_mutations(
+                2,
+                302,
+                vec![
+                    put(b"phase1f/replay/chain", b"v2"),
+                    delete(b"phase1f/replay/a"),
+                    put(b"phase1f/replay/b", b"two"),
+                ],
+            ),
+            test_record_with_mutations(
+                3,
+                303,
+                vec![
+                    put(b"phase1f/replay/chain", b"v3"),
+                    delete(b"phase1f/replay/b"),
+                    put(b"phase1f/replay/c", b"three"),
+                ],
+            ),
+        ];
+        for record in &records {
+            backend.write_batch(&record.backend_ops()).unwrap();
+        }
+
+        begin_replay_audit();
+        let cache = Cache::from_backend(Arc::clone(&backend), CacheOptions::default())
+            .expect("recover audited history");
+        assert_eq!(
+            finish_replay_audit(),
+            vec![1, 2, 3],
+            "recovery must replay each dense CacheSeq exactly once and in order"
+        );
+        assert_eq!(cache.applied_sequence(), 3);
+        assert_eq!(
+            cache.get(b"phase1f/replay/chain").unwrap().as_deref(),
+            Some(&b"v3"[..])
+        );
+        assert_eq!(cache.get(b"phase1f/replay/a").unwrap(), None);
+        assert_eq!(cache.get(b"phase1f/replay/b").unwrap(), None);
+        assert_eq!(
+            cache.get(b"phase1f/replay/c").unwrap().as_deref(),
+            Some(&b"three"[..])
+        );
+        cache.close().expect("close audited recovery cache");
     }
 
     #[test]

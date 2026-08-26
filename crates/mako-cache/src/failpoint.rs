@@ -1,5 +1,6 @@
 //! Test-only process-crash rendezvous points.
 
+use std::cell::Cell;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -9,6 +10,7 @@ use std::sync::OnceLock;
 /// Stable names for deterministic process-crash matrices.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Point {
+    BeforeDetachedPreparation,
     DetachedPrepared,
     NativeWritesetLocked,
     NativeTimestampAllocated,
@@ -37,6 +39,7 @@ pub(crate) enum Point {
 impl Point {
     pub(crate) const fn name(self) -> &'static str {
         match self {
+            Self::BeforeDetachedPreparation => "before-detached-preparation",
             Self::DetachedPrepared => "after-detached-preparation",
             Self::NativeWritesetLocked => "native-after-writeset-locked",
             Self::NativeTimestampAllocated => "native-after-timestamp-allocation",
@@ -65,6 +68,7 @@ impl Point {
 
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
+            "before-detached-preparation" => Some(Self::BeforeDetachedPreparation),
             "after-detached-preparation" => Some(Self::DetachedPrepared),
             "native-after-writeset-locked" => Some(Self::NativeWritesetLocked),
             "native-after-timestamp-allocation" => Some(Self::NativeTimestampAllocated),
@@ -114,6 +118,43 @@ struct Armed {
 }
 
 static ARMED: OnceLock<Armed> = OnceLock::new();
+
+thread_local! {
+    /// A Rust-side response-delay seam. Unlike the native phase observer, this
+    /// runs only after the commit C ABI has returned and released Silo locks.
+    static POST_NATIVE_COMMIT_OBSERVER: Cell<Option<fn()>> = const { Cell::new(None) };
+}
+
+/// Install a callback for the post-native, pre-publication point on this
+/// thread. Application-history tests use it to reorder wrapper responses
+/// without parking inside Silo's lock-holding critical section.
+pub(crate) fn install_post_native_commit_observer(observer: fn()) {
+    POST_NATIVE_COMMIT_OBSERVER.with(|slot| {
+        assert!(
+            slot.replace(Some(observer)).is_none(),
+            "post-native commit observer already installed on this thread"
+        );
+    });
+}
+
+/// Remove the current thread's post-native commit observer.
+pub(crate) fn clear_post_native_commit_observer() {
+    POST_NATIVE_COMMIT_OBSERVER.with(|slot| {
+        assert!(
+            slot.replace(None).is_some(),
+            "post-native commit observer is not installed on this thread"
+        );
+    });
+}
+
+/// Invoke the current thread's post-native commit observer, if any.
+pub(crate) fn observe_post_native_commit() {
+    POST_NATIVE_COMMIT_OBSERVER.with(|slot| {
+        if let Some(observer) = slot.get() {
+            observer();
+        }
+    });
+}
 
 /// Arm one point in a fresh helper process.
 pub(crate) fn arm(point: Point, marker: PathBuf) {

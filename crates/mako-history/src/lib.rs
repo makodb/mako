@@ -5,12 +5,19 @@
 //! searches legal serial executions of the operations a caller observed and
 //! constrains them only by transaction real-time precedence.
 
+mod application;
 mod checker;
 mod replay;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub use application::{
+    check_application, ApplicationCheckFailure, ApplicationCheckFailureKind, ApplicationCommit,
+    ApplicationCommitOutcome, ApplicationHistory, ApplicationWitness, BackendAttempt,
+    BackendAttemptOutcome, CacheSeq, FrontierObservation, ModelMutation, WaitAppliedObservation,
+    WaitAppliedOutcome,
+};
 pub use checker::{
     check, check_opacity, check_strict_serializability, CheckFailure, CheckFailureKind,
     CheckOptions, CheckWitness, Semantics,

@@ -67,6 +67,7 @@ impl Expected {
 }
 
 const CASES: &[(Point, Expected)] = &[
+    (Point::BeforeDetachedPreparation, Expected::Old),
     (Point::DetachedPrepared, Expected::Old),
     (Point::NativeWritesetLocked, Expected::Old),
     (Point::NativeTimestampAllocated, Expected::Old),
@@ -548,7 +549,7 @@ fn process_crash_matrix_recovers_only_whole_transactions() {
     );
     if !native_observer {
         eprintln!(
-            "native commit crash seams are disabled; this profile runs 9/15 write-path points"
+            "native commit crash seams are disabled; this profile runs 10/16 write-path points"
         );
     }
     for &(point, expected) in CASES {

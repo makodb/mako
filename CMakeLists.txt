@@ -3558,18 +3558,41 @@ if(BUILD_TESTS)
                     "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
                     ${MAKO_CACHE_NATIVE_CRASH_TEST_ENV}
-                    ${CARGO_EXECUTABLE} test -p mako-cache --all-targets
+                    ${CARGO_EXECUTABLE} test --locked --features test-support
+                    -p mako-cache --all-targets
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_CACHE_CARGO_ENV}
                     "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
                     "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
-                    ${CARGO_EXECUTABLE} test -p mako-cache --doc
+                    ${CARGO_EXECUTABLE} test --locked -p mako-cache --doc
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
             DEPENDS mako
             COMMENT "Running Rust transaction-cache tests"
             VERBATIM
         )
+
+        # Phase 1F's mutation runner compiles every mutant in an isolated
+        # workspace and accepts a kill only from its one designated exact
+        # test. It requires the hook-enabled archive for timestamp carriage
+        # and native recovery mutants, and writes the authoritative report
+        # under the CMake build tree rather than the source worktree.
+        if(MAKO_LOCAL_TEST_HOOKS)
+            add_custom_target(run_mako_cache_mutation_tests
+                COMMAND ${CMAKE_COMMAND} -E env
+                        ${MAKO_RUST_TOOLCHAIN_ENV}
+                        "MAKO_CACHE_MUTATION_TEMP_ROOT=${CMAKE_BINARY_DIR}/mako-cache-mutation-work"
+                        "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                        "${CMAKE_SOURCE_DIR}/crates/mako-cache/mutations/run.py"
+                        --cargo "${CARGO_EXECUTABLE}"
+                        --hook-build-dir "${CMAKE_BINARY_DIR}"
+                        --report "${CMAKE_BINARY_DIR}/mako-cache-phase1f-mutations.json"
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                DEPENDS mako
+                COMMENT "Running isolated Phase 1F transaction-cache mutation gate"
+                VERBATIM
+            )
+        endif()
     endif()
 
     # Custom target to run all SILO/STO tests
@@ -3597,7 +3620,25 @@ if(BUILD_TESTS)
         add_dependencies(run_mako_cache_rust_tests
             check_mako_local_build_fingerprint
             check_mako_local_abi_symbols)
+        # The hook profile is the mandatory cache cleanup/crash seam gate too.
+        # Keep the dependency one-way: the cache suite requires the hook
+        # archive, while its standalone target must remain usable in ordinary
+        # hook-off builds.
+        if(TARGET run_mako_local_hook_tests)
+            add_dependencies(run_mako_local_hook_tests
+                run_mako_cache_rust_tests)
+        endif()
         add_dependencies(run_silo_sto_tests run_mako_cache_rust_tests)
+    endif()
+    if(TARGET run_mako_cache_mutation_tests)
+        # Run the ordinary baseline before spending time on isolated mutants.
+        # The aggregate hook gate is the mandatory CI entry point.
+        add_dependencies(run_mako_cache_mutation_tests
+            run_mako_cache_rust_tests)
+        if(TARGET run_mako_local_hook_tests)
+            add_dependencies(run_mako_local_hook_tests
+                run_mako_cache_mutation_tests)
+        endif()
     endif()
 
     message(STATUS "Test targets configured:")

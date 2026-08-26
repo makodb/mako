@@ -130,6 +130,36 @@ pub fn check_opacity(
     check(history, Semantics::Opacity, options)
 }
 
+/// Re-run the ordinary oracle while requiring the listed transaction-order
+/// edges.  The application checker uses this after the unconstrained check to
+/// prove that cache sequence order is one of the legal serial executions,
+/// rather than accidentally equating commit response order with serialization
+/// order.
+pub(crate) fn check_with_precedence(
+    history: &History,
+    semantics: Semantics,
+    options: CheckOptions,
+    precedence: &[(TxnId, TxnId)],
+) -> Result<CheckWitness, CheckFailure> {
+    if let Err(detail) = validate(history) {
+        return Err(failure(
+            history,
+            CheckFailureKind::MalformedHistory,
+            semantics,
+            None,
+            0,
+            Vec::new(),
+            detail,
+        ));
+    }
+    match semantics {
+        Semantics::StrictSerializability => {
+            check_strict_validated_with_precedence(history, options, precedence)
+        }
+        Semantics::Opacity => check_opacity_validated_with_precedence(history, options, precedence),
+    }
+}
+
 fn failure(
     history: &History,
     kind: CheckFailureKind,
@@ -359,6 +389,14 @@ fn check_strict_validated(
     history: &History,
     options: CheckOptions,
 ) -> Result<CheckWitness, CheckFailure> {
+    check_strict_validated_with_precedence(history, options, &[])
+}
+
+fn check_strict_validated_with_precedence(
+    history: &History,
+    options: CheckOptions,
+    precedence: &[(TxnId, TxnId)],
+) -> Result<CheckWitness, CheckFailure> {
     let mut candidates: Vec<_> = history
         .transactions
         .iter()
@@ -370,6 +408,7 @@ fn check_strict_validated(
         &history.initial_state,
         history.observed_final_state.as_ref(),
         options.max_search_nodes,
+        precedence,
     );
     search_result(
         history,
@@ -401,6 +440,14 @@ fn check_opacity_validated(
     history: &History,
     options: CheckOptions,
 ) -> Result<CheckWitness, CheckFailure> {
+    check_opacity_validated_with_precedence(history, options, &[])
+}
+
+fn check_opacity_validated_with_precedence(
+    history: &History,
+    options: CheckOptions,
+    precedence: &[(TxnId, TxnId)],
+) -> Result<CheckWitness, CheckFailure> {
     let prefixes = relevant_prefixes(history);
     let final_tick = *prefixes.last().expect("at least one opacity prefix");
     let mut total_explored = 0usize;
@@ -423,6 +470,7 @@ fn check_opacity_validated(
             &history.initial_state,
             expected_final,
             remaining,
+            precedence,
         );
         match search {
             SearchResult::Found {
@@ -658,6 +706,7 @@ fn search(
     initial: &State,
     expected_final: Option<&State>,
     budget: usize,
+    extra_precedence: &[(TxnId, TxnId)],
 ) -> SearchResult {
     let mut predecessors = vec![Vec::new(); candidates.len()];
     for (before_index, before) in candidates.iter().enumerate() {
@@ -668,6 +717,21 @@ fn search(
             if before_index != after_index && end < after.start {
                 predecessors[after_index].push(before_index);
             }
+        }
+    }
+    let candidate_indexes: BTreeMap<_, _> = candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| (candidate.id, index))
+        .collect();
+    for (before, after) in extra_precedence {
+        let (Some(&before_index), Some(&after_index)) =
+            (candidate_indexes.get(before), candidate_indexes.get(after))
+        else {
+            continue;
+        };
+        if before_index != after_index && !predecessors[after_index].contains(&before_index) {
+            predecessors[after_index].push(before_index);
         }
     }
     let mut context = SearchContext {
