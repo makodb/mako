@@ -444,8 +444,8 @@ retry/fail-stop behavior, native multi-key transactions, and reopen recovery.
 Those component tests do not by themselves establish that this revised
 preinstall-hook protocol, Phase 1E, or Milestone 1 has passed. Transactional
 scan read-your-writes and its C ABI, safe Rust, and cache integration slice are
-complete. The fresh-process SIGKILL gate now covers nine outer/Rocks-wrapper
-write-path boundaries in the production-default profile and all fifteen named
+complete. The fresh-process SIGKILL gate now covers ten outer/Rocks-wrapper
+write-path boundaries in the production-default profile and all sixteen named
 boundaries in a dedicated native-hook profile. Eight recovery/replay boundaries
 are each interrupted on two consecutive fresh-process restarts. The native
 boundary now also has a process-isolated direct-C++/C-ABI/safe-Rust
@@ -454,7 +454,10 @@ Item 4's remaining Phase 1A-1D sanitizer/Miri, fixed-worker concurrency, and
 relative-overhead gates passed on candidate `5a3dd3eaf` on 2026-08-25. The
 authoritative evidence is the validation record in
 [Mako local boundary gates](../mako-local-boundary-gates.md). Phase 1F's
-application-aware mutation/history work remains open independently.
+application-aware correctness gate passed on implementation commit
+`5546062af` on 2026-08-25; its separate
+[Item 5 validation record](../mako-local-boundary-gates.md#item-5-phase-1f-validation-record)
+retains the evidence.
 Interruption inside RocksDB's WAL is deliberately not a milestone gate:
 RocksDB remains a black box.
 
@@ -595,20 +598,23 @@ asynchronous milestone. Recovery of an unflushed log tail, forced sync, torn
 WAL simulation, and interruption inside RocksDB are deferred to the later
 durability milestone. No private RocksDB C++ shim is required here.
 
-The following work remains before the broader correctness gate is complete:
+The Phase 1F correctness gate is complete for the current asynchronous
+contract:
 
-- Add any still-useful pre-preparation and abort/commit-cleanup/destroy crash
-  boundaries, with deterministic worker quarantine assertions.
-- Mutation-test stale writeback, early detached-capacity discharge,
-  hook-time allocation, conflict cancellation slots, missing/premature Ready
-  publication, unpinned unknown outcomes, partial replay, reordered commits,
-  duplicate replay, omitted Mako timestamps, and a recovered native clock not
-  advanced past the recovered maximum.
-- Run differential histories through the same full-history, real-time-aware
-  oracle used at the native boundary, extended with application observations.
-- Deliberately inject one divergence and require the differential harness to
-  turn red, avoiding the stale-artifact false-green previously found in the
-  Rust cache build.
+- Pre-preparation plus every reachable cache abort/commit-cleanup path has a
+  fresh-worker quarantine assertion. The raw ABI independently covers all five
+  native cleanup seams, including destroy.
+- The strict isolated suite mutation-tests stale writeback, early detached
+  capacity discharge, hook-time allocation, conflict cancellation slots,
+  missing/premature Ready publication, unpinned unknown outcomes, partial
+  replay, reordered commits, duplicate replay, wrong Mako timestamps, and a
+  recovered native clock not advanced past the recovered maximum; all twelve
+  mutants are killed only by their designated exact tests.
+- Synthetic and real cache histories run through the transaction oracle first,
+  then add cache order, backend batches/retries, visible/applied frontiers,
+  wait barriers, pinned suffixes, and one-global-clock validation.
+- Deliberate decoded-batch divergence turns the same full-history checker path
+  red; partial materialization is rejected earlier by transcript decoding.
 
 ### 1G. Bounded values and eviction
 
@@ -719,14 +725,17 @@ recovery.
 
 Transactional scan chunks, scan read-your-writes, and their C ABI, safe Rust,
 and cache exposure are complete for the RYW profile. The hook-enabled
-fresh-process suite now exercises fifteen write-path and eight repeated
+fresh-process suite now exercises sixteen write-path and eight repeated
 recovery boundaries. The in-memory applied watermark is now explicit and
 advances only after a successful ordered backend call. Item 3's native
 history oracle is complete. Item 4's sanitizer/Miri, fixed-worker concurrency,
 and overhead gate was accepted on candidate `5a3dd3eaf`; the linked
 [validation record](../mako-local-boundary-gates.md#validation-record) retains
-the evidence. Phase 1F's mutation and application-aware history checks remain
-open. Inside-RocksDB instrumentation is intentionally outside this milestone.
+the evidence. Item 5's Phase 1F cleanup, mutation, and application-history gate
+was accepted on implementation commit `5546062af`; the linked
+[Item 5 validation record](../mako-local-boundary-gates.md#item-5-phase-1f-validation-record)
+retains the evidence. Inside-RocksDB instrumentation is intentionally outside
+this milestone.
 
 1. The revision-0 operation/status contract and numeric reservations 0 through
    19 are now published and mechanically checked across the C header, C++
@@ -766,12 +775,17 @@ open. Inside-RocksDB instrumentation is intentionally outside this milestone.
    initial `6.0x` ceiling only as a same-host advisory sanity check. Every row
    in the [validation record](../mako-local-boundary-gates.md#validation-record)
    passed on candidate `5a3dd3eaf` on 2026-08-25. That completes the numbered
-   executable Phase 1A-1D gate, not the revision-0 design/freeze work, Phase
-   1F, or Milestone 1.
-5. Finish Phase 1F with cleanup/quarantine points, the mutation suite, and an
-   application-aware full-history oracle. Keep the dedicated hook-enabled
-   profile mandatory for native seam tests; the production-default build
-   intentionally contains no observer branches in the native commit hot path.
+   executable Phase 1A-1D gate, not the revision-0 design/freeze work or
+   Milestone 1.
+5. Phase 1F is complete on implementation commit `5546062af`. Four
+   fresh-worker cache cleanup/quarantine scenarios complement all five raw ABI
+   seams; the 12-mutant isolated suite has no survivor or harness error; and the
+   application-aware oracle accepts real sequential and response-reordered
+   concurrent cache histories while rejecting injected divergence. The
+   dedicated hook-enabled profile is mandatory for native seam tests; the
+   production-default native commit hot path contains no observer branches.
+   See the
+   [Item 5 validation record](../mako-local-boundary-gates.md#item-5-phase-1f-validation-record).
 6. Treat disk-sync observation, unflushed-tail recovery, and log reclamation as
    a separate durability milestone. They do not block beginning the
    distributed Rust port once the local transaction and ordered-application
