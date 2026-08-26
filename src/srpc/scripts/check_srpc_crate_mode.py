@@ -3096,7 +3096,7 @@ ABI_SPECS = {
                 ('R', 'typeinfo name for srpc::WaitAll@srpc.reactor'),
                 ('R', 'typeinfo name for srpc::WaitAny@srpc.reactor'),
                 ('T', 'janus::QuorumEvent@srpc.reactor::QuorumEvent(janus::QuorumEvent@srpc.reactor&&)'),
-                ('T', 'janus::QuorumEvent@srpc.reactor::QuorumEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>, rusty::RefCell<std_port::collections::hash::map::HashMap@std_port<unsigned short, long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, int, int, rusty::Cell<janus::QuorumPolicy@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<int>, rusty::Cell<int>, rusty::Cell<int>, rusty::Cell<long>, rusty::Cell<bool>, rusty::Cell<unsigned int>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Arc<srpc::IntEvent@srpc.reactor>)'),
+                ('T', 'janus::QuorumEvent@srpc.reactor::QuorumEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>, rusty::RefCell<std_port::collections::hash::map::HashMap@std_port<unsigned short, long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, int, int, rusty::Cell<janus::QuorumPolicy@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<bool>, rusty::Cell<unsigned int>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Arc<srpc::IntEvent@srpc.reactor>)'),
                 ('T', 'janus::QuorumEvent@srpc.reactor::add_xid(unsigned short, long) const'),
                 ('T', 'janus::QuorumEvent@srpc.reactor::finalize(unsigned long, rusty::Function<bool (rusty::port::vec::Vec@vec_port.vec<std::__1::pair<unsigned short, long>, rusty::alloc::Global>&)>) const'),
                 ('T', 'janus::QuorumEvent@srpc.reactor::get_fiber_id() const'),
@@ -4064,7 +4064,7 @@ RAW_ABI_ALIASES = {
         ),
         (
             'T',
-            'janus::QuorumEvent@srpc.reactor::QuorumEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>, rusty::RefCell<std_port::collections::hash::map::HashMap@std_port<unsigned short, long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, int, int, rusty::Cell<janus::QuorumPolicy@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<int>, rusty::Cell<int>, rusty::Cell<int>, rusty::Cell<long>, rusty::Cell<bool>, rusty::Cell<unsigned int>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Arc<srpc::IntEvent@srpc.reactor>)',
+            'janus::QuorumEvent@srpc.reactor::QuorumEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>, rusty::RefCell<std_port::collections::hash::map::HashMap@std_port<unsigned short, long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, int, int, rusty::Cell<janus::QuorumPolicy@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<bool>, rusty::Cell<unsigned int>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Arc<srpc::IntEvent@srpc.reactor>)',
         ),
         (
             'T',

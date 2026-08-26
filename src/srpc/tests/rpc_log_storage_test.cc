@@ -11,7 +11,7 @@
 
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/raft/memory_log_storage.hpp"
-#include "deptran/classic/tpc_command.h"  // TpcEmptyCommand for nested-command tests
+#include "deptran/tpc_command.h"  // TpcEmptyCommand for nested-command tests
 #include "../srpc.hpp"
 
 import std;

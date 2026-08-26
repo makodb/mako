@@ -4,12 +4,10 @@
 #include <gtest/gtest.h>
 #include "../srpc.hpp"
 #include "../misc/serializable.hpp"  // wrap_serializable, serializable_cast
-#include "deptran/RW_command.h"
-#include "deptran/classic/tpc_command.h"
-#include "deptran/procedure.h"
+#include "deptran/tpc_command.h"
 #include "deptran/raft/replicated_db.h"
-#include "deptran/rcc/dep_graph.h"
 #include "deptran/paxos_worker.h"
+#include "deptran/replication_log_entry.h"
 
 import std;
 import rusty;
@@ -36,6 +34,10 @@ concept MakoPackable = requires(const T& value) {
 };
 
 static_assert(static_cast<int32_t>(janus::MakoCommandKind::Unknown) == 0);
+static_assert(static_cast<int32_t>(janus::MakoCommandKind::VecPieceData) == 4);
+static_assert(static_cast<int32_t>(janus::MakoCommandKind::VecRecData) == 15);
+static_assert(static_cast<int32_t>(janus::MakoCommandKind::SimpleRWCommand) == 17);
+static_assert(static_cast<int32_t>(janus::MakoCommandKind::KeyCmdBatchData) == 18);
 
 #define ASSERT_MAKO_PAYLOAD_KIND(TypeName, KindValue)                         \
   static_assert(srpc::PayloadMember<janus::MakoCommands,                      \
@@ -50,7 +52,6 @@ static_assert(static_cast<int32_t>(janus::MakoCommandKind::Unknown) == 0);
 ASSERT_MAKO_PAYLOAD_KIND(LogEntry, 1);
 ASSERT_MAKO_PAYLOAD_KIND(TpcPrepareCommand, 2);
 ASSERT_MAKO_PAYLOAD_KIND(TpcCommitCommand, 3);
-ASSERT_MAKO_PAYLOAD_KIND(VecPieceData, 4);
 ASSERT_MAKO_PAYLOAD_KIND(BulkPaxosCmd, 5);
 ASSERT_MAKO_PAYLOAD_KIND(BulkPrepareLog, 6);
 ASSERT_MAKO_PAYLOAD_KIND(HeartBeatLog, 7);
@@ -61,10 +62,7 @@ ASSERT_MAKO_PAYLOAD_KIND(PaxosPrepCmd, 11);
 ASSERT_MAKO_PAYLOAD_KIND(TpcEmptyCommand, 12);
 ASSERT_MAKO_PAYLOAD_KIND(TpcNoopCommand, 13);
 ASSERT_MAKO_PAYLOAD_KIND(TpcBatchCommand, 14);
-ASSERT_MAKO_PAYLOAD_KIND(VecRecData, 15);
 ASSERT_MAKO_PAYLOAD_KIND(ViewData, 16);
-ASSERT_MAKO_PAYLOAD_KIND(SimpleRWCommand, 17);
-ASSERT_MAKO_PAYLOAD_KIND(KeyCmdBatchData, 18);
 ASSERT_MAKO_PAYLOAD_KIND(ReplicatedDBCommand, 19);
 
 #undef ASSERT_MAKO_PAYLOAD_KIND
@@ -73,10 +71,7 @@ static_assert(!srpc::PayloadMember<janus::MakoCommands,
                                   UnregisteredMakoPayload>::value);
 static_assert(!MakoPackable<UnregisteredMakoPayload>);
 
-template <typename T>
-void ExpectMakoKindWireByte(int32_t expected) {
-  ASSERT_EQ(T::static_kind(), expected);
-
+void ExpectRawMakoKindWireByte(int32_t expected) {
   srpc::BufferSink sink;
   srpc::BinaryWriteArchive writer(srpc::make_sink_proxy_buffer(&sink));
   const srpc::v32 tag(expected);
@@ -84,6 +79,12 @@ void ExpectMakoKindWireByte(int32_t expected) {
 
   ASSERT_EQ(sink.bytes.len(), 1u);
   EXPECT_EQ(sink.bytes[0], static_cast<uint8_t>(expected));
+}
+
+template <typename T>
+void ExpectMakoKindWireByte(int32_t expected) {
+  ASSERT_EQ(T::static_kind(), expected);
+  ExpectRawMakoKindWireByte(expected);
 }
 
 // 2 step 5 (2026-05-05): retired the
@@ -115,18 +116,18 @@ rusty::Arc<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
     txnid_t tx_id,
     int ret,
     ballot_t term,
-    bool_t recovery) {
+    std::string log_bytes) {
   // Fill a local value first, then wrap in the const-view Arc.
   janus::TpcCommitCommand commit;
   commit.tx_id_ = tx_id;
   commit.ret_ = ret;
   commit.term = term;
 
-  janus::VecPieceData vec_piece;
-  vec_piece.sp_vec_piece_data_ =
-      std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
-  vec_piece.is_recovery_command_ = recovery;
-  commit.cmd_ = janus::Command::pack_aliased(rusty::Arc<janus::VecPieceData>::make(std::move(vec_piece)));
+  janus::LogEntry log_entry;
+  log_entry.length = static_cast<int>(log_bytes.size());
+  log_entry.log_entry = std::move(log_bytes);
+  commit.cmd_ = janus::Command::pack_aliased(
+      rusty::Arc<janus::LogEntry>::make(std::move(log_entry)));
 
   janus::ViewData view_data;
   view_data.view_.n_ = 3;
@@ -146,7 +147,8 @@ TEST(MakoCommandKindTest, AllExplicitDiscriminantsAreOneByteV32) {
   ExpectMakoKindWireByte<janus::LogEntry>(1);
   ExpectMakoKindWireByte<janus::TpcPrepareCommand>(2);
   ExpectMakoKindWireByte<janus::TpcCommitCommand>(3);
-  ExpectMakoKindWireByte<janus::VecPieceData>(4);
+  // Retired payload kinds remain wire tombstones and must never be reused.
+  ExpectRawMakoKindWireByte(4);
   ExpectMakoKindWireByte<janus::BulkPaxosCmd>(5);
   ExpectMakoKindWireByte<janus::BulkPrepareLog>(6);
   ExpectMakoKindWireByte<janus::HeartBeatLog>(7);
@@ -157,10 +159,10 @@ TEST(MakoCommandKindTest, AllExplicitDiscriminantsAreOneByteV32) {
   ExpectMakoKindWireByte<janus::TpcEmptyCommand>(12);
   ExpectMakoKindWireByte<janus::TpcNoopCommand>(13);
   ExpectMakoKindWireByte<janus::TpcBatchCommand>(14);
-  ExpectMakoKindWireByte<janus::VecRecData>(15);
+  ExpectRawMakoKindWireByte(15);
   ExpectMakoKindWireByte<janus::ViewData>(16);
-  ExpectMakoKindWireByte<janus::SimpleRWCommand>(17);
-  ExpectMakoKindWireByte<janus::KeyCmdBatchData>(18);
+  ExpectRawMakoKindWireByte(17);
+  ExpectRawMakoKindWireByte(18);
   ExpectMakoKindWireByte<janus::ReplicatedDBCommand>(19);
 }
 
@@ -199,102 +201,6 @@ TEST(MakoCommandKindTest, ExplicitMappingControlsExactEnvelopeWireBytes) {
 // exercised the `TypedMarshallableAdapter` trait path, which is
 // gone now (every production payload uses Serializable).
 
-// 2 step 5 (2026-05-05): removed
-// `DeptranVecPieceDataUsesTypedAdapterPath` — exercised the
-// `wrap_serializable_aliased` aliasing identity through
-// `MarshallDeputy`.  Both helpers retire in this same commit;
-// the remaining `DeptranVecPieceDataNonEmptyRoundTrip` test
-// covers the wire-roundtrip case for VecPieceData.
-
-// round-trip a populated VecPieceData (with a real
-// SimpleCommand carrying TxWorkspace input + map<int32_t,Value> output
-// fields) through Marshal serialization to exercise the new archive
-// operators end-to-end. This stresses the SimpleCommand,
-// TxWorkspace, and mdb::Value archive operators that were added
-// alongside the VecPieceData migration.
-TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataNonEmptyRoundTrip) {
-  // Fill a local value first, then wrap in the const-view Arc below.
-  janus::VecPieceData payload;
-  payload.sp_vec_piece_data_ =
-      std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
-  payload.time_sent_from_client_ = 17.5;
-  payload.is_recovery_command_ = 1;
-
-  // SimpleCommand 1: input has 2 keys mapped to Value, output is empty.
-  auto cmd1 = std::make_shared<janus::SimpleCommand>();
-  cmd1->id_ = 1001;
-  cmd1->type_ = 7;
-  cmd1->inn_id_ = 5;
-  cmd1->root_id_ = 999;
-  cmd1->root_type_ = 3;
-  cmd1->client_id_ = 42;
-  cmd1->cmd_id_in_client_ = 99;
-  cmd1->rule_mode_on_and_is_original_path_only_command_ = 1;
-  cmd1->input.keys_.insert(10);
-  cmd1->input.keys_.insert(20);
-  (*cmd1->input.values_)[10] = mdb::Value(static_cast<i32>(123));
-  (*cmd1->input.values_)[20] = mdb::Value(std::string("hello"));
-  cmd1->output[3] = mdb::Value(static_cast<i64>(456));
-  cmd1->output_size = 1;
-  cmd1->partition_id_ = 11;
-  cmd1->timestamp_ = 7777;
-  cmd1->rank_ = 2;
-  payload.sp_vec_piece_data_->push_back(cmd1);
-
-  // SimpleCommand 2: input/output both empty (edge case).
-  auto cmd2 = std::make_shared<janus::SimpleCommand>();
-  cmd2->id_ = 2002;
-  cmd2->type_ = 8;
-  cmd2->partition_id_ = 22;
-  payload.sp_vec_piece_data_->push_back(cmd2);
-
-  // Serialize via Command's Marshal& archive operators (added in
-  // 2 step 2; same wire bytes as the legacy MarshallDeputy
-  // path).
-  janus::Command outgoing{rusty::Arc<janus::VecPieceData>::make(std::move(payload))};
-  srpc::BufferSink sink;
-  srpc::BinaryWriteArchive war(srpc::make_sink_proxy_buffer(&sink));
-  srpc::Serialize_::serialize(outgoing, war);
-
-  janus::Command incoming;
-  srpc::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  srpc::BinaryReadArchive rar(srpc::make_source_proxy_buffer(&src));
-  srpc::Deserialize_::deserialize(incoming, rar);
-  const auto decoded = marshallable_cast<janus::VecPieceData>(incoming);
-  ASSERT_TRUE(decoded.is_some());
-
-  EXPECT_DOUBLE_EQ(decoded.unwrap()->time_sent_from_client_, 17.5);
-  EXPECT_EQ(decoded.unwrap()->is_recovery_command_, 1);
-  ASSERT_EQ(decoded.unwrap()->sp_vec_piece_data_->size(), 2u);
-
-  auto& d1 = *(*decoded.unwrap()->sp_vec_piece_data_)[0];
-  EXPECT_EQ(d1.id_, 1001);
-  EXPECT_EQ(d1.type_, 7);
-  EXPECT_EQ(d1.inn_id_, 5);
-  EXPECT_EQ(d1.root_id_, 999);
-  EXPECT_EQ(d1.root_type_, 3);
-  EXPECT_EQ(d1.client_id_, 42);
-  EXPECT_EQ(d1.cmd_id_in_client_, 99);
-  EXPECT_EQ(d1.rule_mode_on_and_is_original_path_only_command_, 1);
-  EXPECT_EQ(d1.partition_id_, 11u);
-  EXPECT_EQ(d1.timestamp_, 7777u);
-  EXPECT_EQ(d1.rank_, 2);
-  ASSERT_EQ(d1.input.keys_.count(10), 1u);
-  ASSERT_EQ(d1.input.keys_.count(20), 1u);
-  EXPECT_EQ(d1.input.at(10).get_i32(), 123);
-  EXPECT_EQ(d1.input.at(20).get_str(), "hello");
-  ASSERT_EQ(d1.output.count(3), 1u);
-  EXPECT_EQ(d1.output.at(3).get_i64(), 456);
-  EXPECT_EQ(d1.output_size, 1);
-
-  auto& d2 = *(*decoded.unwrap()->sp_vec_piece_data_)[1];
-  EXPECT_EQ(d2.id_, 2002);
-  EXPECT_EQ(d2.type_, 8);
-  EXPECT_EQ(d2.partition_id_, 22u);
-  EXPECT_TRUE(d2.input.keys_.empty());
-  EXPECT_TRUE(d2.output.empty());
-}
-
 TEST(MarshallableProxyFacadeTest, DeptranViewDataMarshalRoundTrip) {
   janus::ViewData src;
   src.view_.n_ = 3;
@@ -325,48 +231,9 @@ TEST(MarshallableProxyFacadeTest, DeptranViewDataMarshalRoundTrip) {
   EXPECT_EQ(dst.partition_id_, 7);
 }
 
-TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
-  // Fill local values first, then wrap in const-view Arcs.
-  janus::VecRecData vec_rec;
-  vec_rec.key_data_ = std::make_shared<std::vector<key_t>>();
-  vec_rec.key_data_->push_back(11);
-  vec_rec.key_data_->push_back(12);
-
-  janus::Command vec_rec_envelope{
-      rusty::Arc<janus::VecRecData>::make(std::move(vec_rec))};
-  EXPECT_EQ(vec_rec_envelope.kind_, janus::VecRecData::static_kind());
-  const auto decoded_vec_rec =
-      marshallable_cast<janus::VecRecData>(vec_rec_envelope);
-  ASSERT_TRUE(decoded_vec_rec.is_some());
-  ASSERT_NE(decoded_vec_rec.unwrap()->key_data_, nullptr);
-  ASSERT_EQ(decoded_vec_rec.unwrap()->key_data_->size(), 2u);
-  EXPECT_EQ((*decoded_vec_rec.unwrap()->key_data_)[0], 11);
-  EXPECT_EQ((*decoded_vec_rec.unwrap()->key_data_)[1], 12);
-
-  janus::KeyCmdBatchData batch;
-  janus::HeartBeatLog nested;
-  nested.leader_id = 77;
-  nested.epoch = 0;
-  batch.AddEntry(1001, janus::Command::pack_aliased(rusty::Arc<janus::HeartBeatLog>::make(
-                           std::move(nested))));
-
-  janus::Command batch_envelope = janus::Command::pack_aliased(
-      rusty::Arc<janus::KeyCmdBatchData>::make(std::move(batch)));
-  EXPECT_EQ(batch_envelope.kind_, janus::KeyCmdBatchData::static_kind());
-  const auto decoded_batch =
-      marshallable_cast<janus::KeyCmdBatchData>(batch_envelope);
-  ASSERT_TRUE(decoded_batch.is_some());
-  ASSERT_EQ(decoded_batch.unwrap()->Size(), 1u);
-  EXPECT_EQ(decoded_batch.unwrap()->GetKey(0), 1001);
-  const auto nested_decoded = marshallable_cast<janus::HeartBeatLog>(
-      decoded_batch.unwrap()->GetCommand(0));
-  ASSERT_TRUE(nested_decoded.is_some());
-  EXPECT_EQ(nested_decoded.unwrap()->leader_id, 77u);
-}
-
 TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
   auto src = MakeTypedTpcCommitPayload(/*tx_id=*/321, /*ret=*/9, /*term=*/17,
-                                       /*recovery=*/1);
+                                       "raft-entry");
 
   janus::Command outgoing{src};
   EXPECT_EQ(outgoing.kind_, janus::TpcCommitCommand::static_kind());
@@ -387,10 +254,11 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
   EXPECT_EQ(decoded.unwrap()->ret_, 9);
   EXPECT_EQ(decoded.unwrap()->term, 17);
 
-  const auto decoded_vec_piece =
-      marshallable_cast<janus::VecPieceData>(decoded.unwrap()->cmd_);
-  ASSERT_TRUE(decoded_vec_piece.is_some());
-  EXPECT_EQ(decoded_vec_piece.unwrap()->is_recovery_command_, 1);
+  const auto decoded_log_entry =
+      marshallable_cast<janus::LogEntry>(decoded.unwrap()->cmd_);
+  ASSERT_TRUE(decoded_log_entry.is_some());
+  EXPECT_EQ(decoded_log_entry.unwrap()->length, 10);
+  EXPECT_EQ(decoded_log_entry.unwrap()->log_entry, "raft-entry");
 
   ASSERT_TRUE(decoded.unwrap()->sp_view_data_.is_some());
   EXPECT_EQ(decoded.unwrap()->sp_view_data_.unwrap()->partition_id_, 11);
@@ -402,9 +270,9 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   janus::TpcBatchCommand batch;
   std::vector<rusty::Arc<janus::TpcCommitCommand>> commits{
       MakeTypedTpcCommitPayload(/*tx_id=*/101, /*ret=*/1, /*term=*/3,
-                                /*recovery=*/0),
+                                "entry-one"),
       MakeTypedTpcCommitPayload(/*tx_id=*/202, /*ret=*/2, /*term=*/4,
-                                /*recovery=*/1)};
+                                "entry-two")};
   batch.AddCmds(commits);
 
   janus::Command batch_outgoing{
@@ -424,6 +292,14 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   ASSERT_EQ(decoded_batch.unwrap()->Size(), 2u);
   EXPECT_EQ(decoded_batch.unwrap()->cmds_.at(0)->tx_id_, 101);
   EXPECT_EQ(decoded_batch.unwrap()->cmds_.at(1)->tx_id_, 202);
+  const auto first_log_entry = marshallable_cast<janus::LogEntry>(
+      decoded_batch.unwrap()->cmds_.at(0)->cmd_);
+  const auto second_log_entry = marshallable_cast<janus::LogEntry>(
+      decoded_batch.unwrap()->cmds_.at(1)->cmd_);
+  ASSERT_TRUE(first_log_entry.is_some());
+  ASSERT_TRUE(second_log_entry.is_some());
+  EXPECT_EQ(first_log_entry.unwrap()->log_entry, "entry-one");
+  EXPECT_EQ(second_log_entry.unwrap()->log_entry, "entry-two");
 
   // 2 step 5 (2026-05-05): TpcEmptyCommand round-trip via
   // Command::pack_aliased preserves the caller's Arc identity.
@@ -469,57 +345,6 @@ TEST(MarshallableProxyFacadeTest,
   EXPECT_EQ(decoded.unwrap()->op_, janus::ReplicatedDBOp::PUT);
   EXPECT_EQ(decoded.unwrap()->key_, "k1");
   EXPECT_EQ(decoded.unwrap()->value_, "v1");
-}
-
-TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
-  auto payload = rusty::Arc<janus::EmptyGraph>::make();
-  ASSERT_NE(payload.get(), nullptr);
-
-  // graph payloads moved from kind-tagged Serializable
-  // to the open-set `AnyMessage` envelope.  L10f-2 step 5 (2026-05-05):
-  // AnyMessage no longer inherits Marshallable; the envelope rides
-  // directly in RPC fields without a surrounding MarshallDeputy.
-  srpc::AnyMessage outgoing = srpc::AnyMessage::pack(payload);
-
-  BufferSink sink;
-  {
-    BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
-    srpc::Serialize_::serialize(outgoing, writer);
-  }
-
-  srpc::AnyMessage incoming;
-  {
-    BufferSource src(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy_buffer(&src));
-    srpc::Deserialize_::deserialize(incoming, reader);
-  }
-  EXPECT_TRUE(incoming.is_a<janus::EmptyGraph>());
-  ASSERT_TRUE(incoming.unpack<janus::EmptyGraph>().is_some());
-}
-
-TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesAnyMessageEnvelope) {
-  auto payload = rusty::Arc<janus::RccGraph>::make();
-  ASSERT_NE(payload.get(), nullptr);
-
-  srpc::AnyMessage outgoing = srpc::AnyMessage::pack(payload);
-
-  BufferSink sink;
-  {
-    BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
-    srpc::Serialize_::serialize(outgoing, writer);
-  }
-
-  srpc::AnyMessage incoming;
-  {
-    BufferSource src(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy_buffer(&src));
-    srpc::Deserialize_::deserialize(incoming, reader);
-  }
-
-  EXPECT_TRUE(incoming.is_a<janus::RccGraph>());
-  const auto decoded = incoming.unpack<janus::RccGraph>();
-  ASSERT_TRUE(decoded.is_some());
-  EXPECT_EQ(decoded.unwrap()->size(), 0u);
 }
 
 TEST(MarshallableProxyFacadeTest,

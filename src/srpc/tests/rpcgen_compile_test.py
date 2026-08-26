@@ -151,7 +151,6 @@ def compile_header(
     include_dirs = [
         repo_root / "src",
         repo_root / "src/srpc",
-        repo_root / "src/memdb",
         repo_root / "third-party/yaml-cpp/include",
         repo_root / "third-party/rusty-cpp/include",
     ] + extra_include_dirs
