@@ -611,7 +611,7 @@ int main(int argc, char **argv) {
     // Use Raft config files instead of Paxos
     vector<string> raft_config_file{
         get_current_absolute_path() + "../config/1leader_2followers/raft" + std::to_string(nthreads) + "_shardidx" + std::to_string(shardIdx) + ".yml",
-        get_current_absolute_path() + "../config/occ_raft.yml"
+        get_current_absolute_path() + "../config/raft.yml"
     };
 
     auto& benchConfig = BenchmarkConfig::getInstance();

@@ -15,7 +15,7 @@ transpiler-lowered pure-virtual C++ classes:
 - **`OrderedIndex`** — the non-transactional KV surface every backend
   implements: `get / put / insert / remove / scan / rscan` (+ `size`,
   `clear`, `get_table_id`, `get_is_remote`). Each op is
-  self-contained and immediately visible; on Silo-backed tables it is
+  self-contained and immediately visible; on STO/MassTrans-backed tables it is
   an internal one-op OCC transaction, so writes replicate through the
   normal commit path. `put` returns "newly inserted"; `insert` is
   put-if-absent; `remove` returns "existed" (and is a direct raw
@@ -55,7 +55,7 @@ no `using`-declarations and may carry defaults.
 | class | layer | authored | notes |
 |---|---|---|---|
 | `masstree_ordered_index` | plain Masstree (L1) | DSL struct | implements `OrderedIndex` ONLY — "no transactions" is a type fact. Owns value buffers in the RCU arena (`[u32 len][bytes]`), frees RCU-deferred, every op pins a `scoped_rcu_region`. |
-| `mbta_ordered_index` | Silo/STO | DSL struct (`mbta_wrapper.hh`) | remote/local dispatch in the DSL; per-verb C++ kernels own the exception boundary (`STD_OP` catch of `Transaction::Abort`, non-txn retry loops, RPC retries) and the `UPDATE_VS` bookkeeping. MassTrans (non-movable) sits behind a raw pointer; build via `mbta_index_build(name, table_id, is_remote)`. |
+| `mbta_ordered_index` | STO/MassTrans | DSL struct (`mbta_wrapper.hh`) | remote/local dispatch in the DSL; per-verb C++ kernels own the exception boundary (`STD_OP` catch of `Transaction::Abort`, non-txn retry loops, RPC retries) and the `UPDATE_VS` bookkeeping. MassTrans (non-movable) sits behind a raw pointer; build via `mbta_index_build(name, table_id, is_remote)`. |
 | `mbta_sharded_ordered_index` | Mako routing | DSL struct | FNV-1a per-key routing over `abstract_ordered_index*` shards; txn'd range reads visit every shard; non-txn scans are local-shard-only. |
 
 Backends are chosen at construction; callers hold the narrowest

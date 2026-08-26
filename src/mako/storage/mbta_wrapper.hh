@@ -1729,6 +1729,8 @@ public:
   size_t
   sizeof_txn_object(uint64_t txn_flags) const
   {
+    // Reject retired original-Silo/NDB flags before a transaction is created.
+    ALWAYS_ASSERT(txn_flags == 0);
     return sizeof(Transaction);
   }
 
@@ -1738,6 +1740,10 @@ public:
                 str_arena &arena,
                 void *buf,
                 TxnProfileHint hint = HINT_DEFAULT) {
+    // Fail closed if a caller tries to revive an original-Silo/NDB flag.
+    // The current STO/MassTrans wrapper does not consume the profile hint.
+    ALWAYS_ASSERT(txn_flags == 0);
+    (void) hint;
     Sto::start_transaction();
     thr_arena = &arena;
     return NULL;

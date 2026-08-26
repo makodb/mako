@@ -129,7 +129,7 @@ void RaftServer::applyLogs() {
 **Key Observations:**
 - Leader throughput: 340-390k ops/sec (GOOD)
 - Follower replay: Highly variable (BAD)
-- Jetpack recovery: **Disabled** for simplicity (intentional)
+- Legacy Jetpack recovery: **Unsupported and forced disabled**; separate audit pending
 - Election timeout: 10× heartbeat interval (stable leadership)
 - Test kills follower before queue drain (by design, but exposes the bug)
 
@@ -322,7 +322,7 @@ if (!AmIPreferredLeader() && preferred_leader_site_id_ != INVALID_SITEID) {
 - Status: ✅ **COMPLETE**
 - Lines: 65 (header) + 550 (implementation)
 - Matches Paxos API exactly
-- **Jetpack disabled by default**: `setenv("MAKO_DISABLE_JETPACK", "1", 1)` at line 235
+- **Legacy Jetpack recovery forced disabled**: the Rule witness producer is retired and the remaining generic stack is under separate audit
 
 **3. RaftServer** (`src/deptran/raft/server.{cc,h}`)
 - Status: ✅ **COMPLETE WITH PREFERRED LEADER SYSTEM**
@@ -532,37 +532,23 @@ sleep 30  # Grace period for followers to catch up
 
 ## Jetpack Recovery Analysis
 
-**Status**: ⚠️ **DISABLED BY DEFAULT** (intentional)
+**Status**: ⚠️ **LEGACY / UNDER SEPARATE AUDIT** (unsupported)
 
 **What is Jetpack?**
 - Witness-based fast recovery protocol
 - Runs **ONLY during leader elections**
 - Ensures missed transactions are re-executed after failover
 
-**Why Disabled?**
-1. **Simplicity**: Easier to test Raft without Jetpack first
-2. **Performance**: Adds 50-200ms per election (0-15% throughput impact depending on churn)
-3. **Redundancy**: Mako's watermark-based safety checks already prevent unsafe replays
-
-**Code Location**: `src/deptran/raft_main_helper.cc:234-236`
-```cpp
-if (std::getenv("MAKO_DISABLE_JETPACK") == nullptr) {
-  setenv("MAKO_DISABLE_JETPACK", "1", 1);  // Force disable
-}
-```
-
-**Impact on Throughput:**
-
-| Scenario | Jetpack Impact |
-|----------|----------------|
-| Stable leadership (no elections) | **0%** (never runs) |
-| Frequent elections (aggressive timeout) | **-5% to -15%** (blocks during recovery) |
-| Current tests | **0%** (leadership stable, Jetpack disabled) |
+The Rule transaction protocol that produced the witness sets has been retired,
+along with its configurations. Generic Jetpack RPC and recovery machinery still
+exists in the replication stack, but that code is being audited separately and
+has no supported deployment mode.
 
 **Recommendation**:
-- Keep **disabled** for benchmarking and development
-- **Enable** only for production failure testing
-- Enable with: `unset MAKO_DISABLE_JETPACK` or `export MAKO_DISABLE_JETPACK=0`
+- Keep `MAKO_DISABLE_JETPACK=1` for benchmarking, development, and deployment.
+- Do not treat the legacy generic recovery path as tested or supported.
+- Complete the separate recovery-stack audit before deciding whether to repair
+  or retire the remaining code.
 
 ---
 
@@ -614,7 +600,7 @@ if (std::getenv("MAKO_DISABLE_JETPACK") == nullptr) {
 5. **Leader failover testing**
    - Kill leader mid-run
    - Verify new leader takes over
-   - Check Jetpack recovery (if enabled)
+   - Confirm normal Raft recovery without relying on legacy Jetpack behavior
 
 6. **Performance benchmarking**
    - Raft vs Paxos side-by-side
@@ -628,10 +614,10 @@ if (std::getenv("MAKO_DISABLE_JETPACK") == nullptr) {
    - Configuration tuning guide
    - Architecture overview
 
-8. **Optional: Enable Jetpack**
-   - Test with Jetpack enabled
-   - Measure recovery time
-   - Validate correctness
+8. **Audit legacy Jetpack recovery**
+   - Trace the remaining generic RPC and recovery entry points
+   - Decide whether to repair or retire them
+   - Add dedicated correctness tests before any supported use
 
 ---
 
@@ -703,7 +689,7 @@ NewOrder_remote_abort_ratio: -nan (< 20%) ✓
 2. ⏳ Validate with 10+ test runs (target: <5% variance) - **IN PROGRESS**
 3. Test multi-shard and failover scenarios
 4. Performance validation vs Paxos
-5. Production deployment with Jetpack enabled
+5. Production deployment without the unsupported legacy Jetpack path
 
 **Estimated Time to Complete**: 1-2 days (testing + validation)
 

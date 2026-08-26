@@ -325,7 +325,6 @@ majority confirms an entry).  For each newly committed slot:
 for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
     auto next_instance = GetRaftInstance(id);
     if (next_instance && next_instance->log_) {
-        RuleWitnessGC(next_instance->log_);
         app_next_(id, next_instance->log_);   // → RaftWorker::Next()
         executeIndex = id;
     }

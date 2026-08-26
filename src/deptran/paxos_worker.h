@@ -12,8 +12,12 @@
 #include "./paxos/coordinator.h"
 #include "concurrentqueue.h"
 #include "mako_commands.h"
+#include "replication_log_entry.h"
 
 namespace janus {
+
+class MultiPaxosFrame;
+class MultiPaxosCommo;
 
 	typedef std::chrono::time_point<std::chrono::high_resolution_clock> timepoint;
 
@@ -247,34 +251,6 @@ class SyncNoOpRequest
 
 // migrated from TypedPaxosLogEnvelopeAdapter
 // to Serializable. Wire format byte-for-byte preserved:
-//   int length
-//   std::string log_entry-equivalent bytes
-// (the shared_ptr_apprch=1 fast path that copies operation_test bytes
-// into a temporary std::string is reproduced inside save()).
-//
-// 1 cleanup: deleted the unused `bypass_to_socket_` /
-// `entity_size` / `write_to_fd` / `length_as_v64` / `operation_` /
-// `len_v64` members. They were a zero-copy fast path that no caller
-// ever enabled; only `length`, `log_entry`, and `operation_test` are
-// actually used by save/load.
-class LogEntry
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, LogEntry>::KIND> {
-public:
-  int length = 0;
-  std::string log_entry;  // for the serialization over the network, syncLog using shared_ptr as well
-  shared_ptr<char> operation_test;
-
-  LogEntry() = default;
-
-  // Serializable interface. Implementations live in
-  // paxos_worker.cc — they reference the file-static `shared_ptr_apprch`
-  // flag that gates the operation_test-vs-log_entry encoding choice.
-  void save(BinaryWriteArchive& ar) const;
-  void load(BinaryReadArchive& ar);
-};
-// migrated from TypedPaxosLogEnvelopeAdapter
-// to Serializable. Wire format byte-for-byte preserved:
 //   int32_t leader_id
 //   int32_t slots.size() | N x slotid_t
 //   int32_t ballots.size() | N x ballot_t
@@ -394,9 +370,9 @@ public:
 
   Config::SiteInfo* site_info_ = nullptr;
   std::queue<std::tuple<int, int, int, int, const char *>> un_replay_logs_ ;  // timestamp, slot_id, status, len, log
-  Frame* rep_frame_ = nullptr;
+  MultiPaxosFrame* rep_frame_ = nullptr;
   TxLogServer* rep_sched_ = nullptr;
-  Communicator* rep_commo_ = nullptr;
+  MultiPaxosCommo* rep_commo_ = nullptr;
   std::recursive_mutex mtx_worker_submit{};
   std::mutex condition_mutex;
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;

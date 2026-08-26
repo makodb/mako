@@ -71,7 +71,7 @@ static void detect_replication_type_from_config(
             auto pos = line.find("ab:");
             if (pos != std::string::npos) {
                 // trim and extract value
-                if (value == "raft" || value == "fpga_raft") {
+                if (value == "raft") {
                     janus::set_replication_type(
                         janus::ReplicationType::RAFT);
                     return;
@@ -94,7 +94,7 @@ The fix is a lightweight YAML scanner that:
 1. Opens each config file as plain text
 2. Searches for lines containing `ab:`
 3. Extracts the value after the colon
-4. If the value is `"raft"` or `"fpga_raft"`, sets the global type
+4. If the value is `"raft"`, sets the global type
 
 ### 3.3 Priority Rules
 

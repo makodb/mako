@@ -2,7 +2,8 @@
 
 ## 1. Raft Implementation (`src/deptran/raft/`)
 
-Total: ~6,081 lines across 19 files.
+Selected core files are listed below; line counts are a source snapshot and
+may drift as the implementation evolves.
 
 | File | Lines | Description |
 |------|-------|-------------|
@@ -13,7 +14,7 @@ Total: ~6,081 lines across 19 files.
 | `test.cc` | 740 | 11 standalone Raft lab tests: election, agreement, replication, network partition |
 | `testconf.cc` | 585 | Test configuration: replica maps, commit callbacks, network simulation (Disconnect/Reconnect) |
 | `commo.cc` | 287 | Raft RPC communication: AppendEntries, RequestVote, TimeoutNow, ForwardToLearner |
-| `frame.cc` | 206 | Frame registration: protocol initialisation, executor/coordinator/commo factory methods |
+| `frame.cc` | 206 | Frame registration: protocol initialisation and coordinator/commo factory methods |
 | `coordinator.cc` | 199 | Transaction coordinator: command submission to leader, quorum response handling |
 | `testconf.h` | 183 | RaftTestConfig class: NSERVERS=5, ELECTIONTIMEOUT=5s, test helpers |
 | `commo.h` | 128 | RaftCommo interface, RaftVoteQuorumEvent for collecting vote responses |
@@ -23,12 +24,11 @@ Total: ~6,081 lines across 19 files.
 | `macros.h` | 76 | Convenience macros: RAFT_CREATE_EV, LOG_AT_SLOT, LEADER_LOG, etc. |
 | `frame.h` | 49 | RaftFrame interface for protocol-specific transaction processing |
 | `test.h` | 43 | RaftLabTest class header: 11 test method declarations |
-| `exec.cc` | 31 | Executor: delegates to parent TxnExecutor (minimal) |
-| `exec.h` | 29 | ExecutorRaft class header |
 
 ## 2. Paxos Implementation (`src/deptran/paxos/`)
 
-Total: ~2,957 lines across 13 files.
+Selected core files are listed below; line counts are a source snapshot and
+may drift as the implementation evolves.
 
 | File | Lines | Description |
 |------|-------|-------------|
@@ -42,9 +42,6 @@ Total: ~2,957 lines across 13 files.
 | `commo.h` | 108 | MultiPaxosCommo and quorum event definitions |
 | `service.h` | 92 | MultiPaxosServiceImpl class |
 | `frame.h` | 33 | MultiPaxosFrame header |
-| `exec.cc` | 22 | Executor implementation (minimal) |
-| `exec.h` | 23 | Executor header |
-| `commoh.h` | 0 | Empty legacy placeholder |
 
 ## 3. Integration Files
 
@@ -122,8 +119,10 @@ Total: ~2,957 lines across 13 files.
 |------|-------------|
 | `occ_raft.yml` | OCC concurrency control + Raft atomic broadcast |
 | `none_raft.yml` | No CC + Raft |
-| `rule_raft.yml` | Rule-based CC + Raft |
 | `raft_lab_test.yml` | 5-server standalone test config (cc:none, ab:raft) |
+
+Rule-based configuration is retired. The remaining generic Jetpack recovery
+code is legacy and is being audited separately.
 
 ### 8.2 Raft Cluster Topologies (`config/1leader_2followers/`)
 
