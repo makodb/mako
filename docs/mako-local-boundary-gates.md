@@ -10,9 +10,61 @@ Rust OCC engine.
 
 The first all-green record below completes the executable Phase 1A-1D boundary
 gate. The separate Item 5 record completes Phase 1F for the current
-asynchronous contract. Together they still do not freeze revision 0, promote
-it to ABI v1, resolve the remaining ABI-design decisions in Phases 1C/1D, or
-complete Milestone 1.
+asynchronous contract. Subsequent closure work resolved the remaining
+Phase 1B-1E contract items described below. The ABI intentionally continues to
+report revision 0 until a separate promotion action, and Milestone 1 final
+acceptance still requires the comparative zoo-2 benchmark. Historical Item 4
+and Item 5 evidence remains tied to the exact commits named in its records.
+
+## Current Milestone 1 closure status
+
+The functional and contract rows through Phase 1F are complete:
+
+- **Phase 1B:** `CacheOptions::isolation` makes the isolation profile explicit.
+  `StrictSerializable` is the production default; requesting `Opaque` rejects
+  an engine that does not advertise the opacity feature. Point and scan
+  read-your-writes remain required by the ordinary cache profile.
+- **Phase 1C:** database open has a sized, append-only options prefix and keeps
+  the original default-options symbol. The freeze choice retains implicit TLS,
+  the conditional all-output-pointer rule, and process-lifetime STO worker,
+  MassTrans table, and epoch state. Direct concurrent table-open tests cover
+  same identity, name conflict, and numeric-ID conflict. A fresh-process probe
+  attaches 460 distinct joined workers, checks idempotence on each one, and
+  requires worker 461 to return `THREAD_LIMIT`. Because `LocalDb::open()`
+  consumes one slot, `FixedWorkerPool` rejects configurations above 459 even
+  in a fresh process; prior attachments may lower actual availability.
+- **Phase 1D:** compile-fail examples pin transaction thread and database
+  lifetimes. The production `FixedWorkerPool` uses bounded per-worker queues,
+  health checks after every closure and unwind panic, poisoned-worker
+  retirement, pending task failure, metrics, clean drain/join, and explicit
+  conflict-only bounded retry with attempt/conflict reporting.
+- **Phase 1E:** integrated native-cache tests hold the backend stopped while a
+  two-record queue backpressures 8 writers across 128 commits, prove clean
+  close drains and reopens six acknowledged records, prove forced process stop
+  retains the applied prefix while discarding only its unapplied volatile
+  suffix, and prove near-exhaustion recovery mints the final valid timestamp
+  without consuming visibility or `CacheSeq` on the following exhaustion.
+- **Phase 1F:** the cleanup, mutation, history, crash, and replay gate remains
+  accepted by the Item 5 record below.
+
+Phase 1G value eviction is explicitly deferred until after Milestone 1. Every
+live value remains resident in Silo, so the live dataset must fit in RAM, and
+backend commit-record history currently has no reclamation policy. This does
+not make the writeback queue unbounded: `WritebackConfig::capacity` bounds the
+detached permits plus prepared/ready in-memory records and applies producer
+backpressure before native commit.
+
+Exactly one recovered cache namespace per process is a Milestone 1 deployment
+precondition, not a mutex-enforced feature. A future multi-namespace supervisor
+must discover and scan every backend and floor the shared timestamp authority
+before any namespace admits work.
+
+The only open Milestone 1 acceptance row is intentionally left pending for the
+final comparative run; this document does not invent or pre-approve its result:
+
+| Gate | Candidate | Host | Result | Evidence |
+| --- | --- | --- | --- | --- |
+| Cache-level throughput, aborts, retry-inclusive p50/p99, drain/recovery time, and log/backend amplification versus `mrx` and raw RocksDB | To be recorded after the implementation commit is fixed | `zoo-002` (`zoo-2`) with recorded CPU affinity | **PENDING** | Add the exact command, hardware/load metadata, native build fingerprint, methodology, machine-readable artifact, and acceptance summary here or in a linked benchmark record. |
 
 ## Memory and thread safety
 
@@ -168,6 +220,23 @@ The absolute paths are intentional: Cargo build scripts execute from a package
 context, so a relative `MAKO_BUILD_DIR` does not resolve from the invoking
 shell's `crates/` directory.
 
+The production adapter is separately covered by
+`crates/mako-local/tests/fixed_worker.rs`. It proves that submitted closures
+reuse the configured long-lived workers, make transactional progress through
+the explicit conflict-only retry helper, and retire a sacrificial worker after
+native cleanup quarantine without routing later work to it. The adapter's
+private queues are bounded, and dropping its awaitable `Task` never cancels
+accepted native work mid-transaction. Its fresh-process configuration ceiling
+is 459 workers because the thread that opened `LocalDb` has already consumed
+one of the 460 slots; native startup can still fail earlier when the process
+has prior attachments.
+
+`MakoLocalThreadLimitProbe` is process-isolated because attachment IDs are
+never recycled. It creates and joins exactly `MAKO_LOCAL_MAX_WORKERS == 460`
+workers sequentially, attaches twice on each, then verifies that a 461st
+distinct worker returns `THREAD_LIMIT`. This distinguishes the lifetime budget
+from a simultaneous-thread ceiling.
+
 ## Relative wrapper overhead
 
 Only optimized builds may measure overhead:
@@ -279,6 +348,14 @@ returned successfully and the process-local watermark then advanced. It does
 not mean the RocksDB WAL was synchronized. The cache never adds a WAL flush,
 memtable flush, or `fsync` to this contract.
 
+The loss wording follows that distinction. A clean cache/process shutdown
+drains every acknowledged transaction. A forced cache/process stop can lose
+the acknowledged but unapplied in-memory tail while preserving the already
+applied backend prefix. A machine or power failure is stronger: with the
+production `Wal` mode's `sync=false`, it may also lose an applied but unsynced
+RocksDB WAL tail. Neither the applied watermark nor the Phase 1F crash matrix
+claims that such a tail is durable.
+
 ## Validation record
 
 Item 4 was accepted only after every row below passed from the same candidate
@@ -327,6 +404,8 @@ Toolchain: Rust/Cargo 1.97.1. Native hook build identity:
 | Formatting and strict lint | `cd crates && cargo fmt -p mako-cache -p mako-history -- --check`; native environment plus `cargo clippy --locked -p mako-cache --features test-support --all-targets -- -D warnings`; `cargo clippy --locked -p mako-history --all-targets -- -D warnings` | `PASS` | No formatting drift, warnings, or diff whitespace errors. Independent final review reported no remaining actionable finding. |
 
 This all-green record completes Item 5 and Phase 1F for the current
-single-machine, asynchronously applied contract. It does not complete
-Milestone 1, add a disk-sync guarantee, recover an unflushed in-memory tail,
-or add distributed routing, 2PC, or replication.
+single-machine, asynchronously applied contract. The subsequent Phase 1B-1E
+closure work is summarized at the top of this document; final Milestone 1
+acceptance is pending only the explicitly marked zoo-2 comparative benchmark.
+No current phase adds a disk-sync guarantee, recovers an unflushed in-memory
+tail, or adds distributed routing, 2PC, or replication.

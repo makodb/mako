@@ -117,6 +117,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mako-cache-bench"
+version = "0.1.0"
+dependencies = [
+ "mako-cache",
+ "mrx",
+ "mrx-core",
+ "mrx-rocks",
+]
+
+[[package]]
 name = "mako-history"
 version = "0.1.0"
 

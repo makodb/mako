@@ -58,6 +58,9 @@ mod crash_tests;
 #[cfg(all(test, have_mako))]
 mod application_history_tests;
 
+#[cfg(all(test, have_mako))]
+mod milestone1_acceptance_tests;
+
 pub use mako_local::{Error as LocalError, MakoTimestamp};
 pub use mrx_rocks::Durability;
 pub use record::{CommitSeq, RecordError};
@@ -84,6 +87,24 @@ pub struct CacheOptions {
     /// cache profile. Set this to `false` only when deliberately opening
     /// against a legacy native build.
     pub require_read_my_writes: bool,
+    /// Isolation profile required from the native transaction engine.
+    ///
+    /// The production default is committed-transaction strict
+    /// serializability. Select [`Isolation::Opaque`] only when applications
+    /// also require aborted and in-flight transactions to observe a
+    /// consistent snapshot; startup then rejects a non-opaque native build.
+    pub isolation: Isolation,
+}
+
+/// Native transaction isolation required by the cache deployment.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Isolation {
+    /// Committed transactions are strictly serializable.
+    #[default]
+    StrictSerializable,
+    /// Every transaction, including aborted and in-flight work, observes a
+    /// consistent snapshot.
+    Opaque,
 }
 
 impl Default for CacheOptions {
@@ -91,6 +112,7 @@ impl Default for CacheOptions {
         Self {
             writeback: WritebackConfig::default(),
             require_read_my_writes: true,
+            isolation: Isolation::StrictSerializable,
         }
     }
 }
@@ -147,6 +169,9 @@ pub enum Error {
     AllocationFailed,
     /// The selected native feature profile is unavailable.
     MissingReadMyWrites,
+    /// The deployment requires opacity but the native engine was built
+    /// without it.
+    MissingOpacity,
     /// The RocksDB contains a key outside this cache's tagged format.
     ForeignBackendKey,
     /// A backend record or data key names a table unsupported by this slice.
@@ -213,6 +238,10 @@ impl fmt::Display for Error {
                     "the native engine does not provide required read-your-writes"
                 )
             }
+            Self::MissingOpacity => write!(
+                f,
+                "the cache requires opacity, but the native engine provides only strict serializability"
+            ),
             Self::ForeignBackendKey => write!(
                 f,
                 "RocksDB contains a key outside the mako-cache tagged format"
@@ -270,6 +299,7 @@ impl std::error::Error for Error {
             Self::RuntimeLockPoisoned
             | Self::AllocationFailed
             | Self::MissingReadMyWrites
+            | Self::MissingOpacity
             | Self::ForeignBackendKey
             | Self::UnsupportedTable(_)
             | Self::BackendStateMismatch
@@ -369,6 +399,9 @@ impl<B: Blobs + 'static> Cache<B> {
             && (!features.read_my_writes() || !features.scan_read_my_writes())
         {
             return Err(Error::MissingReadMyWrites);
+        }
+        if options.isolation == Isolation::Opaque && !features.opacity() {
+            return Err(Error::MissingOpacity);
         }
 
         let local = LocalDb::open()?;

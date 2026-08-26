@@ -237,6 +237,10 @@ pub(super) unsafe fn mako_local_scan_options_size() -> usize {
     sys::MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE as usize
 }
 
+pub(super) unsafe fn mako_local_db_options_size() -> usize {
+    sys::MAKO_LOCAL_DB_OPTIONS_V0_SIZE as usize
+}
+
 pub(super) unsafe fn mako_local_scan_entry_size() -> usize {
     std::mem::size_of::<sys::mako_local_scan_entry>()
 }
@@ -328,6 +332,27 @@ pub(super) unsafe fn mako_local_db_open(out: *mut *mut sys::mako_local_db) -> c_
         unsafe { out.write(raw) };
         sys::MAKO_LOCAL_OK
     })
+}
+
+pub(super) unsafe fn mako_local_db_open_with_options(
+    options: *const sys::mako_local_db_options,
+    out: *mut *mut sys::mako_local_db,
+) -> c_int {
+    if out.is_null() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: caller supplied the required writable output pointer.
+    unsafe { out.write(ptr::null_mut()) };
+    if options.is_null() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: the non-null options pointer is borrowed for this call.
+    let options = unsafe { &*options };
+    if options.struct_size < sys::MAKO_LOCAL_DB_OPTIONS_V0_SIZE || options.flags != 0 {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: `out` was validated and the legacy helper owns all fake state.
+    unsafe { mako_local_db_open(out) }
 }
 
 pub(super) unsafe fn mako_local_db_close(db: *mut sys::mako_local_db) -> c_int {

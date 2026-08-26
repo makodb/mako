@@ -45,6 +45,8 @@ MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_MAX_VALUE_BYTES,
                            std::uint32_t{1048576}, std::uint32_t);
 MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_TXN_ITEM_BUDGET, std::uint32_t{512},
                            std::uint32_t);
+MAKO_LOCAL_ASSERT_CONSTANT(MAKO_LOCAL_MAX_WORKERS, std::uint32_t{460},
+                           std::uint32_t);
 MAKO_LOCAL_ASSERT_CONSTANT(
     MAKO_LOCAL_MAX_MAKO_TIMESTAMP,
     (std::numeric_limits<std::uint32_t>::max() - std::uint32_t{9}) /
@@ -117,6 +119,11 @@ inline constexpr std::size_t kStatusCount =
 #undef MAKO_LOCAL_COUNT_STATUS
 static_assert(kStatusCount == 20);
 
+struct ExpectedDbOptionsV0 {
+  std::uint32_t struct_size;
+  std::uint32_t flags;
+};
+
 struct ExpectedScanOptionsV0 {
   std::uint32_t struct_size;
   std::uint32_t flags;
@@ -135,6 +142,11 @@ struct ExpectedScanEntryV0 {
   std::uint32_t value_length;
 };
 
+static_assert(std::is_standard_layout_v<mako_local_db_options>);
+static_assert(std::is_trivially_copyable_v<mako_local_db_options>);
+static_assert(sizeof(mako_local_db_options) == sizeof(ExpectedDbOptionsV0));
+static_assert(alignof(mako_local_db_options) == alignof(ExpectedDbOptionsV0));
+
 static_assert(std::is_standard_layout_v<mako_local_scan_options>);
 static_assert(std::is_trivially_copyable_v<mako_local_scan_options>);
 static_assert(sizeof(mako_local_scan_options) == sizeof(ExpectedScanOptionsV0));
@@ -146,6 +158,13 @@ static_assert(alignof(mako_local_scan_options) ==
                 #actual "." #member " changed offset");                    \
   static_assert(std::same_as<decltype(actual::member), member_type>,        \
                 #actual "." #member " changed type")
+
+MAKO_LOCAL_ASSERT_MEMBER(mako_local_db_options, ExpectedDbOptionsV0,
+                         struct_size, std::uint32_t);
+MAKO_LOCAL_ASSERT_MEMBER(mako_local_db_options, ExpectedDbOptionsV0, flags,
+                         std::uint32_t);
+static_assert(MAKO_LOCAL_DB_OPTIONS_V0_SIZE ==
+              offsetof(ExpectedDbOptionsV0, flags) + sizeof(std::uint32_t));
 
 MAKO_LOCAL_ASSERT_MEMBER(mako_local_scan_options, ExpectedScanOptionsV0,
                          struct_size, std::uint32_t);
@@ -201,6 +220,8 @@ using ExpectedSetCommitObserver = int(mako_local_test_commit_observer,
                                       void *) noexcept;
 using ExpectedU32Status = int(std::uint32_t) noexcept;
 using ExpectedDbOpen = int(mako_local_db **) noexcept;
+using ExpectedDbOpenWithOptions = int(const mako_local_db_options *,
+                                      mako_local_db **) noexcept;
 using ExpectedDbClose = int(mako_local_db *) noexcept;
 using ExpectedTableOpen = int(mako_local_db *, const std::uint8_t *,
                               std::size_t, std::uint64_t,
@@ -241,6 +262,7 @@ MAKO_LOCAL_ASSERT_FUNCTION(mako_local_build_fingerprint,
                            ExpectedBuildFingerprint);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_build_fingerprint_size,
                            ExpectedSizeQuery);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_options_size, ExpectedSizeQuery);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_scan_options_size, ExpectedSizeQuery);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_scan_entry_size, ExpectedSizeQuery);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_status_string, ExpectedStatusString);
@@ -259,6 +281,8 @@ MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_clear_cleanup_failure,
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_advance_mako_timestamp_past,
                            ExpectedU32Status);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_open, ExpectedDbOpen);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_open_with_options,
+                           ExpectedDbOpenWithOptions);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_close, ExpectedDbClose);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_table_open, ExpectedTableOpen);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_table_id, ExpectedTableId);
@@ -287,11 +311,13 @@ int main() {
       mako_local_build_fingerprint_size() !=
           MAKO_LOCAL_BUILD_FINGERPRINT_SIZE)
     return 3;
-  if (mako_local_scan_options_size() != MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE)
+  if (mako_local_db_options_size() != MAKO_LOCAL_DB_OPTIONS_V0_SIZE)
     return 4;
-  if (mako_local_scan_entry_size() != sizeof(mako_local_scan_entry))
+  if (mako_local_scan_options_size() != MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE)
     return 5;
-  if (std::strcmp(mako_local_status_string(MAKO_LOCAL_OK), "ok") != 0)
+  if (mako_local_scan_entry_size() != sizeof(mako_local_scan_entry))
     return 6;
+  if (std::strcmp(mako_local_status_string(MAKO_LOCAL_OK), "ok") != 0)
+    return 7;
   return 0;
 }

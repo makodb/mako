@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mako_cache::{Db, Error, Options};
+use mako_cache::{Db, Error, Isolation, Options};
 
 struct Scratch(PathBuf);
 
@@ -254,6 +254,29 @@ fn required_read_your_writes_follows_the_native_feature_bit() {
         (false, Ok(cache)) => {
             cache.close().expect("close unexpectedly opened cache");
             panic!("cache accepted a native profile without required read-your-writes");
+        }
+    }
+}
+
+#[test]
+fn required_opacity_follows_the_native_feature_bit() {
+    let scratch = Scratch::new("required-opacity");
+    let supports_opacity = mako_local::features()
+        .expect("read native features")
+        .opacity();
+    let mut options = Options::default();
+    options.cache.isolation = Isolation::Opaque;
+
+    match (supports_opacity, Db::open(&scratch.0, options)) {
+        (true, Ok(cache)) => {
+            cache.close().expect("close supported opaque profile");
+        }
+        (false, Err(Error::MissingOpacity)) => {}
+        (true, Err(error)) => panic!("advertised opacity was rejected: {error:?}"),
+        (false, Err(error)) => panic!("expected missing opacity, got {error:?}"),
+        (false, Ok(cache)) => {
+            cache.close().expect("close unexpectedly opened cache");
+            panic!("cache accepted a native profile without required opacity");
         }
     }
 }

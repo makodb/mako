@@ -3075,6 +3075,30 @@ if(BUILD_TESTS)
     )
     add_test(NAME MakoLocalAbiTests COMMAND test_mako_local_abi)
 
+    # Worker IDs are process-lifetime, so exhaustion must be tested in a
+    # disposable process that does not consume the rest of this test run's
+    # native slots.
+    add_executable(mako_local_thread_limit_probe
+        tests/mako_local_thread_limit_probe.cc)
+    target_link_libraries(mako_local_thread_limit_probe
+        mako
+        rrr
+        erpc
+        ${TXLOG_LINK_LIBS}
+        pthread
+        yaml-cpp
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+    )
+    target_include_directories(mako_local_thread_limit_probe PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/mako
+    )
+    add_test(NAME MakoLocalThreadLimitProbe
+        COMMAND mako_local_thread_limit_probe)
+
     # Process-isolated differential runner. Direct MassTrans and the local C
     # ABI permanently claim different STO worker-runtime identities, so the
     # Rust orchestrator execs this binary once per mode and feeds both the
@@ -3466,9 +3490,10 @@ if(BUILD_TESTS)
                 COMMAND ${CMAKE_CTEST_COMMAND}
                         --test-dir ${CMAKE_BINARY_DIR} --verbose
                         --output-on-failure --no-tests=error
-                        -R "^(MakoLocalAbiTests|MakoLocalAbiC11Probe|MakoLocalAbiCppConformance)$"
+                        -R "^(MakoLocalAbiTests|MakoLocalAbiC11Probe|MakoLocalAbiCppConformance|MakoLocalThreadLimitProbe)$"
                 DEPENDS test_mako_local_abi test_mako_local_abi_c11
                         test_mako_local_abi_cpp_conformance
+                        mako_local_thread_limit_probe
                         run_mako_local_rust_tests
                         check_mako_local_build_fingerprint
                         check_mako_local_abi_symbols
@@ -3525,7 +3550,7 @@ if(BUILD_TESTS)
                         ${CMAKE_CTEST_COMMAND}
                         --test-dir ${CMAKE_BINARY_DIR} --verbose
                         --output-on-failure --no-tests=error
-                        -R "^(MakoLocalAbiTests|MakoLocalAbiC11Probe|MakoLocalAbiCppConformance)$"
+                        -R "^(MakoLocalAbiTests|MakoLocalAbiC11Probe|MakoLocalAbiCppConformance|MakoLocalThreadLimitProbe)$"
                 COMMAND ${CMAKE_COMMAND} -E env
                         ${MAKO_LOCAL_SANITIZER_CARGO_ENV}
                         "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
@@ -3542,6 +3567,7 @@ if(BUILD_TESTS)
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
                 DEPENDS test_mako_local_abi test_mako_local_abi_c11
                         test_mako_local_abi_cpp_conformance
+                        mako_local_thread_limit_probe
                         mako_local_differential_driver
                         check_mako_local_build_fingerprint
                         check_mako_local_abi_symbols
@@ -3604,6 +3630,7 @@ if(BUILD_TESTS)
                 test_silo_nontxn_api test_kv_backends test_mako_local_abi
                 test_mako_local_abi_c11
                 test_mako_local_abi_cpp_conformance
+                mako_local_thread_limit_probe
                 check_mako_local_build_fingerprint
                 check_mako_local_abi_symbols
                 test_sto_transaction test_sto_transaction_real

@@ -7,6 +7,8 @@ mako_local_build_fingerprint_size
 mako_local_bytes_free
 mako_local_db_close
 mako_local_db_open
+mako_local_db_open_with_options
+mako_local_db_options_size
 mako_local_engine_id
 mako_local_feature_bits
 mako_local_quarantined_worker_count

@@ -25,7 +25,14 @@ mod tests {
         let _: u32 = MAKO_LOCAL_MAX_KEY_BYTES;
         let _: u32 = MAKO_LOCAL_MAX_VALUE_BYTES;
         let _: u32 = MAKO_LOCAL_TXN_ITEM_BUDGET;
+        let _: u32 = MAKO_LOCAL_MAX_WORKERS;
 
+        assert_eq!(core::mem::size_of::<mako_local_db_options>(), 8);
+        assert_eq!(core::mem::align_of::<mako_local_db_options>(), 4);
+        assert_eq!(
+            MAKO_LOCAL_DB_OPTIONS_V0_SIZE as usize,
+            core::mem::offset_of!(mako_local_db_options, flags) + core::mem::size_of::<u32>()
+        );
         assert_eq!(core::mem::size_of::<mako_local_scan_entry>(), 16);
         assert_eq!(core::mem::align_of::<mako_local_scan_entry>(), 4);
         assert_eq!(
@@ -33,7 +40,7 @@ mod tests {
             core::mem::offset_of!(mako_local_scan_options, resume_len)
                 + core::mem::size_of::<usize>()
         );
-        assert_eq!(MAKO_LOCAL_EXPORT_NAMES.len(), 32);
+        assert_eq!(MAKO_LOCAL_EXPORT_NAMES.len(), 34);
     }
 
     #[test]

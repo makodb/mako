@@ -28,12 +28,15 @@ C++ STO/MassTrans engine, gives Rust a narrow C ABI and safe ownership layer,
 then uses that engine as the single-machine transactional cache in front of
 RocksDB. In the current slice RocksDB is an asynchronously updated black box;
 disk-sync policy and recovery of an unsynced tail are later work. The C ABI
-remains a draft until both the executable Phase 1A-1D boundary gate is green
-and the remaining Phase 1C/1D ABI-design and freeze decisions are explicitly
-accepted. Passing the executable gate does not itself promote revision 0 to
-ABI v1. Later milestones move Mako's distributed orchestration into Rust, then
-replace the local C++ engine only after its behavior is captured by an
-executable compatibility suite.
+continues to report draft revision 0, but the Phase 1C/1D freeze inputs are now
+resolved: database open has a sized options seam, worker attachment remains
+implicit TLS, the conditional all-output rule is retained, native table/epoch
+state is honestly process-lifetime, and async callers use the fixed-worker
+adapter. Promoting the numeric revision to ABI v1 remains a separate release
+action; neither the green executable gate nor these resolved design choices
+silently performs that promotion. Later milestones move Mako's distributed
+orchestration into Rust, then replace the local C++ engine only after its
+behavior is captured by an executable compatibility suite.
 
 ## Decisions that should remain stable
 
@@ -49,7 +52,9 @@ executable compatibility suite.
    sees C++ vtables, `std::string`, exceptions, or Masstree/RCU pointers.
 3. **One active transaction belongs to one OS thread.** STO's read/write set
    is ambient TLS. Transactions cannot nest, migrate, or cross `.await`.
-   Initial deployments use a fixed set of long-lived synchronous workers.
+   Async deployments submit complete synchronous closures to the bounded,
+   long-lived `FixedWorkerPool`; they never move a native transaction through
+   an executor.
 4. **Conflicts do not cause invisible retries.** Commit returns `Conflict`;
    the caller decides whether and how to rerun application logic.
 5. **Backend application is transaction-granular.** One committed transaction
@@ -61,10 +66,10 @@ executable compatibility suite.
    obligations; and MassTrans row versions remain engine-private validation
    state. Accidental comparison or conversion between them should be
    impossible in Rust.
-7. **Process-lifetime native resources are honest in the API.** STO has 460
-   process-lifetime thread slots, and current MassTrans teardown lacks a
-   verified global RCU quiescence protocol. The first ABI does not pretend
-   those resources can be cheaply recycled.
+7. **Process-lifetime native resources are honest in the API.** STO has
+   exactly 460 process-lifetime thread slots, and current MassTrans teardown
+   lacks a verified global RCU quiescence protocol. The first ABI does not
+   pretend those resources can be cheaply recycled.
 8. **Distributed code depends on an engine-neutral Rust trait.** A
    `LocalTransactionEngine`/participant trait sits above `mako-local`; raw C
    handles never leak into routing, write-back, or 2PC. That makes the final
@@ -136,11 +141,10 @@ The local cache protocol must not call every ordering value a "timestamp":
 
 **Draft revision policy.** The checked-in implementation reports
 `MAKO_LOCAL_ABI_VERSION == 0`. Revision 0 may add symbols, statuses, option
-fields, and capabilities while Phases 1A-1D are completed. A green executable
-boundary gate below is necessary but not sufficient for ABI-v1 promotion: the
-remaining options, worker-context, output-rule, and process-lifetime design
-decisions in Phases 1C/1D must also be accepted in an explicit freeze review.
-After that promotion, exported symbols and numeric statuses are permanent
+fields, and capabilities until an explicit ABI-v1 release action. The green
+executable boundary gate and the resolved Phase 1C/1D freeze choices make that
+promotion possible, but do not change the reported revision automatically.
+After promotion, exported symbols and numeric statuses are permanent
 reservations. `DUPLICATE_WRITE` is now a legacy/no-RYW result rather than part
 of the default profile, but its assigned number remains reserved. Semantic
 expansions are advertised by capability bits or a later ABI revision rather
@@ -227,11 +231,16 @@ behavior for:
 - record resize on commit and every abort cleanup path;
 - read-only transactions and contention progress.
 
-The repeated point-mutation portion is complete for local single-version
-tables: native, C ABI, safe Rust, in-memory write-back, and RocksDB recovery
-tests cover operation results, final bytes, canonical one-mutation-per-key log
-records, commit, abort, value growth, and net no-op histories. Status 12 remains
-reserved for linked legacy/no-RYW engines.
+The Phase 1B functional contract is complete. Direct native schedules and the
+independent history oracle cover RW, WW, predicate/phantom, abort, progress,
+and both advertised isolation profiles. The three-way scripts cover binary
+point/scan bounds, maximum-sized keys, and chunk resumption. An exact 1 MiB
+value is exercised through both abort and commit/readback paths. Repeated point
+mutations on local single-version tables are covered through native, C ABI,
+safe Rust, in-memory write-back, and RocksDB recovery tests, including operation
+results, final bytes, canonical one-mutation-per-key log records, value growth,
+and net no-op histories. Status 12 remains reserved for linked legacy/no-RYW
+engines.
 
 The current production defaults are `STO_RMW=ON` and `OPACITY=OFF`. CMake
 normalizes the RMW option to a numeric preprocessor definition; passing the
@@ -248,14 +257,15 @@ covers the exposed point and scan surfaces, including repeated same-key
 mutations and scan overlays. Scan support is negotiated by its two scan feature
 bits and is not inferred from the point capability bit.
 
-The Phase 1A-1D boundary profile requires point transactions, scans, and
-conventional read-your-writes. Opacity remains an explicit profile rather than
-an implication of the ABI revision: builds without it must pass strict
-serializability checks for committed transactions, while a build advertising
-`OPACITY` must additionally pass the aborted/in-flight observation checks.
-Phase 1E deployment configuration must declare whether opacity is required,
-and startup must reject an engine whose feature bits do not satisfy that
-declared profile.
+The Phase 1B semantics are frozen for the single-machine profile. Point
+transactions, scans, and conventional read-your-writes are required by
+default. Opacity remains an explicit profile rather than an implication of the
+ABI revision: builds without it must pass strict serializability checks for
+committed transactions, while a build advertising `OPACITY` must additionally
+pass the aborted/in-flight observation checks. `CacheOptions::isolation`
+declares the deployment requirement, defaults to `StrictSerializable`, and
+rejects startup with `MissingOpacity` when `Opaque` is selected against a
+non-opaque native engine.
 
 ### 1C. Complete the ABI surface
 
@@ -269,11 +279,12 @@ declared profile.
   `TXN_TOO_LARGE` is already a recoverable
   terminal error: draft point transactions use a conservative 512-item
   key-weighted budget and never reach STO's 32,768-item hard assertion.
-- Numeric table IDs are unique within a database. The revision-0 reference now
-  specifies empty names and serialized concurrent opens; add the remaining
-  direct concurrency coverage. Closing the
-  in-memory facade is not persistence: a later `db_open` starts a new logical
-  database even though old native table allocations remain process-lifetime.
+- [x] Numeric table IDs are unique within a database. The revision-0 reference
+      specifies empty names and serialized concurrent opens. Direct concurrent
+      tests cover identical name/ID reuse, one name racing with two IDs, and
+      two names racing for one numeric ID. Closing the in-memory facade is not
+      persistence: a later `db_open` starts a new logical database even though
+      old native table allocations remain process-lifetime.
 - [x] Publish a normative revision-0 operation/status state table. The
       [reference contract](../reference/mako-local-abi-v0.md) covers every
       export and status, output initialization and ownership, transaction
@@ -294,25 +305,29 @@ declared profile.
       independently verifies that fingerprint and treats modification times
       as advisory only; a digest-named link anchor prevents a manifest from
       blessing a different archive.
-- Reserve a sized database/open options entry point before ABI v1 is declared
-  frozen, so later limits and durability modes can be negotiated without
-  changing existing function signatures. The existing scan options struct is
-  already sized, but `mako_local_db_open()` has no general options seam yet.
+- [x] Reserve a sized database/open options entry point before ABI v1.
+      `mako_local_db_options_size()`, `MAKO_LOCAL_DB_OPTIONS_V0_SIZE`, and
+      `mako_local_db_open_with_options()` define an append-only prefix. Revision
+      0 currently accepts only zero flags; the original `mako_local_db_open()`
+      remains the default-options spelling.
 - [x] Make the C header the single source of truth for `mako-local-sys` through
       pinned build-time generation of every constant, type, callback, and
       function declaration. Strict C11 and C++ conformance translation units,
       a Rust all-export link probe, and an exact exported-symbol allowlist catch
       signature, constant, `noexcept`/calling-convention, feature-bit, and
       status-number drift even when artifacts report the same ABI revision.
-- Decide whether ABI v1 remains implicit TLS attachment or gains an opaque
-  worker context. Either way, test attachment, wrong-thread calls, nested
-  begin, post-terminal calls, database-close-while-busy, and the 460-thread
-  limit in isolated subprocesses.
+- [x] Retain implicit TLS attachment for this boundary. Attachment,
+      wrong-thread calls, nested begin, post-terminal calls, and
+      database-close-while-busy are covered. A process-isolated probe creates
+      and joins exactly 460 distinct workers, checks that attachment is
+      idempotent on each one, then requires worker 461 to return
+      `THREAD_LIMIT`. This proves the limit is a process-lifetime reservation,
+      not merely a simultaneous-thread ceiling.
 - [x] Specify revision 0's conditional output rule: after every required output
       pointer has been validated, initialize every scalar output before later
       validation. If a multi-output call receives a partially null output set,
-      it writes none of that set. Decide before ABI v1 whether to retain this
-      rule or initialize each non-null member of an invalid set independently.
+      it writes none of that set. The freeze choice retains this rule; ABI v1
+      must not switch to per-member initialization without a new contract.
 - [x] Define cleanup failure conservatively beyond the live-handle
       path. If native abort or destroy cannot prove cleanup complete, retain
       every potentially referenced allocation, mark the attached worker
@@ -322,16 +337,20 @@ declared profile.
       though no facade is returned. Five test-only cleanup boundaries cover
       begin, terminal operations, commit, explicit abort, and active destroy;
       never silently reuse uncertain STO TLS state.
-- Specify process-lifetime table/epoch behavior. Add ordinary teardown only
-  after a tested RCU quiescence protocol exists.
+- [x] Specify process-lifetime table/epoch behavior. `db_close` reclaims only
+      facade and borrowed table-handle storage; native MassTrans tables, STO
+      worker slots, and epoch state remain allocated until process exit.
+      Ordinary native teardown requires a separately tested global RCU
+      quiescence protocol and is not implied by facade close.
 
 ### 1D. Complete the safe Rust layer
 
 - [x] Add owned forward and reverse scan iterators over the chunk API, with
   feature-gated scan RYW, caller-owned chunk storage, and default-table
   exposure through `mako-cache`.
-- Add compile-fail tests proving a transaction cannot move threads, outlive
-  its database, or be held in a spawned async task.
+- [x] Add compile-fail tests proving a transaction cannot move threads,
+      outlive its database, or be held across suspension in a `Send` async
+      task.
 - [x] Unit-test the generated/verified status mapping and abort-on-drop against a
   fake ABI so Miri can exercise the ownership logic without C++. The fake must
   cover every active, terminal, and poisoned transition in the normative state
@@ -343,13 +362,21 @@ declared profile.
   reuse only while the worker remains healthy. Every revision-0 status
   extension must preserve the invariant that cleanup which cannot be proved
   complete sets that quarantine before return.
-- Offer a fixed-worker adapter for async applications; do not mark the native
-  transaction `Send` as a convenience. Because Rust `Drop` cannot return an
-  error, the adapter owns worker health: an abort/destroy failure quarantines
-  that worker, fails its pending command, and is reported on subsequent use
-  and through metrics rather than being ignored.
-- Document conflict retry patterns and put an explicit retry budget above the
-  transaction API.
+- [x] Offer a bounded `FixedWorkerPool` for async applications; the native
+      transaction remains `!Send + !Sync`. Each accepted closure runs to
+      completion on one long-lived worker. Health is checked after every
+      closure and, in unwind-enabled builds, every caught panic; cleanup
+      uncertainty retires that worker, fails its queued commands, removes it
+      from routing, and is visible through task
+      errors and pool metrics. `LocalDb::open()` has already consumed one of
+      the 460 process-lifetime slots, so a pool pre-rejects more than 459
+      workers even in a fresh process; earlier attachments can reduce the
+      actual available count further. Clean shutdown drains accepted work and
+      joins every healthy worker.
+- [x] Provide explicit conflict retry above the transaction API.
+      `RetryPolicy` bounds whole-closure reruns, only `Conflict` is retried,
+      attempt/conflict counts are returned, and external side effects remain
+      the caller's idempotence responsibility.
 
 ### Phase 1A-1D boundary gate
 
@@ -391,14 +418,16 @@ gates are green:
 
 The implementation, reproducible commands, exact concurrency/benchmark
 methodology, retained artifacts, and execution status are maintained in
-[Mako local boundary gates](../mako-local-boundary-gates.md). Treat the
-executable gate as complete only when that validation record is entirely
-green. Even then, ABI revision 0 remains a draft until the explicit Phase
-1C/1D design/freeze work above is accepted.
+[Mako local boundary gates](../mako-local-boundary-gates.md). The executable
+Phase 1A-1D gate is green, and the Phase 1C/1D design choices above are now
+resolved. ABI revision 0 nevertheless remains the reported revision until an
+explicit release review promotes it; completing internal design work is not an
+implicit ABI-number change.
 
-This intermediate boundary gate excludes RocksDB durability and eviction. It
-is not completion of Milestone 1; distributed routing, 2PC, replication, and a
-native Rust OCC implementation remain outside Milestone 1 entirely.
+This intermediate boundary gate excludes RocksDB durability and eviction. By
+itself it is not completion of Milestone 1; distributed routing, 2PC,
+replication, and a native Rust OCC implementation remain outside Milestone 1
+entirely.
 
 Before Phase 1E exposes a public database contract, name five states
 separately: **visible** in Silo, **acknowledged** to the caller, **applied** to
@@ -438,19 +467,20 @@ Create a new `mako-cache` layer rather than adding transaction semantics to
 
 The selected first-slice protocol is below. It supersedes the earlier design
 that put a global commit gate around native commit and assigned a sequence plus
-cancellation marker before Silo validation. The existing vertical-slice work
-already exercises record validation, ordered writeback, atomic RocksDB batches,
-retry/fail-stop behavior, native multi-key transactions, and reopen recovery.
-Those component tests do not by themselves establish that this revised
-preinstall-hook protocol, Phase 1E, or Milestone 1 has passed. Transactional
-scan read-your-writes and its C ABI, safe Rust, and cache integration slice are
-complete. The fresh-process SIGKILL gate now covers ten outer/Rocks-wrapper
+cancellation marker before Silo validation. Record validation, ordered
+writeback, atomic RocksDB batches, retry/fail-stop behavior, native multi-key
+transactions, and reopen recovery are covered both as components and through
+integrated cache acceptance tests. Those tests establish the Phase 1E
+functional contract under bounded sustained overload, clean drain/reopen,
+forced process stop, and near-exhaustion recovery. Transactional scan
+read-your-writes and its C ABI, safe Rust, and cache integration slice are
+complete. The fresh-process SIGKILL gate covers ten outer/Rocks-wrapper
 write-path boundaries in the production-default profile and all sixteen named
 boundaries in a dedicated native-hook profile. Eight recovery/replay boundaries
 are each interrupted on two consecutive fresh-process restarts. The native
 boundary now also has a process-isolated direct-C++/C-ABI/safe-Rust
 differential gate and an independent strict-serializability/opacity oracle.
-Item 4's remaining Phase 1A-1D sanitizer/Miri, fixed-worker concurrency, and
+Item 4's Phase 1A-1D sanitizer/Miri, fixed-worker concurrency, and
 relative-overhead gates passed on candidate `5a3dd3eaf` on 2026-08-25. The
 authoritative evidence is the validation record in
 [Mako local boundary gates](../mako-local-boundary-gates.md). Phase 1F's
@@ -548,11 +578,13 @@ commute; neither number space is derived from the other.
 
 - This slice is unbounded and local: it has no value eviction, distributed
   routing, 2PC, replication, or distributed-finality semantics.
-- Phase 1 admits one recovered cache namespace per process. Native
-  tables and the timestamp authority are process-wide, so independently
-  opening a second pre-existing backend after work begins cannot retroactively
-  preserve history. Supporting multiple caches requires a supervisor that
-  scans and floors every backend before admitting any transaction.
+- Phase 1 admits exactly one recovered cache namespace per process. This is a
+  deployment precondition, not a mutex-enforced runtime feature. Native tables
+  and the timestamp authority are process-wide, so independently opening a
+  second pre-existing backend after work begins cannot retroactively preserve
+  history. Supporting multiple caches requires a supervisor that identifies
+  every namespace, scans every backend, and floors the shared timestamp clock
+  before admitting any transaction to any of them.
 
 The in-memory applied watermark has one meaning in every RocksDB write mode:
 the complete ordered batch is confirmed present in RocksDB. During live
@@ -616,10 +648,17 @@ contract:
 - Deliberate decoded-batch divergence turns the same full-history checker path
   red; partial materialization is rejected earlier by transcript decoding.
 
-### 1G. Bounded values and eviction
+### 1G. Bounded values and eviction (deferred until after Milestone 1)
 
-After 1E/1F are stable, add value eviction while retaining a complete key
-index in Silo:
+Phase 1G is explicitly not a Milestone 1 release blocker. Milestone 1 keeps
+every live value in Silo, so the complete live dataset must fit in RAM. It also
+does not reclaim the commit-record history accumulated in RocksDB. This is
+separate from writeback backpressure: detached permits plus prepared/ready
+in-memory records are bounded by `WritebackConfig::capacity`, and producers
+block before native commit when that capacity is exhausted.
+
+The post-Milestone-1 eviction design may retain a complete key index in Silo
+while bounding resident value bytes:
 
 - An index miss must remain authoritative absence.
 - Evicted markers carry the cache commit sequence to prevent ABA fills.
@@ -629,24 +668,37 @@ index in Silo:
 - Tombstone reclamation waits for a proven conditional-remove/RCU design.
 
 If transactional read-through makes OCC windows unacceptable, keep the first
-production Silo cache unbounded and treat bounded values as a separate design,
-not a release blocker.
+production Silo cache unbounded and treat bounded values and log reclamation as
+separate designs.
 
 ### Milestone 1 final acceptance gate
 
-- Every Phase 1A-1D boundary gate is green.
-- Atomic multi-key application through one black-box RocksDB `WriteBatch`.
-- Reopen advances Mako's native logical counter past every recovered record
-  before admitting work, including near-exhaustion and corrupt-timestamp tests.
-- An honest in-memory `AppliedWatermark` and `wait_applied()` barrier under
-  concurrent writers, write failures, and sustained overload; neither claims
-  disk sync.
-- Concurrent disjoint commits demonstrate that only hook-time queue metadata
-  is serialized; no database-wide native commit gate remains.
-- Clean shutdown drains all accepted transactions to RocksDB; forced shutdown
-  may discard only the unapplied in-memory tail.
-- Throughput, abort rate, p50, p99, recovery time, and log amplification are
-  measured against both the current `mrx` cache and raw RocksDB.
+The functional and contract work is complete. Final Milestone 1 acceptance is
+waiting only for the comparative zoo-2 benchmark row below; no benchmark
+result is claimed by this document yet.
+
+- [x] Every Phase 1A-1D boundary gate is green, including the resolved
+      Phase 1C/1D freeze choices.
+- [x] Atomic multi-key application through one black-box RocksDB `WriteBatch`.
+- [x] Reopen advances Mako's native logical counter past every recovered
+      record before admitting work, including near-exhaustion and
+      corrupt-timestamp tests.
+- [x] An honest in-memory `AppliedWatermark` and `wait_applied()` barrier under
+      concurrent writers, write failures, and sustained overload; neither
+      claims disk sync.
+- [x] Concurrent disjoint commits demonstrate that only hook-time queue
+      metadata is serialized; no database-wide native commit gate remains.
+- [x] Clean cache/process shutdown drains all accepted transactions to
+      RocksDB. A forced cache/process stop may discard the acknowledged but
+      unapplied in-memory tail. A machine or power failure may additionally
+      lose an applied RocksDB WAL tail that was accepted with `sync=false`;
+      `AppliedWatermark` never claims otherwise.
+- [ ] On zoo-2, measure throughput, abort rate, retry-inclusive p50/p99,
+      acknowledgement-to-application drain, recovery time, and log/backend
+      amplification against both the current `mrx` cache and raw RocksDB.
+      Record the candidate commit, build fingerprint, exact command, hardware,
+      CPU affinity, methodology, machine-readable artifact, and acceptance
+      result here or in a linked Milestone 1 benchmark record.
 
 ## Milestone 2: distributed Mako with C++ Silo participants
 
@@ -734,8 +786,13 @@ and overhead gate was accepted on candidate `5a3dd3eaf`; the linked
 the evidence. Item 5's Phase 1F cleanup, mutation, and application-history gate
 was accepted on implementation commit `5546062af`; the linked
 [Item 5 validation record](../mako-local-boundary-gates.md#item-5-phase-1f-validation-record)
-retains the evidence. Inside-RocksDB instrumentation is intentionally outside
-this milestone.
+retains the evidence. The remaining Phase 1B-1E contract items are now
+implemented: explicit isolation selection, the final options/TLS/output/lifetime
+choices, compile-fail ownership checks, the production fixed-worker/retry
+adapter, and integrated overload/shutdown/exhaustion acceptance tests. Phase
+1G eviction is explicitly deferred. The only remaining Milestone 1 acceptance
+action is the comparative zoo-2 benchmark. Inside-RocksDB instrumentation is
+intentionally outside this milestone.
 
 1. The revision-0 operation/status contract and numeric reservations 0 through
    19 are now published and mechanically checked across the C header, C++
@@ -743,13 +800,17 @@ this milestone.
    policy. Typed poison, independent TLS worker health, begin cleanup,
    one-shot cleanup, a monotonic quarantine counter, five native cleanup
    failpoints, and fake-ABI/Miri ownership coverage complete this item.
-   Retain draft revision `0` through the full executable boundary gate and the
-   subsequent explicit Phase 1C/1D design/freeze review. Revisit the conservative
-   transaction budget only with safe pre-reservation.
+   The Phase 1C/1D design/freeze review retains implicit TLS, conditional
+   all-output initialization, and process-lifetime native resources. The ABI
+   still reports draft revision `0`; promotion to v1 is an explicit release
+   action. Revisit the conservative transaction budget only with safe
+   pre-reservation.
 2. The C header now generates the raw Rust declarations. Strict C11/C++
    conformance probes, a Rust all-export link probe, an exact native symbol
    allowlist, and the source/configuration-derived fingerprint plus digest link
-   anchor complete this item in both production and hook-enabled profiles.
+   anchor complete this item in both production and hook-enabled profiles. The
+   same checks cover the sized database options seam and exact 460-worker
+   constant/probe.
 3. The three-way deterministic differential harness and independent
    full-history real-time/opacity oracle complete this item. The gate replays
    one binary-safe corpus through direct MassTrans C++, the raw C ABI, and the
@@ -775,7 +836,8 @@ this milestone.
    initial `6.0x` ceiling only as a same-host advisory sanity check. Every row
    in the [validation record](../mako-local-boundary-gates.md#validation-record)
    passed on candidate `5a3dd3eaf` on 2026-08-25. That completes the numbered
-   executable Phase 1A-1D gate, not the revision-0 design/freeze work or
+   executable Phase 1A-1D gate; the subsequently resolved revision-0
+   design/freeze choices are documented above. It does not by itself complete
    Milestone 1.
 5. Phase 1F is complete on implementation commit `5546062af`. Four
    fresh-worker cache cleanup/quarantine scenarios complement all five raw ABI
@@ -790,3 +852,6 @@ this milestone.
    a separate durability milestone. They do not block beginning the
    distributed Rust port once the local transaction and ordered-application
    contract passes its gate.
+7. Run the final cache-level comparative benchmark on zoo-2 and retain its
+   machine-readable evidence. Until that row is green, describe Milestone 1 as
+   functionally complete but not finally accepted.

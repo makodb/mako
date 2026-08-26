@@ -34,8 +34,9 @@ const ABI_V0_STATUS_NAMES: [&str; 20] = [
     "WORKER_POISONED",
 ];
 
-const ABI_V0_TYPE_NAMES: [&str; 7] = [
+const ABI_V0_TYPE_NAMES: [&str; 8] = [
     "mako_local_db",
+    "mako_local_db_options",
     "mako_local_post_validate_hook",
     "mako_local_scan_entry",
     "mako_local_scan_options",
@@ -44,7 +45,7 @@ const ABI_V0_TYPE_NAMES: [&str; 7] = [
     "mako_local_txn",
 ];
 
-const ABI_V0_EXPORT_NAMES: [&str; 32] = [
+const ABI_V0_EXPORT_NAMES: [&str; 34] = [
     "mako_local_abi_version",
     "mako_local_advance_mako_timestamp_past",
     "mako_local_build_fingerprint",
@@ -52,6 +53,8 @@ const ABI_V0_EXPORT_NAMES: [&str; 32] = [
     "mako_local_bytes_free",
     "mako_local_db_close",
     "mako_local_db_open",
+    "mako_local_db_open_with_options",
+    "mako_local_db_options_size",
     "mako_local_engine_id",
     "mako_local_feature_bits",
     "mako_local_quarantined_worker_count",
@@ -185,6 +188,7 @@ fn run() -> Result<(), String> {
     let source = fs::read_to_string(&header)
         .map_err(|error| format!("could not read {}: {error}", header.display()))?;
     verify_abi_version(&source)?;
+    verify_db_options_v0_size(&source)?;
     verify_scan_options_v0_size(&source)?;
 
     let definition_region = marked_region(&source, DEFINITIONS_BEGIN, DEFINITIONS_END)?;
@@ -244,6 +248,25 @@ fn verify_scan_options_v0_size(source: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn verify_db_options_v0_size(source: &str) -> Result<(), String> {
+    const EXPECTED: &str = "#define MAKO_LOCAL_DB_OPTIONS_V0_SIZE \
+        ((uint32_t)(offsetof(mako_local_db_options, flags) + \
+        sizeof(((mako_local_db_options *)0)->flags)))";
+    let declarations: Vec<_> = logical_preprocessor_lines(source)
+        .into_iter()
+        .map(|line| collapse_whitespace(&line))
+        .filter(|line| line.starts_with("#define MAKO_LOCAL_DB_OPTIONS_V0_SIZE "))
+        .collect();
+    let expected = collapse_whitespace(EXPECTED);
+    if declarations.as_slice() != [expected.as_str()] {
+        return Err(format!(
+            "expected the revision-0 database-options prefix to end at `flags`; \
+             expected `{expected}`, found {declarations:?}"
+        ));
+    }
+    Ok(())
+}
+
 fn logical_preprocessor_lines(source: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut logical = String::new();
@@ -291,6 +314,7 @@ fn generate_bindings(
         .allowlist_type("^mako_local_.*$")
         .allowlist_function("^mako_local_.*$")
         .allowlist_var("^MAKO_LOCAL_.*$")
+        .blocklist_var("^MAKO_LOCAL_DB_OPTIONS_V0_SIZE$")
         .blocklist_var("^MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE$")
         .use_core()
         .ctypes_prefix("core::ffi")
@@ -313,6 +337,21 @@ fn generate_bindings(
 }
 
 fn finalize_bindings(source: &str, mut generated: String) -> Result<String, String> {
+    writeln!(generated).expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "/// Fixed revision-0 database-options prefix size."
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(generated, "pub const MAKO_LOCAL_DB_OPTIONS_V0_SIZE: u32 =")
+        .expect("writing to a String cannot fail");
+    writeln!(
+        generated,
+        "    (core::mem::offset_of!(mako_local_db_options, flags) +"
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(generated, "        core::mem::size_of::<u32>()) as u32;")
+        .expect("writing to a String cannot fail");
     writeln!(generated).expect("writing to a String cannot fail");
     writeln!(
         generated,

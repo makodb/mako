@@ -52,6 +52,7 @@ MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_MAX_KEY_BYTES, UINT32_C(1024));
 MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_MAX_VALUE_BYTES,
                                UINT32_C(1048576));
 MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_TXN_ITEM_BUDGET, UINT32_C(512));
+MAKO_LOCAL_ASSERT_U32_CONSTANT(MAKO_LOCAL_MAX_WORKERS, UINT32_C(460));
 MAKO_LOCAL_ASSERT_U32_CONSTANT(
     MAKO_LOCAL_MAX_MAKO_TIMESTAMP,
     (UINT32_MAX - UINT32_C(9)) / UINT32_C(10));
@@ -133,6 +134,11 @@ static const int mako_local_status_values[] = {
 /* A separately declared golden shape makes field removal, insertion,
  * reordering, type changes, and unexpected trailing fields fail on every
  * supported data model without baking in an LP64-only byte count. */
+typedef struct mako_local_expected_db_options_v0 {
+  uint32_t struct_size;
+  uint32_t flags;
+} mako_local_expected_db_options_v0;
+
 typedef struct mako_local_expected_scan_options_v0 {
   uint32_t struct_size;
   uint32_t flags;
@@ -154,6 +160,22 @@ typedef struct mako_local_expected_scan_entry_v0 {
 #define MAKO_LOCAL_ASSERT_MEMBER_LAYOUT(actual, expected, member)           \
   _Static_assert(offsetof(actual, member) == offsetof(expected, member),    \
                  #actual "." #member " changed offset")
+
+_Static_assert(sizeof(mako_local_db_options) ==
+                   sizeof(mako_local_expected_db_options_v0),
+               "mako_local_db_options changed size");
+_Static_assert(_Alignof(mako_local_db_options) ==
+                   _Alignof(mako_local_expected_db_options_v0),
+               "mako_local_db_options changed alignment");
+MAKO_LOCAL_ASSERT_MEMBER_LAYOUT(mako_local_db_options,
+                                mako_local_expected_db_options_v0,
+                                struct_size);
+MAKO_LOCAL_ASSERT_MEMBER_LAYOUT(mako_local_db_options,
+                                mako_local_expected_db_options_v0, flags);
+_Static_assert(MAKO_LOCAL_DB_OPTIONS_V0_SIZE ==
+                   offsetof(mako_local_expected_db_options_v0, flags) +
+                       sizeof(uint32_t),
+               "MAKO_LOCAL_DB_OPTIONS_V0_SIZE changed");
 
 _Static_assert(sizeof(mako_local_scan_options) ==
                    sizeof(mako_local_expected_scan_options_v0),
@@ -212,6 +234,8 @@ MAKO_LOCAL_ASSERT_MEMBER_LAYOUT(mako_local_scan_entry,
                           expected_type: 1, default: 0),                    \
                  #struct_name "." #member " changed type")
 
+MAKO_LOCAL_ASSERT_MEMBER_TYPE(mako_local_db_options, struct_size, uint32_t);
+MAKO_LOCAL_ASSERT_MEMBER_TYPE(mako_local_db_options, flags, uint32_t);
 MAKO_LOCAL_ASSERT_MEMBER_TYPE(mako_local_scan_options, struct_size,
                               uint32_t);
 MAKO_LOCAL_ASSERT_MEMBER_TYPE(mako_local_scan_options, flags, uint32_t);
@@ -263,6 +287,8 @@ typedef int (*mako_local_expected_set_commit_observer)(
     mako_local_test_commit_observer, void *);
 typedef int (*mako_local_expected_u32_status)(uint32_t);
 typedef int (*mako_local_expected_db_open)(mako_local_db **);
+typedef int (*mako_local_expected_db_open_with_options)(
+    const mako_local_db_options *, mako_local_db **);
 typedef int (*mako_local_expected_db_close)(mako_local_db *);
 typedef int (*mako_local_expected_table_open)(mako_local_db *, const uint8_t *,
                                               size_t, uint64_t,
@@ -297,6 +323,8 @@ MAKO_LOCAL_ASSERT_FUNCTION(mako_local_build_fingerprint,
                            mako_local_expected_build_fingerprint);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_build_fingerprint_size,
                            mako_local_expected_size_query);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_options_size,
+                           mako_local_expected_size_query);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_scan_options_size,
                            mako_local_expected_size_query);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_scan_entry_size,
@@ -320,6 +348,8 @@ MAKO_LOCAL_ASSERT_FUNCTION(mako_local_test_clear_cleanup_failure,
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_advance_mako_timestamp_past,
                            mako_local_expected_u32_status);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_open, mako_local_expected_db_open);
+MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_open_with_options,
+                           mako_local_expected_db_open_with_options);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_db_close, mako_local_expected_db_close);
 MAKO_LOCAL_ASSERT_FUNCTION(mako_local_table_open,
                            mako_local_expected_table_open);
@@ -376,11 +406,13 @@ int main(void) {
       mako_local_build_fingerprint_size() !=
           MAKO_LOCAL_BUILD_FINGERPRINT_SIZE)
     return 7;
-  if (mako_local_scan_options_size() != MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE)
+  if (mako_local_db_options_size() != MAKO_LOCAL_DB_OPTIONS_V0_SIZE)
     return 8;
-  if (mako_local_scan_entry_size() != sizeof(mako_local_scan_entry))
+  if (mako_local_scan_options_size() != MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE)
     return 9;
-  if (strcmp(mako_local_status_string(MAKO_LOCAL_OK), "ok") != 0)
+  if (mako_local_scan_entry_size() != sizeof(mako_local_scan_entry))
     return 10;
+  if (strcmp(mako_local_status_string(MAKO_LOCAL_OK), "ok") != 0)
+    return 11;
   return 0;
 }

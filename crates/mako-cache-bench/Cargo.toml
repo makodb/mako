@@ -1,0 +1,15 @@
+[package]
+name = "mako-cache-bench"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Reproducible Milestone 1 comparison for mako-cache, mrx, and RocksDB"
+build = "build.rs"
+
+[dependencies]
+mako-cache = { path = "../mako-cache" }
+mrx = { path = "../mrx" }
+mrx-core = { path = "../mrx-core" }
+mrx-rocks = { path = "../mrx-rocks" }

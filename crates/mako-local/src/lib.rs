@@ -23,6 +23,9 @@
 
 #![warn(missing_docs)]
 
+/// Fixed, thread-affine workers and bounded OCC retry policy.
+pub mod worker;
+
 use std::cell::Cell;
 use std::ffi::{c_void, CStr};
 use std::fmt;
@@ -350,6 +353,10 @@ pub const MAX_KEY_BYTES: usize = sys::MAKO_LOCAL_MAX_KEY_BYTES as usize;
 pub const MAX_VALUE_BYTES: usize = sys::MAKO_LOCAL_MAX_VALUE_BYTES as usize;
 /// Weighted native item budget for one draft transaction.
 pub const TRANSACTION_ITEM_BUDGET: usize = sys::MAKO_LOCAL_TXN_ITEM_BUDGET as usize;
+/// Maximum number of OS workers that may attach to STO in one process.
+///
+/// Worker identifiers are process-lifetime resources and are not recycled.
+pub const MAX_WORKERS: usize = sys::MAKO_LOCAL_MAX_WORKERS as usize;
 
 /// Compile-time behavior exposed by the linked C++ STO build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -568,6 +575,12 @@ pub fn verify_abi() -> Result<()> {
 
     for (structure, expected, found) in [
         (
+            "mako_local_db_options",
+            sys::MAKO_LOCAL_DB_OPTIONS_V0_SIZE as usize,
+            // SAFETY: pure ABI identity accessor.
+            unsafe { abi::mako_local_db_options_size() },
+        ),
+        (
             "mako_local_scan_options",
             sys::MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE as usize,
             // SAFETY: pure ABI identity accessor.
@@ -757,6 +770,14 @@ pub struct LocalDb {
     raw: NonNull<sys::mako_local_db>,
 }
 
+/// Options for opening a local database facade.
+///
+/// Revision 0 has no behavioral fields yet. The public type and the sized C
+/// representation reserve an append-only negotiation seam before ABI v1.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DbOptions {}
+
 // SAFETY: table-map mutation is protected by the native database mutex, and
 // MassTrans is designed for concurrent access. Transactions themselves carry
 // the thread-affinity restriction and are not Send/Sync.
@@ -767,11 +788,21 @@ unsafe impl Sync for LocalDb {}
 impl LocalDb {
     /// Open a new local database facade and attach the calling worker.
     pub fn open() -> Result<Self> {
+        Self::open_with_options(DbOptions::default())
+    }
+
+    /// Open with the revision-0 sized options contract.
+    pub fn open_with_options(_options: DbOptions) -> Result<Self> {
         verify_abi()?;
         attach_current_thread()?;
         let mut raw = std::ptr::null_mut();
-        // SAFETY: `raw` is a valid out-pointer and is checked before use.
-        status(unsafe { abi::mako_local_db_open(&mut raw) })?;
+        let raw_options = sys::mako_local_db_options {
+            struct_size: sys::MAKO_LOCAL_DB_OPTIONS_V0_SIZE,
+            flags: 0,
+        };
+        // SAFETY: both options and output remain live for this synchronous
+        // call, and the returned handle is checked before use.
+        status(unsafe { abi::mako_local_db_open_with_options(&raw_options, &mut raw) })?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
         Ok(Self { raw })
     }
@@ -894,6 +925,28 @@ impl Table<'_> {
 /// let tx = db.transaction().unwrap();
 /// std::thread::scope(|scope| {
 ///     scope.spawn(|| assert!(std::mem::size_of_val(&tx) > 0));
+/// });
+/// ```
+/// A transaction cannot outlive the database whose accounting and tables it
+/// borrows:
+///
+/// ```compile_fail
+/// let tx = {
+///     let db = mako_local::LocalDb::open().unwrap();
+///     db.transaction().unwrap()
+/// };
+/// drop(tx);
+/// ```
+/// Nor can an executor accept it as a `Send` future held across suspension:
+///
+/// ```compile_fail
+/// # fn require_send<T: Send>(_value: T) {}
+/// # let db = mako_local::LocalDb::open().unwrap();
+/// let tx = db.transaction().unwrap();
+/// require_send(async move {
+///     let tx = tx;
+///     std::future::pending::<()>().await;
+///     drop(tx);
 /// });
 /// ```
 pub struct Transaction<'db> {

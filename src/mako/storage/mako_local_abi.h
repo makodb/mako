@@ -74,6 +74,8 @@ extern "C" {
 #define MAKO_LOCAL_MAX_KEY_BYTES 1024u
 #define MAKO_LOCAL_MAX_VALUE_BYTES 1048576u
 #define MAKO_LOCAL_TXN_ITEM_BUDGET 512u
+/* STO keeps one process-lifetime transaction slot per attached OS worker. */
+#define MAKO_LOCAL_MAX_WORKERS 460u
 /* Mako's legacy u32 `timestamp * 10 + term` format reserves one decimal digit
  * for term. This is therefore the largest representable base timestamp when
  * that distributed-format contract is honored. */
@@ -154,6 +156,19 @@ typedef struct mako_local_db mako_local_db;
 typedef struct mako_local_table mako_local_table;
 typedef struct mako_local_txn mako_local_txn;
 
+/* Database-open options are append-only while this ABI is a draft. Callers
+ * set struct_size to MAKO_LOCAL_DB_OPTIONS_V0_SIZE and zero every flag. The
+ * initially empty flag namespace deliberately reserves a sized negotiation
+ * seam before ABI v1 without inventing a durability policy at this layer. */
+typedef struct mako_local_db_options {
+  uint32_t struct_size;
+  uint32_t flags;
+} mako_local_db_options;
+
+#define MAKO_LOCAL_DB_OPTIONS_V0_SIZE                                    \
+  ((uint32_t)(offsetof(mako_local_db_options, flags) +                    \
+              sizeof(((mako_local_db_options *)0)->flags)))
+
 /* Scan options are append-only while this ABI is a draft. Callers set
  * struct_size to MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE and zero fields they do not
  * use. lower is always an inclusive binary bound. HAS_UPPER supplies an
@@ -230,7 +245,8 @@ const char *mako_local_engine_id(void) MAKO_LOCAL_NOEXCEPT;
 const uint8_t *mako_local_build_fingerprint(void) MAKO_LOCAL_NOEXCEPT;
 size_t mako_local_build_fingerprint_size(void) MAKO_LOCAL_NOEXCEPT;
 /* Required revision-0 options prefix size. This remains fixed when trailing
- * fields are appended to mako_local_scan_options. */
+ * fields are appended to either options structure. */
+size_t mako_local_db_options_size(void) MAKO_LOCAL_NOEXCEPT;
 size_t mako_local_scan_options_size(void) MAKO_LOCAL_NOEXCEPT;
 size_t mako_local_scan_entry_size(void) MAKO_LOCAL_NOEXCEPT;
 const char *mako_local_status_string(int status) MAKO_LOCAL_NOEXCEPT;
@@ -286,7 +302,12 @@ int mako_local_advance_mako_timestamp_past(uint32_t observed)
 
 /* One local in-memory database facade. Multiple facades share the process STO
  * runtime but own disjoint tables. close returns BUSY while a transaction
- * belonging to this database is active. */
+ * belonging to this database is active. The sized entry point requires the
+ * complete v0 prefix and rejects every nonzero flag. The original entry point
+ * is retained as the default-options spelling. */
+int mako_local_db_open_with_options(const mako_local_db_options *options,
+                                    mako_local_db **out)
+    MAKO_LOCAL_NOEXCEPT;
 int mako_local_db_open(mako_local_db **out) MAKO_LOCAL_NOEXCEPT;
 int mako_local_db_close(mako_local_db *db) MAKO_LOCAL_NOEXCEPT;
 

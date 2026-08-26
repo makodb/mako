@@ -359,6 +359,9 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
   EXPECT_STREQ(mako_local_status_string(MAKO_LOCAL_WORKER_POISONED),
                "worker poisoned by uncertain native cleanup");
   static_assert(sizeof(mako_local_scan_entry) == 4 * sizeof(uint32_t));
+  EXPECT_EQ(mako_local_db_options_size(), MAKO_LOCAL_DB_OPTIONS_V0_SIZE);
+  EXPECT_EQ(mako_local_db_options_size(),
+            offsetof(mako_local_db_options, flags) + sizeof(uint32_t));
   EXPECT_EQ(mako_local_scan_options_size(),
             MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE);
   EXPECT_EQ(mako_local_scan_options_size(),
@@ -377,6 +380,29 @@ TEST(MakoLocalAbiIdentity, VersionAndStatusStringsAreStable) {
                 MAKO_LOCAL_MAX_MAKO_TIMESTAMP + 1),
             MAKO_LOCAL_TIMESTAMP_EXHAUSTED);
   EXPECT_EQ(mako_local_db_open(nullptr), MAKO_LOCAL_INVALID_ARGUMENT);
+  mako_local_db_options db_options{MAKO_LOCAL_DB_OPTIONS_V0_SIZE, 0};
+  EXPECT_EQ(mako_local_db_open_with_options(&db_options, nullptr),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  auto *poison_db = reinterpret_cast<mako_local_db *>(uintptr_t{1});
+  EXPECT_EQ(mako_local_db_open_with_options(nullptr, &poison_db),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(poison_db, nullptr);
+  db_options.struct_size = MAKO_LOCAL_DB_OPTIONS_V0_SIZE - 1;
+  poison_db = reinterpret_cast<mako_local_db *>(uintptr_t{1});
+  EXPECT_EQ(mako_local_db_open_with_options(&db_options, &poison_db),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(poison_db, nullptr);
+  db_options = mako_local_db_options{MAKO_LOCAL_DB_OPTIONS_V0_SIZE, 1};
+  poison_db = reinterpret_cast<mako_local_db *>(uintptr_t{1});
+  EXPECT_EQ(mako_local_db_open_with_options(&db_options, &poison_db),
+            MAKO_LOCAL_INVALID_ARGUMENT);
+  EXPECT_EQ(poison_db, nullptr);
+  db_options = mako_local_db_options{MAKO_LOCAL_DB_OPTIONS_V0_SIZE + 8, 0};
+  mako_local_db *option_db = nullptr;
+  ASSERT_EQ(mako_local_db_open_with_options(&db_options, &option_db),
+            MAKO_LOCAL_OK);
+  ASSERT_NE(option_db, nullptr);
+  EXPECT_EQ(mako_local_db_close(option_db), MAKO_LOCAL_OK);
 
   auto *poison_table = reinterpret_cast<mako_local_table *>(uintptr_t{1});
   EXPECT_EQ(mako_local_table_open(nullptr, nullptr, 0, 0, &poison_table),
@@ -1440,6 +1466,98 @@ TEST_F(LocalAbiTest, TableNamesAndNumericIdsAreBothUnique) {
                 other_name.size(), id, &poison),
             MAKO_LOCAL_WRONG_DB_OR_TABLE);
   EXPECT_EQ(poison, nullptr);
+}
+
+TEST_F(LocalAbiTest, ConcurrentTableCreationSerializesIdentityMapping) {
+  struct OpenResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int open = MAKO_LOCAL_INTERNAL;
+    mako_local_table *table = nullptr;
+  };
+
+  auto race = [&](const std::array<std::string, 2> &names,
+                  const std::array<uint64_t, 2> &ids) {
+    std::array<OpenResult, 2> results;
+    std::barrier ready(3);
+    std::array<std::thread, 2> workers;
+    for (size_t worker = 0; worker != workers.size(); ++worker) {
+      workers[worker] = std::thread([&, worker] {
+        results[worker].attach = mako_local_thread_attach();
+        ready.arrive_and_wait();
+        if (results[worker].attach == MAKO_LOCAL_OK) {
+          results[worker].open = mako_local_table_open(
+              db, reinterpret_cast<const uint8_t *>(names[worker].data()),
+              names[worker].size(), ids[worker], &results[worker].table);
+        }
+      });
+    }
+    ready.arrive_and_wait();
+    for (auto &worker : workers) worker.join();
+    return results;
+  };
+
+  const uint64_t same_id = next_table_id.fetch_add(1);
+  auto same = race({"concurrent-same", "concurrent-same"},
+                   {same_id, same_id});
+  EXPECT_EQ(same[0].attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(same[1].attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(same[0].open, MAKO_LOCAL_OK);
+  EXPECT_EQ(same[1].open, MAKO_LOCAL_OK);
+  EXPECT_NE(same[0].table, nullptr);
+  EXPECT_EQ(same[0].table, same[1].table);
+
+  const uint64_t name_conflict_id = next_table_id.fetch_add(2);
+  auto name_conflict = race(
+      {"concurrent-name-conflict", "concurrent-name-conflict"},
+      {name_conflict_id, name_conflict_id + 1});
+  EXPECT_EQ(name_conflict[0].attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(name_conflict[1].attach, MAKO_LOCAL_OK);
+  const int name_successes =
+      (name_conflict[0].open == MAKO_LOCAL_OK ? 1 : 0) +
+      (name_conflict[1].open == MAKO_LOCAL_OK ? 1 : 0);
+  const int name_conflicts =
+      (name_conflict[0].open == MAKO_LOCAL_WRONG_DB_OR_TABLE ? 1 : 0) +
+      (name_conflict[1].open == MAKO_LOCAL_WRONG_DB_OR_TABLE ? 1 : 0);
+  EXPECT_EQ(name_successes, 1);
+  EXPECT_EQ(name_conflicts, 1);
+
+  const uint64_t id_conflict = next_table_id.fetch_add(1);
+  auto numeric_conflict = race(
+      {"concurrent-id-left", "concurrent-id-right"},
+      {id_conflict, id_conflict});
+  EXPECT_EQ(numeric_conflict[0].attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(numeric_conflict[1].attach, MAKO_LOCAL_OK);
+  const int numeric_successes =
+      (numeric_conflict[0].open == MAKO_LOCAL_OK ? 1 : 0) +
+      (numeric_conflict[1].open == MAKO_LOCAL_OK ? 1 : 0);
+  const int numeric_conflicts =
+      (numeric_conflict[0].open == MAKO_LOCAL_WRONG_DB_OR_TABLE ? 1 : 0) +
+      (numeric_conflict[1].open == MAKO_LOCAL_WRONG_DB_OR_TABLE ? 1 : 0);
+  EXPECT_EQ(numeric_successes, 1);
+  EXPECT_EQ(numeric_conflicts, 1);
+}
+
+TEST_F(LocalAbiTest, ExactMaximumValueCommitsAndAbortsWithoutResizeLeakage) {
+  const std::string maximum(MAKO_LOCAL_MAX_VALUE_BYTES, 'm');
+
+  auto *txn = begin();
+  ASSERT_EQ(put(txn, primary, "max-value-abort", maximum), MAKO_LOCAL_OK);
+  ASSERT_EQ(get(txn, primary, "max-value-abort").second,
+            std::optional<std::string>(maximum));
+  abort_and_destroy(txn);
+
+  txn = begin();
+  EXPECT_FALSE(get(txn, primary, "max-value-abort").second.has_value());
+  commit_and_destroy(txn);
+
+  txn = begin();
+  ASSERT_EQ(put(txn, primary, "max-value-commit", maximum), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  txn = begin();
+  ASSERT_EQ(get(txn, primary, "max-value-commit").second,
+            std::optional<std::string>(maximum));
+  commit_and_destroy(txn);
 }
 
 TEST_F(LocalAbiTest, OversizedInputsAreNonterminalAndLeaveOutputsInitialized) {

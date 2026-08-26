@@ -60,6 +60,7 @@ namespace {
 
 static_assert(MAKO_LOCAL_MAX_MAKO_TIMESTAMP ==
               Transaction::max_mako_timestamp);
+static_assert(MAKO_LOCAL_MAX_WORKERS == MAX_THREADS);
 
 thread_local bool local_attached = false;
 thread_local mako_local_txn *local_active_txn = nullptr;
@@ -625,6 +626,10 @@ uint64_t mako_local_feature_bits(void) noexcept {
   return features;
 }
 
+size_t mako_local_db_options_size(void) noexcept {
+  return MAKO_LOCAL_DB_OPTIONS_V0_SIZE;
+}
+
 size_t mako_local_scan_options_size(void) noexcept {
   return MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE;
 }
@@ -764,9 +769,14 @@ int mako_local_test_clear_cleanup_failure(void) noexcept {
 #endif
 }
 
-int mako_local_db_open(mako_local_db **out) noexcept {
+int mako_local_db_open_with_options(
+    const mako_local_db_options *options, mako_local_db **out) noexcept {
   if (out == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
   *out = nullptr;
+  if (options == nullptr ||
+      options->struct_size < MAKO_LOCAL_DB_OPTIONS_V0_SIZE ||
+      options->flags != 0)
+    return MAKO_LOCAL_INVALID_ARGUMENT;
   try {
     *out = new mako_local_db();
     return MAKO_LOCAL_OK;
@@ -775,6 +785,11 @@ int mako_local_db_open(mako_local_db **out) noexcept {
   } catch (...) {
     return MAKO_LOCAL_INTERNAL;
   }
+}
+
+int mako_local_db_open(mako_local_db **out) noexcept {
+  const mako_local_db_options options{MAKO_LOCAL_DB_OPTIONS_V0_SIZE, 0};
+  return mako_local_db_open_with_options(&options, out);
 }
 
 int mako_local_db_close(mako_local_db *db) noexcept {

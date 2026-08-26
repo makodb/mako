@@ -51,6 +51,15 @@ optional surface. Revision 0 defines these feature bits:
 | `MAKO_LOCAL_FEATURE_TEST_COMMIT_OBSERVER` | The test-only commit-observer functions are available. |
 | `MAKO_LOCAL_FEATURE_TEST_CLEANUP_FAILURES` (bit 6) | The test-only cleanup-failure arm and clear functions are available. |
 
+The single-machine cache makes isolation a deployment choice rather than an
+ABI-revision inference. `CacheOptions::isolation` defaults to
+`StrictSerializable`, which accepts the production non-opaque engine and
+requires committed-transaction strict serializability. Selecting `Opaque`
+requires `MAKO_LOCAL_FEATURE_OPACITY`; cache startup returns `MissingOpacity`
+when that bit is absent. The opacity profile additionally constrains aborted
+and in-flight observations, but does not replace read-your-writes or scan
+capability negotiation.
+
 Raw callers may call `mako_local_txn_scan_chunk()` or
 `mako_local_txn_rscan_chunk()` only when both
 `MAKO_LOCAL_FEATURE_TRANSACTIONAL_SCANS` and
@@ -188,7 +197,13 @@ flag exposed by `mako_local_worker_health()`.
   began it.
 - An attached worker cannot switch between the local ABI, native Mako, and the
   plain `mtx_*` adapter. STO thread IDs are process-lifetime resources and are
-  not recycled. There is no detach operation.
+  not recycled. There is no detach operation. The ABI intentionally retains
+  implicit TLS rather than adding an opaque worker context.
+- `MAKO_LOCAL_MAX_WORKERS` is exactly 460. This is a lifetime allocation
+  budget, not a concurrent-thread limit: a process-isolated conformance probe
+  attaches and joins 460 distinct OS workers, verifies a second attach is
+  idempotent on each, and requires the 461st distinct worker to receive
+  `THREAD_LIMIT`.
 - Database and table handles may be shared by attached workers while their
   lifetime is externally protected. `db_close` must not race with any use.
 - Lifetime nesting is `database > table` and `database/table > transaction`.
@@ -201,6 +216,11 @@ flag exposed by `mako_local_worker_health()`.
   epoch runtime intentionally remain process-lifetime. Opening another
   database creates a new logical facade; it does not recover or adopt the old
   facade's tables.
+- The Milestone 1 cache therefore has a deployment precondition of exactly one
+  recovered cache namespace per process. The ABI does not enforce this with a
+  mutex. Supporting several recovered namespaces requires a supervisor to
+  identify and scan every backend, floor the shared Mako timestamp authority,
+  and only then admit work to any namespace.
 - A **Q** transaction retains database active-transaction accounting, so
   `db_close` continues to return `BUSY`. This is intentional containment.
 - Quarantine is stored independently of a transaction facade in TLS. It
@@ -209,7 +229,9 @@ flag exposed by `mako_local_worker_health()`.
 
 ## Output initialization and ownership
 
-Revision 0 has a conditional all-output-pointer rule:
+Revision 0 has a conditional all-output-pointer rule. The Phase 1C freeze
+choice retains this rule for ABI v1 rather than initializing the non-null
+subset of an invalid multi-output set:
 
 1. A function with one required output pointer first validates that pointer.
    If it is non-null, the function initializes the output before validating
@@ -225,7 +247,8 @@ Revision 0 has a conditional all-output-pointer rule:
 
 The concrete initial values are:
 
-- `db_open`, `table_open`, and `txn_begin`: `*out = NULL`.
+- `db_open_with_options`, `db_open`, `table_open`, and `txn_begin`:
+  `*out = NULL`.
 - `txn_get`: `*value_out = NULL`, `*value_len_out = 0`, and
   `*found_out = 0`.
 - `txn_put`, `txn_insert`, and `txn_remove`: the verb-result byte is zero.
@@ -254,6 +277,24 @@ The post-validation hook context is borrowed only during the synchronous
 commit call. A test-observer callback and context are borrowed from successful
 set until successful clear.
 
+## Database-open options
+
+`mako_local_db_options` is an append-only input structure. A revision-0 caller
+sets `struct_size` to `MAKO_LOCAL_DB_OPTIONS_V0_SIZE` and `flags` to zero.
+`mako_local_db_options_size()` reports the exact required v0 prefix. A smaller
+prefix, a null options pointer, or any nonzero current flag returns
+`INVALID_ARGUMENT`; once the output pointer itself is valid, it remains null on
+those failures. A larger `struct_size` is accepted and unknown trailing bytes
+are ignored, so a newer caller can pass its larger structure to this v0
+implementation when the common flags remain supported.
+
+`mako_local_db_open_with_options()` is the canonical sized entry point.
+`mako_local_db_open()` remains exported as the compatibility/default spelling
+and behaves exactly as if passed `{MAKO_LOCAL_DB_OPTIONS_V0_SIZE, 0}`. The safe
+Rust `LocalDb::open_with_options(DbOptions)` always uses the sized entry point;
+`DbOptions` is currently empty and non-exhaustive so later policy fields can be
+added without changing the Rust constructor shape.
+
 ## Binary slices and revision-0 limits
 
 Names, keys, values, and scan bounds are binary slices. A null pointer is valid
@@ -280,6 +321,7 @@ change unless the row states otherwise.
 | `mako_local_build_fingerprint_size` | Returns `MAKO_LOCAL_BUILD_FINGERPRINT_SIZE` (currently 32). | Scalar result; no ownership or transaction effect. |
 | `mako_local_abi_version` | Returns `MAKO_LOCAL_ABI_VERSION` (currently 0). | Scalar result; no ownership or transaction effect. |
 | `mako_local_feature_bits` | Returns the linked build's feature mask. | Scalar result; no ownership or transaction effect. |
+| `mako_local_db_options_size` | Returns `MAKO_LOCAL_DB_OPTIONS_V0_SIZE`. | Scalar result; no ownership or transaction effect. |
 | `mako_local_scan_options_size` | Returns `MAKO_LOCAL_SCAN_OPTIONS_V0_SIZE`. | Scalar result; no ownership or transaction effect. |
 | `mako_local_scan_entry_size` | Returns `sizeof(mako_local_scan_entry)`. | Scalar result; no ownership or transaction effect. |
 | `mako_local_status_string` | Returns a known static string or the static unknown-status string. | Never caller-owned; no transaction effect. |
@@ -291,7 +333,8 @@ change unless the row states otherwise.
 | `mako_local_test_arm_cleanup_failure` | With the feature: `OK`, `INVALID_ARGUMENT`, `NOT_ATTACHED`, `BUSY`, `WORKER_POISONED`. Without it: `FEATURE_UNAVAILABLE`. | Arms one valid `MAKO_LOCAL_CLEANUP_BOUNDARY_*` value in the calling worker's TLS. A second arm before consumption or clear is `BUSY`. The next matching cleanup consumes the arm before forcing a native cleanup exception. No ordinary transaction transition occurs merely by arming. |
 | `mako_local_test_clear_cleanup_failure` | With the feature: `OK`, `NOT_ATTACHED`, `WORKER_POISONED`. Without it: `FEATURE_UNAVAILABLE`. | Clears an unconsumed arm and is otherwise idempotent. It cannot recover or make reusable a poisoned worker. |
 | `mako_local_advance_mako_timestamp_past` | `OK`, `INVALID_ARGUMENT`, `TIMESTAMP_EXHAUSTED`. | Zero is invalid. A successful call monotonically advances the process clock; smaller observations do not move it backward. The requirement that the value came from a prior hook is a caller precondition, not provenance checked by v0. No transaction effect. |
-| `mako_local_db_open` | `OK`, `INVALID_ARGUMENT`, `OUT_OF_MEMORY`, `INTERNAL`. | Once `out` is validated, it is null on every error. `OK` returns a caller-owned database facade requiring `db_close`. Attachment is not required. |
+| `mako_local_db_open_with_options` | `OK`, `INVALID_ARGUMENT`, `OUT_OF_MEMORY`, `INTERNAL`. | Once `out` is validated, it is null on every error. Requires a non-null options pointer with at least the complete v0 prefix and zero flags; larger structure sizes are accepted. `OK` returns a caller-owned database facade requiring `db_close`. Attachment is not required. |
+| `mako_local_db_open` | `OK`, `INVALID_ARGUMENT`, `OUT_OF_MEMORY`, `INTERNAL`. | Default-options compatibility spelling for `mako_local_db_open_with_options`. Once `out` is validated, it is null on every error. `OK` returns a caller-owned database facade requiring `db_close`. Attachment is not required. |
 | `mako_local_db_close` | `OK`, `BUSY`, `INTERNAL`; null is `OK`. | `OK` consumes the facade. `BUSY` retains it and is retryable after healthy active transactions finish. On `INTERNAL`, v0 cannot make destruction retry-safe: abandon the pointer without dereferencing or retrying it. No worker-health transition. |
 | `mako_local_table_open` | `OK`, `INVALID_ARGUMENT`, `VALUE_TOO_LARGE`, `NOT_ATTACHED`, `WRONG_DB_OR_TABLE`, `OUT_OF_MEMORY`, `INTERNAL`. | Once `out` is validated, it is null on every error. `OK` returns a database-owned borrowed table. Concurrent opens are serialized. Reopening a name with its original ID returns the same handle; name/ID conflicts return `WRONG_DB_OR_TABLE`. An empty binary name is valid. |
 | `mako_local_table_id` | Returns the table ID; null returns zero. | Scalar result. ID zero is allowed, so a null result is not distinguishable from a valid zero ID without retaining the original status/handle. The table remains borrowed. |
@@ -409,9 +452,11 @@ ceiling. Configured-key validation is not a claim about whole-table
 cardinality.
 
 The linked validation record accepted Item 4 on candidate `5a3dd3eaf` on
-2026-08-25. That green record does not freeze this revision-0 contract or
-promote it to ABI v1; the unresolved Phase 1C/1D design choices still require
-an explicit freeze review, and Phase 1F and Milestone 1 remain separate.
+2026-08-25. The subsequent Phase 1C/1D review resolved the sized-options,
+implicit-TLS, output-initialization, process-lifetime, and async-worker choices
+documented here. That does not itself promote the reported revision to ABI v1;
+promotion remains an explicit release action. Phase 1F and final Milestone 1
+benchmark acceptance remain separately recorded.
 
 ## Quarantine diagnostics and cleanup-failure tests
 
@@ -473,8 +518,37 @@ passes under Miri as the ownership and output-validation gate. Native failpoint
 tests are separate and prove that the real C++ boundary produces the same
 quarantine and diagnostic behavior.
 
-The fixed-worker async adapter that removes a poisoned worker from service is
-still deferred. The typed status, health query, counter, begin-cleanup anchor,
-and test coverage make that policy implementable without weakening the current
-thread-affine API. This document does not claim that the rest of Phase 1C is
-complete or that the surface is ready for promotion to ABI v1.
+## Safe fixed-worker and retry policy
+
+The production `mako_local::worker::FixedWorkerPool` adapts this thread-affine
+ABI for async callers without making `Transaction` `Send`. It creates a fixed
+number of long-lived OS workers, attaches each once, and gives every worker a
+bounded private FIFO. `submit()` sends an owned, complete synchronous closure
+to one healthy worker and returns a `Task` that can be awaited or synchronously
+waited. Dropping a `Task` abandons only its result: accepted work is not
+cancelled at an arbitrary point while it may own native state. Opening the
+`LocalDb` necessarily attaches its calling thread and consumes one of the 460
+process-lifetime slots, so pool configuration rejects more than 459 workers
+even in a fresh process. Attachments made earlier in the process can reduce
+the number that will actually attach successfully below that structural
+maximum.
+
+After every closure, including a caught application panic in an unwind-enabled
+build, the adapter queries the authoritative native worker health before
+resolving the task. A poisoned worker is atomically removed from routing, its
+current and pending tasks fail with the worker identity, and metrics expose the
+retirement. Other workers
+continue serving work. Clean pool shutdown drains accepted work and joins the
+workers; startup failure stops and joins every worker that was already created,
+although any native thread IDs they claimed remain process-lifetime.
+
+Conflict retries are explicit and bounded. `RetryPolicy` counts whole-closure
+reruns, `retry_transaction()` and `submit_retrying()` retry only
+`Error::Conflict`, and their reports expose attempts and conflicts. Every
+attempt begins fresh application logic; a non-conflict error stops immediately.
+External side effects must occur after success or be idempotent. Compile-fail
+documentation also proves that a transaction cannot move threads, outlive its
+database, or be held across suspension by a `Send` future.
+
+These choices complete the Phase 1C/1D contract work while leaving the ABI at
+reported revision 0 until the separate promotion action.
