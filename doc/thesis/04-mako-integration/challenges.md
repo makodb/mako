@@ -82,7 +82,7 @@ point.
 
 Added `detect_replication_type_from_config()` in `mako.hh:779-816`.  This
 function performs a lightweight text scan of the YAML files before `setup()`
-is called, looking for `ab: raft` or `ab: fpga_raft`:
+is called, looking for `ab: raft`:
 
 ```cpp
 // mako.hh:886-889 — called in init_env() before setup()

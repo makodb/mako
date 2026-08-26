@@ -1,7 +1,6 @@
 #pragma once
 
 #include "frame.h"
-#include "coordinator.h"
 #include <map>
 
 namespace janus {

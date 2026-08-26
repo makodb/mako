@@ -91,7 +91,7 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 ## Code Architecture
 
 ### Core Directory Structure
-- `src/deptran/`: Transaction and replication protocol implementations (2PL, OCC, RCC, Paxos, TAPIR, Snow, Raft)
+- `src/deptran/`: Paxos/Raft replication and their shared runtime support
 - `src/mako/`: Mako system with Masstree storage engine and speculative execution
 - `src/bench/`: Benchmark implementations (TPC-C, TPC-A, RW, Micro)
 - `src/srpc/`: Custom RPC framework and networking layer
@@ -108,11 +108,17 @@ Goal 0. Never recreate a top-level `crates/srpc` hand port.
 
 ### Key Protocol Implementations
 The system implements multiple distributed transaction protocols. The former
-standalone Janus and Mencius implementations are retired; the project-wide
-`janus::` C++ namespace remains for compatibility.
-- **2PL** (`src/deptran/2pl/`): Traditional two-phase locking
-- **OCC** (`src/deptran/occ/`): Optimistic concurrency control
-- **RCC/Rococo** (`src/deptran/rcc/`): Distributed consensus protocol
+standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, Rule, TAPIR, FPGA-Raft,
+Copilot, RCC/Rococo, Carousel, and Februus implementations are retired. This
+includes the old `deptran` and `deptran_er` RCC aliases. EPaxos, Replicated
+Commit, and Multi-Paxos Plus were unimplemented selector placeholders and are
+unsupported. The former standalone DepTran OCC implementation is also retired;
+Mako's optimistic concurrency control is provided by its MBTA/STO engine. The
+original Silo `txn`/`txn_btree`/`txn_proto2` transaction engine is likewise
+retired, source-guarded, and neither selectable nor runnable. Mako always uses
+STO `Transaction` with MassTrans through `storage/mbta_wrapper.hh`.
+`SiloRuntime` remains live allocator/RCU/Masstree support and is not the retired
+engine. The project-wide `janus::` C++ namespace remains for compatibility.
 - **Paxos** (`src/deptran/paxos/`): Consensus for replication
 
 ### Transport Layer Architecture
@@ -145,7 +151,7 @@ is `SrpcRequestHandle`.
 
 ### Key Classes and Components
 - `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
-- `SchedulerClassic`: Handles transaction scheduling and execution (protocol-specific subclasses like `SchedulerOcc`)
+- `TxLogServer`: Shared base for the Paxos and Raft replication servers
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
 - `Masstree`: High-performance in-memory index structure (Mako)

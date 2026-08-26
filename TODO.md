@@ -1375,7 +1375,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [x] **Phase 5: Client Failover** (~350 LOC) [ALREADY IMPLEMENTED]
       - [x] 5.1 Leader Discovery - Client queries replicas for current leader
         - `BroadcastGetLeader()` in Communicator broadcasts to all replicas
-        - `IsFPGALeader` / `IsLeader` RPCs check leader status
+        - `IsLeader` RPC checks leader status
         - `GetLeaderQuorumEvent` handles discovery responses
       - [~] 5.2 Request Forwarding - Non-leaders forward to leader or return hint
         - NOTE: Optional optimization - clients can retry with leader hint

@@ -1128,7 +1128,7 @@ DEPTRAN_SOURCES += $(RAFT_SOURCES)
 # Mako with Raft replication
 bench: mako
 mode: raft
-protocol: none  # or rule for Jetpack
+protocol: none
 
 # Raft-specific parameters
 raft:
@@ -1140,6 +1140,10 @@ raft:
 batch_size: 10000
 duration: 30
 ```
+
+The former Rule protocol and its configuration have since been retired.
+Generic Jetpack recovery machinery remains legacy code under a separate audit;
+it is not a supported protocol selection.
 
 **Checklist:**
 - [ ] Create mako_raft.yml

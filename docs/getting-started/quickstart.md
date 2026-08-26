@@ -232,8 +232,7 @@ mako/
 │   │   ├── Transaction.cc  # Transaction logic
 │   │   └── masstree/   # Masstree storage engine
 │   ├── deptran/        # Transaction protocols
-│   │   ├── paxos/      # Paxos consensus
-│   │   └── rcc/        # RCC protocol
+│   │   └── paxos/      # Paxos consensus
 │   └── srpc/            # RPC framework
 ├── config/             # Configuration files
 │   ├── 1c1s1p.yml      # 1 client, 1 shard, 1 partition

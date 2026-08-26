@@ -1,6 +1,8 @@
 #ifndef _NDB_TUPLE_H_
 #define _NDB_TUPLE_H_
 
+#include "retired_silo_engine.h"
+
 #include <atomic>
 #include <vector>
 #include <string>

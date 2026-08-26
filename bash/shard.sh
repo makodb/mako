@@ -49,10 +49,10 @@ if [ "$is_replicated" == "1" ]; then
     # to the hardcoded path otherwise.
     REPLICATION_CONFIG_DIR="${MAKO_PAXOS_CONFIG_DIR:-config/1leader_2followers}"
     if [ "$replication_type_normalized" == "raft" ]; then
-        OCC_CONFIG="config/occ_raft.yml"
+        MODE_CONFIG="config/raft.yml"
         REPLICATION_CONFIG="${REPLICATION_CONFIG_DIR}/raft${trd}_shardidx${shard}.yml"
     else
-        OCC_CONFIG="config/occ_paxos.yml"
+        MODE_CONFIG="config/paxos.yml"
         REPLICATION_CONFIG="${REPLICATION_CONFIG_DIR}/paxos${trd}_shardidx${shard}.yml"
     fi
 
@@ -60,12 +60,12 @@ if [ "$is_replicated" == "1" ]; then
         echo "Error: replication config not found: $REPLICATION_CONFIG"
         exit 1
     fi
-    if [ ! -f "$OCC_CONFIG" ]; then
-        echo "Error: OCC config not found: $OCC_CONFIG"
+    if [ ! -f "$MODE_CONFIG" ]; then
+        echo "Error: replication mode config not found: $MODE_CONFIG"
         exit 1
     fi
 
-    CMD="$CMD -F $REPLICATION_CONFIG -F $OCC_CONFIG --is-replicated --replication=$replication_type_normalized"
+    CMD="$CMD -F $REPLICATION_CONFIG -F $MODE_CONFIG --is-replicated --replication=$replication_type_normalized"
 fi
 
 # Print configuration

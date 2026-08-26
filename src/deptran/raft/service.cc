@@ -214,13 +214,10 @@ RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) {
 std::map<siteid_t, RaftServiceImpl*> RaftServiceImpl::service_registry_;
 std::mutex RaftServiceImpl::registry_mutex_;
 
-// @unsafe - C-style cast in @unsafe block
-RaftServiceImpl::RaftServiceImpl(TxLogServer *sched, rusty::Arc<srpc::PollThread> poll_thread)
+RaftServiceImpl::RaftServiceImpl(RaftServer *sched, rusty::Arc<srpc::PollThread> poll_thread)
     : poll_thread_(rusty::Some(std::move(poll_thread))) {
-  // @unsafe
-  RaftServer* svr = (RaftServer*)sched;
-  svr_.store(svr, std::memory_order_release);
-  site_id_ = svr->site_id_;
+  svr_.store(sched, std::memory_order_release);
+  site_id_ = sched->site_id_;
   {
     std::lock_guard<std::mutex> lock(registry_mutex_);
     service_registry_[site_id_] = this;

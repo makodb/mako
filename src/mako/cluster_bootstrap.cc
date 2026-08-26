@@ -15,7 +15,8 @@ import cluster;   // config/sharding metadata module (was #include "cluster/..."
 #include "deptran/config_kv_service.h"     // ConfigKvServiceImpl, make_config_read_fn,
                                            // ConfigKvServiceProxy
 
-#include "srpc/srpc.hpp"                      // srpc::Server / Client / PollThread, Log_*
+#include "srpc/srpc.hpp"                      // srpc::Server / Client / PollThread
+#include "srpc_log.h"
 
 namespace janus {
 namespace {
@@ -76,7 +77,7 @@ void SeedTopology(ConfigManager* cm, uint32_t nshards) {
 void StartShard0Leader(abstract_db* db, uint32_t nshards) {
     abstract_ordered_index* idx = db->open_index("__mako_config__", /*shard_index=*/0);
     if (idx == nullptr) {
-        Log_warn("BootstrapClusterConfig: could not open __mako_config__ index");
+        srpc::Log_warn("BootstrapClusterConfig: could not open __mako_config__ index");
         return;
     }
     g_cfg_kv_local = rusty::Some(rusty::make_box<OrderedIndexKvStore>(idx));
@@ -93,11 +94,11 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
     g_cfg_server = new srpc::Server(srpc::Server::new_(rusty::Some(g_cfg_poll.as_ref().unwrap().clone())));
     g_cfg_server->reg_service_typed(rusty::make_box<ConfigKvServiceImpl>(kv));
     if (g_cfg_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())) != 0) {
-        Log_warn("BootstrapClusterConfig: config server failed to bind {}",
+        srpc::Log_warn("BootstrapClusterConfig: config server failed to bind {}",
                  bind_addr.c_str());
         return;
     }
-    Log_info("BootstrapClusterConfig: shard-0 config service listening on {}",
+    srpc::Log_info("BootstrapClusterConfig: shard-0 config service listening on {}",
              bind_addr.c_str());
 
     g_cfg_watcher = rusty::Some(rusty::make_box<ConfigWatcher>(
@@ -116,7 +117,7 @@ void StartRemoteWatcher() {
     g_cfg_poll = rusty::Some(srpc::PollThread::create());
     g_cfg_client = rusty::Some(srpc::Client::create(g_cfg_poll.as_ref().unwrap().clone()));
     if (g_cfg_client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(addr.c_str()), false) != 0) {
-        Log_warn("BootstrapClusterConfig: could not connect to shard-0 config at {}",
+        srpc::Log_warn("BootstrapClusterConfig: could not connect to shard-0 config at {}",
                  addr.c_str());
         return;
     }
@@ -131,7 +132,7 @@ void StartRemoteWatcher() {
     g_cfg_watcher = rusty::Some(rusty::make_box<ConfigWatcher>(
         ConfigWatcher::new_(g_cfg_cm.as_ref().unwrap().get(), &get_cluster_config(), kConfigPollIntervalMs)));
     g_cfg_watcher.as_ref().unwrap()->start();
-    Log_info("BootstrapClusterConfig: watching shard-0 config at {}", addr.c_str());
+    srpc::Log_info("BootstrapClusterConfig: watching shard-0 config at {}", addr.c_str());
 }
 
 }  // namespace

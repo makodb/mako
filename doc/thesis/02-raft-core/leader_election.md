@@ -113,7 +113,7 @@ Three outcomes:
 **Won** (`sp_quorum->yes()`):
 1. Verify term hasn't advanced during the wait (stale election guard)
 2. `setIsLeader(true)` — initialize leader state, update views
-3. Trigger Jetpack recovery if enabled
+3. Reach the legacy Jetpack recovery entry point (unsupported and under a separate audit)
 4. Fire `leader_change_cb_(true)` to notify the upper layer
 
 **Lost** (`sp_quorum->no()`):

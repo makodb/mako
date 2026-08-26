@@ -477,12 +477,6 @@ shared_ptr<RaftVoteQuorumEvent> BroadcastVote(...)
 All functions are factory methods that create components - these are complex and will be in Level 3+.
 
 ```cpp
-// Location: frame.h:28
-Executor* CreateExecutor(...)
-  Status: ⏳ Complex factory - analyze later
-```
-
-```cpp
 // Location: frame.h:29
 Coordinator* CreateCoordinator(...)
   Status: ⏳ Complex factory - analyze later
@@ -943,4 +937,3 @@ git reset --hard origin/branch
 ---
 
 **Next Step**: Start with Level 0, Step 1.1 - Mark `RaftServer::IsLeader()` as @safe
-

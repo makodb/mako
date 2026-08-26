@@ -2,11 +2,6 @@
 
 #include "__dep__.h"
 #include "constants.h"
-#include "../rcc/graph.h"
-#include "../rcc/graph_marshaler.h"
-#include "../command.h"
-#include "deptran/procedure.h"
-#include "../command_marshaler.h"
 #include "../rcc_rpc.h"
 #include "server.h"
 #include <atomic>
@@ -19,10 +14,8 @@
 //   srand: [safe, (unsigned int) -> void]
 // }
 
-class SimpleCommand;
 namespace janus {
 
-class TxLogServer;
 class RaftServer;
 
 // @unsafe - inherits from non-@interface RaftService
@@ -40,7 +33,7 @@ class RaftServiceImpl : public RaftService {
   // inbound and outbound RPCs share a thread.
   rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_;
 
-  RaftServiceImpl(TxLogServer* sched, rusty::Arc<srpc::PollThread> poll_thread);
+  RaftServiceImpl(RaftServer* sched, rusty::Arc<srpc::PollThread> poll_thread);
 
   // Called by test framework during Kill/Restart to update server pointer
   static void UpdateServer(siteid_t site_id, RaftServer* new_svr);

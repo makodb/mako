@@ -1,10 +1,17 @@
 #pragma once
 
-#include "__dep__.h"
-#include "constants.h"
-#include <vector>
-#include <sstream>
+#include <std_compat.hpp>
+
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "constants.h"
+#include "srpc_log.h"
+
 namespace janus {
 
 class View {
@@ -64,8 +71,8 @@ class View {
     timestamp_ = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     
-    Log_info("[VIEW] Updated leader for partition {}: {} -> {}, view_id={}, timestamp={}", 
-             partition_id, old_leader, new_leader, view_id_, timestamp_);
+    srpc::Log_info("[VIEW] Updated leader for partition {}: {} -> {}, view_id={}, timestamp={}",
+                  partition_id, old_leader, new_leader, view_id_, timestamp_);
   }
   
   // Check if view is stale based on timestamp (default: 30 seconds)
@@ -78,7 +85,7 @@ class View {
   std::string ToString() const {
     std::stringstream ss;
     ss << "View{n=" << n_ << ", view_id=" << view_id_ << ", leaders=[";
-    for (size_t i = 0; i < leaders_.size(); i++) {
+    for (std::size_t i = 0; i < leaders_.size(); i++) {
       if (i > 0) ss << ",";
       ss << leaders_[i];
     }

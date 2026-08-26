@@ -119,7 +119,7 @@ echo ""
 
 # Start localhost (leaders for both shards)
 echo "Starting localhost (leaders for shards 0,1)..."
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated > 4proc-localhost.log 2>&1 &
+nohup $GDB_PREFIX ./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/paxos.yml -P localhost -L 0,1 --is-replicated > 4proc-localhost.log 2>&1 &
 LOCALHOST_PID=$!
 STARTED_PROCESSES=1
 
@@ -127,17 +127,17 @@ sleep 2
 
 # Start p1 (followers for both shards)
 echo "Starting p1 (followers for shards 0,1)..."
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P p1 -L 0,1 --is-replicated > 4proc-p1.log 2>&1 &
+nohup $GDB_PREFIX ./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/paxos.yml -P p1 -L 0,1 --is-replicated > 4proc-p1.log 2>&1 &
 P1_PID=$!
 
 # Start p2 (followers for both shards)
 echo "Starting p2 (followers for shards 0,1)..."
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P p2 -L 0,1 --is-replicated > 4proc-p2.log 2>&1 &
+nohup $GDB_PREFIX ./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/paxos.yml -P p2 -L 0,1 --is-replicated > 4proc-p2.log 2>&1 &
 P2_PID=$!
 
 # Start learner (learners for both shards)
 echo "Starting learner (learners for shards 0,1)..."
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P learner -L 0,1 --is-replicated > 4proc-learner.log 2>&1 &
+nohup $GDB_PREFIX ./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/paxos.yml -P learner -L 0,1 --is-replicated > 4proc-learner.log 2>&1 &
 LEARNER_PID=$!
 
 echo ""

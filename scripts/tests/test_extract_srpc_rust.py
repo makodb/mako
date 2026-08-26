@@ -1247,7 +1247,9 @@ class CheckedInCanaryTests(unittest.TestCase):
         # brace and the `else {` opener are the only lines that went away, no
         # logic line moved, and the dual-compile gate still reports the same
         # 1961 provider-owned strong ABI symbols from the generated C++.
-        self.assertEqual(canonical_lines, 13654)
+        # 13654 -> 13639: -15, retiring Rule's leader-aware quorum policy and
+        # its three counters from reactor.rs along with the Rule protocol.
+        self.assertEqual(canonical_lines, 13639)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"

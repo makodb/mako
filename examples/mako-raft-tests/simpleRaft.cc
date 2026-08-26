@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
     cout << "[" << raft_proc_name << "] Starting simpleRaft test (leader=" << leader_config << ")" << endl;
 
     vector<string> raft_config{
-        get_current_absolute_path() + "../config/none_raft.yml",
+        get_current_absolute_path() + "../config/raft.yml",
         get_current_absolute_path() + "../config/1c1s3r3p_cluster_test.yml"
     };
 

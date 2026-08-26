@@ -491,7 +491,6 @@ This registers `RaftFrame` for mode `MODE_RAFT` with the name `"raft"`, matching
 | `CreateScheduler()` | `RaftServer` | Owned by frame (`unique_ptr`) |
 | `CreateCommo()` | `RaftCommo` | Owned by frame (`unique_ptr`) |
 | `CreateCoordinator()` | `CoordinatorRaft` | Caller-owned (raw `new`) |
-| `CreateExecutor()` | `RaftExecutor` | Caller-owned (raw `new`) |
 | `CreateRpcServices()` | `RaftServiceImpl` | Returned as `Box<Service>` |
 
 ### Ownership Model

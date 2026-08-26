@@ -9,7 +9,7 @@ This document explains how transactions are submitted to the Raft consensus laye
 - `src/deptran/raft/coordinator.cc` — Implementation (181 lines)
 - `src/deptran/raft/frame.cc` — `CreateCoordinator()` factory (lines 50-77)
 - `src/deptran/coordinator.h` — Base `Coordinator` class
-- `src/deptran/classic/scheduler.cc` — Where `Submit()` is called from
+- `src/deptran/raft/raft_worker.cc` — Production Mako log-submission path
 
 ---
 
@@ -82,24 +82,21 @@ Submit(cmd, commit_callback, exe_callback):
   |           GotoNextPhase()
 ```
 
-### How Submit is Called
+### How Production Mako Submits
 
-The upper layer calls `Submit()` from `SchedulerClassic::OnCommit()` (`src/deptran/classic/scheduler.cc:241-263`):
+The retired Classic transaction scheduler was the only transaction-engine
+caller of `CoordinatorRaft::Submit()`. Production Mako submits raw log entries
+from `RaftWorker::Submit()` and enters `RaftServer::Start()` directly:
 
 ```cpp
-auto cmd = make_shared<TpcCommitCommand>();
-cmd->tx_id_ = tx_id;
-cmd->ret_ = commit_or_abort;
-cmd->cmd_ = sp_tx->cmd_;
-
-shared_ptr<Coordinator> coo{CreateRepCoord(dep_id.id)};
-coo->Submit(sp_m);   // Blocks until committed or WRONG_LEADER
-
-if (cmd->ret_ == WRONG_LEADER)
-    return WRONG_LEADER;
+auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
+uint64_t index = 0;
+uint64_t term = 0;
+raft_server->Start(std::move(tpc_cmd), &index, &term);
 ```
 
-Each transaction creates a fresh `CoordinatorRaft` instance via `CreateRepCoord()`, submits its command, and blocks until Raft commits it (or returns `WRONG_LEADER`).
+`CoordinatorRaft` remains the protocol-frame coordinator implementation, but
+the production raw-log API does not create a Classic transaction or scheduler.
 
 ---
 
@@ -305,20 +302,16 @@ void CoordinatorRaft::LeaderLearn() {
 }
 ```
 
-The `commit_callback_` is set by `Submit()` from the caller's provided callback. This is how the transaction layer learns that Raft has committed the entry.
+The `commit_callback_` is set by `Submit()` from the caller's provided callback. This is how a frame-level caller learns that Raft has committed the entry.
 
 ---
 
 ## 11. Complete Submission Flow
 
 ```
-Mako Transaction Layer
+Frame-level protocol caller
     |
-    | OnCommit(tx_id)
-    v
-SchedulerClassic::OnCommit()
-    |
-    | CreateRepCoord() → new CoordinatorRaft
+    | Frame::CreateCoordinator() → new CoordinatorRaft
     | Submit(TpcCommitCommand)
     v
 CoordinatorRaft::Submit()
@@ -344,10 +337,10 @@ GotoNextPhase() → COMMIT
     v
 LeaderLearn()
     |
-    +-- commit_callback_()  → Notify transaction layer
+    +-- commit_callback_()  → Notify caller
     |
     v
-Submit() returns, transaction is committed
+Submit() returns, command is committed
 ```
 
 ---

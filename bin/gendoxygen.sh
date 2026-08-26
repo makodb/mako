@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-if [ ! -f run.py ]; then
+if [ ! -f CMakeLists.txt ]; then
 	echo "run from root of project!"
 	exit 1
 fi

@@ -36,7 +36,6 @@ src/deptran/raft/
 ├── coordinator.cc / coordinator.h
 ├── frame.cc / frame.h
 ├── service.cc / service.h
-├── exec.cc / exec.h
 ├── raft_worker.cc / raft_worker.h
 ├── test.cc / test.h
 ├── testconf.cc / testconf.h

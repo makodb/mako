@@ -192,7 +192,7 @@ bash examples/simplePaxos.sh
   --shard-config src/mako/config/local-shards1-warehouses6.yml \
   -P localhost \
   -F config/1leader_2followers/paxos6_shardidx0.yml \
-  -F config/occ_paxos.yml \
+  -F config/paxos.yml \
   --startup-timeout-sec 60 \
   --is-replicated \
   --replication=paxos
@@ -206,15 +206,15 @@ bash examples/simplePaxos.sh
   --shard-index 0 \
   --shard-config src/mako/config/local-shards1-warehouses6.yml \
   -P localhost \
-  -F config/1leader_2followers/paxos6_shardidx0.yml \
-  -F config/occ_raft.yml \
+  -F config/1leader_2followers/raft6_shardidx0.yml \
+  -F config/raft.yml \
   --startup-timeout-sec 60 \
   --is-replicated \
   --replication=raft
 ```
 
 Important:
-- In replicated configs like `config/1leader_2followers/paxos6_shardidx0.yml`, `-P localhost` starts only one role group.
+- In replicated topology configs, `-P localhost` starts only one role group.
 - You must start peer role groups (for example `-P p1`, `-P p2`, and `-P learner`) concurrently, or startup can wait indefinitely.
 - `dbtest` now prints an explicit startup warning when replicated mode is launched with `-P localhost` to highlight this requirement.
 - Use `--startup-timeout-sec <seconds>` (or `MAKO_STARTUP_TIMEOUT_SEC`) to fail fast instead of hanging indefinitely.
@@ -289,6 +289,11 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 - `--is-replicated`
 
 Note: `dbtest` does not currently expose a standard `--help` output.
+
+There is intentionally no storage-backend option. Every `dbtest` path uses
+STO `Transaction` with MassTrans through `mbta_wrapper`; the original Silo/NDB
+transaction engine is retired and guarded against compilation. Paxos and Raft
+select replication only. `SiloRuntime` remains live runtime support.
 
 ## Transport Backends
 

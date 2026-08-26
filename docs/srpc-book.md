@@ -1020,8 +1020,8 @@ polymorphism" subsection below for the full pattern.
 All in-tree deptran payload types (`VecRecData`, `ViewData`,
 `KeyCmdBatchData`, `VecPieceData`, `TpcPrepareCommand`,
 `TpcCommitCommand`, `TpcEmptyCommand`, `TpcNoopCommand`,
-`TpcBatchCommand`, `ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`,
-`BulkPrepareLog`, `PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`,
+`TpcBatchCommand`, `ReplicatedDBCommand`, `BulkPrepareLog`, `PaxosPrepCmd`,
+`HeartBeatLog`, `SyncLogRequest`,
 `SyncLogResponse`, `SyncNoOpRequest`, `LogEntry`, `BulkPaxosCmd`,
 `SimpleRWCommand`) use the Serializable path.  Wire format is
 `[v32 kind][payload bytes]` for closed-set types and
@@ -1034,7 +1034,7 @@ open-set `AnyMessage` envelope.
 > `shared_ptr<Marshallable>`) are gone as of Workstream N L10f-2 step 5
 > (2026-05-05).  Production code uses `janus::Command`
 > (`SerializableEnvelope<MakoCommands>`) for closed-set commands and
-> `srpc::AnyMessage` for open-set graph payloads; both serialize
+> `srpc::AnyMessage` for open-set payloads; both serialize
 > through `pro::proxy<SerializableFacade>` value members with no
 > intermediate adapter or `shared_ptr<Marshallable>` storage.
 
@@ -1054,10 +1054,6 @@ if (auto* view = cmd.unpack<ViewData>()) {
 // Aliased shared_ptr — extends the envelope's storage refcount.
 auto sp = cmd.unpack_shared<ViewData>();
 ```
-
-For RCC graph envelopes (`RccGraph`, `EmptyGraph`) the access pattern
-uses `AnyMessage` directly (Workstream N L7).  See the AnyMessage
-subsection below.
 
 ### Bookmarks
 
@@ -1158,7 +1154,7 @@ proxy->load(reader);
 `SerializableProxy::save` emits only the payload bytes (no kind
 prefix); the kind tag is framed by the enclosing envelope —
 `SerializableEnvelope<TypeList>` (e.g. `janus::Command`) for
-closed-set commands, or `srpc::AnyMessage` for open-set graph
+closed-set commands, or `srpc::AnyMessage` for open-set
 payloads.  Both envelopes wrap the proxy as a value member; there is
 no `shared_ptr<Marshallable>` storage layer.
 
@@ -1207,8 +1203,8 @@ encoded payload (the holder-shaped proxy retains the original
 refcount).
 
 When to choose AnyMessage vs. closed-set TypeList:
-- **AnyMessage** for graph / data payloads (`RccGraph`, `EmptyGraph`),
-  versioned schemas, or any case where a service that doesn't know
+- **AnyMessage** for extensible data payloads, versioned schemas, or any case
+  where a service that doesn't know
   about a new type can still receive and dispatch the envelope. The
   Rust analogue is `typetag` (string tags via the `inventory` pattern);
   the protobuf analogue is `google.protobuf.Any` (type-URL).
@@ -1330,13 +1326,14 @@ Both forms compile and produce identical wire bytes.  As of Phase 3e
 references types with archive operators (`janus::Command` /
 `srpc::AnyMessage` via the L10c/L10f migrations, `Value` /
 `SimpleCommand` / `TxWorkspace` via Phase 4d-6, `TxReply` and
-`ParentEdge<RccTx>` via Phase 3e), so the additive emission compiles
+the former graph payloads via Phase 3e), so the additive emission compiles
 cleanly.  Use `--no-archive` to opt out (e.g. when generating against
 a custom `.rpc` that uses user types without archive overloads).
 
-The four in-tree generated headers (`rcc_rpc.h`, `helloworld.h`,
-`network.h`, `benchmark_service.h`) all carry archive operators;
-`rpcgen_compile_test.py` exercises both modes.
+The two tracked in-tree generated headers (`rcc_rpc.h` and
+`benchmark_service.h`) both carry archive operators. `rpcgen_compile_test.py`
+regenerates every schema, including the HelloWorld and network fixtures, in a
+temporary directory and exercises both modes.
 
 Status: the archive layer landed in five broad strokes.
 
@@ -1344,7 +1341,7 @@ Status: the archive layer landed in five broad strokes.
    `SerializableProxy` + registry, `rpcgen --archive` (now the
    default), `Marshal↔Archive` adapters (`MarshalSink` / `MarshalSource`),
    archive ops on `Value` / `SimpleCommand` / `TxWorkspace` /
-   `TxReply` / `ParentEdge<RccTx>` so every in-tree `.rpc` references
+   `TxReply` so every in-tree `.rpc` references
    archive-aware types.
 2. **Reactor TX/RX migration (Phase 3d)** — channel-mode response
    demux moved to `BufferSource`, request/reply lambdas typed as
@@ -1354,8 +1351,8 @@ Status: the archive layer landed in five broad strokes.
    collapsed back to a single archive-only path.  Every write-side
    caller in the production path now uses `BinaryWriteArchive&`.
 3. **Per-payload Serializable migration (Phase 4)** — every in-tree
-   deptran payload (`EmptyGraph`, the simple paxos control types,
-   `procedure.h` types, `SyncLogResponse`, `RccGraph`, `VecPieceData`,
+   deptran payload (the simple paxos control types, `procedure.h` types,
+   `SyncLogResponse`, `VecPieceData`,
    `LogEntry`, `BulkPaxosCmd`, `SimpleRWCommand`,
    `ReplicatedDBCommand`, the TPC commands) defines `save` / `load` /
    `kind` directly with no `Marshallable` inheritance.
@@ -1654,8 +1651,9 @@ Current codegen is typed-only for non-raw RPC methods:
 - Generated service classes do not inherit `srpc::Service`. They register via
   `Server::reg_service_typed(Box<T>)`, which wraps their concrete dispatch
   methods in the server's internal type-erasure shim.
-- All in-tree generated headers (`rcc_rpc.h`, `network.h`, `helloworld.h`) use
-  typed-only mode and all callsites use typed APIs.
+- The tracked deptran generated header (`rcc_rpc.h`) uses typed-only mode and
+  all live callsites use typed APIs. `helloworld.rpc` and `network.rpc` remain
+  as rpcgen compile fixtures whose outputs are generated temporarily.
 
 ### Generated Client Usage
 

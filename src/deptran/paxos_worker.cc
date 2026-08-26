@@ -4,8 +4,8 @@
 
 #include "paxos/server.h"
 #include "paxos/commo.h"
+#include "paxos/frame.h"
 #include "srpc/misc/serializable.hpp"
-#include "service.h"
 
 import std;
 
@@ -21,8 +21,17 @@ moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
+namespace {
+
+struct SyncLogCallbackState {
+  std::mutex mutex;
+  bool accepting_responses = true;
+  std::vector<rusty::Arc<SyncLogResponse>> responses;
+};
+
+}  // namespace
+
 // Registry keys come from each payload's explicit MakoCommands membership.
-static int volatile xx  = srpc::SerializableRegistry::reg<LogEntry>(LogEntry::static_kind());
 static int volatile xxx = srpc::SerializableRegistry::reg<BulkPaxosCmd>(BulkPaxosCmd::static_kind());
 static int volatile x4  = srpc::SerializableRegistry::reg<BulkPrepareLog>(BulkPrepareLog::static_kind());
 static int volatile x5  = srpc::SerializableRegistry::reg<HeartBeatLog>(HeartBeatLog::static_kind());
@@ -31,36 +40,11 @@ static int volatile x7  = srpc::SerializableRegistry::reg<SyncLogResponse>(SyncL
 static int volatile x8  = srpc::SerializableRegistry::reg<SyncNoOpRequest>(SyncNoOpRequest::static_kind());
 static int volatile x9  = srpc::SerializableRegistry::reg<PaxosPrepCmd>(PaxosPrepCmd::static_kind());
 
-static int shared_ptr_apprch = 1;
-
-// LogEntry::save/load. Wire format
-// byte-for-byte preserved from the legacy to_marshal/from_marshal
-// pair. Encode: int length, then the operation_test bytes (as a
-// length-prefixed std::string) when present, else log_entry.
-// Decode: int length, then std::string into log_entry (mirrors the
-// effective branch of the legacy from_marshal — the
-// `false && shared_ptr_apprch` arm was unreachable).
-void LogEntry::save(BinaryWriteArchive& ar) const {
-  srpc::Serialize_::serialize(length, ar);
-  if (shared_ptr_apprch) {
-    if (operation_test.get()) {
-      srpc::Serialize_::serialize(std::string(operation_test.get(), length), ar);
-    } else {
-      srpc::Serialize_::serialize(log_entry, ar);
-    }
-  } else {
-    srpc::Serialize_::serialize(log_entry, ar);
-  }
-}
-
-void LogEntry::load(BinaryReadArchive& ar) {
-  srpc::Deserialize_::deserialize(length, ar);
-  srpc::Deserialize_::deserialize(log_entry, ar);
-}
-
 void PaxosWorker::SetupBase() {
   auto config = Config::GetConfig();
-  rep_frame_ = Frame::GetFrame(config->replica_proto_);
+  rep_frame_ = dynamic_cast<MultiPaxosFrame*>(
+      Frame::GetFrame(config->replica_proto_));
+  verify(rep_frame_ != nullptr);
   rep_frame_->site_info_ = site_info_;
   rep_sched_ = rep_frame_->CreateScheduler();
   rep_sched_->loc_id_ = site_info_->locale_id;
@@ -89,13 +73,13 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
         // Note: rep_commo_ should be initialized before workload starts
         // If workload starts before all sites connect, this will be skipped
         if (rep_commo_ != nullptr) {
-          ((MultiPaxosCommo*)rep_commo_)->ForwardToLearner(site_info_->partition_id_,
-                                         slot_id,
-                                         cur_epoch,  // Use PaxosWorker's cur_epoch instead of coordinator
-                                         md,
-                                         [](uint64_t slot, ballot_t ballot) {
-                                           //Log_info("received a ack from the learner, slot: {}, ballot: {}", slot, ballot);
-                                         });
+          rep_commo_->ForwardToLearner(
+              site_info_->partition_id_, slot_id,
+              cur_epoch,  // Use PaxosWorker's cur_epoch instead of coordinator
+              md,
+              [](uint64_t slot, ballot_t ballot) {
+                //Log_info("received a ack from the learner, slot: {}, ballot: {}", slot, ballot);
+              });
         }
       }
 
@@ -189,10 +173,10 @@ void PaxosWorker::SetupService() {
 void PaxosWorker::SetupCommo() {
   if (rep_frame_) {
     // Use clone() to preserve svr_poll_thread_worker_ for later use by GetPollThread()
-    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
-    if (rep_commo_) {
-      rep_commo_->loc_id_ = site_info_->locale_id;
-    }
+    auto* communicator =
+        rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
+    rep_commo_ = dynamic_cast<MultiPaxosCommo*>(communicator);
+    verify(rep_commo_ != nullptr);
     rep_sched_->commo_ = rep_commo_;
   }
   // removed commented-out
@@ -235,7 +219,7 @@ void PaxosWorker::WaitForShutdown() {
     // Arc auto-releases on destruction
 
     // removed `for_each_service(...) { if
-    // (auto* s = dynamic_cast<DepTranServiceImpl*>(...)) { auto&
+    // (auto* s = dynamic_cast<ClassicServiceImpl*>(...)) { auto&
     // recorder = s->recorder_; if (recorder) { Log_info(...) } } }`
     // block — `Service::recorder_` field is always nullptr (now
     // gone); the `if (recorder)` branch was unreachable.
@@ -281,11 +265,12 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
 }
 
 inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
-    auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0));
-    coord.get()->par_id_ = site_info_->partition_id_;
-    coord.get()->loc_id_ = site_info_->locale_id;
+    auto coord = shared_ptr<BulkCoordinatorMultiPaxos>(
+        rep_frame_->CreateBulkCoordinator());
+    coord->par_id_ = site_info_->partition_id_;
+    coord->loc_id_ = site_info_->locale_id;
 
-    coord.get()->BulkSubmit(sp_m, [this, cnt]() {
+    coord->BulkSubmit(sp_m, [this, cnt]() {
       this->n_current += cnt;
       if(this->n_current >= this->n_tot)this->finish_cond.notify_all();
     });
@@ -300,36 +285,39 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
 // also clears the rcc_rpc.proto definitions.
 
 int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
-  ballot_t received_epoch = -1;
-  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
-  coord->par_id_ = site_info_->partition_id_;
-  coord->loc_id_ = site_info_->locale_id;
-  bool done = false;
   auto es_pww = es_pw;
-  vector<rusty::Arc<SyncLogResponse>> responses;
+  auto callback_state = std::make_shared<SyncLogCallbackState>();
   // @unsafe { boundary copy: shared_ptr<SyncLogRequest> param -> Arc envelope }
-  auto sp_quorum = coord->commo_->BroadcastSyncLog(site_info_->partition_id_,
-                                                   rusty::Arc<SyncLogRequest>::make(*sync_log_req),
-                                                   [&received_epoch, &done, es_pww, &responses](shared_ptr<janus::Command> md,
-                                                                                    ballot_t ballot,
-                                                                                    int resp_type) {
-    if(!resp_type)
+  auto sp_quorum = rep_commo_->BroadcastSyncLog(
+      site_info_->partition_id_,
+      rusty::Arc<SyncLogRequest>::make(*sync_log_req),
+      [callback_state, es_pww](shared_ptr<janus::Command> md,
+                               ballot_t ballot,
+                               int resp_type) {
+    if (!resp_type) {
       es_pww->step_down(ballot);
-    else{
-      if(!done){
-        rusty::Option<rusty::Arc<SyncLogResponse>> x{rusty::None};
-        if (md != nullptr) {
-          x = marshallable_cast<SyncLogResponse>(*md);
-        }
-        // last use — unwrap() intentionally moves the Arc out.
-        responses.emplace_back(x.unwrap());
-      } else{
-        return;
-      }
+      return;
     }
+
+    rusty::Option<rusty::Arc<SyncLogResponse>> response{rusty::None};
+    if (md != nullptr) {
+      response = marshallable_cast<SyncLogResponse>(*md);
+    }
+    verify(response.is_some());
+
+    std::lock_guard<std::mutex> lock(callback_state->mutex);
+    if (!callback_state->accepting_responses) {
+      return;
+    }
+    callback_state->responses.emplace_back(response.unwrap());
   });
   sp_quorum->wait();
-  done = true;
+  vector<rusty::Arc<SyncLogResponse>> responses;
+  {
+    std::lock_guard<std::mutex> lock(callback_state->mutex);
+    callback_state->accepting_responses = false;
+    responses = std::move(callback_state->responses);
+  }
   if (sp_quorum->yes()) {
     map<pair<int,slotid_t>, rusty::Arc<janus::Command>> commited_slots;
     for(int i = 0; i < responses.size(); i++){
@@ -381,6 +369,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       //      std::cout << sync_cmds[i]->slots[kk] << " ";
       //std::cout << std::endl;
       auto pw = pxs_workers_g[i];
+      verify(pw->rep_commo_ != nullptr);
       auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i,
                                                            rusty::Arc<BulkPaxosCmd>::make(std::move(sync_cmds[i])),
                                                            [es_pww](ballot_t ballot, int valid){
@@ -396,7 +385,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
     }
     return -1;
   }
-  return received_epoch;
+  return -1;
 }
 
 // removed `PaxosWorker::SendSyncNoOpLog` —
@@ -523,22 +512,15 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { /
 }
 
 inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
-  static cooid_t cid{1};
-  static id_t id{1};
   verify(rep_frame_ != nullptr);
-  auto coord = rep_frame_->CreateCoordinator(cid++,
-                                             Config::GetConfig(),
-                                             0,
-                                             rusty::None,
-                                             id++,
-                                             nullptr);
+  auto coord = rep_frame_->CreateCoordinator();
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
   slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
-  coord->set_slot(x);
-  coord->assignCmd(sp_m);
+  coord->SetSlot(x);
   if(stop_flag != true) {
+    coord->SetCommand(sp_m);
     auto sp_coo = shared_ptr<Coordinator>(coord);
     vector<shared_ptr<Coordinator>> curr2;
     curr2.push_back(sp_coo);

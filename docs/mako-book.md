@@ -155,16 +155,13 @@ mako/
     deptran/          # Transaction protocol implementations
       paxos/          # Paxos consensus
       raft/           # Raft consensus
-      2pl/            # Two-phase locking
       occ/            # Optimistic concurrency control
-      rcc/            # Rococo protocol
     mako/             # Mako core
       masstree/       # Masstree storage engine
       lib/            # Transport backends, configuration
       benchmarks/     # Benchmark harness (TPC-C, TPC-A, RW)
     srpc/              # RPC framework and fibers
     bench/            # Benchmark workload implementations
-    memdb/            # In-memory datastore
   config/             # YAML configuration files
   ci/                 # CI test scripts
   examples/           # Example scripts and tests
@@ -789,8 +786,8 @@ t->put(lcdf::Str("k"), "value");   // same code either way
 - `masstree_ordered_index` — plain Masstree (L1), no transactions;
   owns value memory with RCU-deferred frees; the transactional
   virtuals abort loudly.
-- `mbta_ordered_index` — Silo's table; each non-txn op is an internal
-  one-op OCC transaction (Encode/strip handled internally).
+- `mbta_ordered_index` — STO/MassTrans transactional table; each non-txn op
+  is an internal one-op OCC transaction (Encode/strip handled internally).
 - `mbta_sharded_ordered_index` — per-key routing; remote keys travel
   self-contained non-txn RPCs, and writes on a replicated leader
   reach the replication log through the normal commit path.
@@ -1037,7 +1034,7 @@ Port assignment: Shard N uses base_port + N*100 (e.g., 31000, 31100, 31200).
 | Binary | Description |
 |--------|-------------|
 | `build/dbtest` | Main Mako binary (Paxos or Raft) |
-| `build/deptran_server` | Standalone Raft server |
+| `build/deptran_server` | Raft lab harness (`make raft-test` only) |
 | `build/simpleRaft` | Simple Raft replication test |
 | `build/test_rocksdb_persistence` | RocksDB persistence test |
 
@@ -1270,7 +1267,7 @@ jemalloc for optimized allocation; per-CPU memory allocators for reduced content
 | Submodule not found | `git submodule update --init --recursive` |
 | Out of memory during build | `make -j2` (reduce parallelism) |
 | Borrow checker parse errors | Ensure LIBCLANG_PATH matches system clang version |
-| Raft leader churn | Increase heartbeat interval in `config/none_raft.yml` |
+| Raft leader churn | Increase `MAKO_RAFT_HEARTBEAT_INTERVAL_US` |
 | Hanging test processes | `./ci/ci_mako_raft.sh cleanup` |
 
 ### Debugging

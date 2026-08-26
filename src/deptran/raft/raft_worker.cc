@@ -7,11 +7,12 @@
 #include "server.h"
 #include "commo.h"
 #include "service.h"
+#include "application_log.h"
 #include "../config.h"
-#include "../paxos_worker.h"  // Reuse LogEntry marshalling for raw log payloads
+#include "../legacy_raft_log_payload.h"
 #include "../paxos/commo.h"   // PaxosStatus enum reused by Mako watermark callbacks
-#include "../classic/tpc_command.h"  // TpcCommitCommand for batch optimization
-#include "../procedure.h"            // VecPieceData and SimpleCommand
+#include "../replication_log_entry.h"
+#include "../tpc_command.h"  // TpcCommitCommand for batch optimization
 
 import std;
 
@@ -383,30 +384,21 @@ rusty::Arc<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
     txnid_t tx_id,
     uint32_t par_id) {
 
-  auto vpd = rusty::Arc<VecPieceData>::make();
-  // @unsafe - unique-owner mutation window (factory-fresh Arc).
-  vpd.get_mut().unwrap().sp_vec_piece_data_ =
-      std::make_shared<vector<shared_ptr<SimpleCommand>>>();
-
-  auto simple_cmd = std::make_shared<SimpleCommand>();
-
-  simple_cmd->input.values_ = std::make_shared<map<int32_t, Value>>();
-  (*simple_cmd->input.values_)[0] = Value(std::string(log_entry, length));
-  simple_cmd->input.keys_.insert(0);
-  // Store the partition id so callback routing is always explicit.
-  simple_cmd->partition_id_ = par_id;
-
-  vpd->sp_vec_piece_data_->push_back(simple_cmd);
+  LogEntry raw_log;
+  verify(raft::EncodeApplicationLog(log_entry, length, par_id,
+                                    &raw_log.log_entry));
+  raw_log.length = static_cast<int>(raw_log.log_entry.size());
 
   auto tpc_cmd = rusty::Arc<TpcCommitCommand>::make();
   // @unsafe - unique-owner mutation window (factory-fresh Arc).
   {
     auto& mut_cmd = tpc_cmd.get_mut().unwrap();
     mut_cmd.tx_id_ = tx_id;
-    mut_cmd.cmd_ = std::move(vpd);
+    mut_cmd.term = 0;
+    mut_cmd.cmd_ = rusty::Arc<LogEntry>::make(std::move(raw_log));
   }
 
-  Log_debug("[RAFT-LOG-CMD] Created TpcCommitCommand tx_id={} with {} bytes (Mako/test payload)",
+  Log_debug("[RAFT-LOG-CMD] Created TpcCommitCommand tx_id={} with {} application bytes",
             tx_id, length);
 
   return tpc_cmd;
@@ -431,7 +423,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   static std::atomic<txnid_t> next_tx_id{1};
   txnid_t tx_id = next_tx_id.fetch_add(1);
 
-  // Use the production helper to create proper TpcCommitCommand{cmd_=VecPieceData}
+  // Use the production helper to create TpcCommitCommand{cmd_=LogEntry}.
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
 
   uint64_t index = 0;
@@ -590,58 +582,62 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 
   // @unsafe
   {
-  // Extract log payload from TpcCommitCommand{cmd_=VecPieceData}
-  // This matches the structure created by CreateRaftLogCommand() helper
+  // Extract the application payload from TpcCommitCommand. New entries carry
+  // a replication-native LogEntry; the MDB-free LegacyVecPieceData reader
+  // remains available solely for logs persisted by older Mako builds.
   const char* log = nullptr;
   int len = 0;
+  uint32_t par_id = 0;
+  // Owns legacy bytes until both the callback and any safety-failure copy
+  // below have finished consuming `log`.
+  std::string legacy_payload;
 
   // Try TpcCommitCommand (production path with RAFT_BATCH_OPTIMIZATION)
   const auto tpc_cmd = marshallable_cast<TpcCommitCommand>(md);
   // tpc_cmd is Option<Arc<TpcCommitCommand>>; the payload's cmd_ is
   // Command; has_value() for null
   // check; marshallable_cast<T>(Command&) overload handles the cast.
-  if (tpc_cmd.is_some() && tpc_cmd.unwrap()->cmd_.has_value()) {
-    // Extract VecPieceData that contains the raw bytes
-    const auto vpd = marshallable_cast<VecPieceData>(tpc_cmd.unwrap()->cmd_);
-    verify(vpd.is_some());
-    if (vpd.is_some() && vpd.unwrap()->sp_vec_piece_data_ && !vpd.unwrap()->sp_vec_piece_data_->empty()) {
-      // Get the first SimpleCommand
-      auto simple_cmd = (*vpd.unwrap()->sp_vec_piece_data_)[0];
-      if (simple_cmd && simple_cmd->input.values_ && !simple_cmd->input.values_->empty()) {
-        // Extract the raw bytes stored as STR value
-        auto& first_val = simple_cmd->input.values_->begin()->second;
-        if (first_val.get_kind() == Value::STR) {
-          const std::string& payload = first_val.get_str();
-          log = payload.c_str();
-          len = static_cast<int>(payload.size());
-          Log_debug("[RAFT-CALLBACK] Extracted log from VecPieceData (tx_id={}): len={}",
-                    tpc_cmd.unwrap()->tx_id_, len);
-        } else {
-          Log_error("[RAFT-CALLBACK] VecPieceData value is not STR type for slot {}", slot_id);
-          return status;
-        }
-      } else {
-        Log_error("[RAFT-CALLBACK] VecPieceData SimpleCommand has no values for slot {}", slot_id);
-        return status;
-      }
-    } else {
-      Log_error("[RAFT-CALLBACK] TpcCommitCommand.cmd_ is not VecPieceData for slot {}", slot_id);
-      return status;
-    }
-  } else {
+  if (!tpc_cmd.is_some() || !tpc_cmd.unwrap()->cmd_.has_value()) {
     Log_error("[RAFT-CALLBACK] Command is not TpcCommitCommand for partition {}, slot {}",
               site_info_ ? site_info_->partition_id_ : -1, slot_id);
     return status;
   }
 
-  // Extract par_id from the committed entry's SimpleCommand::partition_id_.
-  uint32_t par_id = 0;
-  if (tpc_cmd.is_some() && tpc_cmd.unwrap()->cmd_.has_value()) {
-    const auto vpd_inner = marshallable_cast<VecPieceData>(tpc_cmd.unwrap()->cmd_);
-    verify(vpd_inner.is_some());
-    if (vpd_inner.is_some() && vpd_inner.unwrap()->sp_vec_piece_data_ && !vpd_inner.unwrap()->sp_vec_piece_data_->empty()) {
-      par_id = (*vpd_inner.unwrap()->sp_vec_piece_data_)[0]->partition_id_;
+  const auto& inner = tpc_cmd.unwrap()->cmd_;
+  if (inner.kind_ == LogEntry::static_kind()) {
+    const auto raw_log = marshallable_cast<LogEntry>(inner);
+    if (!raw_log.is_some() || raw_log.unwrap()->length < 0 ||
+        static_cast<size_t>(raw_log.unwrap()->length) !=
+            raw_log.unwrap()->log_entry.size() ||
+        !raft::DecodeApplicationLog(raw_log.unwrap()->log_entry, &log, &len,
+                                    &par_id)) {
+      Log_error("[RAFT-CALLBACK] Invalid application LogEntry for slot {}",
+                slot_id);
+      return status;
     }
+    Log_debug("[RAFT-CALLBACK] Extracted application LogEntry (tx_id={}): len={}",
+              tpc_cmd.unwrap()->tx_id_, len);
+  } else if (inner.kind_ == LegacyVecPieceData::static_kind()) {
+    const auto legacy = marshallable_cast<LegacyVecPieceData>(inner);
+    if (!legacy.is_some() ||
+        !legacy.unwrap()->TryGetApplicationLog(&legacy_payload, &par_id)) {
+      Log_error("[RAFT-CALLBACK] Invalid legacy VecPieceData for slot {}",
+                slot_id);
+      return status;
+    }
+    if (legacy_payload.size() >
+        static_cast<size_t>(std::numeric_limits<int>::max())) {
+      Log_error("[RAFT-CALLBACK] Legacy VecPieceData payload is too large for slot {}",
+                slot_id);
+      return status;
+    }
+    log = legacy_payload.data();
+    len = static_cast<int>(legacy_payload.size());
+    Log_info("[RAFT-CALLBACK] Decoded legacy VecPieceData at slot {}", slot_id);
+  } else {
+    Log_error("[RAFT-CALLBACK] Unsupported inner command kind {} for slot {}",
+              inner.kind_, slot_id);
+    return status;
   }
 
   bool am_leader = IsLeader(par_id);

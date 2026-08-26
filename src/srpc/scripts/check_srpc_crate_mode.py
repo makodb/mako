@@ -597,8 +597,8 @@ EXPECTED_IMPORTS = {
     "srpc.frame_codec": ["srpc.internal_protocol"],
     "srpc.serializable": [
         # Order pins the literal `import` sequence in the generated .cppm.
-        # `rusty` moved ahead of the crate modules in the rrr->srpc rename:
-        # "rrr" sorted before "rusty", "srpc" sorts after it.
+        # `rusty` moved ahead of the crate modules in the srpc->srpc rename:
+        # "srpc" sorted before "rusty", "srpc" sorts after it.
         "rusty",
         "srpc.basetypes",
         "srpc.debugging",
