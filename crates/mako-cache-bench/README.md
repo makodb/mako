@@ -19,8 +19,13 @@ The comparison is deliberately explicit about semantics. Only size-one reads
 and writes exercise a common point-operation contract. Raw RocksDB provides an
 atomic write batch but no OCC read/modify/write transaction. `mrx::WriteBatch`
 is non-atomic and has no OCC. Multi-key and RMW rows therefore remain useful
-performance baselines but are marked `weaker_baseline`; they are never
-presented as equivalent transactions.
+performance baselines but carry precise `weaker_*_baseline` semantic labels;
+they are never presented as equivalent transactions.
+
+The accepted zoo-002 run is retained in the
+[Milestone 1 acceptance record](../../docs/mako-cache-milestone1-acceptance.md),
+with its complete
+[machine-readable report](../../docs/benchmarks/mako-cache-milestone1-zoo-002.json).
 
 The asynchronous arms share a fixed `2^18`-mutation capacity budget. MRX
 uses `2^18` mutation-ticket slots; Mako uses
@@ -106,10 +111,12 @@ The timed `ack` interval ends when foreground calls return. The separate
 `ack+applied` phase additionally waits for the asynchronous cache barrier.
 The reported drain is one phase barrier, not a per-transaction applied-latency
 percentile. Queue capacities and their units are recorded in every sample.
-It intentionally does not call RocksDB WAL sync or memtable flush. A memtable
-flush occurs only after timing, so logical and allocated backend bytes can be
-inspected consistently. Commit-record keys and values are reported separately
-because Milestone 1 does not reclaim that log. Recovery numbers are warm-cache measurements: the
-harness does not mutate global kernel page-cache state on a shared machine,
-and recovery follows the uniform post-timing memtable flush used for backend
-storage accounting.
+The harness issues no explicit RocksDB WAL sync or memtable flush while timing.
+Automatic RocksDB background flush/compaction is neither disabled nor
+instrumented and remains part of this default-profile measurement. The harness
+does issue a uniform explicit flush after timing so logical and allocated
+backend bytes can be inspected consistently. Commit-record keys and values are
+reported separately because Milestone 1 does not reclaim that log. Recovery
+numbers are warm-cache measurements: the harness does not mutate global kernel
+page-cache state on a shared machine, and recovery follows that post-timing
+flush.

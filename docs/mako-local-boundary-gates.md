@@ -12,9 +12,10 @@ The first all-green record below completes the executable Phase 1A-1D boundary
 gate. The separate Item 5 record completes Phase 1F for the current
 asynchronous contract. Subsequent closure work resolved the remaining
 Phase 1B-1E contract items described below. The ABI intentionally continues to
-report revision 0 until a separate promotion action, and Milestone 1 final
-acceptance still requires the comparative zoo-2 benchmark. Historical Item 4
-and Item 5 evidence remains tied to the exact commits named in its records.
+report revision 0 until a separate promotion action. Milestone 1 final
+acceptance was completed by the comparative zoo-2 benchmark on 2026-08-26.
+Historical Item 4 and Item 5 evidence remains tied to the exact commits named
+in its records.
 
 ## Current Milestone 1 closure status
 
@@ -59,12 +60,13 @@ precondition, not a mutex-enforced feature. A future multi-namespace supervisor
 must discover and scan every backend and floor the shared timestamp authority
 before any namespace admits work.
 
-The only open Milestone 1 acceptance row is intentionally left pending for the
-final comparative run; this document does not invent or pre-approve its result:
+The final Milestone 1 acceptance row is complete. The linked record retains the
+methodology, all medians, the machine-readable report, and the significant
+concurrent-write scaling limitation exposed by the run:
 
 | Gate | Candidate | Host | Result | Evidence |
 | --- | --- | --- | --- | --- |
-| Cache-level throughput, aborts, retry-inclusive p50/p99, drain/recovery time, and log/backend amplification versus `mrx` and raw RocksDB | To be recorded after the implementation commit is fixed | `zoo-002` (`zoo-2`) with recorded CPU affinity | **PENDING** | Add the exact command, hardware/load metadata, native build fingerprint, methodology, machine-readable artifact, and acceptance summary here or in a linked benchmark record. |
+| Cache-level throughput, aborts, retry-inclusive p50/p99, drain/recovery time, and log/backend amplification versus `mrx` and raw RocksDB | `6574cf47c3233f208d5b2e68790e411c2ea3debe` | `zoo-002` (`zoo-2`), CPUs 0-15 | **PASS** | [Milestone 1 acceptance record](mako-cache-milestone1-acceptance.md) and [1,260-sample JSON](benchmarks/mako-cache-milestone1-zoo-002.json), SHA-256 `b0298c614fad1bcb8cafd5df60a61ea500c8e95b616d5646b97baa5c843111e0`. PASS is evidence/correctness acceptance, not a performance SLA; the record highlights poor concurrent-write scaling. |
 
 ## Memory and thread safety
 
@@ -405,7 +407,7 @@ Toolchain: Rust/Cargo 1.97.1. Native hook build identity:
 
 This all-green record completes Item 5 and Phase 1F for the current
 single-machine, asynchronously applied contract. The subsequent Phase 1B-1E
-closure work is summarized at the top of this document; final Milestone 1
-acceptance is pending only the explicitly marked zoo-2 comparative benchmark.
-No current phase adds a disk-sync guarantee, recovers an unflushed in-memory
-tail, or adds distributed routing, 2PC, or replication.
+closure work is summarized at the top of this document. The final zoo-2
+comparative row above completes Milestone 1 acceptance. No current phase adds
+a disk-sync guarantee, recovers an unflushed in-memory tail, or adds
+distributed routing, 2PC, or replication.

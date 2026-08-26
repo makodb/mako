@@ -673,9 +673,11 @@ separate designs.
 
 ### Milestone 1 final acceptance gate
 
-The functional and contract work is complete. Final Milestone 1 acceptance is
-waiting only for the comparative zoo-2 benchmark row below; no benchmark
-result is claimed by this document yet.
+The functional and contract work is complete. The comparative zoo-2 benchmark
+also passed its evidence and correctness gate on 2026-08-26. The retained
+[Milestone 1 acceptance record](../mako-cache-milestone1-acceptance.md) reports
+the full matrix and its important concurrent-write scaling limitation; PASS is
+not a claim that Mako beat a predeclared performance SLA.
 
 - [x] Every Phase 1A-1D boundary gate is green, including the resolved
       Phase 1C/1D freeze choices.
@@ -693,12 +695,12 @@ result is claimed by this document yet.
       unapplied in-memory tail. A machine or power failure may additionally
       lose an applied RocksDB WAL tail that was accepted with `sync=false`;
       `AppliedWatermark` never claims otherwise.
-- [ ] On zoo-2, measure throughput, abort rate, retry-inclusive p50/p99,
+- [x] On zoo-2, measure throughput, abort rate, retry-inclusive p50/p99,
       acknowledgement-to-application drain, recovery time, and log/backend
       amplification against both the current `mrx` cache and raw RocksDB.
       Record the candidate commit, build fingerprint, exact command, hardware,
       CPU affinity, methodology, machine-readable artifact, and acceptance
-      result here or in a linked Milestone 1 benchmark record.
+      result in the linked Milestone 1 acceptance record.
 
 ## Milestone 2: distributed Mako with C++ Silo participants
 
@@ -790,9 +792,11 @@ retains the evidence. The remaining Phase 1B-1E contract items are now
 implemented: explicit isolation selection, the final options/TLS/output/lifetime
 choices, compile-fail ownership checks, the production fixed-worker/retry
 adapter, and integrated overload/shutdown/exhaustion acceptance tests. Phase
-1G eviction is explicitly deferred. The only remaining Milestone 1 acceptance
-action is the comparative zoo-2 benchmark. Inside-RocksDB instrumentation is
-intentionally outside this milestone.
+1G eviction is explicitly deferred. The comparative zoo-2 gate is complete on
+candidate `6574cf47c`; its
+[acceptance record](../mako-cache-milestone1-acceptance.md) retains the raw
+artifact and reports the observed concurrent-write scaling cost.
+Inside-RocksDB instrumentation is intentionally outside this milestone.
 
 1. The revision-0 operation/status contract and numeric reservations 0 through
    19 are now published and mechanically checked across the C header, C++
@@ -852,6 +856,7 @@ intentionally outside this milestone.
    a separate durability milestone. They do not block beginning the
    distributed Rust port once the local transaction and ordered-application
    contract passes its gate.
-7. Run the final cache-level comparative benchmark on zoo-2 and retain its
-   machine-readable evidence. Until that row is green, describe Milestone 1 as
-   functionally complete but not finally accepted.
+7. The final cache-level comparative benchmark completed on zoo-2 on
+   2026-08-26. Its machine-readable evidence and independently checked medians
+   are retained in the linked acceptance record. Milestone 1 is finally
+   accepted within its explicitly single-machine, asynchronous scope.
