@@ -260,8 +260,8 @@ pub struct BoxEvent<Type> {
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
-    pub content_: RefCell<Type>,
-    pub is_set_: Cell<bool>,
+    pub content_: rusty::Mutex<Type>,
+    pub is_set_: rusty::sync::atomic::AtomicBool,
 }
 
 impl<Type: Clone + Default + 'static> BoxEvent<Type> {
@@ -297,7 +297,7 @@ impl<Type: Clone + Default + 'static> EventPollable for BoxEvent<Type> {
         event_test_impl(self)
     }
     fn is_ready(&self) -> bool {
-        self.is_set_.get()
+        self.is_set_.load(rusty::sync::atomic::Ordering::Acquire)
     }
     fn log(&self) {}
     fn status(&self) -> EventStatus {
@@ -337,32 +337,36 @@ fn boxevent_make<Type: Clone + Default + 'static>() -> Arc<BoxEvent<Type>> {
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<BoxEvent<Type>>::new(),
-        content_: RefCell::new(Default::default()),
-        is_set_: Cell::new(false),
+        content_: rusty::Mutex::new(Default::default()),
+        is_set_: rusty::sync::atomic::AtomicBool::new(false),
     });
     event_state_seed(&sp.state_);
     sp
 }
 
-// Returns the slot payload by value (copy out of the RefCell).
+// Returns the slot payload by value while serializing with a foreign setter.
 fn boxevent_get<Type: Clone>(ev: &BoxEvent<Type>) -> Type {
-    let g = ev.content_.borrow();
+    let g = ev.content_.lock().unwrap();
     (*g).clone()
 }
 
 fn boxevent_set<Type: Clone + Default + 'static>(ev: &BoxEvent<Type>, c: &Type) {
-    ev.is_set_.set(true);
     {
-        let mut g = ev.content_.borrow_mut();
+        let mut g = ev.content_.lock().unwrap();
         *g = c.clone();
+        // Publish readiness only after the protected payload is complete.
+        ev.is_set_.store(true, rusty::sync::atomic::Ordering::Release);
     }
-    ev.test();
+    // Event status, weak Fiber state, and reactor queues are owner-thread-only.
+    // A foreign setter publishes the payload; the owner's normal waiting-event
+    // scan observes readiness and performs the wakeup itself.
+    if rusty::thread::current_id() == ev.owner_thread_ { ev.test(); }
 }
 
 fn boxevent_clear<Type: Default>(ev: &BoxEvent<Type>) {
-    ev.is_set_.set(false);
-    let mut g = ev.content_.borrow_mut();
+    let mut g = ev.content_.lock().unwrap();
     let _old = core::mem::take(&mut *g);
+    ev.is_set_.store(false, rusty::sync::atomic::Ordering::Release);
 }
 
 #[repr(C)]
@@ -1484,8 +1488,17 @@ impl Reactor {
                     if ready_events.len() > n_before {
                         found_ready_events = true;
                     }
+                    // A timeout wakes its waiter while deliberately preserving
+                    // EventStatus::TIMEOUT for the resumed fiber to inspect.
+                    // It is nevertheless terminal and must leave the polling
+                    // queue.  Retaining it here leaks one Arc per timed wait
+                    // and makes every subsequent reactor pass rescan all past
+                    // timeouts. Short waits under saturation can hit this path
+                    // when their deadline passes between the readiness scan
+                    // above and check_timeout below.
                     waiting_guard.retain(move |ev: &Arc<dyn EventPollable>| -> bool {
-                        (*ev).status() != EventStatus::DONE
+                        let status = (*ev).status();
+                        status != EventStatus::DONE && status != EventStatus::TIMEOUT
                     });
                 }
                 {
@@ -1504,7 +1517,8 @@ impl Reactor {
                         found_ready_events = true;
                     }
                     composite_guard.retain(move |ev: &Arc<dyn EventPollable>| -> bool {
-                        (*ev).status() != EventStatus::DONE
+                        let status = (*ev).status();
+                        status != EventStatus::DONE && status != EventStatus::TIMEOUT
                     });
                 }
                 if do_check_timeout {
@@ -3720,12 +3734,9 @@ fn quorum_event_finalize(qe: &QuorumEvent, timeout: u64,
             // Didn't receive all RPC replies.
             let dr: &mut QuorumDanglingVec = &mut dangling_rpc;
             let _ret = finalize_func(dr);
-            // Drain guard: a TIMEOUT'd event is never evicted by the
-            // reactor loop (extract takes READY, retain drops DONE), so
-            // a registered finalize_event_ would otherwise linger in the
-            // queues forever at broadcast rate. Mark it DONE here (we
-            // run on the owner thread) so the next pass evicts and
-            // prune can free it.
+            // This callback has consumed the timeout. Mark its private event
+            // DONE so it cannot be reused; both DONE and TIMEOUT are terminal
+            // and leave the reactor polling queues on the next pass.
             final_ev.status_.set(EventStatus::DONE);
         }
     });

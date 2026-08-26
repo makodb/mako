@@ -55,6 +55,19 @@ private:
   std::function<void(const char*, int)> callback_ = nullptr;
   std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
 
+  // The public helper API registers callbacks before Raft starts and expects
+  // them to remain associated with their requested role across elections.
+  // Keep those callbacks per partition; the two fields above remain the
+  // role-neutral compatibility path for direct RaftWorker callers.
+  std::map<uint32_t, std::function<void(const char*, int)>>
+      leader_apply_callbacks_by_partition_;
+  std::map<uint32_t, std::function<void(const char*, int)>>
+      follower_apply_callbacks_by_partition_;
+  std::map<uint32_t, std::function<void(const char*&, int, int)>>
+      leader_partition_apply_callbacks_by_partition_;
+  std::map<uint32_t, std::function<void(const char*&, int, int)>>
+      follower_partition_apply_callbacks_by_partition_;
+
   // RAFT CHANGE: Store separate callbacks for leader and follower roles
   // The Next() method will choose which to call based on current leadership
   std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char*>>&)>
@@ -68,6 +81,8 @@ private:
   std::map<uint32_t, watermark_callback_t> leader_callbacks_by_partition_;
   std::map<uint32_t, watermark_callback_t> follower_callbacks_by_partition_;
   std::map<uint32_t, std::queue<std::tuple<int, int, int, int, const char*>>> un_replay_logs_by_partition_;
+  mutable std::mutex callback_registry_mutex_;
+  bool learner_callback_bound_{false};
 
   std::mutex finish_mutex_{};
   std::condition_variable finish_cond_{};
@@ -140,6 +155,16 @@ public:
   void SetupService();
   // @unsafe - uses raw pointers
   void SetupCommo();
+  // Verify that every partition has real callbacks for both Raft roles, then
+  // bind the learner trampoline exactly once. Must run before EnsureSetup().
+  bool PrepareForStartup(const std::vector<uint32_t>& partition_ids);
+  // Wait without changing listener admission; raft_main_helper uses this to
+  // form one all-workers startup barrier.
+  bool WaitForStartup();
+  // Open or close this worker's shared application-RPC admission gate.
+  void SetRpcAdmissionReady(bool ready);
+  // Wait for Raft recovery/replay, then open the shared RPC listener.
+  bool FinishStartup();
   // @unsafe - uses new, raw pointers
   void SetupHeartbeat();
 
@@ -179,6 +204,19 @@ public:
   // @safe - stores callback for later invocation
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)> cb);
 
+  // Role-aware forms used by raft_main_helper. Unlike the legacy methods,
+  // these remain valid when leadership changes after registration.
+  void register_leader_apply_callback_for_partition(
+      uint32_t par_id, std::function<void(const char*, int)> cb);
+  void register_follower_apply_callback_for_partition(
+      uint32_t par_id, std::function<void(const char*, int)> cb);
+  void register_leader_partition_apply_callback_for_partition(
+      uint32_t par_id,
+      std::function<void(const char*&, int, int)> cb);
+  void register_follower_partition_apply_callback_for_partition(
+      uint32_t par_id,
+      std::function<void(const char*&, int, int)> cb);
+
   // RAFT CHANGE: Separate registration for leader and follower callbacks
   // @safe - stores callback for later invocation
   void register_leader_callback_par_id_return(
@@ -210,7 +248,7 @@ public:
   // take janus::Command (matches RegLearnerAction
   // signature in deptran/scheduler.h).  Body unwraps via `md.inner()` /
   // `marshallable_cast<T>(md)` overload as needed.
-  int Next(int slot, janus::Command md);
+  int Next(slotid_t slot, janus::Command md);
 
   // @safe
   rusty::Option<rusty::Arc<PollThread>> GetPollThreadWorker() {

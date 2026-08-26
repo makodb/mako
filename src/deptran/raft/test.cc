@@ -2,11 +2,18 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <cerrno>
+#include <cstring>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "test.h"
+#include "application_log.h"
+#include "../replication_log_entry.h"
 #include "snapshot_manager.hpp"
 #include "snapshot_format.hpp"
 #include "file_snapshot_manager.hpp"
+#include "memory_log_storage.hpp"
 #include "replicated_db.h"
 
 import std;
@@ -15,6 +22,235 @@ import rusty;
 namespace janus {
 
 #ifdef RAFT_TEST_CORO
+
+// @unsafe - Test-only RAII kernel for cleanup across Assert2 early returns.
+// The Rust DSL cannot currently express a C++ destructor that owns a capturing
+// lambda, so test control flow supplies the cleanup body and this kernel only
+// guarantees exactly-once invocation at scope exit.
+template <typename Cleanup>
+class RaftTestScopeExit {
+ public:
+  // @unsafe - Moves a capturing C++ closure into the guard.
+  explicit RaftTestScopeExit(Cleanup cleanup)
+      : cleanup_(std::move(cleanup)) {}
+  RaftTestScopeExit(const RaftTestScopeExit&) = delete;
+  RaftTestScopeExit& operator=(const RaftTestScopeExit&) = delete;
+  // @unsafe - Invokes the test-owned cleanup closure.
+  ~RaftTestScopeExit() noexcept { cleanup_(); }
+
+ private:
+  Cleanup cleanup_;
+};
+
+// Writes and compensating removals take effect in memory, but neither can
+// cross a durable boundary. This models the exact local-append ambiguity that
+// must not be collapsed into a normal retryable rejection.
+class AlwaysFailingSyncLogStorage final
+    : public janus::raft::InMemoryLogStorage {
+ public:
+  int put_calls = 0;
+  int remove_calls = 0;
+  int sync_calls = 0;
+
+  bool put(const janus::raft::LogEntry& entry) override {
+    ++put_calls;
+    return InMemoryLogStorage::put(entry);
+  }
+
+  bool remove(slotid_t slot_id) override {
+    ++remove_calls;
+    return InMemoryLogStorage::remove(slot_id);
+  }
+
+  bool sync() override {
+    ++sync_calls;
+    return false;
+  }
+};
+
+// @unsafe - Constructs a test-only cleanup guard around a C++ closure.
+template <typename Cleanup>
+RaftTestScopeExit<Cleanup> MakeRaftTestScopeExit(Cleanup cleanup) {
+  return RaftTestScopeExit<Cleanup>(std::move(cleanup));
+}
+
+// Test-only prepared transaction whose commit succeeds only after the exact
+// Raft snapshot is readable from SnapshotManager. This is an executable oracle
+// for Prepare -> durable TakeSnapshot -> Commit publication ordering.
+class SnapshotPublicationProbe final
+    : public PreparedStateMachineSnapshotInstall {
+ public:
+  SnapshotPublicationProbe(
+      std::shared_ptr<janus::raft::SnapshotManager> manager,
+      uint64_t expected_index,
+      uint64_t expected_term,
+      std::string expected_data,
+      std::atomic<bool>* commit_called,
+      std::atomic<bool>* commit_saw_published,
+      std::atomic<bool>* aborted_before_commit)
+      : manager_(std::move(manager)),
+        expected_index_(expected_index),
+        expected_term_(expected_term),
+        expected_data_(std::move(expected_data)),
+        commit_called_(commit_called),
+        commit_saw_published_(commit_saw_published),
+        aborted_before_commit_(aborted_before_commit) {}
+
+  // @safe - Records whether an uncommitted probe was abandoned.
+  ~SnapshotPublicationProbe() override {
+    if (!commit_attempted_ && aborted_before_commit_ != nullptr) {
+      aborted_before_commit_->store(true, std::memory_order_release);
+    }
+  }
+
+  // @unsafe - Reads test SnapshotManager state at the commit linearization point.
+  bool Commit() override {
+    if (commit_attempted_) {
+      return false;
+    }
+    commit_attempted_ = true;
+    janus::raft::SnapshotMetadata metadata;
+    std::string data;
+    const bool published = manager_ != nullptr &&
+        manager_->LoadLatestSnapshot(&metadata, &data) &&
+        metadata.last_included_index == expected_index_ &&
+        metadata.last_included_term == expected_term_ &&
+        data == expected_data_;
+    if (commit_saw_published_ != nullptr) {
+      commit_saw_published_->store(published, std::memory_order_release);
+    }
+    if (commit_called_ != nullptr) {
+      commit_called_->store(true, std::memory_order_release);
+    }
+    return published;
+  }
+
+ private:
+  std::shared_ptr<janus::raft::SnapshotManager> manager_;
+  uint64_t expected_index_ = 0;
+  uint64_t expected_term_ = 0;
+  std::string expected_data_;
+  std::atomic<bool>* commit_called_ = nullptr;
+  std::atomic<bool>* commit_saw_published_ = nullptr;
+  std::atomic<bool>* aborted_before_commit_ = nullptr;
+  bool commit_attempted_ = false;
+};
+
+// @unsafe - Test-only friend bridge for rotating storage on a live server.
+// Holding both locks through manager publication and initial persistence means
+// the server never advertises a compacted prefix without bytes in the active
+// manager. This deliberately does not become production RaftServer API.
+bool RaftLabTest::InstallAndSeedSnapshotManager(
+    RaftServer* server,
+    std::shared_ptr<janus::raft::SnapshotManager> manager,
+    uint64_t snapshot_threshold,
+    uint64_t* seeded_snapshot_index) {
+  if (server == nullptr || manager == nullptr ||
+      seeded_snapshot_index == nullptr) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> apply_lock(
+      server->state_machine_apply_mtx_);
+  std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+
+  if (server->snapidx_ > 0) {
+    // A compacted boundary is meaningful only together with its exact state
+    // bytes. Copy that checkpoint rather than regenerating a possibly newer
+    // state-machine image while rotating managers.
+    auto old_manager = server->snapshot_manager_;
+    if (old_manager == nullptr) {
+      return false;
+    }
+    janus::raft::SnapshotMetadata metadata;
+    std::string state_data;
+    if (!old_manager->LoadLatestSnapshot(&metadata, &state_data) ||
+        metadata.last_included_index != server->snapidx_ ||
+        metadata.last_included_term != server->snapterm_ ||
+        !manager->TakeSnapshot(
+            metadata.last_included_index, metadata.last_included_term,
+            state_data.data(), state_data.size())) {
+      return false;
+    }
+
+    server->SetSnapshotManager(std::move(manager));
+  } else {
+    // With no advertised boundary, the replacement may be published only
+    // inside this gate and rolled back if the initial checkpoint fails.
+    auto old_manager = server->snapshot_manager_;
+    server->SetSnapshotManager(manager);
+    if (!server->CreateSnapshotLocked()) {
+      server->SetSnapshotManager(std::move(old_manager));
+      return false;
+    }
+  }
+
+  server->SetSnapshotThreshold(snapshot_threshold);
+  *seeded_snapshot_index = server->snapidx_;
+  return true;
+}
+
+// @unsafe - Test-only state-machine transition.  Unlike the generic manager
+// rotation above, this deliberately serializes a new checkpoint at the current
+// applied boundary rather than copying the previous RaftLab marker bytes.
+bool RaftLabTest::InstallFreshStateMachineSnapshotManager(
+    RaftServer* server,
+    std::shared_ptr<janus::raft::SnapshotManager> manager,
+    uint64_t snapshot_threshold,
+    uint64_t* seeded_snapshot_index) {
+  if (server == nullptr || manager == nullptr ||
+      seeded_snapshot_index == nullptr) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> apply_lock(
+      server->state_machine_apply_mtx_);
+  std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+  auto old_manager = server->snapshot_manager_;
+  server->SetSnapshotManager(manager);
+  if (!server->CreateSnapshotLocked()) {
+    server->SetSnapshotManager(std::move(old_manager));
+    return false;
+  }
+  server->SetSnapshotThreshold(snapshot_threshold);
+  *seeded_snapshot_index = server->snapidx_;
+  return true;
+}
+
+// @unsafe - Test-only late attachment for an application namespace created
+// after the shared RaftLab log already contains unrelated commands. Holding
+// the application gate across construction, metadata adoption, snapshot
+// callback registration, and learner replacement makes them one boundary: the
+// next callback must see exactly S+1.
+std::shared_ptr<ReplicatedDB>
+RaftLabTest::CreateAndAttachReplicatedDBAtCurrentBoundary(
+    RaftServer* server, const std::string& database_path) {
+  if (server == nullptr || database_path.empty()) {
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> apply_lock(
+      server->state_machine_apply_mtx_);
+  auto database =
+      std::make_shared<ReplicatedDB>(server, database_path);
+  if (!database->IsOpen()) {
+    return nullptr;
+  }
+  const slotid_t applied_index = server->GetAppliedIndex();
+  if (!database->BootstrapEmptyStateMachine(applied_index)) {
+    return nullptr;
+  }
+  std::weak_ptr<ReplicatedDB> database_weak = database;
+  server->RegLearnerAction(
+      [database_weak](slotid_t slot, janus::Command command) -> int {
+        auto database_pin = database_weak.lock();
+        if (!database_pin || !database_pin->ApplyEntry(slot, command)) {
+          throw std::runtime_error(
+              "late-attached ReplicatedDB failed atomic apply");
+        }
+        return 0;
+      });
+  return database;
+}
 
 // #define TEST_EXPAND(x) x || x || x || x || x 
 #define TEST_EXPAND(x) x 
@@ -30,9 +266,7 @@ int RaftLabTest::Run(void) {
   const bool persistence_enabled =
       persistence_flag != nullptr &&
       (std::strcmp(persistence_flag, "1") == 0 ||
-       std::strcmp(persistence_flag, "true") == 0 ||
-       std::strcmp(persistence_flag, "TRUE") == 0 ||
-       std::strcmp(persistence_flag, "True") == 0);
+       std::strcmp(persistence_flag, "true") == 0);
 
   bool failed = false;
   if (!persistence_enabled) {
@@ -110,9 +344,15 @@ int RaftLabTest::Run(void) {
   // Reason-aware rollback notification tests
   if (!failed) {
     Log_info("Running reason-aware rollback notification tests");
-    failed =
-        TEST_EXPAND(testRollbackOnUnsecuredFailure())            // Test 63
-        || TEST_EXPAND(testNoRollbackOnHigherTerm());            // Test 64
+    if (!persistence_enabled) {
+      failed = TEST_EXPAND(testRollbackOnUnsecuredFailure());    // Test 63
+    } else {
+      Log_info("Skipping Test 63: UnsecuredFailure requires persistence-off; "
+               "persistence modes need explicit durable-ack fault injection");
+    }
+    if (!failed) {
+      failed = TEST_EXPAND(testNoRollbackOnHigherTerm());        // Test 64
+    }
   }
 
   // Snapshot recovery on startup tests
@@ -219,11 +459,29 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testLinearizableGetAfterLeaderChange()); // Test 100
   }
 
-  // ReplicatedDB crash recovery tests
-  if (!failed) {
+  // A retained application marker can be recovered only alongside a durable
+  // Raft commit boundary.  With persistence disabled Restart() intentionally
+  // creates an empty Raft server, whose fail-closed ahead-marker check must
+  // reject that database.  Exercise the positive crash-recovery case in both
+  // sync and async persistence runs instead of weakening the recovery check.
+  if (!failed && persistence_enabled) {
     Log_info("Running ReplicatedDB crash recovery tests");
+    failed = TEST_EXPAND(testReplicatedDBCrashRecovery());     // Test 101
+  } else if (!failed) {
+    Log_info("Skipping TEST 101 without durable Raft persistence");
+  }
+
+  // This fault injection swaps storage on three successive live leaders and
+  // intentionally fail-stops them. Run it only in the persistence-off matrix
+  // (so no storage worker can race the swap) and make it the terminal cluster
+  // mutation.
+  if (!failed && !persistence_enabled) {
+    Log_info("Running terminal persistence-boundary fault tests");
     failed =
-        TEST_EXPAND(testReplicatedDBCrashRecovery());          // Test 101
+        TEST_EXPAND(testAmbiguousLeaderAppendAdmission())       // Test 102
+        || TEST_EXPAND(testRequestVoteTermPersistenceFailure()); // Test 103
+  } else if (!failed) {
+    Log_info("Skipping TESTS 102-103 with live persistent storage enabled");
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -4849,16 +5107,23 @@ int RaftLabTest::testCreateSnapshotBasic(void) {
   Assert2(server != nullptr, "Server should not be null");
 
   // Set up a snapshot manager with a temporary path
-  std::string test_path = "/tmp/raft_snap_create_test_" + std::to_string(getpid());
+  std::string test_path_template =
+      "/tmp/raft_snap_create_test_55_" + std::to_string(getpid()) +
+      "_XXXXXX";
+  char* created_test_path = mkdtemp(test_path_template.data());  // @unsafe
+  Assert2(created_test_path != nullptr,
+          "Could not create Test55 snapshot directory: %s", strerror(errno));
+  std::string test_path(created_test_path);
   janus::raft::SnapshotConfig config;
   config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
-  auto original_mgr = server->GetSnapshotManager();
   auto original_threshold = server->GetSnapshotThreshold();
-  server->SetSnapshotManager(test_mgr);
-
-  // Set a low threshold so we can trigger a snapshot easily
-  server->SetSnapshotThreshold(5);
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->SetSnapshotManager(test_mgr);
+    // Set a low threshold so we can trigger a snapshot easily.
+    server->SetSnapshotThreshold(5);
+  }
 
   // Verify no snapshot exists yet
   Assert2(!server->HasSnapshot(), "No snapshot should exist initially");
@@ -4891,11 +5156,14 @@ int RaftLabTest::testCreateSnapshotBasic(void) {
           "Manager index (%lu) should match server index (%lu)",
           meta.last_included_index, server->GetSnapshotIndex());
 
-  // Restore and clean up
-  server->SetSnapshotManager(original_mgr);
-  server->SetSnapshotThreshold(original_threshold);
-  test_mgr->DeleteAllSnapshots();
-  rmdir(test_path.c_str());
+  // The snapshot now backs a compacted live prefix.  Restore only the runtime
+  // threshold; keep the manager and files available for future catch-up.
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->SetSnapshotThreshold(original_threshold);
+  }
+  Log_info("[CREATE-SNAPSHOT-BASIC-TEST] Retaining live snapshot path {}",
+           test_path.c_str());
 
   Log_info("[CREATE-SNAPSHOT-BASIC-TEST] PASSED");
   Passed2();
@@ -4917,28 +5185,60 @@ int RaftLabTest::testCreateSnapshotAndCompaction(void) {
   Assert2(server != nullptr, "Server should not be null");
 
   // Set up snapshot manager
-  std::string test_path = "/tmp/raft_snap_compact_test_" + std::to_string(getpid());
+  std::string test_path_template =
+      "/tmp/raft_snap_compact_test_56_" + std::to_string(getpid()) +
+      "_XXXXXX";
+  char* created_test_path = mkdtemp(test_path_template.data());  // @unsafe
+  Assert2(created_test_path != nullptr,
+          "Could not create Test56 snapshot directory: %s", strerror(errno));
+  std::string test_path(created_test_path);
   janus::raft::SnapshotConfig config;
   config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
-  auto original_mgr = server->GetSnapshotManager();
   auto original_threshold = server->GetSnapshotThreshold();
-  server->SetSnapshotManager(test_mgr);
-
-  // Set a low threshold
-  server->SetSnapshotThreshold(5);
+  uint64_t snapshot_baseline = 0;
+  Assert2(InstallAndSeedSnapshotManager(
+              server, test_mgr, 5, &snapshot_baseline),
+          "Could not atomically seed Test56 replacement snapshot manager");
 
   // Submit entries to trigger snapshot
+  uint64_t first_new_index = 0;
   for (int i = 1; i <= 10; i++) {
     uint64_t idx = config_->DoAgreement(200 + i, NSERVERS, true);
     Assert2(idx > 0, "DoAgreement failed for cmd %d", 200 + i);
+    if (first_new_index == 0) {
+      first_new_index = idx;
+    }
   }
 
-  // Wait for snapshot and compaction
-  Fiber::sleep(2000000);
-
-  uint64_t snap_idx = server->GetSnapshotIndex();
-  Assert2(snap_idx > 0, "Snapshot should have been taken, got index=%lu", snap_idx);
+  uint64_t snap_idx = 0;
+  bool snapshot_ready = false;
+  for (int attempt = 0; attempt < 200 && !snapshot_ready; ++attempt) {
+    {
+      std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+      snap_idx = server->GetSnapshotIndex();
+    }
+    auto candidate = test_mgr->GetLatestSnapshot();
+    if (candidate.is_some()) {
+      const auto candidate_metadata = candidate.unwrap();
+      snapshot_ready =
+          candidate_metadata.last_included_index == snap_idx &&
+          snap_idx > snapshot_baseline && snap_idx >= first_new_index;
+    }
+    if (!snapshot_ready) {
+      Fiber::sleep(10000);
+    }
+  }
+  auto latest = test_mgr->GetLatestSnapshot();
+  Assert2(snapshot_ready && latest.is_some(),
+          "Replacement snapshot manager did not advance for this workload");
+  const auto metadata = latest.unwrap();
+  Assert2(snap_idx == metadata.last_included_index,
+          "Server snapshot index %lu does not match manager index %lu",
+          snap_idx, metadata.last_included_index);
+  Assert2(snap_idx > snapshot_baseline && snap_idx >= first_new_index,
+          "Snapshot did not advance for this workload: baseline=%lu, first=%lu, got=%lu",
+          snapshot_baseline, first_new_index, snap_idx);
 
   // Now submit more entries AFTER snapshot - these should still commit
   for (int i = 1; i <= 5; i++) {
@@ -4950,11 +5250,14 @@ int RaftLabTest::testCreateSnapshotAndCompaction(void) {
   int leader2 = config_->OneLeader();
   Assert2(leader2 >= 0, "Should still have a leader after snapshot+compaction");
 
-  // Restore and clean up
-  server->SetSnapshotManager(original_mgr);
-  server->SetSnapshotThreshold(original_threshold);
-  test_mgr->DeleteAllSnapshots();
-  rmdir(test_path.c_str());
+  // The snapshot now backs a compacted live prefix.  Restore only the runtime
+  // threshold; keep the manager and files available for future catch-up.
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->SetSnapshotThreshold(original_threshold);
+  }
+  Log_info("[CREATE-SNAPSHOT-COMPACTION-TEST] Retaining live snapshot path {}",
+           test_path.c_str());
 
   Log_info("[CREATE-SNAPSHOT-COMPACTION-TEST] PASSED");
   Passed2();
@@ -4999,11 +5302,11 @@ int RaftLabTest::testSnapshotThresholdConfigurable(void) {
 }
 
 // =============================================================================
-// Test 58: InstallSnapshot basic functionality
+// Test 58: Same-term InstallSnapshot at/below commit is a successful no-op
 // =============================================================================
 // @unsafe - test function that exercises OnInstallSnapshot
 int RaftLabTest::testInstallSnapshotBasic(void) {
-  Init2(58, "InstallSnapshot basic");
+  Init2(58, "InstallSnapshot stale index is a no-op");
 
   // Wait for a leader
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -5029,64 +5332,222 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   auto server = config_->GetServer(follower);
   Assert2(server != nullptr, "Follower server should not be null");
 
-  // Set up a snapshot manager on the follower for persistence
-  std::string test_path = "/tmp/raft_install_snap_test_" + std::to_string(getpid());
+  // Install a unique manager and seed it atomically. A prior test may already
+  // have compacted this server, so an empty replacement would violate the live
+  // snapshot/log invariant even before this RPC is exercised.
+  std::string test_path_template =
+      "/tmp/raft_install_snap_test_58_" + std::to_string(getpid()) +
+      "_XXXXXX";
+  char* created_test_path = mkdtemp(test_path_template.data());  // @unsafe
+  Assert2(created_test_path != nullptr,
+          "Could not create Test58 snapshot directory: %s", strerror(errno));
+  std::string test_path(created_test_path);
   janus::raft::SnapshotConfig snap_config;
   snap_config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
-  auto original_mgr = server->GetSnapshotManager();
-  server->SetSnapshotManager(test_mgr);
 
-  // Record follower state before InstallSnapshot
-  uint64_t old_snapidx = server->GetSnapshotIndex();
-  uint64_t old_snapterm = server->GetSnapshotTerm();
+  uint64_t old_snapidx = 0;
+  uint64_t old_snapterm = 0;
+  uint64_t old_commit_index = 0;
+  uint64_t old_execute_index = 0;
+  uint64_t old_last_log_index = 0;
+  uint64_t old_min_active_slot = 0;
+  uint64_t follower_term = 0;
+  uint64_t seeded_snapshot_index = 0;
+  Assert2(InstallAndSeedSnapshotManager(
+              server, test_mgr, server->GetSnapshotThreshold(),
+              &seeded_snapshot_index),
+          "Could not atomically seed Test58 replacement snapshot manager");
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    old_snapidx = server->GetSnapshotIndex();
+    old_snapterm = server->GetSnapshotTerm();
+    old_commit_index = server->commitIndex;
+    old_execute_index = server->executeIndex;
+    old_last_log_index = server->lastLogIndex;
+    old_min_active_slot = server->min_active_slot_;
+    follower_term = server->currentTerm;
+  }
 
-  // Create fake snapshot data
-  uint64_t snap_index = 10;
-  uint64_t snap_term = server->currentTerm;
-  std::string snap_data = "test_snapshot_data_for_install";
+  janus::raft::SnapshotMetadata before_metadata;
+  std::string before_snapshot_data;
+  Assert2(test_mgr->LoadLatestSnapshot(
+              &before_metadata, &before_snapshot_data),
+          "Seeded Test58 snapshot manager has no readable snapshot");
+  const size_t before_snapshot_count = test_mgr->ListSnapshots().size();
 
-  // Call OnInstallSnapshot directly on the follower (synchronous)
+  // A snapshot at commitIndex is stale by definition. It is still valid
+  // leader contact (same term), but its payload must not rewrite snapshot,
+  // log, apply, or persistence state.
+  const uint64_t stale_snapshot_index = old_commit_index;
+  Assert2(stale_snapshot_index > 0,
+          "Test58 needs a non-zero committed prefix");
+  const std::string stale_snapshot_data =
+      "stale_same_term_snapshot_must_not_be_persisted";
+
   uint64_t reply_term = 0;
   server->OnInstallSnapshot(
-      server->currentTerm,  // term (matches follower's current term)
+      follower_term,
       config_->GetServer(leader)->site_id_,  // leader_id
-      snap_index,
-      snap_term,
-      snap_data,
+      stale_snapshot_index,
+      follower_term,
+      stale_snapshot_data,
       &reply_term);
 
-  Assert2(reply_term > 0, "Reply term should be > 0, got %lu", reply_term);
+  Assert2(reply_term == follower_term,
+          "Same-term stale snapshot reply should be %lu, got %lu",
+          follower_term, reply_term);
 
-  // Verify snapshot metadata updated
-  Assert2(server->GetSnapshotIndex() == snap_index,
-          "snapidx should be %lu, got %lu", snap_index, server->GetSnapshotIndex());
-  Assert2(server->GetSnapshotTerm() == snap_term,
-          "snapterm should be %lu, got %lu", snap_term, server->GetSnapshotTerm());
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(server->GetSnapshotIndex() == old_snapidx,
+            "Stale snapshot changed snapidx from %lu to %lu",
+            old_snapidx, server->GetSnapshotIndex());
+    Assert2(server->GetSnapshotTerm() == old_snapterm,
+            "Stale snapshot changed snapterm from %lu to %lu",
+            old_snapterm, server->GetSnapshotTerm());
+    Assert2(server->commitIndex == old_commit_index &&
+                server->executeIndex == old_execute_index &&
+                server->lastLogIndex == old_last_log_index &&
+                server->min_active_slot_ == old_min_active_slot,
+            "Stale snapshot mutated log/apply indices");
+    Assert2(!server->IsLeader(),
+            "Accepted same-term leader contact must leave receiver a follower");
+  }
 
-  // Verify commitIndex and executeIndex advanced
-  Assert2(server->commitIndex >= snap_index,
-          "commitIndex should be >= %lu, got %lu", snap_index, server->commitIndex);
-  Assert2(server->executeIndex >= snap_index,
-          "executeIndex should be >= %lu, got %lu", snap_index, server->executeIndex);
+  janus::raft::SnapshotMetadata after_metadata;
+  std::string after_snapshot_data;
+  Assert2(test_mgr->LoadLatestSnapshot(
+              &after_metadata, &after_snapshot_data),
+          "Stale snapshot removed or corrupted the existing snapshot");
+  Assert2(after_metadata.last_included_index ==
+              before_metadata.last_included_index &&
+              after_metadata.last_included_term ==
+                  before_metadata.last_included_term &&
+              after_metadata.timestamp_ms == before_metadata.timestamp_ms &&
+              after_metadata.size_bytes == before_metadata.size_bytes &&
+              after_metadata.checksum == before_metadata.checksum &&
+              after_snapshot_data == before_snapshot_data &&
+              test_mgr->ListSnapshots().size() == before_snapshot_count,
+          "Stale snapshot changed persistent snapshot state");
 
-  // Verify snapshot was persisted
-  auto latest = test_mgr->GetLatestSnapshot();
-  Assert2(latest.is_some(), "Snapshot should be persisted in manager");
-  auto meta = latest.unwrap();
-  Assert2(meta.last_included_index == snap_index,
-          "Persisted snapshot index should be %lu, got %lu",
-          snap_index, meta.last_included_index);
+  // Exercise the fallible Prepare boundary itself (not the stale fast path).
+  // A validation rejection must not publish bytes, compact either log, or
+  // fail-stop a healthy follower because the prepare contract forbids live
+  // state-machine mutation.
+  std::map<slotid_t, std::shared_ptr<RaftData>> rejected_logs_before;
+  uint64_t rejected_snapidx_before = 0;
+  uint64_t rejected_snapterm_before = 0;
+  uint64_t rejected_commit_before = 0;
+  uint64_t rejected_execute_before = 0;
+  uint64_t rejected_last_log_before = 0;
+  uint64_t rejected_min_active_before = 0;
+  uint64_t rejected_local_progress = 0;
+  std::shared_ptr<janus::raft::LogStorage> rejected_storage;
+  slotid_t rejected_storage_first_before = 0;
+  slotid_t rejected_storage_last_before = 0;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    rejected_logs_before = server->raft_logs_;
+    rejected_snapidx_before = server->snapidx_;
+    rejected_snapterm_before = server->snapterm_;
+    rejected_commit_before = server->commitIndex;
+    rejected_execute_before = server->executeIndex;
+    rejected_last_log_before = server->lastLogIndex;
+    rejected_min_active_before = server->min_active_slot_;
+    rejected_local_progress = std::max(
+        {server->commitIndex, server->executeIndex,
+         server->GetAppliedIndex(), server->snapidx_, server->lastLogIndex});
+    rejected_storage = server->log_storage_;
+    if (rejected_storage != nullptr) {
+      rejected_storage_first_before = rejected_storage->get_first_index();
+      rejected_storage_last_before = rejected_storage->get_last_index();
+    }
+  }
+  Assert2(rejected_local_progress < UINT64_MAX,
+          "Test58 cannot construct a successor snapshot boundary");
 
-  // Restore original manager
-  server->SetSnapshotManager(original_mgr);
+  std::atomic<bool> rejecting_prepare_called{false};
+  uint64_t rejecting_callback_token =
+      server->SetStateMachineSnapshotCallbacks(
+          [](uint64_t) { return std::string(); },
+          [&rejecting_prepare_called](
+              const std::string&, uint64_t)
+              -> std::unique_ptr<PreparedStateMachineSnapshotInstall> {
+            rejecting_prepare_called.store(true, std::memory_order_release);
+            return nullptr;
+          });
+  Assert2(rejecting_callback_token != 0,
+          "Could not install Test58 rejecting prepare callback");
+  auto restore_test58_callbacks = MakeRaftTestScopeExit([&]() {  // @unsafe
+    if (rejecting_callback_token != 0) {
+      server->ClearStateMachineSnapshotCallbacks(
+          rejecting_callback_token);
+      rejecting_callback_token = 0;
+    }
+  });
 
-  // Cleanup temp files
-  // @unsafe { system call }
-  std::string cleanup = "rm -rf " + test_path;
-  system(cleanup.c_str());
+  uint64_t rejected_reply_term = follower_term;
+  server->OnInstallSnapshot(
+      follower_term,
+      config_->GetServer(leader)->site_id_,
+      rejected_local_progress + 1,
+      follower_term,
+      "archive_rejected_during_prepare",
+      &rejected_reply_term);
+  Assert2(rejecting_prepare_called.load(std::memory_order_acquire),
+          "InstallSnapshot did not invoke the rejecting Prepare callback");
+  Assert2(rejected_reply_term == 0,
+          "Rejected Prepare must return unavailable term 0, got %lu",
+          rejected_reply_term);
+  Assert2(!server->stop_.load(rusty::sync::atomic::Ordering::Acquire),
+          "Clean Prepare rejection incorrectly fail-stopped the follower");
 
-  Log_info("[INSTALL-SNAPSHOT-BASIC-TEST] PASSED");
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(server->snapidx_ == rejected_snapidx_before &&
+                server->snapterm_ == rejected_snapterm_before &&
+                server->commitIndex == rejected_commit_before &&
+                server->executeIndex == rejected_execute_before &&
+                server->lastLogIndex == rejected_last_log_before &&
+                server->min_active_slot_ == rejected_min_active_before &&
+                server->raft_logs_ == rejected_logs_before,
+            "Rejected Prepare mutated the in-memory snapshot/log boundary");
+    if (rejected_storage != nullptr) {
+      Assert2(rejected_storage->get_first_index() ==
+                  rejected_storage_first_before &&
+                  rejected_storage->get_last_index() ==
+                      rejected_storage_last_before,
+              "Rejected Prepare mutated the persistent log range");
+    }
+  }
+
+  janus::raft::SnapshotMetadata rejected_after_metadata;
+  std::string rejected_after_data;
+  Assert2(test_mgr->LoadLatestSnapshot(
+              &rejected_after_metadata, &rejected_after_data) &&
+              rejected_after_metadata.last_included_index ==
+                  before_metadata.last_included_index &&
+              rejected_after_metadata.last_included_term ==
+                  before_metadata.last_included_term &&
+              rejected_after_metadata.timestamp_ms ==
+                  before_metadata.timestamp_ms &&
+              rejected_after_metadata.size_bytes ==
+                  before_metadata.size_bytes &&
+              rejected_after_metadata.checksum == before_metadata.checksum &&
+              rejected_after_data == before_snapshot_data &&
+              test_mgr->ListSnapshots().size() == before_snapshot_count,
+          "Rejected Prepare changed the durable snapshot manager");
+
+  Assert2(server->ClearStateMachineSnapshotCallbacks(
+              rejecting_callback_token),
+          "Could not clear Test58 rejecting prepare callback");
+  rejecting_callback_token = 0;
+
+  Log_info("[INSTALL-SNAPSHOT-STALE-INDEX-TEST] Retaining live snapshot path {}",
+           test_path.c_str());
+
+  Log_info("[INSTALL-SNAPSHOT-STALE-INDEX-TEST] PASSED");
   Passed2();
 }
 
@@ -5121,12 +5582,35 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
   auto server = config_->GetServer(follower);
   Assert2(server != nullptr, "Follower server should not be null");
 
-  // Record follower state before the stale InstallSnapshot
-  uint64_t before_snapidx = server->GetSnapshotIndex();
-  uint64_t before_snapterm = server->GetSnapshotTerm();
-  uint64_t before_commitIndex = server->commitIndex;
-  uint64_t before_executeIndex = server->executeIndex;
-  uint64_t follower_term = server->currentTerm;
+  // Record one coherent follower state while the live Raft/apply threads are
+  // excluded. The raw fields below are not atomic.
+  uint64_t before_snapidx = 0;
+  uint64_t before_snapterm = 0;
+  uint64_t before_commitIndex = 0;
+  uint64_t before_executeIndex = 0;
+  uint64_t before_lastLogIndex = 0;
+  uint64_t follower_term = 0;
+  siteid_t before_leader_id = static_cast<siteid_t>(INVALID_SITEID);
+  siteid_t before_vote_for = static_cast<siteid_t>(INVALID_SITEID);
+  bool before_is_leader = false;
+  bool before_req_voting = false;
+  bool before_election_in_progress = false;
+  std::set<siteid_t> before_early_durable_voters;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    before_snapidx = server->snapidx_;
+    before_snapterm = server->snapterm_;
+    before_commitIndex = server->commitIndex;
+    before_executeIndex = server->executeIndex;
+    before_lastLogIndex = server->lastLogIndex;
+    follower_term = server->currentTerm;
+    before_leader_id = server->current_leader_id_;
+    before_vote_for = server->vote_for_;
+    before_is_leader = server->is_leader_;
+    before_req_voting = server->req_voting_;
+    before_election_in_progress = server->election_in_progress_;
+    before_early_durable_voters = server->earlyDurableVoters_;
+  }
 
   // Send InstallSnapshot with a stale term (term 0, which is less than any active term)
   uint64_t stale_term = 0;
@@ -5147,19 +5631,117 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
           "Reply term should be follower's current term %lu, got %lu",
           follower_term, reply_term);
 
-  // Verify follower state is UNCHANGED
-  Assert2(server->GetSnapshotIndex() == before_snapidx,
-          "snapidx should be unchanged (%lu), got %lu",
-          before_snapidx, server->GetSnapshotIndex());
-  Assert2(server->GetSnapshotTerm() == before_snapterm,
-          "snapterm should be unchanged (%lu), got %lu",
-          before_snapterm, server->GetSnapshotTerm());
-  Assert2(server->commitIndex == before_commitIndex,
-          "commitIndex should be unchanged (%lu), got %lu",
-          before_commitIndex, server->commitIndex);
-  Assert2(server->executeIndex == before_executeIndex,
-          "executeIndex should be unchanged (%lu), got %lu",
-          before_executeIndex, server->executeIndex);
+  // Verify follower state is UNCHANGED through one synchronized observation.
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(server->snapidx_ == before_snapidx,
+            "snapidx should be unchanged (%lu), got %lu",
+            before_snapidx, server->snapidx_);
+    Assert2(server->snapterm_ == before_snapterm,
+            "snapterm should be unchanged (%lu), got %lu",
+            before_snapterm, static_cast<uint64_t>(server->snapterm_));
+    Assert2(server->commitIndex == before_commitIndex,
+            "commitIndex should be unchanged (%lu), got %lu",
+            before_commitIndex, server->commitIndex);
+    Assert2(server->executeIndex == before_executeIndex,
+            "executeIndex should be unchanged (%lu), got %lu",
+            before_executeIndex, server->executeIndex);
+    Assert2(server->lastLogIndex == before_lastLogIndex &&
+                server->currentTerm == follower_term &&
+                server->current_leader_id_ == before_leader_id &&
+                server->vote_for_ == before_vote_for &&
+                server->is_leader_ == before_is_leader &&
+                server->req_voting_ == before_req_voting &&
+                server->election_in_progress_ ==
+                    before_election_in_progress &&
+                server->earlyDurableVoters_ ==
+                    before_early_durable_voters,
+            "Stale-term snapshot mutated Raft role/election state");
+  }
+
+  // A same-term sender also cannot advertise a snapshot boundary from a
+  // future term. This must be rejected before leader contact or snapshot
+  // payload processing changes any receiver state.
+  uint64_t future_boundary_reply_term = 0;
+  const uint64_t future_boundary_index =
+      before_lastLogIndex == UINT64_MAX
+          ? before_lastLogIndex
+          : before_lastLogIndex + 1;
+  server->OnInstallSnapshot(
+      follower_term,
+      static_cast<uint64_t>(leader),
+      future_boundary_index,
+      follower_term + 1,
+      "future_term_snapshot_must_not_be_loaded",
+      &future_boundary_reply_term);
+  Assert2(future_boundary_reply_term == 0,
+          "Same-term future-boundary rejection must report unavailable (0), got %lu",
+          future_boundary_reply_term);
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(server->currentTerm == follower_term &&
+                server->snapidx_ == before_snapidx &&
+                static_cast<uint64_t>(server->snapterm_) ==
+                    before_snapterm &&
+                server->commitIndex == before_commitIndex &&
+                server->executeIndex == before_executeIndex &&
+                server->lastLogIndex == before_lastLogIndex &&
+                server->current_leader_id_ == before_leader_id &&
+                server->vote_for_ == before_vote_for &&
+                server->is_leader_ == before_is_leader &&
+                server->req_voting_ == before_req_voting &&
+                server->election_in_progress_ ==
+                    before_election_in_progress &&
+                server->earlyDurableVoters_ ==
+                    before_early_durable_voters,
+            "Future-boundary snapshot mutated receiver state");
+  }
+
+  // A rejected, otherwise well-formed request also must not look successful
+  // to the sender. InstallSnapshot's leader callback treats every non-zero
+  // reply at its send term as proof that the snapshot boundary was installed.
+  uint64_t unauthorized_reply_term = UINT64_MAX;
+  server->OnInstallSnapshot(
+      follower_term,
+      998,
+      future_boundary_index,
+      follower_term,
+      "unauthorized_snapshot_must_not_be_acknowledged",
+      &unauthorized_reply_term);
+  Assert2(unauthorized_reply_term == 0,
+          "Unauthorized snapshot rejection must report unavailable (0), got %lu",
+          unauthorized_reply_term);
+
+  uint64_t unrepresentable_reply_term = UINT64_MAX;
+  server->OnInstallSnapshot(
+      follower_term,
+      UINT64_MAX,
+      future_boundary_index,
+      follower_term,
+      "unrepresentable_leader_must_not_be_acknowledged",
+      &unrepresentable_reply_term);
+  Assert2(unrepresentable_reply_term == 0,
+          "Unrepresentable snapshot leader must report unavailable (0), got %lu",
+          unrepresentable_reply_term);
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(server->currentTerm == follower_term &&
+                server->snapidx_ == before_snapidx &&
+                static_cast<uint64_t>(server->snapterm_) ==
+                    before_snapterm &&
+                server->commitIndex == before_commitIndex &&
+                server->executeIndex == before_executeIndex &&
+                server->lastLogIndex == before_lastLogIndex &&
+                server->current_leader_id_ == before_leader_id &&
+                server->vote_for_ == before_vote_for &&
+                server->is_leader_ == before_is_leader &&
+                server->req_voting_ == before_req_voting &&
+                server->election_in_progress_ ==
+                    before_election_in_progress &&
+                server->earlyDurableVoters_ ==
+                    before_early_durable_voters,
+            "Unauthorized snapshot rejection mutated receiver state");
+  }
 
   Log_info("[INSTALL-SNAPSHOT-REJECTS-STALE-TEST] PASSED");
   Passed2();
@@ -5170,138 +5752,270 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
 // =============================================================================
 // @unsafe - test function that exercises HeartbeatLoop snapshot integration
 int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
-  Init2(60, "HeartbeatLoop triggers InstallSnapshot for lagging follower");
+  Init2(60, "HeartbeatLoop installs snapshot after a real partition");
 
-  // Wait for a leader to be elected
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
 
-  auto leader_server = config_->GetServer(leader);
-  Assert2(leader_server != nullptr, "Leader server should not be null");
-
-  // Set up a snapshot manager on the leader with a low threshold
-  std::string test_path = "/tmp/raft_hb_snap_test_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig snap_config;
-  snap_config.storage_path = test_path;
-  auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
-  auto original_mgr = leader_server->GetSnapshotManager();
-  leader_server->SetSnapshotManager(test_mgr);
-  leader_server->SetSnapshotThreshold(3);  // Low threshold to trigger snapshot quickly
-
-  // Commit enough entries to trigger snapshot and compaction on the leader
-  // We need > threshold entries to trigger CreateSnapshot in applyLogs
-  for (int i = 1; i <= 8; i++) {
-    uint64_t idx = config_->DoAgreement(600 + i, NSERVERS, true);
-    Assert2(idx > 0, "DoAgreement failed for cmd %d", 600 + i);
+  // Give every possible leader a unique, live backing manager before the
+  // partition. This keeps the test valid across an ordinary re-election.
+  std::string snapshot_root_template =
+      "/tmp/raft_hb_snap_test_60_" + std::to_string(getpid()) +
+      "_XXXXXX";
+  char* created_snapshot_root =
+      mkdtemp(snapshot_root_template.data());  // @unsafe
+  Assert2(created_snapshot_root != nullptr,
+          "Could not create Test60 snapshot root: %s", strerror(errno));
+  std::string snapshot_root(created_snapshot_root);
+  // The managers below become the live backing store for compacted prefixes.
+  // Keep their root discoverable by later Restart() calls for the remainder of
+  // the suite, just as Test69 does after its manager rotation.
+  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,
+          "Could not enable Test60 snapshots: %s", strerror(errno));
+  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", snapshot_root.c_str(), 1) == 0,
+          "Could not publish Test60 snapshot root: %s", strerror(errno));
+  std::vector<std::shared_ptr<janus::raft::SnapshotManager>> managers(
+      NSERVERS);
+  std::vector<uint64_t> original_thresholds(NSERVERS, 0);
+  std::vector<uint64_t> seeded_snapshot_indices(NSERVERS, 0);
+  for (int i = 0; i < NSERVERS; ++i) {
+    auto server = config_->GetServer(i);
+    Assert2(server != nullptr, "Test60 server %d is null", i);
+    janus::raft::SnapshotConfig snapshot_config;
+    snapshot_config.storage_path =
+        snapshot_root + "/raft_snap_" + std::to_string(server->site_id_) +
+        "_partition_" + std::to_string(server->partition_id_);
+    auto manager =
+        std::make_shared<janus::raft::FileSnapshotManager>(snapshot_config);
+    managers[i] = manager;
+    original_thresholds[i] = server->GetSnapshotThreshold();
+    Assert2(InstallAndSeedSnapshotManager(
+                server, manager, 3, &seeded_snapshot_indices[i]),
+            "Could not atomically seed Test60 server %d snapshot manager", i);
   }
 
-  // Wait for applyLogs to trigger CreateSnapshot on leader
-  Fiber::sleep(HEARTBEAT_INTERVAL * 3);
-
-  // Verify leader has taken a snapshot and compacted
-  uint64_t leader_snap_idx = leader_server->GetSnapshotIndex();
-  uint64_t leader_min_active = leader_server->min_active_slot_;
-  Log_info("[HB-SNAP-TEST] Leader snapshot index={}, min_active_slot={}",
-           leader_snap_idx, leader_min_active);
-
-  // If snapshot wasn't automatically triggered, force it
-  if (leader_snap_idx == 0) {
-    leader_server->CreateSnapshot();
-    leader_snap_idx = leader_server->GetSnapshotIndex();
-    leader_min_active = leader_server->min_active_slot_;
-    Log_info("[HB-SNAP-TEST] After forced snapshot: index={}, min_active_slot={}",
-             leader_snap_idx, leader_min_active);
-  }
-
-  Assert2(leader_snap_idx > 0, "Leader should have created a snapshot, got snapidx=%lu", leader_snap_idx);
-  Assert2(leader_min_active > 1, "Leader min_active_slot_ should be > 1 after compaction, got %lu", leader_min_active);
-
-  // Pick a follower and simulate it being far behind
   int follower = -1;
-  siteid_t follower_site_id = 0;
-  for (int i = 0; i < NSERVERS; i++) {
+  for (int i = 0; i < NSERVERS; ++i) {
     if (i != leader) {
       follower = i;
       break;
     }
   }
-  Assert2(follower >= 0, "No follower found");
-
+  Assert2(follower >= 0, "No Test60 follower found");
   auto follower_server = config_->GetServer(follower);
-  Assert2(follower_server != nullptr, "Follower server should not be null");
-  follower_site_id = follower_server->site_id_;
+  Assert2(follower_server != nullptr, "Test60 follower is null");
 
-  // Set up a snapshot manager on the follower (so it can receive the snapshot)
-  std::string follower_test_path = "/tmp/raft_hb_snap_follower_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig follower_snap_config;
-  follower_snap_config.storage_path = follower_test_path;
-  auto follower_mgr = std::make_shared<janus::raft::FileSnapshotManager>(follower_snap_config);
-  auto follower_original_mgr = follower_server->GetSnapshotManager();
-  follower_server->SetSnapshotManager(follower_mgr);
+  std::atomic<bool> snapshot_prepare_called{false};
+  std::atomic<bool> snapshot_prepare_saw_old_manager{false};
+  std::atomic<bool> snapshot_commit_called{false};
+  std::atomic<bool> snapshot_commit_saw_published{false};
+  std::atomic<bool> snapshot_aborted_before_commit{false};
+  uint64_t snapshot_callback_token = 0;
 
-  // Record follower state before manipulation
-  uint64_t follower_snap_before = follower_server->GetSnapshotIndex();
+  bool follower_disconnected = false;
+  auto restore_test60 = MakeRaftTestScopeExit([&]() {  // @unsafe
+    if (snapshot_callback_token != 0) {
+      follower_server->ClearStateMachineSnapshotCallbacks(
+          snapshot_callback_token);
+      snapshot_callback_token = 0;
+    }
+    if (follower_disconnected) {
+      config_->Reconnect(follower);
+    }
+    for (int i = 0; i < NSERVERS; ++i) {
+      auto server = config_->GetServer(i);
+      if (server == nullptr) continue;
+      std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+      server->SetSnapshotThreshold(original_thresholds[i]);
+    }
+  });
 
-  // Manually set the follower's next_index in the leader to be below min_active_slot_
-  // This simulates a follower that has fallen far behind
+  uint64_t follower_snap_before = 0;
+  uint64_t follower_last_before = 0;
   {
-    std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
-    leader_server->next_index_[follower_site_id] = 1;  // Far behind
-    leader_server->match_index_[follower_site_id] = 0;
-    Log_info("[HB-SNAP-TEST] Set leader's next_index[{}]={}, min_active_slot={}",
-             follower_site_id, 1, leader_min_active);
+    std::lock_guard<std::recursive_mutex> lock(follower_server->mtx_);
+    follower_snap_before = follower_server->GetSnapshotIndex();
+    follower_last_before = follower_server->lastLogIndex;
   }
 
-  // Verify the condition: next_index < min_active_slot_
-  Assert2(1 < leader_min_active,
-          "next_index (1) should be < min_active_slot_ (%lu) for InstallSnapshot trigger",
-          leader_min_active);
+  config_->Disconnect(follower);
+  follower_disconnected = true;
 
-  // Wait for a few heartbeat rounds to allow HeartbeatLoop to detect and send InstallSnapshot
-  Fiber::sleep(HEARTBEAT_INTERVAL * 5);
+  // The callback-only command oracle cannot recreate a covered callback when
+  // a connected replica catches up through a marker-only snapshot. Require a
+  // real quorum through DoAgreement and separately require every reachable
+  // replica to publish the applied boundary, just as Test69 does below.
+  const int partition_quorum = NSERVERS / 2 + 1;
+  uint64_t first_partition_index = 0;
+  uint64_t last_partition_index = 0;
+  for (int i = 1; i <= 8; ++i) {
+    uint64_t idx =
+        config_->DoAgreement(600 + i, partition_quorum, true);
+    Assert2(idx > 0, "Test60 agreement failed for cmd %d", 600 + i);
 
-  // Verify the leader updated next_index and match_index for the follower
-  uint64_t final_next_index = 0;
-  uint64_t final_match_index = 0;
-  {
-    std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
-    final_next_index = leader_server->next_index_[follower_site_id];
-    final_match_index = leader_server->match_index_[follower_site_id];
+    int connected_applied = 0;
+    for (int attempt = 0;
+         attempt < 100 && connected_applied < NSERVERS - 1;
+         ++attempt) {
+      connected_applied = 0;
+      for (int site = 0; site < NSERVERS; ++site) {
+        if (site == follower) continue;
+        auto connected_server = config_->GetServer(site);
+        if (connected_server != nullptr &&
+            connected_server->GetAppliedIndex() >= idx) {
+          connected_applied++;
+        }
+      }
+      if (connected_applied < NSERVERS - 1) {
+        Fiber::sleep(HEARTBEAT_INTERVAL);
+      }
+    }
+    Assert2(connected_applied == NSERVERS - 1,
+            "Only %d of %d connected Test60 replicas published applied "
+            "index %lu for cmd %d",
+            connected_applied, NSERVERS - 1, idx, 600 + i);
+
+    if (first_partition_index == 0) {
+      first_partition_index = idx;
+    }
+    last_partition_index = idx;
   }
 
-  Log_info("[HB-SNAP-TEST] After heartbeat: next_index[{}]={}, match_index[{}]={}",
-           follower_site_id, final_next_index, follower_site_id, final_match_index);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  auto leader_server = config_->GetServer(leader);
+  Assert2(leader_server != nullptr && leader >= 0 && leader < NSERVERS &&
+              managers[leader] != nullptr,
+          "Test60 has no live manager for leader %d", leader);
 
-  // The leader should have updated next_index to snap_index + 1
-  Assert2(final_next_index > 1,
-          "Leader next_index for follower should have advanced from 1, got %lu", final_next_index);
-  Assert2(final_match_index >= leader_snap_idx,
-          "Leader match_index for follower should be >= snapshot index %lu, got %lu",
-          leader_snap_idx, final_match_index);
+  uint64_t leader_execute_index = 0;
+  uint64_t leader_snap_idx = 0;
+  uint64_t leader_min_active = 0;
+  bool leader_snapshot_ready = false;
+  for (int attempt = 0;
+       attempt < 300 && !leader_snapshot_ready;
+       ++attempt) {
+    {
+      std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
+      leader_execute_index = leader_server->executeIndex;
+      leader_snap_idx = leader_server->GetSnapshotIndex();
+      leader_min_active = leader_server->min_active_slot_;
+    }
+    auto candidate = managers[leader]->GetLatestSnapshot();
+    if (candidate.is_some()) {
+      const auto metadata = candidate.unwrap();
+      leader_snapshot_ready =
+          leader_execute_index >= last_partition_index &&
+          metadata.last_included_index == leader_snap_idx &&
+          leader_snap_idx > seeded_snapshot_indices[leader] &&
+          leader_snap_idx >= first_partition_index;
+    }
+    if (!leader_snapshot_ready) {
+      Fiber::sleep(10000);
+    }
+  }
+  Assert2(leader_snapshot_ready,
+          "Test60 leader did not create a fresh partition snapshot");
+  Assert2(leader_snap_idx > follower_snap_before,
+          "Leader snapshot %lu did not advance beyond follower %lu",
+          leader_snap_idx, follower_snap_before);
+  Assert2(follower_last_before < UINT64_MAX &&
+              leader_min_active > follower_last_before + 1,
+          "Leader retained a bridgeable log gap: min_active=%lu follower_next=%lu",
+          leader_min_active, follower_last_before + 1);
 
-  // Verify the follower received and applied the snapshot
-  uint64_t follower_snap_after = follower_server->GetSnapshotIndex();
-  Log_info("[HB-SNAP-TEST] Follower snapshot index: before={}, after={}",
-           follower_snap_before, follower_snap_after);
-  Assert2(follower_snap_after >= leader_snap_idx,
-          "Follower snapshot index should be >= %lu after InstallSnapshot, got %lu",
-          leader_snap_idx, follower_snap_after);
+  // Replace the marker-only loader with an owned probe for this one install.
+  // Prepare observes the old manager state; Commit itself refuses to succeed
+  // unless the exact incoming bytes are already readable from that manager.
+  snapshot_callback_token =
+      follower_server->SetStateMachineSnapshotCallbacks(
+          [](uint64_t) { return std::string(); },
+          [&, follower_manager = managers[follower]](
+              const std::string& incoming_data,
+              uint64_t incoming_index)
+              -> std::unique_ptr<PreparedStateMachineSnapshotInstall> {
+            constexpr size_t kMarkerSize = sizeof(uint64_t) * 2;
+            if (incoming_data.size() != kMarkerSize) {
+              return nullptr;
+            }
+            uint64_t marker_index = 0;
+            uint64_t marker_term = 0;
+            std::memcpy(&marker_index, incoming_data.data(),
+                        sizeof(marker_index));
+            std::memcpy(&marker_term,
+                        incoming_data.data() + sizeof(marker_index),
+                        sizeof(marker_term));
+            if (marker_index != incoming_index) {
+              return nullptr;
+            }
 
-  // Verify the system can still make progress (new entries can be committed)
+            auto previous = follower_manager->GetLatestSnapshot();
+            const bool still_old = previous.is_none() ||
+                previous.unwrap().last_included_index < incoming_index;
+            snapshot_prepare_saw_old_manager.store(
+                still_old, std::memory_order_release);
+            snapshot_prepare_called.store(true, std::memory_order_release);
+            return std::make_unique<SnapshotPublicationProbe>(
+                follower_manager, incoming_index, marker_term, incoming_data,
+                &snapshot_commit_called, &snapshot_commit_saw_published,
+                &snapshot_aborted_before_commit);
+          });
+  Assert2(snapshot_callback_token != 0,
+          "Could not install Test60 snapshot publication probe");
+
+  config_->Reconnect(follower);
+  follower_disconnected = false;
+
+  // Reconnecting the isolated follower can legitimately advance the term and
+  // elect a different leader.  That leader may have compacted to a slightly
+  // earlier (but still bridging) snapshot than `leader_snap_idx`, which was
+  // captured from the pre-reconnect leader.  Raft requires the current leader
+  // to install a snapshot beyond the follower's old log and then repair the
+  // remaining suffix; it does not require every replica to converge on the
+  // former leader's exact compaction boundary.
+  const uint64_t required_snapshot_floor =
+      std::max(follower_last_before + 1, first_partition_index);
+  uint64_t follower_snap_after = follower_snap_before;
+  for (int attempt = 0;
+       attempt < 100 && follower_snap_after < required_snapshot_floor;
+       ++attempt) {
+    Fiber::sleep(HEARTBEAT_INTERVAL);
+    std::lock_guard<std::recursive_mutex> lock(follower_server->mtx_);
+    follower_snap_after = follower_server->GetSnapshotIndex();
+  }
+  Assert2(follower_snap_after >= required_snapshot_floor &&
+              follower_snap_after > follower_snap_before,
+          "Follower snapshot did not bridge its old log from %lu through "
+          "required floor %lu (pre-reconnect leader snapshot was %lu); got %lu",
+          follower_snap_before, required_snapshot_floor, leader_snap_idx,
+          follower_snap_after);
+  auto follower_snapshot = managers[follower]->GetLatestSnapshot();
+  Assert2(follower_snapshot.is_some() &&
+              follower_snapshot.unwrap().last_included_index ==
+                  follower_snap_after,
+          "Follower manager does not contain the installed snapshot %lu",
+          follower_snap_after);
+  Assert2(snapshot_prepare_called.load(std::memory_order_acquire) &&
+              snapshot_prepare_saw_old_manager.load(
+                  std::memory_order_acquire),
+          "InstallSnapshot Prepare did not run against the old manager image");
+  Assert2(snapshot_commit_called.load(std::memory_order_acquire) &&
+              snapshot_commit_saw_published.load(std::memory_order_acquire) &&
+              !snapshot_aborted_before_commit.load(std::memory_order_acquire),
+          "InstallSnapshot Commit ran before exact Raft snapshot publication");
+
+  Assert2(follower_server->ClearStateMachineSnapshotCallbacks(
+              snapshot_callback_token),
+          "Could not clear Test60 snapshot publication probe");
+  snapshot_callback_token = 0;
+
   uint64_t new_idx = config_->DoAgreement(700, NSERVERS, true);
-  Assert2(new_idx > 0, "DoAgreement should succeed after InstallSnapshot recovery");
+  Assert2(new_idx > 0,
+          "Cluster did not make progress after Test60 snapshot recovery");
 
-  // Restore original managers
-  leader_server->SetSnapshotManager(original_mgr);
-  follower_server->SetSnapshotManager(follower_original_mgr);
-
-  // Cleanup temp files
-  // @unsafe { system calls }
-  std::string cleanup1 = "rm -rf " + test_path;
-  std::string cleanup2 = "rm -rf " + follower_test_path;
-  system(cleanup1.c_str());
-  system(cleanup2.c_str());
+  Log_info("[HEARTBEAT-SNAPSHOT-TEST] Retaining live snapshot root {}",
+           snapshot_root.c_str());
 
   Log_info("[HEARTBEAT-SNAPSHOT-TEST] PASSED");
   Passed2();
@@ -5323,9 +6037,12 @@ int RaftLabTest::testSpecCommitIndexPersistence(void) {
 
   // Commit some entries
   Log_info("TEST 61: Committing entries");
-  DoAgreeAndAssertIndex(201, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(202, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(203, NSERVERS, index_++);
+  // Snapshot tests immediately before this case append their own entries and
+  // intentionally do not maintain the legacy global index_ oracle.  This test
+  // cares about durable speculative metadata, not an absolute slot number.
+  DoAgreeAndAssertWaitSuccess(201, NSERVERS);
+  DoAgreeAndAssertWaitSuccess(202, NSERVERS);
+  DoAgreeAndAssertWaitSuccess(203, NSERVERS);
   Log_info("TEST 61: Committed 3 entries");
 
   // Allow time for speculative index advancement
@@ -5401,9 +6118,9 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
 
   // Commit some entries
   Log_info("TEST 62: Committing entries");
-  DoAgreeAndAssertIndex(301, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(302, NSERVERS, index_++);
-  DoAgreeAndAssertIndex(303, NSERVERS, index_++);
+  DoAgreeAndAssertWaitSuccess(301, NSERVERS);
+  DoAgreeAndAssertWaitSuccess(302, NSERVERS);
+  DoAgreeAndAssertWaitSuccess(303, NSERVERS);
   Log_info("TEST 62: Committed 3 entries");
 
   // Allow time for speculative and durable advancement
@@ -5431,19 +6148,23 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
 
   // Commit more entries with remaining servers
   Log_info("TEST 62: Committing with {} servers while {} is down", NSERVERS - 1, victim);
-  DoAgreeAndAssertIndex(304, NSERVERS - 1, index_++);
-  DoAgreeAndAssertIndex(305, NSERVERS - 1, index_++);
+  DoAgreeAndAssertWaitSuccess(304, NSERVERS - 1);
+  DoAgreeAndAssertWaitSuccess(305, NSERVERS - 1);
   Log_info("TEST 62: Committed 2 more entries");
 
   // Restart the killed server
   Log_info("TEST 62: Restarting server {}", victim);
-  config_->Restart(victim);
+  Assert2(config_->Restart(victim),
+          "Restart failed for server %d after speculative-index recovery",
+          victim);
 
   // Give it time to catch up
   Fiber::sleep(ELECTIONTIMEOUT);
 
   // Get the restarted server and check recovery
   victim_server = config_->GetServer(victim);
+  Assert2(victim_server != nullptr,
+          "Restarted server %d was not published", victim);
   uint64_t spec_after = victim_server->specCommitIndex_;
   uint64_t secured_after = victim_server->securedLogIndex_;
   uint64_t commit_after = victim_server->commitIndex;
@@ -5487,17 +6208,20 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
 // ============================================================================
 // @unsafe - Uses test infrastructure, modifies cluster state
 /**
- * Verify that UnsecuredFailure step-down rolls back all entries above commitIndex.
+ * Verify that UnsecuredFailure step-down rolls back every pending entry above
+ * the last durably secured index.
  *
  * Scenario:
- * 1. Start 5-node cluster, elect a leader
- * 2. Register a pending callback on the leader for a new log entry
- * 3. Crash majority of followers so leader loses quorum and steps down
- *    with UnsecuredFailure reason
- * 4. Verify the callback was invoked with ROLLEDBACK status
+ * 1. On a persistence-off (therefore unsecured) leader, commit one entry to a
+ *    memory quorum and observe its SPECULATIVE callback.
+ * 2. Disconnect the followers and append a second, local-only entry.
+ * 3. Feed the real peer-restart invalidation path the leader's speculative
+ *    voters until it loses quorum and steps down with UnsecuredFailure.
+ * 4. Verify both the already-speculative entry and the local-only entry receive
+ *    exactly one ROLLEDBACK notification, then restore the cluster.
  */
 int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
-  Init2(63, "UnsecuredFailure step-down rolls back all entries");
+  Init2(63, "UnsecuredFailure rolls back all non-durable pending entries");
 
   // Wait for initial election
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -5508,60 +6232,45 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
   siteid_t leader_id = config_->getServerIdByIndex(leader);
   Log_info("[ROLLBACK-UNSECURED] Leader: {} (site {})", leader, leader_id);
 
-  // Wait for leader to become secured so we have a stable baseline
-  Fiber::sleep(500000);
+  RaftServer* leader_server = config_->GetServer(leader_id);
+  Assert2(leader_server != nullptr, "Leader server is unavailable");
+  Assert2(!config_->IsSecuredLeader(leader_id),
+          "Persistence-off leader must remain unsecured for Test 63");
 
-  // Track callback invocations
-  std::atomic<int> specNotifications{0};
-  std::atomic<int> durableNotifications{0};
-  std::atomic<int> rollbackNotifications{0};
+  // First exercise the lower rollback bound: this entry reaches memory quorum,
+  // advances commitIndex/specCommitIndex, and is exposed as SPECULATIVE, but it
+  // has no durable-quorum guarantee.
+  std::atomic<int> committedSpec{0};
+  std::atomic<int> committedDurable{0};
+  std::atomic<int> committedRollback{0};
+  uint64_t committed_index = 0;
+  uint64_t committed_term = 0;
 
-  // Submit an entry with callback
-  int cmd = 6300;
-  uint64_t index = 0;
-  uint64_t term = 0;
-
-  bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
+  bool ok = config_->StartWithCallback(leader_id, 6300,
+                                       &committed_index, &committed_term,
     [&](CommitStatus status) {
-      Log_info("[ROLLBACK-UNSECURED] Callback status={}", static_cast<int>(status));
+      Log_info("[ROLLBACK-UNSECURED] Memory-quorum entry status={}",
+               static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
-        specNotifications++;
+        committedSpec++;
       } else if (status == CommitStatus::DURABLE) {
-        durableNotifications++;
+        committedDurable++;
       } else if (status == CommitStatus::ROLLEDBACK) {
-        rollbackNotifications++;
+        committedRollback++;
       }
     });
+  Assert2(ok, "Failed to submit memory-quorum command");
+  for (int i = 0; i < 200 && committedSpec.load() == 0; ++i) {
+    Fiber::sleep(10000);
+  }
+  Assert2(committedSpec.load() == 1,
+          "Memory-quorum entry did not receive one SPECULATIVE notification");
+  Assert2(committedDurable.load() == 0,
+          "Persistence-off entry unexpectedly received DURABLE");
 
-  Assert2(ok, "Failed to submit command with callback");
-  Log_info("[ROLLBACK-UNSECURED] Submitted command {} at index {}", cmd, index);
-
-  // Let entry get speculatively committed
-  Fiber::sleep(300000);
-
-  // Now submit another entry and immediately crash majority to prevent it
-  // from being durably committed
-  int cmd2 = 6301;
-  uint64_t index2 = 0;
-  uint64_t term2 = 0;
-
-  std::atomic<int> cmd2Rollback{0};
-  std::atomic<int> cmd2Spec{0};
-
-  ok = config_->StartWithCallback(leader_id, cmd2, &index2, &term2,
-    [&](CommitStatus status) {
-      Log_info("[ROLLBACK-UNSECURED] Entry 2 status={}", static_cast<int>(status));
-      if (status == CommitStatus::SPECULATIVE) {
-        cmd2Spec++;
-      } else if (status == CommitStatus::ROLLEDBACK) {
-        cmd2Rollback++;
-      }
-    });
-
-  Assert2(ok, "Failed to submit second command");
-  Log_info("[ROLLBACK-UNSECURED] Submitted command2 {} at index {}", cmd2, index2);
-
-  // Crash majority of followers to force leader step-down
+  // Disconnect every follower before adding the upper-bound case.  Disconnect
+  // is immediate and reversible; unlike Kill/Restart it does not introduce a
+  // multi-second cleanup race or rebuild a server while this assertion runs.
   std::vector<siteid_t> followers;
   for (int i = 0; i < NSERVERS; i++) {
     siteid_t svr = config_->getServerIdByIndex(i);
@@ -5569,40 +6278,111 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
       followers.push_back(svr);
     }
   }
-
-  // Kill 3 followers (in 5-node cluster: leader + 1 follower = no quorum)
-  Log_info("[ROLLBACK-UNSECURED] Killing 3 followers to force quorum loss");
-  for (int i = 0; i < 3 && i < (int)followers.size(); i++) {
-    config_->Kill(followers[i]);
+  for (siteid_t follower : followers) {
+    config_->Disconnect(follower);
   }
 
-  // Wait for leader to detect quorum loss and step down
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
+  std::atomic<int> localSpec{0};
+  std::atomic<int> localDurable{0};
+  std::atomic<int> localRollback{0};
+  uint64_t local_index = 0;
+  uint64_t local_term = 0;
 
-  // Log results
-  Log_info("[ROLLBACK-UNSECURED] Results: spec={} durable={} rollback={}",
-           specNotifications.load(), durableNotifications.load(), rollbackNotifications.load());
-  Log_info("[ROLLBACK-UNSECURED] Entry2: spec={} rollback={}",
-           cmd2Spec.load(), cmd2Rollback.load());
+  bool appended_local = false;
+  bool local_was_above_spec = false;
+  bool stepped_down = false;
+  bool callbacks_cleared = false;
+  bool speculative_state_cleared = false;
+  size_t voters_invalidated = 0;
 
-  // Verify: at least first entry should have been speculatively committed
-  Assert2(specNotifications.load() >= 1 || durableNotifications.load() >= 1,
-          "First entry should have received at least SPECULATIVE notification");
+  // Hold the leader lock across append + invalidation so the heartbeat loop
+  // cannot interleave a response.  Both StartWithCallback and OnPeerRestart
+  // use the same recursive mutex, so this exercises their production paths.
+  {
+    std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
+    appended_local = config_->StartWithCallback(
+        leader_id, 6301, &local_index, &local_term,
+        [&](CommitStatus status) {
+          Log_info("[ROLLBACK-UNSECURED] Local-only entry status={}",
+                   static_cast<int>(status));
+          if (status == CommitStatus::SPECULATIVE) {
+            localSpec++;
+          } else if (status == CommitStatus::DURABLE) {
+            localDurable++;
+          } else if (status == CommitStatus::ROLLEDBACK) {
+            localRollback++;
+          }
+        });
 
-  // Restart killed followers for cleanup
-  for (int i = 0; i < 3 && i < (int)followers.size(); i++) {
-    config_->Restart(followers[i]);
+    local_was_above_spec = local_index > leader_server->specCommitIndex_;
+
+    std::vector<siteid_t> speculative_voters;
+    for (siteid_t voter : leader_server->specVoters_) {
+      if (voter != leader_id) {
+        speculative_voters.push_back(voter);
+      }
+    }
+    for (siteid_t voter : speculative_voters) {
+      if (!leader_server->IsLeader()) {
+        break;
+      }
+      leader_server->OnPeerRestart(voter);
+      voters_invalidated++;
+    }
+
+    stepped_down = !leader_server->IsLeader();
+    callbacks_cleared = leader_server->pendingCallbacks_.empty();
+    speculative_state_cleared =
+        leader_server->specVoters_.empty() &&
+        leader_server->durableVoters_.empty() &&
+        leader_server->memoryAcks_.empty() &&
+        leader_server->durableAcks_.empty() &&
+        !leader_server->securedLeader_ &&
+        leader_server->securedLogIndex_ == 0 &&
+        leader_server->specCommitIndex_ == 0;
   }
 
-  // Wait for cluster to stabilize
-  Fiber::sleep(ELECTIONTIMEOUT * 2);
+  // Always restore connectivity before evaluating the captured assertions.
+  for (siteid_t follower : followers) {
+    config_->Reconnect(follower);
+  }
 
+  // Prove the cluster elects a leader and reconciles the old leader's
+  // local-only tail after the forced step-down.
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
   int final_leader = config_->OneLeader();
   if (final_leader < 0) {
     Fiber::sleep(ELECTIONTIMEOUT);
     final_leader = config_->OneLeader();
   }
+
+  Log_info("[ROLLBACK-UNSECURED] committed: spec={} durable={} rollback={}; "
+           "local: spec={} durable={} rollback={}; invalidated={}",
+           committedSpec.load(), committedDurable.load(), committedRollback.load(),
+           localSpec.load(), localDurable.load(), localRollback.load(),
+           voters_invalidated);
+
+  Assert2(appended_local, "Failed to append local-only command");
+  Assert2(local_was_above_spec,
+          "Local-only entry must remain above specCommitIndex");
+  Assert2(stepped_down,
+          "Unsecured leader did not step down after losing speculative quorum");
+  Assert2(committedSpec.load() == 1 && committedDurable.load() == 0 &&
+              committedRollback.load() == 1,
+          "Already-speculative entry notifications were spec=%d durable=%d rollback=%d",
+          committedSpec.load(), committedDurable.load(), committedRollback.load());
+  Assert2(localSpec.load() == 0 && localDurable.load() == 0 &&
+              localRollback.load() == 1,
+          "Local-only entry notifications were spec=%d durable=%d rollback=%d",
+          localSpec.load(), localDurable.load(), localRollback.load());
+  Assert2(callbacks_cleared, "Pending callbacks were not cleared on step-down");
+  Assert2(speculative_state_cleared,
+          "Follower speculative state was not fully cleared after rollback");
   Assert2(final_leader >= 0, "Should have leader after recovery");
+
+  uint64_t reconciled = config_->DoAgreement(6399, NSERVERS, true);
+  Assert2(reconciled > 0,
+          "Cluster did not reconcile the old leader's local-only tail");
 
   Log_info("[ROLLBACK-UNSECURED] UnsecuredFailure rollback test PASSED!");
   Passed2();
@@ -5742,8 +6522,8 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
  *
  * Scenario:
  * 1. Start 5-node cluster, elect leader
- * 2. Set up snapshot manager on a follower with low threshold
- * 3. Commit entries, manually trigger CreateSnapshot on the follower
+ * 2. Create a unique file snapshot manager without installing it live
+ * 3. Commit entries and synchronously write a snapshot of the applied prefix
  * 4. Kill the follower, restart it (snapshot manager re-initialized)
  * 5. Verify state reflects snapshot: executeIndex >= snapidx_, etc.
  * 6. Verify cluster can still make progress
@@ -5761,36 +6541,155 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
   siteid_t follower_id = config_->getNextServerId(leader, 1);
   auto follower_server = config_->GetServer(follower_id);
   Assert2(follower_server != nullptr, "Follower server should not be null");
+  const uint64_t original_snapshot_threshold =
+      follower_server->GetSnapshotThreshold();
 
   // Build the snapshot path that InitializeSnapshotManager() will construct on restart.
   // It uses: MAKO_RAFT_SNAPSHOT_PATH + "/raft_snap_" + site_id + "_partition_" + partition_id
-  std::string base_path = "/tmp/raft_snap_recovery_test_65_" + std::to_string(getpid());
+  // mkdtemp gives this run an empty, collision-free parent.  A PID-only path
+  // can be reused after a crashed run and make GetLatestSnapshot() observe a
+  // stale file rather than a snapshot created by this test.
+  std::string base_path_template =
+      "/tmp/raft_snap_recovery_test_65_" + std::to_string(getpid()) + "_XXXXXX";
+  char* created_base_path = mkdtemp(base_path_template.data());  // @unsafe
+  Assert2(created_base_path != nullptr,
+          "Could not create unique snapshot parent: %s", strerror(errno));
+  std::string base_path(created_base_path);
   std::string full_snap_path = base_path + "/raft_snap_" +
                                std::to_string(follower_server->site_id_) + "_partition_" +
                                std::to_string(follower_server->partition_id_);
 
-  // Set up snapshot manager on the follower using the same path
+  // Build an isolated manager, but do not install it on the live follower.
+  // Installing a low-threshold manager here would compact the follower before
+  // restart and couple this recovery test to asynchronous snapshot scheduling.
   janus::raft::SnapshotConfig snap_config;
   snap_config.storage_path = full_snap_path;
   auto snap_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
-  follower_server->SetSnapshotManager(snap_mgr);
-  follower_server->SetSnapshotThreshold(3);
+
+  // Once Restart() adopts this snapshot directory it must remain available:
+  // in persistence-off mode the snapshot is the only recovered prefix, and a
+  // later InstallSnapshot may still need its bytes.  Before adoption, however,
+  // every early return removes the test-owned empty directory.
+  bool snapshot_path_adopted = false;
+  auto snapshot_cleanup = MakeRaftTestScopeExit([&]() {  // @unsafe
+    if (snapshot_path_adopted && follower_server != nullptr) {
+      follower_server->SetSnapshotThreshold(original_snapshot_threshold);
+    }
+    if (!snapshot_path_adopted) {
+      snap_mgr->DeleteAllSnapshots();
+      (void)rmdir(full_snap_path.c_str());
+      (void)rmdir(base_path.c_str());
+    } else {
+      Log_info("TEST 65: Retaining live recovered snapshot directory {} until process shutdown",
+               base_path.c_str());
+    }
+  });
+
+  struct stat snap_dir_stat;
+  Assert2(stat(full_snap_path.c_str(), &snap_dir_stat) == 0 &&
+              S_ISDIR(snap_dir_stat.st_mode),
+          "Snapshot manager did not create storage directory %s: %s",
+          full_snap_path.c_str(), strerror(errno));
+
+  // Snapshot restart configuration is process-global.  Preserve every value
+  // that this test overrides, including the interval used by Restart(), and
+  // restore it on every Assert2 early return.
+  const char* old_snapshots_raw = std::getenv("MAKO_RAFT_SNAPSHOTS");
+  const char* old_snapshot_path_raw = std::getenv("MAKO_RAFT_SNAPSHOT_PATH");
+  const char* old_snapshot_interval_raw =
+      std::getenv("MAKO_RAFT_SNAPSHOT_INTERVAL");
+  const bool had_snapshots = old_snapshots_raw != nullptr;
+  const bool had_snapshot_path = old_snapshot_path_raw != nullptr;
+  const bool had_snapshot_interval = old_snapshot_interval_raw != nullptr;
+  const std::string old_snapshots =
+      had_snapshots ? old_snapshots_raw : "";
+  const std::string old_snapshot_path =
+      had_snapshot_path ? old_snapshot_path_raw : "";
+  const std::string old_snapshot_interval =
+      had_snapshot_interval ? old_snapshot_interval_raw : "";
+  bool snapshot_env_overridden = false;
+  auto restore_snapshot_env = [&]() {  // @unsafe
+    if (!snapshot_env_overridden) {
+      return;
+    }
+    auto restore_one = [](const char* name, bool existed,
+                          const std::string& value) {  // @unsafe
+      int rc = existed ? setenv(name, value.c_str(), 1) : unsetenv(name);
+      if (rc != 0) {
+        Log_error("TEST 65: Failed to restore {}: {}", name, strerror(errno));
+      }
+    };
+    restore_one("MAKO_RAFT_SNAPSHOTS", had_snapshots, old_snapshots);
+    restore_one("MAKO_RAFT_SNAPSHOT_PATH", had_snapshot_path,
+                old_snapshot_path);
+    restore_one("MAKO_RAFT_SNAPSHOT_INTERVAL", had_snapshot_interval,
+                old_snapshot_interval);
+    snapshot_env_overridden = false;
+  };
+  auto env_cleanup =
+      MakeRaftTestScopeExit([&]() { restore_snapshot_env(); });
 
   // Commit entries
   Log_info("TEST 65: Committing 8 entries");
+  uint64_t first_new_index = 0;
+  uint64_t last_new_index = 0;
   for (int i = 1; i <= 8; i++) {
     uint64_t idx = config_->DoAgreement(6500 + i, NSERVERS, true);
     Assert2(idx > 0, "DoAgreement failed for cmd %d", 6500 + i);
+    if (first_new_index == 0) {
+      first_new_index = idx;
+    }
+    last_new_index = idx;
   }
 
-  // Wait for apply + snapshot creation
-  Fiber::sleep(2000000);
+  // Wait for this follower to apply the agreed prefix, then write exactly one
+  // snapshot synchronously.  This gives the test a precise provenance range
+  // and avoids depending on the apply thread's threshold timing.
+  for (int attempt = 0;
+       attempt < 200 && follower_server->executeIndex < last_new_index;
+       ++attempt) {
+    Fiber::sleep(10000);
+  }
+  Assert2(follower_server->executeIndex >= last_new_index,
+          "Follower executeIndex (%lu) did not reach last new index (%lu)",
+          follower_server->executeIndex, last_new_index);
 
-  // Verify snapshot was created on follower
-  uint64_t snap_idx = follower_server->GetSnapshotIndex();
-  uint64_t snap_term = follower_server->GetSnapshotTerm();
+  uint64_t snap_idx = follower_server->executeIndex;
+  uint64_t snap_term = 0;
+  {
+    std::lock_guard<std::recursive_mutex> lock(follower_server->mtx_);  // @unsafe
+    auto snap_instance = follower_server->raft_logs_.find(snap_idx);
+    Assert2(snap_instance != follower_server->raft_logs_.end() &&
+                snap_instance->second != nullptr,
+            "No Raft instance at manual snapshot index %lu", snap_idx);
+    snap_term = snap_instance->second->term;
+  }
+  Assert2(snap_term > 0, "Manual snapshot term should be non-zero");
+  std::string snapshot_data(sizeof(uint64_t) * 2, '\0');
+  std::memcpy(snapshot_data.data(), &snap_idx, sizeof(uint64_t));
+  std::memcpy(snapshot_data.data() + sizeof(uint64_t), &snap_term,
+              sizeof(uint64_t));
+  Assert2(snap_mgr->TakeSnapshot(snap_idx, snap_term,
+                                 snapshot_data.data(), snapshot_data.size()),
+          "Manual snapshot write failed in %s", full_snap_path.c_str());
+
+  // Verify this manager actually wrote a snapshot.  Checking only the server's
+  // snapidx_ can produce a false positive because it may retain metadata from
+  // an earlier snapshot test even when every new file write failed.
+  auto latest_snapshot = snap_mgr->GetLatestSnapshot();
+  Assert2(latest_snapshot.is_some(),
+          "Snapshot manager did not create a snapshot in %s",
+          full_snap_path.c_str());
+  const auto snapshot_metadata = latest_snapshot.unwrap();
   Log_info("TEST 65: Follower {} snapshot: index={} term={}", follower_id, snap_idx, snap_term);
-  Assert2(snap_idx > 0, "Snapshot should have been created on follower, got index=%lu", snap_idx);
+  Assert2(snapshot_metadata.last_included_index == snap_idx &&
+              snapshot_metadata.last_included_term == snap_term,
+          "Fresh snapshot metadata mismatch: got index=%lu term=%lu, expected index=%lu term=%lu",
+          snapshot_metadata.last_included_index,
+          snapshot_metadata.last_included_term, snap_idx, snap_term);
+  Assert2(snap_idx >= first_new_index && snap_idx <= follower_server->executeIndex,
+          "Snapshot index %lu is outside this run's fresh range [%lu, %lu]",
+          snap_idx, first_new_index, follower_server->executeIndex);
 
   // Record pre-kill state
   uint64_t exec_before = follower_server->executeIndex;
@@ -5806,21 +6705,32 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
 
   // Set MAKO_RAFT_SNAPSHOTS and MAKO_RAFT_SNAPSHOT_PATH env vars so
   // InitializeSnapshotManager() finds the existing snapshot on restart
-  setenv("MAKO_RAFT_SNAPSHOTS", "1", 1);  // @unsafe
-  setenv("MAKO_RAFT_SNAPSHOT_PATH", base_path.c_str(), 1);  // @unsafe
+  snapshot_env_overridden = true;
+  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,  // @unsafe
+          "Could not set MAKO_RAFT_SNAPSHOTS: %s", strerror(errno));
+  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", base_path.c_str(), 1) == 0,  // @unsafe
+          "Could not set MAKO_RAFT_SNAPSHOT_PATH: %s", strerror(errno));
+  Assert2(setenv("MAKO_RAFT_SNAPSHOT_INTERVAL", "1000000", 1) == 0,  // @unsafe
+          "Could not set MAKO_RAFT_SNAPSHOT_INTERVAL: %s", strerror(errno));
 
   // Restart the follower - Setup() will call InitializeSnapshotManager()
   Log_info("TEST 65: Restarting follower {}", follower_id);
-  config_->Restart(follower_id);
-  Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Unset env vars
-  unsetenv("MAKO_RAFT_SNAPSHOTS");  // @unsafe
-  unsetenv("MAKO_RAFT_SNAPSHOT_PATH");  // @unsafe
+  Assert2(config_->Restart(follower_id),
+          "Snapshot-backed restart failed for follower %d", follower_id);
+  restore_snapshot_env();
 
   // Get restarted server
   follower_server = config_->GetServer(follower_id);
   Assert2(follower_server != nullptr, "Restarted server should not be null");
+  auto restarted_snapshot_manager = follower_server->GetSnapshotManager();
+  if (restarted_snapshot_manager != nullptr &&
+      restarted_snapshot_manager->GetStoragePath() == full_snap_path) {
+    snapshot_path_adopted = true;
+  }
+  Assert2(snapshot_path_adopted,
+          "Restarted server did not adopt snapshot directory %s",
+          full_snap_path.c_str());
+  Fiber::sleep(ELECTIONTIMEOUT);
 
   uint64_t exec_after = follower_server->executeIndex;
   uint64_t commit_after = follower_server->commitIndex;
@@ -5842,6 +6752,10 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
   Assert2(min_slot_after >= snap_idx + 1,
           "min_active_slot_ (%lu) should be >= snapshot index + 1 (%lu)",
           min_slot_after, snap_idx + 1);
+  Assert2(snap_idx_after == snap_idx &&
+              follower_server->GetSnapshotTerm() == snap_term,
+          "Restart loaded wrong snapshot metadata: index=%lu term=%lu, expected index=%lu term=%lu",
+          snap_idx_after, follower_server->GetSnapshotTerm(), snap_idx, snap_term);
 
   // Verify cluster can still make progress
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -5851,12 +6765,6 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
     new_leader = config_->OneLeader();
   }
   Assert2(new_leader >= 0, "Should have leader after restart");
-
-  // Clean up snapshot files
-  snap_mgr->DeleteAllSnapshots();
-  // @unsafe { rmdir is not borrow-checked }
-  rmdir(full_snap_path.c_str());
-  rmdir(base_path.c_str());
 
   Log_info("TEST 65: Snapshot recovery on startup PASSED!");
   Passed2();
@@ -5891,28 +6799,98 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
 
-  // Set up snapshot manager
-  std::string snap_path = "/tmp/raft_snap_advancement_test_66_" + std::to_string(getpid());
+  // Set up the snapshot manager at the exact leaf path reconstructed by
+  // InitializeSnapshotManager().  A unique parent prevents a crashed prior
+  // run from supplying stale metadata.
+  std::string snap_root_template =
+      "/tmp/raft_snap_advancement_test_66_" +
+      std::to_string(getpid()) + "_XXXXXX";
+  char* created_snap_root = mkdtemp(snap_root_template.data());  // @unsafe
+  Assert2(created_snap_root != nullptr,
+          "Could not create Test66 snapshot parent: %s", strerror(errno));
+  std::string snap_root(created_snap_root);
+  std::string snap_path =
+      snap_root + "/raft_snap_" + std::to_string(server->site_id_) +
+      "_partition_" + std::to_string(server->partition_id_);
   janus::raft::SnapshotConfig snap_config;
   snap_config.storage_path = snap_path;
   auto snap_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
-  auto original_mgr = server->GetSnapshotManager();
-  server->SetSnapshotManager(snap_mgr);
-  server->SetSnapshotThreshold(3);
+  const uint64_t original_snapshot_threshold =
+      server->GetSnapshotThreshold();
+  uint64_t snapshot_baseline = 0;
+  Assert2(InstallAndSeedSnapshotManager(
+              server, snap_mgr, 3, &snapshot_baseline),
+          "Could not atomically seed Test66 replacement snapshot manager");
+
+  const char* old_snapshots_raw = std::getenv("MAKO_RAFT_SNAPSHOTS");
+  const char* old_snapshot_path_raw =
+      std::getenv("MAKO_RAFT_SNAPSHOT_PATH");
+  const bool had_snapshots = old_snapshots_raw != nullptr;
+  const bool had_snapshot_path = old_snapshot_path_raw != nullptr;
+  const std::string old_snapshots =
+      had_snapshots ? old_snapshots_raw : "";
+  const std::string old_snapshot_path =
+      had_snapshot_path ? old_snapshot_path_raw : "";
+  bool snapshot_env_overridden = false;
+  auto restore_test66_state = MakeRaftTestScopeExit([&]() {  // @unsafe
+    if (snapshot_env_overridden) {
+      if (had_snapshots) {
+        (void)setenv("MAKO_RAFT_SNAPSHOTS", old_snapshots.c_str(), 1);
+      } else {
+        (void)unsetenv("MAKO_RAFT_SNAPSHOTS");
+      }
+      if (had_snapshot_path) {
+        (void)setenv("MAKO_RAFT_SNAPSHOT_PATH",
+                     old_snapshot_path.c_str(), 1);
+      } else {
+        (void)unsetenv("MAKO_RAFT_SNAPSHOT_PATH");
+      }
+      snapshot_env_overridden = false;
+    }
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->SetSnapshotThreshold(original_snapshot_threshold);
+  });
 
   // Commit initial entries to trigger snapshot
   Log_info("TEST 66: Committing initial entries");
+  uint64_t first_new_index = 0;
   for (int i = 1; i <= 6; i++) {
     uint64_t idx = config_->DoAgreement(6600 + i, NSERVERS, true);
     Assert2(idx > 0, "DoAgreement failed for cmd %d", 6600 + i);
+    if (first_new_index == 0) {
+      first_new_index = idx;
+    }
   }
 
-  // Wait for snapshot creation
-  Fiber::sleep(2000000);
-
-  uint64_t snap_idx = server->GetSnapshotIndex();
+  uint64_t snap_idx = 0;
+  bool snapshot_ready = false;
+  for (int attempt = 0; attempt < 200 && !snapshot_ready; ++attempt) {
+    {
+      std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+      snap_idx = server->GetSnapshotIndex();
+    }
+    auto candidate = snap_mgr->GetLatestSnapshot();
+    if (candidate.is_some()) {
+      const auto candidate_metadata = candidate.unwrap();
+      snapshot_ready =
+          candidate_metadata.last_included_index == snap_idx &&
+          snap_idx > snapshot_baseline && snap_idx >= first_new_index;
+    }
+    if (!snapshot_ready) {
+      Fiber::sleep(10000);
+    }
+  }
+  auto fresh_snapshot = snap_mgr->GetLatestSnapshot();
+  Assert2(snapshot_ready && fresh_snapshot.is_some(),
+          "Test66 replacement manager did not advance for this workload");
+  const auto fresh_metadata = fresh_snapshot.unwrap();
   Log_info("TEST 66: Snapshot created at index {}", snap_idx);
-  Assert2(snap_idx > 0, "Snapshot should have been created");
+  Assert2(snap_idx == fresh_metadata.last_included_index,
+          "Server snapshot index %lu does not match manager index %lu",
+          snap_idx, fresh_metadata.last_included_index);
+  Assert2(snap_idx > snapshot_baseline && snap_idx >= first_new_index,
+          "Test66 snapshot did not advance for this workload: baseline=%lu, first=%lu, got=%lu",
+          snapshot_baseline, first_new_index, snap_idx);
 
   // Commit MORE entries so that executeIndex/commitIndex are ahead of snapshot
   Log_info("TEST 66: Committing additional entries beyond snapshot");
@@ -5925,10 +6903,17 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
   Fiber::sleep(1000000);
 
   // Record current values (should be ahead of snapshot)
-  uint64_t exec_before = server->executeIndex;
-  uint64_t commit_before = server->commitIndex;
-  uint64_t last_log_before = server->lastLogIndex;
-  uint64_t min_slot_before = server->min_active_slot_;
+  uint64_t exec_before = 0;
+  uint64_t commit_before = 0;
+  uint64_t last_log_before = 0;
+  uint64_t min_slot_before = 0;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    exec_before = server->executeIndex;
+    commit_before = server->commitIndex;
+    last_log_before = server->lastLogIndex;
+    min_slot_before = server->min_active_slot_;
+  }
   Log_info("TEST 66: Before re-init - executeIndex={} commitIndex={} lastLogIndex={} "
            "min_active_slot_={} snap_idx={}",
            exec_before, commit_before, last_log_before, min_slot_before, snap_idx);
@@ -5940,18 +6925,27 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
           "commitIndex (%lu) should be > snapshot index (%lu) after more commits",
           commit_before, snap_idx);
 
-  // Set env vars and call InitializeSnapshotManager() again
-  setenv("MAKO_RAFT_SNAPSHOTS", "1", 1);  // @unsafe
-  setenv("MAKO_RAFT_SNAPSHOT_PATH", ("/tmp/raft_snap_advancement_test_66_" + std::to_string(getpid())).c_str(), 1);  // @unsafe
-  server->InitializeSnapshotManager();
-  unsetenv("MAKO_RAFT_SNAPSHOTS");  // @unsafe
-  unsetenv("MAKO_RAFT_SNAPSHOT_PATH");  // @unsafe
+  // Set env vars and call InitializeSnapshotManager() again.
+  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,
+          "Could not set MAKO_RAFT_SNAPSHOTS: %s", strerror(errno));
+  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", snap_root.c_str(), 1) == 0,
+          "Could not set MAKO_RAFT_SNAPSHOT_PATH: %s", strerror(errno));
+  snapshot_env_overridden = true;
+  Assert2(server->InitializeSnapshotManager(),
+          "Test66 snapshot manager reinitialization failed");
 
   // Verify indices were NOT set backwards
-  uint64_t exec_after = server->executeIndex;
-  uint64_t commit_after = server->commitIndex;
-  uint64_t last_log_after = server->lastLogIndex;
-  uint64_t min_slot_after = server->min_active_slot_;
+  uint64_t exec_after = 0;
+  uint64_t commit_after = 0;
+  uint64_t last_log_after = 0;
+  uint64_t min_slot_after = 0;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    exec_after = server->executeIndex;
+    commit_after = server->commitIndex;
+    last_log_after = server->lastLogIndex;
+    min_slot_after = server->min_active_slot_;
+  }
   Log_info("TEST 66: After re-init - executeIndex={} commitIndex={} lastLogIndex={} "
            "min_active_slot_={}",
            exec_after, commit_after, last_log_after, min_slot_after);
@@ -5973,11 +6967,9 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
   Assert2(min_slot_after >= snap_idx + 1,
           "min_active_slot_ (%lu) should be >= snapshot+1 (%lu)", min_slot_after, snap_idx + 1);
 
-  // Restore original manager and clean up
-  server->SetSnapshotManager(original_mgr);
-  snap_mgr->DeleteAllSnapshots();
-  // @unsafe { rmdir is not borrow-checked }
-  rmdir(snap_path.c_str());
+  // The reinitialized manager now backs compacted live state.  The scope guard
+  // restores environment/tuning, while the files remain through suite exit.
+  Log_info("TEST 66: Retaining live snapshot root {}", snap_root.c_str());
 
   Log_info("TEST 66: Snapshot recovery field advancement PASSED!");
   Passed2();
@@ -6129,22 +7121,50 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   AssertOneLeader(leader);
   Log_info("TEST 69: Leader elected: {}", leader);
 
-  // Set up snapshot managers on ALL servers with low threshold
-  // @unsafe { filesystem and shared_ptr usage }
-  std::string base_path = "/tmp/raft_long_part_test_" + std::to_string(getpid());
-  std::vector<std::shared_ptr<janus::raft::SnapshotManager>> test_mgrs;
-  std::vector<std::shared_ptr<janus::raft::SnapshotManager>> original_mgrs;
+  // Set up snapshot managers on ALL servers with a low threshold.  Use the
+  // same directory layout that InitializeSnapshotManager() reconstructs after
+  // Kill/Restart, and retain it for the rest of this process: compacted logs
+  // are not self-contained without the snapshot bytes that cover their prefix.
+  // @unsafe { mkdtemp, setenv, filesystem and shared_ptr usage }
+  std::string base_path_template =
+      "/tmp/raft_long_part_test_" + std::to_string(getpid()) + "_XXXXXX";
+  char* created_base_path = mkdtemp(base_path_template.data());
+  Assert2(created_base_path != nullptr,
+          "Could not create unique long-partition snapshot parent: %s",
+          strerror(errno));
+  std::string base_path(created_base_path);
+  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,
+          "Could not enable snapshots for long-partition fixture: %s",
+          strerror(errno));
+  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", base_path.c_str(), 1) == 0,
+          "Could not set long-partition snapshot root: %s", strerror(errno));
+
+  std::vector<std::shared_ptr<janus::raft::SnapshotManager>> test_mgrs(
+      NSERVERS);
+  std::vector<uint64_t> seeded_snapshot_indices(NSERVERS, 0);
+  std::vector<uint64_t> original_thresholds(NSERVERS, 0);
+  std::vector<uint64_t> original_retention_windows(NSERVERS, 0);
   for (int i = 0; i < NSERVERS; i++) {
     auto server = config_->GetServer(i);
     if (server == nullptr) continue;
-    original_mgrs.push_back(server->GetSnapshotManager());
     janus::raft::SnapshotConfig snap_config;
-    snap_config.storage_path = base_path + "_s" + std::to_string(i);
+    snap_config.storage_path =
+        base_path + "/raft_snap_" + std::to_string(server->site_id_) +
+        "_partition_" + std::to_string(server->partition_id_);
     auto mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
-    test_mgrs.push_back(mgr);
-    server->SetSnapshotManager(mgr);
-    server->SetSnapshotThreshold(5);
-    server->SetLogRetentionWindow(10);
+    test_mgrs[i] = mgr;
+    {
+      std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+      original_thresholds[i] = server->GetSnapshotThreshold();
+      original_retention_windows[i] = server->GetLogRetentionWindow();
+    }
+    Assert2(InstallAndSeedSnapshotManager(
+                server, mgr, 5, &seeded_snapshot_indices[i]),
+            "Could not atomically seed Test69 server %d snapshot manager", i);
+    {
+      std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+      server->SetLogRetentionWindow(10);
+    }
   }
 
   // Pick a follower to disconnect
@@ -6161,15 +7181,49 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   // Disconnect the follower
   config_->Disconnect(follower);
 
-  // Commit enough entries on remaining 4 nodes to trigger snapshot + compaction
+  // Commit enough entries to trigger snapshot + compaction. NCommitted is a
+  // callback-only RaftLab oracle: a replica that legitimately installs a
+  // marker-only snapshot through the current command publishes its applied
+  // boundary but cannot reconstruct that covered command's old callback.
+  // Require a real Raft quorum through the command oracle, then independently
+  // require every connected replica to publish the boundary through either
+  // ordinary application or snapshot installation.
+  const int partition_quorum = NSERVERS / 2 + 1;
+  uint64_t first_partition_index = 0;
+  uint64_t last_partition_index = 0;
   for (int i = 1; i <= 20; i++) {
-    uint64_t idx = config_->DoAgreement(6900 + i, NSERVERS - 1, true);
+    uint64_t idx = config_->DoAgreement(
+        6900 + i, partition_quorum, true);
     Assert2(idx > 0, "DoAgreement failed for cmd %d", 6900 + i);
+
+    int connected_applied = 0;
+    for (int attempt = 0;
+         attempt < 100 && connected_applied < NSERVERS - 1;
+         ++attempt) {
+      connected_applied = 0;
+      for (int site = 0; site < NSERVERS; ++site) {
+        if (site == follower) continue;
+        auto connected_server = config_->GetServer(site);
+        if (connected_server != nullptr &&
+            connected_server->GetAppliedIndex() >= idx) {
+          connected_applied++;
+        }
+      }
+      if (connected_applied < NSERVERS - 1) {
+        Fiber::sleep(HEARTBEAT_INTERVAL);
+      }
+    }
+    Assert2(connected_applied == NSERVERS - 1,
+            "Only %d of %d connected replicas published applied index %lu "
+            "for cmd %d",
+            connected_applied, NSERVERS - 1, idx, 6900 + i);
+
+    if (first_partition_index == 0) {
+      first_partition_index = idx;
+    }
+    last_partition_index = idx;
   }
   Log_info("TEST 69: Committed 20 entries with follower disconnected");
-
-  // Wait for snapshot creation and compaction
-  Fiber::sleep(HEARTBEAT_INTERVAL * 5);
 
   // Verify leader has taken a snapshot and compacted
   // Re-check leader in case of re-election
@@ -6177,40 +7231,123 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   AssertOneLeader(leader);
   auto leader_server = config_->GetServer(leader);
   Assert2(leader_server != nullptr, "Leader server should not be null");
+  Assert2(leader >= 0 && leader < NSERVERS && test_mgrs[leader] != nullptr,
+          "Test69 has no unique snapshot manager for leader %d", leader);
 
-  uint64_t leader_snap_idx = leader_server->GetSnapshotIndex();
-  // If snapshot wasn't automatically triggered, force it
-  if (leader_snap_idx == 0) {
-    leader_server->CreateSnapshot();
-    leader_snap_idx = leader_server->GetSnapshotIndex();
+  uint64_t leader_execute_index = 0;
+  uint64_t leader_snap_idx = 0;
+  uint64_t leader_min_active = 0;
+  bool leader_snapshot_ready = false;
+  for (int attempt = 0;
+       attempt < 300 && !leader_snapshot_ready;
+       ++attempt) {
+    {
+      std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
+      leader_execute_index = leader_server->executeIndex;
+      leader_snap_idx = leader_server->GetSnapshotIndex();
+      leader_min_active = leader_server->min_active_slot_;
+    }
+    auto candidate = test_mgrs[leader]->GetLatestSnapshot();
+    if (candidate.is_some()) {
+      const auto candidate_metadata = candidate.unwrap();
+      leader_snapshot_ready =
+          leader_execute_index >= last_partition_index &&
+          candidate_metadata.last_included_index == leader_snap_idx &&
+          leader_snap_idx > seeded_snapshot_indices[leader] &&
+          leader_snap_idx >= first_partition_index;
+    }
+    if (!leader_snapshot_ready) {
+      Fiber::sleep(10000);
+    }
   }
-  uint64_t leader_min_active = leader_server->min_active_slot_;
+  Assert2(leader_snapshot_ready,
+          "Leader did not persist a fresh snapshot for partition workload [%lu, %lu]",
+          first_partition_index, last_partition_index);
+  Assert2(leader_execute_index >= last_partition_index,
+          "Leader executeIndex %lu did not reach partition workload end %lu",
+          leader_execute_index, last_partition_index);
+
+  auto latest_leader_snapshot = test_mgrs[leader]->GetLatestSnapshot();
+  Assert2(latest_leader_snapshot.is_some(),
+          "Test69 leader's unique manager has no snapshot");
+  const auto leader_snapshot_metadata = latest_leader_snapshot.unwrap();
 
   Log_info("TEST 69: Leader snapshot index={}, min_active_slot={}",
            leader_snap_idx, leader_min_active);
-  Assert2(leader_snap_idx > 0,
-          "Leader should have created a snapshot, got snapidx=%lu", leader_snap_idx);
+  Assert2(leader_snap_idx == leader_snapshot_metadata.last_included_index,
+          "Leader snapshot index %lu does not match manager index %lu",
+          leader_snap_idx, leader_snapshot_metadata.last_included_index);
+  Assert2(leader_snap_idx > seeded_snapshot_indices[leader] &&
+              leader_snap_idx >= first_partition_index,
+          "Leader snapshot did not advance for the partition workload: baseline=%lu, first=%lu, got=%lu",
+          seeded_snapshot_indices[leader], first_partition_index,
+          leader_snap_idx);
   Assert2(leader_min_active > 1,
           "Leader min_active_slot_ should be > 1 after compaction, got %lu",
           leader_min_active);
 
-  // Reconnect the follower
+  // Capture the disconnected boundary before opening the network. Otherwise
+  // a fast InstallSnapshot could complete between Reconnect() and this read,
+  // turning the oracle itself into a race.
+  auto follower_server = config_->GetServer(follower);
+  Assert2(follower_server != nullptr,
+          "Disconnected follower server should not be null");
+
+  uint64_t follower_snap_before = 0;
+  uint64_t follower_last_before = 0;
+  {
+    std::lock_guard<std::recursive_mutex> lock(follower_server->mtx_);
+    follower_snap_before = follower_server->GetSnapshotIndex();
+    follower_last_before = follower_server->lastLogIndex;
+  }
+  Assert2(leader_snap_idx > follower_snap_before,
+          "Leader snapshot %lu must be newer than disconnected follower snapshot %lu",
+          leader_snap_idx, follower_snap_before);
+  Assert2(follower_last_before < UINT64_MAX &&
+              leader_min_active > follower_last_before + 1,
+          "Leader retained a bridgeable Test69 gap: min_active=%lu follower_next=%lu",
+          leader_min_active, follower_last_before + 1);
+
+  // Reconnect the follower and wait for heartbeat/election rounds to trigger
+  // InstallSnapshot. The isolated follower may have advanced its private term,
+  // so reconnection can legitimately include one election before transfer.
   Log_info("TEST 69: Reconnecting follower {}", follower);
   config_->Reconnect(follower);
 
-  // Wait for heartbeat rounds to trigger InstallSnapshot to the follower
-  Fiber::sleep(HEARTBEAT_INTERVAL * 10);
-
-  // Verify the follower has caught up via snapshot
-  auto follower_server = config_->GetServer(follower);
-  Assert2(follower_server != nullptr, "Follower server should not be null after reconnect");
-
-  uint64_t follower_snap_idx = follower_server->GetSnapshotIndex();
-  Log_info("TEST 69: Follower snapshot index={} (leader={})",
-           follower_snap_idx, leader_snap_idx);
-  Assert2(follower_snap_idx >= leader_snap_idx,
-          "Follower snapidx_ should match leader's (%lu), got %lu",
-          leader_snap_idx, follower_snap_idx);
+  // Reconnection can replace the pre-reconnect leader because the isolated
+  // follower may carry a newer term.  The replacement leader only needs to
+  // install a snapshot that bridges the follower's missing prefix; its local
+  // compaction boundary need not equal leader_snap_idx above.
+  const uint64_t required_snapshot_floor =
+      std::max(follower_last_before + 1, first_partition_index);
+  uint64_t follower_snap_idx = follower_snap_before;
+  for (int attempt = 0;
+       attempt < 100 && follower_snap_idx < required_snapshot_floor;
+       ++attempt) {
+    Fiber::sleep(HEARTBEAT_INTERVAL);
+    std::lock_guard<std::recursive_mutex> lock(follower_server->mtx_);
+    follower_snap_idx = follower_server->GetSnapshotIndex();
+  }
+  Log_info("TEST 69: Follower snapshot index={} (required_floor={}, "
+           "pre-reconnect leader={})",
+           follower_snap_idx, required_snapshot_floor, leader_snap_idx);
+  Assert2(follower_snap_idx >= required_snapshot_floor &&
+              follower_snap_idx > follower_snap_before,
+          "Follower snapshot should advance beyond %lu through required floor "
+          "%lu (pre-reconnect leader snapshot was %lu), got %lu",
+          follower_snap_before, required_snapshot_floor, leader_snap_idx,
+          follower_snap_idx);
+  Assert2(follower < NSERVERS && test_mgrs[follower] != nullptr,
+          "Test69 has no unique snapshot manager for follower %d", follower);
+  auto latest_follower_snapshot = test_mgrs[follower]->GetLatestSnapshot();
+  Assert2(latest_follower_snapshot.is_some(),
+          "Test69 follower's unique manager has no installed snapshot");
+  const auto follower_snapshot_metadata = latest_follower_snapshot.unwrap();
+  Assert2(follower_snapshot_metadata.last_included_index ==
+              follower_snap_idx,
+          "Follower snapshot index %lu does not match manager index %lu",
+          follower_snap_idx,
+          follower_snapshot_metadata.last_included_index);
 
   // Verify new entries can be committed with all 5 nodes
   uint64_t new_idx = config_->DoAgreement(6999, NSERVERS, true);
@@ -6218,21 +7355,22 @@ int RaftLabTest::testLongPartitionRecovery(void) {
           "DoAgreement should succeed with all 5 nodes after partition recovery");
   Log_info("TEST 69: Full cluster agreement reached at index {}", new_idx);
 
-  // Restore original snapshot managers and settings
-  // @unsafe { filesystem cleanup }
+  // Restore runtime tuning, but keep each server on the live snapshot manager
+  // whose files back its compacted prefix.  MAKO_RAFT_SNAPSHOT_PATH remains
+  // pointed at the same root so later Restart() calls reconstruct it.
   for (int i = 0; i < NSERVERS; i++) {
     auto server = config_->GetServer(i);
     if (server == nullptr) continue;
-    if (i < (int)original_mgrs.size()) {
-      server->SetSnapshotManager(original_mgrs[i]);
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    if (original_thresholds[i] != 0) {
+      server->SetSnapshotThreshold(original_thresholds[i]);
     }
-    server->SetSnapshotThreshold(100);
-    server->SetLogRetentionWindow(5000);
+    if (original_retention_windows[i] != 0) {
+      server->SetLogRetentionWindow(original_retention_windows[i]);
+    }
   }
-  for (int i = 0; i < NSERVERS; i++) {
-    std::string cleanup = "rm -rf " + base_path + "_s" + std::to_string(i);
-    system(cleanup.c_str());  // @unsafe
-  }
+  Log_info("TEST 69: Retaining live snapshot root {} through suite shutdown",
+           base_path.c_str());
 
   Log_info("TEST 69: Long partition recovery via InstallSnapshot PASSED!");
   Passed2();
@@ -6314,7 +7452,8 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
   Log_info("TEST 70: Agreement reached at index {} with 4 nodes", idx);
 
   // Restart the killed target so cleanup (NDisconnected check) passes
-  config_->Restart(target);
+  Assert2(config_->Restart(target),
+          "Failed to restart leadership-transfer target %d", target);
   Fiber::sleep(HEARTBEAT_INTERVAL * 3);
 
   // Verify the cluster is fully functional again
@@ -7118,20 +8257,20 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
           "Initial quorum should be %d, got %zu", NSERVERS / 2 + 1, initial_quorum);
   Log_info("TEST 78: Initial config size={}, quorum={}", NSERVERS, initial_quorum);
 
-  // 2. Add two fake servers so we can remove one and still have enough real servers
+  // 2. Add one fake server.  This makes the configuration even-sized, so
+  // removing it crosses the majority boundary: 6 members need 4 votes, while
+  // the restored 5-member configuration needs 3.
   siteid_t fake1 = 8001;
-  siteid_t fake2 = 8002;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->current_config_.insert(fake1);
-    server->current_config_.insert(fake2);
   }
 
   size_t size_with_extras = server->GetCurrentConfig().size();
-  Assert2(size_with_extras == NSERVERS + 2,
-          "Config should be %d after adding fakes, got %zu", NSERVERS + 2, size_with_extras);
+  Assert2(size_with_extras == NSERVERS + 1,
+          "Config should be %d after adding fake, got %zu", NSERVERS + 1, size_with_extras);
   size_t quorum_with_extras = server->GetQuorumSize();
-  Log_info("TEST 78: After adding 2 fake servers: size={}, quorum={}",
+  Log_info("TEST 78: After adding fake server: size={}, quorum={}",
            size_with_extras, quorum_with_extras);
 
   // 3. Remove fake1 via config manipulation (simulating OnRemoveServer)
@@ -7144,12 +8283,12 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
 
   // 4. Verify config shrinks
   size_t size_after_remove = server->GetCurrentConfig().size();
-  Assert2(size_after_remove == NSERVERS + 1,
-          "Config should be %d after remove, got %zu", NSERVERS + 1, size_after_remove);
+  Assert2(size_after_remove == NSERVERS,
+          "Config should be %d after remove, got %zu", NSERVERS, size_after_remove);
 
   // 5. Verify quorum shrinks
   size_t quorum_after_remove = server->GetQuorumSize();
-  size_t expected_quorum = (NSERVERS + 1) / 2 + 1;
+  size_t expected_quorum = NSERVERS / 2 + 1;
   Assert2(quorum_after_remove == expected_quorum,
           "Quorum should be %zu after remove, got %zu",
           expected_quorum, quorum_after_remove);
@@ -7161,11 +8300,6 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
 
   // 6. Verify cluster can still commit entries
   server->config_change_pending_ = false;
-  // Remove fake2 to restore config
-  {
-    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    server->current_config_.erase(fake2);
-  }
 
   // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
   uint64_t idx = config_->DoAgreement(7800, NSERVERS, true);
@@ -7709,20 +8843,29 @@ int RaftLabTest::testReplicatedDBPutGet(void) {
     rocksdb_options_destroy(opts);
   }
 
-  // Register apply callback and create ReplicatedDB
-  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
-  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
-
-  // Register the apply callback on the server
-  // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md);
-    return 0;
-  });
+  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
+  Assert2(rdb != nullptr,
+          "ReplicatedDB should open and attach at the current Raft boundary");
 
   // Put a key-value pair (goes through Raft)
   bool put_ok = rdb->Put("hello", "world");
   Assert2(put_ok, "Put should succeed on leader");
+
+  // Put returns only after apply and unregisters its uniquely owned callback,
+  // including when persistence is disabled and no DURABLE event will arrive.
+  bool put_callback_released = false;
+  {
+    std::lock_guard<std::recursive_mutex> lock(svr->mtx_);
+    const uint64_t applied_index = svr->GetAppliedIndex();
+    put_callback_released = std::none_of(
+        svr->pendingCallbacks_.begin(), svr->pendingCallbacks_.end(),
+        [applied_index](const auto& entry) {
+          return raft_server_log_index_at_or_below(
+              entry.first, applied_index);
+        });
+  }
+  Assert2(put_callback_released,
+          "Put callback should be released before Put returns");
 
   // Get the value back from local RocksDB
   // The apply callback should have written it
@@ -7753,6 +8896,16 @@ int RaftLabTest::testReplicatedDBPutGet(void) {
 
   // Cleanup
   rdb.reset();
+  bool snapshot_callbacks_cleared = false;
+  {
+    std::lock_guard<std::recursive_mutex> lock(svr->mtx_);
+    snapshot_callbacks_cleared =
+        svr->snapshot_callback_owner_token_ == 0 &&
+        !svr->create_sm_snapshot_cb_ &&
+        !svr->prepare_sm_snapshot_cb_;
+  }
+  Assert2(snapshot_callbacks_cleared,
+          "ReplicatedDB destruction should clear owned snapshot callbacks");
   // @unsafe { RocksDB C API }
   {
     rocksdb_options_t* opts = rocksdb_options_create();
@@ -7796,15 +8949,9 @@ int RaftLabTest::testReplicatedDBDelete(void) {
     rocksdb_options_destroy(opts);
   }
 
-  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
-  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
-
-  // Register apply callback
-  // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md);
-    return 0;
-  });
+  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
+  Assert2(rdb != nullptr,
+          "ReplicatedDB should open and attach at the current Raft boundary");
 
   // Put a key
   bool put_ok = rdb->Put("to_delete", "some_value");
@@ -7891,22 +9038,14 @@ int RaftLabTest::testReplicatedDBReplication(void) {
     rocksdb_options_destroy(opts);
   }
 
-  // Create ReplicatedDB instances for both leader and follower
-  auto leader_rdb = std::make_unique<ReplicatedDB>(leader_svr, leader_db_path);
-  auto follower_rdb = std::make_unique<ReplicatedDB>(follower_svr, follower_db_path);
-  Assert2(leader_rdb->IsOpen(), "Leader ReplicatedDB should be open");
-  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
-
-  // Register apply callbacks on both
-  // @unsafe { RegLearnerAction }
-  leader_svr->RegLearnerAction([&leader_rdb](int slot, janus::Command md) -> int {
-    leader_rdb->ApplyEntry(slot, md);
-    return 0;
-  });
-  follower_svr->RegLearnerAction([&follower_rdb](int slot, janus::Command md) -> int {
-    follower_rdb->ApplyEntry(slot, md);
-    return 0;
-  });
+  auto leader_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
+      leader_svr, leader_db_path);
+  Assert2(leader_rdb != nullptr,
+          "Leader ReplicatedDB should open and attach");
+  auto follower_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
+      follower_svr, follower_db_path);
+  Assert2(follower_rdb != nullptr,
+          "Follower ReplicatedDB should open and attach");
 
   // Put on leader
   bool put_ok = leader_rdb->Put("replicated_key", "replicated_value");
@@ -7987,15 +9126,9 @@ int RaftLabTest::testReplicatedDBSnapshot(void) {
     rocksdb_options_destroy(opts);
   }
 
-  // Create ReplicatedDB and register apply callback
-  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
-  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
-
-  // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md);
-    return 0;
-  });
+  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
+  Assert2(rdb != nullptr,
+          "ReplicatedDB should open and attach at the current Raft boundary");
 
   // Put several keys
   Assert2(rdb->Put("snap_key1", "value1"), "Put snap_key1 should succeed");
@@ -8011,6 +9144,12 @@ int RaftLabTest::testReplicatedDBSnapshot(void) {
   // Create snapshot
   std::string snapshot_blob = rdb->CreateStateMachineSnapshot();
   Assert2(!snapshot_blob.empty(), "Snapshot blob should be non-empty");
+  const uint64_t snapshot_applied_index = rdb->GetLastAppliedIndex();
+  Assert2(snapshot_applied_index > 0 && snapshot_applied_index < UINT64_MAX,
+          "Snapshot applied index must be a non-terminal Raft index, got %lu",
+          snapshot_applied_index);
+  Assert2(rdb->CreateStateMachineSnapshot(snapshot_applied_index + 1).empty(),
+          "Snapshot creator must reject a boundary ahead of application state");
   Log_info("TEST 88: Snapshot blob size = {} bytes", snapshot_blob.size());
 
   // Verify the blob has a compression header byte followed by data
@@ -8020,8 +9159,19 @@ int RaftLabTest::testReplicatedDBSnapshot(void) {
           "Compression header should be 0 (uncompressed) or 1 (LZ4), got %u", compression_byte);
   Log_info("TEST 88: Snapshot compression byte = {}", compression_byte);
 
-  // Load snapshot back into the same ReplicatedDB (simulates recovery)
-  rdb->LoadStateMachineSnapshot(snapshot_blob);
+  // The checkpoint is valid only for the exact Raft boundary serialized in
+  // its metadata. Reject a mismatched RPC boundary without touching live DB.
+  Assert2(!rdb->LoadStateMachineSnapshot(
+              snapshot_blob, snapshot_applied_index + 1),
+          "Snapshot loader should reject a mismatched Raft boundary");
+  Assert2(rdb->IsOpen() &&
+              rdb->Get("snap_key1", &val) && val == "value1",
+          "Rejected boundary mismatch must preserve the live database");
+
+  // Load snapshot back into the same ReplicatedDB (simulates recovery).
+  Assert2(rdb->LoadStateMachineSnapshot(
+              snapshot_blob, snapshot_applied_index),
+          "Snapshot round-trip load should succeed");
   Assert2(rdb->IsOpen(), "ReplicatedDB should be open after snapshot load");
 
   // Verify all keys are still accessible after loading
@@ -8102,16 +9252,11 @@ int RaftLabTest::testReplicatedDBSnapshotTransfer(void) {
     rocksdb_options_destroy(opts);
   }
 
-  // Create ReplicatedDB on leader only (follower gets snapshot)
-  auto leader_rdb = std::make_unique<ReplicatedDB>(leader_svr, leader_db_path);
-  Assert2(leader_rdb->IsOpen(), "Leader ReplicatedDB should be open");
-
-  // Register apply callback on leader
-  // @unsafe { RegLearnerAction }
-  leader_svr->RegLearnerAction([&leader_rdb](int slot, janus::Command md) -> int {
-    leader_rdb->ApplyEntry(slot, md);
-    return 0;
-  });
+  // Create ReplicatedDB on leader only (follower gets snapshot).
+  auto leader_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
+      leader_svr, leader_db_path);
+  Assert2(leader_rdb != nullptr,
+          "Leader ReplicatedDB should open and attach");
 
   // Put keys on leader (goes through Raft)
   Assert2(leader_rdb->Put("transfer_key1", "val_a"), "Put transfer_key1 should succeed");
@@ -8121,10 +9266,15 @@ int RaftLabTest::testReplicatedDBSnapshotTransfer(void) {
   // Create snapshot on leader
   std::string snapshot_blob = leader_rdb->CreateStateMachineSnapshot();
   Assert2(!snapshot_blob.empty(), "Leader snapshot blob should be non-empty");
+  const uint64_t snapshot_applied_index =
+      leader_rdb->GetLastAppliedIndex();
+  Assert2(snapshot_applied_index > 0,
+          "Leader snapshot should carry a non-zero applied index");
   Log_info("TEST 89: Leader snapshot blob size = {} bytes", snapshot_blob.size());
 
   // Create a follower ReplicatedDB (empty initially)
-  auto follower_rdb = std::make_unique<ReplicatedDB>(follower_svr, follower_db_path);
+  auto follower_rdb = std::make_unique<ReplicatedDB>(
+      follower_svr, follower_db_path, false);
   Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
 
   // Verify follower does NOT have the keys yet
@@ -8132,8 +9282,34 @@ int RaftLabTest::testReplicatedDBSnapshotTransfer(void) {
   Assert2(!follower_rdb->Get("transfer_key1", &val),
           "Follower should NOT have transfer_key1 before snapshot load");
 
-  // Load the leader's snapshot onto the follower
-  follower_rdb->LoadStateMachineSnapshot(snapshot_blob);
+  // Prepare must fully validate and stage the leader image without exchanging
+  // the follower's canonical RocksDB directory or publishing any of its keys.
+  struct stat follower_path_before_prepare {};
+  struct stat follower_path_after_prepare {};
+  Assert2(::lstat(follower_db_path.c_str(),
+                  &follower_path_before_prepare) == 0,
+          "Could not stat follower database before snapshot Prepare");
+  const uint64_t follower_applied_before_prepare =
+      follower_rdb->GetLastAppliedIndex();
+  auto prepared_snapshot = follower_rdb->PrepareStateMachineSnapshot(
+      snapshot_blob, snapshot_applied_index);
+  Assert2(prepared_snapshot != nullptr,
+          "Follower snapshot Prepare should succeed");
+  Assert2(::lstat(follower_db_path.c_str(),
+                  &follower_path_after_prepare) == 0 &&
+              follower_path_after_prepare.st_dev ==
+                  follower_path_before_prepare.st_dev &&
+              follower_path_after_prepare.st_ino ==
+                  follower_path_before_prepare.st_ino,
+          "Snapshot Prepare exchanged the canonical follower directory early");
+  Assert2(!follower_rdb->Get("transfer_key1", &val) &&
+              follower_rdb->GetLastAppliedIndex() ==
+                  follower_applied_before_prepare,
+          "Snapshot Prepare published leader state before Commit");
+
+  Assert2(prepared_snapshot->Commit(),
+          "Follower prepared snapshot Commit should succeed");
+  prepared_snapshot.reset();
   Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open after snapshot load");
 
   // Verify follower now has all keys
@@ -8211,21 +9387,13 @@ int RaftLabTest::testReplicatedDBWiring(void) {
     rocksdb_options_destroy(opts);
   }
 
-  // Create ReplicatedDB and assign to server (same as Setup() would do)
-  auto rdb = std::make_shared<ReplicatedDB>(leader_svr, leader_db_path);
-  Assert2(rdb->IsOpen(), "ReplicatedDB should be open after construction");
+  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
+      leader_svr, leader_db_path);
+  Assert2(rdb != nullptr,
+          "Leader ReplicatedDB should open and attach");
 
-  // Wire it into the server (mirroring Setup() logic)
+  // Publish only after the database and its learner share one applied boundary.
   leader_svr->replicated_db_ = rdb;
-
-  // Register apply callback (same lambda as Setup())
-  // @unsafe { RegLearnerAction }
-  leader_svr->RegLearnerAction([rdb](int slot, janus::Command md) -> int {
-    if (rdb) {
-      rdb->ApplyEntry(slot, md);
-    }
-    return 0;
-  });
 
   // Verify GetReplicatedDB() now returns the instance
   Assert2(leader_svr->GetReplicatedDB() != nullptr,
@@ -8279,18 +9447,12 @@ int RaftLabTest::testReplicatedDBWiring(void) {
     rocksdb_options_destroy(opts);
   }
 
-  auto follower_rdb = std::make_shared<ReplicatedDB>(follower_svr, follower_db_path);
-  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
+  auto follower_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
+      follower_svr, follower_db_path);
+  Assert2(follower_rdb != nullptr,
+          "Follower ReplicatedDB should open and attach");
 
   follower_svr->replicated_db_ = follower_rdb;
-
-  // @unsafe { RegLearnerAction }
-  follower_svr->RegLearnerAction([follower_rdb](int slot, janus::Command md) -> int {
-    if (follower_rdb) {
-      follower_rdb->ApplyEntry(slot, md);
-    }
-    return 0;
-  });
 
   Assert2(follower_svr->GetReplicatedDB() != nullptr,
           "Follower GetReplicatedDB() should return non-null after wiring");
@@ -8362,16 +9524,10 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
     rocksdb_options_destroy(opts);
   }
 
-  // Create ReplicatedDB (compression is enabled by default)
-  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
-  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
+  Assert2(rdb != nullptr,
+          "ReplicatedDB should open and attach at the current Raft boundary");
   Assert2(rdb->IsCompressionEnabled(), "Compression should be enabled by default");
-
-  // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md);
-    return 0;
-  });
 
   // Put several keys with large-ish values (to make compression meaningful)
   std::string large_value(1024, 'A');  // 1KB of repeated 'A' - compresses well
@@ -8391,6 +9547,9 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
   // --- Part 1: Compressed snapshot ---
   std::string compressed_blob = rdb->CreateStateMachineSnapshot();
   Assert2(!compressed_blob.empty(), "Compressed snapshot blob should be non-empty");
+  const uint64_t compressed_snapshot_index = rdb->GetLastAppliedIndex();
+  Assert2(compressed_snapshot_index > 0,
+          "Compressed snapshot should carry a non-zero applied index");
 
   // Verify header byte is LZ4 (1)
   uint8_t header = static_cast<uint8_t>(compressed_blob[0]);
@@ -8407,7 +9566,9 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
            100.0 * static_cast<double>(compressed_blob.size()) / static_cast<double>(orig_size));
 
   // Load the compressed snapshot back
-  rdb->LoadStateMachineSnapshot(compressed_blob);
+  Assert2(rdb->LoadStateMachineSnapshot(
+              compressed_blob, compressed_snapshot_index),
+          "Compressed snapshot load should succeed");
   Assert2(rdb->IsOpen(), "ReplicatedDB should be open after compressed snapshot load");
 
   // Verify all keys survive
@@ -8431,6 +9592,7 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
   std::string compressed2 = rdb->CreateStateMachineSnapshot();
   Assert2(!compressed2.empty(), "Second compressed snapshot should be non-empty");
   Assert2(static_cast<uint8_t>(compressed2[0]) == 1, "Should still be LZ4");
+  const uint64_t uncompressed_snapshot_index = rdb->GetLastAppliedIndex();
 
   // Decompress to get raw blob, then wrap as uncompressed
   uint32_t orig_size2 = 0;
@@ -8440,7 +9602,9 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
       compressed2.data() + 5, raw_blob.data(),
       static_cast<int>(compressed2.size() - 5),
       static_cast<int>(orig_size2));
-  Assert2(decompressed >= 0, "Manual decompression should succeed");
+  Assert2(decompressed == static_cast<int>(orig_size2),
+          "Manual decompression should produce exactly %u bytes, got %d",
+          orig_size2, decompressed);
 
   // Construct uncompressed blob: header(0) + raw_blob
   std::string uncompressed_blob;
@@ -8449,7 +9613,9 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
   std::memcpy(uncompressed_blob.data() + 1, raw_blob.data(), raw_blob.size());
 
   // Load the uncompressed blob
-  rdb->LoadStateMachineSnapshot(uncompressed_blob);
+  Assert2(rdb->LoadStateMachineSnapshot(
+              uncompressed_blob, uncompressed_snapshot_index),
+          "Uncompressed snapshot load should succeed");
   Assert2(rdb->IsOpen(), "ReplicatedDB should be open after uncompressed snapshot load");
 
   // Verify all keys survive
@@ -8460,6 +9626,19 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
   Assert2(rdb->Get("comp_key3", &val) && val == "small_val",
           "comp_key3 should survive uncompressed snapshot round-trip");
   Log_info("TEST 91: Uncompressed (backward compat) snapshot round-trip PASSED");
+
+  // A malformed archive must be rejected before the live RocksDB directory is
+  // closed or replaced. Appending one byte is an exact-consumption failure in
+  // the uncompressed archive and gives us a deterministic rollback oracle.
+  std::string malformed_blob = uncompressed_blob;
+  malformed_blob.push_back('\0');
+  Assert2(!rdb->LoadStateMachineSnapshot(
+              malformed_blob, uncompressed_snapshot_index),
+          "Snapshot loader should reject trailing archive bytes");
+  Assert2(rdb->IsOpen(),
+          "Rejected snapshot must leave the live ReplicatedDB open");
+  Assert2(rdb->Get("comp_key1", &val) && val == large_value,
+          "Rejected snapshot must preserve the live state machine");
 
   // Restore the original learner action
   config_->SetLearnerAction();
@@ -8511,15 +9690,9 @@ int RaftLabTest::testLinearizableGet(void) {
     rocksdb_options_destroy(opts);
   }
 
-  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
-  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
-
-  // Register the apply callback on the server
-  // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md);
-    return 0;
-  });
+  auto rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(svr, db_path);
+  Assert2(rdb != nullptr,
+          "ReplicatedDB should open and attach at the current Raft boundary");
 
   // Put a key-value pair (goes through Raft)
   bool put_ok = rdb->Put("linread_key", "linread_value");
@@ -8563,13 +9736,40 @@ int RaftLabTest::testLinearizableGet(void) {
     rocksdb_options_destroy(opts);
   }
 
-  auto follower_rdb = std::make_unique<ReplicatedDB>(follower_svr, follower_db_path);
+  auto follower_rdb = std::make_unique<ReplicatedDB>(
+      follower_svr, follower_db_path, false);
   Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
 
   // LinearizableGet on follower should fail (not leader)
   std::string follower_value;
   bool follower_get = follower_rdb->LinearizableGet("linread_key", &follower_value);
   Assert2(!follower_get, "LinearizableGet should fail on follower");
+
+  // A leader role bit is historical state, not current read authority. Leave
+  // this leader locally connected, but isolate enough followers that it cannot
+  // obtain a fresh 3/5 quorum confirmation. A real ReadIndex must fail even
+  // though the test-only disconnected_ bit on the leader itself remains false.
+  std::vector<siteid_t> quorum_isolated_followers;
+  for (int i = 0; i < NSERVERS && quorum_isolated_followers.size() < 3; ++i) {
+    const siteid_t sid = config_->getServerIdByIndex(i);
+    if (static_cast<int>(sid) == leader) {
+      continue;
+    }
+    config_->Disconnect(sid);
+    quorum_isolated_followers.push_back(sid);
+  }
+  Assert2(quorum_isolated_followers.size() == 3,
+          "Expected to isolate three followers for ReadIndex quorum test");
+  Assert2(!svr->IsDisconnected(),
+          "ReadIndex quorum test must leave the leader locally connected");
+  bool no_quorum_read = svr->ReadIndex(250000);
+  Assert2(!no_quorum_read,
+          "ReadIndex should fail without a fresh quorum even when the local "
+          "leader is not marked disconnected");
+  for (siteid_t sid : quorum_isolated_followers) {
+    config_->Reconnect(sid);
+  }
+  Fiber::sleep(HEARTBEAT_INTERVAL * 3);
 
   // Restore and cleanup
   config_->SetLearnerAction();
@@ -8629,14 +9829,9 @@ int RaftLabTest::testLinearizableGetAfterLeaderChange(void) {
     rocksdb_options_destroy(opts);
   }
 
-  auto rdb1 = std::make_unique<ReplicatedDB>(svr1, db_path1);
-  Assert2(rdb1->IsOpen(), "ReplicatedDB should be open");
-
-  // @unsafe { RegLearnerAction }
-  svr1->RegLearnerAction([&rdb1](int slot, janus::Command md) -> int {
-    rdb1->ApplyEntry(slot, md);
-    return 0;
-  });
+  auto rdb1 = CreateAndAttachReplicatedDBAtCurrentBoundary(svr1, db_path1);
+  Assert2(rdb1 != nullptr,
+          "Old-leader ReplicatedDB should open and attach");
 
   // Put a key-value pair
   bool put_ok = rdb1->Put("leader_change_key", "leader_change_value");
@@ -8682,14 +9877,9 @@ int RaftLabTest::testLinearizableGetAfterLeaderChange(void) {
     rocksdb_options_destroy(opts);
   }
 
-  auto rdb2 = std::make_unique<ReplicatedDB>(svr2, db_path2);
-  Assert2(rdb2->IsOpen(), "New leader ReplicatedDB should be open");
-
-  // @unsafe { RegLearnerAction }
-  svr2->RegLearnerAction([&rdb2](int slot, janus::Command md) -> int {
-    rdb2->ApplyEntry(slot, md);
-    return 0;
-  });
+  auto rdb2 = CreateAndAttachReplicatedDBAtCurrentBoundary(svr2, db_path2);
+  Assert2(rdb2 != nullptr,
+          "New-leader ReplicatedDB should open and attach");
 
   // Put a new key on the new leader to ensure it's applied
   bool put_ok2 = rdb2->Put("new_leader_key", "new_leader_value");
@@ -8780,15 +9970,57 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
     rocksdb_options_destroy(opts);
   }
 
-  // Step 1: Create ReplicatedDB on leader
-  auto leader_rdb = std::make_unique<ReplicatedDB>(leader_svr, leader_db_path);
-  Assert2(leader_rdb->IsOpen(), "Leader ReplicatedDB should be open");
+  // Step 1: Create ReplicatedDB on both replicas before submitting entries.
+  // Learner registration is not retroactive, so installing the follower state
+  // machine after k1/k2 commit would make this a callback-timing test rather
+  // than a crash-recovery test.
+  auto leader_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
+      leader_svr, leader_db_path);
+  Assert2(leader_rdb != nullptr,
+          "Leader ReplicatedDB should open and attach");
+  auto follower_rdb = CreateAndAttachReplicatedDBAtCurrentBoundary(
+      follower_svr, follower_db_path);
+  Assert2(follower_rdb != nullptr,
+          "Follower ReplicatedDB should open and attach");
 
-  // @unsafe { RegLearnerAction }
-  leader_svr->RegLearnerAction([&leader_rdb](int slot, janus::Command md) -> int {
-    leader_rdb->ApplyEntry(slot, md);
-    return 0;
-  });
+  // Test69 intentionally leaves marker-only RaftLab snapshots active because
+  // their bytes cover the cluster's compacted prefix.  Before restarting a
+  // ReplicatedDB, rotate the victim to a unique manager and seed it with a real
+  // RocksDB checkpoint at this adopted boundary.  Restart will reconstruct the
+  // same path and replay k1/k2 plus the later missed suffix from that checkpoint.
+  std::string snapshot_root_template =
+      "/tmp/raft_repldb_recovery_101_" + std::to_string(getpid()) +
+      "_XXXXXX";
+  char* created_snapshot_root = mkdtemp(snapshot_root_template.data());
+  Assert2(created_snapshot_root != nullptr,
+          "Could not create Test101 snapshot root: %s", strerror(errno));
+  const std::string snapshot_root(created_snapshot_root);
+  Assert2(setenv("MAKO_RAFT_SNAPSHOTS", "1", 1) == 0,
+          "Could not enable Test101 snapshots: %s", strerror(errno));
+  Assert2(setenv("MAKO_RAFT_SNAPSHOT_PATH", snapshot_root.c_str(), 1) == 0,
+          "Could not set Test101 snapshot root: %s", strerror(errno));
+
+  janus::raft::SnapshotConfig recovery_snapshot_config;
+  recovery_snapshot_config.storage_path =
+      snapshot_root + "/raft_snap_" +
+      std::to_string(follower_svr->site_id_) + "_partition_" +
+      std::to_string(follower_svr->partition_id_);
+  auto recovery_snapshot_manager =
+      std::make_shared<janus::raft::FileSnapshotManager>(
+          recovery_snapshot_config);
+  uint64_t recovery_snapshot_index = 0;
+  uint64_t follower_snapshot_threshold = 0;
+  {
+    std::lock_guard<std::recursive_mutex> lock(follower_svr->mtx_);
+    follower_snapshot_threshold = follower_svr->GetSnapshotThreshold();
+  }
+  Assert2(InstallFreshStateMachineSnapshotManager(
+              follower_svr, recovery_snapshot_manager,
+              follower_snapshot_threshold, &recovery_snapshot_index),
+          "Could not seed Test101 ReplicatedDB snapshot manager");
+  Assert2(recovery_snapshot_index == follower_rdb->GetLastAppliedIndex(),
+          "Test101 snapshot boundary %lu does not match application marker %lu",
+          recovery_snapshot_index, follower_rdb->GetLastAppliedIndex());
 
   // Step 2: Put initial keys on leader
   Assert2(leader_rdb->Put("k1", "v1"), "Put k1 should succeed");
@@ -8799,21 +10031,7 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
   // @unsafe { Fiber::sleep }
   Fiber::sleep(1000000);  // 1 second
 
-  // Step 4: Create ReplicatedDB on follower and verify it has k1 and k2
-  auto follower_rdb = std::make_unique<ReplicatedDB>(follower_svr, follower_db_path);
-  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
-
-  // @unsafe { RegLearnerAction }
-  follower_svr->RegLearnerAction([&follower_rdb](int slot, janus::Command md) -> int {
-    follower_rdb->ApplyEntry(slot, md);
-    return 0;
-  });
-
-  // Wait for apply callback to fire for already-committed entries
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(500000);  // 500ms
-
-  // Verify follower has the keys via apply callback
+  // Step 4: Verify the follower applied k1 and k2 through its live callback.
   bool found_k1 = false;
   bool found_k2 = false;
   for (int attempt = 0; attempt < 30; attempt++) {
@@ -8828,8 +10046,17 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
   Assert2(found_k2, "Follower should have k2=v2 before kill");
   Log_info("TEST 101: Follower verified k1, k2 before kill");
 
-  // Step 5: Kill the follower - destroy the ReplicatedDB first
-  follower_rdb.reset();
+  // Step 5: Detach the callback under the same gate used for application, then
+  // destroy the ReplicatedDB while its RaftServer is still alive. This drains
+  // any in-flight callback and prevents either a dangling reference or a late
+  // ReplicatedDB destructor from reaching an already-destroyed server.
+  {
+    std::lock_guard<std::mutex> apply_lock(
+        follower_svr->state_machine_apply_mtx_);
+    follower_svr->RegLearnerAction(
+        [](slotid_t, janus::Command) -> int { return 0; });
+    follower_rdb.reset();
+  }
   Log_info("TEST 101: Killing follower {}", follower_victim);
   config_->Kill(follower_victim);
 
@@ -8852,37 +10079,81 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
   }
   Log_info("TEST 101: Leader verified all 4 keys");
 
-  // Step 7: Restart the follower
+  // Step 7: Restart the follower. Construct and register its durable state
+  // machine in Restart's pre-runtime window so no recovered/catch-up entry can
+  // pass the callback before RocksDB is ready.
   Log_info("TEST 101: Restarting follower {}", follower_victim);
-  config_->Restart(follower_victim);
+
+  // A hook-owned state machine must not be publishable when its durable marker
+  // is ahead of the recovered Raft commit. Exercise that rejection before the
+  // real restart; no apply/runtime loop or service pointer may escape it.
+  const bool accepted_ahead_marker = config_->Restart(
+      follower_victim,
+      [](RaftServer* candidate) -> RestartHookStatus {
+        candidate->RegLearnerAction(
+            [](slotid_t, janus::Command) -> int { return 0; });
+        return RestartHookStatus{
+            true,
+            true,
+            []() -> slotid_t { return UINT64_MAX; },
+            []() {}};
+      });
+  Assert2(!accepted_ahead_marker,
+          "Restart must reject an application marker ahead of Raft commit");
+  Assert2(config_->GetServer(follower_victim) == nullptr,
+          "Rejected Restart must not publish its candidate server");
+
+  RaftServer* restarted_svr = nullptr;
+  std::unique_ptr<ReplicatedDB> restarted_rdb;
+  bool restarted_db_open = false;
+  const bool restart_succeeded = config_->Restart(
+      follower_victim,
+      [&](RaftServer* new_server) -> RestartHookStatus {
+        restarted_svr = new_server;
+        restarted_rdb =
+            std::make_unique<ReplicatedDB>(new_server, follower_db_path);
+        restarted_db_open = restarted_rdb->IsOpen();
+        if (!restarted_db_open) {
+          return RestartHookStatus{
+              false,
+              false,
+              {},
+              [&]() {
+                restarted_rdb.reset();
+                restarted_svr = nullptr;
+              }};
+        }
+        new_server->RegLearnerAction(
+            [&restarted_rdb](slotid_t slot, janus::Command md) -> int {
+              if (!restarted_rdb || !restarted_rdb->ApplyEntry(slot, md)) {
+                throw std::runtime_error(
+                    "restarted ReplicatedDB failed atomic apply");
+              }
+              return 0;
+            });
+        return RestartHookStatus{
+            true,
+            true,
+            [&restarted_rdb]() -> slotid_t {
+              if (!restarted_rdb) {
+                throw std::runtime_error(
+                    "restarted ReplicatedDB marker owner is missing");
+              }
+              return restarted_rdb->GetLastAppliedIndex();
+            },
+            [&]() {
+              restarted_rdb.reset();
+              restarted_svr = nullptr;
+              restarted_db_open = false;
+            }};
+      });
+  Assert2(restart_succeeded, "Restarted follower startup should succeed");
+  Assert2(restarted_svr != nullptr, "Restarted follower server is null");
+  Assert2(restarted_db_open, "Restarted follower ReplicatedDB should be open");
 
   // Step 8: Wait for Raft to replicate missed entries to the restarted follower
   // @unsafe { Fiber::sleep }
   Fiber::sleep(ELECTIONTIMEOUT);
-
-  // Step 9: Create a new ReplicatedDB on the restarted follower
-  // The follower's RocksDB already has k1 and k2 from before the kill.
-  // We need to set up the apply callback so new entries (k3, k4) get applied.
-  auto* restarted_svr = config_->GetServer(follower_victim);
-  Assert2(restarted_svr != nullptr, "Restarted follower server is null");
-
-  // Clean the old follower DB path - the restarted server needs a fresh DB
-  // because the old DB files are from the pre-crash state
-  // Actually, keep the old DB - it has k1 and k2, and the apply callback
-  // should be idempotent. We just need to re-open it.
-  auto restarted_rdb = std::make_unique<ReplicatedDB>(restarted_svr, follower_db_path);
-  Assert2(restarted_rdb->IsOpen(), "Restarted follower ReplicatedDB should be open");
-
-  // Register apply callback on the restarted server
-  // @unsafe { RegLearnerAction }
-  restarted_svr->RegLearnerAction([&restarted_rdb](int slot, janus::Command md) -> int {
-    restarted_rdb->ApplyEntry(slot, md);
-    return 0;
-  });
-
-  // Wait for apply callback to process the missed entries (k3, k4)
-  // @unsafe { Fiber::sleep }
-  Fiber::sleep(1000000);  // 1 second
 
   // Step 10: Verify the restarted follower has all 4 keys
   bool all_found = false;
@@ -8926,6 +10197,368 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
   }
 
   Log_info("TEST 101: ReplicatedDB crash recovery PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 102: testAmbiguousLeaderAppendAdmission
+// ============================================================================
+// Exercise the real public admission methods with a storage backend where the
+// append and compensating removal both mutate state but neither fsync succeeds.
+// The possibly durable command identity must survive in the return value, and
+// no callback may be registered for an append that was never proven.
+// @unsafe - Terminal test swaps test-only storage and intentionally fail-stops
+// three leaders. It runs only when the cluster began with persistence disabled.
+int RaftLabTest::testAmbiguousLeaderAppendAdmission(void) {
+  Init2(102, "Ambiguous leader append admission remains explicit");
+
+  Fiber::sleep(ELECTIONTIMEOUT);
+  const int first_leader = config_->OneLeader();
+  Assert2(first_leader >= 0, "No leader elected for plain Start fault test");
+  auto* first_server = config_->GetServer(first_leader);
+  Assert2(first_server != nullptr, "Plain Start leader server is null");
+
+  auto first_command = rusty::Arc<TpcCommitCommand>::make();
+  LogEntry first_log;
+  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &first_log.log_entry));
+  first_log.length = static_cast<int>(first_log.log_entry.size());
+  {
+    auto& command = first_command.get_mut().unwrap();
+    command.tx_id_ = 10201;
+    command.cmd_ = rusty::Arc<LogEntry>::make(std::move(first_log));
+  }
+
+  auto first_storage = std::make_shared<AlwaysFailingSyncLogStorage>();
+  uint64_t first_index = 0;
+  uint64_t first_term = 0;
+  uint64_t first_last_before = 0;
+  uint64_t first_term_before = 0;
+  RaftStartResult first_result = RaftStartResult::REJECTED;
+  {
+    std::lock_guard<std::recursive_mutex> lock(first_server->mtx_);
+    Assert2(first_server->is_leader_ &&
+                !first_server->stop_.load(
+                    rusty::sync::atomic::Ordering::Acquire),
+            "Plain Start target lost live leadership before injection");
+    first_last_before = first_server->lastLogIndex;
+    first_term_before = first_server->currentTerm;
+    Assert2(first_last_before < UINT64_MAX,
+            "Plain Start test cannot allocate a successor slot");
+    Assert2(first_term_before > 0,
+            "Plain Start test requires an elected term");
+    first_server->SetLogStorage(first_storage);
+    first_result = first_server->Start(
+        std::move(first_command), &first_index, &first_term);
+  }
+
+  Assert2(raft_server_start_is_indeterminate(first_result),
+          "Plain Start collapsed ambiguous persistence into result %d",
+          static_cast<int>(first_result));
+  Assert2(first_index == first_last_before + 1 &&
+              first_term == first_term_before,
+          "Plain Start lost ambiguous identity: index=%lu expected=%lu "
+          "term=%lu expected=%lu",
+          first_index, first_last_before + 1,
+          first_term, first_term_before);
+  Assert2(first_storage->put_calls == 1 &&
+              first_storage->remove_calls == 1 &&
+              first_storage->sync_calls == 2,
+          "Plain Start fault path calls put/remove/sync=%d/%d/%d, "
+          "expected 1/1/2",
+          first_storage->put_calls, first_storage->remove_calls,
+          first_storage->sync_calls);
+  Assert2(first_storage->get(first_index).is_none(),
+          "Plain Start compensating removal did not remove failed slot");
+  {
+    std::lock_guard<std::recursive_mutex> lock(first_server->mtx_);
+    Assert2(first_server->lastLogIndex == first_last_before,
+            "Plain Start did not restore lastLogIndex");
+    Assert2(first_server->raft_logs_.count(first_index) == 0 &&
+                first_server->memoryAcks_.count(first_index) == 0 &&
+                first_server->durableAcks_.count(first_index) == 0,
+            "Plain Start retained failed slot in volatile Raft state");
+    Assert2(!first_server->is_leader_ &&
+                !first_server->rpc_ready_.load(
+                    rusty::sync::atomic::Ordering::Acquire) &&
+                first_server->stop_.load(
+                    rusty::sync::atomic::Ordering::Acquire) &&
+                !first_server->looping_.load(
+                    rusty::sync::atomic::Ordering::Acquire),
+            "Plain Start ambiguity did not fail-stop the leader");
+  }
+
+  const int second_leader = config_->OneLeader();
+  Assert2(second_leader >= 0 && second_leader != first_leader,
+          "No replacement leader after plain Start fail-stop (old=%d new=%d)",
+          first_leader, second_leader);
+  auto* second_server = config_->GetServer(second_leader);
+  Assert2(second_server != nullptr,
+          "StartWithCallback replacement leader server is null");
+
+  auto second_command = rusty::Arc<TpcCommitCommand>::make();
+  LogEntry second_log;
+  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &second_log.log_entry));
+  second_log.length = static_cast<int>(second_log.log_entry.size());
+  {
+    auto& command = second_command.get_mut().unwrap();
+    command.tx_id_ = 10202;
+    command.cmd_ = rusty::Arc<LogEntry>::make(std::move(second_log));
+  }
+
+  auto second_storage = std::make_shared<AlwaysFailingSyncLogStorage>();
+  auto callback_calls = std::make_shared<std::atomic<int>>(0);
+  uint64_t callback_token = UINT64_MAX;
+  uint64_t second_index = 0;
+  uint64_t second_term = 0;
+  uint64_t second_last_before = 0;
+  uint64_t second_term_before = 0;
+  RaftStartResult second_result = RaftStartResult::REJECTED;
+  {
+    std::lock_guard<std::recursive_mutex> lock(second_server->mtx_);
+    Assert2(second_server->is_leader_ &&
+                !second_server->stop_.load(
+                    rusty::sync::atomic::Ordering::Acquire),
+            "StartWithCallback target lost live leadership before injection");
+    second_last_before = second_server->lastLogIndex;
+    second_term_before = second_server->currentTerm;
+    Assert2(second_last_before < UINT64_MAX,
+            "StartWithCallback test cannot allocate a successor slot");
+    Assert2(second_term_before > first_term_before,
+            "Replacement leader term %lu did not advance past %lu",
+            second_term_before, first_term_before);
+    second_server->SetLogStorage(second_storage);
+    second_result = second_server->StartWithCallback(
+        std::move(second_command), &second_index, &second_term,
+        [callback_calls](CommitStatus) {
+          callback_calls->fetch_add(1, std::memory_order_relaxed);
+        },
+        &callback_token);
+  }
+
+  Assert2(raft_server_start_is_indeterminate(second_result),
+          "StartWithCallback collapsed ambiguous persistence into result %d",
+          static_cast<int>(second_result));
+  Assert2(second_index == second_last_before + 1 &&
+              second_term == second_term_before,
+          "StartWithCallback lost ambiguous identity: index=%lu expected=%lu "
+          "term=%lu expected=%lu",
+          second_index, second_last_before + 1,
+          second_term, second_term_before);
+  Assert2(callback_token == 0,
+          "StartWithCallback registered token %lu for ambiguous append",
+          callback_token);
+  Assert2(callback_calls->load(std::memory_order_relaxed) == 0,
+          "StartWithCallback invoked callback for ambiguous append");
+  Assert2(second_storage->put_calls == 1 &&
+              second_storage->remove_calls == 1 &&
+              second_storage->sync_calls == 2,
+          "StartWithCallback fault path calls put/remove/sync=%d/%d/%d, "
+          "expected 1/1/2",
+          second_storage->put_calls, second_storage->remove_calls,
+          second_storage->sync_calls);
+  Assert2(second_storage->get(second_index).is_none(),
+          "StartWithCallback compensating removal did not remove failed slot");
+  {
+    std::lock_guard<std::recursive_mutex> lock(second_server->mtx_);
+    Assert2(second_server->lastLogIndex == second_last_before,
+            "StartWithCallback did not restore lastLogIndex");
+    Assert2(second_server->raft_logs_.count(second_index) == 0 &&
+                second_server->memoryAcks_.count(second_index) == 0 &&
+                second_server->durableAcks_.count(second_index) == 0 &&
+                second_server->pendingCallbacks_.count(second_index) == 0,
+            "StartWithCallback retained failed slot in volatile Raft state");
+    Assert2(!second_server->is_leader_ &&
+                !second_server->rpc_ready_.load(
+                    rusty::sync::atomic::Ordering::Acquire) &&
+                second_server->stop_.load(
+                    rusty::sync::atomic::Ordering::Acquire) &&
+                !second_server->looping_.load(
+                    rusty::sync::atomic::Ordering::Acquire),
+            "StartWithCallback ambiguity did not fail-stop the leader");
+  }
+
+  Fiber::sleep(1000);
+  Assert2(callback_calls->load(std::memory_order_relaxed) == 0,
+          "Ambiguous append callback fired after StartWithCallback returned");
+
+  // The coordinator-facing API additionally records a one-shot terminal
+  // UNKNOWN result, so CoordinatorRaft cannot spin or turn the ambiguity into
+  // WRONG_LEADER. Three healthy voters remain after the first two fail-stops,
+  // which is exactly the five-node quorum needed for this final election.
+  const int third_leader = config_->OneLeader();
+  Assert2(third_leader >= 0 && third_leader != first_leader &&
+              third_leader != second_leader,
+          "No third leader for StartTracked fault test (first=%d second=%d "
+          "third=%d)",
+          first_leader, second_leader, third_leader);
+  auto* third_server = config_->GetServer(third_leader);
+  Assert2(third_server != nullptr,
+          "StartTracked replacement leader server is null");
+
+  auto third_command = rusty::Arc<TpcCommitCommand>::make();
+  LogEntry third_log;
+  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &third_log.log_entry));
+  third_log.length = static_cast<int>(third_log.log_entry.size());
+  {
+    auto& command = third_command.get_mut().unwrap();
+    command.tx_id_ = 10203;
+    command.cmd_ = rusty::Arc<LogEntry>::make(std::move(third_log));
+  }
+
+  auto third_storage = std::make_shared<AlwaysFailingSyncLogStorage>();
+  uint64_t third_index = 0;
+  uint64_t third_term = 0;
+  uint64_t third_last_before = 0;
+  uint64_t third_term_before = 0;
+  RaftStartResult third_result = RaftStartResult::REJECTED;
+  {
+    std::lock_guard<std::recursive_mutex> lock(third_server->mtx_);
+    Assert2(third_server->is_leader_ &&
+                !third_server->stop_.load(
+                    rusty::sync::atomic::Ordering::Acquire),
+            "StartTracked target lost live leadership before injection");
+    third_last_before = third_server->lastLogIndex;
+    third_term_before = third_server->currentTerm;
+    Assert2(third_last_before < UINT64_MAX,
+            "StartTracked test cannot allocate a successor slot");
+    Assert2(third_term_before > second_term_before,
+            "Third leader term %lu did not advance past %lu",
+            third_term_before, second_term_before);
+    third_server->SetLogStorage(third_storage);
+    third_result = third_server->StartTracked(
+        std::move(third_command), &third_index, &third_term);
+  }
+
+  Assert2(raft_server_start_is_indeterminate(third_result),
+          "StartTracked collapsed ambiguous persistence into result %d",
+          static_cast<int>(third_result));
+  Assert2(third_index == third_last_before + 1 &&
+              third_term == third_term_before,
+          "StartTracked lost ambiguous identity: index=%lu expected=%lu "
+          "term=%lu expected=%lu",
+          third_index, third_last_before + 1,
+          third_term, third_term_before);
+  const RaftSubmissionProgress wrong_term_progress =
+      third_server->GetSubmissionProgress(third_index, third_term - 1);
+  Assert2(!wrong_term_progress.committed &&
+              !wrong_term_progress.superseded &&
+              !wrong_term_progress.indeterminate,
+          "Wrong-term progress lookup consumed the exact UNKNOWN result");
+  const RaftSubmissionProgress tracked_progress =
+      third_server->GetSubmissionProgress(third_index, third_term);
+  Assert2(!tracked_progress.committed && !tracked_progress.superseded &&
+              tracked_progress.indeterminate,
+          "StartTracked did not publish exactly one terminal UNKNOWN result");
+  const RaftSubmissionProgress consumed_progress =
+      third_server->GetSubmissionProgress(third_index, third_term);
+  Assert2(!consumed_progress.committed && !consumed_progress.superseded &&
+              !consumed_progress.indeterminate,
+          "StartTracked UNKNOWN result was observable more than once");
+  Assert2(third_storage->put_calls == 1 &&
+              third_storage->remove_calls == 1 &&
+              third_storage->sync_calls == 2,
+          "StartTracked fault path calls put/remove/sync=%d/%d/%d, "
+          "expected 1/1/2",
+          third_storage->put_calls, third_storage->remove_calls,
+          third_storage->sync_calls);
+
+  Log_info("TEST 102: Ambiguous leader append admission PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 103: testRequestVoteTermPersistenceFailure
+// ============================================================================
+// A RequestVote carrying a higher term updates stable Raft state even when the
+// vote itself is NO. If that term cannot be fsynced, the follower must return
+// the observed term, vote NO, and stop accepting RPCs.
+// @unsafe - Terminal fault injection against one of the two healthy replicas
+// left by Test 102; no later test requires a quorum.
+int RaftLabTest::testRequestVoteTermPersistenceFailure(void) {
+  Init2(103, "RequestVote higher term is durability gated");
+
+  RaftServer* target = nullptr;
+  siteid_t candidate_id = static_cast<siteid_t>(INVALID_SITEID);
+  for (int i = 0; i < NSERVERS; ++i) {
+    const siteid_t server_id = config_->getServerIdByIndex(i);
+    auto* server = config_->GetServer(server_id);
+    if (server == nullptr ||
+        server->stop_.load(rusty::sync::atomic::Ordering::Acquire)) {
+      continue;
+    }
+    if (target == nullptr) {
+      target = server;
+    } else {
+      candidate_id = server_id;
+      break;
+    }
+  }
+  Assert2(target != nullptr &&
+              candidate_id != static_cast<siteid_t>(INVALID_SITEID),
+          "Test 103 requires the two healthy replicas left by Test 102");
+
+  auto storage = std::make_shared<AlwaysFailingSyncLogStorage>();
+  ballot_t reply_term = -1;
+  bool_t vote_granted = true;
+  uint64_t previous_term = 0;
+  uint64_t requested_term = 0;
+  slotid_t target_last_log_index = 0;
+  ballot_t target_last_log_term = 0;
+  {
+    std::lock_guard<std::recursive_mutex> lock(target->mtx_);
+    Assert2(!target->is_leader_,
+            "Test 103 target unexpectedly remains leader");
+    Assert2(!target->stop_.load(
+                rusty::sync::atomic::Ordering::Acquire),
+            "Test 103 target stopped before fault injection");
+    Assert2(candidate_id != target->site_id_ &&
+                target->current_config_.count(candidate_id) == 1 &&
+                target->learners_.count(candidate_id) == 0,
+            "Test 103 candidate %u is not a remote current voter",
+            static_cast<unsigned>(candidate_id));
+    previous_term = target->currentTerm;
+    Assert2(previous_term < static_cast<uint64_t>(INT64_MAX),
+            "Test 103 cannot allocate a higher signed ballot");
+    requested_term = previous_term + 1;
+    target_last_log_index = target->lastLogIndex;
+    target_last_log_term = target->ElectionLastLogTermLocked();
+    Assert2(target_last_log_index > 0 && target_last_log_term > 0,
+            "Test 103 requires a non-empty target log");
+    Assert2(!raft_server_candidate_log_is_at_least(
+                /*candidate_term=*/0, target_last_log_term,
+                /*candidate_index=*/0, target_last_log_index),
+            "Test 103 candidate tuple is not provably stale");
+    target->SetLogStorage(storage);
+    target->OnRequestVote(
+        /*lst_log_idx=*/0, /*lst_log_term=*/0, candidate_id,
+        static_cast<ballot_t>(requested_term),
+        &reply_term, &vote_granted);
+  }
+
+  Assert2(static_cast<uint64_t>(reply_term) == requested_term,
+          "RequestVote replied with stale term %ld instead of %lu",
+          static_cast<int64_t>(reply_term), requested_term);
+  Assert2(!vote_granted,
+          "RequestVote granted a vote after higher-term persistence failed");
+  Assert2(storage->sync_calls == 1,
+          "Higher RequestVote term performed %d sync calls, expected 1",
+          storage->sync_calls);
+  {
+    std::lock_guard<std::recursive_mutex> lock(target->mtx_);
+    Assert2(target->currentTerm == requested_term &&
+                target->vote_for_ == static_cast<siteid_t>(INVALID_SITEID),
+            "RequestVote did not retain fail-stopped term/vote state");
+    Assert2(!target->is_leader_ &&
+                !target->rpc_ready_.load(
+                    rusty::sync::atomic::Ordering::Acquire) &&
+                target->stop_.load(
+                    rusty::sync::atomic::Ordering::Acquire) &&
+                !target->looping_.load(
+                    rusty::sync::atomic::Ordering::Acquire),
+            "RequestVote term persistence failure did not fail-stop target");
+  }
+
+  Log_info("TEST 103: RequestVote higher-term durability gate PASSED!");
   Passed2();
 }
 

@@ -55,7 +55,7 @@ impl<T> FiberPromise<T> {
             "FiberPromise has no state (moved-from?)"
         );
         let ev = self.state_.as_ref().unwrap();
-        assert!(!(*ev).is_set_.get(), "FiberPromise value already set");
+        assert!(!(*ev).is_ready(), "FiberPromise value already set");
         (*ev).set(value);
     }
 
@@ -64,7 +64,7 @@ impl<T> FiberPromise<T> {
             return false;
         }
         let ev = self.state_.as_ref().unwrap();
-        (*ev).is_set_.get()
+        (*ev).is_ready()
     }
 }
 
@@ -93,7 +93,7 @@ impl<T> FiberFuture<T> {
             "FiberFuture has no state (invalid or moved-from?)"
         );
         let ev = self.state_.as_ref().unwrap();
-        if !(*ev).is_set_.get() {
+        if !(*ev).is_ready() {
             (*ev).wait();
         }
         (*ev).get()
@@ -105,11 +105,11 @@ impl<T> FiberFuture<T> {
             return false;
         }
         let ev = self.state_.as_ref().unwrap();
-        if (*ev).is_set_.get() {
+        if (*ev).is_ready() {
             return true;
         }
         (*ev).wait_timeout(timeout_us);
-        (*ev).is_set_.get()
+        (*ev).is_ready()
     }
 
     pub fn is_ready(&self) -> bool {
@@ -117,7 +117,7 @@ impl<T> FiberFuture<T> {
             return false;
         }
         let ev = self.state_.as_ref().unwrap();
-        (*ev).is_set_.get()
+        (*ev).is_ready()
     }
 
     pub fn valid(&self) -> bool {

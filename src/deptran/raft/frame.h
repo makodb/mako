@@ -9,6 +9,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/option.hpp>
+#include <rusty/sync/atomic.hpp>
 
 namespace janus {
 
@@ -23,13 +24,21 @@ class RaftFrame : public Frame {
   static uint16_t n_replicas_;
   static map<siteid_t, RaftFrame*> frames_;
   static bool all_sites_created_s;
-  static bool tests_done_;
+  // -1 until the lab fiber finishes, then RaftLabTest::Run()'s status.
+  static rusty::sync::atomic::AtomicI32 lab_test_result_;
   static uint16_t n_commo_created_;
   static bool is_lab_test_config_;        // True if running raft lab test (1 partition, 5 replicas)
   static bool lab_test_config_checked_;   // True once we've checked the config
-  static bool IsRaftLabTestConfig();      // Check if we're in lab test configuration
 #endif
  public:
+#ifdef RAFT_TEST_CORO
+  // @unsafe - Uses the legacy test mutex and global Config singleton.
+  static bool IsRaftLabTestConfig();
+  // @safe - Atomic result read; -1=incomplete, 0=passed, >0=failed.
+  static int RaftLabTestResult();
+  // @safe - Returns 1 only for an incomplete/failed in-process RaftLab run.
+  static int RaftLabProcessExitCode();
+#endif
   RaftFrame() = default;
   ~RaftFrame();  // Destructor to clean up owned resources
   std::unique_ptr<RaftCommo> commo_;  // @unsafe - unique_ptr kept for test file compatibility

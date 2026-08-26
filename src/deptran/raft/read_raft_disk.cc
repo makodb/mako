@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <type_traits>
 
 #include <rocksdb/c.h>
 
@@ -48,6 +49,23 @@ bool ReadUInt32(const string& value, uint32_t& result) {
 }
 
 // Decode RaftData from binary value
+#if RUSTYCPP_RUST
+#[allow(non_snake_case)]
+#[cfg_attr(any(), cpp_no_auto_traits)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
+#[repr(C)]
+pub struct RaftData {
+    pub max_ballot_seen_: u64,
+    pub max_ballot_accepted_: u64,
+    pub term: u64,
+    pub prevTerm: u64,
+    pub slot_id: u64,
+    pub ballot: u64,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_disk.data_record version=1 rust_sha256=30b59f182e9a0c2897442cc0084000f4feafb143f81389e78e33ce7eb430d26b*/
+struct RaftData;
+
 struct RaftData {
     uint64_t max_ballot_seen_;
     uint64_t max_ballot_accepted_;
@@ -56,6 +74,22 @@ struct RaftData {
     uint64_t slot_id;
     uint64_t ballot;
 };
+/*RUSTYCPP:GEN-END id=raft_disk.data_record*/
+
+static_assert(std::is_standard_layout_v<RaftData>);
+static_assert(std::is_trivial_v<RaftData>);
+static_assert(std::is_trivially_copyable_v<RaftData>);
+static_assert(std::is_aggregate_v<RaftData>);
+static_assert(sizeof(RaftData) == 6 * sizeof(uint64_t));
+static_assert(alignof(RaftData) == alignof(uint64_t));
+static_assert(offsetof(RaftData, max_ballot_seen_) == 0);
+static_assert(offsetof(RaftData, max_ballot_accepted_) == sizeof(uint64_t));
+static_assert(offsetof(RaftData, term) == 2 * sizeof(uint64_t));
+static_assert(offsetof(RaftData, prevTerm) == 3 * sizeof(uint64_t));
+static_assert(offsetof(RaftData, slot_id) == 4 * sizeof(uint64_t));
+static_assert(offsetof(RaftData, ballot) == 5 * sizeof(uint64_t));
+static_assert(RaftData{}.max_ballot_seen_ == 0);
+static_assert(RaftData{}.ballot == 0);
 
 bool DecodeRaftData(const string& value, RaftData& entry) {
     size_t expected_size = sizeof(entry.max_ballot_seen_) +

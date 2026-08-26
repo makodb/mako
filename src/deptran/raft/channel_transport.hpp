@@ -35,6 +35,7 @@
 #include <rusty/box.hpp>
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
+#include <rusty/slice.hpp>
 #include <rusty/sync/atomic.hpp>
 #include <rusty/sync/mpsc.hpp>
 
@@ -45,6 +46,46 @@
 
 namespace janus {
 namespace raft {
+
+// Pure routing predicates. Container traversal, channel ownership, blocking
+// receive, and fault mutation remain in the existing C++ implementation.
+#if RUSTYCPP_RUST
+pub const fn channel_faults_drop_matches(drop_from: u16,
+                                         drop_to: u16,
+                                         from: u16,
+                                         to: u16) -> bool {
+    drop_from == from && drop_to == to
+}
+
+pub const fn channel_faults_partitions_block(from_partition: i32,
+                                             to_partition: i32) -> bool {
+    from_partition != to_partition
+}
+
+pub const fn channel_site_matches(lhs: u16, rhs: u16) -> bool {
+    lhs == rhs
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_channel_transport.scalar_decisions version=1 rust_sha256=a9ea2c06e0411de12a472d8b3c8e4b2eecbeac984434931f0ec92322134c6800*/
+constexpr bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to);
+constexpr bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition);
+constexpr bool channel_site_matches(uint16_t lhs, uint16_t rhs);
+constexpr bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to) {
+    return (rusty::detail::deref_if_pointer_like(drop_from) == rusty::detail::deref_if_pointer_like(from)) && (rusty::detail::deref_if_pointer_like(drop_to) == rusty::detail::deref_if_pointer_like(to));
+}
+constexpr bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition) {
+    return rusty::detail::deref_if_pointer_like(from_partition) != rusty::detail::deref_if_pointer_like(to_partition);
+}
+constexpr bool channel_site_matches(uint16_t lhs, uint16_t rhs) {
+    return rusty::detail::deref_if_pointer_like(lhs) == rusty::detail::deref_if_pointer_like(rhs);
+}
+/*RUSTYCPP:GEN-END id=raft_channel_transport.scalar_decisions*/
+
+static_assert(channel_faults_drop_matches(1, 2, 1, 2));
+static_assert(!channel_faults_drop_matches(1, 2, 2, 1));
+static_assert(channel_faults_partitions_block(-1, 0));
+static_assert(!channel_faults_partitions_block(-1, -1));
+static_assert(channel_site_matches(7, 7));
 
 // ---------------------------------------------------------------------------
 // Envelope
@@ -95,12 +136,14 @@ struct ChannelFaults {
   // @safe
   bool is_dropped(siteid_t from, siteid_t to) const {
     for (auto& p : dropped) {
-      if (p.first == from && p.second == to) return true;
+      if (channel_faults_drop_matches(p.first, p.second, from, to)) {
+        return true;
+      }
     }
     if (!partitions.empty()) {
       auto pf = find_partition(from);
       auto pt = find_partition(to);
-      if (pf != pt) return true;
+      if (channel_faults_partitions_block(pf, pt)) return true;
     }
     return false;
   }
@@ -110,7 +153,7 @@ struct ChannelFaults {
   int find_partition(siteid_t s) const {
     for (size_t i = 0; i < partitions.size(); ++i) {
       for (auto x : partitions[i]) {
-        if (x == s) return static_cast<int>(i);
+        if (channel_site_matches(x, s)) return static_cast<int>(i);
       }
     }
     return -1;
@@ -137,7 +180,7 @@ class ChannelSwitchboard {
   void send(Envelope env) {
     if (faults_.is_dropped(env.from, env.to)) return;
     for (auto& pair : senders_) {
-      if (pair.first == env.to) {
+      if (channel_site_matches(pair.first, env.to)) {
         (void)pair.second.send(std::move(env));
         return;
       }

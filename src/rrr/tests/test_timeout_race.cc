@@ -5,6 +5,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace rrr;
 using namespace std::chrono;
@@ -154,6 +155,8 @@ TEST_F(TimeoutRaceTest, StaggeredTimeouts) {
 // Test 4: Timeout event cleanup
 TEST_F(TimeoutRaceTest, TimeoutEventCleanup) {
     auto reactor = Reactor::get_reactor();
+    const size_t waiting_before = reactor->waiting_events_.borrow()->size();
+    const size_t composite_before = reactor->composite_events_.borrow()->size();
     
     // Create multiple events that will timeout
     std::vector<rusty::Arc<IntEvent>> events;
@@ -168,16 +171,74 @@ TEST_F(TimeoutRaceTest, TimeoutEventCleanup) {
             completed_count++;
         });
     }
+
+    // Raft's submission loop uses TimeoutEvent::wait() rather than adding a
+    // timeout to an IntEvent. Cover that real primitive too; depending on the
+    // exact scan/deadline interleaving it legitimately finishes as DONE or
+    // TIMEOUT, but either terminal state must leave the polling queue.
+    std::vector<rusty::Arc<TimeoutEvent>> timer_events;
+    std::atomic<int> timer_completed_count{0};
+    for (int i = 0; i < 5; ++i) {
+        auto timer_event = create_sp_timeout_event(10000);
+        timer_events.push_back(timer_event);
+        reactor->create_run_fiber([timer_event, &timer_completed_count]() {
+            timer_event->wait();
+            timer_completed_count++;
+        });
+    }
+
+    // Exercise the second polling queue too. Neither child becomes ready, so
+    // the WaitAll itself times out while registered in both waiting_events_
+    // and composite_events_.
+    auto child_a = create_sp_int_event(1);
+    auto child_b = create_sp_int_event(1);
+    rusty::Vec<rusty::Arc<EventPollable>> children = {child_a, child_b};
+    auto composite = create_sp_waitall_from(children);
+    std::atomic<bool> composite_completed{false};
+    reactor->create_run_fiber([composite, &composite_completed]() {
+        composite->wait_timeout(10000); // 10ms timeout
+        composite_completed = true;
+    });
     
     // Wait for all timeouts
     std::this_thread::sleep_for(milliseconds(20));
     reactor->run_loop(false, true);
     
     EXPECT_EQ(completed_count, 5);
+    EXPECT_EQ(timer_completed_count, 5);
+    EXPECT_TRUE(composite_completed);
     
     // Verify all events are in TIMEOUT state
     for (auto& event : events) {
         EXPECT_EQ(event->status_.get(), EventStatus::TIMEOUT);
+    }
+    for (auto& event : timer_events) {
+        EXPECT_TRUE(event->status_.get() == EventStatus::DONE ||
+                    event->status_.get() == EventStatus::TIMEOUT);
+    }
+    EXPECT_EQ(composite->status_.get(), EventStatus::TIMEOUT);
+
+    // TIMEOUT remains observable on the event, but it is terminal for reactor
+    // scheduling and must not stay in either polling queue.  A second pass
+    // performs the post-resume cleanup in the same way as the production loop.
+    reactor->run_loop(false, true);
+    EXPECT_LE(reactor->waiting_events_.borrow()->size(), waiting_before);
+    EXPECT_LE(reactor->composite_events_.borrow()->size(), composite_before);
+
+    // Aggregate sizes can shrink because of unrelated cleanup, so also assert
+    // the scheduling invariant directly: neither polling queue may retain a
+    // terminal TIMEOUT event.
+    {
+        auto waiting = reactor->waiting_events_.borrow();
+        for (size_t i = 0; i < waiting->size(); ++i) {
+            EXPECT_NE((*waiting)[i]->status(), EventStatus::TIMEOUT);
+        }
+    }
+    {
+        auto composite_queue = reactor->composite_events_.borrow();
+        for (size_t i = 0; i < composite_queue->size(); ++i) {
+            EXPECT_NE((*composite_queue)[i]->status(), EventStatus::TIMEOUT);
+        }
     }
 }
 

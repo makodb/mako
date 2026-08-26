@@ -5,8 +5,12 @@
 #include "../communicator.h"
 #include "../replication_quorum.h"
 #include "messages.hpp"
+#include <atomic>
 #include <map>
 #include <mutex>
+#include <rusty/slice.hpp>
+#include <type_traits>
+#include <utility>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -32,10 +36,117 @@ namespace janus {
  * - PENDING: Should send/retry NotifyRestart (not yet acknowledged, timed out,
  *   or the peer's one-shot reconnect attempt failed)
  */
-enum class NotifyRestartStatus {
-  ACKNOWLEDGED,  // Peer reconnected to us
-  PENDING        // Need to send/retry NotifyRestart
+#if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum NotifyRestartStatus {
+    ACKNOWLEDGED = 0,
+    PENDING = 1,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_commo.notify_restart_status version=1 rust_sha256=89cd2d6a63f03f1708d794b6331d7d920d43868844847437a560e79d0eb5a8d6*/
+enum class NotifyRestartStatus : int32_t;
+constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED();
+constexpr NotifyRestartStatus NotifyRestartStatus_PENDING();
+
+enum class NotifyRestartStatus : int32_t {
+    ACKNOWLEDGED = 0,
+    PENDING = 1
 };
+inline constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED() { return NotifyRestartStatus::ACKNOWLEDGED; }
+inline constexpr NotifyRestartStatus NotifyRestartStatus_PENDING() { return NotifyRestartStatus::PENDING; }
+/*RUSTYCPP:GEN-END id=raft_commo.notify_restart_status*/
+
+static_assert(std::is_same_v<int, int32_t>);
+static_assert(std::is_same_v<std::underlying_type_t<NotifyRestartStatus>, int>);
+static_assert(std::is_trivially_copyable_v<NotifyRestartStatus>);
+static_assert(sizeof(NotifyRestartStatus) == sizeof(int32_t));
+static_assert(alignof(NotifyRestartStatus) == alignof(int32_t));
+static_assert(static_cast<int32_t>(NotifyRestartStatus::ACKNOWLEDGED) == 0);
+static_assert(static_cast<int32_t>(NotifyRestartStatus::PENDING) == 1);
+static_assert(NotifyRestartStatus{} == NotifyRestartStatus::ACKNOWLEDGED);
+
+// Pure Raft communicator decisions over copied scalar values. RPC ownership,
+// callback lifetimes, peer access, and restart-status locking stay in C++.
+#if RUSTYCPP_RUST
+pub const fn commo_append_entries_empty_from_cmd(has_cmd: bool) -> bool {
+    !has_cmd
+}
+
+pub const fn commo_append_entries_reply_lost(ok: u64,
+                                             term: u64,
+                                             last_log_index: u64) -> bool {
+    ok == 0 && term == 0 && last_log_index == 0
+}
+
+pub const fn commo_append_entries_done_from_reply(ok: u64,
+                                                  term: u64,
+                                                  last_log_index: u64) -> bool {
+    !commo_append_entries_reply_lost(ok, term, last_log_index)
+}
+
+pub const fn commo_future_failed(error_code: i32) -> bool {
+    error_code != 0
+}
+
+pub const fn commo_notify_restart_is_pending(status: NotifyRestartStatus) -> bool {
+    (status as i32) == (NotifyRestartStatus::PENDING as i32)
+}
+
+pub const fn commo_retry_has_pending_sites(pending_count: usize) -> bool {
+    pending_count != 0
+}
+
+pub const fn commo_quorum_should_record_voter(voter_id: u16) -> bool {
+    voter_id != 0
+}
+
+pub const fn commo_quorum_should_advance_term(candidate_term: i64,
+                                               highest_term: i64) -> bool {
+    candidate_term > highest_term
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_commo.scalar_decisions version=1 rust_sha256=2f2c858337892ae597e2e835af358f1c25cf66287833f56a8fb2dc3b0741e88c*/
+constexpr bool commo_append_entries_empty_from_cmd(bool has_cmd);
+constexpr bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index);
+constexpr bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index);
+constexpr bool commo_future_failed(int32_t error_code);
+constexpr bool commo_retry_has_pending_sites(size_t pending_count);
+constexpr bool commo_quorum_should_record_voter(uint16_t voter_id);
+constexpr bool commo_quorum_should_advance_term(int64_t candidate_term, int64_t highest_term);
+constexpr bool commo_append_entries_empty_from_cmd(bool has_cmd) {
+    return !has_cmd;
+}
+constexpr bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return ((rusty::detail::deref_if_pointer_like(ok) == static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(term) == static_cast<uint64_t>(0))) && (rusty::detail::deref_if_pointer_like(last_log_index) == static_cast<uint64_t>(0));
+}
+constexpr bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return !commo_append_entries_reply_lost(std::move(ok), std::move(term), std::move(last_log_index));
+}
+constexpr bool commo_future_failed(int32_t error_code) {
+    return rusty::detail::deref_if_pointer_like(error_code) != static_cast<int32_t>(0);
+}
+constexpr bool commo_notify_restart_is_pending(NotifyRestartStatus status) {
+    return ((static_cast<int32_t>(status))) == ((static_cast<int32_t>(NotifyRestartStatus_PENDING())));
+}
+constexpr bool commo_retry_has_pending_sites(size_t pending_count) {
+    return rusty::detail::deref_if_pointer_like(pending_count) != static_cast<size_t>(0);
+}
+constexpr bool commo_quorum_should_record_voter(uint16_t voter_id) {
+    return rusty::detail::deref_if_pointer_like(voter_id) != static_cast<uint16_t>(0);
+}
+constexpr bool commo_quorum_should_advance_term(int64_t candidate_term, int64_t highest_term) {
+    return rusty::detail::deref_if_pointer_like(candidate_term) > rusty::detail::deref_if_pointer_like(highest_term);
+}
+/*RUSTYCPP:GEN-END id=raft_commo.scalar_decisions*/
+
+static_assert(!commo_retry_has_pending_sites(0));
+static_assert(commo_retry_has_pending_sites(1));
+static_assert(!commo_quorum_should_record_voter(0));
+static_assert(commo_quorum_should_record_voter(1));
+static_assert(commo_quorum_should_advance_term(-1, -2));
+static_assert(!commo_quorum_should_advance_term(-2, -1));
 
 // @unsafe - inherits from non-@interface base QuorumEvent
 class RaftVoteQuorumEvent: public QuorumEventBase {
@@ -53,20 +164,26 @@ class RaftVoteQuorumEvent: public QuorumEventBase {
 
   // @safe - Extended to track voter site IDs for speculative voting
   void FeedResponse(bool y, ballot_t term, siteid_t voter_id = 0) {
-    if (y) {
-      // @unsafe
-      { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
-      // Track the voter for speculative voting
-      if (voter_id != 0) {
-        std::lock_guard<std::mutex> lock(voters_mtx_);
-        spec_voters_.insert(voter_id);
-      }
-    } else {
-      vote_no();
-      if(term > q().highest_term_.get())
-      {
+    {
+      std::lock_guard<std::mutex> lock(voters_mtx_);
+      // Every syntactically valid reply term dominates its vote bit. Negative
+      // ballot_t values are sentinels/malformed wire values, not Raft terms.
+      if (term >= 0 &&
+          commo_quorum_should_advance_term(
+              term, q().highest_term_.get())) {
         q().highest_term_.set(term);
       }
+      if (y && commo_quorum_should_record_voter(voter_id)) {
+        spec_voters_.insert(voter_id);
+      }
+    }
+    if (y) {
+      // Publish voter identity before the quorum wakeup; the candidate takes
+      // its voter snapshot immediately after wait_timeout returns.
+      // @unsafe
+      { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
+    } else {
+      vote_no();
     }
   }
 
@@ -77,6 +194,7 @@ class RaftVoteQuorumEvent: public QuorumEventBase {
 
   // @safe
   int64_t Term() {
+    std::lock_guard<std::mutex> lock(voters_mtx_);
     return q().highest_term_.get();
   }
 
@@ -105,10 +223,34 @@ class SendAppendEntriesResults {
  * Memory: Entry appended to in-memory log (immediate response)
  * Durable: Entry persisted to disk (sent via AppendEntriesDurable RPC)
  */
+#if RUSTYCPP_RUST
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(u64)]
+pub enum AckType {
+    Memory = 0,
+    Durable = 1,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_commo.ack_type version=1 rust_sha256=a4a8dc541c6c5e970e786f9c1e0f32a2c02cfd2eed148b63e2c8623f07058b56*/
+enum class AckType : uint64_t;
+constexpr AckType AckType_Memory();
+constexpr AckType AckType_Durable();
+
 enum class AckType : uint64_t {
-  Memory = 0,
-  Durable = 1
+    Memory = 0,
+    Durable = 1
 };
+inline constexpr AckType AckType_Memory() { return AckType::Memory; }
+inline constexpr AckType AckType_Durable() { return AckType::Durable; }
+/*RUSTYCPP:GEN-END id=raft_commo.ack_type*/
+
+static_assert(std::is_same_v<std::underlying_type_t<AckType>, uint64_t>);
+static_assert(std::is_trivially_copyable_v<AckType>);
+static_assert(sizeof(AckType) == sizeof(uint64_t));
+static_assert(alignof(AckType) == alignof(uint64_t));
+static_assert(static_cast<uint64_t>(AckType::Memory) == 0);
+static_assert(static_cast<uint64_t>(AckType::Durable) == 1);
+static_assert(AckType{} == AckType::Memory);
 
 // Response data for async AppendEntries RPC
 // Uses shared_ptr semantics to ensure memory validity when callback fires.
@@ -116,6 +258,10 @@ enum class AckType : uint64_t {
 // None) then the event is assigned via create_sp_event before the RPC is sent.
 struct AppendEntriesResponse {
   rusty::Option<rusty::Arc<IntEvent>> event{rusty::None};
+  // The callback publishes all scalar response fields before setting this
+  // flag. HeartbeatLoop can therefore retain and poll a response across
+  // rounds without timing out (and permanently poisoning) its IntEvent.
+  std::atomic_bool completed{false};
   uint64_t status = 0;
   uint64_t term = 0;
   uint64_t last_log_index = 0;

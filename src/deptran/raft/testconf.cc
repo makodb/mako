@@ -11,8 +11,11 @@
 #include "recovery_manager.hpp"
 #include "application_log.h"
 #include "../replication_log_entry.h"
+#include "replicated_db.h"
 
 #include "rrr/rrr.hpp"
+
+#include <rusty/slice.hpp>
 
 import std;
 
@@ -20,12 +23,113 @@ namespace janus {
 
 #ifdef RAFT_TEST_CORO
 
+// Test-harness-only index decisions. Keep signed i32 arithmetic so the
+// generated C++ retains the incumbent overflow and division preconditions.
+#if RUSTYCPP_RUST
+pub const fn raft_test_server_index_is_valid(index: i32,
+                                              server_count: i32) -> bool {
+    index >= 0 && index < server_count
+}
+
+pub const fn raft_test_wrapped_server_index(index: i32,
+                                             offset: i32,
+                                             server_count: i32) -> i32 {
+    let mut wrapped = (index + offset) % server_count;
+    if wrapped < 0 {
+        wrapped += server_count;
+    }
+    wrapped
+}
+
+pub const fn raft_test_connected_term_moved_on(disconnected: bool,
+                                               current_term: u64,
+                                               observed_term: u64) -> bool {
+    !disconnected && current_term > observed_term
+}
+
+pub const fn raft_test_wait_leader_is_invalid(disconnected: bool,
+                                               is_leader: bool,
+                                               current_term: u64,
+                                               expected_term: u64) -> bool {
+    disconnected || !is_leader || current_term != expected_term
+}
+
+pub const fn raft_test_should_record_agreement_command(command_kind: i32,
+                                                        agreement_kind: i32) -> bool {
+    command_kind == agreement_kind
+}
+
+pub const fn raft_test_is_known_application_command(command_kind: i32,
+                                                     replicated_db_kind: i32) -> bool {
+    command_kind == replicated_db_kind
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_testconf.index_math version=1 rust_sha256=cd8e772d60583e91f305704f1d7a1954f6afa69a5c77d1d98d7487684cd3e3da*/
+constexpr bool raft_test_server_index_is_valid(int32_t index, int32_t server_count);
+constexpr int32_t raft_test_wrapped_server_index(int32_t index, int32_t offset, int32_t server_count);
+constexpr bool raft_test_connected_term_moved_on(bool disconnected, uint64_t current_term, uint64_t observed_term);
+constexpr bool raft_test_wait_leader_is_invalid(bool disconnected, bool is_leader, uint64_t current_term, uint64_t expected_term);
+constexpr bool raft_test_should_record_agreement_command(int32_t command_kind, int32_t agreement_kind);
+constexpr bool raft_test_is_known_application_command(int32_t command_kind, int32_t replicated_db_kind);
+constexpr bool raft_test_server_index_is_valid(int32_t index, int32_t server_count) {
+    return (rusty::detail::deref_if_pointer_like(index) >= 0) && (rusty::detail::deref_if_pointer_like(index) < rusty::detail::deref_if_pointer_like(server_count));
+}
+constexpr int32_t raft_test_wrapped_server_index(int32_t index, int32_t offset, int32_t server_count) {
+    auto wrapped = ((rusty::detail::deref_if_pointer_like(index) + rusty::detail::deref_if_pointer_like(offset))) % rusty::detail::deref_if_pointer_like(server_count);
+    if (rusty::detail::deref_if_pointer_like(wrapped) < 0) {
+        rusty::detail::deref_if_pointer_like(wrapped) += server_count;
+    }
+    return std::move(wrapped);
+}
+constexpr bool raft_test_connected_term_moved_on(bool disconnected, uint64_t current_term, uint64_t observed_term) {
+    return !disconnected && (rusty::detail::deref_if_pointer_like(current_term) > rusty::detail::deref_if_pointer_like(observed_term));
+}
+constexpr bool raft_test_wait_leader_is_invalid(bool disconnected, bool is_leader, uint64_t current_term, uint64_t expected_term) {
+    return (rusty::detail::deref_if_pointer_like(disconnected) || !is_leader) || (rusty::detail::deref_if_pointer_like(current_term) != rusty::detail::deref_if_pointer_like(expected_term));
+}
+constexpr bool raft_test_should_record_agreement_command(int32_t command_kind, int32_t agreement_kind) {
+    return rusty::detail::deref_if_pointer_like(command_kind) == rusty::detail::deref_if_pointer_like(agreement_kind);
+}
+constexpr bool raft_test_is_known_application_command(int32_t command_kind, int32_t replicated_db_kind) {
+    return rusty::detail::deref_if_pointer_like(command_kind) == rusty::detail::deref_if_pointer_like(replicated_db_kind);
+}
+/*RUSTYCPP:GEN-END id=raft_testconf.index_math*/
+
+static_assert(!raft_test_server_index_is_valid(-1, 5));
+static_assert(raft_test_server_index_is_valid(0, 5));
+static_assert(raft_test_server_index_is_valid(4, 5));
+static_assert(!raft_test_server_index_is_valid(5, 5));
+static_assert(raft_test_wrapped_server_index(4, 1, 5) == 0);
+static_assert(raft_test_wrapped_server_index(0, -1, 5) == 4);
+static_assert(raft_test_wrapped_server_index(0, -6, 5) == 4);
+static_assert(raft_test_connected_term_moved_on(false, 51, 50));
+static_assert(!raft_test_connected_term_moved_on(true, 51, 50));
+static_assert(raft_test_wait_leader_is_invalid(true, true, 50, 50));
+static_assert(raft_test_wait_leader_is_invalid(false, false, 50, 50));
+static_assert(raft_test_wait_leader_is_invalid(false, true, 51, 50));
+static_assert(!raft_test_wait_leader_is_invalid(false, true, 50, 50));
+static_assert(raft_test_should_record_agreement_command(7, 7));
+static_assert(!raft_test_should_record_agreement_command(8, 7));
+static_assert(raft_test_is_known_application_command(19, 19));
+static_assert(!raft_test_is_known_application_command(20, 19));
+
+namespace {
+
+// Command values in the RaftLab are non-negative. Keep -1 as an explicit
+// missing-slot marker so a snapshot-restored server is not credited for log
+// history that its new apply callback did not replay.
+constexpr int kMissingCommittedCommand = -1;
+
+}  // namespace
+
 int _test_id_g = 0;
 
 std::map<siteid_t, RaftFrame*> RaftTestConfig::replicas;
-std::map<siteid_t, std::function<int(int, janus::Command)>>
+std::map<siteid_t, std::function<int(slotid_t, janus::Command)>>
     RaftTestConfig::commit_callbacks;
-std::map<siteid_t, std::vector<int>> RaftTestConfig::committed_cmds;
+rusty::Mutex<std::map<siteid_t, std::vector<int>>>
+    RaftTestConfig::committed_cmds{
+        std::map<siteid_t, std::vector<int>>{}};
 std::map<siteid_t, uint64_t> RaftTestConfig::rpc_count_last;
 
 RaftTestConfig::RaftTestConfig(std::map<siteid_t, RaftFrame*>& replicas) {
@@ -34,7 +138,10 @@ RaftTestConfig::RaftTestConfig(std::map<siteid_t, RaftFrame*>& replicas) {
   for (auto& pair : replicas) {
     auto svr = pair.first;
     auto frame = pair.second;
-    RaftTestConfig::committed_cmds[svr].push_back(-1);
+    {
+      auto committed = committed_cmds.lock().unwrap();
+      (*committed)[svr] = {kMissingCommittedCommand};
+    }
     RaftTestConfig::rpc_count_last[svr] = 0;
     disconnected_[svr] = false;
   }
@@ -46,15 +153,28 @@ void RaftTestConfig::SetLearnerAction(void) {
     auto svr = pair.first;
     auto frame = pair.second;
     RaftTestConfig::commit_callbacks[svr] =
-        [svr](int slot, janus::Command md) -> int {
-          verify(md.kind_ == TpcCommitCommand::static_kind());
+        [svr](slotid_t slot, janus::Command md) -> int {
+          if (!raft_test_should_record_agreement_command(
+                  md.kind_, TpcCommitCommand::static_kind())) {
+            verify(raft_test_is_known_application_command(
+                md.kind_, ReplicatedDBCommand::static_kind()));
+            Log_debug("server {} applied ReplicatedDB command kind {} at "
+                      "slot {}; outside the RaftLab integer agreement oracle",
+                      svr, md.kind_, slot);
+            return 0;
+          }
           const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
           verify(commit_cmd.is_some());
           Log_debug("server {} committed value {} at slot {}",
                     svr, commit_cmd.unwrap()->tx_id_, slot);
-          RaftTestConfig::committed_cmds[svr].push_back(commit_cmd.unwrap()->tx_id_);
+          RaftTestConfig::RecordCommittedCommand(
+              svr, slot, commit_cmd.unwrap()->tx_id_);
           return 0;
         };
+    // Runtime apply takes the same gate before copying/invoking app_next_.
+    // Replace the fail-closed startup placeholder without a data race.
+    std::lock_guard<std::mutex> apply_lock(
+        frame->svr_->state_machine_apply_mtx_);
     frame->svr_->RegLearnerAction(RaftTestConfig::commit_callbacks[svr]);
   }
 }
@@ -119,7 +239,8 @@ bool RaftTestConfig::TermMovedOn(uint64_t term) {
     uint64_t curTerm;
     bool isLeader;
     frame->svr_->GetState(&isLeader, &curTerm);
-    if (curTerm > term) {
+    const bool disconnected = frame->svr_->IsDisconnected();
+    if (raft_test_connected_term_moved_on(disconnected, curTerm, term)) {
       return true;
     }
   }
@@ -144,12 +265,32 @@ uint64_t RaftTestConfig::OneTerm(void) {
   return term;
 }
 
+// @safe - The guarded map makes resize/assignment atomic with oracle readers.
+void RaftTestConfig::RecordCommittedCommand(
+    siteid_t svr, slotid_t slot, int cmd) {
+  verify(cmd != kMissingCommittedCommand);
+  verify(slot <= static_cast<slotid_t>(std::numeric_limits<size_t>::max() - 1));
+  auto committed = committed_cmds.lock().unwrap();
+  auto& commands = (*committed)[svr];
+  const size_t slot_index = static_cast<size_t>(slot);
+  if (commands.size() <= slot_index) {
+    commands.resize(slot_index + 1, kMissingCommittedCommand);
+  }
+  verify(commands[slot_index] == kMissingCommittedCommand ||
+         commands[slot_index] == cmd);
+  commands[slot_index] = cmd;
+}
+
 int RaftTestConfig::NCommitted(uint64_t index) {
+  auto committed = committed_cmds.lock().unwrap();
   int cmd,n = 0;
   for (auto& pair : replicas) {
     auto svr = pair.first;
-    if (committed_cmds[svr].size() > index) {
-      auto curcmd = committed_cmds[svr][index];
+    auto commands = committed->find(svr);
+    if (commands != committed->end() &&
+        commands->second.size() > index &&
+        commands->second[index] != kMissingCommittedCommand) {
+      auto curcmd = commands->second[index];
       if (n == 0) {
         cmd = curcmd;
       } else {
@@ -184,27 +325,36 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
   }
   // call Start()
   // Log_info("Start: Calling Start() on server {} for command {}", svr, cmd);
-  bool result = it->second->svr_->Start(std::move(cmdptr), index, term);
+  const RaftStartResult result =
+      it->second->svr_->Start(std::move(cmdptr), index, term);
   // Log_info("Start: Server {} Start() for command {} returned {}, index={}, term={}",
   //          svr, cmd, result ? "SUCCESS" : "FAILED", *index, *term);
-  return result;
+  return raft_server_start_was_appended(result);
 }
 
 bool RaftTestConfig::StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
                                        std::function<void(CommitStatus)> callback) {
-  // First, call Start to submit the command
-  bool result = Start(svr, cmd, index, term);
-  if (!result) {
+  auto it = replicas.find(svr);
+  if (it == replicas.end()) {
+    Log_error("Server {} not found in replicas map", svr);
     return false;
   }
 
-  // If successful, register the callback for commit notifications
-  auto it = replicas.find(svr);
-  if (it != replicas.end()) {
-    it->second->svr_->RegisterCommitCallback(*index, std::move(callback));
+  // Build the same command shape as Start(), but submit it through the server's
+  // atomic append+callback API so step-down/replication cannot race registration.
+  auto cmdptr = rusty::Arc<TpcCommitCommand>::make();
+  LogEntry raw_log;
+  verify(raft::EncodeApplicationLog(nullptr, 0, 0, &raw_log.log_entry));
+  raw_log.length = static_cast<int>(raw_log.log_entry.size());
+  {
+    auto& mut_cmd = cmdptr.get_mut().unwrap();
+    mut_cmd.tx_id_ = cmd;
+    mut_cmd.cmd_ = rusty::Arc<LogEntry>::make(std::move(raw_log));
   }
 
-  return result;
+  return raft_server_start_was_appended(
+      it->second->svr_->StartWithCallback(
+          std::move(cmdptr), index, term, std::move(callback)));
 }
 
 int RaftTestConfig::Wait(uint64_t index, int n, uint64_t term) {
@@ -228,10 +378,14 @@ int RaftTestConfig::Wait(uint64_t index, int n, uint64_t term) {
   if (i == 30) {
     return -1; // timeout
   }
+  auto committed = committed_cmds.lock().unwrap();
   for (auto& pair : replicas) {
     auto svr = pair.first;
-    if (committed_cmds[svr].size() > index) {
-      return committed_cmds[svr][index];
+    auto commands = committed->find(svr);
+    if (commands != committed->end() &&
+        commands->second.size() > index &&
+        commands->second[index] != kMissingCommittedCommand) {
+      return commands->second[index];
     }
   }
   verify(0);
@@ -286,7 +440,10 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
             break;
           }
           ldr_it->second->svr_->GetState(&isLeader, &curTerm);
-          if (!isLeader || curTerm != term) {
+          const bool disconnected =
+              ldr_it->second->svr_->IsDisconnected();
+          if (raft_test_wait_leader_is_invalid(
+                  disconnected, isLeader, curTerm, term)) {
             Log_info("DoAgreement: Leader changed (server={} isLeader={} term={} expected_term={}) while waiting for command {} at index {}, retrying Start()",
                      ldr, isLeader ? 1 : 0, curTerm, term, cmd, index);
             break;
@@ -300,11 +457,15 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
           break;
         } else if (nc >= n) {
           // Log_info("DoAgreement: SUCCESS - {} servers committed index {} for command {}", nc, index, cmd);
+          auto committed = committed_cmds.lock().unwrap();
           for (auto& pair : replicas) {
             auto svr = pair.first;
-            if (committed_cmds[svr].size() > index) {
+            auto commands = committed->find(svr);
+            if (commands != committed->end() &&
+                commands->second.size() > index &&
+                commands->second[index] != kMissingCommittedCommand) {
               // Log_info("DoAgreement: Found commit log on server {} at index {}", svr, index);
-              auto cmd2 = committed_cmds[svr][index];
+              auto cmd2 = commands->second[index];
               // Log_info("DoAgreement: Server {} committed command {} at index {} (expected {})", svr, cmd2, index, cmd);
               if (cmd == cmd2) {
                 // Log_info("DoAgreement: AGREEMENT REACHED - command {} successfully committed at index {}", cmd, index);
@@ -394,6 +555,7 @@ bool RaftTestConfig::IsUnreliable(void) {
   return unreliable_;
 }
 
+// @unsafe - Coordinates native netctl shutdown and reactor-fiber Raft barriers.
 void RaftTestConfig::Shutdown(void) {
   // trigger netctlLoop shutdown
   {
@@ -411,6 +573,15 @@ void RaftTestConfig::Shutdown(void) {
   for (auto& pair : disconnected_) {
     if (pair.second) {
       Reconnect(pair.first);
+    }
+  }
+
+  // This method runs inside the RaftLab reactor fiber.  Quiesce every current
+  // server through its owner-thread completion barrier before the harness
+  // stops poll threads; ServerWorker::rep_sched_ can be stale after Restart.
+  for (auto& pair : replicas) {
+    if (pair.second != nullptr && pair.second->svr_) {
+      pair.second->svr_->PrepareForShutdown();
     }
   }
 }
@@ -436,9 +607,11 @@ uint64_t RaftTestConfig::RpcTotal(void) {
 }
 
 bool RaftTestConfig::ServerCommitted(siteid_t svr, uint64_t index, int cmd) {
-  if (committed_cmds[svr].size() <= index)
+  auto committed = committed_cmds.lock().unwrap();
+  auto commands = committed->find(svr);
+  if (commands == committed->end() || commands->second.size() <= index)
     return false;
-  return committed_cmds[svr][index] == cmd;
+  return commands->second[index] == cmd;
 }
 
 void RaftTestConfig::netctlLoop(void) {
@@ -560,8 +733,15 @@ void RaftTestConfig::slow(siteid_t svr, uint32_t msec) {
   usleep(msec * 1000);  // Convert msec to microseconds
 }
 
+// @unsafe - Locks the legacy test mutex and returns a borrowed server pointer.
 RaftServer *RaftTestConfig::GetServer(siteid_t svr) {
-  return RaftTestConfig::replicas[svr]->svr_.get();
+  std::lock_guard<std::recursive_mutex> lk(connection_m_);
+  auto it = RaftTestConfig::replicas.find(svr);
+  if (it == RaftTestConfig::replicas.end() || it->second == nullptr ||
+      !it->second->svr_) {
+    return nullptr;
+  }
+  return it->second->svr_.get();
 }
 
 void RaftTestConfig::Kill(siteid_t svr) {
@@ -583,16 +763,15 @@ void RaftTestConfig::Kill(siteid_t svr) {
   // This ensures in-flight RPCs get nullptr and return failure gracefully
   RaftServiceImpl::UpdateServer(svr, nullptr);
 
-  // Disconnect to save RPC proxies before deletion
+  // Stop the owner-thread runtime loops before disconnecting their communicator
+  // or destroying the frame. PrepareForShutdown wakes both waits through the
+  // owner PollThread and yields this reactor fiber until both completion flags
+  // are clear.
   RaftFrame* frame = it->second;
   if (frame && frame->svr_) {
+    frame->svr_->PrepareForShutdown();
     frame->svr_->Disconnect(true);
   }
-
-  // Sleep to allow pending coroutines to complete
-  // The election timer coroutine sleeps for HEARTBEAT_INTERVAL * 2-4 (200-400ms)
-  // We must wait longer than this to ensure stale coroutines exit before we delete
-  usleep(450000); // 450ms > max election timer sleep (400ms)
 
   // Delete the frame (this will cascade delete svr_ and commo_)
   delete frame;
@@ -601,8 +780,10 @@ void RaftTestConfig::Kill(siteid_t svr) {
   replicas.erase(it);
 
   // Clear committed commands for this server
-  committed_cmds[svr].clear();
-  committed_cmds[svr].push_back(-1); // Re-initialize with sentinel
+  {
+    auto committed = committed_cmds.lock().unwrap();
+    (*committed)[svr] = {kMissingCommittedCommand};
+  }
 
   // Reset RPC count
   rpc_count_last[svr] = 0;
@@ -610,7 +791,9 @@ void RaftTestConfig::Kill(siteid_t svr) {
   Log_info("[RAFT-TEST] Server {} killed successfully", svr);
 }
 
-void RaftTestConfig::Restart(siteid_t svr) {
+bool RaftTestConfig::Restart(
+    siteid_t svr,
+    std::function<RestartHookStatus(RaftServer*)> before_runtime_start) {
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
   std::lock_guard<std::mutex> lk2(disconnect_mtx_);
 
@@ -619,7 +802,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
   // Check if server is already running
   if (replicas.find(svr) != replicas.end()) {
     Log_error("[RAFT-TEST] Server {} is already running, cannot restart", svr);
-    return;
+    return false;
   }
 
   // Get the config to find site info
@@ -637,14 +820,18 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
   if (!site_info) {
     Log_error("[RAFT-TEST] Could not find site info for server {}", svr);
-    return;
+    return false;
   }
 
-  // Create new RaftFrame
-  RaftFrame* frame = new RaftFrame();
+  // Keep the candidate private and reclaim it on every fail-closed exit.  It is
+  // released to replicas only after recovery, replay, and runtime wiring have
+  // all succeeded.
+  auto frame_owner = std::make_unique<RaftFrame>();
+  RaftFrame* frame = frame_owner.get();
   frame->site_info_ = site_info;
 
-  // Create new RaftServer (persistence will be loaded when EnsureSetup is called)
+  // Create a fresh RaftServer. Restart() bypasses Setup(), so all Setup-owned
+  // state needed by the runtime loops is restored explicitly below.
   frame->svr_ = std::make_unique<RaftServer>();
   frame->svr_->site_id_ = svr;
   frame->svr_->partition_id_ = site_info->partition_id_;
@@ -662,6 +849,14 @@ void RaftTestConfig::Restart(siteid_t svr) {
   }
   // Set commo_ in server before initializing
   frame->svr_->commo_ = frame->commo_.get();
+  auto replication_poll = frame->commo_->PollThread();
+  if (replication_poll.is_some()) {
+    frame->svr_->BindReplicationWakeOwner(replication_poll.unwrap());
+  } else {
+    Log_error("[RAFT-RESTART] site {}: cannot bind replication wake owner",
+              svr);
+    return false;
+  }
 
   // Manually initialize persistence and load state (without starting coroutines)
   const char* persistence_flag = std::getenv("MAKO_RAFT_PERSISTENCE");
@@ -682,6 +877,10 @@ void RaftTestConfig::Restart(siteid_t svr) {
     // Create RecoveryConfig
     raft::RecoveryConfig config;
     std::string base_path = "/tmp";
+    const char* custom_path = std::getenv("MAKO_RAFT_PERSISTENCE_PATH");
+    if (custom_path && custom_path[0] != '\0') {
+      base_path = custom_path;
+    }
     config.storage_path = base_path + "/raft_" + std::to_string(svr) +
                          "_partition_" + std::to_string(site_info->partition_id_);
 
@@ -706,16 +905,185 @@ void RaftTestConfig::Restart(siteid_t svr) {
                  frame->svr_->lastLogIndex, static_cast<int>(result.mode));
       } else {
         Log_error("[RAFT-TEST-RESTART] Recovery failed: {}", result.error_message.c_str());
+        return false;
       }
+    } else {
+      Log_error("[RAFT-TEST-RESTART] Configured storage could not be opened "
+                "for server {}",
+                svr);
+      return false;
+    }
+  }
+
+  // A durable application owns the snapshot loader, so construct/register it
+  // before snapshot discovery can replace application state. The server is not
+  // published through RaftServiceImpl until this entire restart completes.
+  RestartHookStatus hook_status;
+  bool hook_initialized = false;
+  if (before_runtime_start) {
+    try {
+      hook_status = before_runtime_start(frame->svr_.get());
+    } catch (const std::exception& error) {
+      Log_error("[RAFT-TEST-RESTART] Application hook threw for server {}: {}",
+                svr, error.what());
+      return false;
+    } catch (...) {
+      Log_error("[RAFT-TEST-RESTART] Application hook threw for server {}",
+                svr);
+      return false;
+    }
+    hook_initialized = true;
+  }
+
+  auto fail_after_hook = [&](const char* reason) {
+    Log_error("[RAFT-TEST-RESTART] Server {} startup rejected: {}", svr,
+              reason);
+    if (hook_initialized && hook_status.abort_cleanup) {
+      try {
+        hook_status.abort_cleanup();
+      } catch (const std::exception& error) {
+        Log_error("[RAFT-TEST-RESTART] Server {} application cleanup threw: {}",
+                  svr, error.what());
+      } catch (...) {
+        Log_error("[RAFT-TEST-RESTART] Server {} application cleanup threw",
+                  svr);
+      }
+    }
+    hook_initialized = false;
+    return false;
+  };
+
+  if (before_runtime_start &&
+      (!hook_status.initialized || !hook_status.callback_registered ||
+       !hook_status.read_applied_index || !hook_status.abort_cleanup)) {
+    return fail_after_hook(
+        "application hook did not prove initialization, callback, applied marker, and cleanup");
+  }
+
+  auto read_hook_applied_index = [&](slotid_t* applied_index) {
+    if (!before_runtime_start) {
+      return true;
+    }
+    try {
+      *applied_index = hook_status.read_applied_index();
+      return true;
+    } catch (const std::exception& error) {
+      Log_error("[RAFT-TEST-RESTART] Server {} applied-marker read threw: {}",
+                svr, error.what());
+    } catch (...) {
+      Log_error("[RAFT-TEST-RESTART] Server {} applied-marker read threw",
+                svr);
+    }
+    return false;
+  };
+
+  auto validate_hook_applied_index = [&](const char* phase) {
+    if (!before_runtime_start) {
+      return true;
+    }
+    slotid_t application_applied_index = 0;
+    if (!read_hook_applied_index(&application_applied_index)) {
+      return false;
+    }
+    if (application_applied_index > frame->svr_->commitIndex) {
+      Log_error("[RAFT-TEST-RESTART] Server {} application is ahead of durable "
+                "Raft commit {} snapshot restore: applied={} commit={}",
+                svr, phase, application_applied_index,
+                frame->svr_->commitIndex);
+      return false;
+    }
+    return true;
+  };
+
+  // Preserve the recovered application's marker as evidence until it has
+  // been compared with Raft. A snapshot install may legitimately replace the
+  // live application directory, so this check cannot be deferred until after
+  // InitializeSnapshotManager().
+  if (!validate_hook_applied_index("before")) {
+    return fail_after_hook("application applied marker exceeds commit before snapshot restore");
+  }
+
+  // Restart() bypasses Setup(), so restore snapshot manager wiring explicitly.
+  // This runs after RecoverFromStorage(), matching Setup()'s recovery order.
+  if (!frame->svr_->InitializeSnapshotManager()) {
+    Log_error("[RAFT-TEST-RESTART] Snapshot recovery failed for server {}",
+              svr);
+    return fail_after_hook("snapshot recovery failed");
+  }
+
+  // Retain the post-restore assertion as defense against a loader that
+  // publishes an invalid marker despite accepting the snapshot transaction.
+  if (!validate_hook_applied_index("after")) {
+    return fail_after_hook("application applied marker exceeds commit after snapshot restore");
+  }
+
+  // Setup() normally seeds current_config_ from static partition metadata.
+  // HeartbeatLoop uses this membership immediately, so initialize it before
+  // queuing either runtime loop.
+  if (frame->svr_->current_config_.empty()) {
+    auto replicas_for_partition =
+        Config::GetConfig()->SitesByPartitionId(frame->svr_->partition_id_);
+    for (const auto& site : replicas_for_partition) {
+      frame->svr_->current_config_.insert(site.id);
     }
   }
 
   // Record startup timestamp for grace period logic (same as Setup())
-  frame->svr_->startup_timestamp_ = Time::now(false);
+  frame->svr_->startup_timestamp_ = Time::now(true);
 
   // CRITICAL: Mark Setup() as already done to prevent EnsureSetup() from calling it again
   // This prevents double-initialization of persistence which would reset the loaded state
   frame->svr_->heartbeat_setup_ = true;
+
+  // Register the learner callback before recovered committed entries can be
+  // applied, then restore the apply infrastructure normally started by Setup().
+  // A durable application test can construct its state machine in this exact
+  // pre-runtime window; all other tests retain the RaftLab agreement oracle.
+  if (!before_runtime_start) {
+    commit_callbacks[svr] =
+        [svr](slotid_t slot, janus::Command md) -> int {
+          if (!raft_test_should_record_agreement_command(
+                  md.kind_, TpcCommitCommand::static_kind())) {
+            verify(raft_test_is_known_application_command(
+                md.kind_, ReplicatedDBCommand::static_kind()));
+            Log_debug("server {} applied ReplicatedDB command kind {} at "
+                      "slot {}; outside the RaftLab integer agreement oracle",
+                      svr, md.kind_, slot);
+            return 0;
+          }
+          const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
+          verify(commit_cmd.is_some());
+          Log_debug("server {} committed value {} at slot {}",
+                    svr, commit_cmd.unwrap()->tx_id_, slot);
+          RaftTestConfig::RecordCommittedCommand(
+              svr, slot, commit_cmd.unwrap()->tx_id_);
+          return 0;
+        };
+    frame->svr_->RegLearnerAction(commit_callbacks[svr]);
+  }
+
+  if (!frame->svr_->ReplayCommittedEntries() ||
+      frame->svr_->executeIndex != frame->svr_->commitIndex) {
+    Log_error("[RAFT-TEST-RESTART] Committed replay failed for server {}: "
+              "executeIndex={} commitIndex={}",
+              svr, frame->svr_->executeIndex, frame->svr_->commitIndex);
+    return fail_after_hook("committed replay failed");
+  }
+  if (before_runtime_start) {
+    slotid_t application_applied_index = 0;
+    if (!read_hook_applied_index(&application_applied_index)) {
+      return fail_after_hook("post-replay applied marker is unreadable");
+    }
+    if (application_applied_index != frame->svr_->commitIndex) {
+      Log_error("[RAFT-TEST-RESTART] Server {} application replay marker {} "
+                "does not match commit {}",
+                svr, application_applied_index, frame->svr_->commitIndex);
+      return fail_after_hook("application replay did not reach commit");
+    }
+  }
+  frame->svr_->StartApplyThread();
+  frame->svr_->rpc_ready_.store(
+      true, rusty::sync::atomic::Ordering::Release);
 
   // Start the heartbeat loop and election timer manually since we're skipping Setup()
   // CRITICAL (Fix 2 part 2): Must add coroutines to the CORRECT poll thread!
@@ -727,6 +1095,8 @@ void RaftTestConfig::Restart(siteid_t svr) {
     auto& poll_thread = restart_poll_thread.as_ref().unwrap();
 
     // Add HeartbeatLoop as a job to the correct poll thread
+    frame->svr_->heartbeat_loop_running_.store(
+        true, rusty::sync::atomic::Ordering::Release);
     auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
       Fiber::create_run([frame]() {
         frame->svr_->HeartbeatLoop();
@@ -736,6 +1106,8 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
     // Add election timer as a job to the correct poll thread
     if (frame->svr_->failover_) {
+      frame->svr_->election_loop_running_.store(
+          true, rusty::sync::atomic::Ordering::Release);
       auto election_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
         Fiber::create_run([frame]() {
           frame->svr_->StartElectionTimer();
@@ -747,25 +1119,12 @@ void RaftTestConfig::Restart(siteid_t svr) {
   }
 #endif
 
-  // Re-register learner action BEFORE adding to replicas map
-  commit_callbacks[svr] =
-      [svr](int slot, janus::Command md) -> int {
-        verify(md.kind_ == TpcCommitCommand::static_kind());
-        const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
-        verify(commit_cmd.is_some());
-        Log_debug("server {} committed value {} at slot {}",
-                  svr, commit_cmd.unwrap()->tx_id_, slot);
-        RaftTestConfig::committed_cmds[svr].push_back(commit_cmd.unwrap()->tx_id_);
-        return 0;
-      };
-  frame->svr_->RegLearnerAction(commit_callbacks[svr]);
-
   // Update atomic pointer in RaftServiceImpl to point to the new server
   // This allows the existing RPC service to forward requests to the new server
   RaftServiceImpl::UpdateServer(svr, frame->svr_.get());
 
-  // Add back to replicas map - EnsureSetup() will be called lazily on first RPC to start coroutines
-  replicas[svr] = frame;
+  // Add the fully initialized frame back to the replicas map.
+  replicas[svr] = frame_owner.release();
 
   // The fresh communicator owns fresh peers; no stale proxy cache is restored.
   disconnected_[svr] = false;
@@ -785,6 +1144,8 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
   Log_info("[RAFT-TEST] Server {} restarted successfully (term={}, lastLogIndex={})",
            svr, frame->svr_->currentTerm, frame->svr_->lastLogIndex);
+  hook_initialized = false;
+  return true;
 }
 
 siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
@@ -802,7 +1163,7 @@ siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
 
 siteid_t RaftTestConfig::getServerIdByIndex(int index) const {
   // Get server ID by its position in the replicas map (0-4)
-  if (index < 0 || index >= NSERVERS) {
+  if (!raft_test_server_index_is_valid(index, NSERVERS)) {
     // Index out of range, return -1
     return -1;
   }
@@ -836,10 +1197,8 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
   }
   
   // Calculate new index with wrapping
-  int new_index = (current_index + offset) % NSERVERS;
-  if (new_index < 0) {
-    new_index += NSERVERS;
-  }
+  int new_index = raft_test_wrapped_server_index(
+      current_index, offset, NSERVERS);
   
   siteid_t result = getServerIdByIndex(new_index);
   if (result == -1) {

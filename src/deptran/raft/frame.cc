@@ -6,6 +6,7 @@
 #include "commo.h"
 #include "config.h"
 #include "test.h"
+#include <rusty/slice.hpp>
 // #include "../kv/server.h"
 
 // rusty::Rc lives in the rusty module only (the legacy <rusty/rc.hpp>
@@ -27,6 +28,115 @@ import rusty;
 
 namespace janus {
 
+// RAFT_TEST_CORO scalar thresholds. Test fibers, locks, maps, and reactor
+// scheduling remain in the hand-written C++ path.
+#if RUSTYCPP_RUST
+pub const fn raft_frame_has_single_partition(num_partitions: u32) -> bool {
+    num_partitions == 1
+}
+
+pub const fn raft_frame_has_expected_partition_size(partition_size: i32) -> bool {
+    partition_size == 5
+}
+
+pub const fn raft_frame_can_register_lab_scheduler(n_replicas: u16,
+                                                   expected_replicas: u16) -> bool {
+    n_replicas < expected_replicas
+}
+
+pub const fn raft_frame_all_schedulers_created(n_replicas: u16,
+                                               expected_replicas: u16) -> bool {
+    n_replicas == expected_replicas
+}
+
+pub const fn raft_frame_should_create_test_fiber(site_id: u32) -> bool {
+    site_id == 0
+}
+
+pub const fn raft_frame_more_commos_needed(n_commos: u16,
+                                           expected_replicas: u16) -> bool {
+    n_commos < expected_replicas
+}
+
+pub const fn raft_frame_is_lab_config(replica_protocol: i32,
+                                      raft_protocol: i32,
+                                      num_partitions: u32,
+                                      partition_size: i32,
+                                      local_server_count: usize) -> bool {
+    replica_protocol == raft_protocol &&
+        num_partitions == 1 &&
+        partition_size == 5 &&
+        local_server_count == 5
+}
+
+pub const fn raft_frame_lab_process_exit_code(is_lab_config: bool,
+                                              test_result: i32) -> i32 {
+    if is_lab_config && test_result != 0 {
+        1
+    } else {
+        0
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_frame.lab_decisions version=1 rust_sha256=7563957a599c4f80f1732b50ab0fe15fb4b26e3360aa0883e659e9467439c5ba*/
+constexpr bool raft_frame_has_single_partition(uint32_t num_partitions);
+constexpr bool raft_frame_has_expected_partition_size(int32_t partition_size);
+constexpr bool raft_frame_can_register_lab_scheduler(uint16_t n_replicas, uint16_t expected_replicas);
+constexpr bool raft_frame_all_schedulers_created(uint16_t n_replicas, uint16_t expected_replicas);
+constexpr bool raft_frame_should_create_test_fiber(uint32_t site_id);
+constexpr bool raft_frame_more_commos_needed(uint16_t n_commos, uint16_t expected_replicas);
+constexpr bool raft_frame_is_lab_config(int32_t replica_protocol, int32_t raft_protocol, uint32_t num_partitions, int32_t partition_size, size_t local_server_count);
+constexpr int32_t raft_frame_lab_process_exit_code(bool is_lab_config, int32_t test_result);
+constexpr bool raft_frame_has_single_partition(uint32_t num_partitions) {
+    return rusty::detail::deref_if_pointer_like(num_partitions) == static_cast<uint32_t>(1);
+}
+constexpr bool raft_frame_has_expected_partition_size(int32_t partition_size) {
+    return rusty::detail::deref_if_pointer_like(partition_size) == static_cast<int32_t>(5);
+}
+constexpr bool raft_frame_can_register_lab_scheduler(uint16_t n_replicas, uint16_t expected_replicas) {
+    return rusty::detail::deref_if_pointer_like(n_replicas) < rusty::detail::deref_if_pointer_like(expected_replicas);
+}
+constexpr bool raft_frame_all_schedulers_created(uint16_t n_replicas, uint16_t expected_replicas) {
+    return rusty::detail::deref_if_pointer_like(n_replicas) == rusty::detail::deref_if_pointer_like(expected_replicas);
+}
+constexpr bool raft_frame_should_create_test_fiber(uint32_t site_id) {
+    return rusty::detail::deref_if_pointer_like(site_id) == static_cast<uint32_t>(0);
+}
+constexpr bool raft_frame_more_commos_needed(uint16_t n_commos, uint16_t expected_replicas) {
+    return rusty::detail::deref_if_pointer_like(n_commos) < rusty::detail::deref_if_pointer_like(expected_replicas);
+}
+constexpr bool raft_frame_is_lab_config(int32_t replica_protocol, int32_t raft_protocol, uint32_t num_partitions, int32_t partition_size, size_t local_server_count) {
+    return (((rusty::detail::deref_if_pointer_like(replica_protocol) == rusty::detail::deref_if_pointer_like(raft_protocol)) && (rusty::detail::deref_if_pointer_like(num_partitions) == static_cast<uint32_t>(1))) && (rusty::detail::deref_if_pointer_like(partition_size) == static_cast<int32_t>(5))) && (rusty::detail::deref_if_pointer_like(local_server_count) == static_cast<size_t>(5));
+}
+constexpr int32_t raft_frame_lab_process_exit_code(bool is_lab_config, int32_t test_result) {
+    if (rusty::detail::deref_if_pointer_like(is_lab_config) && (rusty::detail::deref_if_pointer_like(test_result) != static_cast<int32_t>(0))) {
+        return static_cast<int32_t>(1);
+    } else {
+        return static_cast<int32_t>(0);
+    }
+}
+/*RUSTYCPP:GEN-END id=raft_frame.lab_decisions*/
+
+static_assert(raft_frame_has_single_partition(1));
+static_assert(!raft_frame_has_single_partition(2));
+static_assert(raft_frame_has_expected_partition_size(5));
+static_assert(!raft_frame_has_expected_partition_size(4));
+static_assert(raft_frame_can_register_lab_scheduler(4, 5));
+static_assert(!raft_frame_can_register_lab_scheduler(5, 5));
+static_assert(raft_frame_all_schedulers_created(5, 5));
+static_assert(raft_frame_should_create_test_fiber(0));
+static_assert(!raft_frame_should_create_test_fiber(1));
+static_assert(raft_frame_more_commos_needed(4, 5));
+static_assert(!raft_frame_more_commos_needed(5, 5));
+static_assert(!raft_frame_more_commos_needed(6, 5));
+static_assert(raft_frame_is_lab_config(MODE_RAFT, MODE_RAFT, 1, 5, 5));
+static_assert(!raft_frame_is_lab_config(MODE_NONE, MODE_RAFT, 1, 5, 5));
+static_assert(!raft_frame_is_lab_config(MODE_RAFT, MODE_RAFT, 1, 5, 1));
+static_assert(raft_frame_lab_process_exit_code(true, -1) == 1);
+static_assert(raft_frame_lab_process_exit_code(true, 1) == 1);
+static_assert(raft_frame_lab_process_exit_code(true, 0) == 0);
+static_assert(raft_frame_lab_process_exit_code(false, -1) == 0);
+
 // @safe - Properly cleans up owned resources via Option<Box<T>>
 RaftFrame::~RaftFrame() {
 }
@@ -41,26 +151,45 @@ static rusty::Option<rusty::Rc<Fiber>> raft_test_fiber_;
 uint16_t RaftFrame::n_replicas_ = 0;
 map<siteid_t, RaftFrame*> RaftFrame::frames_ = {};
 bool RaftFrame::all_sites_created_s = false;
-bool RaftFrame::tests_done_ = false;
+rusty::sync::atomic::AtomicI32 RaftFrame::lab_test_result_{-1};
 uint16_t RaftFrame::n_commo_created_ = 0;
 bool RaftFrame::is_lab_test_config_ = false;
 bool RaftFrame::lab_test_config_checked_ = false;
 
-// @safe - Check if running in raft lab test configuration (1 partition, 5 replicas)
+// @unsafe - Serializes the shared test-config cache with the legacy test mutex.
 bool RaftFrame::IsRaftLabTestConfig() {
+  std::lock_guard<std::mutex> lock(raft_test_mutex_);  // @unsafe
   if (!lab_test_config_checked_) {
     auto config = Config::GetConfig();
     if (config != nullptr) {
-      // Raft lab test configuration: 1 partition with exactly 5 replicas
-      is_lab_test_config_ = (config->GetNumPartition() == 1 &&
-                              config->GetPartitionSize(0) == 5);
+      // The lab embeds all five Raft replicas in this one process. Topology
+      // alone is insufficient: distributed/non-Raft 1x5 configurations must
+      // not start the in-process lab fiber or inherit its exit status.
+      const size_t local_server_count = config->GetMyServers().size();
+      is_lab_test_config_ = raft_frame_is_lab_config(
+          config->replica_proto_, MODE_RAFT, config->GetNumPartition(),
+          config->GetPartitionSize(0), local_server_count);
       lab_test_config_checked_ = true;
-      Log_info("RaftFrame: Lab test config check: partitions={}, replicas={}, is_lab_test={}",
-               config->GetNumPartition(), config->GetPartitionSize(0),
+      Log_info("RaftFrame: Lab test config check: protocol={}, partitions={}, "
+               "replicas={}, local_servers={}, is_lab_test={}",
+               config->replica_proto_, config->GetNumPartition(),
+               config->GetPartitionSize(0), local_server_count,
                is_lab_test_config_ ? "true" : "false");
     }
   }
   return is_lab_test_config_;
+}
+
+// @safe - Atomic read used by the process entry point after the reactor exits.
+int RaftFrame::RaftLabTestResult() {
+  return lab_test_result_.load(
+      rusty::sync::atomic::Ordering::Acquire);
+}
+
+// @safe - Pure DSL exit mapping over an acquire-loaded lab result.
+int RaftFrame::RaftLabProcessExitCode() {
+  return raft_frame_lab_process_exit_code(
+      IsRaftLabTestConfig(), RaftLabTestResult());
 }
 #endif
 
@@ -85,7 +214,7 @@ TxLogServer *RaftFrame::CreateScheduler() {
   // Only run test framework code if in raft lab test configuration
   if (IsRaftLabTestConfig()) {
     raft_test_mutex_.lock();
-    verify(n_replicas_ < 5);
+    verify(raft_frame_can_register_lab_scheduler(n_replicas_, 5));
     frames_[this->site_info_->locale_id] = this;
     n_replicas_++;
     raft_test_mutex_.unlock();
@@ -119,7 +248,7 @@ Communicator *RaftFrame::CreateCommo(
     Log_info("CreateCommo: n_replicas_ = {}, n_commo_ = {}", n_replicas_, n_commo_created_);
 
     // Simple verification: ensure all 5 schedulers are created
-    verify(n_replicas_ == 5);
+    verify(raft_frame_all_schedulers_created(n_replicas_, 5));
 
     // Simple counter increment: track communicator creation
     // Find this frame in the map and increment counter
@@ -138,7 +267,7 @@ Communicator *RaftFrame::CreateCommo(
     raft_test_mutex_.unlock();
 
     // Only site 0 creates and manages the test fiber
-    if (site_info_->locale_id == 0) {
+    if (raft_frame_should_create_test_fiber(site_info_->locale_id)) {
       Log_info("CreateCommo: About to create test fiber");
       verify(raft_test_fiber_.is_none());
       Log_info("Creating Raft test fiber");
@@ -160,11 +289,13 @@ Communicator *RaftFrame::CreateCommo(
         Log_info("Test fiber: Resumed after yield");
 
         // Run tests
-        verify(n_replicas_ == 5);
+        verify(raft_frame_all_schedulers_created(n_replicas_, 5));
         auto testconfig = new RaftTestConfig(frames_);
         RaftLabTest test(testconfig);
-        test.Run();
+        int test_result = test.Run();
         test.Cleanup();
+        lab_test_result_.store(
+            test_result, rusty::sync::atomic::Ordering::Release);
         Log_info("Test fiber: Tests completed, turning off reactor loop");
         // Turn off Reactor loop
         Reactor::get_reactor()->looping_.set(false);
@@ -175,7 +306,7 @@ Communicator *RaftFrame::CreateCommo(
 
       // wait until n_commo_created_ == 5, then resume the fiber
       raft_test_mutex_.lock();
-      while (n_commo_created_ < 5) {
+      while (raft_frame_more_commos_needed(n_commo_created_, 5)) {
         raft_test_mutex_.unlock();
         sleep(0.1);
         raft_test_mutex_.lock();

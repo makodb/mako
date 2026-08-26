@@ -220,6 +220,22 @@ set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppTranspiler.cmake)
 create_rustycpp_transpiler_build_target()
 
+# Stage-1 Raft source-provenance gate. Production still compiles the adjacent
+# generated C++ in the existing carriers; this target proves those bytes are a
+# fresh rendering of their inline Rust DSL and that every extracted carrier is
+# accepted by real rustc.
+add_custom_target(raft_goal0_source_gate
+    COMMAND
+        bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_dsl.sh"
+        --check
+        --transpiler "${RUSTYCPP_TRANSPILER}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Checking Raft inline Rust DSL provenance"
+    USES_TERMINAL
+    VERBATIM
+)
+add_dependencies(raft_goal0_source_gate build_rusty_cpp_transpiler)
+
 # NOTE: RustyCppSubmodule.cmake already computes CPP_BORROW_CHECKER and creates
 # build targets. Do not override checker paths here or Docker CARGO_TARGET_DIR
 # support is bypassed.
@@ -1106,6 +1122,7 @@ add_library(txlog_core_obj OBJECT
     # `txlog_core`'s PUBLIC link to the `rrr` target.
 )
 add_dependencies(txlog_core_obj rcc_rpc_gen)
+add_dependencies(txlog_core_obj raft_goal0_source_gate)
 # Pull in rrr's PUBLIC include dirs + module BMI paths so deptran .cc files
 # that `#include "rrr/rrr.hpp"` find both the
 # umbrella header and the imports it references.
@@ -1177,6 +1194,7 @@ list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
 if(RAFT_BORROW_SRC)
     add_library(raft_borrow OBJECT ${RAFT_BORROW_SRC})
     set_target_properties(raft_borrow PROPERTIES EXCLUDE_FROM_ALL YES)
+    add_dependencies(raft_borrow raft_goal0_source_gate)
 
     target_include_directories(raft_borrow PUBLIC
         src
@@ -1210,6 +1228,7 @@ if(RAFT_BORROW_SRC)
             DEPENDS ${RAFT_BORROW_STAMPS}
             COMMENT "Running borrow checker on Raft sources only"
         )
+        add_dependencies(borrow_check_raft raft_goal0_source_gate)
 
         if(TARGET build_rusty_cpp_checker)
             add_dependencies(borrow_check_raft build_rusty_cpp_checker)
@@ -1760,6 +1779,20 @@ if(BUILD_TESTS)
         # Ensure regular test builds also gate on SRPC borrow-check status.
     endif()
 
+    # Reactor timeout events remain observable as TIMEOUT to the resumed
+    # fiber, but must leave the polling queues once terminal. Raft uses this
+    # path for its short submission-progress waits under saturation.
+    add_executable(test_rrr_timeout_race
+        src/rrr/tests/test_timeout_race.cc)
+    target_include_directories(test_rrr_timeout_race PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rrr_timeout_race PRIVATE
+        ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rrr_timeout_race
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rrr_timeout_race COMMAND test_rrr_timeout_race)
+
 
 
 
@@ -1875,6 +1908,20 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_quorum COMMAND test_raft_quorum)
 
+    add_executable(test_raft_durability_accounting
+        tests/raft_durability_accounting_test.cc)
+    target_include_directories(test_raft_durability_accounting PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
+    target_compile_options(test_raft_durability_accounting PRIVATE
+        ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_durability_accounting
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_raft_durability_accounting
+        COMMAND test_raft_durability_accounting)
+
     add_executable(test_raft_dispatcher_facade tests/raft_dispatcher_facade_test.cc)
     target_include_directories(test_raft_dispatcher_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_dispatcher_facade PRIVATE ${TEST_COMPILE_OPTIONS})
@@ -1905,6 +1952,38 @@ if(BUILD_TESTS)
     target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)
 
+    # read_raft_disk is excluded from txlog_core_obj and its application is
+    # behind MAKO_USE_RAFT. Compile its generated-C++ carrier in the focused
+    # lane so a Rust-valid payload cannot hide a C++ emission regression.
+    add_library(raft_disk_reader_compile OBJECT EXCLUDE_FROM_ALL
+        src/deptran/raft/read_raft_disk.cc)
+    target_include_directories(raft_disk_reader_compile PRIVATE
+        ${TEST_INCLUDE_DIRS})
+    target_compile_options(raft_disk_reader_compile PRIVATE
+        ${TEST_COMPILE_OPTIONS})
+
+    # Every direct Raft consumer first proves that committed generated C++ is
+    # the exact output of the owned inline Rust blocks. This keeps focused
+    # builds from bypassing the source-provenance gate.
+    set(RAFT_DSL_CONSUMER_TARGETS
+        test_raft_messages
+        test_raft_transport_facade
+        test_raft_rrr_transport_compile
+        test_raft_quorum
+        test_raft_durability_accounting
+        test_raft_dispatcher_facade
+        test_raft_channel_transport
+        test_raft_memory_snapshot_manager
+        test_raft_test_cluster
+        raft_lab_standalone
+        raft_disk_reader_compile
+    )
+    foreach(raft_dsl_consumer IN LISTS RAFT_DSL_CONSUMER_TARGETS)
+        add_dependencies(${raft_dsl_consumer} raft_goal0_source_gate)
+    endforeach()
+    # test_raft_messages is part of the focused CI target list, so this edge
+    # makes that lane compile the otherwise standalone disk carrier too.
+    add_dependencies(test_raft_messages raft_disk_reader_compile)
 
     # Service proxy facade guard tests (Phase 2 leaf 1)
 
@@ -1967,13 +2046,13 @@ if(BUILD_TESTS)
     # )
     # # Use RESOURCE_LOCK to prevent port conflicts with other Paxos tests (ports 17001-17xxx)
 
-    # Add a convenience target to run all tests
-    # The src/rrr/tests corpus belongs to srpc and is built and run there;
-    # mako no longer builds any of it, so this convenience target names only
-    # mako's own tests.
+    # Add a convenience target to run all tests. The full src/rrr/tests corpus
+    # belongs to srpc; Mako carries only the focused timeout-queue regression
+    # above because Raft exercises that reactor path under saturation.
     add_custom_target(run_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
         DEPENDS test_masstree
+                test_rrr_timeout_race
                 test_silo_varint test_silo_rcu_thread test_silo_allocator
                 test_sto_transaction test_sto_transaction_real
                 simpleTransaction simplePaxos shard1ReplicationSimple
@@ -1982,6 +2061,8 @@ if(BUILD_TESTS)
     if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_rrr)
         add_dependencies(run_tests borrow_check_rrr)
     endif()
+    add_dependencies(run_tests raft_goal0_source_gate)
+    add_dependencies(run_tests raft_disk_reader_compile)
     add_dependencies(run_tests rrr_goal0_dual_compile)
 
     # Add borrow checking for test files if enabled
@@ -2243,12 +2324,14 @@ if(BUILD_TESTS)
     )
 
     # Keep this summary honest: it must name only targets this file actually
-    # defines. It went stale in 4a06ef0e (which stopped building srpc's
+    # defines. It went stale in 4a06ef0e (which stopped building the complete
     # `src/rrr/tests/` corpus) and then told CI logs that `test_timer`,
     # `test_marshal`, `test_rpc`, `test_rpc_extended`, `test_future`,
     # `test_reactor`, `test_reactor_extended` and `rpcbench` were configured
     # when ninja had no such targets.
     message(STATUS "Test targets configured:")
+    message(STATUS "  Reactor Tests:")
+    message(STATUS "    - test_rrr_timeout_race: terminal timeout queue cleanup")
     message(STATUS "  Masstree Tests:")
     message(STATUS "    - test_masstree: Core Masstree b-tree regression tests")
     message(STATUS "  Live Silo-support/STO Tests:")

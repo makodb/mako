@@ -20,12 +20,66 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
+
+#include <rusty/num.hpp>
+#include <rusty/slice.hpp>
 
 #include "snapshot_manager.hpp"
 
 namespace janus {
 namespace raft {
+
+#if RUSTYCPP_RUST
+pub const fn memory_snapshot_advance_offset(offset: usize,
+                                            size: usize) -> usize {
+    offset.wrapping_add(size)
+}
+
+pub const fn memory_snapshot_reader_bytes_to_read(payload_size: usize,
+                                                  offset: usize,
+                                                  buffer_size: usize) -> usize {
+    let remaining = payload_size.wrapping_sub(offset);
+    if buffer_size < remaining {
+        buffer_size
+    } else {
+        remaining
+    }
+}
+
+pub const fn memory_snapshot_reader_is_complete(payload_size: usize,
+                                                offset: usize) -> bool {
+    offset >= payload_size
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_memory_snapshot.stream_math version=1 rust_sha256=944cf8be20aaa4f98a2a7470ac72dcd139fb927988a33f8ddc6c564cabe5c36f*/
+constexpr size_t memory_snapshot_advance_offset(size_t offset, size_t size);
+constexpr size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size);
+constexpr bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset);
+constexpr size_t memory_snapshot_advance_offset(size_t offset, size_t size) {
+    return rusty::wrapping_add(offset, static_cast<std::remove_cvref_t<decltype(offset)>>(std::move(size)));
+}
+constexpr size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size) {
+    auto remaining = rusty::wrapping_sub(payload_size, static_cast<std::remove_cvref_t<decltype(payload_size)>>(std::move(offset)));
+    if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {
+        return std::move(buffer_size);
+    } else {
+        return std::move(remaining);
+    }
+}
+constexpr bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset) {
+    return rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(payload_size);
+}
+/*RUSTYCPP:GEN-END id=raft_memory_snapshot.stream_math*/
+
+static_assert(memory_snapshot_advance_offset(7, 5) == 12);
+static_assert(memory_snapshot_advance_offset(static_cast<size_t>(-1), 1) == 0);
+static_assert(memory_snapshot_reader_bytes_to_read(10, 4, 3) == 3);
+static_assert(memory_snapshot_reader_bytes_to_read(10, 4, 9) == 6);
+static_assert(!memory_snapshot_reader_is_complete(10, 9));
+static_assert(memory_snapshot_reader_is_complete(10, 10));
 
 class MemorySnapshotWriter : public SnapshotWriter {
  public:
@@ -46,7 +100,7 @@ class MemorySnapshotWriter : public SnapshotWriter {
   // @unsafe - raw pointer append to internal buffer
   bool Write(const char* data, size_t size) override {
     buffer_.append(data, size);
-    offset_ += size;
+    offset_ = memory_snapshot_advance_offset(offset_, size);
     return true;
   }
 
@@ -88,16 +142,18 @@ class MemorySnapshotReader : public SnapshotReader {
 
   // @unsafe - raw buffer copy from internal string
   bool Read(char* buffer, size_t buffer_size, size_t* bytes_read) override {
-    size_t remaining = payload_.size() - offset_;
-    size_t n = buffer_size < remaining ? buffer_size : remaining;
+    size_t n = memory_snapshot_reader_bytes_to_read(
+        payload_.size(), offset_, buffer_size);
     std::memcpy(buffer, payload_.data() + offset_, n);
-    offset_ += n;
+    offset_ = memory_snapshot_advance_offset(offset_, n);
     *bytes_read = n;
     return true;
   }
 
   // @safe
-  bool IsComplete() const override { return offset_ >= payload_.size(); }
+  bool IsComplete() const override {
+    return memory_snapshot_reader_is_complete(payload_.size(), offset_);
+  }
 
   // @safe
   const SnapshotMetadata& GetMetadata() const override { return meta_; }

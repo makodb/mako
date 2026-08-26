@@ -308,8 +308,8 @@ When a leader steps down, `NotifyRollback(StepDownReason)` differentiates rollba
 
 | StepDownReason | Rollback Range | Rationale |
 |----------------|---------------|-----------|
-| `UnsecuredFailure` | `(commitIndex, lastLogIndex]` | Lost speculative quorum while unsecured. All current-term entries are suspect since no durable quorum was ever achieved. |
-| `SecuredFailure` | `(securedLogIndex_, specCommitIndex_]` | Lost quorum but was secured leader. Entries up to `securedLogIndex_` are durably committed and safe. Only unsecured entries above that are suspect. |
+| `UnsecuredFailure` | `(securedLogIndex_, lastLogIndex]` | Lost speculative quorum while unsecured. Entries above the last durably secured index are suspect, including locally appended entries still waiting for memory quorum. |
+| `SecuredFailure` | `(securedLogIndex_, lastLogIndex]` | Lost quorum after becoming secured. Entries up to `securedLogIndex_` are durably committed and safe; every pending local entry above it needs a terminal notification. |
 | `HigherTerm` | None (no rollback sent) | Saw higher term from another server. Entries may still be valid under the new leader, so no premature rollback notification is sent. |
 
 After notification, all pending callbacks are cleared and notification tracking indices are reset, regardless of reason (the server is no longer leader).
@@ -619,7 +619,7 @@ On initialization, if a prior snapshot exists on disk, `snapidx_` and `snapterm_
 
 ### Snapshot Recovery on Startup
 
-After loading snapshot metadata, `InitializeSnapshotManager()` advances the server's state to reflect the snapshot. Since `InitializeSnapshotManager()` runs after `RecoverFromStorage()` in `Setup()`, log-recovered values may already be set. The recovery logic only advances values (using `>` checks), never goes backwards:
+After `RecoverFromStorage()` stages and validates the durable log, `InitializeSnapshotManager()` verifies the snapshot bytes and restores the state machine before opening RPC admission. A recovered suffix is retained only when its entry at the snapshot boundary has the same term, or when the durable range starts exactly at `snapshot_index + 1`; otherwise the suffix is discarded and reconciled durably. A compacted or progress-bearing log without its covering snapshot fails startup.
 
 - `executeIndex` is set to `max(executeIndex, snapidx_)` -- the snapshot represents already-applied state
 - `commitIndex` is set to `max(commitIndex, snapidx_)` and persisted via `PersistCommitIndexToLogStorage()`
@@ -632,18 +632,19 @@ This ensures a server that restarts with a snapshot but no log entries does not 
 
 `CreateSnapshot()` is called automatically from `applyLogs()` when `executeIndex - snapidx_ > snapshot_threshold_`. It serializes the state machine data, persists via `snapshot_manager_->TakeSnapshot()`, updates `snapidx_`/`snapterm_`, and calls `CompactLog()` to discard old entries and advance `min_active_slot_`. The threshold is configurable via `MAKO_RAFT_SNAPSHOT_INTERVAL` env var or `SetSnapshotThreshold()`.
 
-**State machine snapshot hooks**: If `create_sm_snapshot_cb_` is registered (e.g., by `ReplicatedDB`), `CreateSnapshot()` calls it to produce the snapshot data instead of the default 16-byte placeholder (executeIndex + term). Similarly, `OnInstallSnapshot()` calls `load_sm_snapshot_cb_` (if set) to load the received snapshot data into the state machine.
+**State machine snapshot hooks**: If `create_sm_snapshot_cb_` is registered (e.g., by `ReplicatedDB`), `CreateSnapshot()` passes the exact `executeIndex` boundary to it. The application must return a checkpoint for that boundary; `ReplicatedDB` validates the applied index embedded in the checkpoint before Raft persists it or compacts the log. Similarly, `OnInstallSnapshot()` calls `load_sm_snapshot_cb_` with the expected boundary and accepts only an exact match.
 
 ```cpp
 // RaftServer callback registration
-void SetStateMachineSnapshotCallbacks(
-    std::function<std::string()> create_cb,
-    std::function<void(const std::string&)> load_cb);
+uint64_t SetStateMachineSnapshotCallbacks(
+    std::function<std::string(uint64_t expected_applied_index)> create_cb,
+    std::function<bool(const std::string&,
+                       uint64_t expected_applied_index)> load_cb);
 ```
 
 **ReplicatedDB integration**: `ReplicatedDB` registers these callbacks in its constructor. `CreateStateMachineSnapshot()` uses `rocksdb_checkpoint_create()` to produce a consistent checkpoint, serializes all files into a binary blob (format: `num_files(4) + [name_len(4) + name + file_size(8) + file_data]*`), and cleans up the temporary checkpoint directory. `LoadStateMachineSnapshot()` deserializes the blob, closes the current RocksDB, destroys the old data directory, writes the checkpoint files, reopens the database, and reloads `last_applied_index_` from the snapshot's metadata.
 
-**Startup wiring**: When the `MAKO_REPLICATED_DB=1` environment variable is set, `RaftServer::Setup()` automatically creates a `ReplicatedDB` instance after `InitializeSnapshotManager()` completes. It registers the `ApplyEntry` method as the `app_next_` callback via `RegLearnerAction`, so committed Raft entries are applied to local RocksDB. The DB path defaults to `/tmp/mako_replicated_db_<site_id>` but can be overridden with `MAKO_REPLICATED_DB_PATH`. The instance is accessible via `GetReplicatedDB()`. Initialization order: `RecoverFromStorage()` -> `InitializeSnapshotManager()` -> ReplicatedDB creation -> membership config -> heartbeat loops.
+**Startup wiring**: When the `MAKO_REPLICATED_DB=1` environment variable is set, `RaftServer::Setup()` creates `ReplicatedDB` and registers its loader before snapshot discovery. It then restores the snapshot, synchronously replays the committed suffix, starts apply infrastructure, and only then opens RPC admission and starts runtime loops. The DB path defaults to `/tmp/mako_replicated_db_<site_id>` but can be overridden with `MAKO_REPLICATED_DB_PATH`. The instance is accessible via `GetReplicatedDB()`.
 
 ### InstallSnapshot RPC
 

@@ -13,11 +13,13 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <rusty/option.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/slice.hpp>
 
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"  // janus::Command (SerializableEnvelope<MakoCommands>)
@@ -47,6 +49,74 @@ using ballot_t = uint64_t;
  * - Raft: term, log index, command, committed flag
  * - Paxos: ballot, slot, accepted command, committed flag
  */
+#if RUSTYCPP_RUST
+pub const fn log_entry_slot_precedes(slot_id: u64, other_slot_id: u64) -> bool {
+    slot_id < other_slot_id
+}
+
+pub const fn log_entry_scalar_fields_equal(slot_equal: bool,
+                                            term_equal: bool,
+                                            max_seen_equal: bool,
+                                            max_accepted_equal: bool,
+                                            committed_equal: bool,
+                                            no_op_equal: bool) -> bool {
+    slot_equal && term_equal && max_seen_equal && max_accepted_equal &&
+        committed_equal && no_op_equal
+}
+
+pub const fn log_entry_bool_to_i8(value: bool) -> i8 {
+    if value { 1 } else { 0 }
+}
+
+pub const fn log_entry_i8_to_bool(value: i8) -> bool {
+    value != 0
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_log_entry.scalar_decisions version=1 rust_sha256=983d5a4010a6372e6e6c5cf7f136c3d1947e81a01a66c8e1688aba403d213d95*/
+constexpr bool log_entry_slot_precedes(uint64_t slot_id, uint64_t other_slot_id);
+constexpr bool log_entry_scalar_fields_equal(bool slot_equal, bool term_equal, bool max_seen_equal, bool max_accepted_equal, bool committed_equal, bool no_op_equal);
+constexpr int8_t log_entry_bool_to_i8(bool value);
+constexpr bool log_entry_i8_to_bool(int8_t value);
+constexpr bool log_entry_slot_precedes(uint64_t slot_id, uint64_t other_slot_id) {
+    return rusty::detail::deref_if_pointer_like(slot_id) < rusty::detail::deref_if_pointer_like(other_slot_id);
+}
+constexpr bool log_entry_scalar_fields_equal(bool slot_equal, bool term_equal, bool max_seen_equal, bool max_accepted_equal, bool committed_equal, bool no_op_equal) {
+    return ((((rusty::detail::deref_if_pointer_like(slot_equal) && rusty::detail::deref_if_pointer_like(term_equal)) && rusty::detail::deref_if_pointer_like(max_seen_equal)) && rusty::detail::deref_if_pointer_like(max_accepted_equal)) && rusty::detail::deref_if_pointer_like(committed_equal)) && rusty::detail::deref_if_pointer_like(no_op_equal);
+}
+constexpr int8_t log_entry_bool_to_i8(bool value) {
+    if (value) {
+        return static_cast<int8_t>(1);
+    } else {
+        return static_cast<int8_t>(0);
+    }
+}
+constexpr bool log_entry_i8_to_bool(int8_t value) {
+    return rusty::detail::deref_if_pointer_like(value) != static_cast<int8_t>(0);
+}
+/*RUSTYCPP:GEN-END id=raft_log_entry.scalar_decisions*/
+
+static_assert(log_entry_slot_precedes(1, 2));
+static_assert(!log_entry_slot_precedes(2, 2));
+static_assert(log_entry_scalar_fields_equal(
+    true, true, true, true, true, true));
+static_assert(!log_entry_scalar_fields_equal(
+    false, true, true, true, true, true));
+static_assert(!log_entry_scalar_fields_equal(
+    true, false, true, true, true, true));
+static_assert(!log_entry_scalar_fields_equal(
+    true, true, false, true, true, true));
+static_assert(!log_entry_scalar_fields_equal(
+    true, true, true, false, true, true));
+static_assert(!log_entry_scalar_fields_equal(
+    true, true, true, true, false, true));
+static_assert(!log_entry_scalar_fields_equal(
+    true, true, true, true, true, false));
+static_assert(log_entry_bool_to_i8(false) == 0);
+static_assert(log_entry_bool_to_i8(true) == 1);
+static_assert(!log_entry_i8_to_bool(0));
+static_assert(log_entry_i8_to_bool(1));
+static_assert(log_entry_i8_to_bool(-1));
+
 // @safe - POD-like struct with Marshallable serialization
 struct LogEntry {
     slotid_t slot_id{0};              // Primary key (log index / slot)
@@ -82,17 +152,18 @@ struct LogEntry {
 
     // @safe - Comparison for ordering
     bool operator<(const LogEntry& other) const {
-        return slot_id < other.slot_id;
+        return log_entry_slot_precedes(slot_id, other.slot_id);
     }
 
     // @safe - Equality comparison
     bool operator==(const LogEntry& other) const {
-        return slot_id == other.slot_id &&
-               term == other.term &&
-               max_ballot_seen == other.max_ballot_seen &&
-               max_ballot_accepted == other.max_ballot_accepted &&
-               committed == other.committed &&
-               is_no_op == other.is_no_op;
+        return log_entry_scalar_fields_equal(
+            slot_id == other.slot_id,
+            term == other.term,
+            max_ballot_seen == other.max_ballot_seen,
+            max_ballot_accepted == other.max_ballot_accepted,
+            committed == other.committed,
+            is_no_op == other.is_no_op);
         // Note: command comparison requires deep equality
     }
 
@@ -118,16 +189,16 @@ struct LogEntry {
         rrr::Serialize_::serialize(term, ar);
         rrr::Serialize_::serialize(max_ballot_seen, ar);
         rrr::Serialize_::serialize(max_ballot_accepted, ar);
-        rrr::Serialize_::serialize(static_cast<i8>(committed ? 1 : 0), ar);
-        rrr::Serialize_::serialize(static_cast<i8>(is_no_op ? 1 : 0), ar);
+        rrr::Serialize_::serialize(log_entry_bool_to_i8(committed), ar);
+        rrr::Serialize_::serialize(log_entry_bool_to_i8(is_no_op), ar);
 
         // drive the polymorphic command through Command's
         // own archive operator instead of wrapping it in a temporary
         // MarshallDeputy.  Wire format is identical (Command emits
         // `[v32 kind][payload]`, same as MarshallDeputy post-L9).
-        i8 has_command = command.has_value() ? 1 : 0;
+        i8 has_command = log_entry_bool_to_i8(command.has_value());
         rrr::Serialize_::serialize(has_command, ar);
-        if (has_command) {
+        if (log_entry_i8_to_bool(has_command)) {
             rrr::Serialize_::serialize(command, ar);
         }
     }
@@ -147,15 +218,15 @@ struct LogEntry {
 
         i8 committed_byte = 0;
         rrr::Deserialize_::deserialize(committed_byte, ar);
-        committed = (committed_byte != 0);
+        committed = log_entry_i8_to_bool(committed_byte);
 
         i8 is_no_op_byte = 0;
         rrr::Deserialize_::deserialize(is_no_op_byte, ar);
-        is_no_op = (is_no_op_byte != 0);
+        is_no_op = log_entry_i8_to_bool(is_no_op_byte);
 
         i8 has_command = 0;
         rrr::Deserialize_::deserialize(has_command, ar);
-        if (has_command) {
+        if (log_entry_i8_to_bool(has_command)) {
             rrr::Deserialize_::deserialize(command, ar);
         } else {
             command = Command{};
@@ -288,6 +359,17 @@ public:
      */
     // @safe - Abstract method
     virtual bool set_metadata(const std::string& key, const std::string& value) = 0;
+
+    /**
+     * Atomically store a group of metadata values.
+     *
+     * Raft's current term and vote are one persistent state transition.  A
+     * backend must therefore expose a real all-or-nothing write instead of
+     * emulating this operation with successive set_metadata() calls.
+     */
+    // @safe - Abstract method; implementations provide one atomic operation
+    virtual bool set_metadata_batch(
+        const std::vector<std::pair<std::string, std::string>>& entries) = 0;
 
     /**
      * Retrieve metadata.

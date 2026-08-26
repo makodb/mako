@@ -535,10 +535,9 @@ impl ReactorFiber {
 /// direct rustc tests can exercise one-shot set/wait/get behavior; it is never
 /// emitted into production C++.
 pub struct ReactorBoxEvent<T> {
-    pub is_set_: Cell<bool>,
+    pub is_set_: ::std::sync::atomic::AtomicBool,
     value: Mutex<Option<T>>,
     ready: ::std::sync::Condvar,
-    not_thread_safe: PhantomData<Rc<()>>,
 }
 
 /// Rust-only conversion used by [`ReactorBoxEvent::set`] so canonical source
@@ -565,23 +564,27 @@ where
 impl<T> ReactorBoxEvent<T> {
     pub fn new() -> ReactorBoxEvent<T> {
         ReactorBoxEvent {
-            is_set_: Cell::new(false),
+            is_set_: ::std::sync::atomic::AtomicBool::new(false),
             value: Mutex::new(None),
             ready: ::std::sync::Condvar::new(),
-            not_thread_safe: PhantomData,
         }
     }
 
     pub fn is_ready(&self) -> bool {
-        self.is_set_.get()
+        self.is_set_
+            .load(::std::sync::atomic::Ordering::Acquire)
     }
 
     pub fn set<V>(&self, value: V)
     where
         V: ReactorSetValue<T>,
     {
-        *self.value.lock().unwrap() = Some(value.into_owned());
-        self.is_set_.set(true);
+        {
+            let mut slot = self.value.lock().unwrap();
+            *slot = Some(value.into_owned());
+            self.is_set_
+                .store(true, ::std::sync::atomic::Ordering::Release);
+        }
         self.ready.notify_all();
     }
 
@@ -2541,10 +2544,25 @@ impl<A: ?Sized + 'static, R: 'static> Function<dyn FnMut(&mut A) -> R> {
 
 #[cfg(test)]
 mod tests {
-    use super::Function;
+    use super::{Function, ReactorBoxEvent};
     use ::std::cell::Cell;
     use ::std::mem::{align_of, size_of};
     use ::std::rc::Rc;
+    use ::std::sync::Arc;
+
+    #[test]
+    fn box_event_publishes_payload_across_threads() {
+        let event = Arc::new(ReactorBoxEvent::<String>::new());
+        let setter_event = event.clone();
+        let setter = ::std::thread::spawn(move || {
+            setter_event.set(String::from("published"));
+        });
+
+        event.wait();
+        assert!(event.is_ready());
+        assert_eq!(event.get(), "published");
+        setter.join().unwrap();
+    }
 
     #[test]
     fn empty_and_layout_match_the_cpp_runtime() {

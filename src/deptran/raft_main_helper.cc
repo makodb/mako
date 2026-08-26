@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <type_traits>
 
 #include "replication_helper.h"
 
@@ -10,6 +11,7 @@
 #include "raft/raft_worker.h"
 #include "raft/service.h"
 #include "paxos_worker.h"  // ElectionState definition lives here
+#include <rusty/rusty.hpp>
 
 
 import std;
@@ -19,6 +21,7 @@ using namespace janus;
 namespace janus {
 vector<shared_ptr<RaftWorker>> raft_workers_g = {};
 std::function<void(int)> leader_callback_{};
+std::mutex raft_global_callback_mutex;
 }
 
 using janus::raft_workers_g;
@@ -28,10 +31,36 @@ using janus::raft_workers_g;
 // ============================================================================
 namespace raft_impl {
 
+#if RUSTYCPP_RUST
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(u8)]
+pub enum RaftGroupMode {
+    kSingleGroup = 0,
+    kPerPartitionGroup = 1,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_main.group_mode version=1 rust_sha256=cf63b52398c20221967e157653e2031f5a744c2bc6c31f8bbabc264671f87431*/
+enum class RaftGroupMode : uint8_t;
+constexpr RaftGroupMode RaftGroupMode_kSingleGroup();
+constexpr RaftGroupMode RaftGroupMode_kPerPartitionGroup();
+
 enum class RaftGroupMode : uint8_t {
-  kSingleGroup = 0,
-  kPerPartitionGroup = 1,
+    kSingleGroup = 0,
+    kPerPartitionGroup = 1
 };
+inline constexpr RaftGroupMode RaftGroupMode_kSingleGroup() { return RaftGroupMode::kSingleGroup; }
+inline constexpr RaftGroupMode RaftGroupMode_kPerPartitionGroup() { return RaftGroupMode::kPerPartitionGroup; }
+/*RUSTYCPP:GEN-END id=raft_main.group_mode*/
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<RaftGroupMode>, uint8_t>);
+static_assert(std::is_trivially_copyable_v<RaftGroupMode>);
+static_assert(sizeof(RaftGroupMode) == sizeof(uint8_t));
+static_assert(alignof(RaftGroupMode) == alignof(uint8_t));
+static_assert(static_cast<uint8_t>(RaftGroupMode::kSingleGroup) == 0);
+static_assert(static_cast<uint8_t>(RaftGroupMode::kPerPartitionGroup) == 1);
+static_assert(RaftGroupMode{} == RaftGroupMode::kSingleGroup);
 
 #if defined(RAFT_DEFAULT_SINGLE_GROUP)
 constexpr RaftGroupMode kDefaultRaftGroupMode = RaftGroupMode::kSingleGroup;
@@ -51,13 +80,27 @@ std::map<int, std::function<int(const char*&, int, int, int,
     std::queue<std::tuple<int, int, int, int, const char *>> &)>> leader_replay_cb;
 std::map<int, std::function<int(const char*&, int, int, int,
     std::queue<std::tuple<int, int, int, int, const char *>> &)>> follower_replay_cb;
+std::map<uint32_t, std::function<void(const char*, int)>> leader_apply_cb;
+std::map<uint32_t, std::function<void(const char*, int)>> follower_apply_cb;
+std::map<uint32_t, std::function<void(const char*&, int, int)>>
+    leader_partition_apply_cb;
+std::map<uint32_t, std::function<void(const char*&, int, int)>>
+    follower_partition_apply_cb;
 
 shared_ptr<ElectionState> es = ElectionState::instance();
 
 // send_no_ops_for_mark serialises a Raft NO-OP entry so leader/followers sync watermarks.
 void send_no_ops_for_mark(int epoch) {
   std::string log = "no-ops:" + std::to_string(epoch);
-  for (const auto& kv : workers_by_partition_g) {
+  std::vector<std::pair<uint32_t, std::shared_ptr<RaftWorker>>> workers;
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    workers.reserve(workers_by_partition_g.size());
+    for (const auto& kv : workers_by_partition_g) {
+      workers.push_back(kv);
+    }
+  }
+  for (const auto& kv : workers) {
     uint32_t par_id = kv.first;
     if (!kv.second) {
       continue;
@@ -77,18 +120,81 @@ constexpr std::chrono::milliseconds kLeaderWaitTimeout(5000);
 std::mutex leader_wait_mutex;
 std::condition_variable leader_wait_cv;
 
-bool equals_ignore_case(std::string_view lhs, std::string_view rhs) {
-  if (lhs.size() != rhs.size()) {
+enum class RaftLaunchState {
+  kNotStarted,
+  kStarting,
+  kStarted,
+  kFailedAfterStart,
+};
+std::mutex raft_launch_state_mutex;
+RaftLaunchState raft_launch_state = RaftLaunchState::kNotStarted;
+
+bool launch_can_preflight() {
+  std::lock_guard<std::mutex> guard(raft_launch_state_mutex);
+  return raft_launch_state == RaftLaunchState::kNotStarted;
+}
+
+bool claim_launch() {
+  std::lock_guard<std::mutex> guard(raft_launch_state_mutex);
+  if (raft_launch_state != RaftLaunchState::kNotStarted) {
     return false;
   }
-  for (size_t i = 0; i < lhs.size(); ++i) {
-    if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
-        std::tolower(static_cast<unsigned char>(rhs[i]))) {
-      return false;
-    }
-  }
+  raft_launch_state = RaftLaunchState::kStarting;
   return true;
 }
+
+void finish_launch(bool succeeded) {
+  std::lock_guard<std::mutex> guard(raft_launch_state_mutex);
+  raft_launch_state = succeeded ? RaftLaunchState::kStarted
+                                : RaftLaunchState::kFailedAfterStart;
+}
+
+#if RUSTYCPP_RUST
+#[allow(dead_code)]
+fn equals_ignore_case(lhs: &str, rhs: &str) -> bool {
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+    let lhs_bytes = lhs.as_bytes();
+    let rhs_bytes = rhs.as_bytes();
+    let mut i: usize = 0;
+    while i < lhs_bytes.len() {
+        if unsafe { tolower(lhs_bytes[i] as i32) } !=
+            unsafe { tolower(rhs_bytes[i] as i32) } {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+unsafe extern "C" {
+    fn tolower(value: i32) -> i32;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_main.argument_casefold version=1 rust_sha256=aab3bef549cca60d628e6d6caf76e12a44624e86ed820f1f5bd092f9414321f4*/
+bool equals_ignore_case(std::string_view lhs, std::string_view rhs);
+
+extern "C" {
+    int32_t tolower(int32_t value);
+}
+
+bool equals_ignore_case(std::string_view lhs, std::string_view rhs) {
+    if (rusty::len(lhs) != rusty::len(rhs)) {
+        return false;
+    }
+    const auto lhs_bytes = rusty::as_bytes(lhs);
+    const auto rhs_bytes = rusty::as_bytes(rhs);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(lhs_bytes)) {
+        if (tolower(static_cast<int32_t>(lhs_bytes[i])) != tolower(static_cast<int32_t>(rhs_bytes[i]))) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+/*RUSTYCPP:GEN-END id=raft_main.argument_casefold*/
 
 std::optional<RaftGroupMode> parse_raft_group_mode_from_args(int argc, char* argv[]) {
   for (int i = 1; i < argc; ++i) {
@@ -145,9 +251,19 @@ void configure_raft_group_mode(int argc, char* argv[]) {
            raft_group_mode_g == RaftGroupMode::kSingleGroup ? "single" : "multi");
 }
 
-bool is_raft_group_mode_arg(std::string_view arg) {
-  return arg == "--raft-groups" || arg.rfind("--raft-groups=", 0) == 0;
+#if RUSTYCPP_RUST
+#[allow(dead_code)]
+fn is_raft_group_mode_arg(arg: &str) -> bool {
+    arg == "--raft-groups" || arg.starts_with("--raft-groups=")
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_main.group_mode_argument_predicate version=1 rust_sha256=a70c0881db3d75205a090a1ddfb8894ed2e796293ef72dcee1361bedd884da53*/
+bool is_raft_group_mode_arg(std::string_view arg);
+
+bool is_raft_group_mode_arg(std::string_view arg) {
+    return (rusty::detail::deref_if_pointer_like(rusty::to_string_view(arg)) == std::string_view("--raft-groups")) || rusty::starts_with(arg, "--raft-groups=");
+}
+/*RUSTYCPP:GEN-END id=raft_main.group_mode_argument_predicate*/
 
 void build_config_argv_without_raft_group_mode(
     int argc,
@@ -257,6 +373,7 @@ void create_stub_servers() {
 
     // Create RPC server
     auto* rpc_server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread.clone())));
+    rpc_server->set_admission_ready(false);
 
     // Register RaftServiceImpl pointing to the single RaftServer
     rpc_server->reg_service_typed(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread.clone()));
@@ -293,9 +410,13 @@ void destroy_stub_servers() {
 }
 
 // server_launch_worker finishes wiring RPC/commo threads and starts batching loops.
-void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
+bool server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
   if (server_sites.empty()) {
-    return;
+    return true;
+  }
+  if (!launch_can_preflight()) {
+    Log_error("[RAFT-LAUNCH] setup2() cannot be repeated after launch has started");
+    return false;
   }
 
   if (raft_group_mode_g == RaftGroupMode::kSingleGroup) {
@@ -304,10 +425,26 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
 
     if (raft_workers_g.empty() || !raft_workers_g[0]) {
       Log_error("[SINGLE-RAFT] No worker to launch!");
-      return;
+      return false;
     }
 
     auto& worker = raft_workers_g[0];
+    std::vector<uint32_t> partition_ids;
+    partition_ids.reserve(all_site_infos_g.size());
+    for (const auto* site : all_site_infos_g) {
+      if (site != nullptr) {
+        partition_ids.push_back(site->partition_id_);
+      }
+    }
+    if (!worker->PrepareForStartup(partition_ids)) {
+      Log_error("[SINGLE-RAFT] Application callbacks are incomplete; startup remains closed");
+      return false;
+    }
+    if (!claim_launch()) {
+      Log_error("[SINGLE-RAFT] Another setup2() launch won the startup race");
+      return false;
+    }
+
     worker->SetupService();
     create_stub_servers();
     worker->SetupCommo();
@@ -327,13 +464,47 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
       }
     }
 
+    if (!worker->WaitForStartup()) {
+      Log_error("single-group Raft startup failed");
+      finish_launch(false);
+      return false;
+    }
+    worker->SetRpcAdmissionReady(true);
+    for (auto* stub_server : stub_rpc_servers_g) {
+      if (stub_server != nullptr) {
+        stub_server->set_admission_ready(true);
+      }
+    }
+
     worker->StartSubmitThread();
     worker->SetupHeartbeat();
-    return;
+    finish_launch(true);
+    return true;
   }
 
   Log_info("[RAFT-LAUNCH] server_sites.size()={} raft_workers_g.size()={}",
            server_sites.size(), raft_workers_g.size());
+  if (server_sites.size() != raft_workers_g.size()) {
+    Log_error("[RAFT-LAUNCH] Site/worker count mismatch: {} sites, {} workers",
+              server_sites.size(), raft_workers_g.size());
+    return false;
+  }
+
+  // Preflight every state-machine callback before opening even one listener.
+  // This makes startup all-or-nothing with respect to application readiness
+  // and leaves callers free to register missing callbacks and retry setup2().
+  for (const auto& worker : raft_workers_g) {
+    if (!worker || worker->site_info_ == nullptr ||
+        !worker->PrepareForStartup(
+            {worker->site_info_->partition_id_})) {
+      Log_error("[RAFT-LAUNCH] Application callbacks are incomplete");
+      return false;
+    }
+  }
+  if (!claim_launch()) {
+    Log_error("[RAFT-LAUNCH] Another setup2() launch won the startup race");
+    return false;
+  }
 
   for (auto& worker : raft_workers_g) {
     if (worker) {
@@ -341,7 +512,7 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
     }
   }
 
-  for (size_t i = 0; i < server_sites.size() && i < raft_workers_g.size(); ++i) {
+  for (size_t i = 0; i < raft_workers_g.size(); ++i) {
     auto& worker = raft_workers_g[i];
     if (!worker) continue;
 
@@ -361,6 +532,23 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
       }
     }
 
+  }
+
+  // Recovery may complete in any order, but no application listener opens
+  // until every worker has crossed the startup success barrier.
+  for (size_t i = 0; i < raft_workers_g.size(); ++i) {
+    auto& worker = raft_workers_g[i];
+    if (!worker || !worker->WaitForStartup()) {
+      Log_error("Raft startup failed for worker {}", i);
+      finish_launch(false);
+      return false;
+    }
+  }
+
+  for (auto& worker : raft_workers_g) {
+    worker->SetRpcAdmissionReady(true);
+  }
+  for (auto& worker : raft_workers_g) {
     worker->StartSubmitThread();
   }
 
@@ -369,18 +557,34 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
       worker->SetupHeartbeat();
     }
   }
+  finish_launch(true);
+  return true;
 }
 
-RaftWorker* find_worker(uint32_t par_id) {
+std::shared_ptr<RaftWorker> find_worker(uint32_t par_id) {
+  std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
   auto it = workers_by_partition_g.find(par_id);
   if (it == workers_by_partition_g.end() || !it->second) {
-    return nullptr;
+    return {};
   }
-  return it->second.get();
+  return it->second;
+}
+
+std::vector<std::shared_ptr<RaftWorker>> snapshot_workers() {
+  std::vector<std::shared_ptr<RaftWorker>> workers;
+  std::set<RaftWorker*> seen;
+  std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+  workers.reserve(workers_by_partition_g.size());
+  for (const auto& kv : workers_by_partition_g) {
+    if (kv.second && seen.insert(kv.second.get()).second) {
+      workers.push_back(kv.second);
+    }
+  }
+  return workers;
 }
 
 // enqueue_to_worker increments bookkeeping and drops the payload into the worker queue.
-void enqueue_to_worker(RaftWorker* worker,
+void enqueue_to_worker(const std::shared_ptr<RaftWorker>& worker,
                        const char* log,
                        int len,
                        uint32_t par_id,
@@ -397,19 +601,70 @@ void enqueue_to_worker(RaftWorker* worker,
 }
 
 void apply_callbacks_for_partition(uint32_t par_id) {
-  auto* worker = find_worker(par_id);
+  std::shared_ptr<RaftWorker> worker;
+  watermark_callback_t leader_callback;
+  watermark_callback_t follower_callback;
+  std::function<void(const char*, int)> leader_apply_callback;
+  std::function<void(const char*, int)> follower_apply_callback;
+  std::function<void(const char*&, int, int)> leader_partition_callback;
+  std::function<void(const char*&, int, int)> follower_partition_callback;
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    auto worker_it = workers_by_partition_g.find(par_id);
+    if (worker_it != workers_by_partition_g.end()) {
+      worker = worker_it->second;
+    }
+    auto leader_it = leader_replay_cb.find(par_id);
+    if (leader_it != leader_replay_cb.end()) {
+      leader_callback = leader_it->second;
+    }
+    auto follower_it = follower_replay_cb.find(par_id);
+    if (follower_it != follower_replay_cb.end()) {
+      follower_callback = follower_it->second;
+    }
+    auto leader_apply_it = leader_apply_cb.find(par_id);
+    if (leader_apply_it != leader_apply_cb.end()) {
+      leader_apply_callback = leader_apply_it->second;
+    }
+    auto follower_apply_it = follower_apply_cb.find(par_id);
+    if (follower_apply_it != follower_apply_cb.end()) {
+      follower_apply_callback = follower_apply_it->second;
+    }
+    auto leader_partition_it = leader_partition_apply_cb.find(par_id);
+    if (leader_partition_it != leader_partition_apply_cb.end()) {
+      leader_partition_callback = leader_partition_it->second;
+    }
+    auto follower_partition_it = follower_partition_apply_cb.find(par_id);
+    if (follower_partition_it != follower_partition_apply_cb.end()) {
+      follower_partition_callback = follower_partition_it->second;
+    }
+  }
   if (!worker) {
     return;
   }
-
-  auto leader_it = leader_replay_cb.find(par_id);
-  if (leader_it != leader_replay_cb.end()) {
-    worker->register_leader_callback_for_partition(par_id, leader_it->second);
+  if (leader_callback) {
+    worker->register_leader_callback_for_partition(
+        par_id, std::move(leader_callback));
   }
-
-  auto follower_it = follower_replay_cb.find(par_id);
-  if (follower_it != follower_replay_cb.end()) {
-    worker->register_follower_callback_for_partition(par_id, follower_it->second);
+  if (follower_callback) {
+    worker->register_follower_callback_for_partition(
+        par_id, std::move(follower_callback));
+  }
+  if (leader_apply_callback) {
+    worker->register_leader_apply_callback_for_partition(
+        par_id, std::move(leader_apply_callback));
+  }
+  if (follower_apply_callback) {
+    worker->register_follower_apply_callback_for_partition(
+        par_id, std::move(follower_apply_callback));
+  }
+  if (leader_partition_callback) {
+    worker->register_leader_partition_apply_callback_for_partition(
+        par_id, std::move(leader_partition_callback));
+  }
+  if (follower_partition_callback) {
+    worker->register_follower_partition_apply_callback_for_partition(
+        par_id, std::move(follower_partition_callback));
   }
 }
 
@@ -426,6 +681,10 @@ void handle_leader_change_impl(uint32_t partition_id) {
 // setup creates raft workers according to caller-selected group mode.
 std::vector<std::string> setup(int argc, char* argv[]) {
   std::vector<std::string> ret_vector;
+  if (!launch_can_preflight()) {
+    Log_error("[RAFT-SETUP] setup() cannot replace a live or partially started Raft lifecycle");
+    return ret_vector;
+  }
   check_current_path();
 
   if (std::getenv("MAKO_DISABLE_JETPACK") == nullptr) {
@@ -463,8 +722,14 @@ std::vector<std::string> setup(int argc, char* argv[]) {
   auto server_infos = Config::GetConfig()->GetMyServers();
 
   raft_workers_g.clear();
-  workers_by_partition_g.clear();
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    workers_by_partition_g.clear();
+  }
   all_site_infos_g.clear();
+  // Callback registration is intentionally not cleared here. Callers may
+  // register before setup(), and Mako registers its election callback before
+  // configuration creates workers. shutdown_paxos() owns lifecycle cleanup.
 
   // Preserve historical ordering behavior for return vector.
   for (int i = static_cast<int>(server_infos.size()) - 1; i >= 0; --i) {
@@ -481,8 +746,14 @@ std::vector<std::string> setup(int argc, char* argv[]) {
       worker->handles_all_partitions_ = true;
       worker->SetupBase();
       raft_workers_g.push_back(worker);
+      {
+        std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+        for (auto* site : all_site_infos_g) {
+          workers_by_partition_g[site->partition_id_] = worker;
+        }
+      }
       for (auto* site : all_site_infos_g) {
-        workers_by_partition_g[site->partition_id_] = worker;
+        apply_callbacks_for_partition(site->partition_id_);
       }
       Log_info("[SINGLE-RAFT] Created 1 worker for site {} (partition {}), total sites={}",
                all_site_infos_g[0]->id, all_site_infos_g[0]->partition_id_,
@@ -502,8 +773,12 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     worker->site_info_ = const_cast<Config::SiteInfo*>(&site);
     worker->handles_all_partitions_ = false;
     worker->SetupBase();
-    workers_by_partition_g[site.partition_id_] = worker;
+    {
+      std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+      workers_by_partition_g[site.partition_id_] = worker;
+    }
     raft_workers_g.push_back(std::move(worker));
+    apply_callbacks_for_partition(site.partition_id_);
   }
 
   std::reverse(raft_workers_g.begin(), raft_workers_g.end());
@@ -616,7 +891,10 @@ int setup2(int action, int shardIndex) {
 
   // Launch workers (normal Raft elections will proceed, biased toward preferred)
   if (!server_infos.empty()) {
-    server_launch_worker(server_infos);
+    if (!server_launch_worker(server_infos)) {
+      Log_error("[RAFT-SETUP] Worker launch failed; RPC admission remains closed");
+      return -1;
+    }
   }
 
   (void)shardIndex;
@@ -649,7 +927,7 @@ std::map<std::string, std::string> getHosts(std::string filename) {
 
 // get_outstanding_logs reports how many Raft slots the local worker still owes.
 int get_outstanding_logs(uint32_t par_id) {
-  auto* worker = find_worker(par_id);
+  auto worker = find_worker(par_id);
   if (!worker) {
     Log_warn("get_outstanding_logs(): unknown partition {}", par_id);
     return -1;
@@ -682,9 +960,23 @@ int shutdown_paxos() {
     }
   }
 
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    workers_by_partition_g.clear();
+    leader_replay_cb.clear();
+    follower_replay_cb.clear();
+    leader_apply_cb.clear();
+    follower_apply_cb.clear();
+    leader_partition_apply_cb.clear();
+    follower_partition_apply_cb.clear();
+    janus::leader_callback_ = {};
+  }
   raft_workers_g.clear();
-  workers_by_partition_g.clear();
   all_site_infos_g.clear();
+  {
+    std::lock_guard<std::mutex> guard(raft_launch_state_mutex);
+    raft_launch_state = RaftLaunchState::kNotStarted;
+  }
   RandomGenerator::destroy();
   Config::DestroyConfig();
 
@@ -699,19 +991,21 @@ int shutdown_paxos() {
 // register_for_follower installs a lightweight follower callback.
 void register_for_follower(std::function<void(const char*, int)> cb,
                            uint32_t par_id) {
-  auto* worker = find_worker(par_id);
-  if (worker && !worker->IsLeader(par_id)) {
-    worker->register_apply_callback(cb);
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    follower_apply_cb[par_id] = std::move(cb);
   }
+  apply_callbacks_for_partition(par_id);
 }
 
 // register_for_follower_par_id wires callbacks that also consume partition id.
 void register_for_follower_par_id(
     std::function<void(const char*&, int, int)> cb, uint32_t par_id) {
-  auto* worker = find_worker(par_id);
-  if (worker && !worker->IsLeader(par_id)) {
-    worker->register_apply_callback_par_id(cb);
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    follower_partition_apply_cb[par_id] = std::move(cb);
   }
+  apply_callbacks_for_partition(par_id);
 }
 
 // register_for_follower_par_id_return stores the full watermark callback then applies it.
@@ -719,31 +1013,37 @@ void register_for_follower_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb,
     uint32_t par_id) {
-  follower_replay_cb[par_id] = cb;
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    follower_replay_cb[par_id] = std::move(cb);
+  }
   apply_callbacks_for_partition(par_id);
 }
 
 // register_for_leader connects simple leader callbacks to matching workers.
 void register_for_leader(std::function<void(const char*, int)> cb,
                          uint32_t par_id) {
-  auto* worker = find_worker(par_id);
-  if (worker && worker->IsLeader(par_id)) {
-    worker->register_apply_callback(cb);
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    leader_apply_cb[par_id] = std::move(cb);
   }
+  apply_callbacks_for_partition(par_id);
 }
 
 // register_leader_election_callback saves the external notifier invoked on leadership change.
 void register_leader_election_callback(std::function<void(int)> cb) {
+  std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
   janus::leader_callback_ = std::move(cb);
 }
 
 // register_for_leader_par_id registers leader callbacks that want the partition id.
 void register_for_leader_par_id(
     std::function<void(const char*&, int, int)> cb, uint32_t par_id) {
-  auto* worker = find_worker(par_id);
-  if (worker && worker->IsLeader(par_id)) {
-    worker->register_apply_callback_par_id(cb);
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    leader_partition_apply_cb[par_id] = std::move(cb);
   }
+  apply_callbacks_for_partition(par_id);
 }
 
 // register_for_leader_par_id_return mirrors the Paxos helper and stores callbacks for reuse.
@@ -751,7 +1051,10 @@ void register_for_leader_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb,
     uint32_t par_id) {
-  leader_replay_cb[par_id] = cb;
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    leader_replay_cb[par_id] = std::move(cb);
+  }
   apply_callbacks_for_partition(par_id);
 }
 
@@ -760,7 +1063,7 @@ void register_for_leader_par_id_return(
 
 // submit forwards a log to the local leader submit queue (if this node leads).
 void submit(const char* log, int len, uint32_t par_id) {
-  auto* worker = find_worker(par_id);
+  auto worker = find_worker(par_id);
   if (!worker) {
     Log_warn("submit(): unknown partition {}", par_id);
     return;
@@ -784,7 +1087,7 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id) {
 bool add_log_to_nc(const char* log, int len, uint32_t par_id,
                    int batch_size, siteid_t* leader_hint_out /* = nullptr */) {
   // Log_debug("[RAFT-ADD-LOG] par_id={} len={} batch={}", par_id, len, batch_size);
-  auto* worker = find_worker(par_id);
+  auto worker = find_worker(par_id);
   if (!worker) {
     Log_warn("[RAFT-ADD-LOG] no worker found for par_id={}", par_id);
     if (leader_hint_out) {
@@ -818,7 +1121,7 @@ bool add_log_to_nc(const char* log, int len, uint32_t par_id,
 
 // wait_for_submit blocks until the worker drained its submission queue.
 void wait_for_submit(uint32_t par_id) {
-  auto* worker = find_worker(par_id);
+  auto worker = find_worker(par_id);
   if (!worker) {
     Log_warn("wait_for_submit(): unknown partition {}", par_id);
     return;
@@ -832,7 +1135,8 @@ void wait_for_submit(uint32_t par_id) {
 // pre_shutdown_step politely drops control RPC connections before shutdown.
 void pre_shutdown_step() {
   Log_info("Raft pre_shutdown_step invoked.");
-  for (auto& worker : raft_workers_g) {
+  auto workers = snapshot_workers();
+  for (auto& worker : workers) {
     if (!worker) {
       continue;
     }
@@ -868,8 +1172,13 @@ void set_epoch(int epoch) {
 // upgrade_p1_to_leader keeps the Paxos helper instrumentation happy under Raft.
 void upgrade_p1_to_leader() {
   Log_info("upgrade_p1_to_leader invoked for Raft helper.");
-  if (::janus::leader_callback_) {
-    ::janus::leader_callback_(0);
+  std::function<void(int)> callback;
+  {
+    std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+    callback = ::janus::leader_callback_;
+  }
+  if (callback) {
+    callback(0);
   }
 }
 
@@ -954,9 +1263,13 @@ void raft_handle_leader_change(uint32_t partition_id, bool is_leader) {
   raft_impl::handle_leader_change_impl(partition_id);
 
   // Call the callback for BOTH gaining and losing leadership
-  // @safe - leader_callback_ is a std::function, invoking is safe
-  if (leader_callback_) {
-    leader_callback_(is_leader ? 1 : 0);  // 1 = became leader, 0 = lost leadership
+  std::function<void(int)> callback;
+  {
+    std::lock_guard<std::mutex> guard(raft_global_callback_mutex);
+    callback = leader_callback_;
+  }
+  if (callback) {
+    callback(is_leader ? 1 : 0);  // 1 = became leader, 0 = lost leadership
   }
 }
 
