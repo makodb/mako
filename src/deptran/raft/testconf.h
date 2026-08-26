@@ -1,7 +1,11 @@
 #pragma once
 
 #include "frame.h"
+#include <functional>
 #include <map>
+#include <mutex>
+#include <vector>
+#include <rusty/mutex.hpp>
 
 namespace janus {
 
@@ -41,15 +45,39 @@ class CommitIndex {
   void setval(uint64_t val) { val_ = val; }
 };
 
+// A Restart hook that installs a durable application must prove all three
+// startup prerequisites explicitly.  The marker reader is retained only for
+// Restart's synchronous snapshot/replay window.  abort_cleanup is mandatory
+// for every supplied hook and is invoked before the candidate RaftServer is
+// destroyed on startup failure.  A hook that throws before returning this
+// status must clean up any externally owned application state itself.
+struct RestartHookStatus {
+  bool initialized = false;
+  bool callback_registered = false;
+  std::function<slotid_t()> read_applied_index{};
+  std::function<void()> abort_cleanup{};
+};
+
 class RaftTestConfig {
 
  private:
   static std::map<siteid_t, RaftFrame*> replicas;
   // take janus::Command (matching the
   // RegLearnerAction signature change in deptran/scheduler.h).
-  static std::map<siteid_t, std::function<int(int, janus::Command)>> commit_callbacks;
-  static std::map<siteid_t, std::vector<int>> committed_cmds;
+  static std::map<siteid_t,
+                  std::function<int(slotid_t, janus::Command)>>
+      commit_callbacks;
+  // Apply callbacks run on five independent PollThreads while the RaftLab
+  // fiber reads the oracle. Keep the map inside its Rusty mutex so no caller
+  // can touch a per-site vector without owning the synchronization guard.
+  static rusty::Mutex<std::map<siteid_t, std::vector<int>>> committed_cmds;
   static std::map<siteid_t, uint64_t> rpc_count_last;
+
+  // Records a callback by its real Raft slot. Restart from a snapshot resumes
+  // applying above snapidx, so append-only vector bookkeeping would otherwise
+  // store slot N at vector index 1 after Kill() reset the oracle.
+  // @safe - Rusty mutex guard bounds the oracle mutation.
+  static void RecordCommittedCommand(siteid_t svr, slotid_t slot, int cmd);
 
   // disconnected_[svr] true if svr is disconnected by Disconnect()/Reconnect()
   std::map<siteid_t, bool> disconnected_;
@@ -130,8 +158,16 @@ class RaftTestConfig {
   // Kills server (destroys it completely, clearing all in-memory state)
   void Kill(siteid_t svr);
 
-  // Restarts server (creates new instance, loads state from disk)
-  void Restart(siteid_t svr);
+  // Restarts server (creates new instance, loads state from disk).  Tests that
+  // own a durable application state machine may install it before apply and
+  // replication loops start, avoiding a callback-registration catch-up race.
+  // @unsafe - The optional initializer receives the candidate server only for
+  // the duration of Restart's pre-start initialization window.  A hook must
+  // report successful initialization, callback registration, and a readable
+  // durable applied marker before any runtime loop or RPC publication begins.
+  bool Restart(
+      siteid_t svr,
+      std::function<RestartHookStatus(RaftServer*)> before_runtime_start = {});
 
   // Returns number of disconnected servers
   int NDisconnected(void);

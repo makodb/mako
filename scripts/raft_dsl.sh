@@ -25,7 +25,6 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/commo.h|raft_commo.ack_type"
   "src/deptran/raft/commo.h|raft_commo.notify_restart_status"
   "src/deptran/raft/commo.h|raft_commo.scalar_decisions"
-  "src/deptran/raft/coordinator.h|raft_coordinator.scalar_decisions"
   "src/deptran/raft/file_snapshot_manager.hpp|raft_file_snapshot.scalar_decisions"
   "src/deptran/raft/frame.cc|raft_frame.lab_decisions"
   "src/deptran/raft/log_storage.hpp|raft_log_entry.scalar_decisions"
@@ -150,21 +149,21 @@ fi
 FULL_INVENTORY=0
 if ((${#FILES[@]} == 0)); then
   FULL_INVENTORY=1
+  SEARCH_ROOTS=(src/deptran/raft src/deptran/raft_main_helper.cc)
+  if [[ -d src/deptran/fpga_raft ]]; then
+    SEARCH_ROOTS=(src/deptran/fpga_raft "${SEARCH_ROOTS[@]}")
+  fi
   if command -v rg >/dev/null 2>&1; then
     mapfile -t FILES < <(
-      rg -l '#if RUSTYCPP_RUST' \
-        src/deptran/fpga_raft src/deptran/raft \
-        src/deptran/raft_main_helper.cc \
+      rg -l '#if RUSTYCPP_RUST' "${SEARCH_ROOTS[@]}" \
         -g '*.h' -g '*.hh' -g '*.hpp' -g '*.cc' -g '*.cpp' -g '*.cxx' |
         sort
     )
   else
     mapfile -t FILES < <(
-      { grep -rl '#if RUSTYCPP_RUST' \
-          src/deptran/fpga_raft src/deptran/raft \
+      { grep -rl '#if RUSTYCPP_RUST' "${SEARCH_ROOTS[@]}" \
           --include='*.h' --include='*.hh' --include='*.hpp' \
-          --include='*.cc' --include='*.cpp' --include='*.cxx'; \
-        grep -l '#if RUSTYCPP_RUST' src/deptran/raft_main_helper.cc; } |
+          --include='*.cc' --include='*.cpp' --include='*.cxx'; } |
         sort
     )
   fi

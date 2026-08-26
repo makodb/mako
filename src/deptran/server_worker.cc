@@ -42,6 +42,15 @@ void ServerWorker::SetupBase() {
   rep_sched_->partition_id_ = site_info_->partition_id_;
   rep_sched_->loc_id_ = site_info_->locale_id;
   rep_sched_->site_id_ = site_info_->id;
+
+  // RaftLab installs its agreement oracle only after all communicators exist.
+  // Keep recovery fail-closed in the meantime: an unexpected replay must stop
+  // startup instead of invoking an empty std::function.
+  rep_sched_->RegLearnerAction(
+      [](slotid_t, janus::Command) -> int {
+        throw std::runtime_error(
+            "RaftLab learner callback not installed yet");
+      });
 }
 
 void ServerWorker::SetupService() {
@@ -61,6 +70,7 @@ void ServerWorker::SetupService() {
 
   // init rrr::Server first (before registering services)
   rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_worker.clone())));
+  rpc_server_->set_admission_ready(false);
 
   // Create and register replication services (ownership transferred to
   // rpc_server_).
@@ -118,6 +128,13 @@ void ServerWorker::SetupCommo() {
   // Cast OneTimeJob to Job base class for PollThread
   auto arc_job_base = rusty::Arc<Job>(arc_job);
   svr_poll_thread_worker_.as_ref().unwrap()->add(arc_job_base);
+
+  if (!rep_sched_->WaitForStartup()) {
+    Log_error("[RAFT-STARTUP] Site {} failed startup; RPC admission remains closed",
+              site_info_->id);
+    return;
+  }
+  rpc_server_->set_admission_ready(true);
 
   // Keep the coroutine scheduler alive for the embedded lab cluster.
   if (rep_sched_->site_id_ == 0) {

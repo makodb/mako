@@ -10,6 +10,8 @@
  * Note: RocksDB operations are marked @unsafe (third-party library, not borrow-checked)
  */
 
+#include <charconv>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <iomanip>
@@ -133,6 +135,37 @@ private:
             return ""; // @unsafe
         }
         return std::string(data, len); // @unsafe
+    }
+
+    // @unsafe - Strictly decodes the canonical fixed-width key emitted by
+    // make_log_key. Recovery must never accept an entry whose physical key and
+    // embedded slot disagree, because later point reads use the physical key.
+    static slotid_t parse_log_key_or_throw(const std::string& key) {
+        const size_t prefix_size = std::strlen(LOG_PREFIX);
+        if (key.size() != prefix_size + 20 ||
+            key.compare(0, prefix_size, LOG_PREFIX) != 0) {
+            throw std::runtime_error("invalid RocksDB Raft log key shape");
+        }
+        const char* begin = key.data() + prefix_size;
+        const char* end = key.data() + key.size();
+        slotid_t slot = 0;
+        const auto parsed = std::from_chars(begin, end, slot, 10);
+        if (parsed.ec != std::errc{} || parsed.ptr != end) {
+            throw std::runtime_error("invalid RocksDB Raft log key index");
+        }
+        return slot;
+    }
+
+    // @unsafe - Converts a RocksDB-owned error into an exception after freeing
+    // its C allocation. Read APIs cannot represent backend failure separately
+    // from a legitimate missing value, so recovery relies on this fail-closed
+    // distinction.
+    [[noreturn]] static void throw_rocksdb_read_error(
+        const char* operation, char** errptr) {
+        const std::string detail = take_rocksdb_error(errptr);
+        throw std::runtime_error(
+            std::string(operation) + ": " +
+            (detail.empty() ? "RocksDB read failed" : detail));
     }
 
     // @unsafe - Uses ostringstream operations
@@ -274,8 +307,7 @@ public:
         char* value_ptr = rocksdb_get(db_, read_options_, key.data(), key.size(), &value_len, &err);
 
         if (err != nullptr) {
-            take_rocksdb_error(&err);
-            return rusty::None;
+            throw_rocksdb_read_error("RocksDB log get", &err);
         }
         if (!rocksdb_log_value_present(value_ptr != nullptr)) {
             return rusty::None;
@@ -287,6 +319,10 @@ public:
         LogEntry entry;
         if (!deserialize_entry(value, &entry)) {  // @unsafe
             return rusty::None;
+        }
+        if (entry.slot_id != slot_id) {
+            throw std::runtime_error(
+                "RocksDB point-read key does not match embedded slot");
         }
 
         return rusty::Some(entry);
@@ -362,7 +398,7 @@ public:
 
         rocksdb_iterator_t* it = rocksdb_create_iterator(db_, read_options_);  // @unsafe
         if (it == nullptr) {
-            return result;
+            throw std::runtime_error("RocksDB log range iterator creation failed");
         }
 
         rocksdb_iter_seek(it, start_key.data(), start_key.size());
@@ -375,18 +411,28 @@ public:
             if (key >= end_key || key.compare(0, std::strlen(LOG_PREFIX), LOG_PREFIX) != 0) {
                 break;
             }
-
-            LogEntry entry;
-            std::string value = copy_slice(value_ptr, value_len);
-            if (deserialize_entry(value, &entry)) {  // @unsafe
-                result.push_back(entry);
+            try {
+                const slotid_t physical_slot = parse_log_key_or_throw(key);
+                LogEntry entry;
+                std::string value = copy_slice(value_ptr, value_len);
+                if (deserialize_entry(value, &entry)) {  // @unsafe
+                    if (entry.slot_id != physical_slot) {
+                        throw std::runtime_error(
+                            "RocksDB log key does not match embedded slot");
+                    }
+                    result.push_back(entry);
+                }
+            } catch (...) {
+                rocksdb_iter_destroy(it);  // @unsafe
+                throw;
             }
         }
 
         char* err = nullptr;
         rocksdb_iter_get_error(it, &err);
         if (err != nullptr) {
-            take_rocksdb_error(&err);
+            rocksdb_iter_destroy(it);  // @unsafe
+            throw_rocksdb_read_error("RocksDB log range iterator", &err);
         }
         rocksdb_iter_destroy(it);  // @unsafe
 
@@ -491,7 +537,7 @@ public:
 
         rocksdb_iterator_t* it = rocksdb_create_iterator(db_, read_options_);  // @unsafe
         if (it == nullptr) {
-            return 0;
+            throw std::runtime_error("RocksDB first-index iterator creation failed");
         }
 
         rocksdb_iter_seek(it, LOG_PREFIX, std::strlen(LOG_PREFIX));
@@ -502,15 +548,20 @@ public:
             const char* key_ptr = rocksdb_iter_key(it, &key_len);
             std::string key = copy_slice(key_ptr, key_len);
             if (key.compare(0, std::strlen(LOG_PREFIX), LOG_PREFIX) == 0) {
-                std::string slot_str = key.substr(std::strlen(LOG_PREFIX));
-                first_index = std::stoull(slot_str);
+                try {
+                    first_index = parse_log_key_or_throw(key);
+                } catch (...) {
+                    rocksdb_iter_destroy(it);  // @unsafe
+                    throw;
+                }
             }
         }
 
         char* err = nullptr;
         rocksdb_iter_get_error(it, &err);
         if (err != nullptr) {
-            take_rocksdb_error(&err);
+            rocksdb_iter_destroy(it);  // @unsafe
+            throw_rocksdb_read_error("RocksDB first-index iterator", &err);
         }
         rocksdb_iter_destroy(it);  // @unsafe
 
@@ -528,7 +579,7 @@ public:
 
         rocksdb_iterator_t* it = rocksdb_create_iterator(db_, read_options_);  // @unsafe
         if (it == nullptr) {
-            return 0;
+            throw std::runtime_error("RocksDB last-index iterator creation failed");
         }
 
         rocksdb_iter_seek(it, prefix_end.data(), prefix_end.size());
@@ -545,15 +596,20 @@ public:
             const char* key_ptr = rocksdb_iter_key(it, &key_len);
             std::string key = copy_slice(key_ptr, key_len);
             if (key.compare(0, std::strlen(LOG_PREFIX), LOG_PREFIX) == 0) {
-                std::string slot_str = key.substr(std::strlen(LOG_PREFIX));
-                last_index = std::stoull(slot_str);
+                try {
+                    last_index = parse_log_key_or_throw(key);
+                } catch (...) {
+                    rocksdb_iter_destroy(it);  // @unsafe
+                    throw;
+                }
             }
         }
 
         char* err = nullptr;
         rocksdb_iter_get_error(it, &err);
         if (err != nullptr) {
-            take_rocksdb_error(&err);
+            rocksdb_iter_destroy(it);  // @unsafe
+            throw_rocksdb_read_error("RocksDB last-index iterator", &err);
         }
         rocksdb_iter_destroy(it);  // @unsafe
 
@@ -579,7 +635,7 @@ public:
         size_t count = 0;
         rocksdb_iterator_t* it = rocksdb_create_iterator(db_, read_options_);  // @unsafe
         if (it == nullptr) {
-            return 0;
+            throw std::runtime_error("RocksDB size iterator creation failed");
         }
 
         rocksdb_iter_seek(it, LOG_PREFIX, std::strlen(LOG_PREFIX));
@@ -590,13 +646,20 @@ public:
             if (key.compare(0, std::strlen(LOG_PREFIX), LOG_PREFIX) != 0) {
                 break;
             }
+            try {
+                (void)parse_log_key_or_throw(key);
+            } catch (...) {
+                rocksdb_iter_destroy(it);  // @unsafe
+                throw;
+            }
             count++;
         }
 
         char* err = nullptr;
         rocksdb_iter_get_error(it, &err);
         if (err != nullptr) {
-            take_rocksdb_error(&err);
+            rocksdb_iter_destroy(it);  // @unsafe
+            throw_rocksdb_read_error("RocksDB size iterator", &err);
         }
         rocksdb_iter_destroy(it);  // @unsafe
 
@@ -630,6 +693,35 @@ public:
         return true;
     }
 
+    // @unsafe - A single RocksDB WriteBatch is atomic across every metadata key
+    bool set_metadata_batch(
+        const std::vector<std::pair<std::string, std::string>>& entries)
+        override {
+        if (rocksdb_log_storage_is_closed(is_open_.get()) ||
+            rocksdb_log_storage_missing_db(db_ != nullptr)) {
+            return false;
+        }
+
+        rocksdb_writebatch_t* batch = rocksdb_writebatch_create();
+        if (batch == nullptr) {
+            return false;
+        }
+        for (const auto& [key, value] : entries) {
+            const std::string meta_key = make_meta_key(key);
+            rocksdb_writebatch_put(batch, meta_key.data(), meta_key.size(),
+                                   value.data(), value.size());
+        }
+
+        char* err = nullptr;
+        rocksdb_write(db_, write_options_, batch, &err);
+        rocksdb_writebatch_destroy(batch);
+        if (err != nullptr) {
+            take_rocksdb_error(&err);
+            return false;
+        }
+        return true;
+    }
+
     // @unsafe - Uses RocksDB API
     rusty::Option<std::string> get_metadata(const std::string& key) const override {
         if (rocksdb_log_storage_is_closed(is_open_.get()) ||
@@ -645,8 +737,7 @@ public:
                                       &value_len, &err);
 
         if (err != nullptr) {
-            take_rocksdb_error(&err);
-            return rusty::None;
+            throw_rocksdb_read_error("RocksDB metadata get", &err);
         }
         if (!rocksdb_log_value_present(value_ptr != nullptr)) {
             return rusty::None;

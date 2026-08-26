@@ -7239,6 +7239,7 @@ ABI_SPECS = {
                 "export using ServiceProxy = rusty::Box<Service>;",
                 "export using ServerPendingRequestsAtomic = rusty::sync::atomic::AtomicI32;",
                 "export using ServerDropHeartbeatRepliesAtomic = rusty::sync::atomic::AtomicBool;",
+                "export using ServerAdmissionReadyAtomic = rusty::sync::atomic::AtomicBool;",
                 "export using ServerReplyFn = rusty::Function<void(::rrr::BinaryWriteArchive&)>;",
                 "export constexpr uint64_t kDefaultDrainTimeoutMs = static_cast<uint64_t>(30000);",
                 "export std::string_view shutdown_phase_to_string(ShutdownPhase phase);",
@@ -7291,6 +7292,10 @@ ABI_SPECS = {
                 (
                     "R",
                     "rrr::SERVER_ERR_NO_ENTRY@rrr.server",
+                ),
+                (
+                    "R",
+                    "rrr::SERVER_ERR_TRY_AGAIN@rrr.server",
                 ),
                 (
                     "R",
@@ -7366,11 +7371,15 @@ ABI_SPECS = {
                 ),
                 (
                     "T",
+                    "rrr::RpcServiceContext@rrr.server::new_with_admission(std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::port::vec::Vec@vec_port.vec<rusty::RefCell<rusty::Box<rrr::Service@rrr.server, rusty::alloc::Global>>, rusty::alloc::Global>, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long)",
+                ),
+                (
+                    "T",
                     "rrr::Server@rrr.server::Server(rrr::Server@rrr.server&&)",
                 ),
                 (
                     "T",
-                    "rrr::Server@rrr.server::Server(rusty::port::vec::Vec@vec_port.vec<rusty::Box<rrr::Service@rrr.server, rusty::alloc::Global>, rusty::alloc::Global>, std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::Option<rusty::Arc<rrr::RpcServiceContext@rrr.server>>, rusty::Option<rusty::Arc<rrr::PollThread@rrr.reactor>>, rusty::Mutex<rrr::ShutdownState@rrr.server>, rusty::Box<rusty::Condvar, rusty::alloc::Global>, rusty::Cell<rrr::ShutdownPhase@rrr.server>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long, rusty::Option<rusty::Box<rrr::ChannelFactoryBase@rrr.channel, rusty::alloc::Global>>, rusty::Option<rusty::Box<rrr::ChannelListenerBase@rrr.channel, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<rrr::ChannelSconns@rrr.server>>)",
+                    "rrr::Server@rrr.server::Server(rusty::port::vec::Vec@vec_port.vec<rusty::Box<rrr::Service@rrr.server, rusty::alloc::Global>, rusty::alloc::Global>, std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::Option<rusty::Arc<rrr::RpcServiceContext@rrr.server>>, rusty::Option<rusty::Arc<rrr::PollThread@rrr.reactor>>, rusty::Mutex<rrr::ShutdownState@rrr.server>, rusty::Box<rusty::Condvar, rusty::alloc::Global>, rusty::Cell<rrr::ShutdownPhase@rrr.server>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long, rusty::Option<rusty::Box<rrr::ChannelFactoryBase@rrr.channel, rusty::alloc::Global>>, rusty::Option<rusty::Box<rrr::ChannelListenerBase@rrr.channel, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<rrr::ChannelSconns@rrr.server>>)",
                 ),
                 (
                     "T",
@@ -7395,6 +7404,10 @@ ABI_SPECS = {
                 (
                     "T",
                     "rrr::Server@rrr.server::drop_heartbeat_replies() const",
+                ),
+                (
+                    "T",
+                    "rrr::Server@rrr.server::admission_ready() const",
                 ),
                 (
                     "T",
@@ -7463,6 +7476,10 @@ ABI_SPECS = {
                 (
                     "T",
                     "rrr::Server@rrr.server::set_drop_heartbeat_replies(bool) const",
+                ),
+                (
+                    "T",
+                    "rrr::Server@rrr.server::set_admission_ready(bool) const",
                 ),
                 (
                     "T",

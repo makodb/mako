@@ -2,13 +2,20 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <random>
+#include <string>
 #include <type_traits>
 #include <vector>
 
+#include <dirent.h>
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <gtest/gtest.h>
 
+#include "deptran/raft/file_snapshot_manager.hpp"
 #include "deptran/raft/memory_snapshot_manager.hpp"
 #include "deptran/raft/snapshot_format.hpp"
 
@@ -79,6 +86,47 @@ std::string WithRawSnapshotModes(std::string encoded,
   std::memcpy(encoded.data(), &header, sizeof(header));
   return encoded;
 }
+
+class ScopedSnapshotDirectory {
+ public:
+  // @unsafe - Creates a uniquely named private directory with mkdtemp.
+  ScopedSnapshotDirectory() {
+    char path[] = "/tmp/mako_file_snapshot_test_XXXXXX";
+    const char* created = ::mkdtemp(path);
+    if (created != nullptr) {
+      path_ = created;
+    }
+  }
+
+  // @unsafe - Removes only flat files from the private directory created by
+  // this object, then removes that directory.
+  ~ScopedSnapshotDirectory() {
+    if (path_.empty()) {
+      return;
+    }
+    DIR* dir = ::opendir(path_.c_str());
+    if (dir != nullptr) {
+      while (struct dirent* entry = ::readdir(dir)) {
+        const std::string name(entry->d_name);
+        if (name != "." && name != "..") {
+          const std::string file_path = path_ + "/" + name;
+          ::unlink(file_path.c_str());
+        }
+      }
+      ::closedir(dir);
+    }
+    ::rmdir(path_.c_str());
+  }
+
+  ScopedSnapshotDirectory(const ScopedSnapshotDirectory&) = delete;
+  ScopedSnapshotDirectory& operator=(const ScopedSnapshotDirectory&) = delete;
+
+  // @lifetime: (&'a) -> &'a
+  const std::string& path() const { return path_; }
+
+ private:
+  std::string path_;
+};
 
 }  // namespace
 
@@ -201,6 +249,221 @@ TEST(MemorySnapshotManagerTest, PruneAndDelete) {
   EXPECT_FALSE(mgr.GetLatestSnapshot().is_some());
 }
 
+// @unsafe - Exercises durable file publication in a private temp directory.
+TEST(FileSnapshotManagerTest, PublishesRoundTripWithoutTemporaryFile) {
+  ScopedSnapshotDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  SnapshotConfig config;
+  config.storage_path = directory.path();
+  config.max_snapshots = 3;
+  FileSnapshotManager mgr(config);
+
+  std::string payload(256 * 1024, '\0');
+  for (size_t i = 0; i < payload.size(); ++i) {
+    payload[i] = static_cast<char>(i % 251);
+  }
+
+  auto writer = mgr.BeginSnapshot(/*last_index=*/42, /*last_term=*/7);
+  ASSERT_NE(writer, nullptr);
+  ASSERT_TRUE(writer->Write(payload.data(), 17));
+  ASSERT_TRUE(writer->Write(payload.data() + 17, payload.size() - 17));
+  ASSERT_TRUE(writer->Finalize());
+
+  const std::string final_path =
+      directory.path() + "/snapshot_42_7.snap";
+  const std::string temp_path = final_path + ".tmp";
+  EXPECT_EQ(::access(final_path.c_str(), F_OK), 0);
+  EXPECT_NE(::access(temp_path.c_str(), F_OK), 0);
+
+  SnapshotMetadata metadata;
+  std::string loaded;
+  ASSERT_TRUE(mgr.LoadLatestSnapshot(&metadata, &loaded));
+  EXPECT_EQ(metadata.last_included_index, 42u);
+  EXPECT_EQ(metadata.last_included_term, 7u);
+  EXPECT_EQ(loaded, payload);
+}
+
+// @unsafe - Exercises retention unlink and directory-barrier paths.
+TEST(FileSnapshotManagerTest, RetentionAndExplicitDeletionKeepExpectedFiles) {
+  ScopedSnapshotDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  SnapshotConfig config;
+  config.storage_path = directory.path();
+  config.max_snapshots = 2;
+  FileSnapshotManager mgr(config);
+
+  ASSERT_TRUE(mgr.TakeSnapshot(10, 1, "ten", 3));
+  ASSERT_TRUE(mgr.TakeSnapshot(20, 2, "twenty", 6));
+  ASSERT_TRUE(mgr.TakeSnapshot(30, 3, "thirty", 6));
+
+  auto snapshots = mgr.ListSnapshots();
+  ASSERT_EQ(snapshots.size(), 2u);
+  EXPECT_EQ(snapshots[0].last_included_index, 30u);
+  EXPECT_EQ(snapshots[1].last_included_index, 20u);
+  EXPECT_NE(::access(
+                (directory.path() + "/snapshot_10_1.snap").c_str(), F_OK),
+            0);
+
+  EXPECT_EQ(mgr.PruneSnapshots(30), 1u);
+  snapshots = mgr.ListSnapshots();
+  ASSERT_EQ(snapshots.size(), 1u);
+  EXPECT_EQ(snapshots[0].last_included_index, 30u);
+
+  EXPECT_EQ(mgr.DeleteAllSnapshots(), 1u);
+  EXPECT_TRUE(mgr.ListSnapshots().empty());
+}
+
+// @unsafe - Creates a deliberately truncated on-disk snapshot.
+TEST(FileSnapshotManagerTest, RejectsTruncatedPublishedSnapshot) {
+  ScopedSnapshotDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  std::string serialized;
+  const std::string payload = "complete payload";
+  ASSERT_TRUE(SnapshotFormat::Serialize(
+      55, 8, payload.data(), payload.size(), &serialized));
+  ASSERT_GT(serialized.size(), 1u);
+
+  const std::string path =
+      directory.path() + "/snapshot_55_8.snap";
+  const int fd = ::open(
+      path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  ASSERT_GE(fd, 0);
+  ASSERT_TRUE(file_snapshot_write_all(
+      fd, serialized.data(), serialized.size() - 1));
+  ASSERT_TRUE(file_snapshot_fsync(fd));
+  ASSERT_TRUE(file_snapshot_close(fd));
+  ASSERT_TRUE(file_snapshot_sync_directory(directory.path()));
+
+  FileSnapshotReader reader(path);
+  EXPECT_FALSE(reader.IsValid());
+
+  SnapshotConfig config;
+  config.storage_path = directory.path();
+  FileSnapshotManager mgr(config);
+  SnapshotMetadata metadata;
+  std::string loaded;
+  EXPECT_FALSE(mgr.LoadLatestSnapshot(&metadata, &loaded));
+}
+
+// @unsafe - Creates a sparse oversized file without allocating its payload.
+TEST(FileSnapshotManagerTest, RejectsOversizedFileBeforeReadAllocation) {
+  ScopedSnapshotDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  const std::string path =
+      directory.path() + "/snapshot_56_8.snap";
+  const int fd = ::open(
+      path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  ASSERT_GE(fd, 0);
+  ASSERT_EQ(::ftruncate(
+                fd, static_cast<off_t>(
+                        SnapshotFormat::MAX_SERIALIZED_SIZE + 1)),
+            0);
+  ASSERT_TRUE(file_snapshot_fsync(fd));
+  ASSERT_TRUE(file_snapshot_close(fd));
+  ASSERT_TRUE(file_snapshot_sync_directory(directory.path()));
+
+  FileSnapshotReader reader(path);
+  EXPECT_FALSE(reader.IsValid());
+
+  SnapshotConfig config;
+  config.storage_path = directory.path();
+  FileSnapshotManager mgr(config);
+  SnapshotMetadata metadata;
+  std::string loaded;
+  EXPECT_FALSE(mgr.LoadLatestSnapshot(&metadata, &loaded));
+
+  auto writer = mgr.BeginSnapshot(57, 8);
+  ASSERT_NE(writer, nullptr);
+  EXPECT_FALSE(writer->Write(
+      "x", SnapshotFormat::MAX_PAYLOAD_SIZE + 1));
+  EXPECT_EQ(writer->GetOffset(), 0u);
+  EXPECT_TRUE(writer->Abort());
+}
+
+// @unsafe - Creates a regular file where a snapshot directory is required.
+TEST(FileSnapshotManagerTest, RejectsInvalidStorageDirectory) {
+  ScopedSnapshotDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  const std::string storage_path = directory.path() + "/not_a_directory";
+  const int fd = ::open(
+      storage_path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  ASSERT_GE(fd, 0);
+  ASSERT_TRUE(file_snapshot_close(fd));
+
+  SnapshotConfig config;
+  config.storage_path = storage_path;
+  FileSnapshotManager mgr(config);
+  EXPECT_EQ(mgr.BeginSnapshot(1, 1), nullptr);
+  EXPECT_FALSE(mgr.TakeSnapshot(1, 1, "x", 1));
+  EXPECT_EQ(mgr.BeginLoad(SnapshotMetadata{}), nullptr);
+
+  SnapshotMetadata metadata;
+  std::string loaded;
+  EXPECT_FALSE(mgr.LoadLatestSnapshot(&metadata, &loaded));
+  EXPECT_TRUE(mgr.GetLatestSnapshot().is_none());
+  EXPECT_TRUE(mgr.ListSnapshots().empty());
+  EXPECT_FALSE(mgr.HasSnapshotAtOrAfter(1));
+  EXPECT_EQ(mgr.PruneSnapshots(2), 0u);
+  EXPECT_EQ(mgr.DeleteAllSnapshots(), 0u);
+}
+
+// @unsafe - Exercises fail-closed configuration and filename parsing.
+TEST(FileSnapshotManagerTest, RejectsZeroRetentionAndIgnoresOverflowFilename) {
+  ScopedSnapshotDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  SnapshotConfig invalid_config;
+  invalid_config.storage_path = directory.path();
+  invalid_config.max_snapshots = 0;
+  FileSnapshotManager invalid_manager(invalid_config);
+  EXPECT_FALSE(invalid_manager.IsStorageReady());
+  EXPECT_EQ(invalid_manager.BeginSnapshot(1, 1), nullptr);
+
+  const std::string overflow_name =
+      directory.path() + "/snapshot_" + std::string(40, '9') +
+      "_1.snap";
+  const int fd = ::open(
+      overflow_name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  ASSERT_GE(fd, 0);
+  ASSERT_TRUE(file_snapshot_close(fd));
+
+  SnapshotConfig valid_config;
+  valid_config.storage_path = directory.path();
+  FileSnapshotManager valid_manager(valid_config);
+  EXPECT_TRUE(valid_manager.ListSnapshots().empty());
+  EXPECT_TRUE(valid_manager.GetLatestSnapshot().is_none());
+}
+
+// @unsafe - Lets FileSnapshotManager create and validate a missing child
+// directory, then removes only that test-owned directory.
+TEST(FileSnapshotManagerTest, CreatesMissingStorageDirectory) {
+  ScopedSnapshotDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+
+  EXPECT_EQ(file_snapshot_parent_directory("snapshot.snap"), ".");
+  EXPECT_EQ(file_snapshot_parent_directory("/snapshot.snap"), "/");
+  EXPECT_EQ(file_snapshot_parent_directory("/tmp/snapshots/"), "/tmp");
+
+  const std::string storage_path = directory.path() + "/snapshots";
+  SnapshotConfig config;
+  config.storage_path = storage_path;
+  FileSnapshotManager mgr(config);
+
+  ASSERT_TRUE(mgr.TakeSnapshot(9, 2, "durable", 7));
+  SnapshotMetadata metadata;
+  std::string loaded;
+  ASSERT_TRUE(mgr.LoadLatestSnapshot(&metadata, &loaded));
+  EXPECT_EQ(metadata.last_included_index, 9u);
+  EXPECT_EQ(loaded, "durable");
+  EXPECT_EQ(mgr.DeleteAllSnapshots(), 1u);
+  EXPECT_EQ(::rmdir(storage_path.c_str()), 0);
+}
+
 TEST(SnapshotFormatTest, DefaultModesPreserveWireBytesAndChecksum) {
   const std::string payload("a\0\xffz", 4);
   std::string encoded;
@@ -224,12 +487,21 @@ TEST(SnapshotFormatTest, DefaultModesPreserveWireBytesAndChecksum) {
   EXPECT_EQ(stored_crc, CRC32::Calculate(payload.data(), payload.size()));
 }
 
-TEST(SnapshotFormatTest, RawModeChecksPreserveLegacyAcceptance) {
+TEST(SnapshotFormatTest, RawModeChecksRejectUnsupportedValues) {
   const std::string payload("raw\0bytes", 9);
   std::string encoded;
   ASSERT_TRUE(SnapshotFormat::Serialize(
       9, 3, payload.data(), payload.size(), &encoded,
       SnapshotCompression::NONE, SnapshotChecksumType::NONE));
+
+  uint64_t last_index = 0;
+  uint64_t last_term = 0;
+  std::string decoded;
+  EXPECT_TRUE(SnapshotFormat::Deserialize(
+      encoded.data(), encoded.size(), &last_index, &last_term, &decoded));
+  EXPECT_EQ(last_index, 9u);
+  EXPECT_EQ(last_term, 3u);
+  EXPECT_EQ(decoded, payload);
 
   for (uint8_t raw_checksum : {
            static_cast<uint8_t>(SnapshotChecksumType::SHA256),
@@ -237,23 +509,94 @@ TEST(SnapshotFormatTest, RawModeChecksPreserveLegacyAcceptance) {
     std::string candidate = WithRawSnapshotModes(
         encoded, static_cast<uint8_t>(SnapshotCompression::NONE),
         raw_checksum);
-    uint64_t last_index = 0;
-    uint64_t last_term = 0;
-    std::string decoded;
-    EXPECT_TRUE(SnapshotFormat::Deserialize(
+    EXPECT_FALSE(SnapshotFormat::Deserialize(
         candidate.data(), candidate.size(), &last_index, &last_term,
         &decoded));
-    EXPECT_EQ(last_index, 9u);
-    EXPECT_EQ(last_term, 3u);
-    EXPECT_EQ(decoded, payload);
+    SnapshotHeader header{};
+    EXPECT_FALSE(SnapshotFormat::GetHeader(
+        candidate.data(), candidate.size(), &header));
   }
 
   std::string unknown_compression = WithRawSnapshotModes(
       encoded, 0xfe, static_cast<uint8_t>(SnapshotChecksumType::NONE));
-  uint64_t last_index = 0;
-  uint64_t last_term = 0;
-  std::string decoded;
   EXPECT_FALSE(SnapshotFormat::Deserialize(
       unknown_compression.data(), unknown_compression.size(), &last_index,
       &last_term, &decoded));
+}
+
+TEST(SnapshotFormatTest, RejectsOverflowSizeMismatchAndTrailingBytes) {
+  const std::string payload = "bounded snapshot";
+  std::string encoded;
+  ASSERT_TRUE(SnapshotFormat::Serialize(
+      71, 9, payload.data(), payload.size(), &encoded));
+
+  uint64_t last_index = 0;
+  uint64_t last_term = 0;
+  std::string decoded;
+
+  std::string trailing = encoded;
+  trailing.push_back('\0');
+  EXPECT_FALSE(SnapshotFormat::Deserialize(
+      trailing.data(), trailing.size(), &last_index, &last_term, &decoded));
+  SnapshotHeader inspected{};
+  inspected.last_index = 999;
+  EXPECT_FALSE(SnapshotFormat::GetHeader(
+      trailing.data(), trailing.size(), &inspected));
+  EXPECT_EQ(inspected.last_index, 999u);
+
+  SnapshotHeader header{};
+  std::memcpy(&header, encoded.data(), sizeof(header));
+  header.header_size = static_cast<uint32_t>(sizeof(header) + 1);
+  header.header_crc = CRC32::Calculate(
+      reinterpret_cast<const char*>(&header), 44);
+  std::string bad_header_size = encoded;
+  std::memcpy(bad_header_size.data(), &header, sizeof(header));
+  EXPECT_FALSE(SnapshotFormat::Deserialize(
+      bad_header_size.data(), bad_header_size.size(), &last_index, &last_term,
+      &decoded));
+
+  std::memcpy(&header, encoded.data(), sizeof(header));
+  header.data_size =
+      static_cast<uint64_t>(SnapshotFormat::MAX_PAYLOAD_SIZE) + 1;
+  header.header_crc = CRC32::Calculate(
+      reinterpret_cast<const char*>(&header), 44);
+  std::string oversized_header = encoded;
+  std::memcpy(oversized_header.data(), &header, sizeof(header));
+  EXPECT_FALSE(SnapshotFormat::Deserialize(
+      oversized_header.data(), oversized_header.size(), &last_index,
+      &last_term, &decoded));
+
+  header.data_size = UINT64_MAX;
+  header.header_crc = CRC32::Calculate(
+      reinterpret_cast<const char*>(&header), 44);
+  std::string overflowing_header = encoded;
+  std::memcpy(overflowing_header.data(), &header, sizeof(header));
+  EXPECT_FALSE(SnapshotFormat::Deserialize(
+      overflowing_header.data(), overflowing_header.size(), &last_index,
+      &last_term, &decoded));
+
+  EXPECT_FALSE(SnapshotFormat::Deserialize(
+      encoded.data(), SnapshotFormat::MAX_SERIALIZED_SIZE + 1,
+      &last_index, &last_term, &decoded));
+}
+
+TEST(SnapshotFormatTest, SerializeRejectsInvalidPointersModesAndOversize) {
+  std::string output = "unchanged";
+  EXPECT_FALSE(SnapshotFormat::Serialize(
+      1, 1, nullptr, 1, &output));
+  EXPECT_EQ(output, "unchanged");
+
+  EXPECT_FALSE(SnapshotFormat::Serialize(
+      1, 1, "x", SnapshotFormat::MAX_PAYLOAD_SIZE + 1, &output));
+  EXPECT_EQ(output, "unchanged");
+
+  EXPECT_FALSE(SnapshotFormat::Serialize(
+      1, 1, "x", 1, &output, SnapshotCompression::NONE,
+      SnapshotChecksumType::SHA256));
+  EXPECT_EQ(output, "unchanged");
+
+  EXPECT_FALSE(SnapshotFormat::Serialize(
+      1, 1, "x", 1, &output, SnapshotCompression::NONE,
+      static_cast<SnapshotChecksumType>(0xfe)));
+  EXPECT_EQ(output, "unchanged");
 }

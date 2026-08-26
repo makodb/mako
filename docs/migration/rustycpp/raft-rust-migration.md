@@ -35,15 +35,16 @@ An independently maintained Rust port is not a migration stage.
 
 ### Stage 0: baseline and ownership map
 
-- Enumerate Raft declarations and intentional C++ boundaries on current main.
+- Enumerate Raft declarations and intentional C++ boundaries on current
+  `mako-dev`.
 - Pin public layouts, symbols, wire/storage formats, correctness tests, and a
   representative performance baseline.
 - Treat the safety annotations as an input to the map, not as DSL coverage.
 
 ### Stage 1: inline Rust DSL
 
-- Keep each declaration in its existing standard-Raft, main-helper, or
-  FPGA-Raft carrier and keep production compilation in the existing C++ target.
+- Keep each declaration in its existing standard-Raft or main-helper carrier
+  and keep production compilation in the existing C++ target.
 - Replace an existing declaration or body in place with one Rust DSL block and
   its adjacent generated C++.
 - Run `bash scripts/raft_dsl.sh --check`; it verifies the pinned emitter,
@@ -53,15 +54,15 @@ An independently maintained Rust port is not a migration stage.
 - Complete value/POD and plain-control-flow work before stateful, inherited,
   threaded, RPC, storage, or snapshot boundaries.
 
-The current Stage-1 pass owns 40 blocks in 22 carriers. A fixed
-nonblank/non-comment census extracts 897 Rust lines, about 10.77% of the 8,330
+The current Stage-1 pass owns 39 blocks in 21 carriers. A fixed
+nonblank/non-comment census extracts 1,445 Rust lines, about 17.35% of the 8,330
 meaningful lines in the standard-Raft baseline used for this migration. This
-is 59.0% of PR #79's approximately 1,520-line/18.25% DSL surface, while
+is 95.1% of PR #79's approximately 1,520-line/18.25% DSL surface, while
 excluding its state-core, container, interface, and behavior changes.
 
 The owned surface now includes fixed-representation values, all 15
 scalar-only RPC request/reply records, pure quorum/storage/snapshot/worker
-decisions, append-rejection backoff arithmetic, coordinator guards, log-entry
+decisions, append-rejection backoff arithmetic, log-entry
 ordering and wire-boolean conversion, test-harness index math, and the full
 CRC32 update loop. Tests and adjacent assertions pin aggregate status, exact
 member types, field offsets, size, alignment, plain/value/positional
@@ -114,9 +115,9 @@ Production still uses the adjacent generated C++ during this stage.
    retain narrow bridges where a faithful DSL spelling does not yet exist.
 
 Historical PR #79 is useful as a catalog of probes and candidate conversions,
-but its changes must be re-authored against current main and the current pinned
-emitter.  In particular, generated-C++ post-processing and helper/core reshapes
-are not inherited into this migration.
+but its changes must be re-authored against current `mako-dev` and the current
+pinned emitter. In particular, generated-C++ post-processing and helper/core
+reshapes are not inherited into this migration.
 
 The catalogue was applied by category:
 
@@ -126,15 +127,17 @@ The catalogue was applied by category:
 - Mixed records were split at their boundary: scalar message families and leaf
   methods moved, while command/string/array-bearing containers stayed C++.
 - State cores, traits/vtables, providers, ownership/container substitutions,
-  callback-readiness assertions, and generated-output patching were rejected.
-  Those are preparation or provider migrations, not source-ownership changes.
+  and generated-output patching were rejected as DSL conversions. Correctness
+  fixes discovered by the Raft test matrix remain separate, reviewable changes;
+  they are not counted as Rust source ownership.
 
-## Current status (2026-08-23)
+## Current status (2026-08-26)
 
 - The behavior- and structure-preserving PR-catalogue candidate set in
-  Raft-owned code is exhausted at 40 Rust DSL blocks in 22 carriers (897
-  extracted Rust lines, approximately 10.77% of the fixed standard-Raft
-  baseline). Production still compiles only the adjacent generated C++.
+  Raft-owned code is exhausted at 39 Rust DSL blocks in 21 carriers (1,445
+  extracted Rust lines, approximately 17.35% of the fixed standard-Raft
+  baseline, or 95.1% of PR #79's catalogue). Production still compiles only
+  the adjacent generated C++.
 - All 15 scalar-only RPC request/reply records are Rust-owned. The emitter's
   exact inert `#[cfg_attr(any(), cpp_value_init)]` field marker generates the
   incumbent C++ `{}` default member initializer while retaining aggregate,
@@ -144,8 +147,8 @@ The catalogue was applied by category:
   `StepDownReason`, `CommitStatus`, `AckType`, both snapshot mode enums,
   `ReplicatedDBOp`, `RaftGroupMode`, and the six-word disk diagnostic
   `RaftData`.
-- Pure copied-scalar decisions now cover the server, worker, coordinator,
-  communicator, quorum, channel transport, storage, recovery, snapshot,
+- Pure copied-scalar decisions now cover the server, worker, communicator,
+  quorum, channel transport, storage, recovery, snapshot,
   service, frame, and test-harness leaves. Locks, atomics, RPC callbacks,
   container traversal, persistence, filesystem/RocksDB calls, logging, and
   branch sequencing remain at their original C++ call sites.
@@ -165,9 +168,9 @@ The catalogue was applied by category:
 - The earlier standalone canonical-Rust quorum slice remains an experimental
   Stage-2 build-plumbing reference only; it is not part of this lineage.
 
-## Validation evidence (2026-08-23)
+## Validation evidence (2026-08-26)
 
-- `scripts/raft_dsl.sh --check` accepts the frozen 40-block/22-carrier
+- `scripts/raft_dsl.sh --check` accepts the frozen 39-block/21-carrier
   inventory with zero failures. The RRR provenance gates report five
   drift-free files, 37 manifest modules, and 79 passing extraction tests.
 - The pinned emitter's focused `cpp_value_init` suite passes five
@@ -175,32 +178,14 @@ The catalogue was applied by category:
   clippy, and the generated-diff check are clean. Its full suite has 2,364
   passing and one ignored test; the three remaining failures are pre-existing,
   unrelated marker-free direct-CodeGen fixtures.
-- A fresh Clang 22/libc++ Release build with `MAKO_USE_RAFT=ON` and
-  `RAFT_TEST=ON` compiles the final Raft, replicated-DB, txlog, disk-reader,
-  and nine focused test targets. Focused CTest is 9/9 green, including all six
-  standalone three-node, disconnect, partition, durable-write, and unknown-op
-  lab scenarios.
 - `rrr_goal0_dual_compile` compiles 38 modules with zero hand slots, links the
   combined generated/production importer, passes every listed layout/runtime
-  contract, and matches 1,961 provider-owned strong ABI symbols.
-- Strict ASan+UBSan is green for all eight snapshot/CRC tests and for the
-  message and quorum suites. The unsuppressed broad lane is 4/9: its other
-  five executables stop only at the pre-existing `operator new` to
-  `rusty::Box`/`free` allocator mismatch; the involved call sites and runtime
-  headers are byte-identical to the baseline. Suppressing only that known
-  mismatch, while retaining leak detection and UBSan halt-on-error, makes the
-  broad lane 9/9 green. The migration does not hide or repair that independent
-  runtime defect.
-- Six retained matched baseline/candidate five-process `testNoOps` pairs show
-  98.57 versus 98.29 mean logs/s (candidate -0.28%); the mean paired delta is
-  -0.21% with 5.24% standard deviation. Preferred localhost completes 12/12;
-  the incomplete cluster results on both builds have the same pre-existing
-  peer fast-exit shape at 9/10 logs. This detects no regression, but the
-  harness is capped at ten 10ms-spaced logs and is therefore coarse. A longer
-  one-shard workload cannot be produced from the matched artifacts without a
-  broad module rebuild, so no stronger end-to-end claim is made. Independently,
-  Clang 22 `-O3 -march=native` emits identical 44-byte/14-instruction kernels
-  for the incumbent and generated CRC loop.
+  contract, and matches 1,965 provider-owned strong ABI symbols, including the
+  fail-closed RPC admission surface used during Raft recovery.
+- The focused current-target build and runtime matrix, full 155-case RaftLab
+  result, and saturated production throughput comparison are recorded in the
+  PR that promotes this tranche. Historical measurements from an earlier base
+  are intentionally not reused as evidence for the rebased candidate.
 
 ## Conservative Stage-1 stopping and promotion boundary
 
@@ -222,11 +207,6 @@ call-graph decision rather than another mechanical source-ownership change:
   `ballot_t`), while their fallback declarations spell unsigned `uint64_t`.
   Inline extraction cannot encode that preprocessor-selected type policy, so
   those aliases remain C++-owned until the macro/type boundary is unified.
-- `janus::KeyValue` is defined token-identically in standard Raft, FPGA Raft,
-  and Copilot. Converting only one leaf changes its emitted type spelling and
-  violates C++'s one-definition rule even when the platform aliases have the
-  same underlying type. It remains C++-owned until the duplicates are moved to
-  one shared definition or migrated together in a separate preparation change.
 - `AppendEntriesReq` depends on `janus::Command`. Snapshot and membership
   records depend on `std::string`; snapshot data is arbitrary bytes, not UTF-8.
   Inline mode does not yet apply a Rust-to-exact-C++ type map, so pseudo types
@@ -251,15 +231,12 @@ call-graph decision rather than another mechanical source-ownership change:
   including locale-sensitive folding of bytes above ASCII, but canonical Rust
   must use an OS-string or byte-slice boundary rather than construct `&str`
   from unvalidated `argv` or environment bytes.
-- `SnapshotHeader`, full metadata/config records, the full `LogEntry`, the
-  standard `RaftData`, `FpgaRaftData`, envelopes, pending contexts, and worker
-  records still have arrays, strings, commands, callbacks, pointers, atomics,
-  guarded type aliases, or mixed methods whose exact shape the inline emitter
-  cannot preserve. Their scalar leaf methods are already owned where doing so
-  does not move the containing object or alter construction traits.
-- The remaining FPGA-Raft records and its nested status/phase enums contain
-  commands, raw pointers, anonymous or unscoped nested enums, methods, or
-  thread state. Crossing them requires a provider-level tranche.
+- `SnapshotHeader`, full metadata/config records, the full `LogEntry`,
+  envelopes, pending contexts, and worker records still have arrays, strings,
+  commands, callbacks, pointers, atomics, guarded type aliases, or mixed
+  methods whose exact shape the inline emitter cannot preserve. Their scalar
+  leaf methods are already owned where doing so does not move the containing
+  object or alter construction traits.
 - Existing class methods cannot generally be projected independently: an
   `impl` for a hand-written C++ class emits an orphan placeholder. The pass
   therefore takes free scalar helpers and one audited raw-pointer loop, while
@@ -276,10 +253,5 @@ call-graph decision rather than another mechanical source-ownership change:
   would expand this tranche into shared-provider ownership. They remain
   unclaimed; migrating them belongs to a separately inventoried
   shared-dispatcher tranche.
-- `CoordinatorRaft::Phase`, `CoordinatorFpgaRaft::Phase`, and the standard/FPGA
-  server status enums are embedded in existing classes. The phase enums also
-  rely on unscoped-enum integer behavior; a generated scoped Rust enum is not a
-  mechanical replacement.
-
 Crossing any of these boundaries starts a new, explicitly tested preparation
 tranche. It should not be folded into this structure-preserving pass.

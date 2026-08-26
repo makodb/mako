@@ -20,6 +20,30 @@ class RaftLabTest {
 
  private:
 
+  // Test-only atomic manager rotation. RaftLabTest is a RaftServer friend, so
+  // this can preserve the production lock order and seed replacement storage
+  // without exposing a combined manager+snapshot API.
+  bool InstallAndSeedSnapshotManager(
+      RaftServer* server,
+      std::shared_ptr<janus::raft::SnapshotManager> manager,
+      uint64_t snapshot_threshold,
+      uint64_t* seeded_snapshot_index);
+
+  // Rotates a live RaftLab server from the earlier marker-only test state
+  // machine to a fresh manager seeded from the currently attached application.
+  bool InstallFreshStateMachineSnapshotManager(
+      RaftServer* server,
+      std::shared_ptr<janus::raft::SnapshotManager> manager,
+      uint64_t snapshot_threshold,
+      uint64_t* seeded_snapshot_index);
+
+  // Constructs a fresh per-test ReplicatedDB while application is paused,
+  // adopts the current Raft boundary, and publishes its learner before either
+  // snapshotting or application can resume.
+  std::shared_ptr<ReplicatedDB>
+  CreateAndAttachReplicatedDBAtCurrentBoundary(
+      RaftServer* server, const std::string& database_path);
+
   int testPersistence(void);
   int testTwoFollowerPersistence(void);
   int testLeaderFollowerPersistence(void);
@@ -318,6 +342,14 @@ class RaftLabTest {
 
   // Test 101: ReplicatedDB crash recovery
   int testReplicatedDBCrashRecovery(void);
+
+  // Test 102: ambiguous leader-local persistence is never reported as a
+  // retryable rejection by either public admission API.
+  int testAmbiguousLeaderAppendAdmission(void);
+
+  // Test 103: a higher RequestVote term must be durable before the follower
+  // can reply or continue serving.
+  int testRequestVoteTermPersistenceFailure(void);
 
   void wait(uint64_t microseconds);
 

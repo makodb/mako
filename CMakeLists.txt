@@ -1779,6 +1779,20 @@ if(BUILD_TESTS)
         # Ensure regular test builds also gate on SRPC borrow-check status.
     endif()
 
+    # Reactor timeout events remain observable as TIMEOUT to the resumed
+    # fiber, but must leave the polling queues once terminal. Raft uses this
+    # path for its short submission-progress waits under saturation.
+    add_executable(test_rrr_timeout_race
+        src/rrr/tests/test_timeout_race.cc)
+    target_include_directories(test_rrr_timeout_race PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rrr_timeout_race PRIVATE
+        ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rrr_timeout_race
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rrr_timeout_race COMMAND test_rrr_timeout_race)
+
 
 
 
@@ -1894,6 +1908,20 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_quorum COMMAND test_raft_quorum)
 
+    add_executable(test_raft_durability_accounting
+        tests/raft_durability_accounting_test.cc)
+    target_include_directories(test_raft_durability_accounting PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
+    target_compile_options(test_raft_durability_accounting PRIVATE
+        ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_durability_accounting
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_raft_durability_accounting
+        COMMAND test_raft_durability_accounting)
+
     add_executable(test_raft_dispatcher_facade tests/raft_dispatcher_facade_test.cc)
     target_include_directories(test_raft_dispatcher_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_dispatcher_facade PRIVATE ${TEST_COMPILE_OPTIONS})
@@ -1942,6 +1970,7 @@ if(BUILD_TESTS)
         test_raft_transport_facade
         test_raft_rrr_transport_compile
         test_raft_quorum
+        test_raft_durability_accounting
         test_raft_dispatcher_facade
         test_raft_channel_transport
         test_raft_memory_snapshot_manager
@@ -2017,13 +2046,13 @@ if(BUILD_TESTS)
     # )
     # # Use RESOURCE_LOCK to prevent port conflicts with other Paxos tests (ports 17001-17xxx)
 
-    # Add a convenience target to run all tests
-    # The src/rrr/tests corpus belongs to srpc and is built and run there;
-    # mako no longer builds any of it, so this convenience target names only
-    # mako's own tests.
+    # Add a convenience target to run all tests. The full src/rrr/tests corpus
+    # belongs to srpc; Mako carries only the focused timeout-queue regression
+    # above because Raft exercises that reactor path under saturation.
     add_custom_target(run_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
         DEPENDS test_masstree
+                test_rrr_timeout_race
                 test_silo_varint test_silo_rcu_thread test_silo_allocator
                 test_sto_transaction test_sto_transaction_real
                 simpleTransaction simplePaxos shard1ReplicationSimple
@@ -2295,12 +2324,14 @@ if(BUILD_TESTS)
     )
 
     # Keep this summary honest: it must name only targets this file actually
-    # defines. It went stale in 4a06ef0e (which stopped building srpc's
+    # defines. It went stale in 4a06ef0e (which stopped building the complete
     # `src/rrr/tests/` corpus) and then told CI logs that `test_timer`,
     # `test_marshal`, `test_rpc`, `test_rpc_extended`, `test_future`,
     # `test_reactor`, `test_reactor_extended` and `rpcbench` were configured
     # when ninja had no such targets.
     message(STATUS "Test targets configured:")
+    message(STATUS "  Reactor Tests:")
+    message(STATUS "    - test_rrr_timeout_race: terminal timeout queue cleanup")
     message(STATUS "  Masstree Tests:")
     message(STATUS "    - test_masstree: Core Masstree b-tree regression tests")
     message(STATUS "  Live Silo-support/STO Tests:")

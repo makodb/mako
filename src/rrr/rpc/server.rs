@@ -79,6 +79,7 @@ type v64 = rusty::SerializableV64;
 const SERVER_ERR_INVALID_ARGUMENT: i32 = 22;
 const SERVER_ERR_ALREADY_EXISTS: i32 = 17;
 const SERVER_ERR_NO_ENTRY: i32 = 2;
+const SERVER_ERR_TRY_AGAIN: i32 = 11;
 
 #[allow(unsafe_code)]
 mod server_ffi {
@@ -253,6 +254,7 @@ pub fn make_service_proxy_from_typed_box<T: Service + 'static>(svc: Box<T>) -> S
 // aliases so one spelling drives both the Rust and the C++ surface.
 pub type ServerPendingRequestsAtomic = AtomicI32;
 pub type ServerDropHeartbeatRepliesAtomic = AtomicBool;
+pub type ServerAdmissionReadyAtomic = AtomicBool;
 
 /// Shared context for RPC service dispatch.
 ///
@@ -276,6 +278,7 @@ pub struct RpcServiceContext {
     pub addr: LegacyStdString,
     pub pending_requests: Arc<ServerPendingRequestsAtomic>,
     pub drop_heartbeat_replies: Arc<ServerDropHeartbeatRepliesAtomic>,
+    pub admission_ready: Arc<ServerAdmissionReadyAtomic>,
     pub server_instance_id: u64,
 }
 
@@ -289,6 +292,29 @@ impl RpcServiceContext {
         drop_heartbeats: Arc<ServerDropHeartbeatRepliesAtomic>,
         instance_id: u64,
     ) -> RpcServiceContext {
+        RpcServiceContext::new_with_admission(
+            rpc_map,
+            fast_rpc_set,
+            svcs,
+            address,
+            pending_counter,
+            drop_heartbeats,
+            Arc::new(ServerAdmissionReadyAtomic::new(true)),
+            instance_id,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_admission(
+        rpc_map: HashMap<i32, usize>,
+        fast_rpc_set: HashSet<i32>,
+        svcs: Vec<RefCell<ServiceProxy>>,
+        address: LegacyStdString,
+        pending_counter: Arc<ServerPendingRequestsAtomic>,
+        drop_heartbeats: Arc<ServerDropHeartbeatRepliesAtomic>,
+        admission_ready: Arc<ServerAdmissionReadyAtomic>,
+        instance_id: u64,
+    ) -> RpcServiceContext {
         RpcServiceContext {
             rpc_to_service: rpc_map,
             fast_rpc_ids: fast_rpc_set,
@@ -296,6 +322,7 @@ impl RpcServiceContext {
             addr: address,
             pending_requests: pending_counter,
             drop_heartbeat_replies: drop_heartbeats,
+            admission_ready,
             server_instance_id: instance_id,
         }
     }
@@ -772,6 +799,7 @@ pub struct Server {
     shutdown_hooks_field: rusty::Mutex<Vec<ShutdownHook>>,
     pending_requests_field: Arc<ServerPendingRequestsAtomic>,
     drop_heartbeat_replies_field: Arc<ServerDropHeartbeatRepliesAtomic>,
+    admission_ready_field: Arc<ServerAdmissionReadyAtomic>,
     instance_id_field: u64,
     channel_factory_field: Option<ChannelFactoryProxy>,
     channel_listener_field: Option<ChannelListenerProxy>,
@@ -846,6 +874,7 @@ impl Server {
             shutdown_hooks_field: rusty::Mutex::<Vec<ShutdownHook>>::new(Vec::<ShutdownHook>::new()),
             pending_requests_field: Arc::new(ServerPendingRequestsAtomic::new(0i32)),
             drop_heartbeat_replies_field: Arc::new(ServerDropHeartbeatRepliesAtomic::new(false)),
+            admission_ready_field: Arc::new(ServerAdmissionReadyAtomic::new(true)),
             instance_id_field: server_generate_instance_id(),
             channel_factory_field: None,
             channel_listener_field: None,
@@ -980,6 +1009,17 @@ impl Server {
         self.drop_heartbeat_replies_field.load(Ordering::Acquire)
     }
 
+    /// Close or open non-heartbeat RPC admission without disturbing the
+    /// listener. Raft uses this while durable recovery and committed replay
+    /// establish a safe service boundary.
+    pub fn set_admission_ready(&self, ready: bool) {
+        self.admission_ready_field.store(ready, Ordering::Release);
+    }
+
+    pub fn admission_ready(&self) -> bool {
+        self.admission_ready_field.load(Ordering::Acquire)
+    }
+
     pub fn instance_id(&self) -> u64 {
         self.instance_id_field
     }
@@ -1030,13 +1070,14 @@ impl Server {
 
         // Create the immutable RpcServiceContext from the pending
         // registration data.
-        self.ctx_field = Some(Arc::new(RpcServiceContext::new(
+        self.ctx_field = Some(Arc::new(RpcServiceContext::new_with_admission(
             core::mem::take(&mut self.pending_rpc_to_service_field),
             core::mem::take(&mut self.pending_fast_rpc_ids_field),
             wrapped_services,
             addr_str.clone(),
             self.pending_requests_field.clone(),
             self.drop_heartbeat_replies_field.clone(),
+            self.admission_ready_field.clone(),
             self.instance_id_field,
         )));
 
@@ -1403,6 +1444,12 @@ pub unsafe fn sconn_decode_request_and_dispatch(
         return;
     }
 
+    if !sconn.ctx_.admission_ready.load(Ordering::Acquire) {
+        let empty_fn3: ServerReplyFn = no_reply_writer();
+        sconn_reply(sconn, &req_box, SERVER_ERR_TRY_AGAIN, empty_fn3);
+        return;
+    }
+
     let svc_index_opt = sconn.ctx_.rpc_to_service.get(&rpc_id);
     if svc_index_opt.is_none() {
         let mut surpress_warning = false;
@@ -1422,8 +1469,8 @@ pub unsafe fn sconn_decode_request_and_dispatch(
             // SAFETY: the file pointer is null.
             unsafe { cpp_logging::log_line(2, 0, core::ptr::null(), &message) };
         }
-        let empty_fn3: ServerReplyFn = no_reply_writer();
-        sconn_reply(sconn, &req_box, SERVER_ERR_NO_ENTRY, empty_fn3);
+        let empty_fn4: ServerReplyFn = no_reply_writer();
+        sconn_reply(sconn, &req_box, SERVER_ERR_NO_ENTRY, empty_fn4);
         return;
     }
 

@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -329,43 +330,61 @@ class RecoveryManager {
     result.mode = detected_mode_.get();
 
     auto start_time = std::chrono::steady_clock::now();
+    auto fail_in_mode = [&result](const char* reason) {
+      RecoveryResult failure = RecoveryResult::failure(reason);
+      failure.mode = result.mode;
+      return failure;
+    };
 
-    // Fresh start: nothing to recover
-    if (recovery_mode_is_fresh(static_cast<int32_t>(result.mode))) {
-      // Set storage for future persistence
-      if (storage_) {
-        set_storage(storage_);
+    // Backend implementations and caller-provided recovery hooks can throw
+    // while decoding corrupt bytes or collecting statistics. Recovery is a
+    // fail-closed startup boundary, so none of those exceptions may escape
+    // into partially initialized server setup.
+    try {
+      // Fresh start: nothing to recover
+      if (recovery_mode_is_fresh(static_cast<int32_t>(result.mode))) {
+        // Set storage for future persistence
+        if (storage_) {
+          set_storage(storage_);
+        }
+        result.success = true;
+        result.recovered_entries = 0;
+        return result;
       }
+
+      // Normal recovery
+      if (recovery_storage_missing(storage_ != nullptr)) {
+        return fail_in_mode("Storage not initialized");
+      }
+
+      // Set storage first
+      set_storage(storage_);
+
+      // Recover state
+      if (recovery_replay_failed(recover())) {
+        return fail_in_mode("RecoverFromStorage failed");
+      }
+
+      // Get statistics
+      result.recovered_entries = storage_->size();
+      get_stats(result);
+
+      auto end_time = std::chrono::steady_clock::now();
+      result.recovery_time_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              end_time - start_time).count();
+
       result.success = true;
-      result.recovered_entries = 0;
+      Log_info("Recovery complete: {} entries in {} ms",
+               result.recovered_entries, result.recovery_time_ms);
       return result;
+    } catch (const std::exception& error) {
+      Log_error("Recovery failed with exception: {}", error.what());
+      return fail_in_mode("Recovery callback or storage operation threw");
+    } catch (...) {
+      Log_error("Recovery failed with an unknown exception");
+      return fail_in_mode("Recovery callback or storage operation threw");
     }
-
-    // Normal recovery
-    if (recovery_storage_missing(storage_ != nullptr)) {
-      return RecoveryResult::failure("Storage not initialized");
-    }
-
-    // Set storage first
-    set_storage(storage_);
-
-    // Recover state
-    if (recovery_replay_failed(recover())) {
-      return RecoveryResult::failure("RecoverFromStorage failed");
-    }
-
-    // Get statistics
-    result.recovered_entries = storage_->size();
-    get_stats(result);
-
-    auto end_time = std::chrono::steady_clock::now();
-    result.recovery_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        end_time - start_time).count();
-
-    result.success = true;
-    Log_info("Recovery complete: {} entries in {} ms",
-             result.recovered_entries, result.recovery_time_ms);
-    return result;
   }
 
  private:

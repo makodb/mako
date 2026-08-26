@@ -1252,7 +1252,12 @@ class CheckedInCanaryTests(unittest.TestCase):
         # 1961 provider-owned strong ABI symbols from the generated C++.
         # 13654 -> 13639: -15, retiring Rule's leader-aware quorum policy and
         # its three counters from reactor.rs along with the Rule protocol.
-        self.assertEqual(canonical_lines, 13639)
+        # 13639 -> 13641: +2, the waiting and composite event queues now bind
+        # each event status once while pruning both DONE and TIMEOUT entries.
+        # 13641 -> 13681: +40, the RPC server now carries a shared admission
+        # gate so Raft can reject non-heartbeat traffic until durable recovery
+        # and committed replay have completed.
+        self.assertEqual(canonical_lines, 13681)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"

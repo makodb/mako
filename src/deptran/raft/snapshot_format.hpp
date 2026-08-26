@@ -18,8 +18,10 @@
  * RustyCpp Compliance: Uses @safe/@unsafe annotations
  */
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -127,6 +129,11 @@ pub const fn snapshot_checksum_enabled(checksum_type: u8) -> bool {
     checksum_type == SnapshotChecksumType::CRC32 as u8
 }
 
+pub const fn snapshot_checksum_type_supported(checksum_type: u8) -> bool {
+    checksum_type == SnapshotChecksumType::NONE as u8 ||
+        checksum_type == SnapshotChecksumType::CRC32 as u8
+}
+
 pub const fn snapshot_checksum_size(checksum_type: u8) -> usize {
     if snapshot_checksum_enabled(checksum_type) {
         4
@@ -135,19 +142,51 @@ pub const fn snapshot_checksum_size(checksum_type: u8) -> usize {
     }
 }
 
-pub const fn snapshot_expected_serialized_size(header_size: usize,
-                                               data_size: usize,
-                                               checksum_size: usize) -> usize {
-    header_size.wrapping_add(data_size).wrapping_add(checksum_size)
+pub const fn snapshot_header_size_valid(header_size: u32,
+                                        expected_size: u32) -> bool {
+    header_size == expected_size
+}
+
+pub const fn snapshot_payload_size_within_limit(data_size: u64,
+                                                max_payload_size: u64) -> bool {
+    data_size <= max_payload_size
+}
+
+pub const fn snapshot_serialized_size_fits(header_size: usize,
+                                           data_size: usize,
+                                           checksum_size: usize,
+                                           max_size: usize) -> bool {
+    header_size <= max_size &&
+        data_size <= max_size - header_size &&
+        checksum_size <= max_size - header_size - data_size
+}
+
+pub const fn snapshot_serialized_size_matches(header_size: usize,
+                                              data_size: usize,
+                                              checksum_size: usize,
+                                              input_size: usize) -> bool {
+    header_size <= input_size &&
+        data_size <= input_size - header_size &&
+        checksum_size == input_size - header_size - data_size
+}
+
+pub const fn snapshot_serialized_size_within_limit(input_size: usize,
+                                                   max_size: usize) -> bool {
+    input_size <= max_size
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.format_decisions version=1 rust_sha256=c4fca66e2377c08c00ea74ecd23282df72dd7e91c03593fd922e8563655a7d7a*/
+/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.format_decisions version=1 rust_sha256=b3f1f4eba68b00b43b924cd72975c05b799ff3850757a3cbee77a244b10a8491*/
 constexpr bool snapshot_magic_valid(uint32_t magic);
 constexpr bool snapshot_version_valid(uint32_t version);
 constexpr bool snapshot_compression_supported(uint8_t compression);
 constexpr bool snapshot_checksum_enabled(uint8_t checksum_type);
+constexpr bool snapshot_checksum_type_supported(uint8_t checksum_type);
 constexpr size_t snapshot_checksum_size(uint8_t checksum_type);
-constexpr size_t snapshot_expected_serialized_size(size_t header_size, size_t data_size, size_t checksum_size);
+constexpr bool snapshot_header_size_valid(uint32_t header_size, uint32_t expected_size);
+constexpr bool snapshot_payload_size_within_limit(uint64_t data_size, uint64_t max_payload_size);
+constexpr bool snapshot_serialized_size_fits(size_t header_size, size_t data_size, size_t checksum_size, size_t max_size);
+constexpr bool snapshot_serialized_size_matches(size_t header_size, size_t data_size, size_t checksum_size, size_t input_size);
+constexpr bool snapshot_serialized_size_within_limit(size_t input_size, size_t max_size);
 constexpr bool snapshot_magic_valid(uint32_t magic) {
     return rusty::detail::deref_if_pointer_like(magic) == static_cast<uint32_t>(1347305811);
 }
@@ -160,6 +199,9 @@ constexpr bool snapshot_compression_supported(uint8_t compression) {
 constexpr bool snapshot_checksum_enabled(uint8_t checksum_type) {
     return rusty::detail::deref_if_pointer_like(checksum_type) == (static_cast<uint8_t>(SnapshotChecksumType_CRC32()));
 }
+constexpr bool snapshot_checksum_type_supported(uint8_t checksum_type) {
+    return (rusty::detail::deref_if_pointer_like(checksum_type) == (static_cast<uint8_t>(SnapshotChecksumType_NONE()))) || (rusty::detail::deref_if_pointer_like(checksum_type) == (static_cast<uint8_t>(SnapshotChecksumType_CRC32())));
+}
 constexpr size_t snapshot_checksum_size(uint8_t checksum_type) {
     if (snapshot_checksum_enabled(std::move(checksum_type))) {
         return static_cast<size_t>(4);
@@ -167,8 +209,20 @@ constexpr size_t snapshot_checksum_size(uint8_t checksum_type) {
         return static_cast<size_t>(0);
     }
 }
-constexpr size_t snapshot_expected_serialized_size(size_t header_size, size_t data_size, size_t checksum_size) {
-    return rusty::wrapping_add(rusty::wrapping_add(header_size, static_cast<std::remove_cvref_t<decltype(header_size)>>(std::move(data_size))), static_cast<std::remove_cvref_t<decltype(rusty::wrapping_add(header_size, static_cast<std::remove_cvref_t<decltype(header_size)>>(std::move(data_size))))>>(std::move(checksum_size)));
+constexpr bool snapshot_header_size_valid(uint32_t header_size, uint32_t expected_size) {
+    return rusty::detail::deref_if_pointer_like(header_size) == rusty::detail::deref_if_pointer_like(expected_size);
+}
+constexpr bool snapshot_payload_size_within_limit(uint64_t data_size, uint64_t max_payload_size) {
+    return rusty::detail::deref_if_pointer_like(data_size) <= rusty::detail::deref_if_pointer_like(max_payload_size);
+}
+constexpr bool snapshot_serialized_size_fits(size_t header_size, size_t data_size, size_t checksum_size, size_t max_size) {
+    return ((rusty::detail::deref_if_pointer_like(header_size) <= rusty::detail::deref_if_pointer_like(max_size)) && (rusty::detail::deref_if_pointer_like(data_size) <= (rusty::detail::deref_if_pointer_like(max_size) - rusty::detail::deref_if_pointer_like(header_size)))) && (rusty::detail::deref_if_pointer_like(checksum_size) <= ((rusty::detail::deref_if_pointer_like(max_size) - rusty::detail::deref_if_pointer_like(header_size)) - rusty::detail::deref_if_pointer_like(data_size)));
+}
+constexpr bool snapshot_serialized_size_matches(size_t header_size, size_t data_size, size_t checksum_size, size_t input_size) {
+    return ((rusty::detail::deref_if_pointer_like(header_size) <= rusty::detail::deref_if_pointer_like(input_size)) && (rusty::detail::deref_if_pointer_like(data_size) <= (rusty::detail::deref_if_pointer_like(input_size) - rusty::detail::deref_if_pointer_like(header_size)))) && (rusty::detail::deref_if_pointer_like(checksum_size) == ((rusty::detail::deref_if_pointer_like(input_size) - rusty::detail::deref_if_pointer_like(header_size)) - rusty::detail::deref_if_pointer_like(data_size)));
+}
+constexpr bool snapshot_serialized_size_within_limit(size_t input_size, size_t max_size) {
+    return rusty::detail::deref_if_pointer_like(input_size) <= rusty::detail::deref_if_pointer_like(max_size);
 }
 /*RUSTYCPP:GEN-END id=raft_snapshot.format_decisions*/
 
@@ -181,7 +235,20 @@ static_assert(!snapshot_compression_supported(0xff));
 static_assert(snapshot_checksum_size(0) == 0);
 static_assert(snapshot_checksum_size(1) == 4);
 static_assert(snapshot_checksum_size(0xff) == 0);
-static_assert(snapshot_expected_serialized_size(52, 7, 4) == 63);
+static_assert(snapshot_checksum_type_supported(0));
+static_assert(snapshot_checksum_type_supported(1));
+static_assert(!snapshot_checksum_type_supported(2));
+static_assert(!snapshot_checksum_type_supported(0xff));
+static_assert(snapshot_header_size_valid(52, 52));
+static_assert(!snapshot_header_size_valid(51, 52));
+static_assert(snapshot_payload_size_within_limit(7, 7));
+static_assert(!snapshot_payload_size_within_limit(8, 7));
+static_assert(snapshot_serialized_size_fits(52, 7, 4, 63));
+static_assert(!snapshot_serialized_size_fits(52, 8, 4, 63));
+static_assert(snapshot_serialized_size_matches(52, 7, 4, 63));
+static_assert(!snapshot_serialized_size_matches(52, 7, 4, 64));
+static_assert(snapshot_serialized_size_within_limit(63, 63));
+static_assert(!snapshot_serialized_size_within_limit(64, 63));
 
 /**
  * Binary header for snapshot files.
@@ -386,6 +453,13 @@ class SnapshotFormat {
   static constexpr uint32_t MAGIC = 0x504E4153;
   // Format version
   static constexpr uint32_t VERSION = 1;
+  // Matches ReplicatedDB's maximum compressed archive wire size: the
+  // vendored LZ4-compatible raw limit, worst-case compression overhead, and
+  // ReplicatedDB's five-byte compression header.
+  static constexpr size_t MAX_PAYLOAD_SIZE =
+      0x7E000000ULL + (0x7E000000ULL / 255) + 16 + 1 + sizeof(uint32_t);
+  static constexpr size_t MAX_SERIALIZED_SIZE =
+      sizeof(SnapshotHeader) + MAX_PAYLOAD_SIZE + sizeof(uint32_t);
 
   /**
    * Serialize snapshot data to binary format.
@@ -410,10 +484,50 @@ class SnapshotFormat {
       rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: null output");
       return false;
     }
+    if (size > 0 && data == nullptr) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: null data with nonzero "
+                     "size");
+      return false;
+    }
+    if (!snapshot_payload_size_within_limit(
+            static_cast<uint64_t>(size),
+            static_cast<uint64_t>(MAX_PAYLOAD_SIZE))) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: payload too large "
+                     "({} > {})",
+                     size, MAX_PAYLOAD_SIZE);
+      return false;
+    }
 
     // Only NONE compression is supported
     if (!snapshot_compression_supported(static_cast<uint8_t>(compression))) {
       rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: compression not supported");
+      return false;
+    }
+
+    const uint8_t raw_checksum_type =
+        static_cast<uint8_t>(checksum_type);
+    if (!snapshot_checksum_type_supported(raw_checksum_type)) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: checksum type not "
+                     "supported ({})",
+                     raw_checksum_type);
+      return false;
+    }
+
+    const size_t checksum_size =
+        snapshot_checksum_size(raw_checksum_type);
+    if (!snapshot_serialized_size_fits(
+            sizeof(SnapshotHeader), size, checksum_size,
+            std::numeric_limits<size_t>::max())) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: size arithmetic overflow");
+      return false;
+    }
+    const size_t total_size =
+        sizeof(SnapshotHeader) + size + checksum_size;
+    if (!snapshot_serialized_size_within_limit(
+            total_size, MAX_SERIALIZED_SIZE)) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: envelope too large "
+                     "({} > {})",
+                     total_size, MAX_SERIALIZED_SIZE);
       return false;
     }
 
@@ -437,15 +551,9 @@ class SnapshotFormat {
 
     // Calculate data checksum
     uint32_t data_crc = 0;
-    if (snapshot_checksum_enabled(static_cast<uint8_t>(checksum_type))) {
+    if (snapshot_checksum_enabled(raw_checksum_type)) {
       data_crc = CRC32::Calculate(data, size);
     }
-
-    // Calculate output size: header + data + checksum
-    size_t checksum_size =
-        snapshot_checksum_size(static_cast<uint8_t>(checksum_type));
-    size_t total_size = snapshot_expected_serialized_size(
-        sizeof(SnapshotHeader), size, checksum_size);
 
     // Resize output and copy data
     output->resize(total_size);
@@ -462,7 +570,7 @@ class SnapshotFormat {
     }
 
     // Copy checksum
-    if (snapshot_checksum_enabled(static_cast<uint8_t>(checksum_type))) {
+    if (snapshot_checksum_enabled(raw_checksum_type)) {
       std::memcpy(ptr, &data_crc, 4);
     }
 
@@ -495,6 +603,13 @@ class SnapshotFormat {
                 input_size, sizeof(SnapshotHeader));
       return false;
     }
+    if (!snapshot_serialized_size_within_limit(
+            input_size, MAX_SERIALIZED_SIZE)) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: input too large "
+                     "({} > {})",
+                     input_size, MAX_SERIALIZED_SIZE);
+      return false;
+    }
 
     // Copy header
     SnapshotHeader header;
@@ -508,6 +623,14 @@ class SnapshotFormat {
     }
     if (!snapshot_version_valid(header.version)) {
       rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version {}", header.version);
+      return false;
+    }
+    if (!snapshot_header_size_valid(
+            header.header_size,
+            static_cast<uint32_t>(sizeof(SnapshotHeader)))) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid header size {} "
+                     "(expected {})",
+                     header.header_size, sizeof(SnapshotHeader));
       return false;
     }
 
@@ -525,13 +648,33 @@ class SnapshotFormat {
       return false;
     }
 
-    // Calculate expected total size
-    size_t checksum_size = snapshot_checksum_size(header.checksum_type);
-    size_t expected_size = snapshot_expected_serialized_size(
-        sizeof(SnapshotHeader), header.data_size, checksum_size);
-    if (input_size < expected_size) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: input truncated ({} < {})",
-                input_size, expected_size);
+    if (!snapshot_checksum_type_supported(header.checksum_type)) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: checksum type not "
+                     "supported ({})",
+                     header.checksum_type);
+      return false;
+    }
+
+    if (!snapshot_payload_size_within_limit(
+            header.data_size,
+            static_cast<uint64_t>(MAX_PAYLOAD_SIZE))) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: payload too large "
+                     "({} > {})",
+                     header.data_size, MAX_PAYLOAD_SIZE);
+      return false;
+    }
+
+    // The cap above is representable in size_t on every supported target, so
+    // this cast is safe. Subtraction-based validation avoids overflow and also
+    // rejects trailing bytes rather than treating them as a second payload.
+    const size_t data_size = static_cast<size_t>(header.data_size);
+    const size_t checksum_size =
+        snapshot_checksum_size(header.checksum_type);
+    if (!snapshot_serialized_size_matches(
+            sizeof(SnapshotHeader), data_size, checksum_size, input_size)) {
+      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: serialized size does not "
+                     "match header (input={}, payload={}, checksum={})",
+                     input_size, data_size, checksum_size);
       return false;
     }
 
@@ -539,8 +682,8 @@ class SnapshotFormat {
     const char* data_ptr = input + sizeof(SnapshotHeader);
     if (snapshot_checksum_enabled(header.checksum_type)) {
       uint32_t expected_crc;
-      std::memcpy(&expected_crc, data_ptr + header.data_size, 4);
-      uint32_t actual_crc = CRC32::Calculate(data_ptr, header.data_size);
+      std::memcpy(&expected_crc, data_ptr + data_size, sizeof(expected_crc));
+      uint32_t actual_crc = CRC32::Calculate(data_ptr, data_size);
       if (expected_crc != actual_crc) {
         rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x{:08X} != 0x{:08X})",
                   expected_crc, actual_crc);
@@ -551,7 +694,7 @@ class SnapshotFormat {
     // Extract fields
     *last_index = header.last_index;
     *last_term = header.last_term;
-    data->assign(data_ptr, header.data_size);
+    data->assign(data_ptr, data_size);
 
     return true;
   }
@@ -568,14 +711,38 @@ class SnapshotFormat {
     if (input_size < sizeof(SnapshotHeader)) {
       return false;
     }
-    std::memcpy(header, input, sizeof(SnapshotHeader));
-    if (!snapshot_magic_valid(header->magic) ||
-        !snapshot_version_valid(header->version)) {
+    if (!snapshot_serialized_size_within_limit(
+            input_size, MAX_SERIALIZED_SIZE)) {
+      return false;
+    }
+    SnapshotHeader candidate;
+    std::memcpy(&candidate, input, sizeof(candidate));
+    if (!snapshot_magic_valid(candidate.magic) ||
+        !snapshot_version_valid(candidate.version) ||
+        !snapshot_header_size_valid(
+            candidate.header_size,
+            static_cast<uint32_t>(sizeof(SnapshotHeader))) ||
+        !snapshot_compression_supported(candidate.compression) ||
+        !snapshot_checksum_type_supported(candidate.checksum_type) ||
+        !snapshot_payload_size_within_limit(
+            candidate.data_size,
+            static_cast<uint64_t>(MAX_PAYLOAD_SIZE))) {
+      return false;
+    }
+    const size_t data_size = static_cast<size_t>(candidate.data_size);
+    const size_t checksum_size =
+        snapshot_checksum_size(candidate.checksum_type);
+    if (!snapshot_serialized_size_matches(
+            sizeof(SnapshotHeader), data_size, checksum_size, input_size)) {
       return false;
     }
     // Verify header CRC
     uint32_t expected_crc = CRC32::Calculate(input, 44);
-    return header->header_crc == expected_crc;
+    if (candidate.header_crc != expected_crc) {
+      return false;
+    }
+    *header = candidate;
+    return true;
   }
 
  private:
@@ -586,6 +753,17 @@ class SnapshotFormat {
     return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
   }
 };
+
+static_assert(SnapshotFormat::MAX_PAYLOAD_SIZE <=
+              std::numeric_limits<size_t>::max() -
+                  sizeof(SnapshotHeader) - sizeof(uint32_t));
+static_assert(SnapshotFormat::MAX_PAYLOAD_SIZE <=
+              static_cast<size_t>(std::numeric_limits<int>::max()));
+static_assert(SnapshotFormat::MAX_SERIALIZED_SIZE <=
+              static_cast<size_t>(std::numeric_limits<int>::max()));
+static_assert(SnapshotFormat::MAX_SERIALIZED_SIZE ==
+              sizeof(SnapshotHeader) + SnapshotFormat::MAX_PAYLOAD_SIZE +
+                  sizeof(uint32_t));
 
 }  // namespace raft
 }  // namespace janus

@@ -361,6 +361,17 @@ public:
     virtual bool set_metadata(const std::string& key, const std::string& value) = 0;
 
     /**
+     * Atomically store a group of metadata values.
+     *
+     * Raft's current term and vote are one persistent state transition.  A
+     * backend must therefore expose a real all-or-nothing write instead of
+     * emulating this operation with successive set_metadata() calls.
+     */
+    // @safe - Abstract method; implementations provide one atomic operation
+    virtual bool set_metadata_batch(
+        const std::vector<std::pair<std::string, std::string>>& entries) = 0;
+
+    /**
      * Retrieve metadata.
      * @param key Metadata key
      * @return Some(value) if found, None if not found

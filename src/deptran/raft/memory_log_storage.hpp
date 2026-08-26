@@ -264,6 +264,20 @@ public:
         return true;
     }
 
+    // @safe - One mutex acquisition makes the whole metadata transition atomic
+    bool set_metadata_batch(
+        const std::vector<std::pair<std::string, std::string>>& entries)
+        override {
+        if (!memory_log_storage_is_usable(is_open_.get())) {
+            return false;
+        }
+        auto guard = metadata_.lock().unwrap();
+        for (const auto& [key, value] : entries) {
+            (*guard)[key] = value;
+        }
+        return true;
+    }
+
     // @safe - Thread-safe metadata get
     rusty::Option<std::string> get_metadata(const std::string& key) const override {
         if (!memory_log_storage_is_usable(is_open_.get())) {
