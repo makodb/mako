@@ -141,6 +141,7 @@ struct FakeTxn;
 struct State {
     attached: bool,
     poisoned: bool,
+    quarantine_transitions: u64,
     db: Option<Box<FakeDb>>,
     table: Option<Box<FakeTable>>,
     txn: Option<Box<FakeTxn>>,
@@ -164,6 +165,7 @@ fn with_state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 fn poison(state: &mut State) {
     if !state.poisoned {
         state.poisoned = true;
+        state.quarantine_transitions += 1;
         QUARANTINED_WORKERS.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -188,6 +190,10 @@ pub(super) fn push(step: Step) {
 
 pub(super) fn calls() -> Vec<Call> {
     STATE.with(|state| state.borrow().calls.clone())
+}
+
+pub(super) fn local_quarantine_transition_count() -> u64 {
+    STATE.with(|state| state.borrow().quarantine_transitions)
 }
 
 pub(super) fn assert_drained() {
@@ -871,7 +877,8 @@ mod tests {
         drop(transaction);
 
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
-        assert_eq!(quarantined_worker_count().unwrap(), before + 1);
+        assert_eq!(local_quarantine_transition_count(), 1);
+        assert!(quarantined_worker_count().unwrap() >= before + 1);
         assert!(matches!(db.transaction(), Err(Error::WorkerPoisoned)));
         assert_call_count(Call::Begin, 1);
         assert_call_count(Call::Abort, 1);
@@ -1001,7 +1008,8 @@ mod tests {
         assert_call_count(Call::Abort, 1);
         assert_call_count(Call::Destroy, 1);
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
-        assert_eq!(quarantined_worker_count().unwrap(), before + 1);
+        assert_eq!(local_quarantine_transition_count(), 1);
+        assert!(quarantined_worker_count().unwrap() >= before + 1);
         assert!(matches!(db.transaction(), Err(Error::WorkerPoisoned)));
         assert_call_count(Call::Begin, 1);
         assert_call_count(Call::Abort, 1);
@@ -1148,7 +1156,8 @@ mod tests {
         );
         drop(transaction);
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
-        assert_eq!(quarantined_worker_count().unwrap(), before + 1);
+        assert_eq!(local_quarantine_transition_count(), 1);
+        assert!(quarantined_worker_count().unwrap() >= before + 1);
         assert_call_count(Call::Put, 1);
         assert_call_count(Call::Abort, 1);
         assert_call_count(Call::Destroy, 1);
@@ -1284,7 +1293,8 @@ mod tests {
         );
         drop(transaction);
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
-        assert_eq!(quarantined_worker_count().unwrap(), before + 1);
+        assert_eq!(local_quarantine_transition_count(), 1);
+        assert!(quarantined_worker_count().unwrap() >= before + 1);
         assert_call_count(Call::Scan, 1);
         assert_call_count(Call::Put, 0);
         assert_call_count(Call::Abort, 1);
@@ -1316,7 +1326,8 @@ mod tests {
         });
         assert!(matches!(db.transaction(), Err(Error::WorkerPoisoned)));
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
-        assert_eq!(quarantined_worker_count().unwrap(), before + 1);
+        assert_eq!(local_quarantine_transition_count(), 1);
+        assert!(quarantined_worker_count().unwrap() >= before + 1);
         assert!(matches!(db.transaction(), Err(Error::WorkerPoisoned)));
         assert_call_count(Call::Begin, 1);
         assert_call_count(Call::Abort, 0);
