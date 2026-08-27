@@ -1553,6 +1553,40 @@ if(NOT TARGET memdb)
     target_link_libraries(memdb rrr pthread)
 endif()
 
+# Matched native STO/Masstree half of the Rust comparison benchmark. Keep it
+# opt-in and avoid the Rust application target. The existing mako target still
+# brings its public native dependency closure into this executable.
+add_executable(sto_masstree_cpp_bench EXCLUDE_FROM_ALL
+    src/mako/benchmarks/sto_masstree_compare.cc
+)
+target_include_directories(sto_masstree_cpp_bench PRIVATE
+    ${MASSTREE_CONFIG_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+    ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/memdb
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
+)
+target_compile_options(sto_masstree_cpp_bench PRIVATE
+    ${BENCH_CXXFLAGS}
+    ${MASSTREE_FORCE_INCLUDE_FLAG}
+)
+target_compile_definitions(sto_masstree_cpp_bench PRIVATE
+    CONFIG_H=\"${CONFIG_H}\"
+)
+target_link_libraries(sto_masstree_cpp_bench PRIVATE
+    mako
+    rrr
+    memdb
+    yaml-cpp
+    rocksdb
+    lz4
+    pthread
+    ${BENCH_LDFLAGS}
+    ${LIBEVENT_LDFLAGS}
+)
+
 # ============================================================================
 # Test Configuration
 # ============================================================================
