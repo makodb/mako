@@ -1259,7 +1259,11 @@ class CheckedInCanaryTests(unittest.TestCase):
         # `saturating_add` and the derived `TCP_MAX_FRAME_PAYLOAD_SIZE` each
         # replace a line rather than adding one. The dual-compile gate still
         # reports the same 1961 provider-owned strong ABI symbols.
-        self.assertEqual(canonical_lines, 13641)
+        # 13641 -> 13642: +1, the `pending_queue_.clear_all(...)` drain added
+        # to `client.rs::invalidate_pending_futures`, so that close(),
+        # mark_closing() and Drop stop destroying buffered request callbacks
+        # unfired. One statement; the rest of that commit is comment.
+        self.assertEqual(canonical_lines, 13642)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
