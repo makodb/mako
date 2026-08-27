@@ -302,9 +302,11 @@ int mako_local_advance_mako_timestamp_past(uint32_t observed)
 
 /* One local in-memory database facade. Multiple facades share the process STO
  * runtime but own disjoint tables. close returns BUSY while a transaction
- * belonging to this database is active. The sized entry point requires the
- * complete v0 prefix and rejects every nonzero flag. The original entry point
- * is retained as the default-options spelling. */
+ * belonging to this database is active. close requires external quiescence
+ * and must not race with begin or any other use of the database or its tables.
+ * The sized entry point requires the complete v0 prefix and rejects every
+ * nonzero flag. The original entry point is retained as the default-options
+ * spelling. */
 int mako_local_db_open_with_options(const mako_local_db_options *options,
                                     mako_local_db **out)
     MAKO_LOCAL_NOEXCEPT;
@@ -404,9 +406,11 @@ int mako_local_txn_rscan_chunk(
     size_t *arena_required_out, uint8_t *done_out) MAKO_LOCAL_NOEXCEPT;
 
 /* Commit/abort end the transaction but retain the small opaque handle so the
- * caller can inspect the status safely. destroy frees it; destroying an active
- * transaction first aborts it. If native abort cleanup fails, the handle,
- * buffers, database accounting, and owner worker are permanently quarantined.
+ * caller can inspect the status safely. destroy consumes it; its native
+ * storage may be retained internally for reuse only after the pointer becomes
+ * invalid. Destroying an active transaction first aborts it. If native abort
+ * cleanup fails, the handle, buffers, active-database marker, and owner worker
+ * are permanently quarantined.
  * A well-formed owner-thread transaction call then reports WORKER_POISONED
  * after its ordinary argument validation. Call destroy exactly once after an
  * operation first reports cleanup uncertainty: WORKER_POISONED confirms

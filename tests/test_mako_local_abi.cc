@@ -689,15 +689,29 @@ CleanupFailureResult run_cleanup_failure(uint32_t boundary) {
     std::thread conflict_writer;
 
     if (boundary == MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN) {
+      // Warm the worker's facade-storage cache first. The injected failure
+      // must quarantine the reused facade and retain its database marker,
+      // rather than return it to the cache as though cleanup succeeded.
+      result.setup = result.table_open;
+      mako_local_txn *warm = nullptr;
+      if (result.setup == MAKO_LOCAL_OK)
+        result.setup = mako_local_txn_begin(db, &warm);
+      if (result.setup == MAKO_LOCAL_OK)
+        result.setup = mako_local_txn_abort(warm);
+      if (warm != nullptr) {
+        const int warm_destroy = mako_local_txn_destroy(warm);
+        if (result.setup == MAKO_LOCAL_OK)
+          result.setup = warm_destroy;
+      }
+
       result.invalid_arm = mako_local_test_arm_cleanup_failure(0);
       result.arm = mako_local_test_arm_cleanup_failure(boundary);
       result.second_arm = mako_local_test_arm_cleanup_failure(boundary);
       txn = reinterpret_cast<mako_local_txn *>(uintptr_t{1});
-      if (result.table_open == MAKO_LOCAL_OK)
+      if (result.setup == MAKO_LOCAL_OK)
         result.boundary_status = mako_local_txn_begin(db, &txn);
       result.boundary_begin_out_was_null = txn == nullptr;
       result.begin = result.boundary_status;
-      result.setup = MAKO_LOCAL_OK;
     } else {
       result.setup = result.table_open;
       if (boundary == MAKO_LOCAL_CLEANUP_BOUNDARY_OPERATION &&
@@ -2482,6 +2496,7 @@ TEST_F(LocalAbiTest, NestedBeginAndWrongDatabaseTableAreRejected) {
 TEST_F(LocalAbiTest, WrongThreadAndFinishedHandlesAreRejected) {
   auto *txn = begin();
   std::atomic<int> wrong_thread_status{MAKO_LOCAL_INTERNAL};
+  std::atomic<int> wrong_thread_destroy{MAKO_LOCAL_INTERNAL};
   std::thread other([&] {
     uint8_t *value = nullptr;
     size_t value_len = 0;
@@ -2490,14 +2505,21 @@ TEST_F(LocalAbiTest, WrongThreadAndFinishedHandlesAreRejected) {
         txn, primary, reinterpret_cast<const uint8_t *>("key"), 3, &value,
         &value_len, &found));
     mako_local_bytes_free(value);
+    wrong_thread_destroy.store(mako_local_txn_destroy(txn));
   });
   other.join();
   EXPECT_EQ(wrong_thread_status.load(), MAKO_LOCAL_WRONG_THREAD);
+  EXPECT_EQ(wrong_thread_destroy.load(), MAKO_LOCAL_WRONG_THREAD);
 
   ASSERT_EQ(mako_local_txn_commit(txn), MAKO_LOCAL_OK);
   EXPECT_EQ(put(txn, primary, "after", "commit"), MAKO_LOCAL_TXN_FINISHED);
   EXPECT_EQ(mako_local_txn_abort(txn), MAKO_LOCAL_TXN_FINISHED);
   destroy_tracked(txn);
+
+  auto *next = begin();
+  ASSERT_EQ(put(next, primary, "after-wrong-thread-destroy", "works"),
+            MAKO_LOCAL_OK);
+  commit_and_destroy(next);
 }
 
 #if READ_MY_WRITES
@@ -2688,6 +2710,110 @@ TEST_F(LocalAbiTest, DatabaseCloseReportsBusyUntilTransactionEnds) {
   auto *txn = begin();
   EXPECT_EQ(mako_local_db_close(db), MAKO_LOCAL_BUSY);
   abort_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, ActiveTransactionOnAnotherWorkerKeepsDatabaseBusy) {
+  struct WorkerResult {
+    int attach = MAKO_LOCAL_INTERNAL;
+    int begin = MAKO_LOCAL_INTERNAL;
+    int abort = MAKO_LOCAL_INTERNAL;
+    int destroy = MAKO_LOCAL_INTERNAL;
+  } result;
+  std::barrier phase(2);
+  std::atomic<int> close_status{MAKO_LOCAL_INTERNAL};
+
+  std::thread worker([&] {
+    result.attach = mako_local_thread_attach();
+    mako_local_txn *txn = nullptr;
+    if (result.attach == MAKO_LOCAL_OK)
+      result.begin = mako_local_txn_begin(db, &txn);
+    phase.arrive_and_wait();
+    phase.arrive_and_wait();
+    // If close unexpectedly consumed the database, retaining the leaked
+    // facade is safer than dereferencing its now-invalid owner in cleanup.
+    if (txn != nullptr &&
+        close_status.load(std::memory_order_acquire) != MAKO_LOCAL_OK) {
+      result.abort = mako_local_txn_abort(txn);
+      result.destroy = mako_local_txn_destroy(txn);
+    }
+  });
+
+  phase.arrive_and_wait();
+  const int close = mako_local_db_close(db);
+  if (close == MAKO_LOCAL_OK)
+    db = nullptr;
+  close_status.store(close, std::memory_order_release);
+  phase.arrive_and_wait();
+  worker.join();
+
+  EXPECT_EQ(result.attach, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.begin, MAKO_LOCAL_OK);
+  EXPECT_EQ(close, MAKO_LOCAL_BUSY);
+  EXPECT_EQ(result.abort, MAKO_LOCAL_OK);
+  EXPECT_EQ(result.destroy, MAKO_LOCAL_OK);
+}
+
+TEST_F(LocalAbiTest, RecycledHandleChangesDatabaseWithoutStaleBusyState) {
+  auto *first = begin();
+  ASSERT_EQ(put(first, primary, "first-db", "committed"), MAKO_LOCAL_OK);
+  commit_and_destroy(first);
+
+  mako_local_db *other_db = nullptr;
+  mako_local_table *other_table = nullptr;
+  ASSERT_EQ(mako_local_db_open(&other_db), MAKO_LOCAL_OK);
+  const std::string other_name = "recycled-owner";
+  ASSERT_EQ(mako_local_table_open(
+                other_db, reinterpret_cast<const uint8_t *>(other_name.data()),
+                other_name.size(), next_table_id.fetch_add(1), &other_table),
+            MAKO_LOCAL_OK);
+
+  mako_local_txn *other_txn = nullptr;
+  ASSERT_EQ(mako_local_txn_begin(other_db, &other_txn), MAKO_LOCAL_OK);
+  ASSERT_NE(other_txn, nullptr);
+  ASSERT_EQ(put(other_txn, other_table, "second-db", "active"), MAKO_LOCAL_OK);
+
+  // The worker slot follows the active owner, not the database retained by a
+  // previously recycled facade.
+  const int first_close = mako_local_db_close(db);
+  EXPECT_EQ(first_close, MAKO_LOCAL_OK);
+  if (first_close == MAKO_LOCAL_OK)
+    db = nullptr;
+  EXPECT_EQ(mako_local_db_close(other_db), MAKO_LOCAL_BUSY);
+
+  EXPECT_EQ(mako_local_txn_abort(other_txn), MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_local_txn_destroy(other_txn), MAKO_LOCAL_OK);
+  EXPECT_EQ(mako_local_db_close(other_db), MAKO_LOCAL_OK);
+}
+
+TEST_F(LocalAbiTest, FinishedHandlesCanBeDestroyedOutOfOrderAndReused) {
+  auto *first = begin();
+  ASSERT_EQ(put(first, primary, "finished-first", "one"), MAKO_LOCAL_OK);
+  ASSERT_EQ(mako_local_txn_commit(first), MAKO_LOCAL_OK);
+
+  mako_local_txn *second = nullptr;
+  ASSERT_EQ(mako_local_txn_begin(db, &second), MAKO_LOCAL_OK);
+  ASSERT_NE(second, nullptr);
+  ASSERT_EQ(put(second, primary, "finished-second", "two"), MAKO_LOCAL_OK);
+
+  // Destroying the older facade while the next transaction is active must
+  // neither clear nor alias the worker's active-database slot.
+  EXPECT_EQ(mako_local_txn_destroy(first), MAKO_LOCAL_OK);
+  if (txn_for_cleanup == first)
+    txn_for_cleanup = second;
+  EXPECT_EQ(mako_local_db_close(db), MAKO_LOCAL_BUSY);
+  ASSERT_EQ(mako_local_txn_commit(second), MAKO_LOCAL_OK);
+
+  // The older facade occupies the one-slot worker cache, so consuming this
+  // second facade must remain safe even though it cannot itself be retained.
+  EXPECT_EQ(mako_local_txn_destroy(second), MAKO_LOCAL_OK);
+  txn_for_cleanup = nullptr;
+
+  auto *third = begin();
+  EXPECT_EQ(get(third, primary, "finished-first").second,
+            std::optional<std::string>("one"));
+  EXPECT_EQ(get(third, primary, "finished-second").second,
+            std::optional<std::string>("two"));
+  commit_and_destroy(third);
 }
 
 #if !READ_MY_WRITES

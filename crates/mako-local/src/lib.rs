@@ -927,8 +927,8 @@ impl Table<'_> {
 ///     scope.spawn(|| assert!(std::mem::size_of_val(&tx) > 0));
 /// });
 /// ```
-/// A transaction cannot outlive the database whose accounting and tables it
-/// borrows:
+/// A transaction cannot outlive the database whose native marker and tables
+/// it borrows:
 ///
 /// ```compile_fail
 /// let tx = {
@@ -1260,7 +1260,8 @@ impl<'db> Transaction<'db> {
     fn operation_status(&mut self, code: i32) -> Result<()> {
         // A finished or terminal-uncertain native transaction must never be
         // used for another operation or commit. Drop still calls destroy once,
-        // which either frees a clean terminal facade or observes quarantine.
+        // which either consumes a clean terminal facade or observes
+        // quarantine. Native storage may be recycled after consumption.
         if operation_effect(code) != OperationEffect::Active {
             self.active = false;
         }
@@ -1503,8 +1504,9 @@ impl<'db> Transaction<'db> {
             .expect("transaction handle already consumed");
         if !self.active {
             // An earlier terminal operation may have ended or quarantined
-            // native state. Destroy frees a clean terminal handle or reports
-            // quarantine, but commit must never touch either state.
+            // native state. Destroy consumes and invalidates a clean terminal
+            // handle or reports quarantine, but commit must never touch
+            // either state.
             let destroy = unsafe { abi::mako_local_txn_destroy(raw.as_ptr()) };
             return CommitReport {
                 disposition: CommitDisposition::Aborted(Error::TransactionFinished),
@@ -1513,7 +1515,8 @@ impl<'db> Transaction<'db> {
         }
         self.active = false;
         let commit = native_commit(raw.as_ptr());
-        // SAFETY: commit is terminal; destroy only frees the facade handle.
+        // SAFETY: commit is terminal; destroy only consumes and invalidates
+        // the facade handle. Native storage may be recycled internally.
         let destroy = unsafe { abi::mako_local_txn_destroy(raw.as_ptr()) };
         let disposition = commit_disposition(commit);
         CommitReport {

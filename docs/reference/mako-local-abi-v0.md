@@ -82,9 +82,9 @@ The operation tables use the following state notation:
 | State | Meaning | Worker health | Handle cleanup |
 | --- | --- | --- | --- |
 | **A** | The transaction is active. | The owner worker is healthy but occupied by this transaction. | The handle must eventually be committed, aborted, or destroyed. |
-| **F** | The transaction has finished. Native transaction TLS and database active-transaction accounting were released. | The owner worker is healthy and may begin another transaction. | The small facade handle is still live and must be destroyed on its owner thread. |
-| **Q** | Native transaction or facade cleanup could not be proved complete. Every facade, referenced buffer, TLS owner, and database-accounting reference that might still be live is retained. A failed begin can enter **Q** without returning a facade. | An independent TLS quarantine marker makes the owner worker permanently transaction-unusable. Retire it. | If a facade was returned, call destroy once as described below; after destroy reports `WORKER_POISONED`, do not retry or dereference it. A failed begin returns no handle to destroy. |
-| **D** | The facade handle was destroyed. | The worker health is whatever the preceding state established. | The pointer is invalid and must not be used again. |
+| **F** | The transaction has finished. Native transaction TLS and the worker's active-database marker were released. | The owner worker is healthy and may begin another transaction. | The small facade handle is still live and must be destroyed on its owner thread. |
+| **Q** | Native transaction or facade cleanup could not be proved complete. Every facade, referenced buffer, TLS owner, and active-database marker that might still be live is retained. A failed begin can enter **Q** without returning a facade. | An independent TLS quarantine marker makes the owner worker permanently transaction-unusable. Retire it. | If a facade was returned, call destroy once as described below; after destroy reports `WORKER_POISONED`, do not retry or dereference it. A failed begin returns no handle to destroy. |
+| **D** | The facade handle was destroyed. | The worker health is whatever the preceding state established. | The pointer is invalid and must not be used again. Native facade storage may be retained internally for a later transaction. |
 
 Only a properly formed call on the owner thread is guaranteed to surface a
 pre-existing **Q** state as `MAKO_LOCAL_WORKER_POISONED`. Argument and output-pointer
@@ -222,7 +222,7 @@ flag exposed by `mako_local_worker_health()`.
   mutex. Supporting several recovered namespaces requires a supervisor to
   identify and scan every backend, floor the shared Mako timestamp authority,
   and only then admit work to any namespace.
-- A **Q** transaction retains database active-transaction accounting, so
+- A **Q** transaction retains its worker's active-database marker, so
   `db_close` continues to return `BUSY`. This is intentional containment.
 - Quarantine is stored independently of a transaction facade in TLS. It
   therefore survives a failed begin that returned no handle and remains

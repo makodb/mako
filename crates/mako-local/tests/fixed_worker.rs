@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use mako_local::worker::{FixedWorkerPool, FixedWorkerPoolOptions, RetryPolicy, TaskError};
-use mako_local::{features, LocalDb, TestCleanupBoundary};
+use mako_local::{features, Error, LocalDb, TestCleanupBoundary};
 
 const TABLE_NAME: &str = "rust-production-fixed-worker";
 const TABLE_ID: u64 = 24_200;
@@ -75,6 +75,11 @@ fn production_pool_keeps_transactions_on_fixed_workers_and_commits_progress() {
     assert_eq!(metrics.completed_tasks, 14);
     let stopped = pool.shutdown().expect("join production workers");
     assert_eq!(stopped.stopped_workers, 2);
+    let database = Arc::try_unwrap(database)
+        .unwrap_or_else(|_| panic!("worker pool retained its database Arc"));
+    database
+        .close()
+        .expect("healthy worker shutdown released native database markers");
 }
 
 #[test]
@@ -113,8 +118,9 @@ fn native_cleanup_quarantine_retires_the_worker_when_hooks_are_available() {
     let stopped = pool.shutdown().expect("join quarantined worker");
     assert_eq!(stopped.poisoned_workers, 1);
 
-    // Native cleanup is intentionally uncertain, so the quarantined facade and
-    // its database accounting remain rooted until process exit. This test owns
-    // a fresh integration-test process and never attempts worker reuse.
-    std::mem::forget(database);
+    // Native cleanup is intentionally uncertain. The worker has exited, but
+    // its process-lifetime active-database marker must keep close diagnostic.
+    let database = Arc::try_unwrap(database)
+        .unwrap_or_else(|_| panic!("worker pool retained its database Arc"));
+    assert_eq!(database.close(), Err(Error::Busy));
 }

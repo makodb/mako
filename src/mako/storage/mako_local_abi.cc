@@ -8,6 +8,7 @@
 #include "sto/thread_registration.hh"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <climits>
 #include <cstdlib>
@@ -38,12 +39,12 @@ struct mako_local_table {
 struct mako_local_db {
   std::mutex tables_mu;
   std::unordered_map<std::string, std::unique_ptr<mako_local_table>> tables;
-  std::atomic<size_t> active_txns{0};
 };
 
 struct mako_local_txn {
   mako_local_db *owner;
   std::thread::id owner_thread;
+  size_t worker_slot;
   bool active;
   bool poisoned;
   size_t item_budget_used;
@@ -66,6 +67,28 @@ thread_local bool local_attached = false;
 thread_local mako_local_txn *local_active_txn = nullptr;
 thread_local bool local_worker_poisoned = false;
 std::atomic<uint64_t> quarantined_worker_count{0};
+
+// One worker can own at most one ambient STO transaction, regardless of the
+// database facade it uses. Publish that database in a worker-private cache
+// line so db_close can retain its BUSY diagnostic without making every
+// transaction bounce one database-wide atomic counter between cores.
+//
+// db_close is still externally quiesced by contract; the atomics make its
+// diagnostic observation well-defined, but do not turn close into a lifetime
+// barrier against a concurrent new begin.
+constexpr size_t kCacheLineBytes = 64;
+struct alignas(kCacheLineBytes) active_database_slot {
+  std::atomic<mako_local_db *> database{nullptr};
+  // Only the process-lifetime owner of this non-recycled STO worker ID may
+  // touch spare. Keeping it here avoids a destructible internal TLS object:
+  // a caller's TLS transaction wrapper may run its destructor later during
+  // thread exit and must still be able to return a finished facade safely.
+  mako_local_txn *spare = nullptr;
+};
+static_assert(sizeof(active_database_slot) == kCacheLineBytes);
+static_assert(MAKO_LOCAL_MAX_WORKERS <= MAX_THREADS);
+std::array<active_database_slot, MAKO_LOCAL_MAX_WORKERS>
+    active_database_slots{};
 
 enum class cleanup_boundary : uint32_t {
   begin = MAKO_LOCAL_CLEANUP_BOUNDARY_BEGIN,
@@ -135,9 +158,45 @@ void finish_txn(mako_local_txn *txn) noexcept {
   txn->poisoned = false;
   txn->item_budget_used = 0;
   if (local_active_txn == txn) local_active_txn = nullptr;
-  txn->owner->active_txns.fetch_sub(1, std::memory_order_acq_rel);
+  active_database_slots[txn->worker_slot].database.store(
+      nullptr, std::memory_order_release);
   txn->encoded_values.clear();
   txn->mutated_keys.clear();
+}
+
+void recycle_txn(mako_local_txn *txn) noexcept {
+  // Finished handles can coexist briefly: callers may begin a new transaction
+  // before destroying an older F-state facade. Retain at most one spare per
+  // worker and delete any additional finished handle.
+  const size_t worker_slot = txn->worker_slot;
+  txn->owner = nullptr;
+  txn->owner_thread = std::thread::id{};
+  txn->worker_slot = active_database_slots.size();
+  if (active_database_slots[worker_slot].spare == nullptr) {
+    active_database_slots[worker_slot].spare = txn;
+  } else {
+    delete txn;
+  }
+}
+
+mako_local_txn *acquire_txn(mako_local_db *db, size_t worker_slot) {
+  active_database_slot &slot = active_database_slots[worker_slot];
+  if (slot.spare == nullptr) {
+    return new mako_local_txn{
+        db, std::this_thread::get_id(), worker_slot, true, false, 0, {}, {}};
+  }
+
+  mako_local_txn *txn = slot.spare;
+  slot.spare = nullptr;
+  txn->owner = db;
+  txn->owner_thread = std::this_thread::get_id();
+  txn->worker_slot = worker_slot;
+  txn->active = true;
+  txn->poisoned = false;
+  txn->item_budget_used = 0;
+  txn->encoded_values.clear();
+  txn->mutated_keys.clear();
+  return txn;
 }
 
 void poison_worker(mako_local_txn *txn) noexcept {
@@ -206,7 +265,8 @@ int operation_exception(mako_local_txn *txn, int status) noexcept {
   if (Sto::cleanup_in_progress()) return poison_transaction(txn);
   if (!Sto::in_progress()) {
     // A native Sto::abort() completed and threw only its control-flow Abort.
-    // Publish the facade/accounting transition without entering cleanup again.
+    // Publish the facade/active-database transition without entering cleanup
+    // again.
     finish_txn(txn);
     return status;
   }
@@ -216,20 +276,21 @@ int operation_exception(mako_local_txn *txn, int status) noexcept {
 void account_begin_txn(mako_local_txn *txn) noexcept {
   if (local_active_txn == txn) return;
   local_active_txn = txn;
-  txn->owner->active_txns.fetch_add(1, std::memory_order_acq_rel);
+  active_database_slots[txn->worker_slot].database.store(
+      txn->owner, std::memory_order_release);
 }
 
 int cleanup_failed_begin(mako_local_txn *txn, int original_status) noexcept {
   if (txn == nullptr) return original_status;
 
   // Publish a private quarantine anchor before cleanup. On success finish_txn
-  // removes this accounting again; on failure the facade, database charge,
+  // clears this marker again; on failure the facade, active-database marker,
   // native TLS, and every potentially referenced allocation remain live even
   // though the public begin output stays null.
   account_begin_txn(txn);
   if (!abort_and_finish(txn, cleanup_boundary::begin))
     return MAKO_LOCAL_WORKER_POISONED;
-  delete txn;
+  recycle_txn(txn);
   return original_status;
 }
 
@@ -795,8 +856,10 @@ int mako_local_db_open(mako_local_db **out) noexcept {
 int mako_local_db_close(mako_local_db *db) noexcept {
   if (db == nullptr) return MAKO_LOCAL_OK;
   try {
-    if (db->active_txns.load(std::memory_order_acquire) != 0)
-      return MAKO_LOCAL_BUSY;
+    for (const active_database_slot &slot : active_database_slots) {
+      if (slot.database.load(std::memory_order_acquire) == db)
+        return MAKO_LOCAL_BUSY;
+    }
     // Facade table handles are reclaimed here. Their MassTrans objects are
     // intentionally process-lifetime until Mako has a verified global RCU
     // quiescence protocol.
@@ -873,10 +936,14 @@ int mako_local_txn_begin(mako_local_db *db, mako_local_txn **out) noexcept {
   if (Sto::in_progress())
     return MAKO_LOCAL_TXN_ALREADY_ACTIVE;
 
+  const int native_worker = TThread::id();
+  if (native_worker < 0 ||
+      static_cast<size_t>(native_worker) >= active_database_slots.size())
+    return MAKO_LOCAL_INTERNAL;
+
   mako_local_txn *txn = nullptr;
   try {
-    txn = new mako_local_txn{db, std::this_thread::get_id(), true, false, 0,
-                             {}, {}};
+    txn = acquire_txn(db, static_cast<size_t>(native_worker));
     Sto::start_transaction();
     account_begin_txn(txn);
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -1170,7 +1237,7 @@ int mako_local_txn_destroy(mako_local_txn *txn) noexcept {
     }
     if (!abort_and_finish(txn, cleanup_boundary::destroy))
       return MAKO_LOCAL_WORKER_POISONED;
-    delete txn;
+    recycle_txn(txn);
     return MAKO_LOCAL_OK;
   } catch (...) {
     return poison_transaction(txn);
