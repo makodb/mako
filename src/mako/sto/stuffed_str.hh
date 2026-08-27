@@ -158,10 +158,13 @@ public:
     char* const payload = load_data(std::memory_order_acquire);
     const uint32_t length = load_size(std::memory_order_acquire);
     // Pointer and length are separate atomic words. A writer may change one
-    // between these loads, so validate the tuple against atomicRead's initial
-    // unlocked version before using it. The caller retains its post-copy
-    // version check for writers that begin after this point.
-    if (load_stuff() != expected_version)
+    // between these loads, so validate redirected or otherwise impossible
+    // inline snapshots against atomicRead's initial unlocked version before
+    // using them. The ordinary inline tuple is permanently allocated and the
+    // caller's post-copy version check safely rejects a concurrent overwrite
+    // without adding another version load to every single-version read.
+    if ((payload != buf_ || length > capacity_) &&
+        load_stuff() != expected_version)
       return false;
     if (payload == buf_)
       assert(length <= capacity_);
