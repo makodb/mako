@@ -374,11 +374,11 @@ bool try_reserve_item_budget(mako_local_txn *txn, size_t charge) {
   return true;
 }
 
-// Zen's front end is unusually sensitive to this call target's address when
-// several workers execute it in lockstep. Keep the hot function on its own
-// cache-line boundary so unrelated code-size changes cannot move it onto the
-// measured bad alignment.
-[[gnu::aligned(kCacheLineBytes)]] std::string &stage_encoded_value(
+// Every write stages one value before entering MassTrans. Keep this small
+// bookkeeping path in its caller: avoiding the extra call/return removes
+// repeated branches for short write-heavy transactions and lets the compiler
+// reuse the already-validated lengths and transaction fields.
+[[gnu::always_inline]] inline std::string &stage_encoded_value(
     mako_local_txn *txn, const uint8_t *value, size_t value_len) {
   // try_reserve_item_budget has already charged at least four credits for
   // this write, which proves a slot remains in the fixed pool.
