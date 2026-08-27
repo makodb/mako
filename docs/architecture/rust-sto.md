@@ -10,7 +10,7 @@
 > **Baseline:** Mako `mako-dev` at `abfb6ea96739`; compatibility oracle
 > `worktree-masstree-rocks` at `1daec550f`
 >
-> **Last updated:** 2026-08-26
+> **Last updated:** 2026-08-27
 
 This document defines the intended semantics and architecture of Mako's native
 Rust implementation of STO. It is a living design contract: implementation
@@ -46,7 +46,7 @@ target native-Rust transaction layer.
 5. [System architecture and trust boundaries](#5-system-architecture-and-trust-boundaries)
 6. [Rust programming model](#6-rust-programming-model)
 7. [Transaction items](#7-transaction-items)
-8. [Transactional-datatype adapter contract](#8-transactional-datatype-adapter-contract)
+8. [Rust adapter interface and protocol](#8-rust-adapter-interface-and-protocol)
 9. [Versions and the Rust memory model](#9-versions-and-the-rust-memory-model)
 10. [Commit, abort, and failure state machine](#10-commit-abort-and-failure-state-machine)
 11. [Predicates, commutativity, and absence](#11-predicates-commutativity-and-absence)
@@ -119,7 +119,7 @@ The paper identifies three broad responsibilities:
 “Transactions for any data structure” therefore does not mean automatic
 instrumentation. It means any correctly concurrent datatype can participate if
 its adapter supplies a sound conflict model and obeys the protocol in
-[Section 8](#8-transactional-datatype-adapter-contract).
+[Section 8](#8-rust-adapter-interface-and-protocol).
 
 ### 2.3 The local C++ lineage
 
@@ -304,15 +304,18 @@ The public API MUST distinguish at least:
 - `Capacity`: a transaction, worker, key, ID, or buffer limit;
 - `InvalidUse`: wrong runtime, worker, thread, state, or argument;
 - `Unsupported`: a requested capability is unavailable;
-- `Poisoned`: a safety invariant or cleanup guarantee can no longer be proven;
-  and
+- `Poisoned`: the runtime can no longer accept work, but this transaction's
+  abstract committed/aborted outcome is known and returned with the error;
+- `Indeterminate`: publication may have started and the abstract outcome cannot
+  be classified safely; and
 - `Internal`: a failure occurred before the irreversible boundary and cleanup
   completed.
 
 After the irreversible boundary, no failure may be reported as an ordinary
-abort. If the implementation cannot prove complete installation and cleanup,
-the outcome is `Poisoned` or `Indeterminate`, and the affected worker/runtime
-MUST be quarantined according to the integration contract.
+abort. A failure with a proven abstract result is `Poisoned` with its
+`DefiniteOutcome`; a failure whose publication cannot be classified is
+`Indeterminate`. Both quarantine the affected worker/runtime according to the
+integration contract, and neither is a retryable conflict.
 
 ## 5. System architecture and trust boundaries
 
@@ -362,10 +365,17 @@ crate validates lifetimes, thread affinity, sizes, statuses, and output buffers.
 
 Adapter implementations are part of the **transactional-correctness trusted
 base**, even when written entirely in safe Rust. Rust memory safety cannot prove
-that an adapter chose a covering version or a sound conflict unit. Low-level
-type erasure SHOULD remain sealed inside `sto-core`; it becomes an `unsafe
-trait` only if memory safety, rather than isolation alone, relies on its
-contract.
+that an adapter chose a covering version or a sound conflict unit.
+`TransactionalResource`, `OpacityToken`, and `TransactionLock` are nevertheless
+safe traits. A bad implementation can violate isolation or progress, but
+`sto-core` memory safety MUST NOT depend on its semantic claims. Any adapter
+that touches `UnsafeCell`, raw pointers, or FFI owns the corresponding unsafe
+proof and must check the required lock or guard itself.
+
+The private erased item and lock vtables perform checked type transitions only.
+If a future optimization cannot satisfy that boundary, it requires a separately
+reviewed unsafe primitive; it does not retroactively make the public adapter
+protocol unsafe.
 
 ## 6. Rust programming model
 
@@ -378,7 +388,7 @@ contract.
 - the object registry;
 - the finite owner-ID registry;
 - runtime health and statistics; and
-- registered resource factories.
+- registered object/resource type bindings.
 
 `WorkerContext` represents one attached, long-lived OS worker. It has a stable
 `OwnerId`, belongs to exactly one runtime, and is `!Send + !Sync`. Creating more
@@ -400,7 +410,97 @@ match txn.commit()? {
 Ambient TLS MAY exist inside the C++ bridge or a legacy compatibility shim, but
 it is not the Rust core's ownership model.
 
-### 6.2 Transaction ownership
+### 6.2 Public transaction surface
+
+**[RUST]** The following is the normative v1 ownership and outcome shape. Names
+may move between modules before the crate lands, but an implementation MUST NOT
+replace the explicit worker borrow, consuming completion methods, or the
+definite-versus-indeterminate outcome split with ambient state or booleans.
+
+```rust
+use std::sync::Arc;
+
+pub struct Runtime { /* private */ }
+pub struct WorkerContext { /* private; structurally !Send + !Sync */ }
+pub struct Active;
+pub struct Transaction<'worker, State = Active> { /* private */ }
+
+impl Runtime {
+    pub fn new(config: RuntimeConfig) -> Result<Arc<Self>, RuntimeError> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn attach(
+        self: &Arc<Self>,
+    ) -> Result<WorkerContext, AttachError> {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl WorkerContext {
+    pub fn begin(
+        &mut self,
+    ) -> Result<Transaction<'_, Active>, BeginError> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn begin_with(
+        &mut self,
+        isolation: IsolationMode,
+    ) -> Result<Transaction<'_, Active>, BeginError> {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl<'worker> Transaction<'worker, Active> {
+    pub fn commit(
+        self,
+    ) -> Result<CommitOutcome, CommitFailure> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn abort(self) -> AbortInfo {
+        unimplemented!("signature-only design target")
+    }
+}
+
+pub enum CommitOutcome {
+    Committed(CommitInfo),
+    Aborted(AbortReason),
+}
+
+pub enum CommitFailure {
+    Poisoned {
+        outcome: DefiniteOutcome,
+        info: PoisonInfo,
+    },
+    Indeterminate(IndeterminateInfo),
+}
+
+pub enum DefiniteOutcome {
+    Committed(CommitInfo),
+    Aborted(AbortReason),
+}
+```
+
+`begin` uses the runtime's configured default isolation profile; `begin_with`
+fails with `Unsupported` rather than downgrading an unavailable profile.
+Ordinary conflict, capacity exhaustion discovered during commit, hook rejection,
+and any other definite pre-irrevocable abort return
+`Ok(CommitOutcome::Aborted(...))`. `CommitFailure::Poisoned` quarantines the
+runtime but carries a definite committed or aborted outcome; a caller MUST use
+that outcome and MUST NOT retry a definitely committed transaction.
+`CommitFailure::Indeterminate` is reserved for publication that cannot be
+classified after the irreversible boundary. `CommitInfo` contains core OCC
+metadata only; it never smuggles a `MakoTimestamp`, durability sequence, or
+upper-layer commit decision into `sto-core`.
+
+Both completion methods consume the active transaction. `abort` is infallible
+under the adapter contract and returns only after exact-once cleanup. Dropping
+an active transaction takes the same abort path but cannot return its
+`AbortInfo`; any impossible cleanup violation is recorded in runtime health.
+
+### 6.3 Transaction ownership
 
 `Transaction<'worker, Active>` mutably borrows its worker. It is `!Send` and
 `!Sync`, cannot outlive the worker, and cannot be used concurrently. A mutable
@@ -418,7 +518,7 @@ that every acquired lock has exactly one release path. The first release does
 not expose a long-lived public `PreparedTransaction`; see
 [Section 17.3](#173-distributed-prepare-is-not-a-core-v1-feature).
 
-### 6.3 No async suspension
+### 6.4 No async suspension
 
 A transaction MUST NOT cross `.await`, migrate threads, execute blocking I/O,
 or yield a worker while it holds STO locks or native resource guards. The core
@@ -441,6 +541,12 @@ membership and records. `ResourceKey` is an adapter-owned, stable,
 equality-comparable and totally ordered value. Together they MUST describe
 logical identity, not a temporary address, cursor, vector slot that can move,
 or hash value that can collide.
+
+In the Rust interface, `ResourceKey` is the associated `Key` of the relevant
+`TransactionalResource` implementation. Erased key equality or ordering is
+attempted only after `ObjectId`, `ResourceClass`, and the stored key `TypeId`
+match. A mismatch is an invalid registration or poisoned core state, never an
+unchecked downcast.
 
 The core may hash the identity for lookup, but correctness MUST use full
 equality. Hash collisions are ordinary collisions, not aliases.
@@ -492,10 +598,12 @@ before predicate upgrade. Rust SHOULD encode that lifecycle explicitly, for
 example as `Unobserved | Read | Predicate | UpgradedPredicate`, rather than
 permit unchecked combinations of observation fields.
 
-The public adapter API SHOULD be typed. A sealed internal erased representation
-may use vtables and checked `Any` downcasts. It MUST NOT reproduce C++'s untagged
-raw-pointer union or depend on caller-selected template extraction being
-correct.
+External adapters implement the typed protocol in Section 8.
+`Transaction::with_item` is the only typed-to-erased insertion path. The core
+stores a private erased entry and performs `TypeId`-checked key and item
+downcasts; no public `Any`, caller-supplied vtable, or unchecked extraction
+exists. Applications normally call adapter methods such as `get` and `put`, not
+this adapter-author surface directly.
 
 ### 7.4 Total physical lock order
 
@@ -524,40 +632,707 @@ isolating sorting's contribution. The sorted policy may be replaced only after
 deterministic schedule tests and benchmarks show that an unsorted,
 abort-on-contention policy preserves safety and improves relevant workloads.
 
-## 8. Transactional-datatype adapter contract
+## 8. Rust adapter interface and protocol
 
-### 8.1 Conceptual operations
+The v1 signatures in this section are the normative adapter-author contract.
+Names and module paths may be adjusted before `sto-core` first lands, but the
+ownership, type-state, phase, fallibility, and safe-trait properties are design
+requirements. The signature blocks use `unimplemented!()` only where an
+inherent method body does not yet exist. They become compile-tested, out-of-
+crate contract fixtures when the crate lands.
 
-The exact Rust trait syntax is an implementation detail, but every adapter maps
-to these conceptual operations:
+### 8.1 Mapping the C++ class abstraction to Rust
 
-| Operation | Phase | May fail? | Obligation |
+Figure 1 of the paper and the current implementation use inheritance because a
+heterogeneous transaction stores `TObject*` and invokes virtual commit
+callbacks. Rust uses a typed trait at the extension boundary and a sealed
+object-safe shim inside the core. It does **not** expose a public inheritance
+hierarchy or ask adapters to implement type erasure.
+
+| C++ STO abstraction | Rust STO counterpart | Deliberate difference |
+| --- | --- | --- |
+| `TObject` subclass | `TransactionalResource` implementation held by `RegisteredResource<A>` | Associated types replace untyped per-item payloads. |
+| `TItem` / `TransItem` | private `ItemBox<A>` with an explicit observation and preparation state machine | The core, not an adapter, owns flags and legal state transitions. |
+| `Sto::item(obj, key)` / `TransProxy` | `Transaction::with_item(resource, key, operation)` and scoped `Entry<A>` | Explicit transaction borrowing replaces TLS; an entry cannot escape the operation. |
+| `TransProxy::{observe, add_read, set_predicate, add_write}` | `Entry::{record_read, record_predicate, stage}` plus typed accessors | The core checks legal state transitions instead of mutating public flags. |
+| `rdata`, predicate, and `wdata` slots | `A::Observation`, `A::Predicate`, and `A::Intent` | No raw pointer union or caller-selected cast. |
+| `TransProxy::stash` / datatype-private item data | `A::Local` through scoped `Entry` and phase views | Owned typed state replaces an unmarked `void*` payload. |
+| `TObject::lock` | `A::preflight` emits `LockRequest<L>`; the core later calls `L::try_acquire` | Logical items and deduplicated physical locks are separate. |
+| `check_predicate(item, false)` | `A::revalidate_predicate` | Execution-time opacity check does not change item state. |
+| `check_predicate(item, true)` | `A::upgrade_predicate` | On success the core changes `Predicate` to `UpgradedPredicate`. |
+| `TObject::check` | `A::validate_read` | Validation receives only phase-appropriate capabilities. |
+| `TObject::install` | `A::install` | Called only after an internal irreversible permit exists; no `Result`. |
+| `TObject::unlock` | `TransactionLock::release` | One core-owned guard selects abort, commit, or indeterminate publication. |
+| `TObject::cleanup` | `A::finish` | Runs after all physical locks are released on definite outcomes. |
+| `Sto::commit_id()` | `InstallContext::occ_commit_id` and committed `LockDisposition` | Core OCC identity is phase-scoped and remains distinct from upper timestamps. |
+| `new_item`, `fresh_item`, `read_item`, `check_item` | the one `with_item` path plus `ObservationState` transitions | V1 forbids duplicate fresh items and does not expose unchecked lookup variants. |
+| clear/user flags | private observation/preparation states and `A::Local` | Adapters own typed local data, not core flag bits. |
+| `TObject::print` | ordinary adapter diagnostics outside the commit protocol | No formatting callback runs while committing. |
+| Mako `get_table_id` / `get_is_remote` extensions | upper integration layer | Distribution and table-routing policy are not STO callbacks. |
+| static `Sto` / current transaction TLS | `WorkerContext` and `Transaction<'worker, Active>` | Worker affinity and transaction lifetime are explicit. |
+
+This split preserves the paper's central virtual-callback seam while making the
+equivalent of `TItem` a core-controlled generic type. A datatype exposes normal
+methods such as `get`, `put`, or `increment`; those methods use the entry API
+below and are not themselves required trait methods.
+
+### 8.2 Object registration and typed item access
+
+One transactional object can expose several resource classes. For example, one
+Masstree table registers a record resource and a membership resource under the
+same `ObjectId`. Each `(ObjectId, ResourceClass)` pair binds exactly one
+adapter type and key type for the lifetime of the registration.
+`RegisteredResource<A>` is a cloneable `Send + Sync` handle that retains the
+object lease, runtime identity, class, and `Arc<A>`; dropping an
+`ObjectRegistration` cannot invalidate a live resource or transaction item.
+
+```rust
+use std::{fmt, hash::Hash, sync::Arc};
+
+pub trait ResourceKey:
+    Clone + Eq + Ord + Hash + fmt::Debug + Send + Sync + 'static
+{
+}
+
+impl<T> ResourceKey for T where
+    T: Clone + Eq + Ord + Hash + fmt::Debug + Send + Sync + 'static
+{
+}
+
+pub struct ObjectRegistration { /* private RuntimeId and ObjectId lease */ }
+pub struct RegisteredResource<A: TransactionalResource> { /* private */ }
+pub struct Entry<'entry, A: TransactionalResource> { /* private */ }
+
+impl<A: TransactionalResource> Clone for RegisteredResource<A> {
+    fn clone(&self) -> Self {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl<A: TransactionalResource> RegisteredResource<A> {
+    pub fn adapter(&self) -> &A {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl Runtime {
+    pub fn register_object(
+        self: &Arc<Self>,
+    ) -> Result<ObjectRegistration, RegistrationError> {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl ObjectRegistration {
+    pub fn register_resource<A: TransactionalResource>(
+        &self,
+        class: ResourceClass,
+        adapter: A,
+    ) -> Result<RegisteredResource<A>, RegistrationError> {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl<'worker> Transaction<'worker, Active> {
+    pub fn with_item<A, R>(
+        &mut self,
+        resource: &RegisteredResource<A>,
+        key: A::Key,
+        operation: impl for<'entry> FnOnce(
+            &mut Entry<'entry, A>,
+        ) -> Result<R, AccessError>,
+    ) -> Result<R, AccessError>
+    where
+        A: TransactionalResource,
+    {
+        unimplemented!("signature-only design target")
+    }
+}
+```
+
+For every `ResourceKey`, `Eq`, `Ord`, and `Hash` MUST agree, and the value's
+logical meaning MUST NOT mutate while stored in a transaction. Interior
+mutation that changes comparison or hashing can create duplicate logical items
+even in otherwise safe Rust and is an adapter-contract violation.
+
+An external datatype normally wraps the registered handle and exposes its own
+abstract operations:
+
+```rust
+pub struct TxnMap {
+    records: RegisteredResource<RecordAdapter>,
+}
+
+impl TxnMap {
+    pub fn get(
+        &self,
+        txn: &mut Transaction<'_, Active>,
+        key: RecordKey,
+    ) -> Result<Option<Value>, AccessError> {
+        let adapter = self.records.adapter();
+        txn.with_item(&self.records, key, |entry| adapter.get(entry))
+    }
+}
+```
+
+`RecordAdapter::get` is ordinary external-crate code: it soundly snapshots its
+shared datatype, records the typed observation through `Entry`, overlays any
+staged intent, and only then returns the abstract result.
+
+`with_item` MUST:
+
+1. reject a resource registered in another runtime;
+2. form the full identity `(ObjectId, ResourceClass, key)` and use hashing only
+   to find candidates, never to replace full equality;
+3. return the existing typed item when that identity is already present;
+4. on a miss, call `A::new_local`, create one `ItemBox<A>`, and insert it through
+   the one private typed-to-erased path;
+5. check the registered adapter and key `TypeId`s before every erased comparison
+   or downcast; and
+6. arm a transaction-doomed guard at `with_item` entry, before runtime checks,
+   `new_local`, insertion, or `operation`, and clear it only after the entire
+   call returns `Ok`.
+
+Consequently, an outer `AccessError` or an unwind leaves the transaction
+definitely non-committable even if application code catches or ignores it.
+Abstract datatype outcomes such as `NotFound` or `DuplicateKey` belong inside
+`R`, not in the outer `AccessError`; for example, an adapter may return
+`Result<Result<Value, NotFound>, AccessError>`. Such an inner outcome is still a
+completed abstract operation and must leave the item in its documented state;
+a partially completed adapter operation returns the outer error instead. V1
+exposes no `fresh_item` or other API that can create duplicate entries for one
+logical identity.
+
+### 8.3 The transactional-resource trait
+
+The associated types are the safe Rust replacement for `TItem`'s untyped
+read, predicate, write, and scratch slots. Observations and predicates report
+whether their version is ordered with the runtime opacity clock.
+
+```rust
+pub trait OpacityToken: 'static {
+    fn observation_order(&self) -> ObservationOrder;
+}
+
+pub enum ObservationOrder {
+    Ordered(OccVersion),
+    Unordered,
+}
+
+pub trait TransactionalResource: Send + Sync + Sized + 'static {
+    type Key: ResourceKey;
+    type Local: 'static;
+    type Observation: OpacityToken;
+    type Predicate: OpacityToken;
+    type Intent: 'static;
+    type Prepared: 'static;
+
+    fn new_local(
+        &self,
+        key: &Self::Key,
+    ) -> Result<Self::Local, ItemInitError>;
+
+    fn preflight(
+        &self,
+        key: &Self::Key,
+        item: PreflightItem<'_, Self>,
+        cx: &mut PreflightContext<'_>,
+    ) -> Result<Self::Prepared, PrepareError>;
+
+    fn revalidate_read(
+        &self,
+        key: &Self::Key,
+        observation: &Self::Observation,
+        cx: &ExecutionCheckContext<'_>,
+    ) -> Result<(), CheckError>;
+
+    fn revalidate_predicate(
+        &self,
+        key: &Self::Key,
+        predicate: &Self::Predicate,
+        cx: &ExecutionCheckContext<'_>,
+    ) -> Result<ObservationOrder, CheckError>;
+
+    fn upgrade_predicate(
+        &self,
+        key: &Self::Key,
+        predicate: &Self::Predicate,
+        prepared: &Self::Prepared,
+        cx: &PredicateContext<'_>,
+    ) -> Result<Self::Observation, CheckError>;
+
+    fn validate_read(
+        &self,
+        key: &Self::Key,
+        observation: &Self::Observation,
+        prepared: &Self::Prepared,
+        cx: &ValidationContext<'_>,
+    ) -> Result<(), CheckError>;
+
+    fn install(
+        &self,
+        key: &Self::Key,
+        item: InstallItem<'_, Self>,
+        prepared: &mut Self::Prepared,
+        cx: &mut InstallContext<'_>,
+    );
+
+    fn finish(
+        &self,
+        key: &Self::Key,
+        item: FinishItem<'_, Self>,
+        prepared: Option<&mut Self::Prepared>,
+        disposition: FinishDisposition,
+        cx: &mut FinishContext<'_>,
+    );
+}
+
+pub struct PreflightItem<'a, A: TransactionalResource> { /* private */ }
+pub struct InstallItem<'a, A: TransactionalResource> { /* private */ }
+pub struct FinishItem<'a, A: TransactionalResource> { /* private */ }
+
+impl<A: TransactionalResource> PreflightItem<'_, A> {
+    pub fn local(&self) -> &A::Local {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn local_mut(&mut self) -> &mut A::Local {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn observation(&self) -> ObservationRef<'_, A> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn intent(&self) -> Option<&A::Intent> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn intent_mut(&mut self) -> Option<&mut A::Intent> {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl<A: TransactionalResource> InstallItem<'_, A> {
+    pub fn local_mut(&mut self) -> &mut A::Local {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn observation(&self) -> ObservationRef<'_, A> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn intent(&self) -> &A::Intent {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl<A: TransactionalResource> FinishItem<'_, A> {
+    pub fn local_mut(&mut self) -> &mut A::Local {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn observation(&self) -> ObservationRef<'_, A> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn remaining_intent(&self) -> Option<&A::Intent> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn take_remaining_intent(&mut self) -> Option<A::Intent> {
+        unimplemented!("signature-only design target")
+    }
+}
+```
+
+There are intentionally no default validation implementations: returning
+`Ok(())` accidentally would silently remove conflict coverage. The core calls
+callbacks only for the corresponding item state; a resource must still
+implement each method explicitly. `Local = ()` is valid when no datatype-
+private operation state is needed, and `Prepared = ()` is valid when no commit
+scratch or physical lock is needed. `new_local` constructs owned
+transaction-local state only; it MUST NOT perform an unrecorded shared read.
+
+The `ObservationOrder` returned by `revalidate_predicate` is the bound through
+which the unchanged predicate was just certified. The core advances its
+checked-through opacity bound but does not replace the predicate or perform the
+commit-time state transition. `Unordered` forces the conservative full-
+revalidation path.
+
+`PreflightItem`, `InstallItem`, and `FinishItem` have private fields and expose
+only phase-appropriate typed accessors. `PreflightItem` can inspect observations,
+predicates, and intents. `InstallItem` can borrow but cannot move the core-owned
+intent, keeping it reachable if installation unwinds. Only `FinishItem`, after
+all locks are gone and the outcome is definite, can take the remaining intent
+or drain cleanup stored in `Local` and `Prepared`. None exposes the enclosing
+`Transaction` or permits insertion of another item.
+
+After a successful `finish`, the core drops any untaken intent, then prepared
+state, local state, key, and resource handle, all outside transaction locks and
+inside panic containment. On a cleanup panic it does not retry a partially run
+callback or continue destructing uncertain adapter state; it retains the
+remaining item frame and poisons with the already-known outcome.
+
+### 8.4 Core-owned item state and operation-time entry
+
+The following private state is the semantic replacement for C++ `TItem` flags.
+The exact storage layout may change, but its legal states may not be weakened.
+
+```rust
+enum ObservationState<O, P> {
+    Unobserved,
+    Read(O),
+    Predicate(P),
+    UpgradedPredicate(O),
+}
+
+enum PreparationState<P> {
+    Unprepared,
+    Prepared(P),
+    Installed(P),
+}
+
+struct ItemBox<A: TransactionalResource> {
+    identity: ItemIdentity,
+    resource: RegisteredResource<A>,
+    key: A::Key,
+    local: A::Local,
+    observation: ObservationState<A::Observation, A::Predicate>,
+    intent: Option<A::Intent>,
+    preparation: PreparationState<A::Prepared>,
+}
+
+pub enum ObservationRef<'a, A: TransactionalResource> {
+    Unobserved,
+    Read(&'a A::Observation),
+    Predicate(&'a A::Predicate),
+    UpgradedPredicate(&'a A::Observation),
+}
+
+impl<A: TransactionalResource> Entry<'_, A> {
+    pub fn local(&self) -> &A::Local {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn local_mut(&mut self) -> &mut A::Local {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn observation(&self) -> ObservationRef<'_, A> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn intent(&self) -> Option<&A::Intent> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn intent_mut(&mut self) -> Option<&mut A::Intent> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn record_read(
+        &mut self,
+        observation: A::Observation,
+    ) -> Result<(), AccessError> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn record_predicate(
+        &mut self,
+        predicate: A::Predicate,
+    ) -> Result<(), AccessError> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn stage(&mut self, intent: A::Intent) -> Result<(), AccessError> {
+        unimplemented!("signature-only design target")
+    }
+}
+```
+
+`Entry` contains a transaction reference plus a slot index, not an unchecked
+direct pointer to an erased item. This lets `record_read` and
+`record_predicate` perform any whole-transaction opacity revalidation required
+by Section 12 before the adapter exposes its abstract result. The adapter is
+responsible for same-item operation composition and read-your-writes, using
+`local`, `observation`, `intent`, and their mutable counterparts before
+replacing state with `stage`. The core performs successful predicate and
+installation transitions itself, so an adapter cannot install twice or claim
+that a predicate was upgraded when its callback failed.
+
+`record_read` permits `Unobserved -> Read`; `record_predicate` permits
+`Unobserved -> Predicate`; successful predicate upgrade is the only
+`Predicate -> UpgradedPredicate` transition. A repeated operation inspects and
+reuses the existing observation rather than overwriting it with a later token.
+The optional intent is orthogonal to those states, and `stage` replaces only an
+already-composed intent. An illegal transition returns `AccessError`, dooms the
+transaction, and is never repaired by discarding the earlier observation.
+
+### 8.5 Canonical physical-lock trait
+
+Logical callbacks plan locks, but the core owns every acquired guard. V1
+requires an owned `'static` guard rather than a borrowed `MutexGuard<'a, T>`;
+this avoids self-referential transaction storage. A guard may be `!Send` and
+`!Sync` because the transaction is worker-affine.
+
+```rust
+pub trait TransactionLock: Send + Sync + 'static {
+    type Guard: 'static;
+
+    fn try_acquire(
+        &self,
+        cx: &AcquireContext<'_>,
+    ) -> Result<Self::Guard, AcquireError>;
+
+    fn release(
+        &self,
+        guard: &mut Self::Guard,
+        disposition: LockDisposition,
+        cx: &ReleaseContext<'_>,
+    );
+}
+
+pub enum LockDisposition {
+    Aborted,
+    Committed { occ_commit_id: Option<OccCommitId> },
+    Indeterminate { occ_commit_id: Option<OccCommitId> },
+}
+
+pub struct LockRequest<L: TransactionLock> { /* private identity and Arc<L> */ }
+pub struct LockUse<L: TransactionLock> { /* private plan nonce and slot */ }
+
+impl<L: TransactionLock> LockRequest<L> {
+    pub fn new(identity: LockIdentity, target: Arc<L>) -> Self {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl PreflightContext<'_> {
+    pub fn require_lock<L: TransactionLock>(
+        &mut self,
+        request: LockRequest<L>,
+    ) -> Result<LockUse<L>, PrepareError> {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl PredicateContext<'_> {
+    pub fn guard<L: TransactionLock>(
+        &self,
+        use_: &LockUse<L>,
+    ) -> Result<&L::Guard, AdapterFault> {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl ValidationContext<'_> {
+    pub fn guard<L: TransactionLock>(
+        &self,
+        use_: &LockUse<L>,
+    ) -> Result<&L::Guard, AdapterFault> {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl InstallContext<'_> {
+    pub fn guard_mut<L: TransactionLock>(
+        &mut self,
+        use_: &LockUse<L>,
+    ) -> &mut L::Guard {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn occ_commit_id(&self) -> Option<OccCommitId> {
+        unimplemented!("signature-only design target")
+    }
+}
+```
+
+`require_lock` allocates one private erased lock frame during preflight. That
+frame contains an inline `Option<L::Guard>`, so `try_acquire` can place its
+result into already allocated storage. Lock acquisition MUST be bounded and
+nonblocking and MUST NOT allocate. `Err` leaves the lock unowned. A successful
+guard remains in core custody until release; `release` makes it inert and does
+not fail or panic.
+
+The core deduplicates and sorts by full `LockIdentity`. Duplicate requests must
+also have the same lock target `TypeId` and canonical `Arc` instance before they
+share a frame; a mismatch is `AdapterFault`, not an unchecked cast. `LockUse<L>`
+is unforgeable and tied to one plan nonce. Every phase-context access checks
+that nonce, slot, identity, and `TypeId` before downcasting. A mismatch during
+predicate upgrade or validation is a pre-irrevocable `AdapterFault`; presenting
+a stale token for the first time during `install` is an adapter-contract
+violation that becomes indeterminate and quarantines the runtime, never an
+unchecked cast or undefined behavior. A correct `Prepared` value retains only
+the `LockUse` values returned by its current `PreflightContext`.
+
+A private release guard initially has fallback disposition `Aborted`. At the
+`Irrevocable` transition it changes the fallback to `Indeterminate`, which must
+conservatively advance or preserve publication and quarantine the runtime; it
+must never restore the pre-lock generation after partial installation. The
+normal path explicitly releases in reverse order with `Committed`. If a release
+callback panics, the core retains or deliberately leaks the frame for diagnosis
+rather than losing the only remaining guard.
+
+### 8.6 Phase capabilities and private erasure
+
+All phase contexts have private constructors and fields, carry a non-cloneable
+lifetime, and are `!Send + !Sync`. Their capabilities are deliberately narrow:
+
+- `PreflightContext` builds the physical lock plan and reserves bounded scratch;
+- `AcquireContext` exposes the opaque current `LockOwner` only;
+- `ExecutionCheckContext` exposes the opacity bound needed to revalidate prior
+  reads or predicates;
+- `PredicateContext` provides immutable access to already-held guards, before a
+  core commit ID necessarily exists;
+- `ValidationContext` provides immutable guards and core OCC metadata;
+- `InstallContext` exists only with the private irreversible permit and provides
+  mutable held guards;
+- `ReleaseContext` supplies only the metadata needed to publish or abort a held
+  lock; and
+- `FinishContext` permits retirement of displaced resources after locks are
+  gone.
+
+These context types are public and nameable so an external crate can implement
+the traits, but their fields and constructors remain opaque. The core supplies
+the non-lossy conversions needed for `?`, including `ItemInitError` into the
+outer `AccessError` and `AdapterFault` into `PrepareError`, `AcquireError`, and
+`CheckError`; none of those conversions turns a fault into `Conflict`.
+
+No context can be retained, construct or borrow a `Transaction`, perform a new
+item lookup, acquire an unplanned blocking lock, or invoke arbitrary application
+code. No commit callback receives `&mut Transaction`, preventing callback
+reentry and item-set mutation while the core iterates it.
+
+The registered adapter `A` and its handle are `Send + Sync`. `A::Local`,
+`A::Observation`, `A::Predicate`, `A::Intent`, `A::Prepared`, and `L::Guard`
+are owned and `'static` but intentionally need not be `Send` or `Sync`; they
+remain inside the worker-affine transaction.
+
+`TransactionalResource` is intentionally not object-safe. Although another
+public trait may be technically object-safe after fixing its associated types,
+the API exposes no public adapter or lock trait objects. Internally,
+`ItemBox<A>` blanket-implements a sealed `ErasedItem` vtable, and a corresponding
+sealed lock frame stores `L::Guard`. The transaction may therefore hold
+heterogeneous items and locks, while `Any::downcast_ref`/`downcast_mut` checks
+every transition. The erased traits and their constructors are private to
+`sto-core`; external crates never implement them, name `Any`, or supply a
+vtable. There is no `unsafe` public trait in this protocol.
+
+Conceptually, the private item vtable has this shape:
+
+```rust
+trait ErasedItem: sealed::Sealed {
+    fn identity(&self) -> &ItemIdentity;
+    fn concrete_type_id(&self) -> TypeId;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn preflight(
+        &mut self,
+        cx: &mut PreflightContext<'_>,
+    ) -> Result<(), PrepareError>;
+    fn revalidate_for_opacity(
+        &mut self,
+        cx: &ExecutionCheckContext<'_>,
+    ) -> Result<(), CheckError>;
+    fn upgrade_predicate(
+        &mut self,
+        cx: &PredicateContext<'_>,
+    ) -> Result<(), CheckError>;
+    fn validate(
+        &self,
+        cx: &ValidationContext<'_>,
+    ) -> Result<(), CheckError>;
+    fn install(&mut self, cx: &mut InstallContext<'_>);
+    fn finish(
+        &mut self,
+        disposition: FinishDisposition,
+        cx: &mut FinishContext<'_>,
+    );
+}
+```
+
+The blanket implementation dispatches to the registered `A`, passes typed
+phase views over `ItemBox<A>`, and owns the state transitions described above.
+This trait is shown to make heterogeneous dispatch reviewable; it is not part
+of the public adapter API.
+
+### 8.7 Callback phases and fallibility
+
+The callback-specific failures are deliberately smaller than the public
+transaction error taxonomy:
+
+```rust
+pub enum PrepareError {
+    Conflict(Conflict),
+    Capacity(CapacityError),
+    Fault(AdapterFault),
+}
+
+pub enum ItemInitError {
+    Capacity(CapacityError),
+    Fault(AdapterFault),
+}
+
+pub enum AcquireError {
+    Conflict(Conflict),
+    Fault(AdapterFault),
+}
+
+pub enum CheckError {
+    Conflict(Conflict),
+    Fault(AdapterFault),
+}
+
+pub enum FinishDisposition {
+    Committed,
+    Aborted,
+}
+```
+
+| Invocation | Phase | Result contract | Core response |
 | --- | --- | --- | --- |
-| `observe` | execution | conflict/capacity | Return a sound snapshot and owned validation token. |
-| `stage` | execution | yes | Compose a transaction-local write without exposing it. |
-| `preflight` | pre-commit | yes | Perform allocation/normalization and emit the canonical physical lock plan. |
-| `try_lock` | lock | conflict only | Acquire one canonical lock request or leave it unowned. |
-| `revalidate_predicate` | execution/opacity | conflict only | Re-evaluate a predicate and its covered state without commit-time upgrade. |
-| `upgrade_predicate` | validation | conflict only | Check the semantic condition and produce covering observations. |
-| `validate_read` | validation | conflict only | Accept unchanged state or state locked by this transaction. |
-| `install` | irreversible | **no** | Publish the prepared write and locked generation; retain displaced resources for later cleanup. |
-| `unlock` | cleanup | **no** | Release exactly one acquired lock. Prefer a core-owned guard. |
-| `finish` | cleanup | **no** | Perform commit/abort cleanup with no abstract rollback after commit. |
+| `TransactionalResource::new_local` | first typed lookup | `ItemInitError::{Capacity, Fault}` | Doom the transaction; poison on adapter fault. |
+| adapter operation inside `with_item` | execution | outer `AccessError` or unwind | Mark the transaction doomed; no later commit. |
+| `TransactionalResource::preflight` | preflight | `PrepareError::{Conflict, Capacity, Fault}` | Definite abort for conflict/capacity; poison for adapter fault. |
+| `TransactionLock::try_acquire` | locking | `AcquireError::{Conflict, Fault}` | Reverse-release acquired guards on conflict; poison on fault. |
+| `revalidate_read` / `revalidate_predicate` | execution-time opacity | `CheckError::{Conflict, Fault}` | Abort before exposing an inconsistent result; poison on fault. |
+| `upgrade_predicate` | predicate upgrade | `CheckError::{Conflict, Fault}` | Definite abort or poison; state changes only on success. |
+| `validate_read` | final validation | `CheckError::{Conflict, Fault}` | Definite abort or poison before irreversibility. |
+| optional upper hook | after validation | reject or contained panic | Definite abort under the stronger no-visible-effect hook contract. |
+| `install` | irreversible install | no `Result`; must not panic | Panic yields `Indeterminate` and quarantine. |
+| `TransactionLock::release` | reverse publication/unlock | no `Result`; must not panic | Retain/quarantine; report indeterminate unless publication is proved. |
+| `finish` | post-unlock cleanup | no `Result`; must not panic | Poison with the already-known `DefiniteOutcome`; never invite retry. |
 
-`try_lock` and `unlock` operate on deduplicated physical lock requests;
-observation, validation, installation, and finish state remain attached to
-logical items.
+`ItemInitError`, `PrepareError`, `AcquireError`, and `CheckError` distinguish
+ordinary capacity or conflict outcomes from `AdapterFault`; a fault is never
+converted into a retryable conflict.
+Installation, release, and finish have no error return because there is no safe
+abstract rollback after `Irrevocable` and no remaining lock during finish that
+can be reacquired out of order.
 
-No commit callback may perform network or disk I/O, await, invoke arbitrary
-application code, recursively enter STO on the same worker, or acquire an
-untracked blocking lock.
+For every definite committed or aborted path—including explicit abort, Drop,
+and pre-irrevocable failure—the core calls `finish` exactly once for every
+inserted item. If `finish` itself violates the contract, the already-known
+outcome is returned as `CommitFailure::Poisoned { outcome, .. }`; the callback
+is not retried, and unfinished cleanup state is retained for diagnosis. If
+publication becomes indeterminate before all locks are released, the core does
+not invent a `FinishDisposition::Committed` or `Aborted`: it uses indeterminate
+lock release, quarantines the runtime, and retains the item vector as Section
+10.5 requires.
 
-`install` MUST NOT drop displaced `Arc`s, buffers, or foreign allocations while
-transaction locks are held. It moves them into preallocated cleanup state;
-`finish(Committed)` releases or retires them after all transaction locks are
-published and released.
+The execution-time `with_item` closure may run ordinary synchronous adapter
+code and access its registered datatype, but it cannot `.await`, migrate the
+worker, perform blocking I/O, or reenter the mutably borrowed transaction. No
+preflight-or-later callback may perform network or disk I/O, await, invoke
+arbitrary application code, recursively enter STO on the same worker, or
+acquire an untracked blocking lock. `install` MUST NOT drop displaced `Arc`s,
+buffers, or foreign allocations while transaction locks are held. It moves
+them into preallocated cleanup state;
+`finish(FinishDisposition::Committed)` releases or retires them after all
+transaction locks are published and released.
 
-### 8.2 Normative adapter obligations
+### 8.8 Normative adapter obligations
 
 The following adapt the six correctness rules in Section 4.1 of the EuroSys
 paper:
@@ -586,22 +1361,30 @@ paper:
 
 Rust STO adds:
 
-7. **Lifetime.** Every token remains valid through validation and cleanup
-   without retaining an unguarded foreign pointer.
+7. **Lifetime.** Every token and associated value is owned for the transaction
+   and remains valid through validation and cleanup without an unguarded
+   foreign pointer.
 8. **Infallible installation.** All allocation and fallible computation needed
-   by `install` completes during execution or `preflight`.
-9. **Panic freedom.** Lock, validation, install, unlock, and finish callbacks
-   do not panic. A panic before install triggers guarded abort; a panic after
-   the irreversible boundary poisons the runtime.
+   by `install`, `TransactionLock::release`, and `finish` completes during
+   execution or `preflight`.
+9. **Panic freedom.** Resource, `TransactionLock`, validation, install, release,
+   and finish callbacks do not panic. A pre-irrevocable callback panic performs
+   guarded abort and poisons the resource/runtime; a post-irrevocable panic is
+   indeterminate and quarantines it.
 10. **Memory-model soundness.** Reads and writes use actual synchronization;
     later version validation does not excuse a Rust data race.
 11. **Nontransactional participation.** Any concurrent nontransactional
-    operation updates the same locks/versions required to keep transactions
+    operation updates the same locks and versions required to keep transactions
     correct.
 12. **Cross-object neutrality.** The adapter does not assume callback position,
     sole ownership of the transaction, or a particular other adapter.
+13. **Owned execution state.** Keys, observations, predicates, intents,
+    prepared state, and guards contain no borrow that can outlive its source or
+    be invalidated before exact-once cleanup.
+14. **Deterministic composition.** Repeated operations on one identity merge in
+    its one item and define read-your-writes for every supported sequence.
 
-### 8.3 Deferred and eager updates
+### 8.9 Deferred and eager updates
 
 The default adapter strategy is deferred update: execution records an intent,
 and commit publishes it.
@@ -743,17 +1526,27 @@ The normative local protocol is:
 
 1. **Preflight.** Deduplicate and finalize items; allocate all write snapshots,
    adapter scratch, and lock vectors; derive, deduplicate, and sort the canonical
-   physical lock plan. Failure is a definite abort with no locks held.
-2. **Lock writes.** Acquire each unique `LockIdentity` in total order. On any
-   failure, release already acquired physical locks exactly once in reverse
-   order and abort.
+   physical lock plan by calling `TransactionalResource::preflight` for each
+   item. `Conflict` or `Capacity` returns `Ok(CommitOutcome::Aborted(..))` with
+   no locks held. `Fault` performs the same definite-abort cleanup but returns
+   `CommitFailure::Poisoned` with `DefiniteOutcome::Aborted`.
+2. **Acquire planned locks.** For each unique `LockIdentity` in total order,
+   call its `TransactionLock::try_acquire` and place the owned guard in the
+   preallocated erased lock frame. On `Conflict`, call
+   `TransactionLock::release` with
+   `LockDisposition::Aborted` for already acquired guards exactly once in
+   reverse order and return a normal abort. `Fault` uses that same release path
+   and returns poisoned with a definite aborted outcome.
 3. **Reserve optional upper metadata.** After the full write set is locked, an
    upper compatibility coordinator may reserve a `MakoTimestamp` or equivalent
    preallocated ticket. Reservation failure aborts. Gaps from later validation
    failure are harmless. This value is not an `OccVersion` and does not mean the
    transaction committed.
-4. **Upgrade predicates.** Evaluate commit predicates and capture their covering
-   versions while write locks are held. A failed predicate aborts.
+4. **Upgrade predicates.** Call `TransactionalResource::upgrade_predicate` and
+   capture its covering observation while write locks are held. The core changes
+   the item to `UpgradedPredicate` only on success. `Conflict` is a normal
+   abort; `Fault` abort-cleans and returns poisoned with a definite aborted
+   outcome.
 5. **Choose core commit metadata.** Before the final validating pass, reserve
    any `OccCommitId` required by the isolation profile. Gaps from validation or
    later hook rejection are allowed. Reserving here makes the global clock order
@@ -761,11 +1554,14 @@ The normative local protocol is:
    exhaustion cannot abort after hook acceptance. Upper `MakoTimestamp`
    allocation remains separate.
 6. **Validate reads.** Define the **certification cut** immediately before the
-   first check in the final validating pass. Validate every read and upgraded
-   predicate. A value may match the observed version or that version locked by
-   this transaction. Because covering versions cannot wrap or return to an old
+   first check in the final validating pass. Call
+   `TransactionalResource::validate_read` for every read and upgraded predicate.
+   A value may match the observed version or that version locked by this
+   transaction. Because covering versions cannot wrap or return to an old
    observable value, success of the whole pass retrospectively certifies that
-   every observation held at this cut.
+   every observation held at this cut. A `CheckError::Conflict` is a normal
+   abort; `CheckError::Fault` abort-cleans and returns poisoned with a definite
+   aborted outcome.
 7. **Run the optional pre-install hook.** For a non-read-only compatibility
    transaction, invoke the hook exactly once after all local writes are locked
    and reads validate, but before the first install. It receives the previously
@@ -777,16 +1573,18 @@ The normative local protocol is:
    workers may run hooks concurrently.
 8. **Cross the irreversible boundary.** From this point, the transaction cannot
    report conflict or abort.
-9. **Install.** Call every write item's infallible, nonpanicking install while all
-   resources retain their own-lock state. Install callbacks may run in any item
-   order; correctness MUST NOT depend on their relative position. In particular,
-   a membership resource may prepare its next locked generation before or after
+9. **Install.** Call `TransactionalResource::install` for every item with an
+   intent while all resources retain their own-lock state. The method is
+   infallible and nonpanicking. Install callbacks may run in any item order;
+   correctness MUST NOT depend on their relative position. In particular, a
+   membership resource may prepare its next locked generation before or after
    record snapshots, because none is visible while its lock remains held.
-10. **Unlock and finish.** Release locks in reverse acquisition order, publishing
-   their new generations. This releases Masstree record resources before their
-   table membership resource. Then run finish/cleanup in reverse item order.
-   Return committed only after required cleanup and worker-state restoration
-   complete.
+10. **Unlock and finish.** Call `TransactionLock::release` with
+    `LockDisposition::Committed` in reverse acquisition order, publishing new
+    generations. This releases Masstree record resources before their table
+    membership resource. Then call `TransactionalResource::finish` with
+    `FinishDisposition::Committed` in reverse item order. Return committed only
+    after required cleanup and worker-state restoration complete.
 
 The paper's basic protocol uses lock → predicate → validate → version →
 install → cleanup. **[RUST/OPAQUE]** This design reserves an opacity-ordering
@@ -828,22 +1626,45 @@ validation already supplies the same guarantee.
 
 Abort performs, exactly once:
 
-1. reverse release of every acquired lock;
-2. reverse `finish(Aborted)` for every item with speculative state;
+1. reverse `TransactionLock::release(LockDisposition::Aborted)` for every
+   acquired lock;
+2. reverse `TransactionalResource::finish(FinishDisposition::Aborted)` for
+   every inserted item;
 3. resource-scope exit; and
 4. worker transaction-state reset.
 
-Dropping `Transaction<Active>` invokes this path. A partially locked guard also
-invokes it. Double unlock, double finish, and reuse after finish are bugs caught
-by state ownership rather than boolean flags.
+Dropping `Transaction<Active>` invokes this path. `commit(self)` first transfers
+the item vector and release guards out of the public active-transaction Drop
+guard into a private commit guard. Before `Irrevocable`, that guard's fallback
+is `Aborted`; at `Irrevocable`, it changes the fallback to `Indeterminate`
+before the first install. The ownership transfer disarms the public Drop path,
+so it can never abort-release an irrevocable transaction. A partially locked,
+pre-irrevocable commit guard also invokes the abort path. Double unlock, double
+finish, and reuse after finish are bugs caught by state ownership rather than
+boolean flags.
+
+If abort cleanup violates its infallible contract, the abstract outcome remains
+definitely aborted, but the runtime is poisoned. A fallible commit call reports
+`CommitFailure::Poisoned { outcome: DefiniteOutcome::Aborted(..), .. }`;
+explicit `abort` or Drop records the same health failure because those paths
+cannot return a `CommitFailure`.
 
 ### 10.5 Failure after installation starts
 
 Installation and mandatory cleanup are designed to be infallible. An adapter
 panic, foreign abort, or invariant violation after `Irrevocable` cannot be
 translated into `Conflict` or `Aborted`. The implementation MUST preserve all
-reachable state for diagnosis, quarantine the affected worker/runtime, and
-return an indeterminate/poisoned disposition when unwinding can be contained.
+core-retained reachable state for diagnosis, quarantine the affected
+worker/runtime, and
+return `Indeterminate` when publication cannot be classified. If publication
+is provably complete and only later cleanup fails, it returns
+`CommitFailure::Poisoned` carrying `DefiniteOutcome::Committed`; callers MUST
+NOT retry it.
+Every still-held physical guard is released only with
+`LockDisposition::Indeterminate`, which conservatively advances its generation
+or preserves publication; it never restores a pre-lock version after partial
+installation. An unreleasable guard and its frame remain quarantined rather
+than being implicitly dropped.
 
 If an accepted hook staged upper metadata and installation later becomes
 poisoned or indeterminate, recovery of that staged metadata belongs to the upper
@@ -1130,8 +1951,9 @@ struct RecordState {
 `AtomicImmutableSnapshot` is descriptive, not a commitment to a specific crate.
 Its implementation must have a sound reference-count and memory-order proof.
 A lock-backed immutable snapshot is acceptable only when that synchronization
-guard is itself the tracked record lock, is acquired during `try_lock` in the
-global lock order, and remains in the item's lock token through installation.
+guard is itself the tracked record lock, is acquired by
+`TransactionLock::try_acquire` in the global lock order, and remains in the
+core-owned lock frame through installation.
 `install` MUST NOT acquire a second mutex. Otherwise the adapter must use a
 sound atomic immutable-snapshot publication primitive.
 
@@ -1515,16 +2337,42 @@ It MUST NOT hard-cast erased item state to MassTrans key/value types.
 
 Required tests include:
 
+- an out-of-crate adapter contract fixture that implements
+  `TransactionalResource` for two resource classes and uses a custom
+  `TransactionLock`;
+- compile checks that the normative public signatures remain externally
+  implementable while the erased item and lock traits remain inaccessible;
+- heterogeneous dispatch through two `ItemBox<A>` types in one transaction,
+  including reuse of the same typed item on repeated lookup;
+- rejection of wrong-runtime resources, registration `TypeId` mismatches, and
+  stale or mismatched `LockUse` tokens without an unchecked downcast;
+- a caught operation error or unwind dooms the transaction and cannot commit
+  partially changed item state;
+- `ItemInitError` and failure at every other fallible `with_item` step leave the
+  transaction doomed;
+- compile-fail checks that active transactions, entries, phase contexts, and
+  worker-affine guards do not accidentally become `Send` or `Sync`;
 - version classification, checked overflow, and own-lock validation;
 - item identity, hash collision handling, deduplication, and total order;
 - aliased physical-lock canonicalization, cross-transaction order, and
-  exact-once release;
+  exact-once release, including two logical resource classes deliberately
+  sharing one `LockIdentity`;
 - adversarial alias schedules such as `a,c -> L` and `b,d -> M` across opposite
   logical item sets;
 - bounded hidden-lock failure releases every planned and hidden acquisition
   exactly once;
 - every same-item read/write mutation sequence;
 - lock-N failure releases locks `0..N-1` exactly once in reverse;
+- phase-by-phase panic injection proves commit-guard ownership transfer and
+  that no Drop path uses `LockDisposition::Aborted` after `Irrevocable`;
+- every pre-irrevocable `AdapterFault` performs abort cleanup and returns
+  `Poisoned` with a definite aborted outcome;
+- install or release panic returns `Indeterminate`, while finish panic after
+  complete publication returns `Poisoned` with a definite committed outcome;
+- callback traces for `preflight` failure at item N distinguish items with and
+  without `Prepared` state and finish each inserted item exactly once;
+- a failing allocator is enabled after preflight through install, release, and
+  finish to prove those phases allocate nothing;
 - predicate-upgrade and validation failure install nothing;
 - commit/abort/Drop cleanup exactly once;
 - cross-object atomicity using two independently implemented adapters;
@@ -1673,6 +2521,7 @@ release after cutover.
 | D14 | RUST | Distributed prepared state is outside core v1. | Network waiting while locks are held needs a separate liveness design. |
 | D15 | RUST | Native version encoding is private; the C++ layout is a parity oracle. | Rust records do not exchange atomic objects with C++. |
 | D16 | RUST/COMPAT | Native teardown requires negotiated `GRACEFUL_SHUTDOWN`; otherwise native allocations are process-lifetime. | Makes RCU/thread-affine destruction an explicit capability rather than a `Drop` guess. |
+| D17 | RUST | External adapters implement safe typed `TransactionalResource`, `OpacityToken`, and `TransactionLock` traits; heterogeneous item/guard erasure is sealed, private, and checked. | Preserves the paper's virtual extension seam without exposing untagged storage or making memory safety depend on adapter semantics. |
 
 ### 20.2 Deferred decisions and review triggers
 
