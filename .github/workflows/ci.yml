@@ -322,6 +322,7 @@ jobs:
         run: |
           tsan_cargo_home=/tmp/mako-local-tsan-cargo
           tsan_rustup_home=/tmp/mako-local-tsan-rustup
+          stable_sysroot=$(rustc --print sysroot)
           toolchain=$(bash ./scripts/run_mako_local_miri.sh --print-toolchain)
           CARGO_HOME="${tsan_cargo_home}" \
           RUSTUP_HOME="${tsan_rustup_home}" \
@@ -335,7 +336,11 @@ jobs:
             --profile minimal --component rust-src
           CARGO_HOME="${tsan_cargo_home}" \
           RUSTUP_HOME="${tsan_rustup_home}" \
-            "${tsan_cargo_home}/bin/rustup" default "${toolchain}"
+            "${tsan_cargo_home}/bin/rustup" toolchain link \
+              mako-ci-stable "${stable_sysroot}"
+          CARGO_HOME="${tsan_cargo_home}" \
+          RUSTUP_HOME="${tsan_rustup_home}" \
+            "${tsan_cargo_home}/bin/rustup" default mako-ci-stable
           echo "CARGO_HOME=${tsan_cargo_home}" >> "${GITHUB_ENV}"
           echo "RUSTUP_HOME=${tsan_rustup_home}" >> "${GITHUB_ENV}"
           echo "${tsan_cargo_home}/bin" >> "${GITHUB_PATH}"
