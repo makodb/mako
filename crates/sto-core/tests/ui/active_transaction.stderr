@@ -1,0 +1,161 @@
+error[E0277]: `Rc<()>` cannot be sent between threads safely
+  --> tests/ui/active_transaction.rs:11:19
+   |
+11 |     assert_send::<Transaction<'static, Active>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be sent between threads safely
+   |
+   = help: within `Transaction<'static>`, the trait `Send` is not implemented for `Rc<()>`
+note: required because it appears within the type `PhantomData<Rc<()>>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `Transaction<'static>`
+  --> src/transaction.rs
+   |
+   | pub struct Transaction<'worker, State = Active> {
+   |            ^^^^^^^^^^^
+note: required by a bound in `assert_send`
+  --> tests/ui/active_transaction.rs:3:19
+   |
+ 3 | fn assert_send<T: Send>() {}
+   |                   ^^^^ required by this bound in `assert_send`
+
+error[E0277]: `(dyn sto_core::item::ErasedItem + 'static)` cannot be sent between threads safely
+  --> tests/ui/active_transaction.rs:11:19
+   |
+11 |     assert_send::<Transaction<'static, Active>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(dyn sto_core::item::ErasedItem + 'static)` cannot be sent between threads safely
+   |
+   = help: the trait `Send` is not implemented for `(dyn sto_core::item::ErasedItem + 'static)`
+   = note: required for `std::ptr::Unique<(dyn sto_core::item::ErasedItem + 'static)>` to implement `Send`
+note: required because it appears within the type `Box<(dyn sto_core::item::ErasedItem + 'static)>`
+  --> $RUST/alloc/src/boxed.rs
+   |
+   | pub struct Box<
+   |            ^^^
+note: required because it appears within the type `Option<Box<(dyn sto_core::item::ErasedItem + 'static)>>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {
+   |          ^^^^^^
+note: required because it appears within the type `PhantomData<Option<Box<(dyn sto_core::item::ErasedItem + 'static)>>>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `alloc::raw_vec::RawVec<Option<Box<(dyn sto_core::item::ErasedItem + 'static)>>>`
+  --> $RUST/alloc/src/raw_vec/mod.rs
+   |
+   | pub(crate) struct RawVec<T, A: Allocator = Global> {
+   |                   ^^^^^^
+note: required because it appears within the type `Vec<Option<Box<(dyn sto_core::item::ErasedItem + 'static)>>>`
+  --> $RUST/alloc/src/vec/mod.rs
+   |
+   | pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global> {
+   |            ^^^
+note: required because it appears within the type `transaction::TransactionFrame`
+  --> src/transaction.rs
+   |
+   | struct TransactionFrame {
+   |        ^^^^^^^^^^^^^^^^
+note: required because it appears within the type `Option<transaction::TransactionFrame>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {
+   |          ^^^^^^
+note: required because it appears within the type `Transaction<'static>`
+  --> src/transaction.rs
+   |
+   | pub struct Transaction<'worker, State = Active> {
+   |            ^^^^^^^^^^^
+note: required by a bound in `assert_send`
+  --> tests/ui/active_transaction.rs:3:19
+   |
+ 3 | fn assert_send<T: Send>() {}
+   |                   ^^^^ required by this bound in `assert_send`
+
+error[E0277]: `Rc<()>` cannot be shared between threads safely
+  --> tests/ui/active_transaction.rs:12:19
+   |
+12 |     assert_sync::<Transaction<'static, Active>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be shared between threads safely
+   |
+   = help: within `Transaction<'static>`, the trait `Sync` is not implemented for `Rc<()>`
+note: required because it appears within the type `PhantomData<Rc<()>>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `Transaction<'static>`
+  --> src/transaction.rs
+   |
+   | pub struct Transaction<'worker, State = Active> {
+   |            ^^^^^^^^^^^
+note: required by a bound in `assert_sync`
+  --> tests/ui/active_transaction.rs:4:19
+   |
+ 4 | fn assert_sync<T: Sync>() {}
+   |                   ^^^^ required by this bound in `assert_sync`
+
+error[E0277]: `(dyn sto_core::item::ErasedItem + 'static)` cannot be shared between threads safely
+  --> tests/ui/active_transaction.rs:12:19
+   |
+12 |     assert_sync::<Transaction<'static, Active>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(dyn sto_core::item::ErasedItem + 'static)` cannot be shared between threads safely
+   |
+   = help: the trait `Sync` is not implemented for `(dyn sto_core::item::ErasedItem + 'static)`
+   = note: required for `std::ptr::Unique<(dyn sto_core::item::ErasedItem + 'static)>` to implement `Sync`
+note: required because it appears within the type `Box<(dyn sto_core::item::ErasedItem + 'static)>`
+  --> $RUST/alloc/src/boxed.rs
+   |
+   | pub struct Box<
+   |            ^^^
+note: required because it appears within the type `Option<Box<(dyn sto_core::item::ErasedItem + 'static)>>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {
+   |          ^^^^^^
+note: required because it appears within the type `PhantomData<Option<Box<(dyn sto_core::item::ErasedItem + 'static)>>>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `alloc::raw_vec::RawVec<Option<Box<(dyn sto_core::item::ErasedItem + 'static)>>>`
+  --> $RUST/alloc/src/raw_vec/mod.rs
+   |
+   | pub(crate) struct RawVec<T, A: Allocator = Global> {
+   |                   ^^^^^^
+note: required because it appears within the type `Vec<Option<Box<(dyn sto_core::item::ErasedItem + 'static)>>>`
+  --> $RUST/alloc/src/vec/mod.rs
+   |
+   | pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global> {
+   |            ^^^
+note: required because it appears within the type `transaction::TransactionFrame`
+  --> src/transaction.rs
+   |
+   | struct TransactionFrame {
+   |        ^^^^^^^^^^^^^^^^
+note: required because it appears within the type `Option<transaction::TransactionFrame>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {
+   |          ^^^^^^
+note: required because it appears within the type `Transaction<'static>`
+  --> src/transaction.rs
+   |
+   | pub struct Transaction<'worker, State = Active> {
+   |            ^^^^^^^^^^^
+note: required by a bound in `assert_sync`
+  --> tests/ui/active_transaction.rs:4:19
+   |
+ 4 | fn assert_sync<T: Sync>() {}
+   |                   ^^^^ required by this bound in `assert_sync`
+
+error: lifetime may not live long enough
+ --> tests/ui/active_transaction.rs:7:5
+  |
+6 | fn escape(transaction: Transaction<'_, Active>) -> Transaction<'static, Active> {
+  |           ----------- has type `Transaction<'1>`
+7 |     transaction
+  |     ^^^^^^^^^^^ returning this value requires that `'1` must outlive `'static`

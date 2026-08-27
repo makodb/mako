@@ -1,0 +1,17 @@
+# Native Rust components for Mako. The workspace lives below the repository
+# root so the existing CMake project and unrelated Rust workspaces remain
+# independent.
+[workspace]
+resolver = "2"
+members = [
+    "masstree",
+    "mtree-sys",
+    "sto-core",
+    "sto-masstree",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+publish = false
+rust-version = "1.95"

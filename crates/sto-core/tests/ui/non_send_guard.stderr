@@ -1,0 +1,44 @@
+error[E0277]: `Rc<()>` cannot be sent between threads safely
+  --> tests/ui/non_send_guard.rs:17:19
+   |
+17 |     assert_send::<LocalGuard>();
+   |                   ^^^^^^^^^^ `Rc<()>` cannot be sent between threads safely
+   |
+   = help: within `LocalGuard`, the trait `Send` is not implemented for `Rc<()>`
+note: required because it appears within the type `LocalGuard`
+  --> tests/ui/support/mod.rs
+   |
+   | pub struct LocalGuard(pub Rc<()>);
+   |            ^^^^^^^^^^
+note: required by a bound in `assert_send`
+  --> tests/ui/non_send_guard.rs:6:19
+   |
+ 6 | fn assert_send<T: Send>() {}
+   |                   ^^^^ required by this bound in `assert_send`
+
+error[E0277]: `Rc<()>` cannot be shared between threads safely
+  --> tests/ui/non_send_guard.rs:18:19
+   |
+18 |     assert_sync::<LocalGuard>();
+   |                   ^^^^^^^^^^ `Rc<()>` cannot be shared between threads safely
+   |
+   = help: within `LocalGuard`, the trait `Sync` is not implemented for `Rc<()>`
+note: required because it appears within the type `LocalGuard`
+  --> tests/ui/support/mod.rs
+   |
+   | pub struct LocalGuard(pub Rc<()>);
+   |            ^^^^^^^^^^
+note: required by a bound in `assert_sync`
+  --> tests/ui/non_send_guard.rs:7:19
+   |
+ 7 | fn assert_sync<T: Sync>() {}
+   |                   ^^^^ required by this bound in `assert_sync`
+
+error: lifetime may not live long enough
+  --> tests/ui/non_send_guard.rs:13:5
+   |
+ 9 | fn escape_guard<'a>(
+   |                 -- lifetime `'a` defined here
+...
+13 |     context.guard(lock_use).unwrap()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'a` must outlive `'static`

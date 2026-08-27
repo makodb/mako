@@ -845,6 +845,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/shardClient.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/abstract_db.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mtree_abi.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
@@ -1310,6 +1311,70 @@ target_link_libraries(mako PUBLIC txlog_core_obj masstree)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
+# Inspect the archive rather than trusting the ABI's self-reported symbol
+# fingerprint. The checker filters the static archive down to its externally
+# visible C `mt_*` surface, so unrelated C++ symbols from Mako do not make the
+# allowlist platform- or implementation-dependent.
+add_custom_target(check_mtree_abi_exports
+    COMMAND "${CMAKE_COMMAND}"
+        "-DMAKO_NM=${CMAKE_NM}"
+        "-DMAKO_ABI_ARTIFACT=$<TARGET_FILE:mako>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckMtreeAbiExports.cmake"
+    DEPENDS mako
+    VERBATIM
+    COMMENT "Checking the native Masstree ABI exported-symbol allowlist"
+)
+
+# Rust's safe Masstree wrapper deliberately leaves the native ABI unresolved
+# in ordinary Cargo builds. This opt-in target first builds the authoritative
+# CMake archives (so mtree_abi.cc sees the exact same generated config and
+# compile definitions as Mako), then runs the downstream Rust integration
+# test against those archive paths. It is not part of ALL and does not make
+# Cargo a configure-time requirement for non-Rust builds.
+set(MAKO_MTREE_RUST_NATIVE_LIBS
+    "static=mako,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
+    CACHE STRING
+    "Comma-separated rustc native libraries for the Masstree ABI integration test"
+)
+find_program(MAKO_CARGO_EXECUTABLE NAMES cargo)
+if(MAKO_CARGO_EXECUTABLE)
+    get_filename_component(_MAKO_CXX_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_MAKO_CXX_COMPILER_ROOT "${_MAKO_CXX_COMPILER_DIR}" DIRECTORY)
+
+    if(APPLE)
+        set(_MAKO_MTREE_LOADER_PATH_VARIABLE "DYLD_LIBRARY_PATH")
+    else()
+        set(_MAKO_MTREE_LOADER_PATH_VARIABLE "LD_LIBRARY_PATH")
+    endif()
+
+    set(_MAKO_STO_MASSTREE_NATIVE_TEST "")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/native_integration.rs")
+        set(_MAKO_STO_MASSTREE_NATIVE_TEST
+            "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/native_integration.rs")
+    endif()
+
+    add_custom_target(rust_masstree_native_integration
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMAKO_CARGO_EXECUTABLE=${MAKO_CARGO_EXECUTABLE}"
+            "-DMAKO_RUST_MANIFEST=${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+            "-DMAKO_CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-native-target"
+            "-DMAKO_ARCHIVE=$<TARGET_FILE:mako>"
+            "-DMASSTREE_ARCHIVE=$<TARGET_FILE:masstree>"
+            "-DMAKO_CXX_RUNTIME_DIR=${_MAKO_CXX_COMPILER_ROOT}/lib"
+            "-DMAKO_LOADER_PATH_VARIABLE=${_MAKO_MTREE_LOADER_PATH_VARIABLE}"
+            "-DMAKO_NATIVE_LIBS=${MAKO_MTREE_RUST_NATIVE_LIBS}"
+            "-DMAKO_STO_NATIVE_TEST=${_MAKO_STO_MASSTREE_NATIVE_TEST}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunRustMasstreeNativeIntegration.cmake"
+        DEPENDS check_mtree_abi_exports masstree
+        USES_TERMINAL
+        VERBATIM
+        COMMENT "Running Rust against CMake's native Masstree ABI"
+    )
+else()
+    message(STATUS
+        "Cargo not found; rust_masstree_native_integration target is unavailable")
+endif()
+
 # ============================================================================
 # BORROW CHECKER REGISTRATION SILO/STO
 # ============================================================================
@@ -1494,6 +1559,27 @@ endif()
 
 # Enable testing
 enable_testing()
+
+# C consumers must be able to include the public ABI without any C++
+# compatibility layer. This executable contains no ABI calls and therefore
+# compiles and links independently of libmako and Masstree.
+add_executable(test_mtree_abi_c11_header EXCLUDE_FROM_ALL
+    tests/mtree_abi_c11_header.c)
+target_include_directories(test_mtree_abi_c11_header PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+set_target_properties(test_mtree_abi_c11_header PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+    CXX_MODULE_STD OFF
+    LINKER_LANGUAGE C
+)
+target_compile_options(test_mtree_abi_c11_header PRIVATE
+    $<$<COMPILE_LANG_AND_ID:C,Clang,AppleClang,GNU>:-Wall;-Wextra;-Wpedantic;-Werror>
+)
+add_test(NAME test_mtree_abi_c11_header COMMAND test_mtree_abi_c11_header)
+set_tests_properties(test_mtree_abi_c11_header PROPERTIES LABELS "masstree;abi;c11")
 
 # Use vendored GoogleTest only (no system gtest dependency).
 set(BUILD_TESTS OFF)
@@ -2050,6 +2136,37 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         pthread)
     add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
+
+    # Test: stable C ABI over the native SiloRuntime/Masstree configuration.
+    # Linking through mako ensures the ABI implementation is compiled with the
+    # exact same generated Masstree config, definitions, and native options as
+    # the storage engine it wraps.
+    add_executable(test_mtree_abi tests/test_mtree_abi.cc)
+    target_include_directories(test_mtree_abi PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_mtree_abi PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_mtree_abi
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        pthread)
+    add_test(NAME test_mtree_abi COMMAND test_mtree_abi)
+    set_tests_properties(test_mtree_abi PROPERTIES LABELS "masstree;silo;abi")
+
+    add_test(NAME test_mtree_abi_exports
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMAKO_NM=${CMAKE_NM}"
+            "-DMAKO_ABI_ARTIFACT=$<TARGET_FILE:mako>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckMtreeAbiExports.cmake"
+    )
+    set_tests_properties(test_mtree_abi_exports PROPERTIES LABELS "masstree;abi;exports")
+
+    add_custom_target(run_mtree_abi_test
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "^test_mtree_abi$"
+        DEPENDS test_mtree_abi
+        COMMENT "Running the Masstree C ABI test"
+    )
 
     # Test: Multi-site Silo stress.
     add_executable(test_silo_multi_site_stress tests/test_silo_multi_site_stress.cc)

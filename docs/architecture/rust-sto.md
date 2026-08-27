@@ -1,9 +1,12 @@
 # Rust STO: Type-Aware Transactions for Safe, Extensible Data Structures
 
-> **Status:** Draft design guideline
+> **Status:** Implemented experimental non-opaque v1; pre-cutover
 >
-> **Implementation status:** Pre-implementation target architecture; the native
-> crates and hardened ABI described below do not yet exist on this branch.
+> **Implementation status:** `sto-core`, the raw and safe Masstree boundary,
+> transactional Masstree point operations, copied scans, membership validation,
+> bounded registries, and the upper commit-hook seam exist on this branch.
+> The optional opacity profile, graceful native shutdown, production upper-layer
+> facade/cutover, and performance acceptance remain deferred milestones.
 >
 > **Audience:** STO core, transactional-datatype, Masstree ABI, and Mako integration developers
 >
@@ -412,10 +415,10 @@ it is not the Rust core's ownership model.
 
 ### 6.2 Public transaction surface
 
-**[RUST]** The following is the normative v1 ownership and outcome shape. Names
-may move between modules before the crate lands, but an implementation MUST NOT
-replace the explicit worker borrow, consuming completion methods, or the
-definite-versus-indeterminate outcome split with ambient state or booleans.
+**[RUST]** The following is the normative v1 ownership and outcome shape and is
+implemented by `sto-core`. Future refactoring MUST NOT replace the explicit
+worker borrow, consuming completion methods, or the definite-versus-
+indeterminate outcome split with ambient state or booleans.
 
 ```rust
 use std::sync::Arc;
@@ -635,11 +638,10 @@ abort-on-contention policy preserves safety and improves relevant workloads.
 ## 8. Rust adapter interface and protocol
 
 The v1 signatures in this section are the normative adapter-author contract.
-Names and module paths may be adjusted before `sto-core` first lands, but the
-ownership, type-state, phase, fallibility, and safe-trait properties are design
-requirements. The signature blocks use `unimplemented!()` only where an
-inherent method body does not yet exist. They become compile-tested, out-of-
-crate contract fixtures when the crate lands.
+The ownership, type-state, phase, fallibility, and safe-trait properties are
+design requirements. The signature blocks use `unimplemented!()` only to keep
+the document focused on public shape; the corresponding real methods and an
+out-of-crate adapter contract fixture compile in `crates/sto-core`.
 
 ### 8.1 Mapping the C++ class abstraction to Rust
 
@@ -969,10 +971,12 @@ or drain cleanup stored in `Local` and `Prepared`. None exposes the enclosing
 `Transaction` or permits insertion of another item.
 
 After a successful `finish`, the core drops any untaken intent, then prepared
-state, local state, key, and resource handle, all outside transaction locks and
-inside panic containment. On a cleanup panic it does not retry a partially run
-callback or continue destructing uncertain adapter state; it retains the
-remaining item frame and poisons with the already-known outcome.
+state, observation/predicate state, local state, key, and resource handle, all
+outside transaction locks and inside panic containment. Each step first leaves
+an empty core slot and then drops the removed value. On a cleanup panic the core
+does not retry a partially run callback or continue destructing uncertain
+adapter state; it retains the remaining item frame and poisons with the
+already-known outcome.
 
 ### 8.4 Core-owned item state and operation-time entry
 
@@ -994,13 +998,13 @@ enum PreparationState<P> {
 }
 
 struct ItemBox<A: TransactionalResource> {
-    identity: ItemIdentity,
-    resource: RegisteredResource<A>,
-    key: A::Key,
-    local: A::Local,
-    observation: ObservationState<A::Observation, A::Predicate>,
     intent: Option<A::Intent>,
     preparation: PreparationState<A::Prepared>,
+    observation: ObservationState<A::Observation, A::Predicate>,
+    retained_predicate: Option<A::Predicate>,
+    local: Option<A::Local>,
+    key: Option<A::Key>,
+    resource: Option<RegisteredResource<A>>,
 }
 
 pub enum ObservationRef<'a, A: TransactionalResource> {
@@ -1051,15 +1055,28 @@ impl<A: TransactionalResource> Entry<'_, A> {
 }
 ```
 
-`Entry` contains a transaction reference plus a slot index, not an unchecked
-direct pointer to an erased item. This lets `record_read` and
-`record_predicate` perform any whole-transaction opacity revalidation required
-by Section 12 before the adapter exposes its abstract result. The adapter is
-responsible for same-item operation composition and read-your-writes, using
-`local`, `observation`, `intent`, and their mutable counterparts before
-replacing state with `stage`. The core performs successful predicate and
-installation transitions itself, so an adapter cannot install twice or claim
-that a predicate was upgraded when its callback failed.
+The upgraded form moves the old predicate into the separate retained field so
+its destructor cannot run while the commit lock plan is held and so observation
+and predicate destructors have distinct unwind boundaries. Likewise, a released
+`TransactionLock::Guard` is made inert by `release` but retained in the plan
+until every physical lock has been released. Post-unlock teardown extracts and
+drops each guard before its target, one frame and one unwind boundary at a time;
+on the first destructor panic it retains the rest. These retained values and
+the optional item fields make teardown order enforceable even when an associated
+type has a nontrivial destructor.
+
+In the implemented serializable profile, `Entry` is a scoped typed borrow of
+the already `TypeId`-checked `ItemBox<A>`; it is never a pointer into erased
+storage, and the higher-ranked `with_item` closure prevents it from escaping.
+An opaque profile may replace that internal representation with a transaction
+reference plus slot index so `record_read` and `record_predicate` can trigger
+whole-transaction execution-time revalidation before exposing a result. That
+change must preserve this public API. The adapter is responsible for same-item
+operation composition and read-your-writes, using `local`, `observation`,
+`intent`, and their mutable counterparts before replacing state with `stage`.
+The core performs successful predicate and installation transitions itself, so
+an adapter cannot install twice or claim that a predicate was upgraded when its
+callback failed.
 
 `record_read` permits `Unobserved -> Read`; `record_predicate` permits
 `Unobserved -> Predicate`; successful predicate upgrade is the only
@@ -1139,7 +1156,7 @@ impl InstallContext<'_> {
     pub fn guard_mut<L: TransactionLock>(
         &mut self,
         use_: &LockUse<L>,
-    ) -> &mut L::Guard {
+    ) -> Result<&mut L::Guard, AdapterFault> {
         unimplemented!("signature-only design target")
     }
 
@@ -1311,15 +1328,18 @@ Installation, release, and finish have no error return because there is no safe
 abstract rollback after `Irrevocable` and no remaining lock during finish that
 can be reacquired out of order.
 
-For every definite committed or aborted path—including explicit abort, Drop,
-and pre-irrevocable failure—the core calls `finish` exactly once for every
-inserted item. If `finish` itself violates the contract, the already-known
-outcome is returned as `CommitFailure::Poisoned { outcome, .. }`; the callback
-is not retried, and unfinished cleanup state is retained for diagnosis. If
-publication becomes indeterminate before all locks are released, the core does
-not invent a `FinishDisposition::Committed` or `Aborted`: it uses indeterminate
-lock release, quarantines the runtime, and retains the item vector as Section
-10.5 requires.
+For every definite committed or aborted path whose lock callbacks all return,
+including explicit abort and Drop, the core calls `finish` exactly once for
+every inserted item. If `finish` itself violates the contract, the
+already-known outcome is returned as `CommitFailure::Poisoned { outcome, .. }`;
+the callback is not retried, and unfinished cleanup state is retained for
+diagnosis. An unwind from acquire or abort-release leaves that callback frame's
+guard state uncertain. Although no installation began and the abstract outcome
+is definitely aborted, the core MUST retain the lock plan and item vector and
+MUST NOT invoke the post-unlock `finish` callback. If publication becomes
+indeterminate after irreversibility, the core likewise does not invent a
+`FinishDisposition::Committed` or `Aborted`: it uses indeterminate lock release,
+quarantines the runtime, and retains the item vector as Section 10.5 requires.
 
 The execution-time `with_item` closure may run ordinary synchronous adapter
 code and access its registered datatype, but it cannot `.await`, migrate the
@@ -1632,6 +1652,13 @@ Abort performs, exactly once:
    every inserted item;
 3. resource-scope exit; and
 4. worker transaction-state reset.
+
+Those steps describe callbacks that honor their infallible contract. If an
+acquire or abort-release callback unwinds, its physical guard is uncertain;
+the runtime is poisoned, other definitely held guards are abort-released when
+possible, and item state is quarantined without calling post-unlock `finish`.
+The abstract outcome remains definitely aborted because installation never
+started.
 
 Dropping `Transaction<Active>` invokes this path. `commit(self)` first transfers
 the item vector and release guards out of the public active-transaction Drop
@@ -2019,25 +2046,29 @@ A scan:
 7. applies lower/upper and inclusive/exclusive bounds exactly; and
 8. merges transaction-local writes and deletes into key order.
 
-Each C chunk is structurally weakly consistent. Transactional consistency comes
-from record and membership validation. In opaque mode, the adapter additionally
-performs execution-time validation before exposing a chunk whose observations
-might be inconsistent.
+The C bridge serializes each possible tree insertion against point lookups and
+scans for that tree; read-only calls may proceed together. A single copied C
+chunk therefore has stable native structure, while a multi-chunk range remains
+structurally weakly consistent because mutations may occur between calls.
+Transactional consistency comes from the adapter's whole-scan structural gate,
+record observations, and membership validation. In opaque mode, the adapter
+additionally performs execution-time validation before exposing a chunk whose
+observations might be inconsistent.
 
 For each call, “weakly consistent” still requires a gap-free key-ordered prefix
 up to the reported stop/resume boundary: a concurrent append-only insert or
 split cannot corrupt, omit, or duplicate an entry continuously present in that
 traversed prefix. Exclusive resumption then partitions the remaining range. The
-Masstree bridge MUST prove that property. If the inherited scan cannot provide
-it, the table uses a separate lockable structural version. Before entering any
-native call that may publish an entry or split the tree—including tombstone
-interning—the inserter locks that version. It retains the lock through every
-native publication outcome, then advances and unlocks it before returning. An
-outcome proved to have made no structural change may abort-unlock to the old
-version; an ambiguous outcome advances, unlocks, and quarantines the table.
-Scans observe and validate an unlocked structural version, and opaque scans do
-so before exposing a chunk. Logical membership validation alone cannot hide a
-structural traversal gap.
+Masstree bridge MUST prove that property or serialize the conflicting native
+operations. V1 takes the conservative serialization route twice: the ABI uses
+per-tree shared/exclusive structural access for each call, and the
+transactional table holds a nonblocking structural read guard across its whole
+multi-chunk scan while tombstone interning holds the write guard across every
+native publication outcome. This prevents a physical mutation between chunks
+without turning physical tombstone creation into an abstract transactional
+write. A later versioned protocol may replace the coarse gate only after it
+proves the same prefix and resumption properties. Logical membership validation
+alone cannot hide a structural traversal gap.
 
 The paper's `TMasstree` used transaction items for both stored values and leaf
 nodes and modified Masstree to expose the prior versions of leaves split by an
@@ -2258,11 +2289,11 @@ table mutation goes through the Rust adapter.
 
 Tombstone interning changes only physical structure and therefore does not
 advance logical membership. Scan completeness additionally relies on Assumption
-8: the bridge either preserves every continuously present entry through a
-concurrent split, or the inserter locks a structural version before the native
-call and advances it only after mutation ends while scans observe and validate
-its unlocked value. Thus a physical-only insert cannot silently hide or
-duplicate a stable live record in a committed scan.
+8. In v1, per-call ABI synchronization and the table's whole-scan structural
+read guard exclude a concurrent split; an interning writer holds the matching
+write guard across the native outcome classification. Thus a physical-only
+insert cannot silently hide or duplicate a stable live record in a committed
+scan.
 
 ### 16.6 What this argument does not prove
 
@@ -2290,6 +2321,29 @@ rollout.
 Mako timestamp reservation after the full write set is locked and before local
 read validation. It places the hook after validation but before the first
 install. Rust STO preserves that sequence and the hook's exactly-once behavior.
+
+The implemented seam keeps typed upper metadata in the hook object; `sto-core`
+never erases or interprets it:
+
+```rust
+pub enum CommitHookError {
+    Rejected,
+    Capacity(CapacityError),
+}
+
+pub trait CommitHook {
+    fn reserve_upper_metadata(&mut self) -> Result<(), CommitHookError>;
+    fn pre_install(&mut self) -> Result<(), CommitHookError>;
+}
+
+impl<'worker> Transaction<'worker, Active> {
+    pub fn commit_with_hook<H: CommitHook>(
+        self,
+        hook: &mut H,
+    ) -> Result<CommitOutcome, CommitFailure>;
+}
+```
+
 A later conflict may leave a harmless timestamp gap. Hook rejection or a
 contained panic is a definite abort only because the upper hook contract
 guarantees that its preallocated staging has no externally visible rejection
@@ -2459,6 +2513,35 @@ direct C++ MassTrans -> native Rust STO/Masstree
 Track throughput, p50/p99 latency, abort rate, allocations, item bytes,
 lock-hold time, scan chunk cost, and false conflicts from the coarse membership
 item. Performance changes never weaken a stated correctness gate.
+
+### 18.6 Implementation conformance record
+
+The experimental v1 implementation corresponding to this contract is split as
+follows:
+
+| Surface | Repository implementation | V1 state |
+| --- | --- | --- |
+| Typed STO protocol, private erasure, lock planning, failure dispositions | [`crates/sto-core`](../../crates/sto-core) | Implemented for serializable non-opaque transactions. |
+| Raw stable declarations | [`crates/mtree-sys`](../../crates/mtree-sys) | Implemented for ABI version 1. |
+| Native C boundary | [`mtree_abi.h`](../../src/mako/storage/mtree_abi.h) and [`mtree_abi.cc`](../../src/mako/storage/mtree_abi.cc) | Implemented for point operations and copied bounded scans. |
+| Safe runtime, worker, tree, point, and scan facade | [`crates/masstree`](../../crates/masstree) | Implemented; native cursors, pointers, and RCU guards remain private. |
+| Transactional records, tombstones, quotas, membership predicate, and scan overlay | [`crates/sto-masstree`](../../crates/sto-masstree) | Implemented for the conservative table-membership profile. |
+| Upper metadata reservation and pre-install coordination | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`. |
+| Opacity, graceful native shutdown, upper backend cutover, and performance acceptance | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
+
+The branch-level validation record for this implementation includes the full
+workspace suite in debug and release modes on Rust 1.95, strict Clippy and
+rustdoc builds, C11 header compilation, the exact 34-symbol native allowlist,
+the raw ABI suite, native safe-wrapper and transactional-adapter integration,
+and ASan, UBSan, and unsuppressed TSan stress. The production cutover record
+still needs explicit native fault injection for allocation failure, ordinary
+C++ exceptions, and publication-unknown insertion, plus the upper-backend
+differential histories, performance budgets, and the deferred capabilities in
+the table above.
+
+This table records implementation presence, not authorization to make the Rust
+backend the production default. That decision still requires the cutover gates
+in Section 19.2.
 
 ## 19. Implementation sequence and rollout
 
