@@ -10,17 +10,18 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <memory>
 #include <mutex>
 #include <new>
 #include <string>
-#include <thread>
 #include <unordered_map>
+#if !READ_MY_WRITES
 #include <unordered_set>
+#endif
 
 #if STO_OPACITY
 using mako_local_table_impl =
@@ -29,6 +30,16 @@ using mako_local_table_impl =
 using mako_local_table_impl =
     MassTrans<std::string, versioned_str_struct, false /* opacity */>;
 #endif
+
+constexpr size_t kMinimumWriteItemCharge = 4;
+constexpr size_t kMaximumEncodedValues =
+    MAKO_LOCAL_TXN_ITEM_BUDGET / kMinimumWriteItemCharge;
+constexpr size_t kMaximumRetainedEncodedValueCapacity = 512;
+constexpr size_t kMaximumRetainedEncodedValueBytes = 64 * 1024;
+static_assert(kMaximumEncodedValues * kMinimumWriteItemCharge ==
+              MAKO_LOCAL_TXN_ITEM_BUDGET);
+static_assert(kMaximumEncodedValues * kMaximumRetainedEncodedValueCapacity ==
+              kMaximumRetainedEncodedValueBytes);
 
 struct mako_local_table {
   mako_local_db *owner;
@@ -43,18 +54,24 @@ struct mako_local_db {
 
 struct mako_local_txn {
   mako_local_db *owner;
-  std::thread::id owner_thread;
   size_t worker_slot;
   bool active;
   bool poisoned;
   size_t item_budget_used;
+  size_t encoded_values_used;
+  bool encoded_values_require_release;
 
-  // StringWrapper retains a pointer until commit. deque push_back preserves
-  // references, including the address of small-string-optimised payloads, so
-  // every write gets a distinct stable owner for the full transaction.
-  std::deque<std::string> encoded_values;
+  // StringWrapper retains the std::string object's address until terminal
+  // native cleanup. Every write consumes at least four item-budget credits,
+  // so this fixed pool is large enough for every legal transaction and never
+  // moves an earlier slot while a later write is staged. Retaining at most
+  // 512 bytes of capacity in each slot bounds warmed payload storage to 64 KiB
+  // while eliminating allocation churn for up to 128 short values.
+  std::array<std::string, kMaximumEncodedValues> encoded_values;
+#if !READ_MY_WRITES
   std::unordered_map<mako_local_table *, std::unordered_set<std::string>>
       mutated_keys;
+#endif
 };
 
 namespace {
@@ -149,28 +166,53 @@ lcdf::Str as_key(const uint8_t *p, size_t n) {
 }
 
 bool on_owner_thread(const mako_local_txn *txn) {
-  return txn->owner_thread == std::this_thread::get_id();
+  // Attachment assigns one process-lifetime, never-recycled STO worker ID to
+  // this OS thread. Comparing that TLS integer is both a complete ownership
+  // proof and substantially cheaper than calling pthread_self at every ABI
+  // boundary. The attachment bit is required because uninitialised TThread
+  // TLS is zero, which would otherwise alias worker slot zero.
+  return local_attached &&
+         TThread::id() == static_cast<int>(txn->worker_slot);
+}
+
+void finish_encoded_values(mako_local_txn *txn) noexcept {
+  // The common small-transaction path retains both size and capacity. The
+  // next payload copy and metadata initialization overwrite every byte before
+  // the slot is lent to STO again, so no clearing scan is required.
+  if (txn->encoded_values_require_release) {
+    for (size_t index = 0; index != txn->encoded_values_used; ++index) {
+      std::string &encoded = txn->encoded_values[index];
+      if (encoded.capacity() <= kMaximumRetainedEncodedValueCapacity)
+        continue;
+      std::string{}.swap(encoded);
+    }
+    txn->encoded_values_require_release = false;
+  }
+  txn->encoded_values_used = 0;
 }
 
 void finish_txn(mako_local_txn *txn) noexcept {
-  if (!txn->active) return;
+  assert(txn->active);
+  assert(!txn->poisoned);
+  assert(local_active_txn == txn);
   txn->active = false;
-  txn->poisoned = false;
   txn->item_budget_used = 0;
-  if (local_active_txn == txn) local_active_txn = nullptr;
+  local_active_txn = nullptr;
   active_database_slots[txn->worker_slot].database.store(
       nullptr, std::memory_order_release);
-  txn->encoded_values.clear();
+  finish_encoded_values(txn);
+#if !READ_MY_WRITES
   txn->mutated_keys.clear();
+#endif
 }
 
 void recycle_txn(mako_local_txn *txn) noexcept {
+  assert(!txn->active);
+  assert(!txn->poisoned);
   // Finished handles can coexist briefly: callers may begin a new transaction
   // before destroying an older F-state facade. Retain at most one spare per
   // worker and delete any additional finished handle.
   const size_t worker_slot = txn->worker_slot;
-  txn->owner = nullptr;
-  txn->owner_thread = std::thread::id{};
   txn->worker_slot = active_database_slots.size();
   if (active_database_slots[worker_slot].spare == nullptr) {
     active_database_slots[worker_slot].spare = txn;
@@ -179,23 +221,33 @@ void recycle_txn(mako_local_txn *txn) noexcept {
   }
 }
 
-mako_local_txn *acquire_txn(mako_local_db *db, size_t worker_slot) {
-  active_database_slot &slot = active_database_slots[worker_slot];
-  if (slot.spare == nullptr) {
-    return new mako_local_txn{
-        db, std::this_thread::get_id(), worker_slot, true, false, 0, {}, {}};
-  }
+[[gnu::noinline]] mako_local_txn *allocate_txn(mako_local_db *db,
+                                                size_t worker_slot) {
+#if READ_MY_WRITES
+  return new mako_local_txn{db, worker_slot, true, false, 0, 0, false, {}};
+#else
+  return new mako_local_txn{db, worker_slot, true, false, 0, 0, false, {}, {}};
+#endif
+}
 
+[[gnu::always_inline]] inline mako_local_txn *acquire_txn(
+    mako_local_db *db, size_t worker_slot) {
+  active_database_slot &slot = active_database_slots[worker_slot];
   mako_local_txn *txn = slot.spare;
+  if (txn == nullptr) [[unlikely]] return allocate_txn(db, worker_slot);
   slot.spare = nullptr;
+  assert(!txn->active);
+  assert(!txn->poisoned);
+  assert(txn->worker_slot == active_database_slots.size());
+  assert(txn->item_budget_used == 0);
+  assert(txn->encoded_values_used == 0);
+  assert(!txn->encoded_values_require_release);
   txn->owner = db;
-  txn->owner_thread = std::this_thread::get_id();
   txn->worker_slot = worker_slot;
   txn->active = true;
-  txn->poisoned = false;
-  txn->item_budget_used = 0;
-  txn->encoded_values.clear();
-  txn->mutated_keys.clear();
+  // Only a successfully finished facade enters spare. finish_txn already
+  // reset every cursor and bounded reusable state before recycle, so repeating
+  // those checks here only lengthens every begin fast path.
   return txn;
 }
 
@@ -246,10 +298,17 @@ bool abort_and_finish(mako_local_txn *txn,
 
 int check_txn(mako_local_txn *txn, mako_local_table *table = nullptr) {
   if (txn == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
-  if (!on_owner_thread(txn)) return MAKO_LOCAL_WRONG_THREAD;
-  if (txn->poisoned || local_worker_poisoned)
-    return MAKO_LOCAL_WORKER_POISONED;
-  if (!txn->active || local_active_txn != txn) return MAKO_LOCAL_TXN_FINISHED;
+  // The active TLS pointer is an ownership and liveness proof on the common
+  // path: only begin publishes it, and terminal cleanup clears it before the
+  // facade can be recycled. Preserve the full diagnostic ordering for stale
+  // and cross-thread handles on the cold mismatch path.
+  if (local_active_txn != txn) [[unlikely]] {
+    if (!on_owner_thread(txn)) return MAKO_LOCAL_WRONG_THREAD;
+    if (txn->poisoned || local_worker_poisoned)
+      return MAKO_LOCAL_WORKER_POISONED;
+    return MAKO_LOCAL_TXN_FINISHED;
+  }
+  if (txn->poisoned) return MAKO_LOCAL_WORKER_POISONED;
   if (table != nullptr && table->owner != txn->owner)
     return MAKO_LOCAL_WRONG_DB_OR_TABLE;
   return MAKO_LOCAL_OK;
@@ -274,7 +333,7 @@ int operation_exception(mako_local_txn *txn, int status) noexcept {
 }
 
 void account_begin_txn(mako_local_txn *txn) noexcept {
-  if (local_active_txn == txn) return;
+  assert(local_active_txn == nullptr || local_active_txn == txn);
   local_active_txn = txn;
   active_database_slots[txn->worker_slot].database.store(
       txn->owner, std::memory_order_release);
@@ -300,17 +359,49 @@ size_t write_item_charge(size_t key_len) {
   // A missing SET can observe the old leaf, create at most one new leaf per
   // eight-byte Masstree trie slice, and add its value item. Four fixed credits
   // also cover the existing-value resize path and cursor bookkeeping.
-  return 4 + (key_len + kMasstreeSliceBytes - 1) / kMasstreeSliceBytes;
+  return kMinimumWriteItemCharge +
+         (key_len + kMasstreeSliceBytes - 1) / kMasstreeSliceBytes;
 }
 
-int reserve_item_budget(mako_local_txn *txn, size_t charge) {
+bool try_reserve_item_budget(mako_local_txn *txn, size_t charge) {
   static_assert(MAKO_LOCAL_TXN_ITEM_BUDGET <=
                 Transaction::tset_initial_capacity);
-  if (txn->item_budget_used > MAKO_LOCAL_TXN_ITEM_BUDGET ||
-      charge > MAKO_LOCAL_TXN_ITEM_BUDGET - txn->item_budget_used)
-    return operation_abort(txn, MAKO_LOCAL_TXN_TOO_LARGE);
-  txn->item_budget_used += charge;
-  return MAKO_LOCAL_OK;
+  assert(txn->item_budget_used <= MAKO_LOCAL_TXN_ITEM_BUDGET);
+  assert(charge <= MAKO_LOCAL_TXN_ITEM_BUDGET);
+  const size_t next = txn->item_budget_used + charge;
+  if (next > MAKO_LOCAL_TXN_ITEM_BUDGET) return false;
+  txn->item_budget_used = next;
+  return true;
+}
+
+// Zen's front end is unusually sensitive to this call target's address when
+// several workers execute it in lockstep. Keep the hot function on its own
+// cache-line boundary so unrelated code-size changes cannot move it onto the
+// measured bad alignment.
+[[gnu::aligned(kCacheLineBytes)]] std::string &stage_encoded_value(
+    mako_local_txn *txn, const uint8_t *value, size_t value_len) {
+  // try_reserve_item_budget has already charged at least four credits for
+  // this write, which proves a slot remains in the fixed pool.
+  assert(txn->encoded_values_used < txn->encoded_values.size());
+  const size_t index = txn->encoded_values_used++;
+  std::string &encoded = txn->encoded_values[index];
+  const size_t encoded_size =
+      value_len + static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE);
+  if (encoded.size() != encoded_size)
+    encoded.resize(encoded_size, '\0');
+  if (encoded.capacity() > kMaximumRetainedEncodedValueCapacity)
+    txn->encoded_values_require_release = true;
+  if (value_len != 0) std::memcpy(encoded.data(), value, value_len);
+  // The buffer is private until transPut below. Initialize the entire tail,
+  // including Node padding, once; then overwrite the pointer field with the
+  // platform's actual null representation rather than assuming zero bits.
+  std::array<unsigned char,
+             static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE)> metadata{};
+  char *null_data = nullptr;
+  std::memcpy(metadata.data() + sizeof(uint32_t) + offsetof(mako::Node, data),
+              &null_data, sizeof(null_data));
+  std::memcpy(encoded.data() + value_len, metadata.data(), metadata.size());
+  return encoded;
 }
 
 constexpr uint32_t kKnownScanFlags =
@@ -933,9 +1024,10 @@ int mako_local_txn_begin(mako_local_db *db, mako_local_txn **out) noexcept {
   if (local_active_txn != nullptr)
     return local_active_txn->poisoned ? MAKO_LOCAL_WORKER_POISONED
                                       : MAKO_LOCAL_TXN_ALREADY_ACTIVE;
-  if (Sto::in_progress())
-    return MAKO_LOCAL_TXN_ALREADY_ACTIVE;
-
+  // Attachment permanently claims this worker for the local ABI, and every
+  // native transaction it starts remains anchored by local_active_txn until
+  // terminal cleanup. No independent STO transaction can therefore remain.
+  assert(!Sto::in_progress());
   const int native_worker = TThread::id();
   if (native_worker < 0 ||
       static_cast<size_t>(native_worker) >= active_database_slots.size())
@@ -979,8 +1071,8 @@ int mako_local_txn_get(mako_local_txn *txn, mako_local_table *table,
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     operation_cleanup_failure_scope cleanup_failure_scope;
 #endif
-    const int reserved = reserve_item_budget(txn, 1);
-    if (reserved != MAKO_LOCAL_OK) return reserved;
+    if (!try_reserve_item_budget(txn, 1))
+      return operation_abort(txn, MAKO_LOCAL_TXN_TOO_LARGE);
     std::string value;
     const bool found = table->table->transGet(as_key(key, key_len), value);
     if (TThread::transget_without_throw) {
@@ -1034,13 +1126,14 @@ int mako_local_txn_put(mako_local_txn *txn, mako_local_table *table,
     if (mutations.contains(mutation_key))
       return MAKO_LOCAL_DUPLICATE_WRITE;
 #endif
-    const int reserved = reserve_item_budget(txn, write_item_charge(key_len));
-    if (reserved != MAKO_LOCAL_OK) return reserved;
-    const std::string raw(
-        value_len == 0 ? "" : reinterpret_cast<const char *>(value), value_len);
-    txn->encoded_values.push_back(mako::Encode(raw));
+    if (!try_reserve_item_budget(txn, write_item_charge(key_len)))
+      return operation_abort(txn, MAKO_LOCAL_TXN_TOO_LARGE);
+    // Build directly in a stable transaction-owned slot. Clean terminal
+    // paths retain a bounded set of small allocations for the next facade
+    // generation instead of malloc/free on every short transaction.
+    std::string &encoded = stage_encoded_value(txn, value, value_len);
     const bool existed = table->table->transPut(
-        as_key(key, key_len), StringWrapper(txn->encoded_values.back()));
+        as_key(key, key_len), StringWrapper(encoded));
 #if !READ_MY_WRITES
     mutations.insert(mutation_key);
 #endif
@@ -1081,13 +1174,11 @@ int mako_local_txn_insert(mako_local_txn *txn, mako_local_table *table,
     if (mutations.contains(mutation_key))
       return MAKO_LOCAL_DUPLICATE_WRITE;
 #endif
-    const int reserved = reserve_item_budget(txn, write_item_charge(key_len));
-    if (reserved != MAKO_LOCAL_OK) return reserved;
-    const std::string raw(
-        value_len == 0 ? "" : reinterpret_cast<const char *>(value), value_len);
-    txn->encoded_values.push_back(mako::Encode(raw));
+    if (!try_reserve_item_budget(txn, write_item_charge(key_len)))
+      return operation_abort(txn, MAKO_LOCAL_TXN_TOO_LARGE);
+    std::string &encoded = stage_encoded_value(txn, value, value_len);
     const bool existed = table->table->transInsert(
-        as_key(key, key_len), StringWrapper(txn->encoded_values.back()));
+        as_key(key, key_len), StringWrapper(encoded));
 #if !READ_MY_WRITES
     if (!existed) mutations.insert(mutation_key);
 #endif
@@ -1125,8 +1216,8 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
     if (mutations.contains(mutation_key))
       return MAKO_LOCAL_DUPLICATE_WRITE;
 #endif
-    const int reserved = reserve_item_budget(txn, 1);
-    if (reserved != MAKO_LOCAL_OK) return reserved;
+    if (!try_reserve_item_budget(txn, 1))
+      return operation_abort(txn, MAKO_LOCAL_TXN_TOO_LARGE);
     const bool existed = table->table->transDelete(as_key(key, key_len));
 #if !READ_MY_WRITES
     if (existed) mutations.insert(mutation_key);
@@ -1235,7 +1326,8 @@ int mako_local_txn_destroy(mako_local_txn *txn) noexcept {
       const int checked = check_txn(txn);
       if (checked != MAKO_LOCAL_OK) return checked;
     }
-    if (!abort_and_finish(txn, cleanup_boundary::destroy))
+    if (txn->active &&
+        !abort_and_finish(txn, cleanup_boundary::destroy))
       return MAKO_LOCAL_WORKER_POISONED;
     recycle_txn(txn);
     return MAKO_LOCAL_OK;

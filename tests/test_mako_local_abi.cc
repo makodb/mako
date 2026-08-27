@@ -1556,8 +1556,10 @@ TEST_F(LocalAbiTest, ExactMaximumValueCommitsAndAbortsWithoutResizeLeakage) {
 
   auto *txn = begin();
   ASSERT_EQ(put(txn, primary, "max-value-abort", maximum), MAKO_LOCAL_OK);
+#if READ_MY_WRITES
   ASSERT_EQ(get(txn, primary, "max-value-abort").second,
             std::optional<std::string>(maximum));
+#endif
   abort_and_destroy(txn);
 
   txn = begin();
@@ -2176,6 +2178,95 @@ TEST_F(LocalAbiTest, EveryStagedWriteOwnsADistinctStableBuffer) {
   commit_and_destroy(txn);
 }
 
+TEST_F(LocalAbiTest,
+       RecycledValueSlotsSurviveRetentionBoundaryGrowthAndAbort) {
+  constexpr size_t kWrites = 20;
+  std::array<std::string, kWrites> keys;
+  std::array<std::string, kWrites> original;
+  std::array<std::string, kWrites> committed;
+  for (size_t index = 0; index != kWrites; ++index) {
+    keys[index] = "value-pool-" + std::to_string(index);
+    original[index] = std::string(index + 1, static_cast<char>('a' + index));
+    committed[index] =
+        std::string(32 + index, static_cast<char>('A' + index));
+  }
+
+  auto *txn = begin();
+  for (size_t index = 0; index != kWrites; ++index)
+    ASSERT_EQ(put(txn, primary, keys[index], original[index]), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  // Exercise many reusable slots and cross the per-slot capacity ceiling,
+  // then abort. Releasing those buffers is only safe after native rollback
+  // has stopped borrowing every std::string object.
+  txn = begin();
+  for (size_t index = 0; index != kWrites; ++index) {
+    const std::string value = index == 0 ? std::string(8192, 'x')
+                                         : std::string(index + 3, 'y');
+    ASSERT_EQ(put(txn, primary, keys[index], value), MAKO_LOCAL_OK);
+  }
+  abort_and_destroy(txn);
+
+  txn = begin();
+  for (size_t index = 0; index != kWrites; ++index)
+    EXPECT_EQ(get(txn, primary, keys[index]).second,
+              std::optional<std::string>(original[index]));
+  commit_and_destroy(txn);
+
+  // Reuse the same facade pool after the oversized slot was discarded.
+  txn = begin();
+  for (size_t index = 0; index != kWrites; ++index)
+    ASSERT_EQ(put(txn, primary, keys[index], committed[index]), MAKO_LOCAL_OK);
+  commit_and_destroy(txn);
+
+  txn = begin();
+  for (size_t index = 0; index != kWrites; ++index)
+    EXPECT_EQ(get(txn, primary, keys[index]).second,
+              std::optional<std::string>(committed[index]));
+  commit_and_destroy(txn);
+}
+
+TEST_F(LocalAbiTest, ExactMaximumEncodedValueSlotsRemainStable) {
+  constexpr size_t kMinimumWriteCharge = 4;
+  constexpr size_t kMaximumWrites =
+      MAKO_LOCAL_TXN_ITEM_BUDGET / kMinimumWriteCharge;
+  static_assert(kMaximumWrites == 128);
+  std::array<mako_local_table *, kMaximumWrites + 1> tables{};
+  for (size_t index = 0; index != tables.size(); ++index)
+    open_table("value-pool-limit-" + std::to_string(index), &tables[index]);
+
+  // Empty keys are the only way to reach the four-credit minimum. Distinct
+  // tables keep all 128 StringWrapper borrows live through one commit.
+  auto *txn = begin();
+  for (size_t index = 0; index != kMaximumWrites; ++index) {
+    const std::string value(1, static_cast<char>(index));
+    ASSERT_EQ(put(txn, tables[index], "", value), MAKO_LOCAL_OK)
+        << "write " << index;
+  }
+  commit_and_destroy(txn);
+
+  txn = begin();
+  for (size_t index = 0; index != kMaximumWrites; ++index) {
+    const std::string expected(1, static_cast<char>(index));
+    EXPECT_EQ(get(txn, tables[index], "").second,
+              std::optional<std::string>(expected));
+  }
+  commit_and_destroy(txn);
+
+  // The next minimum-charge write must terminate the transaction before it
+  // can index one element beyond the fixed pool, including in release builds
+  // where the assertion in stage_encoded_value is compiled out.
+  txn = begin();
+  for (size_t index = 0; index != kMaximumWrites; ++index) {
+    const std::string value(1, static_cast<char>(index));
+    ASSERT_EQ(put(txn, tables[index], "", value), MAKO_LOCAL_OK)
+        << "write " << index;
+  }
+  EXPECT_EQ(put(txn, tables[kMaximumWrites], "", "overflow"),
+            MAKO_LOCAL_TXN_TOO_LARGE);
+  destroy_tracked(txn);
+}
+
 TEST_F(LocalAbiTest, AbortingALargerValueResizePreservesTheOldValue) {
   auto *txn = begin();
   ASSERT_EQ(put(txn, primary, "resize-abort", "old"), MAKO_LOCAL_OK);
@@ -2497,6 +2588,9 @@ TEST_F(LocalAbiTest, WrongThreadAndFinishedHandlesAreRejected) {
   auto *txn = begin();
   std::atomic<int> wrong_thread_status{MAKO_LOCAL_INTERNAL};
   std::atomic<int> wrong_thread_destroy{MAKO_LOCAL_INTERNAL};
+  std::atomic<int> wrong_thread_attach{MAKO_LOCAL_INTERNAL};
+  std::atomic<int> attached_wrong_thread_status{MAKO_LOCAL_INTERNAL};
+  std::atomic<int> attached_wrong_thread_destroy{MAKO_LOCAL_INTERNAL};
   std::thread other([&] {
     uint8_t *value = nullptr;
     size_t value_len = 0;
@@ -2506,10 +2600,25 @@ TEST_F(LocalAbiTest, WrongThreadAndFinishedHandlesAreRejected) {
         &value_len, &found));
     mako_local_bytes_free(value);
     wrong_thread_destroy.store(mako_local_txn_destroy(txn));
+
+    // Ownership must remain tied to the creator's non-recycled STO worker ID
+    // even after the calling thread has valid ABI TLS of its own.
+    wrong_thread_attach.store(mako_local_thread_attach());
+    value = nullptr;
+    value_len = 0;
+    found = 0;
+    attached_wrong_thread_status.store(mako_local_txn_get(
+        txn, primary, reinterpret_cast<const uint8_t *>("key"), 3, &value,
+        &value_len, &found));
+    mako_local_bytes_free(value);
+    attached_wrong_thread_destroy.store(mako_local_txn_destroy(txn));
   });
   other.join();
   EXPECT_EQ(wrong_thread_status.load(), MAKO_LOCAL_WRONG_THREAD);
   EXPECT_EQ(wrong_thread_destroy.load(), MAKO_LOCAL_WRONG_THREAD);
+  EXPECT_EQ(wrong_thread_attach.load(), MAKO_LOCAL_OK);
+  EXPECT_EQ(attached_wrong_thread_status.load(), MAKO_LOCAL_WRONG_THREAD);
+  EXPECT_EQ(attached_wrong_thread_destroy.load(), MAKO_LOCAL_WRONG_THREAD);
 
   ASSERT_EQ(mako_local_txn_commit(txn), MAKO_LOCAL_OK);
   EXPECT_EQ(put(txn, primary, "after", "commit"), MAKO_LOCAL_TXN_FINISHED);

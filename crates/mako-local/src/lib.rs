@@ -318,6 +318,14 @@ thread_local! {
     static TEST_COMMIT_OBSERVER: Cell<Option<TestCommitObserver>> = const { Cell::new(None) };
 }
 
+#[cfg(not(test))]
+thread_local! {
+    // Native attachment is process-lifetime for an OS thread and has no detach
+    // operation. Remember successful calls so the safe transaction fast path
+    // does not cross the ABI merely to repeat that idempotent check.
+    static SAFE_WRAPPER_ATTACHED: Cell<bool> = const { Cell::new(false) };
+}
+
 /// Whether a native commit definitely became visible.
 ///
 /// This is deliberately separate from handle cleanup. A transaction can be
@@ -758,7 +766,22 @@ pub fn advance_mako_timestamp_past(observed: MakoTimestamp) -> Result<()> {
 
 fn attach_current_thread() -> Result<()> {
     // SAFETY: no pointer arguments; native side is idempotent per OS thread.
-    status(unsafe { abi::mako_local_thread_attach() })
+    let result = status(unsafe { abi::mako_local_thread_attach() });
+    #[cfg(not(test))]
+    if result.is_ok() {
+        SAFE_WRAPPER_ATTACHED.with(|attached| attached.set(true));
+    }
+    result
+}
+
+fn ensure_current_thread_attached() -> Result<()> {
+    #[cfg(not(test))]
+    if SAFE_WRAPPER_ATTACHED.with(Cell::get) {
+        return Ok(());
+    }
+    // Unit tests deliberately reset their fake native TLS between cases, so
+    // cfg(test) continues to exercise the real attach call every time.
+    attach_current_thread()
 }
 
 /// A local in-memory Mako database using the C++ STO/MassTrans engine.
@@ -839,7 +862,7 @@ impl LocalDb {
     /// Conflicts are returned by [`Transaction::commit`]; this method never
     /// retries user code implicitly.
     pub fn transaction(&self) -> Result<Transaction<'_>> {
-        attach_current_thread()?;
+        ensure_current_thread_attached()?;
         let mut raw = std::ptr::null_mut();
         // SAFETY: database is live and raw is a valid out-pointer.
         status(unsafe { abi::mako_local_txn_begin(self.raw.as_ptr(), &mut raw) })?;

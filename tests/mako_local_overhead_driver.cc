@@ -13,12 +13,12 @@
 #include "storage/mako_local_abi.h"
 
 #include <algorithm>
+#include <array>
 #include <barrier>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <exception>
 #include <iostream>
 #include <latch>
@@ -221,7 +221,6 @@ public:
   void begin() {
     if (active_ || Sto::in_progress())
       throw std::runtime_error("direct benchmark transaction already active");
-    encoded_values_.clear();
     Sto::start_transaction();
     active_ = true;
   }
@@ -252,9 +251,26 @@ public:
   bool put(const Bytes &key, uint64_t value) {
     require_active();
     try {
-      encoded_values_.push_back(mako::Encode(value_bytes(value)));
-      (void)table_->transPut(direct_key(key),
-                             StringWrapper(encoded_values_.back()));
+      const Bytes bytes = value_bytes(value);
+      const size_t encoded_index = encoded_values_used_++;
+      std::string &encoded = encoded_values_[encoded_index];
+      const size_t encoded_size =
+          bytes.size() + static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE);
+      if (encoded.size() != encoded_size)
+        encoded.resize(encoded_size, '\0');
+      if (!bytes.empty())
+        std::memcpy(encoded.data(), bytes.data(), bytes.size());
+      std::array<unsigned char,
+                 static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE)> metadata{};
+      char *null_data = nullptr;
+      std::memcpy(
+          metadata.data() + sizeof(uint32_t) + offsetof(mako::Node, data),
+          &null_data, sizeof(null_data));
+      std::memcpy(encoded.data() + bytes.size(), metadata.data(),
+                  metadata.size());
+      if (encoded.capacity() > kMaximumRetainedValueCapacity)
+        encoded_value_release_required_ = true;
+      (void)table_->transPut(direct_key(key), StringWrapper(encoded));
       return true;
     } catch (const Transaction::Abort &) {
       abort_if_active();
@@ -270,7 +286,7 @@ public:
     try {
       const bool committed = Sto::try_commit_no_paxos();
       active_ = false;
-      encoded_values_.clear();
+      finish_encoded_values();
       return committed;
     } catch (const Transaction::Abort &) {
       abort_if_active();
@@ -296,12 +312,32 @@ private:
     } catch (...) {
     }
     active_ = false;
-    encoded_values_.clear();
+    finish_encoded_values();
+  }
+
+  void finish_encoded_values() noexcept {
+    if (encoded_value_release_required_) {
+      for (size_t index = 0; index != encoded_values_used_; ++index) {
+        std::string &encoded = encoded_values_[index];
+        if (encoded.capacity() > kMaximumRetainedValueCapacity)
+          std::string{}.swap(encoded);
+      }
+      encoded_value_release_required_ = false;
+    }
+    encoded_values_used_ = 0;
   }
 
   DirectTable *table_;
   bool active_ = false;
-  std::deque<std::string> encoded_values_;
+  // Match the raw ABI's bounded stable-value pool so this benchmark measures
+  // the facade contract rather than deque allocation/free policy.
+  static constexpr size_t kEncodedValueSlots =
+      MAKO_LOCAL_TXN_ITEM_BUDGET / 4;
+  static constexpr size_t kMaximumRetainedValueCapacity = 512;
+  static_assert(kEncodedValueSlots == 128);
+  std::array<std::string, kEncodedValueSlots> encoded_values_;
+  size_t encoded_values_used_ = 0;
+  bool encoded_value_release_required_ = false;
 };
 
 const uint8_t *abi_bytes(const Bytes &bytes) {

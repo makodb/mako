@@ -182,10 +182,10 @@ transaction might be active is terminal-uncertain. Do not attempt commit. Apply
 the same one-shot owner-thread destroy procedure as for `WORKER_POISONED`, and
 retire the worker if cleanup cannot be proved. Every revision-0 extension must
 set the authoritative TLS quarantine before returning whenever cleanup is not
-proved complete. The safe Rust entry points call `mako_local_thread_attach()`
-again before every later table-open or transaction-begin admission; on an
-already attached worker, that is an enforcement gate over the same quarantine
-flag exposed by `mako_local_worker_health()`.
+proved complete. The safe Rust table-open entry point repeats
+`mako_local_thread_attach()`. Its transaction-begin fast path caches a prior
+successful attachment, while native `mako_local_txn_begin()` still rechecks the
+authoritative TLS quarantine flag on every admission.
 
 ## Threading and lifetimes
 
