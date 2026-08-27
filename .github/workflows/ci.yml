@@ -320,9 +320,25 @@ jobs:
       - name: Install pinned Rust TSan toolchain
         if: matrix.sanitizer == 'tsan'
         run: |
+          tsan_cargo_home=/tmp/mako-local-tsan-cargo
+          tsan_rustup_home=/tmp/mako-local-tsan-rustup
           toolchain=$(bash ./scripts/run_mako_local_miri.sh --print-toolchain)
-          rustup toolchain install "${toolchain}" \
+          CARGO_HOME="${tsan_cargo_home}" \
+          RUSTUP_HOME="${tsan_rustup_home}" \
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | CARGO_HOME="${tsan_cargo_home}" \
+                RUSTUP_HOME="${tsan_rustup_home}" \
+                sh -s -- -y --profile minimal --default-toolchain none
+          CARGO_HOME="${tsan_cargo_home}" \
+          RUSTUP_HOME="${tsan_rustup_home}" \
+            "${tsan_cargo_home}/bin/rustup" toolchain install "${toolchain}" \
             --profile minimal --component rust-src
+          CARGO_HOME="${tsan_cargo_home}" \
+          RUSTUP_HOME="${tsan_rustup_home}" \
+            "${tsan_cargo_home}/bin/rustup" default "${toolchain}"
+          echo "CARGO_HOME=${tsan_cargo_home}" >> "${GITHUB_ENV}"
+          echo "RUSTUP_HOME=${tsan_rustup_home}" >> "${GITHUB_ENV}"
+          echo "${tsan_cargo_home}/bin" >> "${GITHUB_PATH}"
 
       - name: Run mako-local ${{ matrix.sanitizer }} boundary gate
         run: ./ci/ci.sh makoLocalSanitizerGates

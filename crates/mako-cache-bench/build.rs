@@ -6,6 +6,7 @@
 //! `mako-cache`: Mako's in-tree yaml-cpp and the configured libc++.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
     for variable in ["MAKO_BUILD_DIR", "LIBCXX_DIR"] {
@@ -70,8 +71,27 @@ fn libcxx_dir(cache: &str) -> Option<PathBuf> {
         }
     }
     let compiler = PathBuf::from(cmake_value(cache, "CMAKE_CXX_COMPILER")?);
-    let path = compiler.parent()?.parent()?.join("lib");
-    has_libcxx(&path).then_some(path)
+    compiler_libcxx_dir(&compiler)
+}
+
+fn compiler_libcxx_dir(compiler: &Path) -> Option<PathBuf> {
+    for library in ["libc++.so.1", "libc++.so"] {
+        let output = Command::new(compiler)
+            .arg(format!("--print-file-name={library}"))
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            continue;
+        }
+        let reported = String::from_utf8(output.stdout).ok()?;
+        let path = PathBuf::from(reported.trim());
+        if path == Path::new(library) || !path.is_file() {
+            continue;
+        }
+        let path = path.canonicalize().ok()?;
+        return path.parent().map(Path::to_path_buf);
+    }
+    None
 }
 
 fn cmake_value<'a>(cache: &'a str, key: &str) -> Option<&'a str> {
