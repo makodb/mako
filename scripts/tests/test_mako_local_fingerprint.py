@@ -38,12 +38,19 @@ class FingerprintTests(unittest.TestCase):
             # This object-library member is bundled into libmako.a even though
             # Cargo does not link a separate txlog_core_obj archive.
             ("txlog_core_obj", "src/deptran/replication_helper.cc"),
-            # CMake's C++23 module object target is bundled into libmako.a too.
-            ("__cmake_cxx23", "toolchain/libcxx/std.cppm"),
             ("masstree", "src/masstree/compiler.cc"),
             ("cluster", "src/cluster/cluster_config.cc"),
             ("rrr", "src/rrr/base/logging.cpp"),
         ]
+        covered_targets = {target for target, _relative in members}
+        members.extend(
+            (
+                target,
+                f"third-party/rusty-cpp/transpiled/{target}/{target}.cppm",
+            )
+            for target in fingerprint.RUST_LINKED_ARCHIVE_TARGETS
+            if target not in covered_targets
+        )
         database = []
         for target, relative in members:
             source = source_root / relative
@@ -84,6 +91,34 @@ class FingerprintTests(unittest.TestCase):
             }
         )
         return source_root, build_dir, database
+
+    def test_native_link_archive_manifest_is_strict_and_ordered(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "archives.txt"
+            manifest.write_text(
+                "# consumer before provider\n"
+                "mako libmako.a\n"
+                "rrr src/rrr/librrr.a\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                fingerprint.read_native_link_archives(manifest),
+                (("mako", "libmako.a"), ("rrr", "src/rrr/librrr.a")),
+            )
+
+            invalid_cases = (
+                ("mako libmako.a extra\n", "exactly"),
+                ("mako ../libmako.a\n", "relative"),
+                ("mako libmako.a\nmako other.a\n", "repeats library"),
+                ("rrr src/rrr/librrr.a\n", "must start"),
+            )
+            for contents, diagnostic in invalid_cases:
+                with self.subTest(contents=contents):
+                    manifest.write_text(contents, encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        fingerprint.FingerprintError, diagnostic
+                    ):
+                        fingerprint.read_native_link_archives(manifest)
 
     def test_record_order_is_deterministic_and_duplicates_are_rejected(self) -> None:
         first = fingerprint.Record.from_bytes("input", "$SRC/a", b"a")
@@ -253,7 +288,6 @@ class FingerprintTests(unittest.TestCase):
                         "mako_local_abi.cc.o": 1,
                         "message.cc.o": 1,
                         "replication_helper.cc.o": 1,
-                        "std.cppm.o": 1,
                         "mako_local_build_identity.cc.o": 1,
                     }
                 ),

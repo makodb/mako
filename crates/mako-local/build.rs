@@ -4,11 +4,13 @@
 //! different generated config or compile definitions creates incompatible
 //! template/layout instantiations in one process.
 
+use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 const DEFAULT_BUILD_DIRS: [&str; 4] = ["build_mrx", "build_c22", "build", "build_docker"];
+const NATIVE_LINK_ARCHIVES: &str = include_str!("native-link-archives.txt");
 
 fn main() {
     println!("cargo:rerun-if-env-changed=MAKO_BUILD_DIR");
@@ -16,6 +18,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=MAKO_LOCAL_FAKE_ABI");
     println!("cargo:rerun-if-env-changed=LIBCXX_DIR");
     println!("cargo:rerun-if-env-changed=PYTHON");
+    println!("cargo:rerun-if-changed=native-link-archives.txt");
     println!("cargo:rustc-check-cfg=cfg(have_mako)");
 
     if fake_abi_requested() {
@@ -52,18 +55,27 @@ fn main() {
         "cargo:rerun-if-changed={}",
         build.join("CMakeCache.txt").display()
     );
-    let archives: [(&str, &str); 4] = [
-        ("mako", "libmako.a"),
-        ("cluster", "libcluster.a"),
-        ("masstree", "src/masstree/libmasstree.a"),
-        ("rrr", "src/rrr/librrr.a"),
-    ];
-    for (lib, rel) in archives {
+    // Keep the same consumer-before-provider archive closure used by CMake's
+    // native executables. The smaller historical closure stopped working once
+    // real transaction tests selected rrr/deptran objects whose out-of-line
+    // implementations live in rusty-cpp port archives.
+    for (lib, rel) in native_link_archives() {
         let path = build.join(rel);
-        if let (Some(dir), true) = (path.parent(), path.exists()) {
-            println!("cargo:rustc-link-search=native={}", dir.display());
-            println!("cargo:rustc-link-lib=static={lib}");
-        }
+        let dir = path.parent().unwrap_or_else(|| {
+            panic!(
+                "native archive path has no parent directory: {}",
+                path.display()
+            )
+        });
+        assert!(
+            path.is_file(),
+            "mako-local native archive closure is incomplete: {} is missing; \
+             rebuild the CMake target before linking Rust",
+            path.display()
+        );
+        println!("cargo:rerun-if-changed={}", path.display());
+        println!("cargo:rustc-link-search=native={}", dir.display());
+        println!("cargo:rustc-link-lib=static={lib}");
     }
 
     // Mako's in-tree yaml-cpp is built against the same libc++ as libmako.
@@ -99,6 +111,55 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=c++");
     println!("cargo:rustc-link-lib=dylib=c++abi");
     println!("cargo:rustc-cfg=have_mako");
+}
+
+fn native_link_archives() -> Vec<(&'static str, &'static str)> {
+    let mut archives = Vec::new();
+    let mut names = HashSet::new();
+    let mut paths = HashSet::new();
+    for (index, raw_line) in NATIVE_LINK_ARCHIVES.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<_> = line.split_whitespace().collect();
+        assert_eq!(
+            fields.len(),
+            2,
+            "native-link-archives.txt:{} must contain exactly a library name and path",
+            index + 1
+        );
+        let (name, relative) = (fields[0], fields[1]);
+        assert!(
+            name.chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_'),
+            "native-link-archives.txt:{} has invalid library name {name:?}",
+            index + 1
+        );
+        assert!(
+            Path::new(relative)
+                .components()
+                .all(|component| matches!(component, Component::Normal(_))),
+            "native-link-archives.txt:{} path must stay relative to MAKO_BUILD_DIR: {relative:?}",
+            index + 1
+        );
+        assert!(
+            names.insert(name),
+            "native-link-archives.txt:{} repeats library {name:?}",
+            index + 1
+        );
+        assert!(
+            paths.insert(relative),
+            "native-link-archives.txt:{} repeats archive path {relative:?}",
+            index + 1
+        );
+        archives.push((name, relative));
+    }
+    assert!(
+        !archives.is_empty(),
+        "native-link-archives.txt contains no archives"
+    );
+    archives
 }
 
 fn find_build_dir() -> Option<PathBuf> {

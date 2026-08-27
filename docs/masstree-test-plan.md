@@ -1,8 +1,9 @@
 # Masstree Test Plan — Path to Industry Grade
 
-Scope: `src/masstree/` only. Excludes the Silo transactional layer
+Scope: `src/masstree/` only. Excludes the live SiloRuntime support layer
 (`test_silo_runtime.cc`, `test_silo_multi_site_stress.cc`) and excludes
-the STO benchmark suite under `src/mako/sto/`.
+the STO transaction suite under `src/mako/sto/`. The original Silo
+transaction engine is retired and is not what those SiloRuntime tests cover.
 
 ## Current state (baseline)
 

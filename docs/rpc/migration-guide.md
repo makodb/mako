@@ -81,13 +81,13 @@ git submodule update --init third-party/rusty-cpp
 
 ## New Headers
 
-| Header | Purpose |
-|--------|---------|
+| Header or module | Purpose |
+|------------------|---------|
 | `rpc/connection_state.hpp` | Connection state machine |
-| `rpc/reconnect_policy.hpp` | Reconnection configuration |
-| `rpc/circuit_breaker.hpp` | Circuit breaker pattern |
+| `rrr.reconnect_policy` | Reconnection configuration module |
+| `rrr.circuit_breaker` | Circuit breaker pattern |
 | `rpc/request_queue.hpp` | Request buffering |
-| `rpc/request_options.hpp` | Per-request options |
+| `rrr.request_options` | Per-request options C++ module |
 | `rpc/heartbeat.hpp` | Keep-alive management |
 | `rpc/connection_metrics.hpp` | Connection statistics |
 | `rpc/errors.hpp` | Structured error types |
@@ -116,7 +116,7 @@ client->close();
 Enable automatic reconnection for resilience:
 
 ```cpp
-#include "rpc/reconnect_policy.hpp"
+import rrr.reconnect_policy;
 
 auto client = Client::create(poll_thread);
 
@@ -149,7 +149,7 @@ client->add_on_disconnected([]() {
 });
 
 client->add_on_reconnected([](bool success) {
-    Log_info("Reconnected to server (success=%d)", success ? 1 : 0);
+    Log_info("Reconnected to server (success={})", success ? 1 : 0);
 });
 
 client->connect("127.0.0.1:8080");
@@ -160,14 +160,14 @@ client->connect("127.0.0.1:8080");
 Prevent cascading failures:
 
 ```cpp
-#include "rpc/circuit_breaker.hpp"
+import rrr.circuit_breaker;
 
-CircuitBreakerConfig config;
+auto config = CircuitBreakerConfig::defaults();
 config.failure_threshold = 5;   // Open after 5 failures
 config.success_threshold = 3;   // Close after 3 successes
 config.timeout_ms = 30000;      // Try again after 30s
 
-CircuitBreaker breaker(config);
+auto breaker = CircuitBreaker::new_(config);
 
 // Before each request
 if (!breaker.allow_request()) {
@@ -188,12 +188,9 @@ if (success) {
 Configure per-request behavior:
 
 ```cpp
-#include "rpc/request_options.hpp"
+import rrr.request_options;
 
-RequestOptions opts = RequestOptions::with_retry();
-opts.timeout_ms = 5000;      // 5 second timeout
-opts.max_retries = 3;        // Retry up to 3 times
-opts.idempotent = true;      // Safe to retry
+RequestOptions opts = RequestOptions::with_retry(3, 5000);
 
 auto future = client->request_with_options(RPC_ID, opts, writer);
 ```
@@ -205,11 +202,11 @@ Monitor connection health:
 ```cpp
 auto& metrics = client->metrics();
 
-Log_info("Requests sent: %lu", metrics.requests_sent());
-Log_info("Requests completed: %lu", metrics.requests_completed());
-Log_info("Requests failed: %lu", metrics.requests_failed());
-Log_info("Reconnect count: %lu", metrics.reconnect_count());
-Log_info("Avg latency: %lu us", metrics.avg_latency_us());
+Log_info("Requests sent: {}", metrics.requests_sent());
+Log_info("Requests completed: {}", metrics.requests_completed());
+Log_info("Requests failed: {}", metrics.requests_failed());
+Log_info("Reconnect count: {}", metrics.reconnect_count());
+Log_info("Avg latency: {} us", metrics.avg_latency_us());
 ```
 
 ### 7. Graceful Server Shutdown
@@ -288,7 +285,7 @@ ctest -L chaos
 // Check connection state
 if (!client->connected()) {
     ConnectionState state = client->connection_state();
-    Log_warn("Not connected, state: %s",
+    Log_warn("Not connected, state: {}",
              connection_state_to_string(state));
 }
 ```
@@ -297,7 +294,7 @@ if (!client->connected()) {
 
 ```cpp
 if (!breaker.allow_request()) {
-    Log_warn("Circuit breaker open. State: %s, Failures: %lu",
+    Log_warn("Circuit breaker open. State: {}, Failures: {}",
              circuit_state_to_string(breaker.state()),
              breaker.failure_count());
 }
@@ -310,7 +307,7 @@ if (future->timed_wait(timeout_ms)) {
     // Completed within timeout
 } else {
     // Timed out
-    Log_warn("Request timed out after %u ms", timeout_ms);
+    Log_warn("Request timed out after {} ms", timeout_ms);
 }
 ```
 

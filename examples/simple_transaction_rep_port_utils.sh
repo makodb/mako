@@ -53,7 +53,6 @@ ensure_paxos_replication_configs() {
 }
 
 pick_simple_transaction_port_base() {
-    local transport="${MAKO_TRANSPORT:-rrr}"
     local base_min=20000
     # Keep RRR dynamic ports out of:
     # 1) fixed Paxos/Raft control ports (45001+), and
@@ -61,17 +60,13 @@ pick_simple_transaction_port_base() {
     #    when worker threads open outbound TCP connections during startup.
     # With max offset 3100, base_max=28599 keeps highest port at 31699.
     local base_max=28599
-    if [ "$transport" = "erpc" ]; then
-        base_min=31000
-        base_max=37899
-    fi
     python3 - <<'PY' "$base_min" "$base_max"
 import random
 import socket
 import sys
 
 # Probe CONTIGUOUS per-shard windows, not spot offsets: dbtest binds
-# base+id for id in [0, ~warehouses+5+num_erpc) within each shard
+# base+id for id in [0, ~warehouses+5+num_rpc_servers) within each shard
 # block (blocks at +0, +100, +1000, ... per the config layout). CI
 # died on base+6 — a mid-window port a spot-offset probe never
 # checked, squatted by a leftover listener from an earlier suite.

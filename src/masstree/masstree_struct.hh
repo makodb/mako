@@ -55,14 +55,17 @@ class node_base : public make_nodeversion<P>::type {
     typedef key<ikey_type> key_type;
     typedef typename make_nodeversion<P>::type nodeversion_type;
     typedef typename P::threadinfo_type threadinfo;
+    typedef rusty::MutPtr<base_type> base_ptr;
+    typedef rusty::MutPtr<leaf_type> leaf_ptr;
+    typedef rusty::MutPtr<internode_type> internode_ptr;
 
     // @safe - initializes base with isleaf flag
     node_base(bool isleaf)
         : nodeversion_type(isleaf) {
     }
 
-    // @safe - returns parent pointer
-    inline base_type* parent() const {
+    // @unsafe - downcasts this and returns a raw parent pointer
+    inline base_ptr parent() const {
         // almost always an internode
         if (this->isleaf())
             return static_cast<const leaf_type*>(this)->parent_;
@@ -70,17 +73,17 @@ class node_base : public make_nodeversion<P>::type {
             return static_cast<const internode_type*>(this)->parent_;
     }
     // @safe - null check
-    inline bool parent_exists(base_type* p) const {
+    inline bool parent_exists(base_ptr p) const {
         return p != 0;
     }
-    // @safe - delegates to parent() and parent_exists()
+    // @unsafe - delegates to parent(), which downcasts this to raw node storage
     inline bool has_parent() const {
         return parent_exists(parent());
     }
     // @unsafe - manipulates parent pointers under locks
-    inline internode_type* locked_parent(threadinfo& ti) const;
+    inline internode_ptr locked_parent(threadinfo& ti) const;
     // @unsafe { Uses static_cast to downcast this to leaf/internode }
-    inline void set_parent(base_type* p) {
+    inline void set_parent(base_ptr p) {
         if (this->isleaf())
             static_cast<leaf_type*>(this)->parent_ = p;
         else
@@ -92,16 +95,16 @@ class node_base : public make_nodeversion<P>::type {
         this->mark_root();
     }
     // @unsafe { Uses raw pointer, const_cast }
-    inline base_type* maybe_parent() const {
-        base_type* x = parent();
+    inline base_ptr maybe_parent() const {
+        base_ptr x = parent();
         return parent_exists(x) ? x : const_cast<base_type*>(this);
     }
 
     // @unsafe - traverses tree via raw pointers
-    inline leaf_type* reach_leaf(const key_type& k, nodeversion_type& version,
-                                 threadinfo& ti) const;
+    inline leaf_ptr reach_leaf(const key_type& k, nodeversion_type& version,
+                               threadinfo& ti) const;
 
-    // @safe - prefetch hint for CPU cache
+    // @unsafe - casts this to raw bytes and prefetches by address
     void prefetch_full() const {
         for (int i = 0; i < std::min(16 * std::min(P::leaf_width, P::internode_width) + 1, 4 * 64); i += 64)
             ::prefetch((const char *) this + i);
@@ -119,11 +122,13 @@ class internode : public node_base<P> {
     typedef typename P::ikey_type ikey_type;
     typedef typename key_bound<width, P::bound_method>::type bound_type;
     typedef typename P::threadinfo_type threadinfo;
+    typedef rusty::MutPtr<node_base<P>> node_ptr;
+    typedef rusty::MutPtr<internode<P>> internode_ptr;
 
     uint8_t nkeys_;
     ikey_type ikey0_[width];
-    node_base<P>* child_[width + 1];
-    node_base<P>* parent_;
+    node_ptr child_[width + 1];
+    node_ptr parent_;
     kvtimestamp_t created_at_[P::debug_level > 0];
 
     // @safe - default initialization
@@ -149,7 +154,7 @@ class internode : public node_base<P> {
 
     // @safe - returns key from array
     key_type get_key(int p) const {
-        return key_type(ikey0_[p]);
+        return key_type::from_ikey(ikey0_[p]);
     }
     // @safe - returns ikey from array
     ikey_type ikey(int p) const {
@@ -166,7 +171,7 @@ class internode : public node_base<P> {
     inline int stable_last_key_compare(const key_type& k, nodeversion_type v,
                                        threadinfo& ti) const;
 
-    // @safe - prefetch hint
+    // @unsafe - casts this to raw bytes and prefetches by address
     void prefetch() const {
         for (int i = 64; i < std::min(16 * width + 1, 4 * 64); i += 64)
             ::prefetch((const char *) this + i);
@@ -185,7 +190,7 @@ class internode : public node_base<P> {
 
   private:
     // @unsafe { Calls set_parent() and assigns to child_[] array }
-    void assign(int p, ikey_type ikey, node_base<P>* child) {
+    void assign(int p, ikey_type ikey, node_ptr child) {
         child->set_parent(this);
         child_[p + 1] = child;
         ikey0_[p] = ikey;
@@ -202,17 +207,17 @@ class internode : public node_base<P> {
     // @unsafe { memmove() on ikey0_[], raw pointer arithmetic on child_[] }
     void shift_up(int p, int xp, int n) {
         memmove(ikey0_ + p, ikey0_ + xp, sizeof(ikey0_[0]) * n);
-        for (node_base<P> **a = child_ + p + n, **b = child_ + xp + n; n; --a, --b, --n)
+        for (node_ptr *a = child_ + p + n, *b = child_ + xp + n; n; --a, --b, --n)
             *a = *b;
     }
     // @unsafe { memmove() on ikey0_[], raw pointer arithmetic on child_[] }
     void shift_down(int p, int xp, int n) {
         memmove(ikey0_ + p, ikey0_ + xp, sizeof(ikey0_[0]) * n);
-        for (node_base<P> **a = child_ + p + 1, **b = child_ + xp + 1; n; ++a, ++b, --n)
+        for (node_ptr *a = child_ + p + 1, *b = child_ + xp + 1; n; ++a, ++b, --n)
             *a = *b;
     }
 
-    int split_into(internode<P>* nr, int p, ikey_type ka, node_base<P>* value,
+    int split_into(internode_ptr nr, int p, ikey_type ka, node_ptr value,
                    ikey_type& split_ikey, int split_type);
 
     template <typename PP> friend class tcursor;
@@ -233,7 +238,7 @@ class leafvalue {
         u_.v = v;
     }
     // @unsafe { Uses reinterpret_cast to store pointer as uintptr_t }
-    leafvalue(node_base<P>* n) {
+    leafvalue(rusty::MutPtr<node_base<P>> n) {
         u_.x = reinterpret_cast<uintptr_t>(n);
     }
 
@@ -262,7 +267,7 @@ class leafvalue {
     }
 
     // @unsafe { Uses reinterpret_cast to recover pointer from uintptr_t }
-    node_base<P>* layer() const {
+    rusty::MutPtr<node_base<P>> layer() const {
         return reinterpret_cast<node_base<P>*>(u_.x);
     }
 
@@ -276,7 +281,7 @@ class leafvalue {
 
   private:
     union {
-        node_base<P>* n;
+        rusty::MutPtr<node_base<P>> n;
         value_type v;
         uintptr_t x;
     } u_;
@@ -296,6 +301,8 @@ class leaf : public node_base<P> {
     typedef stringbag<uint8_t> internal_ksuf_type;
     typedef stringbag<uint16_t> external_ksuf_type;
     typedef typename P::phantom_epoch_type phantom_epoch_type;
+    typedef rusty::MutPtr<leaf<P>> leaf_ptr;
+    typedef rusty::MutPtr<node_base<P>> node_ptr;
     static constexpr int ksuf_keylenx = 64;
     static constexpr int layer_keylenx = 128;
 
@@ -311,11 +318,11 @@ class leaf : public node_base<P> {
     leafvalue_type lv_[width];
     external_ksuf_type* ksuf_;
     union {
-        leaf<P>* ptr;
+        leaf_ptr ptr;
         uintptr_t x;
     } next_;
-    leaf<P>* prev_;
-    node_base<P>* parent_;
+    leaf_ptr prev_;
+    node_ptr parent_;
     phantom_epoch_type phantom_epoch_[P::need_phantom_epoch];
     kvtimestamp_t created_at_[P::debug_level > 0];
     internal_ksuf_type iksuf_[0];
@@ -343,7 +350,7 @@ class leaf : public node_base<P> {
         return n;
     }
     // @unsafe { Calls make() and make_layer_root() which are @unsafe }
-    static leaf<P>* make_root(int ksufsize, leaf<P>* parent, threadinfo& ti) {
+    static leaf<P>* make_root(int ksufsize, leaf_ptr parent, threadinfo& ti) {
         leaf<P>* n = make(ksufsize, parent ? parent->phantom_epoch() : phantom_epoch_type(), ti);
         n->next_.ptr = n->prev_ = 0;
         n->make_layer_root();
@@ -395,13 +402,13 @@ class leaf : public node_base<P> {
         return this->has_changed(oldv) || oldperm != permutation_;
     }
 
-    // @safe - returns key from stored data
+    // @unsafe - may read key suffix through raw stringbag storage
     key_type get_key(int p) const {
         int keylenx = keylenx_[p];
         if (!keylenx_has_ksuf(keylenx))
-            return key_type(ikey0_[p], keylenx);
+            return key_type::from_ikey_len(ikey0_[p], keylenx);
         else
-            return key_type(ikey0_[p], ksuf(p));
+            return key_type::from_ikey_suffix(ikey0_[p], ksuf(p));
     }
     // @safe - array access
     ikey_type ikey(int p) const {
@@ -418,7 +425,7 @@ class leaf : public node_base<P> {
     inline int stable_last_key_compare(const key_type& k, nodeversion_type v,
                                        threadinfo& ti) const;
 
-    inline leaf<P>* advance_to_key(const key_type& k, nodeversion_type& version,
+    inline leaf_ptr advance_to_key(const key_type& k, nodeversion_type& version,
                                    threadinfo& ti) const;
 
     // @safe - pure comparison
@@ -438,24 +445,24 @@ class leaf : public node_base<P> {
     bool has_ksuf(int p) const {
         return keylenx_has_ksuf(keylenx_[p]);
     }
-    // @safe - returns suffix string view
+    // @unsafe - returns suffix view from raw stringbag storage
     Str ksuf(int p, int keylenx) const {
         (void) keylenx;
         masstree_precondition(keylenx_has_ksuf(keylenx));
         // @unsafe - ksuf_->get / iksuf_->get
         { return ksuf_ ? ksuf_->get(p) : iksuf_[0].get(p); }
     }
-    // @safe - returns suffix string view
+    // @unsafe - delegates to ksuf(), which reads raw suffix storage
     Str ksuf(int p) const {
         // @unsafe - calls ksuf(p, keylenx)
         { return ksuf(p, keylenx_[p]); }
     }
-    // @safe - suffix comparison
+    // @unsafe - delegates to suffix comparison using raw suffix storage
     bool ksuf_equals(int p, const key_type& ka) const {
         // @unsafe - calls ksuf_equals
         { return ksuf_equals(p, ka, keylenx_[p]); }
     }
-    // @safe - suffix comparison
+    // @unsafe - compares suffix bytes from raw stringbag storage
     bool ksuf_equals(int p, const key_type& ka, int keylenx) const {
         if (!keylenx_has_ksuf(keylenx))
             return true;
@@ -466,7 +473,7 @@ class leaf : public node_base<P> {
                 && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
         }
     }
-    // @safe - suffix matching
+    // @unsafe - compares suffix bytes from raw stringbag storage
     // Returns 1 if match & not layer, 0 if no match, <0 if match and layer
     int ksuf_matches(int p, const key_type& ka) const {
         int keylenx = keylenx_[p];
@@ -481,7 +488,7 @@ class leaf : public node_base<P> {
                 && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
         }
     }
-    // @safe - suffix comparison
+    // @unsafe - compares suffix view from raw stringbag storage
     int ksuf_compare(int p, const key_type& ka) const {
         int keylenx = keylenx_[p];
         if (!keylenx_has_ksuf(keylenx))
@@ -489,7 +496,7 @@ class leaf : public node_base<P> {
         return ksuf(p, keylenx).compare(ka.suffix());
     }
 
-    // @safe - returns capacity
+    // @unsafe - reads capacity from raw stringbag storage
     size_t ksuf_used_capacity() const {
         if (ksuf_)
             return ksuf_->used_capacity();
@@ -498,7 +505,7 @@ class leaf : public node_base<P> {
         else
             return 0;
     }
-    // @safe - returns capacity
+    // @unsafe - reads capacity from raw stringbag storage
     size_t ksuf_capacity() const {
         if (ksuf_)
             return ksuf_->capacity();
@@ -511,14 +518,14 @@ class leaf : public node_base<P> {
     bool ksuf_external() const {
         return ksuf_;
     }
-    // @safe - returns string view
+    // @unsafe - returns string view from raw stringbag storage
     Str ksuf_storage(int p) const {
         if (ksuf_)
             return ksuf_->get(p);
         else if (extrasize64_ > 0)
             return iksuf_[0].get(p);
         else
-            return Str();
+            return Str::empty();
     }
 
     // @safe - value comparison
@@ -526,7 +533,7 @@ class leaf : public node_base<P> {
         return modstate_ == modstate_deleted_layer;
     }
 
-    // @safe - prefetch hint
+    // @unsafe - casts raw leaf and suffix storage pointers for prefetch
     void prefetch() const {
         for (int i = 64; i < std::min(16 * width + 1, 4 * 64); i += 64)
             ::prefetch((const char *) this + i);
@@ -541,7 +548,7 @@ class leaf : public node_base<P> {
     void print(FILE* f, const char* prefix, int indent, int kdepth);
 
     // @unsafe { Uses reinterpret_cast and mask on next_.x union member }
-    leaf<P>* safe_next() const {
+    leaf_ptr safe_next() const {
         return reinterpret_cast<leaf<P>*>(next_.x & ~(uintptr_t) 1);
     }
 
@@ -591,7 +598,7 @@ class leaf : public node_base<P> {
         }
     }
     // @unsafe { Copies from source leaf x via raw pointer access }
-    inline void assign_initialize(int p, leaf<P>* x, int xp, threadinfo& ti) {
+    inline void assign_initialize(int p, leaf_ptr x, int xp, threadinfo& ti) {
         lv_[p] = x->lv_[xp];
         ikey0_[p] = x->ikey0_[xp];
         keylenx_[p] = x->keylenx_[xp];
@@ -608,7 +615,7 @@ class leaf : public node_base<P> {
 
     inline ikey_type ikey_after_insert(const permuter_type& perm, int i,
                                        const key_type& ka, int ka_i) const;
-    int split_into(leaf<P>* nr, int p, const key_type& ka, ikey_type& split_ikey,
+    int split_into(leaf_ptr nr, int p, const key_type& ka, ikey_type& split_ikey,
                    threadinfo& ti);
 
     template <typename PP> friend class tcursor;
@@ -628,9 +635,9 @@ void basic_table<P>::initialize(threadinfo& ti) {
     @post this->parent() == result && (!result || result->locked()) */
 template <typename P>
 // @unsafe { Traverses parent chain acquiring locks, uses raw pointers }
-internode<P>* node_base<P>::locked_parent(threadinfo& ti) const
+rusty::MutPtr<internode<P>> node_base<P>::locked_parent(threadinfo& ti) const
 {
-    node_base<P>* p;
+    rusty::MutPtr<node_base<P>> p;
     masstree_precondition(!this->concurrent || this->locked());
     while (1) {
         p = this->parent();
@@ -687,11 +694,11 @@ leaf<P>::stable_last_key_compare(const key_type& k, nodeversion_type v,
     Returns a stable leaf. Sets @a version to the stable version. */
 template <typename P>
 // @unsafe { Traverses tree via raw internode/child pointers with retry loops }
-inline leaf<P>* node_base<P>::reach_leaf(const key_type& ka,
-                                         nodeversion_type& version,
-                                         threadinfo& ti) const
+inline rusty::MutPtr<leaf<P>> node_base<P>::reach_leaf(const key_type& ka,
+                                                       nodeversion_type& version,
+                                                       threadinfo& ti) const
 {
-    const node_base<P> *n[2];
+    rusty::Ptr<node_base<P>> n[2];
     typename node_base<P>::nodeversion_type v[2];
     bool sense;
 
@@ -746,15 +753,15 @@ inline leaf<P>* node_base<P>::reach_leaf(const key_type& ka,
     the relevant leaf, setting @a v to the stable version for that leaf. */
 template <typename P>
 // @unsafe { Follows B^link-tree next pointers via safe_next() }
-leaf<P>* leaf<P>::advance_to_key(const key_type& ka, nodeversion_type& v,
-                                 threadinfo& ti) const
+rusty::MutPtr<leaf<P>> leaf<P>::advance_to_key(const key_type& ka, nodeversion_type& v,
+                                               threadinfo& ti) const
 {
-    const leaf<P>* n = this;
+    rusty::Ptr<leaf<P>> n = this;
     nodeversion_type oldv = v;
     v = n->stable_annotated(ti.stable_fence());
     if (v.has_split(oldv)
         && n->stable_last_key_compare(ka, v, ti) > 0) {
-        leaf<P> *next;
+        rusty::MutPtr<leaf<P>> next;
         ti.mark(tc_leaf_walk);
         while (likely(!v.deleted()) && (next = n->safe_next())
                && compare(ka.ikey(), next->ikey_bound()) >= 0) {
@@ -845,7 +852,7 @@ inline basic_table<P>::basic_table(basic_table<P>&& other) noexcept
     other.root_ = 0;
 }
 
-// @safe - move assignment: source must not own a tree after this returns.
+// @unsafe - transfers raw root pointer ownership and returns a reference without lifetime annotation.
 // Caller is responsible for having destroy()'d the destination's prior
 // tree if it had one (we can't do it here without a threadinfo).
 template <typename P>
@@ -863,7 +870,7 @@ inline rusty::MutPtr<node_base<P>> basic_table<P>::root() const {
     return root_;
 }
 
-// @safe - Returns rusty::MutPtr, uses atomic CAS internally
+// @unsafe - walks raw root parent pointers and performs atomic CAS
 template <typename P>
 inline rusty::MutPtr<node_base<P>> basic_table<P>::fix_root() {
     rusty::MutPtr<node_base<P>> root = root_;

@@ -11,11 +11,15 @@
  * supporting multiple Masstree instances.
  */
 
+#include <stdint.h>
 #include <stdlib.h>
 
 #include <gtest/gtest.h>
 
-#include <rusty/hashset.hpp>
+// No <rusty/hashset.hpp>: upstream deleted the header-form HashMap/HashSet
+// (rusty-cpp task #185). rusty::HashSet now comes from the std_port module,
+// re-aliased by `import rusty;` below.
+#include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -24,6 +28,7 @@
 #include "masstree/kvthread.hh"
 
 import std;
+import rusty;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;
@@ -97,13 +102,22 @@ TEST_F(MasstreeInternalsTest, MultipleThreadInfoCreation) {
     }
 
     // Verify all are in the list
-    rusty::HashSet<threadinfo*> found_set;
+    // NOTE (rusty-cpp pin fa7dd9d9): these identity sets hold the ADDRESS of each
+    // threadinfo, not the pointer itself. std_port's hashbrown lowers its
+    // `Equivalent` extension trait to
+    //   deref_if_pointer_like(self_) == rusty::borrow(key)
+    // (transpiled/std_port/hashbrown/hashbrown.cppm), which for a raw-pointer key
+    // dereferences BOTH sides and then demands `operator==` on the pointee — so
+    // `rusty::HashSet<threadinfo*>` no longer compiles. The retired hashbrown_port
+    // accepted pointer keys. uintptr_t keeps exactly the pointer-identity
+    // semantics these assertions want; revert if upstream stops dereferencing.
+    rusty::HashSet<uintptr_t> found_set;
     for (threadinfo* t = ctx_->get_allthreads(); t; t = t->next()) {
-        found_set.insert(t);
+        found_set.insert(reinterpret_cast<uintptr_t>(t));
     }
 
     for (auto* ti : infos) {
-        EXPECT_TRUE(found_set.contains(ti))
+        EXPECT_TRUE(found_set.contains(reinterpret_cast<uintptr_t>(ti)))
             << "threadinfo with index " << ti->index() << " not found in list";
     }
 }
@@ -270,8 +284,8 @@ TEST_F(MasstreeInternalsTest, ThreadPurposes) {
 // Test 10: Multi-threaded ThreadInfo Creation
 TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
     const int NUM_THREADS = 4;
-    auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS);
-    std::atomic<int> created{0};
+    auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS);
+    rusty::sync::atomic::Atomic<int> created{0};
     auto thread_infos = rusty::Vec<threadinfo*>::with_capacity(NUM_THREADS);
     for (int i = 0; i < NUM_THREADS; ++i) thread_infos.push(nullptr);
 
@@ -281,7 +295,7 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
             ASSERT_NE(ti, nullptr);
             EXPECT_EQ(ti->index(), 6000 + i);
             thread_infos[i] = ti;
-            created++;
+            created.fetch_add(1);
         }));
     }
 
@@ -292,14 +306,23 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
     EXPECT_EQ(created.load(), NUM_THREADS);
 
     // Verify all threadinfos are in the context's list
-    rusty::HashSet<threadinfo*> found_set;
+    // NOTE (rusty-cpp pin fa7dd9d9): these identity sets hold the ADDRESS of each
+    // threadinfo, not the pointer itself. std_port's hashbrown lowers its
+    // `Equivalent` extension trait to
+    //   deref_if_pointer_like(self_) == rusty::borrow(key)
+    // (transpiled/std_port/hashbrown/hashbrown.cppm), which for a raw-pointer key
+    // dereferences BOTH sides and then demands `operator==` on the pointee — so
+    // `rusty::HashSet<threadinfo*>` no longer compiles. The retired hashbrown_port
+    // accepted pointer keys. uintptr_t keeps exactly the pointer-identity
+    // semantics these assertions want; revert if upstream stops dereferencing.
+    rusty::HashSet<uintptr_t> found_set;
     for (threadinfo* t = ctx_->get_allthreads(); t; t = t->next()) {
-        found_set.insert(t);
+        found_set.insert(reinterpret_cast<uintptr_t>(t));
     }
 
     for (int i = 0; i < NUM_THREADS; ++i) {
         EXPECT_NE(thread_infos[i], nullptr);
-        EXPECT_TRUE(found_set.contains(thread_infos[i]))
+        EXPECT_TRUE(found_set.contains(reinterpret_cast<uintptr_t>(thread_infos[i])))
             << "Thread " << i << "'s threadinfo not found in context's list";
     }
 }
@@ -307,8 +330,8 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
 // Test 11: Multi-threaded RCU Operations
 TEST_F(MasstreeInternalsTest, MultithreadedRcuOperations) {
     const int NUM_THREADS = 4;
-    auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS);
-    std::atomic<int> completed{0};
+    auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS);
+    rusty::sync::atomic::Atomic<int> completed{0};
 
     for (int i = 0; i < NUM_THREADS; ++i) {
         threads.push(rusty::thread::spawn([i, &completed]() {
@@ -329,7 +352,7 @@ TEST_F(MasstreeInternalsTest, MultithreadedRcuOperations) {
             ti->rcu_quiesce();
             ti->rcu_stop();
 
-            completed++;
+            completed.fetch_add(1);
         }));
     }
 

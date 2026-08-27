@@ -32,7 +32,7 @@ __thread int TThread::nshards;
 __thread int TThread::shard_index;
 __thread int TThread::pid;
 __thread int TThread::the_mode;
-__thread int TThread::the_num_erpc_server;
+__thread int TThread::the_num_rpc_server;
 __thread int TThread::the_is_micro;
 __thread int TThread::the_counter;
 __thread int TThread::the_role;

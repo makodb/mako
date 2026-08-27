@@ -380,13 +380,6 @@ Enable with: `cmake -DDPDK_ENABLED=ON`
 - **Sub-microsecond latency**
 - **Requires**: InfiniBand hardware
 
-### eRPC *(Experimental)*
-
-Efficient RPC library:
-- **Low overhead**: Optimized for datacenter
-- **High performance**: Better than gRPC for small messages
-- **Configurable**: Multiple transport backends
-
 ---
 
 ## Configuration Hierarchy
@@ -443,7 +436,7 @@ host:
 - ⚡ **Speculative Execution**: Near-local latency with background replication
 - 🎯 **Consistency**: Strict serializability by default
 - 💾 **Storage**: Masstree (memory) + RocksDB (disk)
-- 🌐 **Transport**: TCP/IP, DPDK, RDMA, eRPC
+- 🌐 **Transport**: TCP/IP, DPDK, RDMA
 
 ---
 

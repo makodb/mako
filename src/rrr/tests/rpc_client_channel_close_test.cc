@@ -24,9 +24,13 @@
 
 
 #include <rusty/arc.hpp>
+#include <rusty/sync/weak.hpp>  // rusty::sync::downgrade
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.reconnect_policy;
 
 import std;
 
@@ -54,7 +58,7 @@ class CloseDriverChannelStub {
 
     void deliver_closed(ChannelError reason = ChannelError::ConnectionReset) {
         closed_ = true;
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
     std::size_t send_count() {
         std::lock_guard<std::mutex> g(mu_);
@@ -100,7 +104,7 @@ void pump_until(Pred&& pred, int max_iterations = 1000) {
     auto reactor = Reactor::get_reactor();
     for (int i = 0; i < max_iterations; ++i) {
         if (pred()) return;
-        reactor->loop();
+        reactor->run_loop(false, true);
     }
     FAIL() << "pump_until: predicate never satisfied (recv-loop fiber wedged?)";
 }
@@ -122,7 +126,7 @@ class ClientChannelCloseTest : public ::testing::Test {
         // would also work, but sharing an Arc lets the test (a)
         // register before bind_channel and (b) read the registered
         // callbacks back if needed.
-        callback_manager_ = rusty::Some(rusty::Arc<CallbackManager>::make());
+        callback_manager_ = rusty::Some(rusty::Arc<CallbackManager>::new_(CallbackManager::new_()));
         mut_conn().set_callback_manager(callback_manager_.as_ref().unwrap());
 
         callback_manager_.as_ref().unwrap()->add_on_error([this](RpcError e, const std::string&) {
@@ -144,7 +148,7 @@ class ClientChannelCloseTest : public ::testing::Test {
         // so the recv-loop fiber exits.
         if (stub_ && !stub_->is_closed()) {
             stub_->deliver_closed(ChannelError::None);
-            (void)Reactor::get_reactor()->loop();
+            (void)Reactor::get_reactor()->run_loop(false, true);
         }
         conn_ = rusty::None;
         if (poll_thread_.is_some()) {
@@ -235,7 +239,7 @@ TEST_F(ClientChannelCloseTest, OnClosedAttemptsReconnectWhenPolicyAllows) {
     // legacy fd reconnect path by aborting it via reconnect_abort_
     // *inside* the spawned thread (we observe the spawn via the
     // counter, then immediately abort to avoid hitting socket(2)).
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     mut_conn().set_reconnect_policy(policy);
 

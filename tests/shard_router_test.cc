@@ -140,7 +140,7 @@ TEST_F(ShardRouterTest, ComputeShardWithPolicy) {
                                  {{0, 5, 0}, {5, 10, 1}}, 0),
     });
 
-    policy_cache.set_policy(policy);
+    policy_cache.set_policy(std::move(policy));
 
     // With policy, routing should be based on key value
     // Key bytes are interpreted as big-endian int64
@@ -175,7 +175,7 @@ TEST_F(ShardRouterTest, ComputeShardWithPolicyKeyValue) {
                                  {{0, 10, 0}, {10, 20, 1}, {20, 30, 2}}, 0),
     });
 
-    policy_cache.set_policy(policy);
+    policy_cache.set_policy(std::move(policy));
 
     // Using explicit key value
     EXPECT_EQ(0, compute_shard_for_key_value(1, "STOCK", 5));
@@ -199,7 +199,7 @@ TEST_F(ShardRouterTest, ComputeShardUnknownTableFallsBack) {
                                  {{0, 5, 0}, {5, 10, 1}}),
     });
 
-    policy_cache.set_policy(policy);
+    policy_cache.set_policy(std::move(policy));
 
     // Unknown table should fall back to table-ID-based routing
     // table_id 1 → (1-1)/200 = 0
@@ -215,7 +215,7 @@ TEST_F(ShardRouterTest, HasPolicyRouting) {
                                  {{0, 10, 0}}),
     });
 
-    policy_cache.set_policy(policy);
+    policy_cache.set_policy(std::move(policy));
 
     EXPECT_TRUE(has_policy_routing("HAS_POLICY_TEST_TABLE"));
     EXPECT_FALSE(has_policy_routing("NONEXISTENT_TABLE_XYZ"));
@@ -230,7 +230,7 @@ TEST_F(ShardRouterTest, GetPolicyNumShards) {
                                  {{0, 10, 0}}),
     });
 
-    policy_cache.set_policy(policy);
+    policy_cache.set_policy(std::move(policy));
 
     EXPECT_EQ(4, get_policy_num_shards());
 }

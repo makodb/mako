@@ -7,7 +7,7 @@ import std;
 
 
 int setup_paxos_default(){
-  std::vector<std::string> paxos_config{"config/1c1s1p.yml", "config/occ_paxos.yml"};
+  std::vector<std::string> paxos_config{"config/1c1s1p.yml", "config/paxos.yml"};
   char *argv_paxos[16];
   argv_paxos[0] = "build/microbench";
   argv_paxos[1] = "-b";

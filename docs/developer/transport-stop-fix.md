@@ -3,13 +3,13 @@
 ## Background
 
 ### Original Problem (Commit b9d3940)
-- Commit b9d3940 added RRR/RPC support for distributed transaction coordination (previously only eRPC/DPDK was supported)
+- Commit b9d3940 added RRR/RPC support for distributed transaction coordination (previously only the eRPC/DPDK backend, since removed, was supported)
 - The system would hang (continuously printing throughput messages) or coredump when using RRR for coordination
 - Commit a6f342 attempted to fix the issue by:
   - Adding double `stop()` calls (before and after worker join)
   - Making `ShardClient::stop()` idempotent
   - Handling epoll races gracefully (`ENOENT`/`EBADF` in `epoll_wrapper.h`)
-  - Moving `mako::stop_erpc_server()` call to after worker join
+  - Moving `mako::stop_rpc_server()` call to after worker join
 - However, a6f342 only mitigated the issue - the system could still hang or coredump intermittently
 
 ### Root Cause Analysis

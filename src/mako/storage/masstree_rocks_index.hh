@@ -98,12 +98,12 @@
 #include <new>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <rusty/condvar.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/option.hpp>
 #include <rusty/thread.hpp>
-#include <rusty/vec.hpp>
 
 // ---------------------------------------------------------------------------
 // Value record. IMMUTABLE once published. Value bytes follow the header
@@ -393,14 +393,14 @@ struct mrx_store {
   std::unordered_map<mrx_entry *, uint64_t> dirty;
   // Writeback scratch: entries written in the current batch, erased
   // from `dirty` only after rocksdb_write succeeds.
-  rusty::Vec<mrx_entry *> wrote_scratch;
+  std::vector<mrx_entry *> wrote_scratch;
 
   // CLOCK hand for the sweeper — a KEY, not an iterator, so it survives
   // concurrent tree mutation. Sweeper thread only; no lock needed.
   std::string sweep_cursor;
 
-  rusty::Option<rusty::thread::JoinHandle<void>> flusher;
-  rusty::Option<rusty::thread::JoinHandle<void>> sweeper;
+  rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>> flusher;
+  rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>> sweeper;
 };
 
 // @safe - true when the value tier is over its ceiling
@@ -880,7 +880,8 @@ inline size_t mrx_flusher_cycle(mrx_store *s) {
     {
       const auto region = mrx_rcu_region();
       for (auto it = s->dirty.begin();
-           it != s->dirty.end() && s->wrote_scratch.len() < MRX_WRITEBACK_CHUNK;
+           it != s->dirty.end() &&
+           s->wrote_scratch.size() < MRX_WRITEBACK_CHUNK;
            ++it) {
         mrx_entry *e = it->first;
         mrx_val *cur = e->val.load(std::memory_order_acquire);
@@ -895,7 +896,7 @@ inline size_t mrx_flusher_cycle(mrx_store *s) {
                 reinterpret_cast<const char *>(mrx_val_bytes(cur)), cur->len);
           }
         }
-        s->wrote_scratch.push(e);
+        s->wrote_scratch.push_back(e);
       }
     }
     char *err = nullptr;
@@ -920,10 +921,10 @@ inline size_t mrx_flusher_cycle(mrx_store *s) {
       // self-heals with no data loss.
       s->io_failing.store(true, std::memory_order_release);
     } else {
-      for (size_t i = 0; i < s->wrote_scratch.len(); i++) {
+      for (size_t i = 0; i < s->wrote_scratch.size(); i++) {
         s->dirty.erase(s->wrote_scratch[i]);
       }
-      progressed += s->wrote_scratch.len();
+      progressed += s->wrote_scratch.size();
       s->io_failing.store(false, std::memory_order_release);
     }
   }
@@ -1110,10 +1111,10 @@ struct mrx_chunk_item {
 // Bridges mbtree's templated functor protocol to a bounded buffer.
 // @unsafe - reads RCU-protected entries (caller holds region)
 struct mrx_chunk_collector {
-  mrx_chunk_collector(rusty::Vec<mrx_chunk_item> &out, size_t budget)
+  mrx_chunk_collector(std::vector<mrx_chunk_item> &out, size_t budget)
       : out_(out), budget_(budget) {}
   bool operator()(const lcdf::Str &k, concurrent_btree::value_type v) {
-    if (out_.len() >= budget_) return false;  // stop the walk
+    if (out_.size() >= budget_) return false;  // stop the walk
     mrx_entry *e = reinterpret_cast<mrx_entry *>(v);
     mrx_val *val = e->val.load(std::memory_order_acquire);
     e->referenced.store(1, std::memory_order_relaxed);
@@ -1124,10 +1125,10 @@ struct mrx_chunk_collector {
     if (item.resident && !item.tombstone) {
       mrx_val_copy_out(val, item.value, std::string::npos);
     }
-    out_.push(std::move(item));
+    out_.push_back(std::move(item));
     return true;
   }
-  rusty::Vec<mrx_chunk_item> &out_;
+  std::vector<mrx_chunk_item> &out_;
   size_t budget_;
 };
 
@@ -1169,24 +1170,24 @@ inline void mrx_scan(mrx_store *s, const std::string &start_key,
                      const std::string *end_key, oi_scan_callback &cb) {
   std::string cursor = start_key;
   for (;;) {
-    rusty::Vec<mrx_chunk_item> chunk;
+    std::vector<mrx_chunk_item> chunk;
     {
       const auto region = mrx_rcu_region();
       mrx_chunk_collector c(chunk, MRX_SCAN_CHUNK);
       varkey lower = mrx_key(lcdf::Str(cursor));
       if (end_key != nullptr) {
         varkey upper = mrx_key(lcdf::Str(*end_key));
-        s->tree->search_range(lower, &upper, c);
+        s->tree->search_range_bounded(lower, upper, c);
       } else {
-        s->tree->search_range(lower, nullptr, c);
+        s->tree->search_range_unbounded(lower, c);
       }
     }
-    if (chunk.len() == 0) return;
-    for (size_t i = 0; i < chunk.len(); i++) {
+    if (chunk.empty()) return;
+    for (size_t i = 0; i < chunk.size(); i++) {
       if (!mrx_emit_item(s, chunk[i], cb)) return;
     }
-    cursor = chunk[chunk.len() - 1].key;
-    if (chunk.len() < MRX_SCAN_CHUNK) return;
+    cursor = chunk.back().key;
+    if (chunk.size() < MRX_SCAN_CHUNK) return;
     // Resume strictly after the last key: appending a 0 byte yields its
     // immediate successor in byte order.
     cursor.push_back('\0');
@@ -1200,21 +1201,21 @@ inline void mrx_rscan(mrx_store *s, const std::string &start_key,
   bool have_prev = false;
   std::string prev;
   for (;;) {
-    rusty::Vec<mrx_chunk_item> chunk;
+    std::vector<mrx_chunk_item> chunk;
     {
       const auto region = mrx_rcu_region();
       mrx_chunk_collector c(chunk, MRX_SCAN_CHUNK);
       varkey upper = mrx_key(lcdf::Str(cursor));
       if (end_key != nullptr) {
         varkey lower = mrx_key(lcdf::Str(*end_key));
-        s->tree->rsearch_range(upper, &lower, c);
+        s->tree->rsearch_range_bounded(upper, lower, c);
       } else {
-        s->tree->rsearch_range(upper, nullptr, c);
+        s->tree->rsearch_range_unbounded(upper, c);
       }
     }
-    if (chunk.len() == 0) return;
+    if (chunk.empty()) return;
     size_t emitted = 0;
-    for (size_t i = 0; i < chunk.len(); i++) {
+    for (size_t i = 0; i < chunk.size(); i++) {
       // The upper bound is inclusive, so the first item of a resumed
       // chunk repeats the previous chunk's last key.
       if (have_prev && i == 0 &&
@@ -1226,10 +1227,10 @@ inline void mrx_rscan(mrx_store *s, const std::string &start_key,
       emitted++;
     }
     if (emitted == 0) return;
-    cursor = chunk[chunk.len() - 1].key;
+    cursor = chunk.back().key;
     prev = cursor;
     have_prev = true;
-    if (chunk.len() < MRX_SCAN_CHUNK) return;
+    if (chunk.size() < MRX_SCAN_CHUNK) return;
   }
 }
 
@@ -1250,17 +1251,17 @@ struct mrx_sweep_item {
 
 // @unsafe - reads RCU-protected entries (caller holds region)
 struct mrx_sweep_collector {
-  mrx_sweep_collector(rusty::Vec<mrx_sweep_item> &out, size_t budget)
+  mrx_sweep_collector(std::vector<mrx_sweep_item> &out, size_t budget)
       : out_(out), budget_(budget) {}
   bool operator()(const lcdf::Str &k, concurrent_btree::value_type v) {
-    if (out_.len() >= budget_) return false;
+    if (out_.size() >= budget_) return false;
     mrx_sweep_item item;
     item.key.assign(k.data(), k.length());
     item.entry = reinterpret_cast<mrx_entry *>(v);
-    out_.push(std::move(item));
+    out_.push_back(std::move(item));
     return true;
   }
-  rusty::Vec<mrx_sweep_item> &out_;
+  std::vector<mrx_sweep_item> &out_;
   size_t budget_;
 };
 
@@ -1275,15 +1276,15 @@ inline uint64_t mrx_sweep_chunk(mrx_store *s, size_t budget) {
   std::string last;
   {
     const auto region = mrx_rcu_region();
-    rusty::Vec<mrx_sweep_item> chunk;
+    std::vector<mrx_sweep_item> chunk;
     mrx_sweep_collector c(chunk, budget);
     varkey lower = mrx_key(lcdf::Str(s->sweep_cursor));
-    s->tree->search_range(lower, nullptr, c);
+    s->tree->search_range_unbounded(lower, c);
 
-    if (chunk.len() == 0) {
+    if (chunk.empty()) {
       wrapped = true;  // cursor ran past the last key
     } else {
-      for (size_t i = 0; i < chunk.len(); i++) {
+      for (size_t i = 0; i < chunk.size(); i++) {
         mrx_entry *e = chunk[i].entry;
         // Second chance: a recently touched value survives, but pays
         // for it by losing the bit.
@@ -1293,8 +1294,8 @@ inline uint64_t mrx_sweep_chunk(mrx_store *s, size_t budget) {
         mrx_evict_value(s, e);
         if (!mrx_over_capacity(s)) break;
       }
-      last = chunk[chunk.len() - 1].key;
-      if (chunk.len() < budget) wrapped = true;
+      last = chunk.back().key;
+      if (chunk.size() < budget) wrapped = true;
     }
   }
 
@@ -1405,10 +1406,12 @@ inline mrx_store *mrx_store_open(concurrent_btree *tree,
 
   mrx_load_keys(s);
 
-  s->flusher = rusty::Option<rusty::thread::JoinHandle<void>>(
+  s->flusher = rusty::Option<
+      rusty::thread::JoinHandle<rusty::thread::Unit>>(
       rusty::thread::spawn([s]() { mrx_flusher_loop(s); }));
   if (capacity != 0) {
-    s->sweeper = rusty::Option<rusty::thread::JoinHandle<void>>(
+    s->sweeper = rusty::Option<
+        rusty::thread::JoinHandle<rusty::thread::Unit>>(
         rusty::thread::spawn([s]() { mrx_sweeper_loop(s); }));
   }
   return s;

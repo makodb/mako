@@ -35,43 +35,27 @@ ALGORITHM = "sha256"
 DOMAIN = b"mako-local-build-fingerprint\0v1\0"
 FINGERPRINT_SIZE = 32
 DEFAULT_MANIFEST = "generated/mako_local_build_manifest.json"
+NATIVE_LINK_ARCHIVE_MANIFEST = "crates/mako-local/native-link-archives.txt"
 
-# Cargo names these four CMake archives when it links the native boundary.
-RUST_LINKED_ARCHIVE_TARGETS = ("mako", "masstree", "cluster", "rrr")
-
-# ``libmako.a`` also physically bundles every object from these object targets,
-# so they are part of the same closure even though Cargo does not name them as
-# separate archives.
-MAKO_BUNDLED_OBJECT_TARGETS = ("txlog_core_obj", "__cmake_cxx23")
-
-# Selecting every matching output from compile_commands.json covers out-of-line
-# implementations reached indirectly by the facade (for example shardClient
-# and message), not merely the STO translation units that include its header.
-NATIVE_CLOSURE_TARGETS = (
-    "mako",
-    *MAKO_BUNDLED_OBJECT_TARGETS,
-    "masstree",
-    "cluster",
-    "rrr",
-)
-
-# Archive paths are relative to the CMake build directory. The boolean records
-# the one generated identity member deliberately excluded from the source hash
-# to avoid making its fingerprint depend on itself.
-ARCHIVE_COMPOSITIONS = (
-    ("libmako.a", ("mako", *MAKO_BUNDLED_OBJECT_TARGETS), True),
-    ("src/rrr/librrr.a", ("__cmake_cxx23", "rrr"), False),
-    ("src/masstree/libmasstree.a", ("__cmake_cxx23", "masstree"), False),
-    ("libcluster.a", ("cluster",), False),
-)
+# ``libmako.a`` also physically bundles every object from this object target,
+# so it is part of the same closure even though Cargo does not name it as a
+# separate archive. CMake's standard-library module is a build dependency, not
+# an object member of any archive in the current build graph; the compiler,
+# effective commands, scanned libc++ headers, and libc++/libc++abi binaries are
+# fingerprinted separately below.
+MAKO_BUNDLED_OBJECT_TARGETS = ("txlog_core_obj",)
 GENERATED_IDENTITY = "generated/mako_local_build_identity.cc"
 ABI_IMPLEMENTATION = "src/mako/storage/mako_local_abi.cc"
 
 RECIPE_FILES = (
     "CMakeLists.txt",
+    "src/rrr/CMakeLists.txt",
     "src/masstree/CMakeLists.txt",
     "src/masstree/ConfigureMasstree.cmake",
     "src/masstree/config-cmake.h.in",
+    "third-party/rusty-cpp/CMakeLists.txt",
+    "crates/mako-local/build.rs",
+    NATIVE_LINK_ARCHIVE_MANIFEST,
     "scripts/mako_local_fingerprint.py",
 )
 
@@ -103,6 +87,91 @@ CACHE_KEYS = (
 
 class FingerprintError(RuntimeError):
     """A fingerprint cannot be computed or does not match."""
+
+
+def read_native_link_archives(path: Path) -> tuple[tuple[str, str], ...]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise FingerprintError(
+            f"cannot read native link archive manifest {path}: {error}"
+        ) from error
+    archives: list[tuple[str, str]] = []
+    names: set[str] = set()
+    paths: set[str] = set()
+    for line_number, raw_line in enumerate(lines, 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) != 2:
+            raise FingerprintError(
+                f"{path}:{line_number} must contain exactly a library name and path"
+            )
+        target, relative = fields
+        relative_path = Path(relative)
+        if not re.fullmatch(r"[A-Za-z0-9_]+", target):
+            raise FingerprintError(
+                f"{path}:{line_number} has invalid library name {target!r}"
+            )
+        if (
+            relative_path.is_absolute()
+            or not relative_path.parts
+            or any(part in (".", "..") for part in relative_path.parts)
+        ):
+            raise FingerprintError(
+                f"{path}:{line_number} path must stay relative to the build directory: "
+                f"{relative!r}"
+            )
+        if target in names:
+            raise FingerprintError(
+                f"{path}:{line_number} repeats library name {target!r}"
+            )
+        if relative in paths:
+            raise FingerprintError(
+                f"{path}:{line_number} repeats archive path {relative!r}"
+            )
+        names.add(target)
+        paths.add(relative)
+        archives.append((target, relative))
+    if not archives:
+        raise FingerprintError(f"native link archive manifest {path} is empty")
+    if archives[0] != ("mako", "libmako.a"):
+        raise FingerprintError(
+            f"native link archive manifest {path} must start with mako libmako.a"
+        )
+    return tuple(archives)
+
+
+# Cargo recreates this consumer-before-provider slice of CMake's native link
+# closure. Verification fails closed on archive membership and object bytes.
+RUST_LINKED_ARCHIVES = read_native_link_archives(
+    Path(__file__).resolve().parents[1] / NATIVE_LINK_ARCHIVE_MANIFEST
+)
+RUST_LINKED_ARCHIVE_TARGETS = tuple(
+    target for target, _relative in RUST_LINKED_ARCHIVES
+)
+
+# Selecting every matching output from compile_commands.json covers out-of-line
+# implementations reached indirectly by the facade (for example shardClient
+# and message), not merely the STO translation units that include its header.
+NATIVE_CLOSURE_TARGETS = (
+    "mako",
+    *MAKO_BUNDLED_OBJECT_TARGETS,
+    *(target for target in RUST_LINKED_ARCHIVE_TARGETS if target != "mako"),
+)
+
+# Archive paths are relative to the CMake build directory. The boolean records
+# the one generated identity member deliberately excluded from the source hash
+# to avoid making its fingerprint depend on itself.
+ARCHIVE_COMPOSITIONS = (
+    ("libmako.a", ("mako", *MAKO_BUNDLED_OBJECT_TARGETS), True),
+    *(
+        (relative, (target,), False)
+        for target, relative in RUST_LINKED_ARCHIVES
+        if target != "mako"
+    ),
+)
 
 
 @dataclasses.dataclass(frozen=True, order=True)

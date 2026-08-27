@@ -26,6 +26,7 @@
 #include <stdlib.h>
 
 #include "testrunner.hh"
+#include <rusty/vec.hpp>
 
 import std;
 
@@ -36,15 +37,18 @@ testrunner_base* testrunner_base::thetail;
 void testrunner_base::print_names(FILE* stream, int ncol) {
     masstree_precondition(ncol >= 1);
 
-    std::vector<lcdf::String> names;
+    rusty::Vec<lcdf::String> names;
     for (testrunner_base* tr = thehead; tr; tr = tr->next_)
-        names.push_back(tr->name());
+        names.push(tr->name());
 
     size_t percol;
-    std::vector<int> colwidth;
+    rusty::Vec<int> colwidth;
     while (1) {
         percol = (names.size() + ncol - 1) / ncol;
-        colwidth.assign(ncol, 0);
+        colwidth.clear();
+        colwidth.reserve(ncol);
+        for (int i = 0; i != ncol; ++i)
+            colwidth.push(0);
         for (size_t i = 0; i != names.size(); ++i)
             colwidth[i/percol] = std::max(colwidth[i/percol], names[i].length());
         if (ncol == 1

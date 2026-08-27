@@ -18,7 +18,6 @@
 #include <unordered_map>
 #include <map>
 #include "common.h"
-#include "transport_backend.h"
 
 using std::string;
 
@@ -94,48 +93,6 @@ namespace transport
         bool multi_shard_mode;                  // true if running multiple shards in one process
         std::vector<int> local_shard_indices;   // list of shard indices to run locally (e.g., [0,1,2])
 
-        // Transport configuration
-        mako::TransportType transport_type;
-
-        /**
-         * Load transport configuration from environment or YAML
-         * Priority: environment variable > YAML config > default (rrr/rpc)
-         */
-        void LoadTransportConfig(YAML::Node* config = nullptr) {
-            // Default to rrr/rpc
-            transport_type = mako::TransportType::RRR_RPC;
-            const char* env_transport = std::getenv("MAKO_TRANSPORT");
-
-            // Check environment variable first (highest priority)
-            if (env_transport) {
-                try {
-                    transport_type = mako::ParseTransportType(env_transport);
-                    std::cout << "[TRANSPORT] Configured via MAKO_TRANSPORT=" << env_transport
-                              << ": using " << mako::TransportTypeToString(transport_type) << std::endl;
-                    return;  // Environment variable takes precedence
-                } catch (const std::exception& e) {
-                    // Invalid value, fall through to YAML or default
-                    std::cout << "[TRANSPORT] WARNING: Invalid MAKO_TRANSPORT value '" << env_transport
-                              << "', falling back to default" << std::endl;
-                }
-            }
-
-            // Check YAML config if provided
-            if (config && (*config)["transport"]) {
-                try {
-                    std::string transport_str = (*config)["transport"].as<std::string>();
-                    transport_type = mako::ParseTransportType(transport_str);
-                    std::cout << "[TRANSPORT] Configured via YAML: using "
-                              << mako::TransportTypeToString(transport_type) << std::endl;
-                    return;
-                } catch (const std::exception& e) {
-                    // Invalid YAML value, use default
-                }
-            }
-
-            // Otherwise use default (RRR_RPC)
-            std::cout << "[TRANSPORT] Using default: " << mako::TransportTypeToString(transport_type) << std::endl;
-        }
         
     private:
         std::vector<ShardAddress> shards;  // Old format

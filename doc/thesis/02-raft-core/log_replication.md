@@ -7,7 +7,7 @@ This document provides a complete walkthrough of Raft log replication as impleme
 **Key source files**:
 - `src/deptran/raft/server.cc` — `HeartbeatLoop()`, `OnAppendEntries()`, `Start()`, `applyLogs()`
 - `src/deptran/raft/commo.cc` — `SendAppendEntries2()`
-- `src/deptran/classic/tpc_command.h` — `TpcBatchCommand`, `TpcCommitCommand`
+- `src/deptran/tpc_command.h` — `TpcBatchCommand`, `TpcCommitCommand`
 
 ---
 

@@ -5,13 +5,6 @@ set -e  # Exit on error
 # Disable GDB for CI runs - GDB changes output format and breaks grep patterns
 export MAKO_NO_GDB=1
 
-# On macOS, eRPC is disabled by design; skip the eRPC variants in CI.
-if [[ "$(uname -s)" == "Darwin" ]]; then
-    SKIP_ERPC=1
-else
-    SKIP_ERPC=0
-fi
-
 # Build directory (can be overridden via environment variable)
 BUILD_DIR=${BUILD_DIR:-build}
 
@@ -280,8 +273,14 @@ compile() {
     echo "Using ${jobs} parallel build jobs"
     echo "Configuring CMake generator='${generator}', build_type='${build_type}', build_dir='${BUILD_DIR}'"
     set -o pipefail
-    cmake -S . -B "${BUILD_DIR}" -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" 2>&1 | tee build.log
-    cmake --build "${BUILD_DIR}" --parallel "${jobs}" 2>&1 | tee -a build.log
+    # -DCMAKE_POLICY_VERSION_MINIMUM=3.5: CMake 4.x removed compatibility with
+    # cmake_minimum_required(VERSION < 3.5). Kept as a safety net for vendored
+    # third-party projects that still pin an old minimum.
+    # (The local/dev configure passes this same flag.)
+    cmake -S . -B "${BUILD_DIR}" -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 2>&1 | tee build.log
+    # -- -k 0: keep going past the first failure so one build surfaces ALL
+    # compile errors (ninja default stops at the first batch).
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" --target all rrr_goal0_dual_compile -- -k 0 2>&1 | tee -a build.log
     # Generate configuration
     bash ./src/mako/update_config.sh
 }
@@ -345,6 +344,7 @@ run_mako_local_sanitizer_gates() {
     echo "Configuring ${sanitizer} boundary gate in ${BUILD_DIR}"
     env "${sanitizer_toggle}" cmake -S . -B "${BUILD_DIR}" \
         -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DMAKO_LOCAL_TEST_HOOKS=OFF
     env "${sanitizer_toggle}" cmake --build "${BUILD_DIR}" \
         --parallel "${jobs}" --target run_mako_local_sanitizer_tests
@@ -361,7 +361,9 @@ run_mako_local_hook_gates() {
     local generator="${CMAKE_GENERATOR:-Ninja}"
     local build_type="${CMAKE_BUILD_TYPE:-RelWithDebInfo}"
     cmake -S . -B "${BUILD_DIR}" -G "${generator}" \
-        -DCMAKE_BUILD_TYPE="${build_type}" -DMAKO_LOCAL_TEST_HOOKS=ON
+        -DCMAKE_BUILD_TYPE="${build_type}" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DMAKO_LOCAL_TEST_HOOKS=ON
     cmake --build "${BUILD_DIR}" --parallel "${jobs}" \
         --target run_mako_local_hook_tests
 }
@@ -438,27 +440,6 @@ run_2shard_no_replication() {
     return 1
 }
 
-# Function 4b: Run 2-shard no replication test with eRPC transport
-run_2shard_no_replication_erpc() {
-    if [ "$SKIP_ERPC" -eq 1 ]; then
-        echo "========================================="
-        echo "Skipping: ./ci/ci.sh shardNoReplicationErpc (macOS: eRPC disabled)"
-        echo "========================================="
-        return 0
-    fi
-    echo "========================================="
-    echo "Running: ./ci/ci.sh shardNoReplicationErpc"
-    echo "========================================="
-    cleanup_processes
-    set +e
-    MAKO_TRANSPORT=erpc bash ./examples/test_2shard_no_replication.sh
-    local test_result=$?
-    set -e
-    check_for_hanging_processes "shardNoReplicationErpc"
-    local hanging_check=$?
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
-}
-
 run_1shard_replication() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1Replication"
@@ -507,39 +488,6 @@ run_2shard_replication() {
         fi
         if [ $attempt -lt $max_attempts ]; then
             echo "Retrying shard2Replication (attempt $((attempt + 1))/$max_attempts)..."
-        fi
-        attempt=$((attempt + 1))
-    done
-    return 1
-}
-
-run_2shard_replication_erpc() {
-    if [ "$SKIP_ERPC" -eq 1 ]; then
-        echo "========================================="
-        echo "Skipping: ./ci/ci.sh shard2ReplicationErpc (macOS: eRPC disabled)"
-        echo "========================================="
-        return 0
-    fi
-    echo "========================================="
-    echo "Running: ./ci/ci.sh shard2ReplicationErpc"
-    echo "========================================="
-    local attempt=1
-    local max_attempts=2
-    while [ $attempt -le $max_attempts ]; do
-        cleanup_processes
-        # Run test and capture exit code (set +e to prevent immediate exit)
-        set +e
-        MAKO_TRANSPORT=erpc bash ./examples/test_2shard_replication.sh
-        local test_result=$?
-        set -e
-        # Always check for hanging processes, even if test failed
-        check_for_hanging_processes "shard2ReplicationErpc"
-        local hanging_check=$?
-        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
-            return 0
-        fi
-        if [ $attempt -lt $max_attempts ]; then
-            echo "Retrying shard2ReplicationErpc (attempt $((attempt + 1))/$max_attempts)..."
         fi
         attempt=$((attempt + 1))
     done
@@ -776,8 +724,20 @@ run_rrr_unit_tests() {
     write_simple_transaction_config "$base_port" "$src_config" "$tmp_config"
 
     cd ${BUILD_DIR}
-    # Exclude eRPC tests in CI due transport/environment instability on shared runners.
-    MAKO_CONFIG="$tmp_config" ctest --output-on-failure -E 'erpc'
+    # Exclude rusty-cpp's own test suite: third-party/rusty-cpp is added
+    # EXCLUDE_FROM_ALL so its ~60 test binaries are never built, yet its CMake
+    # still registers them -> ctest counts the missing binaries as "Not Run"
+    # failures. Those tests belong to rusty-cpp's own CI, not mako's. (Verified
+    # no mako test name matches these patterns.)
+    # hashset_set_algebra_test is the same class as the rest of this list --
+    # third-party/rusty-cpp/CMakeLists.txt:624 registers it, mako never builds
+    # it -- but its name carries neither the `_port` nor the `rusty_` marker the
+    # patterns keyed on, so it slipped through and was the single "Not Run"
+    # failure of `ci.sh rrrTests` (46/47 passing). Match it by name. NOTE: this
+    # denylist is name-shaped, so a future rusty-cpp test named outside these
+    # patterns will slip through the same way; the durable fix is for the
+    # exclusion to key on test provenance rather than spelling.
+    MAKO_CONFIG="$tmp_config" ctest --output-on-failure -E '_port|rusty_|async_module_test|dispatch_test|test_channel|test_mutex|test_thread|test_traits|test_external_annotations|test_simplified_external|test_stl_lifetimes|test_unified_annotations|hashset_set_algebra_test'
     local test_result=$?
     cd ..
     rm -f "$tmp_config"
@@ -851,17 +811,11 @@ case "${1:-}" in
     shardNoReplication)
         run_2shard_no_replication
         ;;
-    shardNoReplicationErpc)
-        run_2shard_no_replication_erpc
-        ;;
     shard1Replication)
         run_1shard_replication
         ;;
     shard2Replication)
         run_2shard_replication
-        ;;
-    shard2ReplicationErpc)
-        run_2shard_replication_erpc
         ;;
     shard1ReplicationSimple)
         run_1shard_replication_simple
@@ -914,15 +868,9 @@ case "${1:-}" in
         run_client_server_test
         run_simple_paxos
         run_2shard_no_replication
-        if [ "$SKIP_ERPC" -eq 0 ]; then
-            run_2shard_no_replication_erpc
-        fi
         # Paxos replication tests
         run_1shard_replication
         run_2shard_replication
-        if [ "$SKIP_ERPC" -eq 0 ]; then
-            run_2shard_replication_erpc
-        fi
         run_1shard_replication_simple
         run_2shard_replication_simple
         # Raft replication tests
@@ -944,8 +892,8 @@ case "${1:-}" in
         echo "  compile, makoLocalAbiGates, makoLocalSanitizerGates,"
         echo "  makoLocalHookGates, makoLocalMiriGate, cleanup,"
         echo "  simpleTransaction, simplePaxos,"
-        echo "  shardNoReplication, shardNoReplicationErpc,"
-        echo "  shard1Replication, shard2Replication, shard2ReplicationErpc,"
+        echo "  shardNoReplication,"
+        echo "  shard1Replication, shard2Replication,"
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"

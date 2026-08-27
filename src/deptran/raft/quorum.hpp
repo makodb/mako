@@ -19,7 +19,7 @@
  * Rusty-safety:
  *  - All public methods are `@safe` modulo the `rrr::IntEvent` boundary,
  *    which is annotated `@unsafe` (rrr is a header-as-module library and
- *    its `Reactor::create_sp_event<…>` returns `std::shared_ptr<Ev>` —
+ *    its `reactor_create_sp_event<…>` returns `std::shared_ptr<Ev>` —
  *    `rusty::Arc<T>` cannot be substituted because the reactor itself
  *    must hold a strong reference, see docs/dev/raft_quorum.md for the
  *    full rationale).
@@ -30,6 +30,7 @@
 #include <utility>
 #include <vector>
 
+#include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
 
@@ -49,10 +50,9 @@ class RaftQuorum {
   RaftQuorum(int n_total, int n_needed)
       : n_total_(n_total),
         n_needed_(n_needed),
-        // @unsafe { rrr::Reactor::create_sp_event returns std::shared_ptr;
-        //           we keep that shape because the reactor owns the event
-        //           via its all_events_ list. }
-        ready_(::rrr::Reactor::create_sp_event<::rrr::IntEvent>(n_needed)),
+        // rrr::Reactor::create_sp_event returns rusty::Arc; the reactor
+        // owns the event via its all_events_ list.
+        ready_(::rrr::create_sp_int_event(n_needed)),
         replies_(std::vector<std::pair<siteid_t, Reply>>{}) {}
 
   // Non-copyable, non-movable: holds an event registered with the reactor.
@@ -84,7 +84,7 @@ class RaftQuorum {
   bool wait_until_quorum(uint64_t timeout_us) {
     // @unsafe { rrr::IntEvent::wait yields the fiber via the reactor;
     //           rrr-boundary call }
-    ready_->wait(timeout_us);
+    ready_->wait_timeout(timeout_us);
     // @unsafe { rrr::IntEvent::is_ready compares value_ >= target_ }
     return ready_->is_ready();
   }
@@ -112,8 +112,8 @@ class RaftQuorum {
   const int n_total_;
   const int n_needed_;
   // See class-level @unsafe note about std::shared_ptr.
-  std::shared_ptr<::rrr::IntEvent> ready_;
-  rusty::sync::atomic::Atomic<int> n_received_{0};
+  rusty::Arc<::rrr::IntEvent> ready_;
+  rusty::sync::atomic::AtomicI32 n_received_{0};
   mutable rusty::Mutex<std::vector<std::pair<siteid_t, Reply>>> replies_;
 };
 

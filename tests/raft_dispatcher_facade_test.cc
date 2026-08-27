@@ -13,7 +13,7 @@ using namespace janus::raft;
 
 namespace {
 
-using AtomicInt = rusty::sync::atomic::Atomic<int>;
+using AtomicInt = rusty::sync::atomic::detail::Atomic<int>;
 
 struct Counts {
   AtomicInt n_vote{0};

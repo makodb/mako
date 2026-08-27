@@ -2,6 +2,7 @@
 
 #include "masstree/kvthread.hh"
 #include "masstree/masstree_context.h"
+#include "sto/Interface.hh"
 #include "sto/Transaction.hh"
 
 #include <atomic>

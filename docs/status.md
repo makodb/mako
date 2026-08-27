@@ -158,18 +158,29 @@ Proven, high-performance in-memory index. The critical missing piece is crash re
 - **OCC (Optimistic Concurrency Control)**: Mature implementation with MVCC, thread-local transaction state, read/write set tracking.
 - **Transaction API**: Clean `abstract_db` interface with `new_txn`, `commit_txn`, `abort_txn`.
 - **Speculative 2PC**: Core Mako innovation — watermark-based validation with background replication.
-- **Protocol plugin system (Frame)**: Well-designed factory pattern supporting 15+ protocols. Easy to add new protocols.
+- **Protocol plugin system (Frame)**: Factory pattern for the remaining transaction and replication protocols.
 - **Coordinator framework**: Phase-based execution (DISPATCH → PREPARE → COMMIT) with pluggable backends.
 
 ### What's Research-Only (Not Production-Ready)
 
 | Protocol | Completeness | Status |
 |----------|-------------|--------|
-| 2PL | 70% | Core works, no deadlock detection |
 | OCC | 65% | Lazy versioning, ad-hoc design |
-| Janus | 50% | 10+ TODOs in coordinator, incomplete phase transitions |
-| RCC/Rococo | 55% | Complex dependency graphs, 24 `verify(0)` stubs |
-| TROAD, Carousel, Februus, SNOW | <30% | Proof-of-concept only |
+
+The former standalone Janus, Mencius, SNOW/RO6, Extern-C, 2PL, Rule, TAPIR,
+FPGA-Raft, Copilot, RCC/Rococo, TROAD, MDCC, Carousel, and Februus protocol
+implementations are retired and are not supported configuration options. The
+old `deptran` and `deptran_er` names were RCC aliases and are retired too.
+The former internal MemDB transaction and storage stack is retired; Mako uses
+STO `Transaction` with MassTrans/Masstree through `mbta_wrapper`. The original
+Silo `txn`/`txn_btree`/`txn_proto2` engine is also retired, source-guarded, and
+not selectable. `SiloRuntime` remains live allocator/RCU/Masstree support and
+must not be confused with that retired transaction engine.
+The `rpc_null` benchmark mode and its no-op Classic RPC endpoint are retired.
+Generic Jetpack recovery code remains as a legacy subsystem pending a separate
+audit; it is not a supported replacement for the retired Rule protocol.
+EPaxos, Replicated Commit, and Multi-Paxos Plus were unimplemented selector
+placeholders; those names are rejected instead of silently selecting `none`.
 
 ### Critical Issues
 

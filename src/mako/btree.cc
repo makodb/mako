@@ -328,7 +328,7 @@ test6()
   scan_callback::kv_vec data;
   scan_callback cb(&data);
   u64_varkey max_key(600);
-  btr.search_range(u64_varkey(500), &max_key, cb);
+  btr.search_range_bounded(u64_varkey(500), max_key, cb);
   ALWAYS_ASSERT(data.size() == 100);
   for (size_t i = 0; i < 100; i++) {
     const varkey lhs(data[i].first), rhs(u64_varkey(500 + i));
@@ -337,7 +337,7 @@ test6()
   }
 
   data.clear();
-  btr.search_range(u64_varkey(500), NULL, cb);
+  btr.search_range_unbounded(u64_varkey(500), cb);
   ALWAYS_ASSERT(data.size() == 500);
   for (size_t i = 0; i < 500; i++) {
     ALWAYS_ASSERT(varkey(data[i].first) == u64_varkey(500 + i));
@@ -347,7 +347,7 @@ test6()
 #ifdef HAVE_REVERSE_RANGE_SCANS
   data.clear();
   scan_callback cb_rev(&data, true);
-  btr.rsearch_range(u64_varkey(499), NULL, cb_rev);
+  btr.rsearch_range_unbounded(u64_varkey(499), cb_rev);
   ALWAYS_ASSERT(data.size() == 500);
   for (ssize_t i = 499; i >= 0; i--) {
     ALWAYS_ASSERT(varkey(data[499 - i].first) == u64_varkey(i));
@@ -356,7 +356,7 @@ test6()
 
   data.clear();
   u64_varkey min_key(499);
-  btr.rsearch_range(u64_varkey(999), &min_key, cb_rev);
+  btr.rsearch_range_bounded(u64_varkey(999), min_key, cb_rev);
   ALWAYS_ASSERT(data.size() == 500);
   for (ssize_t i = 999; i >= 500; i--) {
     ALWAYS_ASSERT(varkey(data[999 - i].first) == u64_varkey(i));
@@ -524,10 +524,17 @@ public:
   void test()
   {
     keys.clear();
-    if (!reverse_)
-      btr->search_range_call(begin, end, *this);
-    else
-      btr->rsearch_range_call(begin, end, *this);
+    if (!reverse_) {
+      if (end)
+        btr->search_range_call_bounded(begin, *end, *this);
+      else
+        btr->search_range_call_unbounded(begin, *this);
+    } else {
+      if (end)
+        btr->rsearch_range_call_bounded(begin, *end, *this);
+      else
+        btr->rsearch_range_call_unbounded(begin, *this);
+    }
     if (expectation.tag == 0) {
       switch (ex_type) {
       case EXPECT_EXACT:
@@ -1436,7 +1443,7 @@ namespace mp_test7_ns {
       while (running) {
         scan_callback::kv_vec data;
         scan_callback cb(&data);
-        btr->search_range(u64_varkey(nkeys / 2), NULL, cb);
+        btr->search_range_unbounded(u64_varkey(nkeys / 2), cb);
         set<typename testing_concurrent_btree::string_type> scan_keys;
         std::string prev;
         for (size_t i = 0; i < data.size(); i++) {

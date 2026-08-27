@@ -6,6 +6,9 @@
 #include <gtest/gtest.h>
 #include "../rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.circuit_breaker;
+
 import std;
 
 using namespace rrr;
@@ -16,7 +19,7 @@ using namespace std::chrono;
 // ============================================================================
 
 TEST(CircuitBreakerConfigTest, DefaultValues) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     EXPECT_TRUE(config.enabled);
     EXPECT_EQ(config.failure_threshold, 5u);
     EXPECT_EQ(config.success_threshold, 3u);
@@ -45,9 +48,9 @@ TEST(CircuitBreakerConfigTest, DisabledPreset) {
 }
 
 TEST(CircuitBreakerStateTest, StateToString) {
-    EXPECT_STREQ(circuit_state_to_string(CircuitState::CLOSED), "CLOSED");
-    EXPECT_STREQ(circuit_state_to_string(CircuitState::OPEN), "OPEN");
-    EXPECT_STREQ(circuit_state_to_string(CircuitState::HALF_OPEN), "HALF_OPEN");
+    EXPECT_EQ(circuit_state_to_string(CircuitState::CLOSED), "CLOSED");
+    EXPECT_EQ(circuit_state_to_string(CircuitState::OPEN), "OPEN");
+    EXPECT_EQ(circuit_state_to_string(CircuitState::HALF_OPEN), "HALF_OPEN");
 }
 
 // ============================================================================
@@ -55,7 +58,7 @@ TEST(CircuitBreakerStateTest, StateToString) {
 // ============================================================================
 
 TEST(CircuitBreakerTest, InitialStateClosed) {
-    CircuitBreaker cb(CircuitBreakerConfig{});
+    auto cb = CircuitBreaker::new_(CircuitBreakerConfig{});
     EXPECT_EQ(cb.state(), CircuitState::CLOSED);
     EXPECT_TRUE(cb.is_closed());
     EXPECT_FALSE(cb.is_open());
@@ -69,9 +72,9 @@ TEST(CircuitBreakerTest, InitialStateClosed) {
 // ============================================================================
 
 TEST(CircuitBreakerTest, ClosedToOpenAfterThresholdFailures) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 3;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Record failures up to threshold
     cb.record_failure();
@@ -87,9 +90,9 @@ TEST(CircuitBreakerTest, ClosedToOpenAfterThresholdFailures) {
 }
 
 TEST(CircuitBreakerTest, SuccessResetsFailureCount) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 5;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     cb.record_failure();
     cb.record_failure();
@@ -101,10 +104,10 @@ TEST(CircuitBreakerTest, SuccessResetsFailureCount) {
 }
 
 TEST(CircuitBreakerTest, OpenToHalfOpenAfterTimeout) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
     config.timeout_ms = 50;  // Short timeout for testing
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -121,11 +124,11 @@ TEST(CircuitBreakerTest, OpenToHalfOpenAfterTimeout) {
 }
 
 TEST(CircuitBreakerTest, HalfOpenToClosedOnSuccessThreshold) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
     config.success_threshold = 2;
     config.timeout_ms = 10;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -151,10 +154,10 @@ TEST(CircuitBreakerTest, HalfOpenToClosedOnSuccessThreshold) {
 }
 
 TEST(CircuitBreakerTest, HalfOpenToOpenOnFailure) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
     config.timeout_ms = 10;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -176,7 +179,7 @@ TEST(CircuitBreakerTest, HalfOpenToOpenOnFailure) {
 
 TEST(CircuitBreakerTest, DisabledAlwaysAllowsRequests) {
     auto config = CircuitBreakerConfig::disabled();
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Record many failures
     for (int i = 0; i < 100; i++) {
@@ -193,9 +196,9 @@ TEST(CircuitBreakerTest, DisabledAlwaysAllowsRequests) {
 // ============================================================================
 
 TEST(CircuitBreakerTest, ResetToClosed) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -214,10 +217,10 @@ TEST(CircuitBreakerTest, ResetToClosed) {
 // ============================================================================
 
 TEST(CircuitBreakerTest, HalfOpenLimitsProbes) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
     config.timeout_ms = 10;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -239,9 +242,9 @@ TEST(CircuitBreakerTest, HalfOpenLimitsProbes) {
 // ============================================================================
 
 TEST(CircuitBreakerTest, ThresholdOne) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 1;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Single failure opens circuit
     cb.record_failure();
@@ -250,9 +253,9 @@ TEST(CircuitBreakerTest, ThresholdOne) {
 }
 
 TEST(CircuitBreakerTest, VeryHighThreshold) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 1000000;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Many failures, but not enough
     for (int i = 0; i < 1000; i++) {
@@ -264,7 +267,7 @@ TEST(CircuitBreakerTest, VeryHighThreshold) {
 }
 
 TEST(CircuitBreakerTest, SuccessInClosedState) {
-    CircuitBreaker cb(CircuitBreakerConfig{});
+    auto cb = CircuitBreaker::new_(CircuitBreakerConfig{});
 
     // Success in CLOSED state should be no-op (just reset failure count)
     cb.record_success();
@@ -273,56 +276,31 @@ TEST(CircuitBreakerTest, SuccessInClosedState) {
 }
 
 // ============================================================================
-// Concurrent Access Tests
+// Repeated Access Tests
 // ============================================================================
 
-TEST(CircuitBreakerTest, ConcurrentFailures) {
-    CircuitBreakerConfig config;
+TEST(CircuitBreakerTest, RepeatedFailuresRemainSingleThreaded) {
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 100;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
-    std::vector<std::thread> threads;
-    for (int i = 0; i < 10; i++) {
-        threads.emplace_back([&cb]() {
-            for (int j = 0; j < 5; j++) {
-                cb.record_failure();
-            }
-        });
+    // CircuitBreaker is Cell-backed (Send, not Sync). Exercise repeated
+    // mutation on its supported single-threaded path instead of racing Cell.
+    for (int i = 0; i < 50; ++i) {
+        cb.record_failure();
     }
 
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    // Should have up to 50 failures (10 threads * 5 failures)
-    // Due to race conditions, actual count may vary but should be <= 50
-    EXPECT_LE(cb.failure_count(), 50u);
+    EXPECT_EQ(cb.failure_count(), 50u);
     EXPECT_EQ(cb.state(), CircuitState::CLOSED);  // Below threshold
 }
 
-TEST(CircuitBreakerTest, ConcurrentStateQueries) {
-    CircuitBreaker cb(CircuitBreakerConfig{});
+TEST(CircuitBreakerTest, RepeatedStateQueries) {
+    auto cb = CircuitBreaker::new_(CircuitBreakerConfig{});
 
-    std::atomic<bool> all_ok{true};
-    std::vector<std::thread> threads;
-
-    for (int i = 0; i < 10; i++) {
-        threads.emplace_back([&]() {
-            for (int j = 0; j < 100; j++) {
-                auto state = cb.state();
-                if (state != CircuitState::CLOSED) {
-                    all_ok = false;
-                }
-                cb.allow_request();
-            }
-        });
+    for (int i = 0; i < 1000; ++i) {
+        EXPECT_EQ(cb.state(), CircuitState::CLOSED);
+        EXPECT_TRUE(cb.allow_request());
     }
-
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    EXPECT_TRUE(all_ok.load());
 }
 
 // ============================================================================
@@ -330,10 +308,10 @@ TEST(CircuitBreakerTest, ConcurrentStateQueries) {
 // ============================================================================
 
 TEST(CircuitBreakerTest, ConfigAccess) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 10;
     config.timeout_ms = 5000;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     EXPECT_EQ(cb.config().failure_threshold, 10u);
     EXPECT_EQ(cb.config().timeout_ms, 5000u);
@@ -344,11 +322,11 @@ TEST(CircuitBreakerTest, ConfigAccess) {
 // ============================================================================
 
 TEST(CircuitBreakerTest, SuccessCountTracking) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
     config.success_threshold = 3;
     config.timeout_ms = 10;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open circuit
     cb.record_failure();

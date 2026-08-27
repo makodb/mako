@@ -35,7 +35,6 @@ class Tests:
 class Protocols:
     OCC = 'occ-multi_paxos'
     TPL = '2pl_ww-multi_paxos'
-    JANUS = 'brq-brq'
     TAPIR = 'tapir-tapir'
 
 class DataMapping:
@@ -138,17 +137,8 @@ def get_mappings():
 
     m = {}
     
-    add_mapping(m, ZipfDataMapping('LanZipfClientCount', 
-                                   Environment.SINGLE, Protocols.JANUS, 'clients', "0.0"))
-    add_mapping(m, ZipfDataMapping('WanZipfClientCount', 
-                                   Environment.MULTI, Protocols.JANUS, 'clients', "0.0"))
-    
     add_mapping(m, ZipfDataMapping('LanZipfZeroZeroTapirThroughputKilo', Environment.SINGLE, 
                                    Protocols.TAPIR, 'tps', "0.0", kilo_2_significant))
-    add_mapping(m, ZipfDataMapping('LanZipfZeroZeroJanusThroughputKilo', Environment.SINGLE, 
-                                   Protocols.JANUS, 'tps', "0.0", kilo_2_significant))
-    add_mapping(m, ZipfDataMapping('LanZipfZeroNineJanusThroughputKilo', Environment.SINGLE, 
-                                   Protocols.JANUS, 'tps', "0.9", kilo_2_significant))
     add_mapping(m, ZipfDataMapping('LanZipfZeroNineTapirThroughputKilo', Environment.SINGLE, 
                                    Protocols.TAPIR, 'tps', "0.9", kilo_2_significant))
 
@@ -157,19 +147,12 @@ def get_mappings():
 
     add_mapping(m, ZipfDataMapping('LanZipfZeroFiveTapirNineZeroLatencyMs', Environment.SINGLE, 
                                    Protocols.TAPIR, 'all_latency', "0.5", latency_90))
-    add_mapping(m, ZipfDataMapping('LanZipfZeroFiveJanusNineZeroLatencyMs', Environment.SINGLE, 
-                                   Protocols.JANUS, 'all_latency', "0.5", latency_90))
     add_mapping(m, ZipfDataMapping('LanZipfZeroFiveTplNineZeroLatencyMs', Environment.SINGLE, 
                                    Protocols.TPL, 'all_latency', "0.5", latency_90))
     add_mapping(m, ZipfDataMapping('LanZipfZeroFiveOccNineZeroLatencyMs', Environment.SINGLE, 
                                    Protocols.OCC, 'all_latency', "0.5", latency_90))
     add_mapping(m, ZipfDataMapping('LanZipfZeroNineTapirNineZeroLatencyMs', Environment.SINGLE, 
                                    Protocols.TAPIR, 'all_latency', "0.9", latency_90))
-    add_mapping(m, ZipfDataMapping('LanZipfZeroNineJanusNineZeroLatencyMs', Environment.SINGLE, 
-                                   Protocols.JANUS, 'all_latency', "0.9", latency_90))
-
-    add_mapping(m, ZipfDataMapping('WanZipfZeroNineJanusThroughputKilo', Environment.MULTI, 
-                                   Protocols.JANUS, 'tps', "0.9", kilo_2_significant))
     add_mapping(m, ZipfDataMapping('WanZipfZeroNineTapirThroughputKilo', Environment.MULTI, 
                                    Protocols.TAPIR, 'tps', "0.9", kilo_2_significant))
     add_mapping(m, ZipfDataMapping('WanZipfZeroNineOccThroughput', Environment.MULTI, 
@@ -181,9 +164,6 @@ def get_mappings():
                                Environment.SINGLE, Tests.TPCC, Protocols.TPL, 'tps'))
     add_mapping(m, PeakMapping('LanTpccTapirPeakThroughput', 
                                Environment.SINGLE, Tests.TPCC, Protocols.TAPIR, 'tps'))
-    add_mapping(m, PeakMapping('LanTpccJanusPeakThroughputKilo', 
-                               Environment.SINGLE, Tests.TPCC, Protocols.JANUS,
-                               'tps', kilo_2_significant))
     add_mapping(m, PeakMapping('OurTapirPeakThroughputRWKilo', 
                                Environment.SINGLE, Tests.RW, Protocols.TAPIR,
                                'tps', kilo_2_significant))

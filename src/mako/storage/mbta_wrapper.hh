@@ -209,12 +209,16 @@ inline void oi_mbta_tx_scan(mbta_table *t, const std::string &start_key,
   mt_scan++;
 #endif
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
+  mbta_table::ValueAllocator value_allocator(
+      [arena]() -> mbta_table::value_type* { return (*arena)(); });
+  mbta_table::ValueAllocator *value_allocator_ptr =
+      arena ? &value_allocator : nullptr;
   STD_OP(t->transQuery(start_key, end,
                        [&](mbta_table::Str key, std::string &value) {
     if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
       value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
     return callback.invoke(key.data(), key.length(), value);
-  }, arena));
+  }, value_allocator_ptr));
 }
 
 // @unsafe - Sto txn reverse range read
@@ -225,12 +229,16 @@ inline void oi_mbta_tx_rscan(mbta_table *t, const std::string &start_key,
   mt_rscan++;
 #endif
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
+  mbta_table::ValueAllocator value_allocator(
+      [arena]() -> mbta_table::value_type* { return (*arena)(); });
+  mbta_table::ValueAllocator *value_allocator_ptr =
+      arena ? &value_allocator : nullptr;
   STD_OP(t->transRQuery(start_key, end,
                         [&](mbta_table::Str key, std::string &value) {
     if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
       value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
     return callback.invoke(key.data(), key.length(), value);
-  }, arena));
+  }, value_allocator_ptr));
 }
 
 // @unsafe - local single-match range read on the caller's txn
@@ -250,7 +258,7 @@ inline void oi_mbta_tx_scan_one_local(mbta_table *t,
       found = true;
     }
     return false;  // Stop after first result
-  }, static_cast<str_arena *>(nullptr)));
+  }));
   // Check for silent abort after transQuery (may have used
   // abort_without_throw). Throw to match RPC path behavior.
   if (TThread::transget_without_throw) {
@@ -322,10 +330,14 @@ inline bool oi_mbta_shard_scan(mbta_table *t, const std::string &start_key,
                                const std::string *end_key,
                                oi_scan_callback &callback, str_arena *arena) {
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
+  mbta_table::ValueAllocator value_allocator(
+      [arena]() -> mbta_table::value_type* { return (*arena)(); });
+  mbta_table::ValueAllocator *value_allocator_ptr =
+      arena ? &value_allocator : nullptr;
   STD_OP(t->transQuery(start_key, end,
                        [&](mbta_table::Str key, std::string &value) {
     return callback.invoke(key.data(), key.length(), value);
-  }, arena));
+  }, value_allocator_ptr));
   return true;
 }
 
@@ -481,11 +493,15 @@ inline void oi_mbta_nontxn_scan(mbta_table *t, const std::string &start_key,
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   while (true) {
     try {
+      mbta_table::ValueAllocator value_allocator(
+          [arena]() -> mbta_table::value_type* { return (*arena)(); });
+      mbta_table::ValueAllocator *value_allocator_ptr =
+          arena ? &value_allocator : nullptr;
       t->scan(start_key, end, [&](mbta_table::Str key, std::string &value) {
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
         return callback.invoke(key.data(), key.length(), value);
-      }, arena);
+      }, value_allocator_ptr);
       return;
     } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
   }
@@ -501,11 +517,15 @@ inline void oi_mbta_nontxn_rscan(mbta_table *t, const std::string &start_key,
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   while (true) {
     try {
+      mbta_table::ValueAllocator value_allocator(
+          [arena]() -> mbta_table::value_type* { return (*arena)(); });
+      mbta_table::ValueAllocator *value_allocator_ptr =
+          arena ? &value_allocator : nullptr;
       t->rscan(start_key, end, [&](mbta_table::Str key, std::string &value) {
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
         return callback.invoke(key.data(), key.length(), value);
-      }, arena);
+      }, value_allocator_ptr);
       return;
     } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
   }
@@ -1635,7 +1655,7 @@ public:
     }
     TThread::set_id(thread_id);
     TThread::set_mode(0); // checking in-progress
-    TThread::set_num_eprc_server(BenchmarkConfig::getInstance().getNumErpcServer());
+    TThread::set_num_rpc_server(BenchmarkConfig::getInstance().getNumRpcServer());
     TThread::set_is_micro(BenchmarkConfig::getInstance().getIsMicro());
 #if defined(DISABLE_MULTI_VERSION)
     TThread::disable_multiversion();
@@ -1720,6 +1740,8 @@ public:
   size_t
   sizeof_txn_object(uint64_t txn_flags) const
   {
+    // Reject retired original-Silo/NDB flags before a transaction is created.
+    ALWAYS_ASSERT(txn_flags == 0);
     return sizeof(Transaction);
   }
 
@@ -1729,6 +1751,10 @@ public:
                 str_arena &arena,
                 void *buf,
                 TxnProfileHint hint = HINT_DEFAULT) {
+    // Fail closed if a caller tries to revive an original-Silo/NDB flag.
+    // The current STO/MassTrans wrapper does not consume the profile hint.
+    ALWAYS_ASSERT(txn_flags == 0);
+    (void) hint;
     Sto::start_transaction();
     thr_arena = &arena;
     return NULL;

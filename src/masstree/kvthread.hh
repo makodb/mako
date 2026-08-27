@@ -143,7 +143,7 @@ class threadinfo {
     kvtimestamp_t update_timestamp() const {
         return ts_;
     }
-    // @safe - Returns value copy (ts_ is mutable for internal use)
+    // @unsafe - mutates ts_ from a const method using interior mutable state
     kvtimestamp_t update_timestamp(kvtimestamp_t x) const {
         if (circular_int<kvtimestamp_t>::less_equal(ts_, x))
             // x might be a marker timestamp; ensure result is not
@@ -157,12 +157,12 @@ class threadinfo {
     }
 
     // event counters
-    // @safe - Modifies owned counter array
+    // @unsafe - indexes counter array using non-borrow-checked threadcounter test
     void mark(threadcounter ci) {
         if (has_threadcounter<int(ncounters)>::test(ci))
             ++counters_[ci];
     }
-    // @safe - Modifies owned counter array
+    // @unsafe - indexes counter array using non-borrow-checked threadcounter test
     void mark(threadcounter ci, int64_t delta) {
         if (has_threadcounter<int(ncounters)>::test(ci))
             counters_[ci] += delta;
@@ -219,7 +219,7 @@ class threadinfo {
     }
 
     // memory allocation
-    // @unsafe
+    // @unsafe - allocates raw heap memory and initializes memdebug header
     // @lifetime: owned
     void* allocate(size_t sz, memtag tag) {
         // @unsafe {

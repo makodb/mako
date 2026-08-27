@@ -32,10 +32,11 @@ durability checksum or an authentication primitive. Required-native Rust
 builds independently recompute it, embed the expected bytes, and reference a
 digest-named symbol in `libmako.a`; startup rejects a mismatched engine ID,
 size, or bytes. A selected CMake build tree must remain immutable for the
-duration of the Cargo link: the gate verifies all four archives before linking,
-and the digest anchor pins `libmako.a`, but external concurrent replacement of
-the separately linked dependency archives is outside the supported build
-protocol.
+duration of the Cargo link: the gate verifies every archive named by the
+ordered [native-link-archives.txt](../../crates/mako-local/native-link-archives.txt)
+manifest before linking, and the digest anchor pins `libmako.a`, but external
+concurrent replacement of separately linked dependency archives is outside the
+supported build protocol.
 
 After the identity handshake, a caller must check
 `mako_local_abi_version()` and `mako_local_feature_bits()` before using an

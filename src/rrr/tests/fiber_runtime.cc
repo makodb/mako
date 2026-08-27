@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
@@ -20,8 +19,11 @@ using namespace rrr;
 //}
 
 #include "gtest/gtest.h"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 import std;
+import rusty;
 
 TEST(FiberRuntimeTest, helloworld) {
   Fiber::create_run([] () {ASSERT_EQ(1, 1);});
@@ -139,43 +141,11 @@ TEST(FiberRuntimeTest, destroy_paused_fiber_with_cleanup) {
     delete heap_flag;
     std::cout << "=== Test completed successfully ===" << std::endl;
 }
-
-TEST(FiberRuntimeTest, wait_die_lock) {
-  WaitDieALock a;
-  auto fiber1 = Fiber::create_run([&a] () {
-    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 10);
-    ASSERT_EQ(req_id, true);
-    Fiber::current_fiber().unwrap()->yield_();
-    Log_debug("aborting lock from fiber 1.");
-    a.abort(req_id);
-  });
-
-  int x = 0;
-  auto fiber2 = Fiber::create_run([&] () {
-    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 11);
-    ASSERT_EQ(req_id, false);
-    x = 1;
-  });
-  ASSERT_EQ(x, 1);
-
-  int y = 0;
-  auto fiber3 = Fiber::create_run([&] () {
-    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 8);
-    ASSERT_GT(req_id, 0);
-    Log_debug("acquired lock from fiber 3.");
-    y = 1;
-  });
-  ASSERT_EQ(y, 0);
-  fiber1->continue_();
-  Reactor::get_reactor()->loop();
-  ASSERT_EQ(y, 1);
-}
-
 TEST(FiberRuntimeTest, timeout) {
   auto fiber1 = Fiber::create_run([](){
     auto t1 = Time::now(true);
     auto timeout = 1 * 1000000;
-    auto sp_e = Reactor::create_sp_event<TimeoutEvent>(timeout);
+    auto sp_e = create_sp_timeout_event(timeout);
     Log_debug("set timeout, start wait");
     sp_e->wait();
     auto t2 = Time::now(true);
@@ -183,16 +153,16 @@ TEST(FiberRuntimeTest, timeout) {
     Log_debug("end timeout, end wait");
     Reactor::get_reactor()->looping_.set(false);
   });
-  Reactor::get_reactor()->loop(true);
+  Reactor::get_reactor()->run_loop(true, true);
 }
 
 TEST(FiberRuntimeTest, orevent) {
-  auto inte = Reactor::create_sp_event<IntEvent>();
+  auto inte = create_sp_int_event(1);
   auto fiber1 = Fiber::create_run([&inte](){
     auto t1 = Time::now(true);
     auto timeout = 10 * 1000000;
-    auto sp_e1 = Reactor::create_sp_event<TimeoutEvent>(timeout);
-    auto sp_e2 = Reactor::create_sp_event<WaitAny>(sp_e1, inte);
+    auto sp_e1 = create_sp_timeout_event(timeout);
+    auto sp_e2 = create_sp_waitany(sp_e1, inte);
     sp_e2->wait();
     auto t2 = Time::now(true);
     ASSERT_GT(t1 + timeout, t2);

@@ -728,22 +728,20 @@ RaftCommo maintains `rpc_par_proxies_[partition_id][replica_id]` for each peer. 
 
 ### YAML Configuration
 
-**Base Raft config** (`config/none_raft.yml`):
+**Production Mako Raft config** (`config/raft.yml`):
 ```yaml
 mode:
-  cc: none       # Concurrency control: none, occ, rule, tpl_ww, 2pl_ww
   ab: raft       # Atomic broadcast: raft
   batch: false
   retry: 20
-  ongoing: 1     # Per-client concurrent transactions
 ```
 
-**With Jetpack recovery** (`config/rule_raft.yml`):
-```yaml
-mode:
-  cc: rule       # Enables witness tracking for Jetpack
-  ab: raft
-```
+Mako executes transactions through mbta/STO. This fragment selects only its
+replication backend; DepTran transaction-protocol selectors are unsupported.
+
+The former Rule concurrency-control mode and its Jetpack configuration are
+retired. Generic Jetpack recovery machinery remains legacy code under a
+separate audit and is not a supported configuration.
 
 **Cluster topology** (separate file):
 ```yaml
@@ -764,13 +762,10 @@ host:
 
 ### Available Configurations
 
-| File | CC Mode | Use Case |
-|------|---------|----------|
-| `none_raft.yml` | None | Basic Raft testing |
-| `rule_raft.yml` | Rule | With Jetpack recovery |
-| `occ_raft.yml` | OCC | Optimistic CC |
-| `tpl_ww_raft.yml` | TPL-WW | Two-phase locking |
-| `raft_lab_test.yml` | None | Lab test harness (5 servers) |
+| File | Purpose |
+|------|---------|
+| `raft.yml` | Production Mako Raft replication mode |
+| `raft_lab_test.yml` | Five-server Raft lab harness |
 
 ### Per-Shard Configs
 
@@ -807,7 +802,7 @@ uint64_t window = server->GetLogRetentionWindow();
 
 | Command | Description | Binary |
 |---------|-------------|--------|
-| `make -j32` | Default (Paxos) | `dbtest`, `deptran_server` |
+| `make -j32` | Default (Paxos) | `dbtest` |
 | `make mako-raft -j64` | Mako with Raft | `dbtest` + Raft test binaries |
 | `make raft-test -j32` | Raft lab tests only | `deptran_server` with test fibers |
 
@@ -818,12 +813,12 @@ uint64_t window = server->GetLogRetentionWindow();
 | `MAKO_USE_RAFT` | OFF | Use `raft_main_helper.cc`, build Raft executables |
 | `RAFT_TEST` | OFF | Enable `RAFT_TEST_CORO=1` for lab test fibers |
 
-### Output Binaries (mako-raft build)
+### Output Binaries
 
 | Binary | Purpose |
 |--------|---------|
 | `build/dbtest` | Main Mako binary with Raft replication |
-| `build/deptran_server` | Standalone Raft server |
+| `build/deptran_server` | Raft lab harness (`make raft-test` only) |
 | `build/simpleRaft` | Simple Raft replication test |
 | `build/simpleTransactionRepRaft` | Transaction replication test |
 | `build/testPreferredReplicaStartup` | Preferred leader startup test |
@@ -890,30 +885,15 @@ size_t GetDurableVotersCount(siteid_t svr);
 bool VerifySpecInvariants(siteid_t svr);
 ```
 
-### Running Standalone Raft (without Mako)
+### Running the Raft Lab Harness (without Mako)
 
 ```bash
-# Build (regular make, NOT raft-test)
-make -j32
-
-# Basic: 1 client, 1 shard, 3 replicas
-./build/deptran_server \
-  -f config/none_raft.yml \
-  -f config/1c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
-
-# Higher concurrency: 12 clients
-./build/deptran_server \
-  -f config/none_raft.yml \
-  -f config/12c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
+make raft-test -j32
+./build/deptran_server -f config/raft_lab_test.yml
 ```
+
+Regular Mako-Raft builds intentionally do not contain `deptran_server`.
+The lab harness is server-only and rejects configurations with client sites.
 
 ---
 
@@ -1022,8 +1002,11 @@ MAKO_RAFT_PERSISTENCE_PATH=/tmp  # Storage path
 MAKO_RAFT_SNAPSHOTS=1            # Enable snapshots
 MAKO_RAFT_SNAPSHOT_PATH=/tmp     # Snapshot storage path
 MAKO_RAFT_SNAPSHOT_INTERVAL=10000 # Entries between snapshots
-MAKO_DISABLE_JETPACK=1           # Disable Jetpack recovery
+MAKO_DISABLE_JETPACK=1           # Keep legacy Jetpack recovery disabled
 ```
+
+There is no supported setting that enables the legacy recovery subsystem while
+its separate audit is pending.
 
 ### Checking Test Results
 

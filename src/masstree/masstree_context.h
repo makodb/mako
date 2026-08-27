@@ -12,10 +12,10 @@
 #ifndef MASSTREE_CONTEXT_H
 #define MASSTREE_CONTEXT_H
 
-#include <atomic>
 #include <cstdint>
 #include <rusty/mutex.hpp>
 #include <rusty/ptr.hpp>
+#include <rusty/sync/atomic.hpp>
 
 class threadinfo;
 
@@ -35,8 +35,8 @@ typedef uint64_t mrcu_epoch_type;
  *
  * RustyCpp Safety Annotations:
  * - @safe: pure getters that don't reach into std:: facilities directly
- * - @unsafe: paths that still call std::atomic, the C++ `new` operator,
- *   or unwrap a rusty::Result (the LockResult returned by rusty::Mutex)
+ * - @unsafe: paths that still call the C++ `new` operator or unwrap a
+ *   rusty::Result (the LockResult returned by rusty::Mutex)
  *
  * Migration notes (vs the prior version):
  * - `std::mutex allthreads_lock_` plus `std::atomic<MutPtr<threadinfo>>
@@ -45,10 +45,8 @@ typedef uint64_t mrcu_epoch_type;
  *   get_allthreads are called outside the hot insert/lookup path, so
  *   the cost is negligible vs the gain of a single sync primitive.
  * - `std::once_flag` + `std::call_once` migrated to `rusty::Once`.
- * - `std::atomic<mrcu_epoch_type> epoch_` retained: hot-path RCU
- *   counter with explicit memory ordering, no rusty equivalent.
- * - `std::atomic<int> s_next_context_id_` retained: one-shot
- *   fetch_add, wrapping a mutex around it would be overkill.
+ * - `std::atomic<mrcu_epoch_type>` and `std::atomic<int>` migrated to
+ *   `rusty::sync::atomic::Atomic<T>`.
  */
 class MasstreeContext {
 public:
@@ -61,19 +59,19 @@ public:
     MasstreeContext& operator=(const MasstreeContext&) = delete;
 
     // Epoch management
-    // @unsafe { std::atomic::load is not borrow-checked }
+    // @safe - Rusty atomic load wrapper
     mrcu_epoch_type get_epoch() const {
-        return epoch_.load(std::memory_order_seq_cst);
+        return epoch_.load(rusty::sync::atomic::Ordering::SeqCst);
     }
 
-    // @unsafe { std::atomic::store is not borrow-checked }
+    // @safe - Rusty atomic store wrapper
     void set_epoch(mrcu_epoch_type e) {
-        epoch_.store(e, std::memory_order_seq_cst);
+        epoch_.store(e, rusty::sync::atomic::Ordering::SeqCst);
     }
 
-    // @unsafe { std::atomic::fetch_add is not borrow-checked }
+    // @safe - Rusty atomic fetch_add wrapper
     void increment_epoch(mrcu_epoch_type delta = 2) {
-        epoch_.fetch_add(delta, std::memory_order_seq_cst);
+        epoch_.fetch_add(delta, rusty::sync::atomic::Ordering::SeqCst);
     }
 
     // @unsafe { Returns volatile reference for legacy code patterns, bypasses safety }
@@ -102,14 +100,14 @@ public:
 
 private:
     int context_id_;
-    std::atomic<mrcu_epoch_type> epoch_{1};
+    rusty::sync::atomic::Atomic<mrcu_epoch_type> epoch_{1};
     // Head of the registered-thread linked list, protected by the
     // mutex. Folding the head pointer into the lock removes the
     // earlier "lock-free read via atomic, serialize writers via
     // separate mutex" split that's easy to get wrong.
     mutable rusty::Mutex<rusty::MutPtr<threadinfo>> allthreads_{nullptr};
 
-    static std::atomic<int> s_next_context_id_;
+    static rusty::sync::atomic::Atomic<int> s_next_context_id_;
 };
 
 // Thread-local context pointer

@@ -1,29 +1,19 @@
 #ifndef _LIB_HELPER_QUEUE_H_
 #define _LIB_HELPER_QUEUE_H_
 
-#include "rpc.h"
-
-// Forward declare erpc::ReqHandle to break a circular include cycle:
-//   rpc.h → cc/timing_wheel.h → cc/timely.h → "common.h"
-// resolves to mako/benchmarks/common.h (not erpc/src/common.h) because of
-// include path ordering. mako's common.h pulls benchmark_config.h which
-// pulls this file before rpc.h has finished declaring erpc::ReqHandle.
-namespace erpc { class ReqHandle; }
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <utility>
 
 #define HELPER_QUEUE_SIZE 100
-
-namespace erpc {
-class ReqHandle;
-}
 
 namespace mako
 {
 using namespace std;
 
-// 1 writer + 1 reader queue
+// 1 writer + 1 reader queue. The request token is an opaque void* (the
+// transport backend's per-request handle, used only as a pointer key).
 class HelperQueue {
 public:
     HelperQueue(int id,bool is_req);
@@ -31,11 +21,11 @@ public:
     bool is_req_buffer_full() { return req_cnt == HELPER_QUEUE_SIZE;};
     bool is_req_buffer_empty() { return req_cnt == 0;};
     size_t get_size() {return req_cnt;} ;
-    bool add_one_req(erpc::ReqHandle *req_handle, size_t msg_size);
+    bool add_one_req(void *req_handle, size_t msg_size);
     bool free_one_req();
     void suspend();
     void wakeup();
-    bool fetch_one_req(erpc::ReqHandle **req_handle, size_t &msg_size);
+    bool fetch_one_req(void **req_handle, size_t &msg_size);
     void request_stop();
     bool should_stop() const { return stop_flag_.load(std::memory_order_acquire); }
     int req_buffer_reader_idx;
@@ -43,7 +33,7 @@ public:
     int req_cnt;
 
 private:
-    std::pair<erpc::ReqHandle*, size_t>req_buffer[HELPER_QUEUE_SIZE];
+    std::pair<void*, size_t>req_buffer[HELPER_QUEUE_SIZE];
     std::mutex condition_mutex;
 
     /* used for wakeup*/

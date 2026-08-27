@@ -1,13 +1,25 @@
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
-#include "__dep__.h"
-#include "constants.h"
-#include "sharding.h"
+#include <cstddef>
+#include <cstdint>
 #include <deque>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "constants.h"
+
+namespace YAML {
+class Node;
+}
 
 namespace janus {
-extern size_t bulkBatchCount;
+using std::map;
+using std::string;
+using std::vector;
+
+extern std::size_t bulkBatchCount;
 
 class Config {
  public:
@@ -17,12 +29,6 @@ class Config {
     SS_THREAD_SINGLE,
     SS_PROCESS_SINGLE
   } single_server_t;
-
-  std::map<string, mdb::symbol_t> tbl_types_map_ = {
-      {"sorted", mdb::TBL_SORTED},
-      {"unsorted", mdb::TBL_UNSORTED},
-      {"snapshot", mdb::TBL_SNAPSHOT}
-  };
 
   enum ClientType { Open, Closed };
   enum TimestampType {CLOCK=0, COUNTER=1};
@@ -49,8 +55,10 @@ class Config {
   ClientType client_type_ = Closed;
   int client_rate_ = -1;
   int32_t client_max_undone_ = -1;
-  int32_t tx_proto_ = 0; // transaction protocol
-  int32_t replica_proto_ = 0; // replication protocol
+  // Temporary bridge for the legacy standalone transaction path. Production
+  // Mako selects only a replication protocol.
+  int32_t tx_proto_ = -1;
+  int32_t replica_proto_ = MODE_NONE; // MODE_NONE means no replication
   uint32_t proc_id_;
   int32_t benchmark_; // workload
   uint32_t scale_factor_ = 1; // currently disabled
@@ -59,8 +67,6 @@ class Config {
   std::string proc_name_;
   std::string exp_setting_name_;
   bool batch_start_;
-  bool early_return_;
-  bool retry_wait_;
   // removed `string logging_path_;` field
   // — only readers (`do_logging` and `log_path`) were already
   // deleted in Phase 4e-41; only writer was the `-r` CLI flag (also
@@ -95,8 +101,6 @@ class Config {
   uint32_t cid_;
 
 
-  // Jetpack fast path mode
-  int jetpack_fastpath_attempt_rate_ = 0;
   int jetpack_recovery_batch_size_ = 1000;
 
   // Transaction timeout configuration
@@ -118,14 +122,7 @@ class Config {
 
     SiteInfo() = delete;
     SiteInfo(uint32_t id) : id(id) {}
-    SiteInfo(uint32_t id, std::string &site_addr) :
-      id(id) {
-      auto pos = site_addr.find(':');
-      verify(pos != std::string::npos);
-      name = site_addr.substr(0, pos);
-      std::string port_str = site_addr.substr(pos + 1);
-      port = std::stoi(port_str);
-    }
+    SiteInfo(uint32_t id, std::string &site_addr);
 
     string GetBindAddress() {
       string ret("0.0.0.0:");
@@ -158,11 +155,6 @@ class Config {
   map<string, string> proc_host_map_;
   map<string, string> site_proc_map_;
 
-  Sharding* sharding_;
-  
-  // Store the raw YAML configuration
-  YAML::Node yaml_config_;
-
  protected:
 
   Config() = default;
@@ -176,10 +168,7 @@ class Config {
          int16_t n_concurrent,
          uint32_t duration,
          bool heart_beat,
-         single_server_t single_server,
-         // removed `string logging_path,`
-         // ctor parameter — field gone.
-         int jetpack_fastpath_attempt_rate
+         single_server_t single_server
   );
   int GetClientPort(std::string site_name);
 
@@ -191,8 +180,6 @@ class Config {
   static Config* GetConfig();
   static void DestroyConfig();
 
-  void InitTPCCD();
-
   void Load();
 
   void LoadYML(std::string &);
@@ -200,17 +187,8 @@ class Config {
   void LoadProcYML(YAML::Node config);
   void LoadHostYML(YAML::Node config);
   void LoadModeYML(YAML::Node config);
-  void LoadBenchYML(YAML::Node config);
-  void LoadShardingYML(YAML::Node config);
   void LoadClientYML(YAML::Node client);
-  void LoadSchemaYML(YAML::Node config);
   void LoadFailoverYML(YAML::Node config);
-  void LoadSchemaTableColumnYML(Sharding::tb_info_t &tb_info,
-                                YAML::Node column);
-  void UpdateWeights(YAML::Node config);
-
-  void InitMode(std::string&cc_name, string&ab_name);
-  void InitBench(std::string &);
 
   uint32_t get_site_id();
   uint32_t get_client_id();
@@ -256,12 +234,10 @@ class Config {
   }
 
   int32_t get_threads(uint32_t &threads);
-  int32_t get_mode();
   uint32_t get_num_threads();
   uint32_t get_start_coordinator_id();
   int32_t benchmark();
   uint32_t GetNumPartition();
-  int32_t get_num_leaders(parid_t partition_id);
   uint32_t get_scale_factor();
   int32_t get_max_retry();
   single_server_t get_single_server();
@@ -270,7 +246,6 @@ class Config {
   // @safe - Get transaction timeout in microseconds
   uint64_t get_txn_timeout() const { return txn_timeout_us_; }
   bool get_batch_start();
-  bool do_early_return();
   // removed `bool do_logging();` declaration
   // — see config.cc retirement comment.
   bool IsReplicated();
@@ -284,8 +259,6 @@ class Config {
 
   // removed `const char *log_path();`
   // declaration — no callers anywhere.
-
-  bool retry_wait();
 
   std::vector<double> &get_txn_weight();
 

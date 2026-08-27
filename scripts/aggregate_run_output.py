@@ -34,7 +34,6 @@ def read_files():
 
 def format_cc_name(etxn):
     m = {
-        'brq': 'Janus',
         '2pl_ww': '2PL',
         'occ': 'OCC',
         'tapir': 'Tapir',

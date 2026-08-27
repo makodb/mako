@@ -62,22 +62,22 @@ TEST_F(CompletionTrackerConfigTest, DisabledPreset) {
 
 class CompletedEntryTest : public ::testing::Test {};
 
-TEST_F(CompletedEntryTest, DefaultConstruction) {
-    CompletedEntry entry;
+TEST_F(CompletedEntryTest, ZeroFactory) {
+    auto entry = CompletedEntry::new_(0, 0);
 
     EXPECT_EQ(entry.xid, 0);
     EXPECT_EQ(entry.timestamp_ms, 0);
 }
 
 TEST_F(CompletedEntryTest, ExplicitConstruction) {
-    CompletedEntry entry(12345, 1000);
+    auto entry = CompletedEntry::new_(12345, 1000);
 
     EXPECT_EQ(entry.xid, 12345);
     EXPECT_EQ(entry.timestamp_ms, 1000);
 }
 
 TEST_F(CompletedEntryTest, IsExpired) {
-    CompletedEntry entry(1, 1000);
+    auto entry = CompletedEntry::new_(1, 1000);
 
     // Not expired
     EXPECT_FALSE(entry.is_expired(1050, 100));  // 1050 <= 1000 + 100 = 1100
@@ -97,7 +97,16 @@ TEST_F(CompletedEntryTest, IsExpired) {
 
 class CompletionTrackerTest : public ::testing::Test {
 protected:
-    CompletionTracker tracker_;
+    CompletionTracker tracker_ = CompletionTracker::new_();
+
+    // Explicit noexcept dtor — gtest's `virtual ~Test()` is defaulted in
+    // the .cc TU, so it's noexcept(true). `CompletionTracker` transitively
+    // owns a `rusty::HashSet<int64_t>` whose RawTable dtor is
+    // `noexcept(false)`, which would make this fixture's implicit dtor
+    // `noexcept(false)` — strictly laxer than the gtest base, which clang
+    // rejects. Promise noexcept and accept that an exception escaping
+    // CompletionTracker's drop will terminate (it never does in practice).
+    ~CompletionTrackerTest() noexcept override = default;
 
     void SetUp() override {
         tracker_.set_config(CompletionTrackerConfig::defaults());
@@ -169,7 +178,7 @@ TEST_F(CompletionTrackerTest, MultipleXIDs) {
 }
 
 TEST_F(CompletionTrackerTest, TTLExpiration) {
-    CompletionTrackerConfig cfg;
+    auto cfg = CompletionTrackerConfig::new_();
     cfg.ttl_ms = 100;  // 100ms TTL
     tracker_.set_config(cfg);
 
@@ -184,7 +193,7 @@ TEST_F(CompletionTrackerTest, TTLExpiration) {
 }
 
 TEST_F(CompletionTrackerTest, EvictionOnCapacity) {
-    CompletionTrackerConfig cfg;
+    auto cfg = CompletionTrackerConfig::new_();
     cfg.max_entries = 3;
     cfg.ttl_ms = 60000;
     tracker_.set_config(cfg);
@@ -287,7 +296,7 @@ TEST_F(CompletionTrackerTest, ResetStats) {
 }
 
 TEST_F(CompletionTrackerTest, EvictExpired) {
-    CompletionTrackerConfig cfg;
+    auto cfg = CompletionTrackerConfig::new_();
     cfg.ttl_ms = 100;  // 100ms TTL
     tracker_.set_config(cfg);
 
@@ -313,34 +322,45 @@ TEST_F(CompletionTrackerTest, EvictExpired) {
 }
 
 TEST_F(CompletionTrackerTest, ThreadSafety) {
-    const int num_threads = 4;
-    const int ops_per_thread = 1000;
-    std::atomic<int> completed{0};
+    constexpr int num_threads = 8;
+    constexpr int ops_per_thread = 500;
+    constexpr int rounds = 3;
+    constexpr uint64_t expected = num_threads * ops_per_thread;
 
-    auto worker = [&](int thread_id) {
-        int64_t base_xid = thread_id * ops_per_thread;
-        uint64_t now = current_time_ms();
+    for (int round = 0; round < rounds; ++round) {
+        tracker_.clear();
+        tracker_.reset_stats();
+        std::atomic<int> failures{0};
 
-        for (int i = 0; i < ops_per_thread; i++) {
-            tracker_.mark_completed(base_xid + i, now);
-            tracker_.is_completed(base_xid + i, now);
+        auto worker = [&](int thread_id) {
+            int64_t base_xid = thread_id * ops_per_thread;
+            uint64_t now = current_time_ms();
+
+            for (int i = 0; i < ops_per_thread; i++) {
+                tracker_.mark_completed(base_xid + i, now);
+                if (!tracker_.is_completed(base_xid + i, now)) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        };
+
+        std::vector<std::thread> threads;
+        for (int i = 0; i < num_threads; i++) {
+            threads.emplace_back(worker, i);
         }
 
-        completed++;
-    };
+        for (auto& t : threads) {
+            t.join();
+        }
 
-    std::vector<std::thread> threads;
-    for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back(worker, i);
+        EXPECT_EQ(failures.load(std::memory_order_relaxed), 0);
+        EXPECT_EQ(tracker_.size(), expected);
+        EXPECT_EQ(tracker_.total_tracked(), expected);
+        EXPECT_EQ(tracker_.queries(), expected);
+        EXPECT_EQ(tracker_.query_hits(), expected);
+        EXPECT_EQ(tracker_.evictions(), 0);
+        EXPECT_DOUBLE_EQ(tracker_.hit_rate(), 1.0);
     }
-
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    EXPECT_EQ(completed, num_threads);
-    // All operations should have succeeded without crashes
-    EXPECT_LE(tracker_.size(), tracker_.config().max_entries);
 }
 
 // ===========================================================================
@@ -349,8 +369,8 @@ TEST_F(CompletionTrackerTest, ThreadSafety) {
 
 class CompletionQueryResultTest : public ::testing::Test {};
 
-TEST_F(CompletionQueryResultTest, DefaultConstruction) {
-    CompletionQueryResult result;
+TEST_F(CompletionQueryResultTest, FactoryNew) {
+    auto result = CompletionQueryResult::new_();
 
     EXPECT_EQ(result.status, CompletionStatus::NOT_FOUND);
     EXPECT_EQ(result.error_code, 0);
@@ -391,11 +411,11 @@ TEST_F(CompletionQueryResultTest, Expired) {
 }
 
 TEST_F(CompletionQueryResultTest, StatusToString) {
-    EXPECT_STREQ(completion_status_to_string(CompletionStatus::NOT_FOUND), "NOT_FOUND");
-    EXPECT_STREQ(completion_status_to_string(CompletionStatus::COMPLETED), "COMPLETED");
-    EXPECT_STREQ(completion_status_to_string(CompletionStatus::COMPLETED_WITH_ERROR), "COMPLETED_WITH_ERROR");
-    EXPECT_STREQ(completion_status_to_string(CompletionStatus::EXPIRED), "EXPIRED");
-    EXPECT_STREQ(completion_status_to_string(static_cast<CompletionStatus>(99)), "UNKNOWN");
+    EXPECT_EQ(completion_status_to_string(CompletionStatus::NOT_FOUND), "NOT_FOUND");
+    EXPECT_EQ(completion_status_to_string(CompletionStatus::COMPLETED), "COMPLETED");
+    EXPECT_EQ(completion_status_to_string(CompletionStatus::COMPLETED_WITH_ERROR), "COMPLETED_WITH_ERROR");
+    EXPECT_EQ(completion_status_to_string(CompletionStatus::EXPIRED), "EXPIRED");
+    EXPECT_EQ(completion_status_to_string(static_cast<CompletionStatus>(99)), "UNKNOWN");
 }
 
 // ===========================================================================

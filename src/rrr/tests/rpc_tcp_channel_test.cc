@@ -40,6 +40,10 @@
 
 #include "../rrr.hpp"
 
+// PollMode (READ/WRITE) lives in rrr.epoll_wrapper, which the trimmed
+// consumer umbrella no longer re-exports (08b68144) — import directly.
+import rrr.epoll_wrapper;
+
 import std;
 
 namespace rrr {
@@ -146,7 +150,7 @@ TEST_F(TcpConnectionTest, SendFramePushesEncodedBytesOnHandleWrite) {
     ASSERT_EQ(got.size(), 4u + sizeof(payload));
 
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(got.data(), got.size(), hdr),
+    EXPECT_EQ(frame_codec_peek_header(got, hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, static_cast<std::int32_t>(sizeof(payload)));
     EXPECT_FALSE(hdr.extended_header_flag);
@@ -161,7 +165,7 @@ TEST_F(TcpConnectionTest, SendZeroLengthPayload) {
     std::vector<std::uint8_t> got;
     ASSERT_EQ(peer_read(got), 4);  // Just the size header.
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(got.data(), 4, hdr),
+    EXPECT_EQ(frame_codec_peek_header(std::span<const std::uint8_t>(got).first(4), hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, 0);
 }
@@ -179,7 +183,7 @@ TEST_F(TcpConnectionTest, MultipleSendFramesCoalesceIntoOneWrite) {
     ASSERT_EQ(n, static_cast<ssize_t>(4 + sizeof(a) + 4 + sizeof(b)));
 
     // Decode both frames out of the coalesced buffer.
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(got.data(), got.size());
     FrameView v{};
     ASSERT_EQ(reader.next_frame(v), FrameDecodeStatus::Complete);
@@ -198,10 +202,10 @@ TEST_F(TcpConnectionTest, MultipleSendFramesCoalesceIntoOneWrite) {
 TEST_F(TcpConnectionTest, HandleReadDeliversCompleteFrame) {
     int frames_seen = 0;
     std::vector<std::uint8_t> last_frame;
-    mut_conn().set_on_frame([&](const ChannelFrame& f) {
+    mut_conn().set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
         ++frames_seen;
         last_frame.assign(f.payload, f.payload + f.size);
-    });
+    }));
 
     // Encode a frame on the peer side and write it.
     std::vector<std::uint8_t> wire;
@@ -219,10 +223,10 @@ TEST_F(TcpConnectionTest, HandleReadDeliversCompleteFrame) {
 TEST_F(TcpConnectionTest, FragmentedInboundReassembled) {
     int frames_seen = 0;
     std::vector<std::uint8_t> last_frame;
-    mut_conn().set_on_frame([&](const ChannelFrame& f) {
+    mut_conn().set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
         ++frames_seen;
         last_frame.assign(f.payload, f.payload + f.size);
-    });
+    }));
 
     std::vector<std::uint8_t> wire;
     const std::uint8_t payload[] = {'h', 'e', 'l', 'l', 'o'};
@@ -244,9 +248,9 @@ TEST_F(TcpConnectionTest, FragmentedInboundReassembled) {
 
 TEST_F(TcpConnectionTest, MultiFrameCoalescedReadDeliversAll) {
     std::vector<std::vector<std::uint8_t>> seen;
-    mut_conn().set_on_frame([&](const ChannelFrame& f) {
+    mut_conn().set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
         seen.emplace_back(f.payload, f.payload + f.size);
-    });
+    }));
 
     std::vector<std::uint8_t> wire;
     const std::uint8_t a[] = {0xAA};
@@ -271,14 +275,14 @@ TEST_F(TcpConnectionTest, MalformedInboundFiresErrorThenClosed) {
     int closes_seen = 0;
     ChannelError last_err = ChannelError::None;
     ChannelError last_close = ChannelError::None;
-    mut_conn().set_on_error([&](ChannelError e, std::string_view) {
+    mut_conn().set_on_error(OnErrorCallback::from_callable([&](ChannelError e, std::string_view) {
         ++errors_seen;
         last_err = e;
-    });
-    mut_conn().set_on_closed([&](ChannelError r) {
+    }));
+    mut_conn().set_on_closed(OnClosedCallback::from_callable([&](ChannelError r) {
         ++closes_seen;
         last_close = r;
-    });
+    }));
 
     // Forge a header whose decoded payload size is negative. The
     // sentinel bit pattern: i32 with bit 31 clear and a payload size
@@ -328,7 +332,8 @@ TEST_F(TcpConnectionTest, MalformedInboundFiresErrorThenClosed) {
 
 TEST_F(TcpConnectionTest, PeerHangupFiresOnClosedExactlyOnce) {
     int closes_seen = 0;
-    mut_conn().set_on_closed([&](ChannelError) { ++closes_seen; });
+    mut_conn().set_on_closed(OnClosedCallback::from_callable(
+        [&](ChannelError) { ++closes_seen; }));
 
     ::shutdown(peer_fd_, SHUT_WR);
     ::close(peer_fd_);
@@ -350,7 +355,8 @@ TEST_F(TcpConnectionTest, PeerHangupFiresOnClosedExactlyOnce) {
 
 TEST_F(TcpConnectionTest, CloseIsIdempotent) {
     int closes_seen = 0;
-    mut_conn().set_on_closed([&](ChannelError) { ++closes_seen; });
+    mut_conn().set_on_closed(OnClosedCallback::from_callable(
+        [&](ChannelError) { ++closes_seen; }));
 
     EXPECT_FALSE(conn().is_closed());
     mut_conn().close();
@@ -442,7 +448,8 @@ TEST_F(TcpConnectionTest, ChannelProxyForwardsAllOps) {
     auto proxy = make_tcp_connection_channel_proxy(conn_.as_ref().unwrap().clone());
 
     int frames_seen = 0;
-    proxy->set_on_frame([&](const ChannelFrame&) { ++frames_seen; });
+    proxy->set_on_frame(OnFrameCallback::from_callable(
+        [&](const ChannelFrame&) { ++frames_seen; }));
 
     EXPECT_EQ(proxy->peer_address(), "test-peer");
     EXPECT_FALSE(proxy->is_closed());

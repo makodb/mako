@@ -17,7 +17,6 @@
 #include <getopt.h>
 
 
-#include "../txn.h"
 #include "../macros.h"
 #include "../scopedperf.hh"
 #include "../spinlock.h"

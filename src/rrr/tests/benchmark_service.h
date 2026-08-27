@@ -20,19 +20,21 @@ struct point3 {
     double z;
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const point3& o) {
-    ar << o.x;
-    ar << o.y;
-    ar << o.z;
-    return ar;
+inline void serialize(const point3& o, rrr::BinaryWriteArchive& ar) {
+    rrr::Serialize_::serialize(o.x, ar);
+    rrr::Serialize_::serialize(o.y, ar);
+    rrr::Serialize_::serialize(o.z, ar);
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, point3& o) {
-    ar >> o.x;
-    ar >> o.y;
-    ar >> o.z;
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const point3& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(point3& o, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(o.x, ar);
+    rrr::Deserialize_::deserialize(o.y, ar);
+    rrr::Deserialize_::deserialize(o.z, ar);
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, point3& o) { deserialize(o, ar); return ar; }
 
 class BenchmarkService {
 public:
@@ -40,290 +42,290 @@ public:
     struct RpcFastPrimeRequest {
         rrr::i32 n;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastPrimeRequest& o) {
-        ar << o.n;
-        return ar;
+    friend inline void serialize(const RpcFastPrimeRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.n, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastPrimeRequest& o) {
-        ar >> o.n;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastPrimeRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastPrimeRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.n, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastPrimeRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcFastPrimeResponse {
         rrr::i8 flag;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastPrimeResponse& o) {
-        ar << o.flag;
-        return ar;
+    friend inline void serialize(const RpcFastPrimeResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.flag, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastPrimeResponse& o) {
-        ar >> o.flag;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastPrimeResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastPrimeResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.flag, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastPrimeResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcFastDotProdRequest {
         point3 p1;
         point3 p2;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastDotProdRequest& o) {
-        ar << o.p1;
-        ar << o.p2;
-        return ar;
+    friend inline void serialize(const RpcFastDotProdRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.p1, ar);
+        rrr::Serialize_::serialize(o.p2, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastDotProdRequest& o) {
-        ar >> o.p1;
-        ar >> o.p2;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastDotProdRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastDotProdRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.p1, ar);
+        rrr::Deserialize_::deserialize(o.p2, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastDotProdRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcFastDotProdResponse {
         double v;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastDotProdResponse& o) {
-        ar << o.v;
-        return ar;
+    friend inline void serialize(const RpcFastDotProdResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.v, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastDotProdResponse& o) {
-        ar >> o.v;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastDotProdResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastDotProdResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.v, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastDotProdResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcFastAddRequest {
         rrr::v32 a;
         rrr::v32 b;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastAddRequest& o) {
-        ar << o.a;
-        ar << o.b;
-        return ar;
+    friend inline void serialize(const RpcFastAddRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.a, ar);
+        rrr::Serialize_::serialize(o.b, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastAddRequest& o) {
-        ar >> o.a;
-        ar >> o.b;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastAddRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastAddRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.a, ar);
+        rrr::Deserialize_::deserialize(o.b, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastAddRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcFastAddResponse {
         rrr::v32 a_add_b;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastAddResponse& o) {
-        ar << o.a_add_b;
-        return ar;
+    friend inline void serialize(const RpcFastAddResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.a_add_b, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastAddResponse& o) {
-        ar >> o.a_add_b;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastAddResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastAddResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.a_add_b, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastAddResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcFastNopRequest {
         std::string in_0;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastNopRequest& o) {
-        ar << o.in_0;
-        return ar;
+    friend inline void serialize(const RpcFastNopRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.in_0, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastNopRequest& o) {
-        ar >> o.in_0;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastNopRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastNopRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.in_0, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastNopRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcFastNopResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastNopResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcFastNopResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastNopResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastNopResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastNopResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastNopResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcFastVecRequest {
         rrr::i32 n;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastVecRequest& o) {
-        ar << o.n;
-        return ar;
+    friend inline void serialize(const RpcFastVecRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.n, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastVecRequest& o) {
-        ar >> o.n;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastVecRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastVecRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.n, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastVecRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcFastVecResponse {
         std::vector<rrr::i64> v;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastVecResponse& o) {
-        ar << o.v;
-        return ar;
+    friend inline void serialize(const RpcFastVecResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.v, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastVecResponse& o) {
-        ar >> o.v;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastVecResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcFastVecResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.v, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFastVecResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcPrimeRequest {
         rrr::i32 n;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrimeRequest& o) {
-        ar << o.n;
-        return ar;
+    friend inline void serialize(const RpcPrimeRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.n, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcPrimeRequest& o) {
-        ar >> o.n;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrimeRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcPrimeRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.n, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcPrimeRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcPrimeResponse {
         rrr::i8 flag;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrimeResponse& o) {
-        ar << o.flag;
-        return ar;
+    friend inline void serialize(const RpcPrimeResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.flag, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcPrimeResponse& o) {
-        ar >> o.flag;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrimeResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcPrimeResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.flag, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcPrimeResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcDotProdRequest {
         point3 p1;
         point3 p2;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDotProdRequest& o) {
-        ar << o.p1;
-        ar << o.p2;
-        return ar;
+    friend inline void serialize(const RpcDotProdRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.p1, ar);
+        rrr::Serialize_::serialize(o.p2, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDotProdRequest& o) {
-        ar >> o.p1;
-        ar >> o.p2;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDotProdRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcDotProdRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.p1, ar);
+        rrr::Deserialize_::deserialize(o.p2, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDotProdRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcDotProdResponse {
         double v;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDotProdResponse& o) {
-        ar << o.v;
-        return ar;
+    friend inline void serialize(const RpcDotProdResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.v, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDotProdResponse& o) {
-        ar >> o.v;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDotProdResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcDotProdResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.v, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDotProdResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcAddRequest {
         rrr::v32 a;
         rrr::v32 b;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAddRequest& o) {
-        ar << o.a;
-        ar << o.b;
-        return ar;
+    friend inline void serialize(const RpcAddRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.a, ar);
+        rrr::Serialize_::serialize(o.b, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAddRequest& o) {
-        ar >> o.a;
-        ar >> o.b;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAddRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcAddRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.a, ar);
+        rrr::Deserialize_::deserialize(o.b, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAddRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcAddResponse {
         rrr::v32 a_add_b;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAddResponse& o) {
-        ar << o.a_add_b;
-        return ar;
+    friend inline void serialize(const RpcAddResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.a_add_b, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAddResponse& o) {
-        ar >> o.a_add_b;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAddResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcAddResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.a_add_b, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAddResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcNopRequest {
         std::string in_0;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcNopRequest& o) {
-        ar << o.in_0;
-        return ar;
+    friend inline void serialize(const RpcNopRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.in_0, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcNopRequest& o) {
-        ar >> o.in_0;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcNopRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcNopRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.in_0, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcNopRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcNopResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcNopResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcNopResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcNopResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcNopResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcNopResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcNopResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcAsyncNopRequest {
         std::string in_0;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAsyncNopRequest& o) {
-        ar << o.in_0;
-        return ar;
+    friend inline void serialize(const RpcAsyncNopRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.in_0, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAsyncNopRequest& o) {
-        ar >> o.in_0;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAsyncNopRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcAsyncNopRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.in_0, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAsyncNopRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcAsyncNopResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAsyncNopResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcAsyncNopResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAsyncNopResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAsyncNopResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcAsyncNopResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcAsyncNopResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcSleepRequest {
         double sec;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSleepRequest& o) {
-        ar << o.sec;
-        return ar;
+    friend inline void serialize(const RpcSleepRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.sec, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcSleepRequest& o) {
-        ar >> o.sec;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSleepRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcSleepRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.sec, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcSleepRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcSleepResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSleepResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcSleepResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcSleepResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSleepResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcSleepResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcSleepResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcDeferredEchoRequest {
         rrr::i32 val;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDeferredEchoRequest& o) {
-        ar << o.val;
-        return ar;
+    friend inline void serialize(const RpcDeferredEchoRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.val, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDeferredEchoRequest& o) {
-        ar >> o.val;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDeferredEchoRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcDeferredEchoRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.val, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDeferredEchoRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcDeferredEchoResponse {
         rrr::i32 result;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDeferredEchoResponse& o) {
-        ar << o.result;
-        return ar;
+    friend inline void serialize(const RpcDeferredEchoResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.result, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDeferredEchoResponse& o) {
-        ar >> o.result;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDeferredEchoResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcDeferredEchoResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.result, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDeferredEchoResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
         FAST_PRIME = 0x4f4daa5a,
@@ -446,19 +448,18 @@ private:
         // @unsafe
         {
             RpcFastPrimeRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.n;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.n, __req_ar__);
             auto __typed_result__ = this->fast_prime(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-                        m << __typed_resp__.flag;
+                        rrr::Serialize_::serialize(__typed_resp__.flag, m);
                     });
                 }
             }
@@ -470,20 +471,19 @@ private:
         // @unsafe
         {
             RpcFastDotProdRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.p1;
-            __req_ar__ >> __typed_req__.p2;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.p1, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.p2, __req_ar__);
             auto __typed_result__ = this->fast_dot_prod(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-                        m << __typed_resp__.v;
+                        rrr::Serialize_::serialize(__typed_resp__.v, m);
                     });
                 }
             }
@@ -495,20 +495,19 @@ private:
         // @unsafe
         {
             RpcFastAddRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.a;
-            __req_ar__ >> __typed_req__.b;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.a, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.b, __req_ar__);
             auto __typed_result__ = this->fast_add(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-                        m << __typed_resp__.a_add_b;
+                        rrr::Serialize_::serialize(__typed_resp__.a_add_b, m);
                     });
                 }
             }
@@ -520,19 +519,18 @@ private:
         // @unsafe
         {
             RpcFastNopRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.in_0;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.in_0, __req_ar__);
             auto __typed_result__ = this->fast_nop(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     (void)__typed_resp__;
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, rrr::ServerReplyFn{});
                 }
             }
             // req automatically cleaned up by rusty::Box
@@ -543,19 +541,18 @@ private:
         // @unsafe
         {
             RpcFastVecRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.n;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.n, __req_ar__);
             auto __typed_result__ = this->fast_vec(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-                        m << __typed_resp__.v;
+                        rrr::Serialize_::serialize(__typed_resp__.v, m);
                     });
                 }
             }
@@ -567,19 +564,18 @@ private:
         // @unsafe
         {
             RpcPrimeRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.n;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.n, __req_ar__);
             auto __typed_result__ = this->prime(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-                        m << __typed_resp__.flag;
+                        rrr::Serialize_::serialize(__typed_resp__.flag, m);
                     });
                 }
             }
@@ -591,20 +587,19 @@ private:
         // @unsafe
         {
             RpcDotProdRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.p1;
-            __req_ar__ >> __typed_req__.p2;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.p1, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.p2, __req_ar__);
             auto __typed_result__ = this->dot_prod(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-                        m << __typed_resp__.v;
+                        rrr::Serialize_::serialize(__typed_resp__.v, m);
                     });
                 }
             }
@@ -616,20 +611,19 @@ private:
         // @unsafe
         {
             RpcAddRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.a;
-            __req_ar__ >> __typed_req__.b;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.a, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.b, __req_ar__);
             auto __typed_result__ = this->add(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-                        m << __typed_resp__.a_add_b;
+                        rrr::Serialize_::serialize(__typed_resp__.a_add_b, m);
                     });
                 }
             }
@@ -641,19 +635,18 @@ private:
         // @unsafe
         {
             RpcNopRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.in_0;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.in_0, __req_ar__);
             auto __typed_result__ = this->nop(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     (void)__typed_resp__;
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, rrr::ServerReplyFn{});
                 }
             }
             // req automatically cleaned up by rusty::Box
@@ -664,22 +657,21 @@ private:
         // @unsafe
         {
             RpcAsyncNopRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.in_0;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.in_0, __req_ar__);
             auto __async_req__ = std::move(req);
             auto __async_weak_sconn__ = weak_sconn;
             auto __async_task__ = this->async_nop(__typed_req__);
-            rrr::Reactor::get_reactor()->spawn_stackless_task_with_result(std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {
+            rrr::reactor_spawn_stackless_task_with_result(*rrr::Reactor::get_reactor(), std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {
                 auto sconn_opt = __async_weak_sconn__.upgrade();
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         (void)__typed_resp__;
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__);
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, 0, rrr::ServerReplyFn{});
                     }
                 }
             });
@@ -690,19 +682,18 @@ private:
         // @unsafe
         {
             RpcSleepRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.sec;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.sec, __req_ar__);
             auto __typed_result__ = this->sleep(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     (void)__typed_resp__;
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, rrr::ServerReplyFn{});
                 }
             }
             // req automatically cleaned up by rusty::Box
@@ -713,15 +704,14 @@ private:
         // @unsafe
         {
             RpcDeferredEchoRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__.val;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__.val, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcDeferredEchoResponse>();
-            rrr::DeferredReply __defer__(
+            auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->result;
+                    rrr::Serialize_::serialize(__typed_resp__->result, m);
                 },
                 []() {});
             this->deferred_echo(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -783,26 +773,19 @@ public:
             }
             RpcFastPrimeResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
-            __reply_ar__ >> __typed_resp__.flag;
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::Deserialize_::deserialize(__typed_resp__.flag, __reply_ar__);
             return rusty::Result<RpcFastPrimeResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
         }
     };
     rusty::Result<fast_primeTypedFuture, rrr::i32> async_fast_prime(const RpcFastPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.n;
+            rrr::Serialize_::serialize(req.n, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<fast_primeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_primeTypedFuture, rrr::i32>::Ok(fast_primeTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_primeTypedFuture> await_fast_prime(const RpcFastPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_prime(req, __fu_attr__));
     }
     rusty::Result<RpcFastPrimeResponse, rrr::i32> fast_prime(const RpcFastPrimeRequest& req) {
         auto __typed_fu_result__ = this->async_fast_prime(req);
@@ -835,27 +818,20 @@ public:
             }
             RpcFastDotProdResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
-            __reply_ar__ >> __typed_resp__.v;
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::Deserialize_::deserialize(__typed_resp__.v, __reply_ar__);
             return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
         }
     };
     rusty::Result<fast_dot_prodTypedFuture, rrr::i32> async_fast_dot_prod(const RpcFastDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.p1;
-            __m__ << req.p2;
+            rrr::Serialize_::serialize(req.p1, __m__);
+            rrr::Serialize_::serialize(req.p2, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<fast_dot_prodTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_dot_prodTypedFuture, rrr::i32>::Ok(fast_dot_prodTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_dot_prodTypedFuture> await_fast_dot_prod(const RpcFastDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_dot_prod(req, __fu_attr__));
     }
     rusty::Result<RpcFastDotProdResponse, rrr::i32> fast_dot_prod(const RpcFastDotProdRequest& req) {
         auto __typed_fu_result__ = this->async_fast_dot_prod(req);
@@ -888,27 +864,20 @@ public:
             }
             RpcFastAddResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
-            __reply_ar__ >> __typed_resp__.a_add_b;
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::Deserialize_::deserialize(__typed_resp__.a_add_b, __reply_ar__);
             return rusty::Result<RpcFastAddResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
         }
     };
     rusty::Result<fast_addTypedFuture, rrr::i32> async_fast_add(const RpcFastAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.a;
-            __m__ << req.b;
+            rrr::Serialize_::serialize(req.a, __m__);
+            rrr::Serialize_::serialize(req.b, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<fast_addTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_addTypedFuture, rrr::i32>::Ok(fast_addTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_addTypedFuture> await_fast_add(const RpcFastAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_add(req, __fu_attr__));
     }
     rusty::Result<RpcFastAddResponse, rrr::i32> fast_add(const RpcFastAddRequest& req) {
         auto __typed_fu_result__ = this->async_fast_add(req);
@@ -942,21 +911,15 @@ public:
             RpcFastNopResponse __typed_resp__;
             return rusty::Result<RpcFastNopResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<fast_nopTypedFuture, rrr::i32> async_fast_nop(const RpcFastNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.in_0;
+            rrr::Serialize_::serialize(req.in_0, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<fast_nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_nopTypedFuture, rrr::i32>::Ok(fast_nopTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_nopTypedFuture> await_fast_nop(const RpcFastNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_nop(req, __fu_attr__));
     }
     rusty::Result<RpcFastNopResponse, rrr::i32> fast_nop(const RpcFastNopRequest& req) {
         auto __typed_fu_result__ = this->async_fast_nop(req);
@@ -989,26 +952,19 @@ public:
             }
             RpcFastVecResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
-            __reply_ar__ >> __typed_resp__.v;
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::Deserialize_::deserialize(__typed_resp__.v, __reply_ar__);
             return rusty::Result<RpcFastVecResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
         }
     };
     rusty::Result<fast_vecTypedFuture, rrr::i32> async_fast_vec(const RpcFastVecRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.n;
+            rrr::Serialize_::serialize(req.n, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<fast_vecTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_vecTypedFuture, rrr::i32>::Ok(fast_vecTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<fast_vecTypedFuture> await_fast_vec(const RpcFastVecRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_fast_vec(req, __fu_attr__));
     }
     rusty::Result<RpcFastVecResponse, rrr::i32> fast_vec(const RpcFastVecRequest& req) {
         auto __typed_fu_result__ = this->async_fast_vec(req);
@@ -1041,26 +997,19 @@ public:
             }
             RpcPrimeResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
-            __reply_ar__ >> __typed_resp__.flag;
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::Deserialize_::deserialize(__typed_resp__.flag, __reply_ar__);
             return rusty::Result<RpcPrimeResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
         }
     };
     rusty::Result<primeTypedFuture, rrr::i32> async_prime(const RpcPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.n;
+            rrr::Serialize_::serialize(req.n, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<primeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<primeTypedFuture, rrr::i32>::Ok(primeTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<primeTypedFuture> await_prime(const RpcPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_prime(req, __fu_attr__));
     }
     rusty::Result<RpcPrimeResponse, rrr::i32> prime(const RpcPrimeRequest& req) {
         auto __typed_fu_result__ = this->async_prime(req);
@@ -1093,27 +1042,20 @@ public:
             }
             RpcDotProdResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
-            __reply_ar__ >> __typed_resp__.v;
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::Deserialize_::deserialize(__typed_resp__.v, __reply_ar__);
             return rusty::Result<RpcDotProdResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
         }
     };
     rusty::Result<dot_prodTypedFuture, rrr::i32> async_dot_prod(const RpcDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.p1;
-            __m__ << req.p2;
+            rrr::Serialize_::serialize(req.p1, __m__);
+            rrr::Serialize_::serialize(req.p2, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<dot_prodTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<dot_prodTypedFuture, rrr::i32>::Ok(dot_prodTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<dot_prodTypedFuture> await_dot_prod(const RpcDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_dot_prod(req, __fu_attr__));
     }
     rusty::Result<RpcDotProdResponse, rrr::i32> dot_prod(const RpcDotProdRequest& req) {
         auto __typed_fu_result__ = this->async_dot_prod(req);
@@ -1146,27 +1088,20 @@ public:
             }
             RpcAddResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
-            __reply_ar__ >> __typed_resp__.a_add_b;
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::Deserialize_::deserialize(__typed_resp__.a_add_b, __reply_ar__);
             return rusty::Result<RpcAddResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
         }
     };
     rusty::Result<addTypedFuture, rrr::i32> async_add(const RpcAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.a;
-            __m__ << req.b;
+            rrr::Serialize_::serialize(req.a, __m__);
+            rrr::Serialize_::serialize(req.b, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<addTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<addTypedFuture, rrr::i32>::Ok(addTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<addTypedFuture> await_add(const RpcAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_add(req, __fu_attr__));
     }
     rusty::Result<RpcAddResponse, rrr::i32> add(const RpcAddRequest& req) {
         auto __typed_fu_result__ = this->async_add(req);
@@ -1200,21 +1135,15 @@ public:
             RpcNopResponse __typed_resp__;
             return rusty::Result<RpcNopResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<nopTypedFuture, rrr::i32> async_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.in_0;
+            rrr::Serialize_::serialize(req.in_0, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<nopTypedFuture, rrr::i32>::Ok(nopTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<nopTypedFuture> await_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_nop(req, __fu_attr__));
     }
     rusty::Result<RpcNopResponse, rrr::i32> nop(const RpcNopRequest& req) {
         auto __typed_fu_result__ = this->async_nop(req);
@@ -1248,21 +1177,15 @@ public:
             RpcAsyncNopResponse __typed_resp__;
             return rusty::Result<RpcAsyncNopResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<async_nopTypedFuture, rrr::i32> async_async_nop(const RpcAsyncNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::ASYNC_NOP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.in_0;
+            rrr::Serialize_::serialize(req.in_0, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<async_nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<async_nopTypedFuture, rrr::i32>::Ok(async_nopTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<async_nopTypedFuture> await_async_nop(const RpcAsyncNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_async_nop(req, __fu_attr__));
     }
     rusty::Result<RpcAsyncNopResponse, rrr::i32> async_nop(const RpcAsyncNopRequest& req) {
         auto __typed_fu_result__ = this->async_async_nop(req);
@@ -1296,21 +1219,15 @@ public:
             RpcSleepResponse __typed_resp__;
             return rusty::Result<RpcSleepResponse, rrr::i32>::Ok(__typed_resp__);
         }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
     };
     rusty::Result<sleepTypedFuture, rrr::i32> async_sleep(const RpcSleepRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.sec;
+            rrr::Serialize_::serialize(req.sec, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<sleepTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<sleepTypedFuture, rrr::i32>::Ok(sleepTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<sleepTypedFuture> await_sleep(const RpcSleepRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_sleep(req, __fu_attr__));
     }
     rusty::Result<RpcSleepResponse, rrr::i32> sleep(const RpcSleepRequest& req) {
         auto __typed_fu_result__ = this->async_sleep(req);
@@ -1343,26 +1260,19 @@ public:
             }
             RpcDeferredEchoResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
-            __reply_ar__ >> __typed_resp__.result;
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::Deserialize_::deserialize(__typed_resp__.result, __reply_ar__);
             return rusty::Result<RpcDeferredEchoResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
         }
     };
     rusty::Result<deferred_echoTypedFuture, rrr::i32> async_deferred_echo(const RpcDeferredEchoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::DEFERRED_ECHO, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.val;
+            rrr::Serialize_::serialize(req.val, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<deferred_echoTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<deferred_echoTypedFuture, rrr::i32>::Ok(deferred_echoTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<deferred_echoTypedFuture> await_deferred_echo(const RpcDeferredEchoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_deferred_echo(req, __fu_attr__));
     }
     rusty::Result<RpcDeferredEchoResponse, rrr::i32> deferred_echo(const RpcDeferredEchoRequest& req) {
         auto __typed_fu_result__ = this->async_deferred_echo(req);

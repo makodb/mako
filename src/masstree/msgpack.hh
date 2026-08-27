@@ -7,6 +7,12 @@
 #include "json.hh"
 #include "small_vector.hh"
 #include "straccum.hh"
+// NOTE (merge of PR #78 onto the a1f8fef8 rusty-cpp pin): this legacy
+// masstree corpus is compiled as plain non-module TUs, and since
+// rusty-cpp #185 rusty::Vec / rusty::HashMap exist only as C++20 modules
+// (<rusty/vec.hpp> and <rusty/hashmap.hpp> are gone/empty). A header
+// cannot `import`, and importing before the textual includes clashes with
+// libc++ under `import std`, so these stay std:: containers.
 #include <vector>
 namespace msgpack {
 using lcdf::Json;
@@ -384,13 +390,22 @@ class streaming_parser {
 class parser {
   public:
     explicit inline parser(const char* s)
-        : s_(reinterpret_cast<const unsigned char*>(s)), str_() {
+        : parser(from_const_char(s)) {
     }
     explicit inline parser(const unsigned char* s)
-        : s_(s), str_() {
+        : parser(from_const_unsigned_char(s)) {
     }
     explicit inline parser(const String& str)
-        : s_(reinterpret_cast<const uint8_t*>(str.begin())), str_(str) {
+        : parser(from_string(str)) {
+    }
+    static parser from_const_char(const char* s) {
+        return parser(reinterpret_cast<const uint8_t*>(s), String());
+    }
+    static parser from_const_unsigned_char(const unsigned char* s) {
+        return parser(reinterpret_cast<const uint8_t*>(s), String());
+    }
+    static parser from_string(const String& str) {
+        return parser(reinterpret_cast<const uint8_t*>(str.begin()), str);
     }
     inline const char* position() const {
         return reinterpret_cast<const char*>(s_);
@@ -508,6 +523,10 @@ class parser {
         return *this;
     }
   private:
+    explicit inline parser(const uint8_t* s, String str)
+        : s_(s), str_(str) {
+    }
+
     const uint8_t* s_;
     String str_;
     template <typename T> void hard_read_int(T& x);

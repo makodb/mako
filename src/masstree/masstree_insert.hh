@@ -67,7 +67,7 @@ bool tcursor<P>::find_insert(threadinfo& ti)
 template <typename P>
 // @unsafe { Allocates new leaf nodes, manipulates raw pointers }
 bool tcursor<P>::make_new_layer(threadinfo& ti) {
-    key_type oka(n_->ksuf(kx_.p));
+    key_type oka = key_type::from_str(n_->ksuf(kx_.p));
     ka_.shift();
     int kcmp = oka.compare(ka_);
 
@@ -164,7 +164,7 @@ template <typename P> template <typename F>
 // @unsafe { Locks nodes, calls user callback f }
 inline int basic_table<P>::modify(Str key, F& f, threadinfo& ti)
 {
-    tcursor<P> lp(*this, key);
+    auto lp = tcursor<P>::from_mutable_str(*this, key);
     bool found = lp.find_locked(ti);
     int answer;
     if (found)
@@ -179,7 +179,7 @@ template <typename P> template <typename F>
 // @unsafe { Locks nodes, may insert, calls user callback f }
 inline int basic_table<P>::modify_insert(Str key, F& f, threadinfo& ti)
 {
-    tcursor<P> lp(*this, key);
+    auto lp = tcursor<P>::from_mutable_str(*this, key);
     bool found = lp.find_insert(ti);
     int answer = f(key, found, lp, ti);
     lp.finish(answer, ti);

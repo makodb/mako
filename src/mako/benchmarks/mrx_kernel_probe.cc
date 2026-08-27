@@ -33,10 +33,9 @@
 //           cpp_flush, rust_flush, cpp_read, rust_read
 //           (default cpp_write,rust_write)
 //
-// BUILD: scripts/build_mrx_kernel_probe.sh -- it compiles and links with
-// the flags CMake uses for masstree_rocks_bench (lifted from
-// compile_commands.json and build.ninja) WITHOUT adding a CMake target,
-// so it does not race a concurrent build in the same build directory.
+// BUILD: scripts/build_mrx_kernel_probe.sh [build-directory]. The script
+// delegates to the CMake target so this probe always uses the configured
+// compiler, generated module map, STO definitions, and dependency closure.
 //
 // Trace it with:
 //   strace -f -tt -T -o t.trace \

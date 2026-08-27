@@ -2,11 +2,18 @@
 
 This document describes Mako's RocksDB-compatible `ITable` and `IDatabase` interfaces, located in `src/rocks_interface/idb.hh`. It covers three things:
 
-- **Conceptual model** — how Silo/Masstree's building blocks map to RocksDB's (`DB`, `ColumnFamily`, `Transaction`, `Snapshot`, `Iterator`, persistence, …), what aligns, and where the two systems irreconcilably diverge.
+- **Conceptual model** — how Mako's STO/MassTrans/Masstree building blocks map to RocksDB's (`DB`, `ColumnFamily`, `Transaction`, `Snapshot`, `Iterator`, persistence, …), what aligns, and where the two systems irreconcilably diverge.
 - **Interface reference** — the abstract `ITable` and `IDatabase` methods, their semantics, and worked examples.
 - **RocksDB migration & extensibility** — a `RocksDB API → Mako` translation table, a compatibility feasibility matrix, and a roadmap for what extending the interface further would unlock.
 
 Read the conceptual section first if you're deciding *whether* Mako's interface fits your use case; jump to the interface reference if you're wiring code against it.
+
+> **Backend terminology:** Current Mako transactions use STO `Transaction`
+> with MassTrans/Masstree through `mbta_wrapper`. Older revisions of this
+> document used “Silo” as shorthand for that lineage. The original Silo
+> `transaction_base`/`dbtuple`/`txn_btree` engine is retired and guarded
+> against compilation. Literal `SiloRuntime` references below remain current:
+> it is live allocator, RCU, and Masstree runtime support for STO/MassTrans.
 
 ---
 
@@ -14,16 +21,16 @@ Read the conceptual section first if you're deciding *whether* Mako's interface 
 
 ### Vocabulary at a glance
 
-| RocksDB concept | Silo/Masstree analogue | Aligned? |
+| RocksDB concept | Mako STO/MassTrans analogue | Aligned? |
 |---|---|---|
 | `DB` (a directory of SSTables + WAL) | `SiloRuntime` (per-shard runtime) | Partially — see §1 |
 | `ColumnFamily` (namespace within a DB) | `abstract_ordered_index` / `mbtree` instance | Yes — see §2 |
 | `Key` (`Slice`, arbitrary bytes) | `varkey` / `lcdf::Str` (byte string) | Yes |
-| `Value` (`Slice`, arbitrary bytes) | `dbtuple` holding typed rows (`value_array`, `value_versioned_array`, `value_string`, `value_bag`) | Diverges — see §7 |
+| `Value` (`Slice`, arbitrary bytes) | Encoded strings held by MassTrans values | Largely aligned — see §7 |
 | `Transaction` | Mako's `abstract_db::new_txn` returning `void*` handle | Yes for OCC — see §3 |
-| `OptimisticTransactionDB` (OCC) | Silo's OCC with opacity checking | Yes — see §3 |
+| `OptimisticTransactionDB` (OCC) | STO OCC with optional opacity checking | Yes — see §3 |
 | `TransactionDB` (pessimistic 2PL) | No equivalent | No |
-| `Snapshot` (explicit `SetSnapshot`) | Implicit txn-start snapshot only | Diverges — see §4 |
+| `Snapshot` (explicit `SetSnapshot`) | No explicit or txn-start snapshot; OCC reads are validated at commit | Diverges — see §4 |
 | `WriteBatch` (atomic multi-key write) | Implicit within a single txn | Yes — see §3 |
 | `Iterator` (stateful, snapshot-pinned) | `Scan` callback (single pass, per-node consistency only) | Diverges — see §8 |
 | `MergeOperator` | No equivalent | No |
@@ -36,19 +43,23 @@ Read the conceptual section first if you're deciding *whether* Mako's interface 
 
 **RocksDB `DB`.** A `DB` is a directory on disk containing SSTables + a WAL. One process opens as many `DB` instances as it wants, each with its own path, WAL, block cache, and set of Column Families. `DB::Open("/tmp/foo")` and `DB::Open("/tmp/bar")` are entirely independent.
 
-**Silo `SiloRuntime`.** Declared in `src/mako/silo_runtime.h:38-244`. A runtime bundles the resources for one "site" or shard: its own `MasstreeContext` (epoch counter, threadinfo list), per-site core-id allocator, per-site memory allocator, per-site ticker, per-site RCU system. Multiple runtimes can coexist in one process via `SiloRuntime::Create()`; threads bind to exactly one via `SiloRuntime::BindCurrentThread(runtime)`.
+**Mako `SiloRuntime`.** Declared in `src/mako/silo_runtime.h:38-244`. A runtime bundles the resources for one "site" or shard: its own `MasstreeContext` (epoch counter, threadinfo list), per-site core-id allocator, per-site memory allocator, per-site ticker, per-site RCU system. Multiple runtimes can coexist in one process via `SiloRuntime::Create()`; threads bind to exactly one via `SiloRuntime::BindCurrentThread(runtime)`.
 
-**Mapping.** A `SiloRuntime` is closer to a RocksDB `DB` than to a shared allocator or a global. **One process can host N independent `SiloRuntime`s**, each with its own tables, mirroring the multi-`DB` RocksDB pattern. The current `mako::DB` in `db.hh` is a facade over exactly one `SiloRuntime`; a hypothetical `mako::DB::Open("path_a")` + `mako::DB::Open("path_b")` would each internally create their own runtime.
+**Mapping.** At the lower level, a `SiloRuntime` is closer to a RocksDB `DB` than to a shared allocator or a global. **One process can host N independent `SiloRuntime`s**, each with its own tables. The current `mako::DB::Open`, however, does not create or bind one runtime per facade. It mutates the process-wide `BenchmarkConfig`, calls the legacy `init_env()` and `initWithDB()` paths, and selects the returned database pointer according to the configured role. Repeated calls therefore are not independent RocksDB-style opens.
 
-The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directory. Silo's `SiloRuntime` corresponds to an in-memory shard. The `name` argument to `DB::Open` in RocksDB names the filesystem path; in `mako::DB::Open` it names logical shard identity (or is ignored for in-memory-only builds).
+RocksDB's `DB` also corresponds to a persistence directory, whereas a `SiloRuntime` corresponds to an in-memory shard. The `path` argument to the current `mako::DB::Open` is ignored; it neither selects a runtime nor names a persistence directory.
 
 ### 2. Namespaces: `ColumnFamily` vs table / index
 
 **RocksDB `ColumnFamily`.** A CF is a logical KV namespace within a single `DB`. All CFs in one DB share the WAL and block cache, but their key spaces are disjoint. Every put/get/delete/iterator takes a `ColumnFamilyHandle*`. A DB has at minimum one CF (`default`).
 
-**Silo tables.** Each table is a separate `abstract_ordered_index` (`src/mako/storage/abstract_ordered_index.h`), most often instantiated as `typed_txn_btree<Schema>` (`src/mako/typed_txn_btree.h:8-16`) wrapping an `mbtree<concurrent_btree>`. TPC-C creates ~10 tables (`warehouse`, `district`, `customer`, `stock`, `item`, `order`, `order_line`, `new_order`, `history`, plus secondary indexes — `tpcc.cc:1372`).
+**STO/MassTrans tables.** Each table is a separate `abstract_ordered_index`
+(`src/mako/storage/abstract_ordered_index.h`), instantiated by the production
+wrapper as `mbta_ordered_index` over `MassTrans`. The historical
+`typed_txn_btree` implementation belongs to the retired original Silo engine.
+TPC-C creates approximately ten primary and secondary table instances.
 
-**Mapping.** RocksDB CF ↔ Silo table ↔ mbtree instance, all natural fits. `IDatabase::GetTable(name)` already returns an `ITable*` per name — this is functionally equivalent to `DB::CreateColumnFamily` / `DB::GetColumnFamilyHandle`.
+**Mapping.** RocksDB CF ↔ Mako table ↔ MassTrans/Masstree instance, all natural fits. `IDatabase::GetTable(name)` already returns an `ITable*` per name — this is functionally equivalent to `DB::CreateColumnFamily` / `DB::GetColumnFamilyHandle`.
 
 **Divergences to note**:
 
@@ -60,17 +71,17 @@ The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directo
 
 **RocksDB.** Two flavors: `OptimisticTransactionDB` (OCC, validates read-set at commit) and `TransactionDB` (pessimistic 2PL, locks acquired eagerly). Both use `class Transaction` with `Put`/`Get`/`GetForUpdate`/`Commit`/`Rollback`. Isolation: snapshot isolation by default; serializable with `SetSnapshot()` + `GetForUpdate()`. Supports 2PC (`Prepare`).
 
-**Silo.** OCC-only via opacity checking. `abstract_db::new_txn(flags, arena, buf)` returns a `void*` handle; ops are staged in a per-txn item set (`tset_`, `src/mako/sto/Transaction.hh:571-577`), validated at `commit_txn(txn)` returning `bool`. Aborts throw `abstract_abort_exception` or set an error flag; retry is caller-driven (no automatic loop). Isolation: **serializable** via read-set validation at commit — stricter than RocksDB's default snapshot isolation. No 2PC surface.
+**STO/MassTrans.** OCC with optional opacity checking. `abstract_db::new_txn(flags, arena, buf)` returns a `void*` handle; ops are staged in a per-txn item set (`tset_`, `src/mako/sto/Transaction.hh:571-577`), validated at `commit_txn(txn)` returning `bool`. Aborts throw `abstract_abort_exception` or set an error flag; retry is caller-driven (no automatic loop). Isolation is **serializable** via read-set validation at commit — stricter than RocksDB's default snapshot isolation. No 2PC surface.
 
 **Mapping**:
 
-| Feature | RocksDB (`OptimisticTransactionDB`) | Silo | Notes |
+| Feature | RocksDB (`OptimisticTransactionDB`) | STO/MassTrans | Notes |
 |---|---|---|---|
 | `BeginTransaction` | `db->BeginTransaction(...)` → `Transaction*` | `db->BeginTransaction()` → `void*` | Present |
 | `Put/Get/Delete` in txn | `txn->Put(cf, k, v)` | `table->Put(txn, k, v)` | Present; API shape flipped (Mako passes `void* txn` first) |
 | `GetForUpdate` | `txn->GetForUpdate(...)` | No equivalent | Silo OCC doesn't distinguish — every read is tracked implicitly |
 | Isolation level | Snapshot (default) or serializable | Always serializable | Silo is stricter |
-| Read-your-writes | Yes | Point reads and repeated point mutations with `STO_RMW=ON` on local single-version tables | The local ABI advertises point RYW; remote/MV participants and transactional scan overlays remain gaps |
+| Read-your-writes | Yes | Point reads, repeated point mutations, and transactional scans with `STO_RMW=ON` on local single-version tables | The local ABI advertises point and scan RYW; remote/MV participants remain excluded |
 | Commit | `txn->Commit()` returning `Status` | `db->commit_txn(txn)` returning `bool` | Aligned semantics; different signatures |
 | Rollback | `txn->Rollback()` | `db->abort_txn(txn)` | Aligned |
 | Retry on conflict | Caller loop | Caller loop | Aligned |
@@ -79,18 +90,18 @@ The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directo
 
 **No pessimistic flavor**. RocksDB's `TransactionDB` (2PL) has no counterpart. Any consumer requiring lock-based blocking semantics can't be supported without a fresh implementation.
 
-**Non-transactional access.** Silo's `abstract_ordered_index` also exposes a **non-transactional API** mirroring Masstree's operation set — `get / put / insert / remove / scan / rscan` without a txn handle, each op per-key atomic on its own (internally a one-op OCC transaction with retry; `remove` is a direct raw write). This is the analog of RocksDB's plain `db->Put/Get/Delete` outside any `Transaction`. See [`storage-interface.md`](storage-interface.md) for the full contract, including the constraint that these must not be called from a thread with an open transaction.
+**Non-transactional access.** Mako's `abstract_ordered_index` also exposes a **non-transactional API** mirroring Masstree's operation set — `get / put / insert / remove / scan / rscan` without a txn handle, each op per-key atomic on its own (internally a one-op OCC transaction with retry; `remove` is a direct raw write). This is the analog of RocksDB's plain `db->Put/Get/Delete` outside any `Transaction`. See [`storage-interface.md`](storage-interface.md) for the full contract, including the constraint that these must not be called from a thread with an open transaction.
 
 ### 4. Snapshots
 
 **RocksDB.** `Snapshot* s = db->GetSnapshot()` captures a global sequence number. Reads with `ReadOptions{.snapshot=s}` see the committed state as of that seq. `ReleaseSnapshot(s)` decrements a refcount. Snapshots pin resources (SSTables can't be compacted away). Explicit inside a txn via `txn->SetSnapshot()`.
 
-**Silo.** No explicit snapshot handle. A transaction implicitly reads at its start-tid; the "snapshot" is what the txn observes across the lifetime of its ops. There's no way to hand a snapshot to a different code path or hold one open past commit.
+**STO/MassTrans.** No explicit snapshot handle and, in the actively tested non-opaque mode, no fixed transaction-start snapshot. Each operation reads a current version and records the versions and predicates it observed. Commit validation rejects incompatible interleavings so that a successful transaction is serializable, but this is not a user-visible snapshot that can be reused or held open.
 
 **Mapping.** RocksDB's snapshot API is `Status::NotSupported` territory for Mako. Any RocksDB code that does `s = db->GetSnapshot(); ... use s ...; ReleaseSnapshot(s);` outside a transaction cannot be directly ported. Two workaround patterns:
 
-- Wrap the "using the snapshot" region in a Mako transaction (`BeginTransaction` → do reads → `Commit`).
-- Read at higher isolation via GetForUpdate-equivalent — but Silo has no such distinction.
+- Wrap the read region in a Mako transaction (`BeginTransaction` → do reads → `Commit`) when serializable, jointly validated reads are sufficient.
+- Read at higher isolation via GetForUpdate-equivalent — but STO has no such distinction.
 
 Callers relying on cross-txn snapshot handles (e.g., long-running analytical queries against a snapshot fixed at some past time) don't have a natural mapping.
 
@@ -100,7 +111,7 @@ The most fundamental divergence. Worth stating clearly:
 
 **RocksDB's persistence is intrinsic**. `db->Put(...)` writes to memtable + WAL; on memtable flush, immutable SSTables land on disk; compaction merges them. `sync=true` fsyncs the WAL. Recovery replays the WAL from the last checkpoint. Persistence is not a separate layer — it *is* the storage engine.
 
-**Silo/Masstree persistence is external and optional**. Masstree is a pure in-memory index; its `checkpoint.hh` (`ckstate::visit_value`) and `kvio.hh` (`kvout` msgpack serializer) exist as infrastructure but are **not wired into `mbtree`**. Durability in Mako is provided by an entirely separate component: `src/mako/rocksdb_persistence.h` uses RocksDB as a partitioned write-ahead log, and `src/deptran/raft/rocksdb_log_storage.hpp` uses RocksDB for Raft's consensus log. These are Mako's persistence layers; masstree itself doesn't participate.
+**Mako/Masstree persistence is external and optional**. Masstree is a pure in-memory index; its `checkpoint.hh` (`ckstate::visit_value`) and `kvio.hh` (`kvout` msgpack serializer) exist as infrastructure but are **not wired into `mbtree`**. Durability in Mako is provided by an entirely separate component: `src/mako/rocksdb_persistence.h` uses RocksDB as a partitioned write-ahead log, and `src/deptran/raft/rocksdb_log_storage.hpp` uses RocksDB for Raft's consensus log. These are Mako's persistence layers; masstree itself doesn't participate.
 
 **Mapping implications**:
 
@@ -116,51 +127,56 @@ The most fundamental divergence. Worth stating clearly:
 
 **RocksDB.** Multiple threads share a `DB`; internal locking. Global monotonic sequence number ordered by write time. Snapshots reference a seq.
 
-**Silo.** Multiple threads share a `SiloRuntime` after `BindCurrentThread`. **Epoch-based advancement**: the runtime's ticker advances a global epoch ~every 100µs (`Transaction.cc:122`). Epochs are used for **RCU deferred reclamation only** — not durability, not commit visibility. `txn commit tid` is drawn from a per-thread counter combined with the current epoch.
+**Mako/STO.** Multiple threads can share a `SiloRuntime` after `BindCurrentThread`. **Epoch-based advancement**: STO's epoch advancer sleeps for about 100 ms between passes (`src/mako/sto/Transaction.cc`). Epochs are used for **RCU deferred reclamation only** — not durability, not commit visibility. `txn commit tid` is drawn from a per-thread counter combined with the current epoch.
 
 **Mapping.** Not directly observable from RocksDB's API — mostly internal. But two visible knock-on effects:
 
-- Deletes in Mako become tombstoned tuples reclaimed at some later epoch; a caller who deletes then quickly reads may still find the value visible until epoch advance (though the txn layer masks this).
+- A committed delete is logically visible immediately. In the non-MV MassTrans path the row is removed synchronously; only its memory reclamation is deferred to a safe epoch.
 - No monotonic global sequence number to expose as `SequenceNumber` in a RocksDB-shaped API. Any consumer relying on RocksDB's sequence numbers for external ordering can't be served.
 
 ### 7. Values: opaque bytes vs typed rows
 
 **RocksDB.** Values are opaque `Slice`s. Applications serialize their own structs to bytes. `PinnableSlice` avoids copying on read.
 
-**Silo.** Values are `dbtuple`s wrapping typed row objects. TPC-C uses schema-generated types (`customer_value`, `stock_value`, etc.) with columns accessed as fields. The row types are configured at compile time via `MASSTREE_ROW_TYPE_*` macros (`src/masstree/kvrow.hh:29-41`).
+**STO/MassTrans.** Values are encoded strings stored by MassTrans. TPC-C still
+uses schema-generated record types in application code, then encodes those
+records before staging them through `mbta_ordered_index`.
 
-**Mapping.** The `ITable` interface (below) smooths this over: it takes `std::string` for both key and value, using `mako::Encode()` for the value. Under the hood, the encoded string is stored inside a `dbtuple`. This is the natural bridge — the compat layer's "opaque bytes" model is preserved end-to-end even though the storage is typed.
+**Mapping.** The `ITable` interface (below) takes `std::string` for both key and
+value, using `mako::Encode()` where the Mako storage format requires it. The
+compatibility layer's opaque-byte model is preserved end-to-end.
 
-Cost: two extra copies per Put (application → encoded string → dbtuple) vs RocksDB (application → memtable). One extra copy per Get (dbtuple → std::string → application). For low-latency use cases this can matter; for the common case it doesn't.
+Encoding and wrapper copies can add overhead relative to RocksDB's direct
+application-to-memtable path; measure that cost for latency-sensitive uses.
 
 ### 8. Iteration model
 
 **RocksDB.** `Iterator* it = db->NewIterator(ro, cf);` returns a stateful, snapshot-pinned cursor. Methods: `SeekToFirst`, `SeekToLast`, `Seek(key)`, `SeekForPrev(key)`, `Next`, `Prev`, `Valid`, `key`, `value`, `status`. `~Iterator` releases resources. The iterator observes a consistent snapshot regardless of concurrent writes.
 
-**Silo/Masstree.** No stateful iterator. `mbtree::search_range_call(lower, upper, callback)` is push-based: the caller provides a callback invoked for each key until it returns false. `ITable::Scan` and `ITable::ReverseScan` follow this shape. Consistency: masstree's normal per-node version-check retry; **not** a pinned snapshot across the whole scan.
+**MassTrans/Masstree.** No stateful iterator. The current `mbtree` API uses the push-based `search_range_bounded` / `search_range_unbounded` and reverse variants: the caller provides a callback invoked for each key until it returns false. `ITable::Scan` and `ITable::ReverseScan` follow this shape. Consistency: Masstree's normal per-node version-check retry; **not** a pinned snapshot across the whole scan.
 
 **Mapping**:
 
 - Callback-based scan is functional and already in `ITable`. Consumers who can restructure code to callbacks can use it directly.
 - Consumers who need a *stateful* pull-based iterator (`for (it->SeekToFirst(); it->Valid(); it->Next())`) need an adapter. Two designs:
-  - **Chunked materialization**: on `SeekToFirst`/`Seek`, run `search_range_call` collecting up to N pairs into a buffer; on `Next` past the buffer, refill from the next key onward. Bounded memory. Loses point-in-time consistency across chunks unless run inside a transaction.
-  - **Transaction-scoped iterator**: an iterator opened inside a Silo transaction naturally gets serialisable consistency across its lifetime, because all its reads are tracked in the txn's read-set and validated together at commit.
-- Snapshot-pinned iterators outside a transaction (RocksDB's default) have no clean Silo mapping.
+  - **Chunked materialization**: on `SeekToFirst`/`Seek`, run the appropriate bounded or unbounded range call, collecting up to N pairs into a buffer; on `Next` past the buffer, refill from the next key onward. This bounds memory but does not provide point-in-time consistency. Inside a transaction, the combined reads and predicates can instead be validated for serializability at commit.
+  - **Transaction-scoped iterator**: an iterator opened inside an STO transaction naturally gets serialisable consistency across its lifetime, because all its reads are tracked in the txn's read-set and validated together at commit.
+- Snapshot-pinned iterators outside a transaction (RocksDB's default) have no clean Mako mapping.
 
 ### 9. Secondary indexes
 
 **RocksDB.** No first-class secondary index; applications maintain them manually as auxiliary CFs.
 
-**Silo.** Same — no automatic secondary indexes. TPC-C's `customer_name_idx` (`tpcc.h:80-87`) is a separate `mbtree` instance keyed by `(warehouse, district, last_name, first_name) → customer_id`, updated by the application whenever the primary `customer` table is updated.
+**Mako.** Same — no automatic secondary indexes. TPC-C's `customer_name_idx` (`tpcc.h:80-87`) is a separate MassTrans/Masstree instance keyed by `(warehouse, district, last_name, first_name) → customer_id`, updated by the application whenever the primary `customer` table is updated.
 
 **Mapping.** Both systems put secondary index maintenance on the application. No compat gap.
 
-### 10. Extension points RocksDB has that Silo doesn't
+### 10. Extension points RocksDB has that Mako doesn't
 
-Three RocksDB features are architecturally absent from Silo/Masstree:
+Three RocksDB features are architecturally absent from Mako/Masstree:
 
-- **`MergeOperator`**: RocksDB supports read-modify-write with user-defined associative merge functions (`db->Merge(key, delta)`). At read time, RocksDB replays all pending merges. Silo has no equivalent — a Mako-side merge would require the application to Get → modify → Put inside a transaction.
-- **`CompactionFilter`**: RocksDB invokes user callbacks during compaction to filter or transform values (e.g., TTL-based expiry). Silo has no background compaction, so nothing to hook into.
+- **`MergeOperator`**: RocksDB supports read-modify-write with user-defined associative merge functions (`db->Merge(key, delta)`). At read time, RocksDB replays all pending merges. Mako has no equivalent — a Mako-side merge would require the application to Get → modify → Put inside a transaction.
+- **`CompactionFilter`**: RocksDB invokes user callbacks during compaction to filter or transform values (e.g., TTL-based expiry). Mako has no background compaction, so nothing to hook into.
 - **Custom `Comparator`**: RocksDB accepts a custom key comparator per CF; the default is bytewise lex. Masstree's trie-of-B+trees hardcodes bytewise lex order internally; there's no way to swap in a custom comparator without rewriting Masstree.
 
 None of these have workarounds. `NotSupported` is the honest answer for all three.
@@ -359,7 +375,7 @@ Status s = table->ReverseScan(txn, "scan_key_039", &end,
         return true;
     });
 db->Commit(txn);
-// keys contains scan_key_039, scan_key_038, ..., scan_key_020 in descending order
+// keys contains scan_key_039, scan_key_038, ..., scan_key_021 in descending order
 ```
 
 ### Exists
@@ -516,7 +532,7 @@ Initialize the current thread for database operations. Required for leader nodes
 
 ```cpp
 #include "mako/mako.hh"
-#include "mako/db.hh"
+#include "rocks_interface/db.hh"
 
 mako::DB* db = nullptr;
 mako::Options opts;
@@ -524,7 +540,7 @@ opts.num_threads = 1;
 mako::DB::Open(opts, "/tmp/mako_db", &db);
 
 db->InitThread();
-ITable* tbl = db->GetTable("my_table");
+mako::ITable* tbl = db->GetTable("my_table");
 
 // Write
 void* txn = db->BeginTransaction();
@@ -584,7 +600,7 @@ if (exists) { /* ... */ }
 ```cpp
 void* txn = db->BeginTransaction();
 std::string enc = mako::Encode("new_value");
-Status s = tbl->Insert(txn, "unique_key", enc);
+mako::Status s = tbl->Insert(txn, "unique_key", enc);
 if (s.IsInvalidArgument()) {
     db->Rollback(txn);  // key existed, abort
 } else {
@@ -621,7 +637,10 @@ Three programs currently use the ITable / IDatabase interface:
 | `examples/makoCon.cc` | Redis-compatible server built on top of `mako::DB`; MULTI/EXEC wraps in one transaction | Proof-of-concept for building higher-level protocol layers on the interface. Not currently in CI. |
 | `examples/rocksdbInterfaceTest.cc` | Integration test for `Scan` / `ReverseScan` / `Exists` / `Insert` / `GetApproximateSize` / `ListTables` | Safety-net regression suite for the six ops added in PR #60. Not currently in CI. |
 
-No internal Mako subsystem consumes `IDatabase`. The Mako runtime (TPCC benchmarks, `dbtest`, `txn_proto2_impl`) uses `typed_txn_btree` and `abstract_ordered_index` directly. The four RocksDB *producers* (`ConfigStore`, `ReplicatedDB`, `RocksDBLogStorage`, `RocksDBPersistence`) call the real RocksDB C API directly.
+No internal Mako subsystem consumes `IDatabase`. The Mako runtime (TPC-C and
+`dbtest`) uses `mbta_wrapper`/`mbta_ordered_index` and the abstract ordered-index
+interface directly. The original `txn_proto2_impl`/`typed_txn_btree` path is
+retired. RocksDB-backed producers call the real RocksDB C API directly.
 
 The compat interface is deliberately an **external-consumer surface** — its purpose is to let code that thinks in RocksDB terms compile and run against Mako, whether that's a client program (`simpleTransactionRep`), a higher-level protocol shim (`makoCon`), or an eventual downstream project.
 
@@ -633,7 +652,7 @@ Feasibility assessment for every notable RocksDB feature, from the conceptual an
 
 | RocksDB feature | Mako support today | Feasibility to add | Notes |
 |---|---|---|---|
-| Multiple DBs | Via multiple `SiloRuntime`s | Already possible; `mako::DB::Open` chooses one | Trivial extension of factory |
+| Multiple DBs | Low-level runtimes can coexist, but the current `mako::DB::Open` uses process-wide configuration and legacy initialization | Not exposed as independent RocksDB-style DBs | Requires per-instance configuration and runtime ownership |
 | Column families | Via `GetTable(name)` returning per-name `ITable` | Already there | Naming semantics differ |
 | Put/Get/Delete | Yes | — | Present |
 | MultiGet | No | Straightforward as batch of Get in one txn | Easy |
@@ -670,7 +689,7 @@ Method-level mapping for translating RocksDB code to Mako's interface:
 | Reverse iterator | `table->ReverseScan(txn, start, end, cb)` | Callback-based |
 | `db->KeyMayExist(...)` | `table->Exists(txn, key, &exists)` | Exact check, not bloom filter hint |
 | `db->Merge(wo, key, value)` | Not available | No merge operators |
-| `db->GetSnapshot()` | Not available | No snapshot isolation |
+| `db->GetSnapshot()` | Not available | No explicit snapshot API; successful transactions are serializable through OCC validation |
 | `db->GetColumnFamilyHandle(name)` | `db->GetTable(name)` | Returns `ITable*` |
 | `db->DefaultColumnFamily()` | `db->GetTable("default")` or any name | |
 | `db->ListColumnFamilies(...)` | `db->ListTables()` | Only lists opened tables |
@@ -685,13 +704,13 @@ The existing interface is already at "80% of the common-case surface." What exte
 
 **High value, low-to-medium effort**:
 - **WriteBatch as a single-txn wrapper**: `makoCon.cc` already does this manually — its Redis `MULTI/EXEC` path calls `BeginTransaction` → op → op → `Commit`. Exposing an explicit `WriteBatch` lets it drop that custom wrapper and lets any RocksDB code using `WriteBatch` compile against `mako::DB` unchanged.
-- **MultiGet as batched read within one implicit txn**: `makoCon.cc`'s Redis `MGET` currently issues N individual `Get` calls, each in its own transaction. A native `MultiGet` gives it snapshot-consistent multi-key reads with less overhead. Same win for any consumer doing bulk lookups.
+- **MultiGet as batched read within one implicit txn**: `makoCon.cc`'s Redis `MGET` currently issues N individual `Get` calls, each in its own transaction. A native `MultiGet` gives it one serializable, jointly validated multi-key read with less overhead. Same win for any consumer doing bulk lookups.
 - **Stateful iterator adapter**: no current consumer needs this. Useful when porting RocksDB code that uses `for (it->SeekToFirst(); it->Valid(); it->Next())`. Worth building only when a specific porting target motivates it.
 - **Explicit `Transaction` class** (`OptimisticTransactionDB`-shaped): `simpleTransactionRep.cc` gets what it needs from the `BeginTransaction/Commit/Rollback` triple already. A separate `Transaction` object is mostly a shape match for RocksDB code being ported in; low urgency compared to WriteBatch/MultiGet.
 
 **Medium value, medium effort**:
 - **Cross-shard Scan** (the existing single-shard limitation; requires RPC fan-out for `RemoteDB`).
-- **Snapshot API** limited to transaction-scoped snapshots only; `db->GetSnapshot()` outside a txn returns `NotSupported`.
+- **Transaction-scoped validated reads** as the supported alternative to snapshots; a true `db->GetSnapshot()` API remains unavailable.
 - **Range delete** as `Scan` + per-key delete inside a txn.
 
 **Low value or infeasible**:
@@ -702,7 +721,7 @@ The existing interface is already at "80% of the common-case surface." What exte
 
 **Deliberately don't try**:
 - Making `WriteOptions.sync` mean anything for in-memory paths.
-- Exposing a `SequenceNumber` (Silo has no monotonic global counter).
+- Exposing a `SequenceNumber` (Mako has no monotonic global counter).
 - Snapshots that outlive a transaction.
 
 ---
@@ -713,5 +732,5 @@ The existing interface is already at "80% of the common-case surface." What exte
 - `src/rocks_interface/db.hh` — local `mako::DB` implementation.
 - `src/rocks_interface/remote_db.hh` — remote-client `mako::RemoteDB` implementation.
 - `src/rocks_interface/local_table.hh` — local table backing.
-- `src/mako/silo_runtime.h` — the `SiloRuntime` container that each local DB wraps.
+- `src/mako/silo_runtime.h` — lower-level allocator, RCU, and runtime support; the current local `DB` facade does not own one runtime per database instance.
 - [`masstree-test-plan.md`](masstree-test-plan.md) — masstree correctness testing.

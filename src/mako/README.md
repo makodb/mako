@@ -1,5 +1,11 @@
 ## Mako: Speculative Distributed Transactions with Geo-Replication (OSDI'25)
 
+> **Storage status:** Production Mako uses STO `Transaction` with MassTrans
+> through `storage/mbta_wrapper.hh`. The original Silo
+> `txn`/`txn_btree`/`txn_proto2` engine is retained only as guarded source
+> history and cannot be compiled. `SiloRuntime`, allocator, RCU, and Masstree
+> support remain live; see [`RETIRED_SILO_ENGINE.md`](RETIRED_SILO_ENGINE.md).
+
 ### How to setup environment step by step
 https://aju9mlkupe.feishu.cn/docx/SafudaEdzostF6xFXr2cGgxBnpg?from=from_copylink
 
@@ -8,7 +14,7 @@ https://aju9mlkupe.feishu.cn/docx/SafudaEdzostF6xFXr2cGgxBnpg?from=from_copylink
 ### Different ratio on Microbenchmark
 ### In the same DC or different DC
 1. We run different with ratio [0, 5, 20, 50, 90, 100]
-2. We need to disable warmup in benchmarks/tpcc.cc, otherwise too many erpc connections are created!
+2. We need to disable warmup in benchmarks/tpcc.cc, otherwise too many RPC connections are created!
 3. Run examples 
 ```
 bash ~/mako/bash/run_x.sh

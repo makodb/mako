@@ -1,6 +1,8 @@
 #ifndef _NDB_TXN_H_
 #define _NDB_TXN_H_
 
+#include "retired_silo_engine.h"
+
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
 #else

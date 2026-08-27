@@ -59,7 +59,7 @@ Welcome to the Mako documentation.
 - **[Coroutines & Reactor](developer/coroutines.md)** - Understanding RRR's async model
 - **[Fiber API](developer/fiber-api.md)** - Fiber API documentation
   - [Fiber API Refactoring](developer/fiber-api-refactoring.md)
-- **[Transport Backends](developer/transport-backends.md)** - Switching between rrr/rpc and eRPC
+- **[Transport Backend](developer/transport-backends.md)** - The rrr/rpc transport layer
   - [Transport Stop Fix](developer/transport-stop-fix.md)
 - **[C++ Multicore Optimizations](developer/cpp-multicore-optimizations.md)** - CPU optimization techniques
 

@@ -1169,9 +1169,9 @@ int main(int argc, char **argv) {
     const bool use_raft_replication = (replication_type_normalized == "raft");
 
     // Use replication-specific config files.
-    std::string occ_config = use_raft_replication
-        ? "../config/occ_raft.yml"
-        : "../config/occ_paxos.yml";
+    std::string replication_mode_config = use_raft_replication
+        ? "../config/raft.yml"
+        : "../config/paxos.yml";
     std::string replication_config_prefix = use_raft_replication ? "raft" : "paxos";
 
     // Test wrappers set MAKO_PAXOS_CONFIG_DIR to redirect the replication
@@ -1184,7 +1184,7 @@ int main(int argc, char **argv) {
 
     std::vector<std::string> paxos_config_files{
         replication_config_path,
-        get_current_absolute_path() + occ_config
+        get_current_absolute_path() + replication_mode_config
     };
 
     // Use the new RocksDB-like Open interface
@@ -1237,7 +1237,7 @@ int main(int argc, char **argv) {
 
     if (benchConfig.getLeaderConfig()) {
         // pre-declare sharded tables
-        mako::setup_erpc_server();
+        mako::setup_rpc_server();
         mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         map<int, abstract_ordered_index*> open_tables;
@@ -1314,12 +1314,12 @@ int main(int argc, char **argv) {
         std::cout.flush();
     }
 
-    // Cleanup: stop helper and eRPC server threads before closing DB on leaders
+    // Cleanup: stop helper and RPC server threads before closing DB on leaders
     if (benchConfig.getLeaderConfig()) {
         if (server_only_mode) {
             mako::stop_client_tcp_server();
         }
-        mako::stop_erpc_server();
+        mako::stop_rpc_server();
     }
 
     db_close();

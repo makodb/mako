@@ -1,15 +1,13 @@
-// byte-for-byte compatibility tests for the
-// new BinaryWriteArchive / BinaryReadArchive against the existing
-// `Marshal` operator<< / operator>> wire format.
+// Round-trip tests for BinaryWriteArchive / BinaryReadArchive over
+// BufferSink / BufferSource / FdSink / FdSource, plus the
+// (the former Marshal bridge layer is deleted with Marshal itself).
 //
-// Strategy: encode each primitive (and std::string) via BOTH the old
-// `Marshal` path AND the new `BinaryWriteArchive` + `BufferSink` path,
-// then assert the two byte buffers are identical.
-//
-// Read side: encode via Marshal, then decode via BinaryReadArchive +
-// BufferSource, and verify the value round-trips. (The reverse —
-// encode via Archive, decode via Marshal — is implicitly verified by
-// the byte-equality test plus Marshal's existing tests.)
+// Historically this suite byte-compared the archive encoders against
+// the old `Marshal` operator<< / operator>> serde surface. That
+// Marshal-direct serde surface has been deleted; each case now
+// asserts an archive encode -> decode round-trip over the same wire
+// format (byte-level expectations that survive are asserted against
+// the archive bytes directly).
 
 #include <stdint.h>
 #include <stddef.h>
@@ -22,34 +20,23 @@
 
 
 #include <gtest/gtest.h>
+#include <rusty/arc.hpp>
+#include <rusty/marker.hpp>
+#include <rusty/option.hpp>
 
-#include <rusty/btreemap.hpp>
-#include <rusty/btreeset.hpp>
-#include <rusty/hashmap.hpp>
-#include <rusty/hashset.hpp>
-#include <rusty/vec.hpp>
 
 #include "../rrr.hpp"
-#include "../misc/marshal.hpp"
 #include "../misc/serializable.hpp"
 #include "../misc/serializable_envelope.hpp"
 
 import std;
+import rusty;
 import rrr.basetypes;
 
 namespace rrr {
 namespace {
 
-// Drain a Marshal into a contiguous byte vector for comparison.
-std::vector<uint8_t> drain_marshal(Marshal& m) {
-  std::vector<uint8_t> out;
-  out.resize(m.content_size());
-  if (!out.empty()) {
-    auto got = m.read(out.data(), out.size());
-    EXPECT_EQ(got, out.size());
-  }
-  return out;
-}
+
 
 std::vector<uint8_t> sink_to_vector(const BufferSink& sink) {
   std::vector<uint8_t> out;
@@ -61,33 +48,16 @@ std::vector<uint8_t> sink_to_vector(const BufferSink& sink) {
 }
 
 template <typename T>
-void check_byte_compat_write(const T& value) {
-  Marshal old_m;
-  old_m << value;
-  auto old_bytes = drain_marshal(old_m);
-
+void check_round_trip(const T& value) {
+  // Encode via the archive path.
   BufferSink sink;
   BinaryWriteArchive archive(make_sink_proxy(&sink));
-  archive << value;
-  auto new_bytes = sink_to_vector(sink);
+  rrr::Serialize_::serialize(value, archive);
 
-  ASSERT_EQ(old_bytes.size(), new_bytes.size())
-      << "byte-length mismatch for type " << typeid(T).name();
-  EXPECT_EQ(old_bytes, new_bytes)
-      << "byte content mismatch for type " << typeid(T).name();
-}
-
-template <typename T>
-void check_round_trip(const T& value) {
-  // Encode via the OLD Marshal path.
-  Marshal old_m;
-  old_m << value;
-  auto bytes = drain_marshal(old_m);
-
-  BufferSource source(bytes.data(), bytes.size());
+  BufferSource source(sink.bytes.data(), sink.bytes.len());
   BinaryReadArchive reader(make_source_proxy(&source));
   T decoded{};
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
 
   EXPECT_EQ(decoded, value)
       << "round-trip mismatch for type " << typeid(T).name();
@@ -102,7 +72,6 @@ TEST(MarshalArchiveByteCompat, Int8Boundary) {
   for (int8_t v : {std::numeric_limits<int8_t>::min(),
                    int8_t{-1}, int8_t{0}, int8_t{1},
                    std::numeric_limits<int8_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -111,7 +80,6 @@ TEST(MarshalArchiveByteCompat, Int16Boundary) {
   for (int16_t v : {std::numeric_limits<int16_t>::min(),
                     int16_t{-1}, int16_t{0}, int16_t{1},
                     std::numeric_limits<int16_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -120,7 +88,6 @@ TEST(MarshalArchiveByteCompat, Int32Boundary) {
   for (int32_t v : {std::numeric_limits<int32_t>::min(),
                     int32_t{-1}, int32_t{0}, int32_t{1}, int32_t{12345},
                     std::numeric_limits<int32_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -130,7 +97,6 @@ TEST(MarshalArchiveByteCompat, Int64Boundary) {
                     int64_t{-1}, int64_t{0}, int64_t{1},
                     int64_t{0x1234'5678'9ABC'DEF0LL},
                     std::numeric_limits<int64_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -138,7 +104,6 @@ TEST(MarshalArchiveByteCompat, Int64Boundary) {
 TEST(MarshalArchiveByteCompat, Uint8Boundary) {
   for (uint8_t v : {uint8_t{0}, uint8_t{1}, uint8_t{0x7F}, uint8_t{0x80},
                     std::numeric_limits<uint8_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -146,7 +111,6 @@ TEST(MarshalArchiveByteCompat, Uint8Boundary) {
 TEST(MarshalArchiveByteCompat, Uint16Boundary) {
   for (uint16_t v : {uint16_t{0}, uint16_t{1},
                      std::numeric_limits<uint16_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -154,7 +118,6 @@ TEST(MarshalArchiveByteCompat, Uint16Boundary) {
 TEST(MarshalArchiveByteCompat, Uint32Boundary) {
   for (uint32_t v : {uint32_t{0}, uint32_t{1}, uint32_t{0xDEADBEEF},
                      std::numeric_limits<uint32_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -163,7 +126,6 @@ TEST(MarshalArchiveByteCompat, Uint64Boundary) {
   for (uint64_t v : {uint64_t{0}, uint64_t{1},
                      uint64_t{0xCAFEBABE'DEADBEEF},
                      std::numeric_limits<uint64_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -174,7 +136,6 @@ TEST(MarshalArchiveByteCompat, DoubleBoundary) {
   for (double v : {0.0, 1.0, -1.0, 3.14159265358979,
                    std::numeric_limits<double>::min(),
                    std::numeric_limits<double>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -192,24 +153,15 @@ TEST(MarshalArchiveByteCompat, V32Boundary) {
                   std::numeric_limits<i32>::min()}) {
     v32 v(raw);
 
-    // Byte compatibility on the write side.
-    Marshal old_m;
-    old_m << v;
-    auto old_bytes = drain_marshal(old_m);
-
     BufferSink sink;
     BinaryWriteArchive archive(make_sink_proxy(&sink));
-    archive << v;
-    auto new_bytes = sink_to_vector(sink);
-
-    ASSERT_EQ(old_bytes.size(), new_bytes.size()) << "v32 raw=" << raw;
-    EXPECT_EQ(old_bytes, new_bytes) << "v32 raw=" << raw;
+    rrr::Serialize_::serialize(v, archive);
 
     // Round-trip read.
-    BufferSource source(old_bytes.data(), old_bytes.size());
+    BufferSource source(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&source));
     v32 decoded;
-    reader >> decoded;
+    rrr::Deserialize_::deserialize(decoded, reader);
     EXPECT_EQ(decoded.get(), raw) << "v32 round-trip raw=" << raw;
     EXPECT_TRUE(source.eof());
   }
@@ -224,22 +176,14 @@ TEST(MarshalArchiveByteCompat, V64Boundary) {
                   std::numeric_limits<int64_t>::min()}) {
     v64 v(raw);
 
-    Marshal old_m;
-    old_m << v;
-    auto old_bytes = drain_marshal(old_m);
-
     BufferSink sink;
     BinaryWriteArchive archive(make_sink_proxy(&sink));
-    archive << v;
-    auto new_bytes = sink_to_vector(sink);
+    rrr::Serialize_::serialize(v, archive);
 
-    ASSERT_EQ(old_bytes.size(), new_bytes.size()) << "v64 raw=" << raw;
-    EXPECT_EQ(old_bytes, new_bytes) << "v64 raw=" << raw;
-
-    BufferSource source(old_bytes.data(), old_bytes.size());
+    BufferSource source(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&source));
     v64 decoded;
-    reader >> decoded;
+    rrr::Deserialize_::deserialize(decoded, reader);
     EXPECT_EQ(decoded.get(), raw) << "v64 round-trip raw=" << raw;
     EXPECT_TRUE(source.eof());
   }
@@ -251,13 +195,11 @@ TEST(MarshalArchiveByteCompat, V64Boundary) {
 
 TEST(MarshalArchiveByteCompat, StringEmpty) {
   std::string s = "";
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StringShort) {
   std::string s = "hello";
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
@@ -265,58 +207,54 @@ TEST(MarshalArchiveByteCompat, StringWithEmbeddedNul) {
   // 5-byte string with a NUL in the middle. The wire format MUST
   // preserve it byte-for-byte (length-prefixed; no C-string treatment).
   std::string s("ab\0cd", 5);
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StringMedium) {
   std::string s(200, 'x');
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StringLongerThanV64Boundary) {
   // 100 KB string — exercises the multi-byte v64 length prefix path.
   std::string s(100 * 1024, 'a');
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
 // ---------------------------------------------------------------------------
-// Composite write — multiple primitives in a row, byte-for-byte against
-// Marshal's accumulated buffer.
+// Composite write — multiple primitives in a row, decoded back in order.
 // ---------------------------------------------------------------------------
 
 TEST(MarshalArchiveByteCompat, CompositePrimitiveSequence) {
-  // Encode a heterogenous sequence via both paths.
-  auto encode_old = [&](Marshal& m) {
-    int32_t a = 0x12345678;
-    int64_t b = 0x1122334455667788LL;
-    v64 c(8192);
-    std::string d = "hello world";
-    double e = 3.14;
-    m << a << b << c << d << e;
-  };
-  auto encode_new = [&](BinaryWriteArchive& ar) {
-    int32_t a = 0x12345678;
-    int64_t b = 0x1122334455667788LL;
-    v64 c(8192);
-    std::string d = "hello world";
-    double e = 3.14;
-    ar << a << b << c << d << e;
-  };
-
-  Marshal old_m;
-  encode_old(old_m);
-  auto old_bytes = drain_marshal(old_m);
+  // Encode a heterogenous sequence, then decode it back in order.
+  int32_t a = 0x12345678;
+  int64_t b = 0x1122334455667788LL;
+  v64 c(8192);
+  std::string d = "hello world";
+  double e = 3.14;
 
   BufferSink sink;
   BinaryWriteArchive archive(make_sink_proxy(&sink));
-  encode_new(archive);
-  auto new_bytes = sink_to_vector(sink);
+  rrr::Serialize_::serialize(a, archive);
+  rrr::Serialize_::serialize(b, archive);
+  rrr::Serialize_::serialize(c, archive);
+  rrr::Serialize_::serialize(d, archive);
+  rrr::Serialize_::serialize(e, archive);
 
-  ASSERT_EQ(old_bytes.size(), new_bytes.size());
-  EXPECT_EQ(old_bytes, new_bytes);
+  BufferSource source(sink.bytes.data(), sink.bytes.len());
+  BinaryReadArchive reader(make_source_proxy(&source));
+  int32_t a2; int64_t b2; v64 c2{0}; std::string d2; double e2;
+  rrr::Deserialize_::deserialize(a2, reader);
+  rrr::Deserialize_::deserialize(b2, reader);
+  rrr::Deserialize_::deserialize(c2, reader);
+  rrr::Deserialize_::deserialize(d2, reader);
+  rrr::Deserialize_::deserialize(e2, reader);
+  EXPECT_EQ(a2, a);
+  EXPECT_EQ(b2, b);
+  EXPECT_EQ(c2.get(), c.get());
+  EXPECT_EQ(d2, d);
+  EXPECT_EQ(e2, e);
+  EXPECT_TRUE(source.eof());
 }
 
 // ---------------------------------------------------------------------------
@@ -328,20 +266,21 @@ TEST(BufferSourceSemantics, EofReturnsZero) {
   BufferSource source(bytes, sizeof(bytes));
 
   uint8_t got[2];
-  EXPECT_EQ(source.read(got, 2), 2u);
+  EXPECT_EQ(source.read_bytes(got, 2), 2u);
   EXPECT_EQ(source.remaining(), 1u);
   EXPECT_FALSE(source.eof());
 
-  EXPECT_EQ(source.read(got, 2), 1u);  // partial read of last byte
+  EXPECT_EQ(source.read_bytes(got, 2), 1u);  // partial read of last byte
   EXPECT_TRUE(source.eof());
 
-  EXPECT_EQ(source.read(got, 2), 0u);  // no bytes left
+  EXPECT_EQ(source.read_bytes(got, 2), 0u);  // no bytes left
 }
 
 TEST(BufferSinkSemantics, AccumulatesBytes) {
   BufferSink sink;
   uint32_t value = 0xDEADBEEF;
-  sink.write(&value, sizeof(value));
+  // buffer_sink_write is gone; the copy is BufferSink::write_bytes (DSL).
+  sink.write_bytes(reinterpret_cast<const std::uint8_t*>(&value), sizeof(value));
   ASSERT_EQ(sink.bytes.len(), 4u);
 
   uint32_t reread;
@@ -356,58 +295,27 @@ TEST(BufferSinkSemantics, AccumulatesBytes) {
 // each element serialized via its element-type operator<<. Iteration
 // order matches the container's begin()/end() — for ordered containers
 // (set/map/BTreeSet/BTreeMap) sorted-key order; for unordered containers
-// (unordered_set/HashSet/unordered_map/HashMap) the same bucket-walk
-// order Marshal uses, so byte-for-byte compatibility holds.
+// (unordered_set/HashSet/unordered_map/HashMap) the container's
+// bucket-walk order.
 // ---------------------------------------------------------------------------
 
 // Pair — no length prefix, just first followed by second.
 TEST(MarshalArchiveByteCompat, PairOfPrimitives) {
   std::pair<int32_t, std::string> p{42, "hello"};
-  check_byte_compat_write(p);
-
-  // Round-trip: Marshal-encoded → BinaryReadArchive.
-  Marshal m;
-  m << p;
-  auto bytes = drain_marshal(m);
-  BufferSource source(bytes.data(), bytes.size());
-  BinaryReadArchive reader(make_source_proxy(&source));
-  std::pair<int32_t, std::string> decoded;
-  reader >> decoded;
-  EXPECT_EQ(decoded, p);
-  EXPECT_TRUE(source.eof());
+  check_round_trip(p);
 }
 
-// Helper that drives the standard container test pattern: encode via
-// both paths, byte-compat assert, round-trip from Marshal-bytes back
-// through BinaryReadArchive.
-template <typename Container>
-void check_container_compat_write(const Container& c) {
-  Marshal old_m;
-  old_m << c;
-  auto old_bytes = drain_marshal(old_m);
-
-  BufferSink sink;
-  BinaryWriteArchive archive(make_sink_proxy(&sink));
-  archive << c;
-  auto new_bytes = sink_to_vector(sink);
-
-  ASSERT_EQ(old_bytes.size(), new_bytes.size())
-      << "container byte-length mismatch for " << typeid(Container).name();
-  EXPECT_EQ(old_bytes, new_bytes)
-      << "container byte content mismatch for " << typeid(Container).name();
-}
-
-// Helper for round-trip: encode via Marshal, decode via BinaryReadArchive,
-// assert equality.
+// Helper for round-trip: encode + decode via the archive, assert
+// equality.
 template <typename Container>
 void check_container_round_trip(const Container& c) {
-  Marshal m;
-  m << c;
-  auto bytes = drain_marshal(m);
-  BufferSource source(bytes.data(), bytes.size());
+  BufferSink sink;
+  BinaryWriteArchive archive(make_sink_proxy(&sink));
+  rrr::Serialize_::serialize(c, archive);
+  BufferSource source(sink.bytes.data(), sink.bytes.len());
   BinaryReadArchive reader(make_source_proxy(&source));
   Container decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   EXPECT_EQ(decoded, c) << "container round-trip mismatch for "
                        << typeid(Container).name();
   EXPECT_TRUE(source.eof());
@@ -417,22 +325,15 @@ void check_container_round_trip(const Container& c) {
 
 // rusty containers (Vec/BTreeSet/HashSet/BTreeMap/HashMap):
 //
-// Note: the existing `Marshal::operator<<` templates for `rusty::Vec<T>`
-// etc. (in marshal.hpp lines 1110+) reference `typename
-// rusty::Vec<T>::const_iterator` — a typedef that rusty types do not
-// expose. Those templates are dead code in the existing Marshal — they
-// would fail to compile if any real call site instantiated them, but
-// in practice rrr only marshals std:: containers. So byte-for-byte
-// compatibility is not testable for rusty containers (no working
-// reference). Instead we verify the new Archive round-trips correctly
-// through itself (encode + decode via Archive), which is the actual
-// guarantee the new code provides.
+// Verified by round-tripping through the archive (encode + decode);
+// equality is checked via len() + element access since rusty types
+// lack a deep operator== usable here.
 
 template <typename Container>
 void check_archive_round_trip_only(const Container& c) {
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << c;
+  rrr::Serialize_::serialize(c, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
@@ -440,7 +341,7 @@ void check_archive_round_trip_only(const Container& c) {
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   Container decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   EXPECT_TRUE(source.eof()) << "decoder did not consume all bytes for "
                             << typeid(Container).name();
   // Element-wise comparison via len() + index for rusty types.
@@ -459,7 +360,7 @@ TEST(MarshalArchiveRoundTrip, RustyVecPrimitives) {
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << v;
+  rrr::Serialize_::serialize(v, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
@@ -467,7 +368,7 @@ TEST(MarshalArchiveRoundTrip, RustyVecPrimitives) {
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   rusty::Vec<int32_t> decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.size(), v.size());
   for (size_t i = 0; i < v.size(); ++i) {
     EXPECT_EQ(decoded[i], v[i]);
@@ -477,38 +378,32 @@ TEST(MarshalArchiveRoundTrip, RustyVecPrimitives) {
 
 TEST(MarshalArchiveByteCompat, StdVectorEmpty) {
   std::vector<int32_t> v;
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, StdVectorPrimitives) {
   std::vector<int64_t> v{1, 2, 3, -1, 0x7FFFFFFFFFFFFFFFLL};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, StdVectorOfStrings) {
   std::vector<std::string> v{"a", "bb", "", "ccc", "dddd"};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, StdVectorOfPairs) {
   std::vector<std::pair<int32_t, std::string>> v{
       {1, "one"}, {2, "two"}, {3, "three"}};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, NestedVectors) {
   std::vector<std::vector<int32_t>> v{{1, 2}, {}, {3, 4, 5}};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, StdListPrimitives) {
   std::list<int32_t> v{10, 20, 30};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
@@ -516,63 +411,84 @@ TEST(MarshalArchiveByteCompat, StdListPrimitives) {
 
 TEST(MarshalArchiveByteCompat, StdSetEmpty) {
   std::set<int32_t> s;
-  check_container_compat_write(s);
   check_container_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StdSetPrimitives) {
-  // std::set is sorted by key — both Marshal and BinaryWriteArchive
-  // iterate in the same sorted order, so bytes match.
+  // std::set is sorted by key — encoded in sorted order.
   std::set<int32_t> s{5, 1, 3, 2, 4};
-  check_container_compat_write(s);
   check_container_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StdUnorderedSetPrimitives) {
-  // For unordered_set, both Marshal and BinaryWriteArchive iterate via
-  // the same begin()/end() — same hash table iteration order, so the
-  // bytes match (even though the order is not deterministic across
-  // runs/sets, within a single set both encoders produce the same).
+  // For unordered_set the encoder iterates begin()/end() — the hash
+  // table's own order. Round-trip equality is order-insensitive.
   std::unordered_set<int32_t> s{1, 2, 3, 4, 5};
-  check_container_compat_write(s);
   check_container_round_trip(s);
 }
 
 TEST(MarshalArchiveRoundTrip, RustyBTreeSetPrimitives) {
-  rusty::BTreeSet<int32_t> s;
+  auto s = rusty::BTreeSet<int32_t>::new_();
   s.insert(5); s.insert(1); s.insert(3); s.insert(2); s.insert(4);
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << s;
+  rrr::Serialize_::serialize(s, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
 
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
-  rusty::BTreeSet<int32_t> decoded;
-  reader >> decoded;
+  auto decoded = rusty::BTreeSet<int32_t>::new_();
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.len(), s.len());
   EXPECT_TRUE(source.eof());
 }
 
 TEST(MarshalArchiveRoundTrip, RustyHashSetPrimitives) {
-  rusty::HashSet<int32_t> s;
-  s.insert(1); s.insert(2); s.insert(3);
+  // This test used to encode a wire-compatible std::set and only decode
+  // into a rusty::HashSet, because the old hashbrown_port enumeration
+  // routed through the anonymous `rusty::iter()` dispatcher in slice.hpp
+  // and SIGSEGV'd clang-22's Itanium mangler. That is over: rusty::HashSet
+  // is now std_port's, whose iter() returns the NAMED struct
+  // std_port::collections::hash::set::Iter<T>.
+  //
+  // Instantiating the ENCODER here is the point of the test. The
+  // Serialize impl for rusty::HashSet in serializable.cpp is a template,
+  // so a stale body (it used to read a `map` field that std_port's HashSet
+  // does not have) compiles fine until something instantiates it. This
+  // call is that something — if the body regresses, this TU fails to
+  // compile.
+  auto s = rusty::HashSet<int32_t>::new_();
+  s.insert(1);
+  s.insert(2);
+  s.insert(3);
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << s;
+  rrr::Serialize_::serialize(s, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
 
+  // Wire shape is a v64 count + elements — byte-length identical to the
+  // std::set encoding of the same three values. (Element ORDER is std's
+  // RandomState order and varies per run, so only the length is fixed.)
+  std::set<int32_t> reference{1, 2, 3};
+  BufferSink reference_sink;
+  BinaryWriteArchive reference_writer(make_sink_proxy(&reference_sink));
+  rrr::Serialize_::serialize(reference, reference_writer);
+  EXPECT_EQ(sink.bytes.len(), reference_sink.bytes.len());
+
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   rusty::HashSet<int32_t> decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.len(), s.len());
+  EXPECT_TRUE(decoded.contains(1));
+  EXPECT_TRUE(decoded.contains(2));
+  EXPECT_TRUE(decoded.contains(3));
   EXPECT_TRUE(source.eof());
 }
 
@@ -580,59 +496,72 @@ TEST(MarshalArchiveRoundTrip, RustyHashSetPrimitives) {
 
 TEST(MarshalArchiveByteCompat, StdMapEmpty) {
   std::map<int32_t, std::string> m;
-  check_container_compat_write(m);
   check_container_round_trip(m);
 }
 
 TEST(MarshalArchiveByteCompat, StdMapPrimitives) {
   std::map<int32_t, std::string> m{
       {3, "three"}, {1, "one"}, {2, "two"}};
-  check_container_compat_write(m);
   check_container_round_trip(m);
 }
 
 TEST(MarshalArchiveByteCompat, StdUnorderedMapPrimitives) {
   std::unordered_map<int32_t, std::string> m{
       {1, "a"}, {2, "b"}, {3, "c"}};
-  check_container_compat_write(m);
   check_container_round_trip(m);
 }
 
 TEST(MarshalArchiveRoundTrip, RustyBTreeMapPrimitives) {
-  rusty::BTreeMap<int32_t, int64_t> m;
+  auto m = rusty::BTreeMap<int32_t, int64_t>::new_();
   m.insert(3, 30); m.insert(1, 10); m.insert(2, 20);
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << m;
+  rrr::Serialize_::serialize(m, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
 
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
-  rusty::BTreeMap<int32_t, int64_t> decoded;
-  reader >> decoded;
+  auto decoded = rusty::BTreeMap<int32_t, int64_t>::new_();
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.len(), m.len());
   EXPECT_TRUE(source.eof());
 }
 
 TEST(MarshalArchiveRoundTrip, RustyHashMapPrimitives) {
-  rusty::HashMap<int32_t, std::string> m;
-  m.insert(1, "a"); m.insert(2, "b"); m.insert(3, "c");
+  // Encoder + decoder, both through rusty::HashMap — see the note on
+  // RustyHashSetPrimitives for why this stopped being decode-only. The
+  // Serialize impl is a template; this call is what instantiates it.
+  auto m = rusty::HashMap<int32_t, std::string>::new_();
+  m.insert(1, std::string("a"));
+  m.insert(2, std::string("b"));
+  m.insert(3, std::string("c"));
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << m;
+  rrr::Serialize_::serialize(m, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
 
+  // v64 count + key/value pairs — byte-length identical to the std::map
+  // encoding of the same three entries; pair ORDER varies (RandomState).
+  std::map<int32_t, std::string> reference{{1, "a"}, {2, "b"}, {3, "c"}};
+  BufferSink reference_sink;
+  BinaryWriteArchive reference_writer(make_sink_proxy(&reference_sink));
+  rrr::Serialize_::serialize(reference, reference_writer);
+  EXPECT_EQ(sink.bytes.len(), reference_sink.bytes.len());
+
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   rusty::HashMap<int32_t, std::string> decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.len(), m.len());
+  EXPECT_TRUE(decoded.contains_key(1));
+  EXPECT_TRUE(decoded.contains_key(2));
+  EXPECT_TRUE(decoded.contains_key(3));
   EXPECT_TRUE(source.eof());
 }
 
@@ -657,21 +586,33 @@ struct ScopedPipe {
   }
 };
 
+// Temp directory for test scratch: honour TMPDIR, fall back to /tmp.
+// Hardcoding /tmp made these tests fail with ENOSPC whenever the host's
+// /tmp tmpfs filled up -- and the failure mode was a bare SIGABRT from
+// the write path, which reads exactly like a real regression.
+inline std::string test_tmp_dir() {
+  const char* env = ::getenv("TMPDIR");
+  return (env != nullptr && env[0] != '\0') ? std::string(env) : std::string("/tmp");
+}
+
 // RAII wrapper around a temp file. Lives only inside the test.
 struct ScopedTempFile {
-  char path[64] = "/tmp/mako_archive_test_XXXXXX";
+  std::vector<char> path;
   int fd = -1;
   ScopedTempFile() {
-    fd = ::mkstemp(path);
-    EXPECT_GE(fd, 0);
+    const std::string tmpl = test_tmp_dir() + "/mako_archive_test_XXXXXX";
+    path.assign(tmpl.begin(), tmpl.end());
+    path.push_back('\0');
+    fd = ::mkstemp(path.data());
+    EXPECT_GE(fd, 0) << "mkstemp failed under " << test_tmp_dir();
   }
   ~ScopedTempFile() {
     if (fd >= 0) ::close(fd);
-    ::unlink(path);
+    ::unlink(path.data());
   }
   // Reopen by path read-only, returning a fresh fd. Caller closes it.
   int reopen_ro() const {
-    int rfd = ::open(path, O_RDONLY);
+    int rfd = ::open(path.data(), O_RDONLY);
     EXPECT_GE(rfd, 0);
     return rfd;
   }
@@ -681,7 +622,7 @@ TEST(FdSinkSemantics, EmptyWriteIsNoop) {
   ScopedPipe p;
   FdSink sink(p.fds[1]);
   // Calling write(p, 0) should not block and should not consume bytes.
-  sink.write(nullptr, 0);
+  sink.write_bytes(nullptr, 0);
   // Close the write end. The read end should immediately see EOF.
   p.close_write();
   uint8_t buf[1];
@@ -692,7 +633,7 @@ TEST(FdSinkSemantics, EmptyWriteIsNoop) {
 TEST(FdSourceSemantics, EmptyReadIsNoop) {
   ScopedPipe p;
   FdSource src(p.fds[0]);
-  size_t got = src.read(nullptr, 0);
+  size_t got = src.read_bytes(nullptr, 0);
   EXPECT_EQ(got, 0u);
 }
 
@@ -709,14 +650,14 @@ TEST(FdSourceSemantics, EofReturnsShortRead) {
   FdSource src(p.fds[0]);
   uint8_t buf[16];
   std::memset(buf, 0, sizeof(buf));
-  size_t got = src.read(buf, sizeof(buf));
+  size_t got = src.read_bytes(buf, sizeof(buf));
   EXPECT_EQ(got, 3u);
   EXPECT_EQ(buf[0], 0x01);
   EXPECT_EQ(buf[1], 0x02);
   EXPECT_EQ(buf[2], 0x03);
 
   // Subsequent read on the closed pipe sees EOF immediately.
-  size_t again = src.read(buf, 4);
+  size_t again = src.read_bytes(buf, 4);
   EXPECT_EQ(again, 0u);
 }
 
@@ -740,11 +681,11 @@ TEST(FdSinkArchive, PipeRoundTripPrimitives) {
   {
     FdSink sink(p.fds[1]);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<int32_t>(0x12345678);
-    writer << static_cast<int64_t>(-1);
-    writer << std::string("hello");
-    writer << v32(5);
-    writer << v64(1024);
+    rrr::Serialize_::serialize(static_cast<int32_t>(0x12345678), writer);
+    rrr::Serialize_::serialize(static_cast<int64_t>(-1), writer);
+    rrr::Serialize_::serialize(std::string("hello"), writer);
+    rrr::Serialize_::serialize(v32(5), writer);
+    rrr::Serialize_::serialize(v64(1024), writer);
   }
   p.close_write();
   reader_thread.join();
@@ -755,7 +696,11 @@ TEST(FdSinkArchive, PipeRoundTripPrimitives) {
   BinaryReadArchive reader(make_source_proxy(&source));
 
   int32_t a; int64_t b; std::string c; v32 d{0}; v64 e{0};
-  reader >> a >> b >> c >> d >> e;
+  rrr::Deserialize_::deserialize(a, reader);
+  rrr::Deserialize_::deserialize(b, reader);
+  rrr::Deserialize_::deserialize(c, reader);
+  rrr::Deserialize_::deserialize(d, reader);
+  rrr::Deserialize_::deserialize(e, reader);
   EXPECT_EQ(a, 0x12345678);
   EXPECT_EQ(b, -1);
   EXPECT_EQ(c, "hello");
@@ -782,22 +727,22 @@ TEST(FdSinkArchive, ByteForByteCompatVsBufferSink) {
   {
     FdSink sink(p.fds[1]);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<uint32_t>(42);
-    writer << std::string("the quick brown fox");
-    writer << v64(0x123456789ABCDEFLL);
+    rrr::Serialize_::serialize(static_cast<uint32_t>(42), writer);
+    rrr::Serialize_::serialize(std::string("the quick brown fox"), writer);
+    rrr::Serialize_::serialize(v64(0x123456789ABCDEFLL), writer);
     std::vector<int32_t> vec{1, 2, 3, 4, 5};
-    writer << vec;
+    rrr::Serialize_::serialize(vec, writer);
   }
   p.close_write();
   reader_thread.join();
 
   BufferSink ref_sink;
   BinaryWriteArchive ref_writer(make_sink_proxy(&ref_sink));
-  ref_writer << static_cast<uint32_t>(42);
-  ref_writer << std::string("the quick brown fox");
-  ref_writer << v64(0x123456789ABCDEFLL);
+  rrr::Serialize_::serialize(static_cast<uint32_t>(42), ref_writer);
+  rrr::Serialize_::serialize(std::string("the quick brown fox"), ref_writer);
+  rrr::Serialize_::serialize(v64(0x123456789ABCDEFLL), ref_writer);
   std::vector<int32_t> vec{1, 2, 3, 4, 5};
-  ref_writer << vec;
+  rrr::Serialize_::serialize(vec, ref_writer);
 
   std::vector<uint8_t> ref_bytes(ref_sink.bytes.len());
   for (size_t i = 0; i < ref_sink.bytes.len(); ++i) ref_bytes[i] = ref_sink.bytes[i];
@@ -812,13 +757,13 @@ TEST(FdSourceArchive, TempFileRoundTripCompositeSequence) {
   {
     FdSink sink(tf.fd);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<int32_t>(7);
-    writer << static_cast<int64_t>(-99);
-    writer << std::string("temp file payload");
+    rrr::Serialize_::serialize(static_cast<int32_t>(7), writer);
+    rrr::Serialize_::serialize(static_cast<int64_t>(-99), writer);
+    rrr::Serialize_::serialize(std::string("temp file payload"), writer);
     std::vector<std::string> strs{"a", "bb", "ccc"};
-    writer << strs;
+    rrr::Serialize_::serialize(strs, writer);
     std::map<int32_t, int64_t> m{{1, 100}, {2, 200}, {3, 300}};
-    writer << m;
+    rrr::Serialize_::serialize(m, writer);
   }
   // Flush by closing — done by ScopedTempFile dtor at scope end. Force
   // it now since we want to reopen for reading.
@@ -832,7 +777,11 @@ TEST(FdSourceArchive, TempFileRoundTripCompositeSequence) {
     int32_t a; int64_t b; std::string c;
     std::vector<std::string> strs;
     std::map<int32_t, int64_t> m;
-    reader >> a >> b >> c >> strs >> m;
+    rrr::Deserialize_::deserialize(a, reader);
+    rrr::Deserialize_::deserialize(b, reader);
+    rrr::Deserialize_::deserialize(c, reader);
+    rrr::Deserialize_::deserialize(strs, reader);
+    rrr::Deserialize_::deserialize(m, reader);
     EXPECT_EQ(a, 7);
     EXPECT_EQ(b, -99);
     EXPECT_EQ(c, "temp file payload");
@@ -872,7 +821,7 @@ TEST(FdSinkArchive, LargePayloadChunkedWrite) {
   {
     FdSink sink(p.fds[1]);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << big;
+    rrr::Serialize_::serialize(big, writer);
   }
   p.close_write();
   reader_thread.join();
@@ -881,7 +830,7 @@ TEST(FdSinkArchive, LargePayloadChunkedWrite) {
   BufferSource source(drained.data(), drained.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   std::vector<int32_t> decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   EXPECT_EQ(decoded.size(), big.size());
   EXPECT_EQ(decoded, big);
   EXPECT_TRUE(source.eof());
@@ -897,10 +846,10 @@ TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
   // splatters bytes onto the pipe in 1-byte writes.
   BufferSink prep_sink;
   BinaryWriteArchive prep(make_sink_proxy(&prep_sink));
-  prep << static_cast<int32_t>(0xDEADBEEF);
-  prep << static_cast<int64_t>(0x1122334455667788LL);
-  prep << std::string("chunked across syscalls");
-  prep << v64(987654321LL);
+  rrr::Serialize_::serialize(static_cast<int32_t>(0xDEADBEEF), prep);
+  rrr::Serialize_::serialize(static_cast<int64_t>(0x1122334455667788LL), prep);
+  rrr::Serialize_::serialize(std::string("chunked across syscalls"), prep);
+  rrr::Serialize_::serialize(v64(987654321LL), prep);
 
   std::vector<uint8_t> payload(prep_sink.bytes.len());
   for (size_t i = 0; i < prep_sink.bytes.len(); ++i) payload[i] = prep_sink.bytes[i];
@@ -918,7 +867,10 @@ TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
   FdSource src(p.fds[0]);
   BinaryReadArchive reader(make_source_proxy(&src));
   int32_t a; int64_t b; std::string c; v64 d{0};
-  reader >> a >> b >> c >> d;
+  rrr::Deserialize_::deserialize(a, reader);
+  rrr::Deserialize_::deserialize(b, reader);
+  rrr::Deserialize_::deserialize(c, reader);
+  rrr::Deserialize_::deserialize(d, reader);
   EXPECT_EQ(static_cast<uint32_t>(a), 0xDEADBEEFu);
   EXPECT_EQ(b, 0x1122334455667788LL);
   EXPECT_EQ(c, "chunked across syscalls");
@@ -929,10 +881,8 @@ TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
 
 // ---- SerializableProxy / SerializableRegistry --------------
 
-// Canary command for Phase 2: implements BOTH the new Serializable
-// interface (`save` / `load` / `kind`) AND the old Marshal-based
-// interface (`to_marshal` / `from_marshal`) so we can byte-compare
-// the two paths.
+// Canary command for Phase 2: implements the Serializable interface
+// (`save` / `load` / `kind`).
 //
 // This type is intentionally test-local — Phase 2 only validates the
 // new infrastructure. Per-command-type production migrations land in
@@ -947,39 +897,34 @@ struct CanaryCommand {
   int32_t kind() const { return kKind; }
 
   void save(BinaryWriteArchive& ar) const {
-    ar << id << name << values;
+    rrr::Serialize_::serialize(id, ar);
+    rrr::Serialize_::serialize(name, ar);
+    rrr::Serialize_::serialize(values, ar);
   }
 
   void load(BinaryReadArchive& ar) {
-    ar >> id >> name >> values;
-  }
-
-  // ---- Old Marshal-based interface (for byte-compat verification) -
-  Marshal& to_marshal(Marshal& m) const {
-    m << id << name << values;
-    return m;
-  }
-
-  Marshal& from_marshal(Marshal& m) {
-    m >> id >> name >> values;
-    return m;
+    rrr::Deserialize_::deserialize(id, ar);
+    rrr::Deserialize_::deserialize(name, ar);
+    rrr::Deserialize_::deserialize(values, ar);
   }
 };
 
 TEST(SerializableProxy, ByteCompatVsMarshalDirect) {
   // Encode the same payload via:
-  //   (a) the old Marshal path: canary.to_marshal(m)
-  //   (b) the new SerializableProxy path: proxy->save(writer)
-  // and assert the two byte streams are identical.
+  //   (a) the archive-native path: canary.save(writer)
+  //   (b) the SerializableProxy path: proxy->save(writer)
+  // assert the two byte streams are identical, then load the bytes
+  // back into a fresh command and verify the fields.
   CanaryCommand canary;
   canary.id = 42;
   canary.name = "hello, world";
   canary.values = {1, 2, 3, 4, 5};
 
-  // Path (a): old Marshal.
-  Marshal old_m;
-  canary.to_marshal(old_m);
-  auto old_bytes = drain_marshal(old_m);
+  // Path (a): direct save.
+  BufferSink direct_sink;
+  BinaryWriteArchive direct_writer(make_sink_proxy(&direct_sink));
+  canary.save(direct_writer);
+  auto old_bytes = sink_to_vector(direct_sink);
 
   // Path (b): SerializableProxy.
   SerializableProxy proxy = make_serializable_proxy<CanaryCommand>(canary);
@@ -990,6 +935,16 @@ TEST(SerializableProxy, ByteCompatVsMarshalDirect) {
 
   ASSERT_EQ(old_bytes.size(), new_bytes.size());
   EXPECT_EQ(old_bytes, new_bytes);
+
+  // Round-trip: load the bytes back into a fresh command.
+  BufferSource source(direct_sink.bytes.data(), direct_sink.bytes.len());
+  BinaryReadArchive reader(make_source_proxy(&source));
+  CanaryCommand canary2;
+  canary2.load(reader);
+  EXPECT_EQ(canary2.id, canary.id);
+  EXPECT_EQ(canary2.name, canary.name);
+  EXPECT_EQ(canary2.values, canary.values);
+  EXPECT_TRUE(source.eof());
 }
 
 TEST(SerializableProxy, KindIsExposedThroughProxy) {
@@ -1017,7 +972,9 @@ TEST(SerializableProxy, RoundTripSaveLoadViaProxy) {
   SerializableProxy load_proxy = make_serializable_proxy<CanaryCommand>();
   BufferSource source(orig_bytes.data(), orig_bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
-  load_proxy->load(reader);
+  // @unsafe - unique-owner mutation window: load_proxy is factory-fresh
+  // (strong_count 1), so get_mut() is Some.
+  load_proxy.get_mut().unwrap().load(reader);
   EXPECT_TRUE(source.eof());
 
   // Re-save via the loaded proxy. Bytes must match exactly.
@@ -1057,7 +1014,9 @@ TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
 
   BufferSource source(src_bytes.data(), src_bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
-  proxy->load(reader);
+  // @unsafe - unique-owner mutation window: proxy is factory-fresh
+  // (strong_count 1), so get_mut() is Some.
+  proxy.get_mut().unwrap().load(reader);
   EXPECT_TRUE(source.eof());
 
   // Save via the loaded proxy; compare bytes.
@@ -1076,134 +1035,6 @@ TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
 }
 
 // ---- Marshal ↔ Archive bridges ----------------------------
-
-TEST(MarshalSinkBridge, WriteIntoMarshalProducesIdenticalBytes) {
-  // Encode a payload via:
-  //   (a) BinaryWriteArchive over BufferSink (reference)
-  //   (b) BinaryWriteArchive over MarshalSink wrapping a Marshal
-  // and verify the two byte streams are identical. Confirms
-  // MarshalSink does not introduce any framing or transformation.
-  const int32_t i = 0xDEADBEEFu;
-  const std::string s = "bridge to marshal";
-  std::vector<int64_t> v{1, -2, 3, -4, 5};
-
-  // (a) reference via BufferSink.
-  BufferSink ref_sink;
-  BinaryWriteArchive ref_writer(make_sink_proxy(&ref_sink));
-  ref_writer << i << s << v;
-  auto ref_bytes = sink_to_vector(ref_sink);
-
-  // (b) via MarshalSink.
-  Marshal m;
-  MarshalSink mark_sink(&m);
-  BinaryWriteArchive mark_writer(make_sink_proxy(&mark_sink));
-  mark_writer << i << s << v;
-  auto bridge_bytes = drain_marshal(m);
-
-  ASSERT_EQ(ref_bytes.size(), bridge_bytes.size());
-  EXPECT_EQ(ref_bytes, bridge_bytes);
-}
-
-TEST(MarshalSinkBridge, MixedMarshalAndArchiveWrites) {
-  // Interleave old-style `Marshal::operator<<` writes with new-style
-  // BinaryWriteArchive writes through a MarshalSink wrapping the same
-  // Marshal. The combined byte stream should be the concatenation —
-  // proving the bridge is safe to use alongside legacy code.
-  Marshal m;
-  m << static_cast<int32_t>(1);
-
-  {
-    MarshalSink sink(&m);
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<int32_t>(2);
-  }
-
-  m << std::string("trailing");
-
-  // Compare against a reference encoded entirely through Marshal.
-  Marshal ref;
-  ref << static_cast<int32_t>(1);
-  ref << static_cast<int32_t>(2);
-  ref << std::string("trailing");
-
-  auto bridge_bytes = drain_marshal(m);
-  auto ref_bytes = drain_marshal(ref);
-  EXPECT_EQ(bridge_bytes, ref_bytes);
-}
-
-TEST(MarshalSourceBridge, ReadOldMarshalBytesViaArchive) {
-  // Encode a payload via the OLD `Marshal::operator<<` path, then
-  // decode it through a `BinaryReadArchive` over `MarshalSource`.
-  // Expected: identical decoded values, source drained at the end.
-  const int32_t i = 42;
-  const std::string s = "marshal-encoded";
-  std::vector<int64_t> v{10, 20, 30};
-
-  Marshal m;
-  m << i << s << v;
-
-  MarshalSource src(&m);
-  BinaryReadArchive reader(make_source_proxy(&src));
-
-  int32_t i2;
-  std::string s2;
-  std::vector<int64_t> v2;
-  reader >> i2 >> s2 >> v2;
-
-  EXPECT_EQ(i2, i);
-  EXPECT_EQ(s2, s);
-  EXPECT_EQ(v2, v);
-  EXPECT_EQ(m.content_size(), 0u);  // Marshal drained.
-}
-
-TEST(MarshalBridges, RoundTripThroughMarshalSinkAndSource) {
-  // Write via BinaryWriteArchive(MarshalSink) -> Marshal ->
-  // BinaryReadArchive(MarshalSource). Should round-trip cleanly.
-  Marshal m;
-
-  {
-    MarshalSink sink(&m);
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<int32_t>(7);
-    writer << static_cast<int64_t>(-99);
-    writer << std::string("hello");
-    std::vector<int32_t> ints{4, 5, 6};
-    writer << ints;
-  }
-
-  MarshalSource src(&m);
-  BinaryReadArchive reader(make_source_proxy(&src));
-
-  int32_t a;
-  int64_t b;
-  std::string c;
-  std::vector<int32_t> d;
-  reader >> a >> b >> c >> d;
-
-  EXPECT_EQ(a, 7);
-  EXPECT_EQ(b, -99);
-  EXPECT_EQ(c, "hello");
-  EXPECT_EQ(d, (std::vector<int32_t>{4, 5, 6}));
-  EXPECT_EQ(m.content_size(), 0u);
-}
-
-TEST(MarshalSourceBridge, ShortReadAtEofMatchesBufferSourceSemantics) {
-  // Drain a Marshal, then attempt to read past its end via
-  // MarshalSource. Should return 0 (not abort), consistent with
-  // BufferSource and FdSource EOF semantics.
-  Marshal m;
-  m << static_cast<int32_t>(1);
-
-  MarshalSource src(&m);
-  int32_t v;
-  BinaryReadArchive reader(make_source_proxy(&src));
-  reader >> v;
-  EXPECT_EQ(v, 1);
-
-  uint8_t extra[4];
-  size_t got = src.read(extra, sizeof(extra));
-  EXPECT_EQ(got, 0u);
-}
 
 TEST(SerializableRegistry, MultipleKindsCoexist) {
   // Two different kinds should be retrievable independently.
@@ -1255,56 +1086,99 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
 // removed earlier this session.
 
 // ---------------------------------------------------------------------------
-// TypeList::create_at(pos) compile-time-dispatched factory.
-//
-// Replaces the runtime `MarshallDeputy::reg_initializer(kind, factory)`
-// registry for the closed-set polymorphic path: the TypeList knows its
-// types at compile time, so wire-kind → fresh SerializableProxy is a
-// switch over `Ts...` with no static-init registration step. Used by
-// the L10b `SerializableEnvelope<TypeList>` carrier on its read path.
+// PayloadMember and SerializableEnvelope fixtures.
 // ---------------------------------------------------------------------------
 
-// Three small Serializable types for the TypeList factory tests. They
-// have distinct save/load shapes so an out-of-position dispatch
-// produces a recognizable type mismatch.
-// Test types use kind values 50/51/52 — fit in v32 single-byte range
+// Three small Serializable-shaped types shared by the compile-time marker
+// membership tests and the runtime-registry envelope tests.
+// Test types use kind values 60/61/62 — fit in v32 single-byte range
 // (≤63), distinct from `MakoCommands` (1-19) and `ANY_MESSAGE` (24).
-// The L10c-cmds runtime-registry path on `SerializableEnvelope::load`
-// uses `MarshallDeputy::create_initializer(kind)` which requires the
-// kind to be registered; tests register their types via
-// `reg_serializable_in_deputy` below.  `TypeList::index_of<T>()`
-// remains compile-time (1-indexed positions); the kind value the
-// test types report is independent of TypeList position.
+// `SerializableEnvelope::load` uses `SerializableRegistry::create(kind)`,
+// so the test types are registered below. Closed-set membership and its
+// wire kind are explicit, compile-time `PayloadMember` properties.
+struct EnvelopeTestSet {};
+
 struct TypeListFactoryAlpha {
   static constexpr int32_t kKind = 60;
   int32_t a{0};
-  void save(BinaryWriteArchive& ar) const { ar << a; }
-  void load(BinaryReadArchive& ar) { ar >> a; }
+  void save(BinaryWriteArchive& ar) const { rrr::Serialize_::serialize(a, ar); }
+  void load(BinaryReadArchive& ar) { rrr::Deserialize_::deserialize(a, ar); }
   int32_t kind() const { return kKind; }
 };
 
 struct TypeListFactoryBeta {
   static constexpr int32_t kKind = 61;
   std::string b;
-  void save(BinaryWriteArchive& ar) const { ar << b; }
-  void load(BinaryReadArchive& ar) { ar >> b; }
+  void save(BinaryWriteArchive& ar) const { rrr::Serialize_::serialize(b, ar); }
+  void load(BinaryReadArchive& ar) { rrr::Deserialize_::deserialize(b, ar); }
   int32_t kind() const { return kKind; }
 };
 
 struct TypeListFactoryGamma {
   static constexpr int32_t kKind = 62;
   int64_t c{0};
-  void save(BinaryWriteArchive& ar) const { ar << c; }
-  void load(BinaryReadArchive& ar) { ar >> c; }
+  void save(BinaryWriteArchive& ar) const { rrr::Serialize_::serialize(c, ar); }
+  void load(BinaryReadArchive& ar) { rrr::Deserialize_::deserialize(c, ar); }
   int32_t kind() const { return kKind; }
 };
 
-using TypeListFactoryList = TypeList<TypeListFactoryAlpha,
-                                     TypeListFactoryBeta,
-                                     TypeListFactoryGamma>;
+}  // namespace
 
-// Register with MarshallDeputy so SerializableEnvelope::load can find
-// them via the runtime registry path.  (Static-init ordering is fine:
+// Marker specializations must live in the primary template's namespace.
+// The fixture types remain TU-local through the surrounding unnamed
+// namespace; reopening it below refers to the same unnamed namespace.
+template <>
+struct PayloadMember<EnvelopeTestSet, TypeListFactoryAlpha> {
+  static constexpr bool value = true;
+  static constexpr int32_t KIND = TypeListFactoryAlpha::kKind;
+};
+
+template <>
+struct PayloadMember<EnvelopeTestSet, TypeListFactoryBeta> {
+  static constexpr bool value = true;
+  static constexpr int32_t KIND = TypeListFactoryBeta::kKind;
+};
+
+template <>
+struct PayloadMember<EnvelopeTestSet, TypeListFactoryGamma> {
+  static constexpr bool value = true;
+  static constexpr int32_t KIND = TypeListFactoryGamma::kKind;
+};
+
+namespace {
+
+struct LegacyEnvelopeLayout {
+  int32_t kind_;
+  rusty::Option<SerializableProxy> inner_;
+};
+
+using EnvelopeLayoutSubject = SerializableEnvelope<EnvelopeTestSet>;
+
+template <typename T>
+concept HasGeneratedDefaultFactory = requires { T::default_(); };
+
+static_assert(std::is_default_constructible_v<EnvelopeLayoutSubject>);
+static_assert(std::is_copy_constructible_v<EnvelopeLayoutSubject>);
+static_assert(std::is_copy_assignable_v<EnvelopeLayoutSubject>);
+static_assert(!std::is_aggregate_v<EnvelopeLayoutSubject>);
+static_assert(!HasGeneratedDefaultFactory<EnvelopeLayoutSubject>);
+static_assert(!std::is_constructible_v<
+              EnvelopeLayoutSubject,
+              int32_t,
+              rusty::Option<SerializableProxy>,
+              std::array<rusty::PhantomData<EnvelopeTestSet>, 0>>);
+static_assert(std::is_standard_layout_v<EnvelopeLayoutSubject>);
+static_assert(sizeof(SerializableEnvelope<EnvelopeTestSet>) ==
+              sizeof(LegacyEnvelopeLayout));
+static_assert(alignof(SerializableEnvelope<EnvelopeTestSet>) ==
+              alignof(LegacyEnvelopeLayout));
+static_assert(offsetof(EnvelopeLayoutSubject, kind_) ==
+              offsetof(LegacyEnvelopeLayout, kind_));
+static_assert(offsetof(EnvelopeLayoutSubject, inner_) ==
+              offsetof(LegacyEnvelopeLayout, inner_));
+
+// Register with SerializableRegistry so SerializableEnvelope::load can
+// find them. (Static-init ordering is fine:
 // these run before any test body.)
 static int _reg_tl_factory_alpha =
     SerializableRegistry::reg<TypeListFactoryAlpha>(
@@ -1316,85 +1190,109 @@ static int _reg_tl_factory_gamma =
     SerializableRegistry::reg<TypeListFactoryGamma>(
         TypeListFactoryGamma::kKind);
 
-TEST(TypeListFactory, IndexOfReturns1IndexedPosition) {
-  EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryAlpha>(), 1);
-  EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryBeta>(), 2);
-  EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryGamma>(), 3);
-  // Type not in list resolves to 0 (UNKNOWN sentinel).
-  EXPECT_EQ(TypeListFactoryList::index_of<int>(), 0);
-}
+template <typename T>
+concept EnvelopeTestPackable = requires(const T& value) {
+  SerializableEnvelope<EnvelopeTestSet>::template pack<T>(value);
+};
 
-TEST(TypeListFactory, ContainsTracksIndexOf) {
-  EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryAlpha>());
-  EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryBeta>());
-  EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryGamma>());
-  EXPECT_FALSE(TypeListFactoryList::contains<int>());
-}
+template <typename T>
+concept EnvelopeTestAliasPackable = requires(rusty::Arc<T> value) {
+  SerializableEnvelope<EnvelopeTestSet>::template pack_aliased<T>(value);
+};
 
-namespace {
-template<typename T>
-T* serializable_proxy_cast(SerializableProxy& proxy) {
-  if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(proxy.get())) {
-    return h->ptr.get();
-  }
-  return nullptr;
-}
-}  // namespace
+template <typename T>
+concept EnvelopeTestUnpackable =
+    requires(const SerializableEnvelope<EnvelopeTestSet>& env) {
+      env.template unpack<T>();
+    };
 
-TEST(TypeListFactory, CreateAtReturnsCorrectTypeForEachPosition) {
-  // pos=1 → Alpha
-  {
-    auto proxy = TypeListFactoryList::create_at(1);
-    auto* alpha = serializable_proxy_cast<TypeListFactoryAlpha>(proxy);
-    EXPECT_NE(alpha, nullptr);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryBeta>(proxy), nullptr);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryGamma>(proxy), nullptr);
-  }
-  // pos=2 → Beta
-  {
-    auto proxy = TypeListFactoryList::create_at(2);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryAlpha>(proxy), nullptr);
-    auto* beta = serializable_proxy_cast<TypeListFactoryBeta>(proxy);
-    EXPECT_NE(beta, nullptr);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryGamma>(proxy), nullptr);
-  }
-  // pos=3 → Gamma
-  {
-    auto proxy = TypeListFactoryList::create_at(3);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryAlpha>(proxy), nullptr);
-    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryBeta>(proxy), nullptr);
-    auto* gamma = serializable_proxy_cast<TypeListFactoryGamma>(proxy);
-    EXPECT_NE(gamma, nullptr);
-  }
+template <typename T>
+concept EnvelopeTestSharedUnpackable =
+    requires(const SerializableEnvelope<EnvelopeTestSet>& env) {
+      env.template unpack_shared<T>();
+    };
+
+template <typename T>
+concept EnvelopeTestTypeCheckable =
+    requires(const SerializableEnvelope<EnvelopeTestSet>& env) {
+      env.template is_a<T>();
+    };
+
+template <typename T>
+concept EnvelopeTestMutUnpackable =
+    requires(SerializableEnvelope<EnvelopeTestSet>& env) {
+      env.template unpack_mut<T>();
+    };
+
+template <typename T>
+concept EnvelopeTestMarshallableCastable =
+    requires(const SerializableEnvelope<EnvelopeTestSet>& env) {
+      marshallable_cast<T>(env);
+    };
+
+static_assert(EnvelopeTestPackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestPackable<TypeListFactoryBeta>);
+static_assert(EnvelopeTestPackable<TypeListFactoryGamma>);
+static_assert(EnvelopeTestAliasPackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestUnpackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestSharedUnpackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestTypeCheckable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestMutUnpackable<TypeListFactoryAlpha>);
+static_assert(EnvelopeTestMarshallableCastable<TypeListFactoryAlpha>);
+static_assert(!EnvelopeTestPackable<int>);
+static_assert(!EnvelopeTestAliasPackable<int>);
+static_assert(!EnvelopeTestUnpackable<int>);
+static_assert(!EnvelopeTestSharedUnpackable<int>);
+static_assert(!EnvelopeTestTypeCheckable<int>);
+static_assert(!EnvelopeTestMutUnpackable<int>);
+static_assert(!EnvelopeTestMarshallableCastable<int>);
+
+TEST(PayloadMemberFactory, ExplicitMembershipAndKinds) {
+  EXPECT_TRUE((PayloadMember<EnvelopeTestSet, TypeListFactoryAlpha>::value));
+  EXPECT_TRUE((PayloadMember<EnvelopeTestSet, TypeListFactoryBeta>::value));
+  EXPECT_TRUE((PayloadMember<EnvelopeTestSet, TypeListFactoryGamma>::value));
+  EXPECT_FALSE((PayloadMember<EnvelopeTestSet, int>::value));
+  EXPECT_EQ((PayloadMember<EnvelopeTestSet, TypeListFactoryAlpha>::KIND), 60);
+  EXPECT_EQ((PayloadMember<EnvelopeTestSet, TypeListFactoryBeta>::KIND), 61);
+  EXPECT_EQ((PayloadMember<EnvelopeTestSet, TypeListFactoryGamma>::KIND), 62);
 }
 
 // ---------------------------------------------------------------------------
-// SerializableEnvelope<TypeList> — closed-set polymorphic carrier.
+// SerializableEnvelope<PayloadSet> — closed-set polymorphic carrier.
 //
 // Replaces MarshallDeputy for closed-set polymorphism. Wire format
 // [v32 kind][payload bytes] — byte-for-byte identical to MarshallDeputy
 // post-L9.
 // ---------------------------------------------------------------------------
 
-using EnvelopeTestList = TypeList<TypeListFactoryAlpha,
-                                  TypeListFactoryBeta,
-                                  TypeListFactoryGamma>;
-
 TEST(SerializableEnvelope, DefaultConstructedIsEmpty) {
-  SerializableEnvelope<EnvelopeTestList> env;
+  SerializableEnvelope<EnvelopeTestSet> env;
+  // (the redundant `explicit operator bool` was removed with the DSL
+  // conversion — no trait maps to it and it had zero production callers)
   EXPECT_FALSE(env.has_value());
-  EXPECT_FALSE(static_cast<bool>(env));
+  EXPECT_EQ(env.kind_, 0);
   EXPECT_EQ(env.kind(), 0);
   // unpack on empty returns nullptr.
   EXPECT_EQ(env.unpack<TypeListFactoryAlpha>(), nullptr);
   EXPECT_FALSE(env.is_a<TypeListFactoryAlpha>());
+
+  // Prove the generated C++ constructor writes the public kind cache rather
+  // than merely observing zeroed stack storage by accident.
+  alignas(EnvelopeLayoutSubject)
+      std::array<std::byte, sizeof(EnvelopeLayoutSubject)> storage;
+  storage.fill(std::byte{0xA5});
+  auto* poisoned = std::construct_at(
+      reinterpret_cast<EnvelopeLayoutSubject*>(storage.data()));
+  EXPECT_EQ(poisoned->kind_, 0);
+  EXPECT_FALSE(poisoned->has_value());
+  std::destroy_at(poisoned);
 }
 
 TEST(SerializableEnvelope, PackValueSemanticHoldsCopy) {
   TypeListFactoryBeta beta;
   beta.b = "value-semantic";
 
-  auto env = SerializableEnvelope<EnvelopeTestList>::pack(beta);
+  auto env = SerializableEnvelope<EnvelopeTestSet>::pack(beta);
   EXPECT_TRUE(env.has_value());
   EXPECT_EQ(env.kind(), TypeListFactoryBeta::kKind);
   EXPECT_TRUE(env.is_a<TypeListFactoryBeta>());
@@ -1410,25 +1308,29 @@ TEST(SerializableEnvelope, PackValueSemanticHoldsCopy) {
 }
 
 TEST(SerializableEnvelope, PackAliasedSharesPayload) {
-  auto sp = std::make_shared<TypeListFactoryAlpha>();
-  sp->a = 7;
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto sp = rusty::Arc<TypeListFactoryAlpha>::make();
+  sp.get_mut().unwrap().a = 7;
 
-  auto env = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
+  auto env = SerializableEnvelope<EnvelopeTestSet>::pack_aliased(sp);
   EXPECT_TRUE(env.has_value());
   EXPECT_EQ(env.kind(), TypeListFactoryAlpha::kKind);
 
   auto* recovered = env.unpack<TypeListFactoryAlpha>();
   ASSERT_NE(recovered, nullptr);
-  EXPECT_EQ(recovered, sp.get());  // aliased — same object
+  EXPECT_EQ(static_cast<const TypeListFactoryAlpha*>(recovered),
+            sp.get());  // aliased — same object
   EXPECT_EQ(recovered->a, 7);
 
   // Mutating through the original IS visible.
-  sp->a = 99;
+  // @unsafe { aliasing canary: proves pack_aliased shares (not copies)
+  // the payload }
+  const_cast<TypeListFactoryAlpha*>(sp.get())->a = 99;
   EXPECT_EQ(recovered->a, 99);
 }
 
 TEST(SerializableEnvelope, UnpackWrongTypeReturnsNullptr) {
-  auto env = SerializableEnvelope<EnvelopeTestList>::pack(
+  auto env = SerializableEnvelope<EnvelopeTestSet>::pack(
       TypeListFactoryGamma{});
   EXPECT_TRUE(env.is_a<TypeListFactoryGamma>());
   EXPECT_FALSE(env.is_a<TypeListFactoryAlpha>());
@@ -1442,13 +1344,13 @@ TEST(SerializableEnvelope, RoundTripValueSemanticViaArchive) {
   // Encode.
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  auto outgoing = SerializableEnvelope<EnvelopeTestList>::pack(beta);
+  auto outgoing = SerializableEnvelope<EnvelopeTestSet>::pack(beta);
   outgoing.save(writer);
 
   // Decode.
   BufferSource source(sink.bytes.data(), sink.bytes.len());
   BinaryReadArchive reader(make_source_proxy(&source));
-  SerializableEnvelope<EnvelopeTestList> incoming;
+  SerializableEnvelope<EnvelopeTestSet> incoming;
   incoming.load(reader);
 
   EXPECT_TRUE(incoming.has_value());
@@ -1459,19 +1361,20 @@ TEST(SerializableEnvelope, RoundTripValueSemanticViaArchive) {
 }
 
 TEST(SerializableEnvelope, RoundTripAliasedViaArchive) {
-  auto sp = std::make_shared<TypeListFactoryGamma>();
-  sp->c = 0xDEADBEEFCAFEBABEll;
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto sp = rusty::Arc<TypeListFactoryGamma>::make();
+  sp.get_mut().unwrap().c = 0xDEADBEEFCAFEBABEll;
 
   // Encode aliased pack.
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  auto outgoing = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
+  auto outgoing = SerializableEnvelope<EnvelopeTestSet>::pack_aliased(sp);
   outgoing.save(writer);
 
   // Decode.
   BufferSource source(sink.bytes.data(), sink.bytes.len());
   BinaryReadArchive reader(make_source_proxy(&source));
-  SerializableEnvelope<EnvelopeTestList> incoming;
+  SerializableEnvelope<EnvelopeTestSet> incoming;
   incoming.load(reader);
 
   EXPECT_EQ(incoming.kind(), TypeListFactoryGamma::kKind);
@@ -1481,14 +1384,14 @@ TEST(SerializableEnvelope, RoundTripAliasedViaArchive) {
 }
 
 TEST(SerializableEnvelope, WireSizeFor1ByteKind) {
-  // Kind 50 (alpha) fits in 1-byte v32 (≤63); alpha's `a` field is
+  // Kind 60 (alpha) fits in 1-byte v32 (≤63); alpha's `a` field is
   // i32 (4 bytes).  Total wire size: 1 (v32 kind) + 4 (i32 a) = 5 bytes.
   TypeListFactoryAlpha alpha;
   alpha.a = 0;
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  auto env = SerializableEnvelope<EnvelopeTestList>::pack(alpha);
+  auto env = SerializableEnvelope<EnvelopeTestSet>::pack(alpha);
   env.save(writer);
 
   EXPECT_EQ(sink.bytes.len(), 1u + sizeof(int32_t));
@@ -1501,47 +1404,32 @@ TEST(SerializableEnvelope, IsCopyableAndCopiesShareProxy) {
   // copies share the underlying proxy (and payload). This matches
   // the existing `req.cmd = some_md;` pattern where two MarshallDeputy
   // instances refer to the same payload.
-  auto sp = std::make_shared<TypeListFactoryAlpha>();
-  sp->a = 100;
-  auto env_a = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto sp = rusty::Arc<TypeListFactoryAlpha>::make();
+  sp.get_mut().unwrap().a = 100;
+  auto env_a = SerializableEnvelope<EnvelopeTestSet>::pack_aliased(sp);
 
-  // Copy.
+  // The implicit C++ copy remains available.
   auto env_b = env_a;
 
-  // Both should see the same payload.
+  // The explicit Rust Clone surface has the same Arc-sharing semantics and
+  // does not require the payload-set tag to implement Clone.
+  auto env_c = env_a.clone();
+
+  // All three should see the same payload.
   EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>(),
             env_b.unpack<TypeListFactoryAlpha>());
+  EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>(),
+            env_c.unpack<TypeListFactoryAlpha>());
 
   // Mutation through one envelope is visible to the other (because
-  // both share the same shared_ptr<SerializableProxy> internally).
-  sp->a = 200;
+  // both share the same Arc-backed proxy internally).
+  // @unsafe { aliasing canary: proves pack_aliased shares (not copies)
+  // the payload }
+  const_cast<TypeListFactoryAlpha*>(sp.get())->a = 200;
   EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>()->a, 200);
   EXPECT_EQ(env_b.unpack<TypeListFactoryAlpha>()->a, 200);
-}
-
-TEST(TypeListFactory, CreateAtRoundTripsViaProxySaveLoad) {
-  // Pack a Beta via create_at(2), save + load through a proxy, verify
-  // the value survives. Demonstrates the L10b read-path shape:
-  //   1) Read v32 kind from wire.
-  //   2) create_at(kind) → fresh SerializableProxy for that type.
-  //   3) proxy->load(reader) — populates the typed value.
-  //   4) Caller dispatches via dynamic_cast on the SerializableBase holder.
-  {
-    BufferSink sink;
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    TypeListFactoryBeta beta;
-    beta.b = "round-trip canary";
-    beta.save(writer);
-
-    BufferSource source(sink.bytes.data(), sink.bytes.len());
-    BinaryReadArchive reader(make_source_proxy(&source));
-    auto proxy = TypeListFactoryList::create_at(2);
-    proxy->load(reader);
-
-    auto* recovered = serializable_proxy_cast<TypeListFactoryBeta>(proxy);
-    ASSERT_NE(recovered, nullptr);
-    EXPECT_EQ(recovered->b, "round-trip canary");
-  }
+  EXPECT_EQ(env_c.unpack<TypeListFactoryAlpha>()->a, 200);
 }
 
 }  // namespace

@@ -1,14 +1,18 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
-#include "exec.h"
-#include "coordinator.h"
 #include "server.h"
 #include "service.h"
 #include "commo.h"
 #include "config.h"
 #include "test.h"
 // #include "../kv/server.h"
+
+// rusty::Rc lives in the rusty module only (the legacy <rusty/rc.hpp>
+// header was retired). Pull it in here so the file-scope
+// raft_test_fiber_ below can name rusty::Option<rusty::Rc<Fiber>>.
+// Per libc++'s textual-then-module ordering, imports follow #includes.
+import rusty;
 
 // @external: {
 //   Log_info: [safe, (...) -> void]
@@ -23,24 +27,17 @@
 
 namespace janus {
 
-REG_FRAME(MODE_RAFT, vector<string>({"raft"}), RaftFrame);
-
-Frame* CreateRaftFrameBuiltin(int mode) {
-  return new RaftFrame(mode);
-}
-
-// @safe
-RaftFrame::RaftFrame(int mode) : Frame(mode) {
-
-}
-
 // @safe - Properly cleans up owned resources via Option<Box<T>>
 RaftFrame::~RaftFrame() {
 }
 
 #ifdef RAFT_TEST_CORO
 std::mutex RaftFrame::raft_test_mutex_;
-rusty::Option<rusty::Rc<Fiber>> RaftFrame::raft_test_fiber_;
+// File-scope static (used to be RaftFrame::raft_test_fiber_; demoted
+// because rusty::Rc is module-only and frame.h can't reach it). All
+// references below resolve via namespace lookup once the class member
+// is gone.
+static rusty::Option<rusty::Rc<Fiber>> raft_test_fiber_;
 uint16_t RaftFrame::n_replicas_ = 0;
 map<siteid_t, RaftFrame*> RaftFrame::frames_ = {};
 bool RaftFrame::all_sites_created_s = false;
@@ -58,7 +55,7 @@ bool RaftFrame::IsRaftLabTestConfig() {
       is_lab_test_config_ = (config->GetNumPartition() == 1 &&
                               config->GetPartitionSize(0) == 5);
       lab_test_config_checked_ = true;
-      Log_info("RaftFrame: Lab test config check: partitions=%u, replicas=%d, is_lab_test=%s",
+      Log_info("RaftFrame: Lab test config check: partitions={}, replicas={}, is_lab_test={}",
                config->GetNumPartition(), config->GetPartitionSize(0),
                is_lab_test_config_ ? "true" : "false");
     }
@@ -68,47 +65,12 @@ bool RaftFrame::IsRaftLabTestConfig() {
 #endif
 
 
-// @unsafe - factory method returns raw pointer via new (caller takes ownership)
-Executor *RaftFrame::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
-  Executor *exec = new RaftExecutor(cmd_id, sched);
-  return exec;
-}
-
-// @unsafe - factory method uses new to create raw pointer (caller takes ownership)
-Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
-                                                Config *config,
-                                                int benchmark,
-                                                rusty::Option<rusty::Arc<ClientStatus>> client_status,
-                                                uint32_t id,
-                                                shared_ptr<TxnRegistry> txn_reg) {
-  verify(config != nullptr);
-  CoordinatorRaft *coo;
-  coo = new CoordinatorRaft(coo_id,
-                                  benchmark,
-                                  std::move(client_status),
-                                  id);
-  coo->frame_ = this;
-  verify(commo_ != nullptr);
-  coo->commo_ = commo_.get();
-  /* TODO: remove when have a class for common data */
-  verify(svr_ != nullptr);
-  coo->svr_ = this->svr_.get();
-  coo->slot_hint_ = slot_hint_;  // Safe: Arc copy shares ownership
-  coo->slot_id_ = slot_hint_->get();
-  slot_hint_->set(slot_hint_->get() + 1);
-  coo->n_replica_ = config->GetPartitionSize(site_info_->partition_id_);
-  coo->loc_id_ = this->site_info_->locale_id;
-  verify(coo->n_replica_ != 0); // TODO
-  Log_debug("create new fpga raft coord, coo_id: %d", (int) coo->coo_id_);
-  return coo;
-}
-
 // @unsafe - returns raw pointer to owned member (caller does not take ownership), calls Log_error/Log_debug
 TxLogServer *RaftFrame::CreateScheduler() {
   if(svr_ == nullptr)
   {
     // @unsafe
-    { svr_ = std::make_unique<RaftServer>(this); }
+    { svr_ = std::make_unique<RaftServer>(); }
   }
   else
   {
@@ -117,7 +79,7 @@ TxLogServer *RaftFrame::CreateScheduler() {
     return svr_.get();
   }
   // @unsafe
-  { Log_debug("create new fpga raft sched loc: %d", this->site_info_->locale_id); }
+  { Log_debug("create new raft sched loc: {}", this->site_info_->locale_id); }
 
 #ifdef RAFT_TEST_CORO
   // Only run test framework code if in raft lab test configuration
@@ -134,14 +96,15 @@ TxLogServer *RaftFrame::CreateScheduler() {
 }
 
 // @unsafe - returns raw pointer to owned member, external calls marked @external [safe]
-Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
+Communicator *RaftFrame::CreateCommo(
+    rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker) {
   // We only have 1 instance of RaftFrame object that is returned from
   // GetFrame method. RaftCommo currently seems ok to share among the
   // clients of this method.
-  Log_info("CreateCommo: Thread ID = %lu", std::this_thread::get_id());
+  Log_info("CreateCommo: Thread ID = {}", std::this_thread::get_id());
   {
-    auto guard = Reactor::sp_running_fiber_th_.borrow();
-    Log_info("CreateCommo: sp_running_fiber_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+    auto guard = rrr::sp_running_fiber_th_.borrow();
+    Log_info("CreateCommo: sp_running_fiber_th_ = {}", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
   }
   if (commo_ == nullptr) {
     Log_info("CreateCommo: Creating new RaftCommo");
@@ -153,7 +116,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   if (IsRaftLabTestConfig()) {
     Log_info("CreateCommo: RAFT_TEST_CORO enabled (lab test mode)");
     raft_test_mutex_.lock();
-    Log_info("CreateCommo: n_replicas_ = %d, n_commo_ = %d", n_replicas_, n_commo_created_);
+    Log_info("CreateCommo: n_replicas_ = {}, n_commo_ = {}", n_replicas_, n_commo_created_);
 
     // Simple verification: ensure all 5 schedulers are created
     verify(n_replicas_ == 5);
@@ -171,7 +134,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
 
     // Use a simple counter approach like lab solution
     n_commo_created_++;
-    Log_info("CreateCommo: n_commo_ now = %d", n_commo_created_);
+    Log_info("CreateCommo: n_commo_ now = {}", n_commo_created_);
     raft_test_mutex_.unlock();
 
     // Only site 0 creates and manages the test fiber
@@ -182,10 +145,10 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
 
       raft_test_fiber_ = rusty::Some(Fiber::create_run([this] () {
         Log_info("Test fiber: Starting execution");
-        Log_info("Test fiber: Thread ID = %lu", std::this_thread::get_id());
+        Log_info("Test fiber: Thread ID = {}", std::this_thread::get_id());
         {
-          auto guard = Reactor::sp_running_fiber_th_.borrow();
-          Log_info("Test fiber: sp_running_fiber_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+          auto guard = rrr::sp_running_fiber_th_.borrow();
+          Log_info("Test fiber: sp_running_fiber_th_ = {}", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
         }
 
         // Yield until all 5 communicators are initialized
@@ -207,7 +170,8 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
         Reactor::get_reactor()->looping_.set(false);
         return;
       }));
-      Log_info("raft_test_fiber_ id=%d", raft_test_fiber_.as_ref().unwrap()->id);
+      Log_info("raft_test_fiber_ id={}",
+               raft_test_fiber_.as_ref().unwrap()->id.get());
 
       // wait until n_commo_created_ == 5, then resume the fiber
       raft_test_mutex_.lock();
@@ -222,12 +186,12 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   }
   #endif
 
-  Log_info("CreateCommo: Returning commo_ = %p", commo_.get());
+  Log_info("CreateCommo: Returning commo_ = {}", (void*)commo_.get());
   return commo_.get();
 }
 
 // @unsafe - external calls marked @external [safe]
-vector<rrr::ServiceProxy>
+std::vector<rrr::ServiceProxy>
 RaftFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
                                    rusty::Arc<rrr::PollThread> poll_thread_worker) {
@@ -236,7 +200,13 @@ RaftFrame::CreateRpcServices(uint32_t site_id,
   switch (config->replica_proto_) {
     // Fix 2: Pass poll_thread_worker to RaftServiceImpl so it can be
     // retrieved during Restart() to ensure inbound/outbound use same thread
-    case MODE_RAFT:result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread_worker.clone())));
+    case MODE_RAFT: {
+      auto* server = dynamic_cast<RaftServer*>(rep_sched);
+      verify(server != nullptr);
+      result.push_back(rrr::make_service_proxy_from_typed_box(
+          rusty::make_box<RaftServiceImpl>(server, poll_thread_worker.clone())));
+      break;
+    }
     default:break;
   }
   return result;

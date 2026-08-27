@@ -123,19 +123,19 @@ STEP 2: Broadcast to All Peers (commo.cc)
         if (p.first == self_id) continue;
         auto proxy = (RaftProxy*) p.second;
 
-        fuattr.callback = [this, site_id](Future fu) {
+        fuattr.callback = rrr::FutureCallback::from_callable([this, site_id](Future fu) {
           if (fu->get_error_code() != 0) {
             // Timeout/error - stays PENDING for retry
             return;
           }
           bool_t acknowledged;
-          fu->get_reply() >> acknowledged;
+          rrr::deserialize_from(fu->get_reply(), acknowledged);
           if (acknowledged) {
             notify_restart_status_[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
           } else {
             notify_restart_status_[site_id] = NotifyRestartStatus::DOWN;
           }
-        };
+        });
 
         Call_Async(proxy, NotifyRestart, self_id, fuattr);
       }

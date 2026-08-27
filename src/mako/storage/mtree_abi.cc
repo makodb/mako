@@ -290,7 +290,7 @@ int mtx_scan_chunk(mtx_tree *t, const char *from, size_t fromlen, mtx_kv *out,
     chunk_collector c{out, cap, arena, arena_cap};
     varkey lower = to_varkey(from == nullptr ? "" : from,
                              from == nullptr ? 0 : fromlen);
-    as_tree(t)->search_range(lower, nullptr, c);
+    as_tree(t)->search_range_unbounded(lower, c);
     *n_out = c.n;
     // The arena-full signal: report what one more key would have needed,
     // which is by construction greater than arena_cap. See the header.
@@ -321,7 +321,7 @@ int mtx_rscan_chunk(mtx_tree *t, const char *from, size_t fromlen, mtx_kv *out,
     chunk_collector c{out, cap, arena, arena_cap};
     varkey upper = to_varkey(from == nullptr ? "" : from,
                              from == nullptr ? 0 : fromlen);
-    as_tree(t)->rsearch_range(upper, nullptr, c);
+    as_tree(t)->rsearch_range_unbounded(upper, c);
     *n_out = c.n;
     *arena_used = c.needed != 0 ? c.needed : c.used;
     if (c.n == 0 && (arena_cap == 0 || c.needed != 0)) return MTX_ERR_NO_SPACE;

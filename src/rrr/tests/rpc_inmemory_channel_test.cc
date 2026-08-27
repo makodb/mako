@@ -30,9 +30,10 @@ namespace {
 class InMemoryChannelTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        switchboard_ = rusty::Some(rusty::Arc<InMemorySwitchboard>::make());
+        switchboard_ = rusty::Some(
+            rusty::Arc<InMemorySwitchboard>::new_(InMemorySwitchboard::new_()));
         factory_arc_ = rusty::Some(
-            rusty::Arc<InMemoryFactory>::make(switchboard_.as_ref().unwrap().clone()));
+            rusty::Arc<InMemoryFactory>::new_(InMemoryFactory::new_(switchboard_.as_ref().unwrap().clone())));
         factory_ = rusty::Some(
             make_inmemory_factory_proxy(factory_arc_.as_ref().unwrap().clone()));
     }
@@ -57,7 +58,7 @@ class InMemoryChannelTest : public ::testing::Test {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, BackendName) {
-    EXPECT_STREQ(factory().backend_name(), "inmemory");
+    EXPECT_EQ(factory().backend_name(), "inmemory");
 }
 
 TEST_F(InMemoryChannelTest, ConnectToUnboundAddrReturnsRefused) {
@@ -104,12 +105,12 @@ TEST_F(InMemoryChannelTest, ConnectAndSendFrameClientToServer) {
     // Server-side state captured by the on_accept callback.
     std::vector<std::vector<std::uint8_t>> server_received;
     rusty::Option<ChannelConnectionProxy> server_side_proxy{rusty::None};
-    listener->set_on_accept([&](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy peer) {
         server_side_proxy = rusty::Some(std::move(peer));
-        server_side_proxy.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
+        server_side_proxy.as_mut().unwrap()->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
             server_received.emplace_back(f.payload, f.payload + f.size);
-        });
-    });
+        }));
+    }));
 
     auto result = factory().connect("inmemory://service-1");
     ASSERT_EQ(result.error, ChannelError::None);
@@ -137,19 +138,19 @@ TEST_F(InMemoryChannelTest, BidirectionalSendFrame) {
     std::vector<std::vector<std::uint8_t>> client_received;
     rusty::Option<ChannelConnectionProxy> server_side_proxy{rusty::None};
 
-    listener->set_on_accept([&](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy peer) {
         server_side_proxy = rusty::Some(std::move(peer));
-        server_side_proxy.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
+        server_side_proxy.as_mut().unwrap()->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
             server_received.emplace_back(f.payload, f.payload + f.size);
-        });
-    });
+        }));
+    }));
 
     auto result = factory().connect("inmemory://bidir");
     ASSERT_EQ(result.error, ChannelError::None);
     auto& client_proxy = result.connection;
-    client_proxy.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
+    client_proxy.as_mut().unwrap()->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
         client_received.emplace_back(f.payload, f.payload + f.size);
-    });
+    }));
 
     // Client → server.
     std::vector<std::uint8_t> req = {0xA, 0xB, 0xC};
@@ -187,10 +188,10 @@ TEST_F(InMemoryChannelTest, MultipleConnections) {
 
     int accept_count = 0;
     std::vector<ChannelConnectionProxy> server_proxies;
-    listener->set_on_accept([&](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy peer) {
         ++accept_count;
         server_proxies.push_back(std::move(peer));
-    });
+    }));
 
     auto c1 = factory().connect("inmemory://multi");
     auto c2 = factory().connect("inmemory://multi");
@@ -225,9 +226,9 @@ TEST_F(InMemoryChannelTest, PeerAddress) {
     ASSERT_EQ(listener->listen("inmemory://peer-addr-test"), ChannelError::None);
 
     rusty::Option<ChannelConnectionProxy> server_side_proxy{rusty::None};
-    listener->set_on_accept([&](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy peer) {
         server_side_proxy = rusty::Some(std::move(peer));
-    });
+    }));
 
     auto result = factory().connect("inmemory://peer-addr-test");
     ASSERT_EQ(result.error, ChannelError::None);
@@ -263,9 +264,9 @@ inline ConnectedPair make_connected_pair(
         ChannelListenerProxy& listener,
         std::string_view addr) {
     ConnectedPair pair;
-    listener->set_on_accept([&pair](ChannelConnectionProxy peer) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&pair](ChannelConnectionProxy peer) {
         pair.server = rusty::Some(std::move(peer));
-    });
+    }));
     auto result = factory.connect(addr);
     if (result.error == ChannelError::None) {
         pair.client = std::move(result.connection);
@@ -288,10 +289,10 @@ TEST_F(InMemoryChannelTest, ClientCloseFiresServerOnClosed) {
 
     int server_on_closed_calls = 0;
     ChannelError observed_reason = ChannelError::Internal;
-    pair.server_ref().set_on_closed([&](ChannelError r) {
+    pair.server_ref().set_on_closed(OnClosedCallback::from_callable([&](ChannelError r) {
         ++server_on_closed_calls;
         observed_reason = r;
-    });
+    }));
     EXPECT_EQ(server_on_closed_calls, 0);
 
     pair.client_ref().close();
@@ -307,9 +308,9 @@ TEST_F(InMemoryChannelTest, ServerCloseFiresClientOnClosed) {
         factory(), listener, "inmemory://close-2");
 
     int client_on_closed_calls = 0;
-    pair.client_ref().set_on_closed([&](ChannelError) {
+    pair.client_ref().set_on_closed(OnClosedCallback::from_callable([&](ChannelError) {
         ++client_on_closed_calls;
-    });
+    }));
 
     pair.server_ref().close();
 
@@ -328,9 +329,9 @@ TEST_F(InMemoryChannelTest, CloseIsIdempotent) {
         factory(), listener, "inmemory://close-idem");
 
     int server_on_closed_calls = 0;
-    pair.server_ref().set_on_closed([&](ChannelError) {
+    pair.server_ref().set_on_closed(OnClosedCallback::from_callable([&](ChannelError) {
         ++server_on_closed_calls;
-    });
+    }));
 
     pair.client_ref().close();
     pair.client_ref().close();
@@ -432,8 +433,10 @@ TEST_F(InMemoryChannelTest, BothSidesCloseFiresOnClosedOnce) {
 
     int client_on_closed_calls = 0;
     int server_on_closed_calls = 0;
-    pair.client_ref().set_on_closed([&](ChannelError) { ++client_on_closed_calls; });
-    pair.server_ref().set_on_closed([&](ChannelError) { ++server_on_closed_calls; });
+    pair.client_ref().set_on_closed(OnClosedCallback::from_callable(
+        [&](ChannelError) { ++client_on_closed_calls; }));
+    pair.server_ref().set_on_closed(OnClosedCallback::from_callable(
+        [&](ChannelError) { ++server_on_closed_calls; }));
 
     pair.client_ref().close();  // fires server's on_closed
     EXPECT_EQ(client_on_closed_calls, 0);
@@ -474,8 +477,8 @@ inline rusty::Box<PairAndProxies> make_pair_with_capture(
     auto out = rusty::make_box<PairAndProxies>();
     auto pair = make_channel_pair_for_testing(std::move(a_addr),
                                               std::move(b_addr));
-    out->a = rusty::Some(std::move(pair.first));
-    out->b = rusty::Some(std::move(pair.second));
+    out->a = rusty::Some(std::move(std::get<0>(pair)));
+    out->b = rusty::Some(std::move(std::get<1>(pair)));
     out->a_proxy = rusty::Some(
         make_inmemory_channel_proxy(out->a.as_ref().unwrap().clone()));
     out->b_proxy = rusty::Some(
@@ -483,12 +486,12 @@ inline rusty::Box<PairAndProxies> make_pair_with_capture(
 
     auto* a_received_ptr = &out->a_received;
     auto* b_received_ptr = &out->b_received;
-    out->a_proxy_ref().set_on_frame([a_received_ptr](const ChannelFrame& f) {
+    out->a_proxy_ref().set_on_frame(OnFrameCallback::from_callable([a_received_ptr](const ChannelFrame& f) {
         a_received_ptr->emplace_back(f.payload, f.payload + f.size);
-    });
-    out->b_proxy_ref().set_on_frame([b_received_ptr](const ChannelFrame& f) {
+    }));
+    out->b_proxy_ref().set_on_frame(OnFrameCallback::from_callable([b_received_ptr](const ChannelFrame& f) {
         b_received_ptr->emplace_back(f.payload, f.payload + f.size);
-    });
+    }));
     return out;
 }
 
@@ -506,7 +509,7 @@ inline void send_byte(ChannelConnectionBase& proxy, std::uint8_t b) {
 TEST_F(InMemoryChannelTest, InjectDropNextSendsDropsThenResumes) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(3);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 3);
 
     // First 3 sends from A → silently dropped.
     fault_test_helpers::send_byte(p->a_proxy_ref(), 1);
@@ -531,7 +534,7 @@ TEST_F(InMemoryChannelTest, InjectDropNextSendsDropsThenResumes) {
 TEST_F(InMemoryChannelTest, InjectDropNextSendsIsPerSide) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(2);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 2);
 
     fault_test_helpers::send_byte(p->a_proxy_ref(), 1);  // dropped
     fault_test_helpers::send_byte(p->b_proxy_ref(), 2);  // delivered (B-side has no drop)
@@ -552,7 +555,7 @@ TEST_F(InMemoryChannelTest, InjectDropNextSendsIsPerSide) {
 TEST_F(InMemoryChannelTest, InjectSendErrorReturnsErrThenResumes) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_send_error(ChannelError::WouldBlock, 2);
+    inmemory_channel_inject_send_error(p->mut_a(), ChannelError::WouldBlock, 2);
 
     std::uint8_t b = 0;
     ChannelFrame f{&b, 1};
@@ -573,8 +576,8 @@ TEST_F(InMemoryChannelTest, InjectSendErrorReturnsErrThenResumes) {
 TEST_F(InMemoryChannelTest, DropTakesPrecedenceOverError) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(2);
-    p->mut_a().inject_send_error(ChannelError::ConnectionReset, 2);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 2);
+    inmemory_channel_inject_send_error(p->mut_a(), ChannelError::ConnectionReset, 2);
 
     std::uint8_t b = 0;
     ChannelFrame f{&b, 1};
@@ -598,9 +601,9 @@ TEST_F(InMemoryChannelTest, DropTakesPrecedenceOverError) {
 TEST_F(InMemoryChannelTest, ClearFaultInjectionResets) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(5);
-    p->mut_a().inject_send_error(ChannelError::WouldBlock, 5);
-    p->mut_a().clear_fault_injection();
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 5);
+    inmemory_channel_inject_send_error(p->mut_a(), ChannelError::WouldBlock, 5);
+    inmemory_channel_clear_fault_injection(p->mut_a());
 
     fault_test_helpers::send_byte(p->a_proxy_ref(), 7);
     ASSERT_EQ(p->b_received.size(), 1u);
@@ -615,7 +618,7 @@ TEST_F(InMemoryChannelTest, ClearFaultInjectionResets) {
 TEST_F(InMemoryChannelTest, FaultInjectionRespectsClose) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(10);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 10);
     p->mut_a().close();
 
     std::uint8_t b = 0;
@@ -632,8 +635,8 @@ TEST_F(InMemoryChannelTest, FaultInjectionRespectsClose) {
 TEST_F(InMemoryChannelTest, InjectDropZeroClears) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(3);
-    p->mut_a().inject_drop_next_sends(0);  // clears the counter
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 3);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 0);  // clears the counter
 
     fault_test_helpers::send_byte(p->a_proxy_ref(), 9);
     ASSERT_EQ(p->b_received.size(), 1u);

@@ -48,7 +48,6 @@ make -j32
 ```
 
 Notes:
-- On macOS, eRPC is disabled; `./ci/ci.sh all` skips the eRPC variants and runs the rrr/rpc-based tests.
 
 ---
 
@@ -122,4 +121,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - **Research Team**: Mako research and development team
-- **Dependencies**: Built on Janus, Masstree, RocksDB, eRPC, and other open-source projects
+- **Historical lineage**: Mako was derived from the original Janus codebase; the standalone Janus protocol implementation is retired
+- **Dependencies**: Masstree, RocksDB, eRPC, and other open-source projects

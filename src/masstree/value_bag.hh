@@ -116,15 +116,15 @@ inline O value_bag<O>::column_length(int i) const {
 template <typename O>
 inline lcdf::Str value_bag<O>::col(int i) const {
     if (unsigned(i) < unsigned(d_.ncol_))
-        return Str(d_.s_ + d_.pos_[i], column_length(i));
+        return Str::from_chars(d_.s_ + d_.pos_[i], column_length(i));
     else
-        return Str();
+        return Str::empty();
 }
 
 template <typename O>
 // @unsafe - returns slice into caller-managed backing storage
 inline lcdf::Str value_bag<O>::row_string() const {
-    return Str(d_.s_, d_.pos_[d_.ncol_]);
+    return Str::from_chars(d_.s_, d_.pos_[d_.ncol_]);
 }
 
 // @unsafe - releases raw bag memory
@@ -266,7 +266,7 @@ inline value_bag<O>* value_bag<O>::checkpoint_read(PARSER& par,
 
 template <typename O> template <typename UNPARSER>
 inline void value_bag<O>::checkpoint_write(UNPARSER& unpar) const {
-    unpar << Str(d_.s_, d_.pos_[d_.ncol_]);
+    unpar << Str::from_chars(d_.s_, d_.pos_[d_.ncol_]);
 }
 
 template <typename O>

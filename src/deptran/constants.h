@@ -71,40 +71,32 @@ namespace janus {
 #define FAILURE     (-1)
 #define CONTENTION  (-1)
 #define REJECT      (-10)
-#define ABSTAIN     (-10)
-#define RETRY       (-10)
 #define REPEAT      (-15)  // Jetpack: null_cmd retry indicator
 #define DELAYED     (1)
 #define WRONG_LEADER (-20)
 #define TXN_TIMEOUT (-30)  // Transaction timed out waiting for shard response
 
 #define MODE_NONE   (0x00)
-#define MODE_2PL    (0x01)
-#define MODE_OCC    (0x02)
-#define MODE_RCC    (0x04)
-#define MODE_RO6    (0x08)
-#define MODE_BRQ    (0x10)
-#define MODE_JANUS    (0x10)
-#define MODE_RULE    (0x15)
-#define MODE_MDCC   (0x12)
-#define MODE_TROAD    (0x03)
-#define MODE_EXTERNC   (0x14)
-#define MODE_RPC_NULL   (0x800)
-#define MODE_NOTX   (0x1000)
-#define MODE_NONE_COPILOT (0x18)
-
-    // deprecated.
-#define MODE_DEPTRAN (4)
+// 0x01 is retired with the former standalone 2PL protocol; do not reuse it.
+// 0x02 is retired with the former standalone OCC protocol; do not reuse it.
+// 0x04 was RCC/Rococo (including the deprecated deptran aliases).
+// Keep the value reserved so retired configurations fail instead of
+// silently selecting a different protocol.
+// 0x15 is reserved for compatibility with the retired Rule protocol.
+// 0x12 is reserved for compatibility with the retired MDCC protocol.
+// 0x03 is reserved for compatibility with the retired TROAD protocol.
+// 0x800 is reserved for compatibility with the retired rpc-null benchmark mode.
+// 0x1000 is reserved for compatibility with the retired no-transaction
+// selector; do not reuse it.
+// 0x18 is reserved for compatibility with the retired None-Copilot adapter.
 
 #define MODE_MULTI_PAXOS   (0x40)
-#define MODE_MULTI_PAXOS_PLUS   (0x41)
-#define MODE_EPAXOS        (0x80)
-#define MODE_TAPIR         (0x100)
-#define MODE_MENCIUS       (0x200)
+// 0x41 is reserved for the former Multi-Paxos-Plus placeholder.
+// 0x80 is reserved for the former EPaxos placeholder.
+// 0x100 is reserved for compatibility with the retired TAPIR protocol.
 #define MODE_RAFT (0x400)
-#define MODE_FPGA_RAFT (0x401)
-#define MODE_COPILOT        (0x4000)
-#define MODE_NOT_READY     (0x00)
+// 0x401 is reserved for compatibility with the retired FPGA-Raft protocol.
+// 0x4000 is reserved for compatibility with the retired Copilot protocol.
 
 #define OP_IR   (0x1)
 #define OP_DR   (0x2)
@@ -136,8 +128,6 @@ namespace janus {
 #define YES (1)
 #define NO  (0)
 
-// #define COPILOT_DEBUG
-// #define COPILOT_TIME_DEBUG
 // #define FINISH_COUNTDOWN_MAX (1)
 // #define TC
 

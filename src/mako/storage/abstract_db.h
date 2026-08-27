@@ -88,14 +88,17 @@ public:
     HINT_TPCC_STOCK_LEVEL,
     HINT_TPCC_STOCK_LEVEL_READ_ONLY,
 
-    // erpc server profiles
+    // rpc server profiles
     HINT_TPCC_BASIC,
   };
 
   /**
    * Initializes a new txn object the space pointed to by buf
    *
-   * Flags is only for the ndb protocol for now
+   * Transaction flags from the retired original-Silo/NDB engine are not
+   * supported. Production STO/MassTrans callers must pass zero.
+   * TxnProfileHint is backend-neutral metadata; the current mbta wrapper
+   * does not use it to alter transaction behavior.
    *
    * [buf, buf + sizeof_txn_object(txn_flags)) is a valid ptr
    */

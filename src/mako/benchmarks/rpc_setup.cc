@@ -76,8 +76,8 @@ void helper_server(
   ss->Run(); // event-driven
 }
 
-// Thread entry: eRPC server
-void erpc_server(
+// Thread entry: RPC server
+void rpc_server(
   std::string cluster,
   int running_shardIndex,
   int num_warehouses,
@@ -108,7 +108,7 @@ void erpc_server(
   for (int i = 0; i < (int)NumWarehousesTotal(); i++) {
     if (i / (int)NumWarehouses() == running_shardIndex)
       continue;
-    if (i % (int)BenchmarkConfig::getInstance().getNumErpcServer() == alpha) {
+    if (i % (int)BenchmarkConfig::getInstance().getNumRpcServer() == alpha) {
       auto *it = new mako::HelperQueue(i, true);
       local_queue_holders[i] = it;
       auto *it_res = new mako::HelperQueue(i, false);
@@ -120,7 +120,7 @@ void erpc_server(
   server_transports[alpha]->SetHelperQueuesResponse(local_queue_holders_response);
   set_server_transport.fetch_add(1);
   server_transports[alpha]->Run();
-  Notice("the erpc_server is terminated on shardIdx:%d, alpha:%d!", running_shardIndex, alpha);
+  Notice("the rpc_server is terminated on shardIdx:%d, alpha:%d!", running_shardIndex, alpha);
 }
 
 } // anonymous namespace
@@ -203,7 +203,7 @@ void mako::initialize_per_thread(abstract_db *db_) {
   scoped_db_thread_ctx ctx(db_, false);
 }
 
-void mako::setup_erpc_server()
+void mako::setup_rpc_server()
 {
   auto &cfg = BenchmarkConfig::getInstance();
   auto &server_transports = cfg.getServerTransports();
@@ -212,11 +212,11 @@ void mako::setup_erpc_server()
   auto &set_server_transport = cfg.getServerTransportReadyCounter();
 
   // Use existing state; server threads will populate queues.
-  if (server_transports.size() < cfg.getNumErpcServer())
-    server_transports.resize(cfg.getNumErpcServer());
-  for (int i = 0; i < (int)cfg.getNumErpcServer(); ++i) {
+  if (server_transports.size() < cfg.getNumRpcServer())
+    server_transports.resize(cfg.getNumRpcServer());
+  for (int i = 0; i < (int)cfg.getNumRpcServer(); ++i) {
     auto t = std::thread(
-      erpc_server,
+      rpc_server,
       cfg.getCluster(),
       (int)cfg.getShardIndex(),
       (int)NumWarehouses(),
@@ -227,31 +227,31 @@ void mako::setup_erpc_server()
 #if defined(__APPLE__)
     // macOS pthread_setname_np() only supports naming the *current* thread.
 #else
-    pthread_setname_np(t.native_handle(), "erpc_server");
+    pthread_setname_np(t.native_handle(), "rpc_server");
 #endif
     t.detach();
   }
 
-  while (set_server_transport.load() < (int)cfg.getNumErpcServer()) {
+  while (set_server_transport.load() < (int)cfg.getNumRpcServer()) {
     sleep(0);
   }
 
   for (int i = 0; i < (int)NumWarehousesTotal(); i++) {
     if (i / (int)NumWarehouses() == (int)cfg.getShardIndex())
       continue;
-    auto idx = i % (int)cfg.getNumErpcServer();
+    auto idx = i % (int)cfg.getNumRpcServer();
     queue_holders[i] = server_transports[idx]->GetHelperQueue(i);
     queue_holders_response[i] = server_transports[idx]->GetHelperQueueResponse(i);
   }
 }
 
-void mako::stop_erpc_server()
+void mako::stop_rpc_server()
 {
   auto &cfg = BenchmarkConfig::getInstance();
   auto &server_transports = cfg.getServerTransports();
 
   // Use actual vector size to avoid out-of-bounds access
-  // In multi-shard mode, server_transports may be empty while getNumErpcServer() > 0
+  // In multi-shard mode, server_transports may be empty while getNumRpcServer() > 0
   size_t actual_count = server_transports.size();
   std::cerr << "[STOP_SERVER] Stopping " << actual_count << " server transports" << std::endl;
 

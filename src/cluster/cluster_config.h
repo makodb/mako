@@ -4,13 +4,15 @@ module;
 #include <map>
 #include <cstdint>
 
-#include <btree_port/btreemap.hpp>  // native-API ordered maps (replace std::map)
 #include <rusty/mutex.hpp>
 #include <rusty/slice.hpp>   // deref_if_pointer_like (guard bodies)
 
 export module cluster:cluster_config;
+import btree_port.btree.map;   // c529cd3d: btree_port is now a C++20 module (retired the .hpp header)
 import :sharding_policy;
 import :config_manager;   // ConfigManager named in load_from_config_manager / cc_load_from_cm
+
+namespace btree_port { using btree::map::BTreeMap; }  // compat: flat name the DSL/GEN expect
 
 export namespace janus {
 
@@ -57,15 +59,15 @@ struct ClusterConfigState {
 // ---- kernels: run under an already-held guard; own the map/routing ----
 inline std::vector<std::string> cc_shard_replicas(const ClusterConfigState& s, uint32_t id) {
     auto found = s.shards.get(id);
-    return found.is_some() ? found.unwrap().get().replicas : std::vector<std::string>{};
+    return found.is_some() ? found.unwrap().replicas : std::vector<std::string>{};
 }
 inline std::string cc_shard_leader(const ClusterConfigState& s, uint32_t id) {
     auto found = s.shards.get(id);
-    return found.is_some() ? found.unwrap().get().leader : std::string();
+    return found.is_some() ? found.unwrap().leader : std::string();
 }
 inline std::string cc_shard_status(const ClusterConfigState& s, uint32_t id) {
     auto found = s.shards.get(id);
-    return found.is_some() ? found.unwrap().get().status : std::string();
+    return found.is_some() ? found.unwrap().status : std::string();
 }
 // cc_update_shard / cc_set_table_policy / cc_clear_table_policy /
 // cc_has_table_policy are gone: folded into the DSL methods below as direct
@@ -84,6 +86,20 @@ uint32_t cc_route(const ClusterConfigState& s, const std::string& table,
 // where ConfigManager is a complete type).
 bool cc_load_from_cm(ClusterConfigState& s, ConfigManager* cm);
 
+// @unsafe - Workaround for a clang C++20-module defect (clang 21 & 22): the ONE
+// btree MUTATION in the cluster_config.cc impl unit (cc_load_from_cm's insert)
+// makes clang emit the module's reachable BTreeMap insert/split/remove generic
+// lambdas (incl. <string,string> from Shard::data) IN that impl unit, which trips
+// an Itanium-mangler / lambda-ODR bug. Routing the insert through this concrete,
+// non-inline helper DEFINED in the interface partition keeps insert_fit's
+// instantiation on the interface side (where it already occurs + compiles), so
+// the impl unit emits only a call. Do NOT mark inline. See
+// docs/dev/clang22-mangler-crash.md + issue shuaimu/rusty-cpp#31.
+void cc_shards_insert(btree_port::BTreeMap<uint32_t, ShardInfo>& shards,
+                      uint32_t id, ShardInfo info) {
+    shards.insert(std::move(id), std::move(info));
+}
+
 #if RUSTYCPP_RUST
 pub struct ClusterConfig {
     state: rusty::Mutex<ClusterConfigState>,
@@ -91,7 +107,13 @@ pub struct ClusterConfig {
 impl ClusterConfig {
     fn new() -> ClusterConfig {
         ClusterConfig {
-            state: rusty::Mutex::<ClusterConfigState>::default_(),
+            state: rusty::Mutex::<ClusterConfigState>::new_(ClusterConfigState {
+                shard_count: 0,
+                version: 0,
+                epoch: 0,
+                shards: btree_port::BTreeMap::<u32, ShardInfo>::new_(),
+                table_policies: btree_port::BTreeMap::<std::string, TableShardingPolicy>::new_(),
+            }),
         }
     }
     fn load_from_config_manager(&mut self, cm: *mut ConfigManager) -> bool {
@@ -160,7 +182,7 @@ impl ClusterConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=74f9e5f747d8354805866ec529132911c9ebd82e2aed38d5ab61cd2dee48f134*/
+/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=bb0c3c6ae9d030da1628cb49cd09a7dba1189fc76895bbb290638b41925b4e3f*/
 struct ClusterConfig;
 
 struct ClusterConfig {
@@ -186,11 +208,11 @@ struct ClusterConfig {
 };
 
 
-inline ClusterConfig ClusterConfig::new_() {
-    return ClusterConfig{.state = rusty::Mutex<ClusterConfigState>::default_()};
+ClusterConfig ClusterConfig::new_() {
+    return ClusterConfig{.state = rusty::Mutex<ClusterConfigState>::new_(ClusterConfigState{.shard_count = 0, .version = 0, .epoch = 0, .shards = btree_port::BTreeMap<uint32_t, ShardInfo>::new_(), .table_policies = btree_port::BTreeMap<std::string, TableShardingPolicy>::new_()})};
 }
 
-inline bool ClusterConfig::load_from_config_manager(ConfigManager* cm) {
+bool ClusterConfig::load_from_config_manager(ConfigManager* cm) {
     auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -198,7 +220,7 @@ inline bool ClusterConfig::load_from_config_manager(ConfigManager* cm) {
     }
 }
 
-inline uint32_t ClusterConfig::get_shard_for_key(const std::string& table, const std::string& key) const {
+uint32_t ClusterConfig::get_shard_for_key(const std::string& table, const std::string& key) const {
     const auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -206,32 +228,32 @@ inline uint32_t ClusterConfig::get_shard_for_key(const std::string& table, const
     }
 }
 
-inline uint32_t ClusterConfig::get_shard_for_key_default(const std::string& key) const {
+uint32_t ClusterConfig::get_shard_for_key_default(const std::string& key) const {
     const std::string empty = std::string("");
     return this->get_shard_for_key(empty, key);
 }
 
-inline void ClusterConfig::set_table_policy(const std::string& table, TableShardingPolicy policy) {
+void ClusterConfig::set_table_policy(const std::string& table, TableShardingPolicy policy) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).table_policies.insert(table, std::move(policy));
 }
 
-inline void ClusterConfig::clear_table_policy(const std::string& table) {
+void ClusterConfig::clear_table_policy(const std::string& table) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).table_policies.remove(table);
 }
 
-inline bool ClusterConfig::has_table_policy(const std::string& table) const {
+bool ClusterConfig::has_table_policy(const std::string& table) const {
     const auto g = ((*this)).state.lock().unwrap();
     return (rusty::detail::deref_if_pointer_like(g)).table_policies.contains_key(table);
 }
 
-inline uint32_t ClusterConfig::get_shard_count() const {
+uint32_t ClusterConfig::get_shard_count() const {
     const auto g = ((*this)).state.lock().unwrap();
     return (rusty::detail::deref_if_pointer_like(g)).shard_count;
 }
 
-inline std::vector<std::string> ClusterConfig::get_shard_replicas(uint32_t shard_id) const {
+std::vector<std::string> ClusterConfig::get_shard_replicas(uint32_t shard_id) const {
     const auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -239,7 +261,7 @@ inline std::vector<std::string> ClusterConfig::get_shard_replicas(uint32_t shard
     }
 }
 
-inline std::string ClusterConfig::get_shard_leader(uint32_t shard_id) const {
+std::string ClusterConfig::get_shard_leader(uint32_t shard_id) const {
     const auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -247,7 +269,7 @@ inline std::string ClusterConfig::get_shard_leader(uint32_t shard_id) const {
     }
 }
 
-inline std::string ClusterConfig::get_shard_status(uint32_t shard_id) const {
+std::string ClusterConfig::get_shard_status(uint32_t shard_id) const {
     const auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -255,32 +277,32 @@ inline std::string ClusterConfig::get_shard_status(uint32_t shard_id) const {
     }
 }
 
-inline uint64_t ClusterConfig::get_version() const {
+uint64_t ClusterConfig::get_version() const {
     const auto g = ((*this)).state.lock().unwrap();
     return (rusty::detail::deref_if_pointer_like(g)).version;
 }
 
-inline uint64_t ClusterConfig::get_epoch() const {
+uint64_t ClusterConfig::get_epoch() const {
     const auto g = ((*this)).state.lock().unwrap();
     return (rusty::detail::deref_if_pointer_like(g)).epoch;
 }
 
-inline void ClusterConfig::update_shard(uint32_t id, const ShardInfo& info) {
+void ClusterConfig::update_shard(uint32_t id, const ShardInfo& info) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).shards.insert(std::move(id), std::move(info));
 }
 
-inline void ClusterConfig::set_shard_count(uint32_t count) {
+void ClusterConfig::set_shard_count(uint32_t count) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).shard_count = std::move(count);
 }
 
-inline void ClusterConfig::set_version(uint64_t version) {
+void ClusterConfig::set_version(uint64_t version) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).version = std::move(version);
 }
 
-inline void ClusterConfig::set_epoch(uint64_t epoch) {
+void ClusterConfig::set_epoch(uint64_t epoch) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).epoch = std::move(epoch);
 }

@@ -611,7 +611,7 @@ int main(int argc, char **argv) {
     // Use Raft config files instead of Paxos
     vector<string> raft_config_file{
         get_current_absolute_path() + "../config/1leader_2followers/raft" + std::to_string(nthreads) + "_shardidx" + std::to_string(shardIdx) + ".yml",
-        get_current_absolute_path() + "../config/occ_raft.yml"
+        get_current_absolute_path() + "../config/raft.yml"
     };
 
     auto& benchConfig = BenchmarkConfig::getInstance();
@@ -632,7 +632,7 @@ int main(int argc, char **argv) {
     abstract_db* db = initWithDB();
 
     if (benchConfig.getLeaderConfig()) {
-        mako::setup_erpc_server();
+        mako::setup_rpc_server();
         mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         map<int, abstract_ordered_index*> open_tables;
@@ -652,7 +652,7 @@ int main(int argc, char **argv) {
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
     if (benchConfig.getLeaderConfig()) {
-        mako::stop_erpc_server();
+        mako::stop_rpc_server();
     }
 
     db_close();

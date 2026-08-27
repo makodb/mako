@@ -418,7 +418,7 @@ namespace mako
                 status = ErrorCode::ABORT;
             }
         } else {
-            val = "this is a mocked value for erpc_client and erpc_server";
+            val = "this is a mocked value for the rpc client and rpc server";
         }
         
         auto *resp = reinterpret_cast<scan_response_t *>(respBuf);
@@ -465,7 +465,7 @@ namespace mako
                 status = ErrorCode::ABORT;
             }
         } else {
-            obj_v = "this is a mocked value for erpc_client and erpc_server";
+            obj_v = "this is a mocked value for the rpc client and rpc server";
         }
         
         auto *resp = reinterpret_cast<get_response_t *>(respBuf);
@@ -518,7 +518,7 @@ namespace mako
                 status = ErrorCode::ABORT;
             }
         } else {
-            obj_v = "this is a mocked value for erpc_client and erpc_server";
+            obj_v = "this is a mocked value for the rpc client and rpc server";
         }
         
         auto *resp = reinterpret_cast<get_response_t *>(respBuf);
@@ -567,7 +567,7 @@ namespace mako
                 }
             }
         } else {
-            obj_v = "this is a mocked value for erpc_client and erpc_server";
+            obj_v = "this is a mocked value for the rpc client and rpc server";
         }
         
         auto *resp = reinterpret_cast<get_response_t *>(respBuf);
@@ -1065,7 +1065,7 @@ namespace mako
             queue->suspend();
 
             while (true) {
-                erpc::ReqHandle *handle;
+                void *handle;
                 size_t msg_size;
                 if (!queue->fetch_one_req(&handle, msg_size)) {
                     break;
@@ -1078,18 +1078,17 @@ namespace mako
 
                 }
 
-                // Cast to transport-agnostic interface
-                // The backend has enqueued a TransportRequestHandle* (cast to erpc::ReqHandle*)
+                // Cast to transport-agnostic interface: the backend enqueued
+                // a TransportRequestHandle* as an opaque token.
                 mako::TransportRequestHandle* req_handle = reinterpret_cast<mako::TransportRequestHandle*>(handle);
 
-                // Use abstract interface methods instead of eRPC-specific API
                 size_t msgLen = shardReceiver->ReceiveRequest(
                     req_handle->GetRequestType(),
                     req_handle->GetRequestBuffer(),
                     req_handle->GetResponseBuffer());
 
                 // Enqueue response via transport-agnostic interface
-                // This will call ErpcRequestHandle::EnqueueResponse() or RrrRequestHandle::EnqueueResponse()
+                // This calls RrrRequestHandle::EnqueueResponse().
                 req_handle->EnqueueResponse(msgLen);
             }
 

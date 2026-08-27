@@ -17,6 +17,9 @@ class ConfigManagerTest : public ::testing::Test {
  protected:
     InMemoryKvStore kv_;
     ConfigManager cm_{&kv_};
+    // Force a noexcept dtor: ConfigManager's DSL-generated dtor is noexcept(false),
+    // which would otherwise clash with ::testing::Test::~Test() (noexcept).
+    ~ConfigManagerTest() noexcept override {}
 };
 
 // ===========================================================================

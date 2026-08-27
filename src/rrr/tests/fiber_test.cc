@@ -4,6 +4,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <rusty/option.hpp>
 #include "../rrr.hpp"
 
 namespace rrr {
@@ -15,7 +16,43 @@ protected:
     }
 
     void TearDown() override {
-        // Clean up
+        // Drop the thread-local reactor + any running-fiber slot between
+        // tests so each test gets a fresh scheduler. Without this, fibers
+        // suspended in one test (e.g. after a yield/sleep) stay registered
+        // in the next test's `reactor->run_loop(false, true)` call and block it forever.
+        // The Rc<Reactor> goes out of scope on assignment, running ~Reactor.
+        *rrr::sp_running_fiber_th_.borrow_mut() = rusty::None;
+        rrr::sp_reactor_th_ = rusty::None;
+    }
+
+    // Drive the reactor until `done` holds, or give up after timeout_us.
+    //
+    // A single `run_loop(false, true)` pass returns long before a
+    // millisecond-scale timeout expires, so a sleeping fiber is still
+    // PARKED when the pass returns. Nothing then resumes it: it stays
+    // registered in `reactor->fibers_`, its stack is never unwound, and
+    // the `Rc<Reactor>` living in that suspended frame keeps the reactor
+    // alive past TearDown's drop -- which is the 1,088-byte "leak"
+    // LeakSanitizer reports for this file.
+    //
+    // It also made the sleep assertions VACUOUS: with the fiber never
+    // finishing, `end_time` stayed 0 and `end_time - start_time` wrapped
+    // to ~1.8e19, satisfying any EXPECT_GE. Callers must ASSERT_TRUE on
+    // the result before treating that subtraction as meaningful.
+    // (The reactor handle is a template parameter so this file does not
+    // have to name rusty::Rc, which it never imports.)
+    template <typename ReactorHandle, typename Pred>
+    static bool DriveUntil(const ReactorHandle& reactor, Pred done,
+                           uint64_t timeout_us) {
+        const uint64_t deadline = rrr::Time::now(true) + timeout_us;
+        while (!done()) {
+            if (rrr::Time::now(true) >= deadline) {
+                return false;
+            }
+            reactor->run_loop(false, true);
+            rrr::Time::sleep(100);
+        }
+        return true;
     }
 };
 
@@ -36,11 +73,6 @@ TEST_F(FiberTest, WaitAllIsDefined) {
 TEST_F(FiberTest, WaitAnyIsDefined) {
     // Verify WaitAny class is defined and usable
     static_assert(sizeof(WaitAny) > 0, "WaitAny must be a defined class");
-}
-
-TEST_F(FiberTest, WaitNIsDefined) {
-    // Verify WaitN class is defined and usable
-    static_assert(sizeof(WaitN) > 0, "WaitN must be a defined class");
 }
 
 // =============================================================================
@@ -72,7 +104,7 @@ TEST_F(FiberTest, GetIdInsideFiberContext) {
         captured_id = this_fiber::get_id();
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     // Inside fiber context, should return non-zero ID
     EXPECT_NE(0u, captured_id);
@@ -90,7 +122,7 @@ TEST_F(FiberTest, GetIdUniquePerFiber) {
         id2 = this_fiber::get_id();
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     // Each fiber should have a unique ID
     EXPECT_NE(0u, id1);
@@ -117,7 +149,7 @@ TEST_F(FiberTest, CurrentInsideFiberContext) {
         got_current = current.is_some();
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     // Inside fiber context, should return Some
     EXPECT_TRUE(got_current);
@@ -139,7 +171,7 @@ TEST_F(FiberTest, InFiberContextInside) {
         inside = this_fiber::in_fiber_context();
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     EXPECT_TRUE(inside);
 }
@@ -187,7 +219,7 @@ TEST_F(FiberTest, SleepUsZero) {
         completed = true;
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     EXPECT_TRUE(completed);
 }
@@ -203,9 +235,11 @@ TEST_F(FiberTest, SleepUsPositive) {
         end_time = Time::now(true);
     });
 
-    reactor->loop();
+    ASSERT_TRUE(DriveUntil(reactor, [&] { return end_time != 0; }, 1000000))
+        << "fiber never completed its sleep; the assertion below would be vacuous";
 
     // Should have slept at least the specified duration
+    ASSERT_GE(end_time, start_time);
     EXPECT_GE(end_time - start_time, sleep_duration);
 }
 
@@ -224,9 +258,11 @@ TEST_F(FiberTest, SleepMsConversion) {
         end_time = Time::now(true);
     });
 
-    reactor->loop();
+    ASSERT_TRUE(DriveUntil(reactor, [&] { return end_time != 0; }, 1000000))
+        << "fiber never completed its sleep; the assertion below would be vacuous";
 
     // Should have slept at least 5ms = 5000us
+    ASSERT_GE(end_time, start_time);
     EXPECT_GE(end_time - start_time, sleep_ms * 1000);
 }
 
@@ -240,7 +276,7 @@ TEST_F(FiberTest, SleepSConversion) {
     // Note: Even sleep_s(0) creates a TimeoutEvent that may yield
 
     // Verify the conversion factor is correct: 1 second = 1,000,000 us
-    static_assert(Time::RRR_USEC_PER_SEC == 1000000,
+    static_assert(rrr::RRR_USEC_PER_SEC == 1000000,
                   "1 second should be 1,000,000 microseconds");
 
     // Just verify the function exists and is callable
@@ -265,9 +301,14 @@ TEST_F(FiberTest, SleepUntilPastTime) {
         end_time = Time::now(true);
     });
 
-    reactor->loop();
+    // A past deadline should not park the fiber, so this returns on the
+    // first pass; assert that explicitly instead of relying on the
+    // subtraction below to notice.
+    ASSERT_TRUE(DriveUntil(reactor, [&] { return end_time != 0; }, 1000000))
+        << "sleep_until_us(past) never resumed the fiber";
 
     // Should return immediately (within a few hundred microseconds)
+    ASSERT_GE(end_time, start_time);
     EXPECT_LT(end_time - start_time, 10000u); // Less than 10ms
 }
 
@@ -355,7 +396,7 @@ TEST_F(FiberTest, FutureGetValueInFiber) {
     promise.set_value(42);
 
     // Run reactor to let consumer fiber complete
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     EXPECT_EQ(42, received_value);
 }
@@ -372,7 +413,7 @@ TEST_F(FiberTest, FutureWaitForTimeout) {
         ready = future.wait_for(1000);  // 1ms timeout
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     EXPECT_FALSE(ready);
 }
@@ -443,7 +484,7 @@ TEST_F(FiberTest, FutureWithVectorType) {
     auto future = promise.get_future();
     promise.set_value({1, 2, 3, 4, 5});
 
-    auto& result = future.get();
+    auto result = future.get();
     EXPECT_EQ(5u, result.size());
     EXPECT_EQ(1, result[0]);
     EXPECT_EQ(5, result[4]);

@@ -133,7 +133,7 @@ public:
         t.detach();
     }
 
-    void static erpc_server(std::string cluster,
+    void static rpc_server(std::string cluster,
                           transport::Configuration *config) {
         std::string local_uri = config->shard(server_shardIndex, mako::convertCluster(cluster)).host;
         int id = num_warehouses;
@@ -152,8 +152,8 @@ public:
         server_transport->Run(); 
     }
 
-    void setup_erpc_server() {
-        auto t=std::thread(erpc_server, cluster, config);
+    void setup_rpc_server() {
+        auto t=std::thread(rpc_server, cluster, config);
         sleep(1);
         queue_holders[0] = server_transport->c->queue_holders[0];
         queue_holders_response[0] = server_transport->c->queue_holders_response[0];
@@ -212,7 +212,7 @@ int main(int argv, char **args) {
         worker->client();
         //worker->print_stats();
     } else {
-        worker->setup_erpc_server();
+        worker->setup_rpc_server();
         worker->setup_helper();
         worker->validate();
         //worker->print_stats();

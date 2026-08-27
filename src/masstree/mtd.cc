@@ -109,6 +109,8 @@ namespace mtd_unsafe_file {} // Sets file_default to Unsafe for borrow checker
 #include "masstree_scan.hh"
 #include "masstree_context.h"
 #include "msgpack.hh"
+#include <rusty/vec.hpp>
+#include <rusty/vecdeque.hpp>
 
 import std;
 
@@ -127,7 +129,7 @@ static int tcpthreads = 0;
 static int nckthreads = 0;
 static int testthreads = 0;
 static int nlogger = 0;
-static std::vector<int> cores;
+static rusty::Vec<int> cores;
 
 static bool logging = true;
 static bool pinthreads = false;
@@ -141,8 +143,8 @@ int kvtest_first_seed = 31949;
 static volatile sig_atomic_t go_quit = 0;
 static int quit_pipe[2];
 
-static std::vector<const char*> logdirs;
-static std::vector<const char*> ckpdirs;
+static rusty::Vec<const char*> logdirs;
+static rusty::Vec<const char*> ckpdirs;
 
 static logset* logs;
 volatile bool recovering = false; // so don't add log entries, and free old value immediately
@@ -485,7 +487,9 @@ static const char * const kvstats_name[] = {
 };
 
 void runtest(const char *testname, int nthreads) {
-    std::vector<kvtest_client> clients(nthreads, kvtest_client(testname));
+    rusty::Vec<kvtest_client> clients = rusty::Vec<kvtest_client>::with_capacity(nthreads);
+    for (int i = 0; i != nthreads; ++i)
+        clients.push(kvtest_client(testname));
     ::testthreads = nthreads;
     for (int i = 0; i < nthreads; ++i)
         clients[i].set_thread(threadinfo::make(threadinfo::TI_PROCESS, i));
@@ -550,17 +554,17 @@ struct conn {
     }
     Str recent_string(uint64_t xposition) const {
         if (xposition - inbuftotal_ <= unsigned(inbufpos_))
-            return Str(inbuf_ + (xposition - inbuftotal_),
-                       inbuf_ + inbufpos_);
+            return Str::from_range(inbuf_ + (xposition - inbuftotal_),
+                                   inbuf_ + inbufpos_);
         else
-            return Str();
+            return Str::empty();
     }
 
   private:
     char* inbuf_;
     int inbufpos_;
     int inbuflen_;
-    std::vector<char*> oldinbuf_;
+    rusty::Vec<char*> oldinbuf_;
     msgpack::streaming_parser parser_;
   public:
     struct kvout *kvout;
@@ -579,7 +583,7 @@ void conn::hard_check(int tryhard) {
             delete[] x;
         oldinbuf_.clear();
     } else if (inbufpos_ == inbufsz) {
-        oldinbuf_.push_back(inbuf_);
+        oldinbuf_.push(inbuf_);
         inbuf_ = new char[inbufsz];
         inbuftotal_ += inbufpos_;
         inbufpos_ = inbuflen_ = 0;
@@ -667,13 +671,13 @@ main(int argc, char *argv[])
       case opt_logdir: {
           const char *s = strtok((char *) clp->vstr, ",");
           for (; s; s = strtok(NULL, ","))
-              logdirs.push_back(s);
+              logdirs.push(s);
           break;
       }
       case opt_ckpdir: {
           const char *s = strtok((char *) clp->vstr, ",");
           for (; s; s = strtok(NULL, ","))
-              ckpdirs.push_back(s);
+              ckpdirs.push(s);
           break;
       }
       case opt_checkpoint:
@@ -721,7 +725,7 @@ main(int argc, char *argv[])
                   firstcore = pj1.to_i(), corestride = pj2.to_i();
               else if (aj) {
                   for (int i = 0; i < aj.size(); ++i)
-                      cores.push_back(aj[i].to_i());
+                      cores.push(aj[i].to_i());
               } else {
                   Clp_OptionError(clp, "bad %<%O%>, expected %<CORE1%>, %<CORE1+STRIDE%>, or %<CORE1,CORE2,...%>");
                   exit(EXIT_FAILURE);
@@ -740,14 +744,14 @@ main(int argc, char *argv[])
       }
   }
   Clp_DeleteParser(clp);
-  if (logdirs.empty())
-      logdirs.push_back(".");
-  if (ckpdirs.empty())
-      ckpdirs.push_back(".");
+  if (logdirs.is_empty())
+      logdirs.push(".");
+  if (ckpdirs.is_empty())
+      ckpdirs.push(".");
   if (firstcore < 0)
       firstcore = cores.size() ? cores.back() + 1 : 0;
   for (; (int) cores.size() < udpthreads; firstcore += corestride)
-      cores.push_back(firstcore);
+      cores.push(firstcore);
 
   // for -pg profiling
   signal(SIGINT, catchint);
@@ -1022,7 +1026,7 @@ int onego(query<row_type>& q, Json& request, Str request_str, threadinfo& ti) {
                                req, end_req, ti);
         if (ti.logger() && request_str) {
             // use the client's parsed version of the request
-            msgpack::parser mp(request_str.data());
+            msgpack::parser mp = msgpack::parser::from_const_char(request_str.data());
             mp.skip_array_size().skip_primitives(3);
             ti.logger()->record(logcmd_put, q.query_times(), key, Str(mp.position(), request_str.end()));
         } else if (ti.logger())
@@ -1096,7 +1100,7 @@ struct tcpfds {
 class tcpfds {
     int nfds_;
     fd_set rfds_;
-    std::vector<conn *> conns_;
+    rusty::Vec<conn *> conns_;
 
   public:
     tcpfds(int pipefd)
@@ -1104,7 +1108,9 @@ class tcpfds {
         always_assert(pipefd < FD_SETSIZE);
         FD_ZERO(&rfds_);
         FD_SET(pipefd, &rfds_);
-        conns_.resize(nfds_, 0);
+        conns_.reserve(nfds_);
+        while ((int) conns_.size() < nfds_)
+            conns_.push(0);
         conns_[pipefd] = (conn *) 1;
     }
 
@@ -1124,7 +1130,9 @@ class tcpfds {
         FD_SET(fd, &rfds_);
         if (fd >= nfds_) {
             nfds_ = fd + 1;
-            conns_.resize(nfds_, 0);
+            conns_.reserve(nfds_);
+            while ((int) conns_.size() < nfds_)
+                conns_.push(0);
         }
         conns_[fd] = c;
     }
@@ -1163,7 +1171,7 @@ void* tcp_threadfunc(void* x) {
     int myfd = tcp_thread_pipes[2 * ti->index()];
     tcpfds sloop(myfd);
     tcpfds::eventset events;
-    std::deque<conn*> ready;
+    rusty::VecDeque<conn*> ready;
     query<row_type> q;
 
     while (1) {
@@ -1172,7 +1180,7 @@ void* tcp_threadfunc(void* x) {
             if (conn *c = sloop.event_conn(events, i))
                 ready.push_back(c);
 
-        while (!ready.empty()) {
+        while (!ready.is_empty()) {
             conn* c = ready.front();
             ready.pop_front();
 
@@ -1334,7 +1342,7 @@ kvepoch_t read_checkpoint(threadinfo *ti, const char *path) {
     always_assert(p != MAP_FAILED);
     close(fd);
 
-    msgpack::parser par(String::make_stable(p, sb.st_size));
+    msgpack::parser par = msgpack::parser::from_string(String::make_stable(p, sb.st_size));
     Json j;
     par >> j;
     std::cerr << j << "\n";

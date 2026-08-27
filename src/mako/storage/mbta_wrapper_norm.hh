@@ -91,9 +91,13 @@ void scan(void *txn,
 mt_scan++;
 #endif    
 mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
+mbta_type::ValueAllocator value_allocator(
+    [arena]() -> mbta_type::value_type* { return (*arena)(); });
+mbta_type::ValueAllocator *value_allocator_ptr =
+    arena ? &value_allocator : nullptr;
 STD_OP(mbta.transQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
   return callback.invoke(key.data(), key.length(), value);
-}, arena));
+}, value_allocator_ptr));
 }
 
 void rscan(void *txn,
@@ -106,9 +110,13 @@ void rscan(void *txn,
 mt_rscan++;
 #endif
 mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
+mbta_type::ValueAllocator value_allocator(
+    [arena]() -> mbta_type::value_type* { return (*arena)(); });
+mbta_type::ValueAllocator *value_allocator_ptr =
+    arena ? &value_allocator : nullptr;
 STD_OP(mbta.transRQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
   return callback.invoke(key.data(), key.length(), value);
-}, arena));
+}, value_allocator_ptr));
 #endif
 }
 

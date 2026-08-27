@@ -53,6 +53,12 @@
 #include <string.h>
 #include <ctype.h>
 #include <inttypes.h>
+// NOTE (merge of PR #78 onto the a1f8fef8 rusty-cpp pin): this legacy
+// masstree corpus is compiled as plain non-module TUs, and since
+// rusty-cpp #185 rusty::Vec / rusty::HashMap exist only as C++20 modules
+// (<rusty/vec.hpp> and <rusty/hashmap.hpp> are gone/empty). A header
+// cannot `import`, and importing before the textual includes clashes with
+// libc++ under `import std`, so these stay std:: containers.
 
 import std;
 namespace lcdf {
@@ -298,7 +304,7 @@ String_generic::hashcode(const char *s, int len)
 #undef get16
 #if !HAVE_INDIFFERENT_ALIGNMENT
     } else {
-# if !__i386__ && !__x86_64__ && !__arch_um__
+# if WORDS_BIGENDIAN
 #  define get16(p) (((unsigned char) (p)[0] << 8) + (unsigned char) (p)[1])
 # else
 #  define get16(p) ((unsigned char) (p)[0] + ((unsigned char) (p)[1] << 8))

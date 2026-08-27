@@ -4,6 +4,8 @@
  * Tests the shutdown phase tracking, hooks, request tracking,
  * drain functionality, and full graceful shutdown sequence.
  */
+#include <rusty/option.hpp>
+
 #include "gtest/gtest.h"
 #include "../rrr.hpp"
 
@@ -20,27 +22,27 @@ protected:
 // ========== ShutdownPhase Tests ==========
 
 TEST_F(GracefulShutdownTest, ShutdownPhaseToString) {
-    EXPECT_STREQ("RUNNING", shutdown_phase_to_string(ShutdownPhase::RUNNING));
-    EXPECT_STREQ("STOP_ACCEPTING", shutdown_phase_to_string(ShutdownPhase::STOP_ACCEPTING));
-    EXPECT_STREQ("DRAINING", shutdown_phase_to_string(ShutdownPhase::DRAINING));
-    EXPECT_STREQ("CLOSING", shutdown_phase_to_string(ShutdownPhase::CLOSING));
-    EXPECT_STREQ("STOPPED", shutdown_phase_to_string(ShutdownPhase::STOPPED));
+    EXPECT_EQ("RUNNING", shutdown_phase_to_string(ShutdownPhase::RUNNING));
+    EXPECT_EQ("STOP_ACCEPTING", shutdown_phase_to_string(ShutdownPhase::STOP_ACCEPTING));
+    EXPECT_EQ("DRAINING", shutdown_phase_to_string(ShutdownPhase::DRAINING));
+    EXPECT_EQ("CLOSING", shutdown_phase_to_string(ShutdownPhase::CLOSING));
+    EXPECT_EQ("STOPPED", shutdown_phase_to_string(ShutdownPhase::STOPPED));
 }
 
 TEST_F(GracefulShutdownTest, InitialPhaseIsRunning) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     EXPECT_EQ(ShutdownPhase::RUNNING, server.phase());
 }
 
 TEST_F(GracefulShutdownTest, InitialPendingRequestCountIsZero) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     EXPECT_EQ(0, server.pending_request_count());
 }
 
 // ========== Request Tracking Tests ==========
 
 TEST_F(GracefulShutdownTest, IncrementPendingRequests) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     EXPECT_EQ(0, server.pending_request_count());
 
     server.increment_pending();
@@ -51,7 +53,7 @@ TEST_F(GracefulShutdownTest, IncrementPendingRequests) {
 }
 
 TEST_F(GracefulShutdownTest, DecrementPendingRequests) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     server.increment_pending();
     server.increment_pending();
     EXPECT_EQ(2, server.pending_request_count());
@@ -64,7 +66,7 @@ TEST_F(GracefulShutdownTest, DecrementPendingRequests) {
 }
 
 TEST_F(GracefulShutdownTest, ConcurrentRequestTracking) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     const int num_threads = 10;
     const int increments_per_thread = 100;
     std::vector<std::thread> threads;
@@ -104,7 +106,7 @@ TEST_F(GracefulShutdownTest, ConcurrentRequestTracking) {
 // ========== Shutdown Hook Tests ==========
 
 TEST_F(GracefulShutdownTest, ShutdownHookCalled) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     bool hook_called = false;
 
     server.add_shutdown_hook([&hook_called]() {
@@ -118,7 +120,7 @@ TEST_F(GracefulShutdownTest, ShutdownHookCalled) {
 }
 
 TEST_F(GracefulShutdownTest, MultipleHooksCalledInOrder) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     std::vector<int> call_order;
 
     server.add_shutdown_hook([&call_order]() {
@@ -140,7 +142,7 @@ TEST_F(GracefulShutdownTest, MultipleHooksCalledInOrder) {
 }
 
 TEST_F(GracefulShutdownTest, HookExceptionDoesNotStopOthers) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     std::vector<int> call_order;
 
     server.add_shutdown_hook([&call_order]() {
@@ -154,17 +156,41 @@ TEST_F(GracefulShutdownTest, HookExceptionDoesNotStopOthers) {
     });
 
     // Should not throw, and all hooks should be attempted
+    testing::internal::CaptureStdout();
     EXPECT_NO_THROW(server.graceful_shutdown(100));
+    const auto log = testing::internal::GetCapturedStdout();
 
     ASSERT_EQ(2u, call_order.size());
     EXPECT_EQ(1, call_order[0]);
     EXPECT_EQ(3, call_order[1]);
+    EXPECT_NE(std::string::npos,
+              log.find("Server::graceful_shutdown: hook threw exception: Hook error"));
+}
+
+TEST_F(GracefulShutdownTest, OpaqueHookExceptionUsesUnknownMessageAndDoesNotStopOthers) {
+    auto server = Server::new_(rusty::None);
+    bool later_hook_called = false;
+
+    server.add_shutdown_hook([]() {
+        throw 7;
+    });
+    server.add_shutdown_hook([&later_hook_called]() {
+        later_hook_called = true;
+    });
+
+    testing::internal::CaptureStdout();
+    EXPECT_NO_THROW(server.graceful_shutdown(100));
+    const auto log = testing::internal::GetCapturedStdout();
+
+    EXPECT_TRUE(later_hook_called);
+    EXPECT_NE(std::string::npos,
+              log.find("Server::graceful_shutdown: hook threw unknown exception"));
 }
 
 // ========== Stop Accepting Tests ==========
 
 TEST_F(GracefulShutdownTest, StopAcceptingTransitionsPhase) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     EXPECT_EQ(ShutdownPhase::RUNNING, server.phase());
 
     server.stop_accepting();
@@ -172,7 +198,7 @@ TEST_F(GracefulShutdownTest, StopAcceptingTransitionsPhase) {
 }
 
 TEST_F(GracefulShutdownTest, StopAcceptingIdempotent) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     server.stop_accepting();
     EXPECT_EQ(ShutdownPhase::STOP_ACCEPTING, server.phase());
 
@@ -184,7 +210,7 @@ TEST_F(GracefulShutdownTest, StopAcceptingIdempotent) {
 // ========== Drain Tests ==========
 
 TEST_F(GracefulShutdownTest, DrainImmediateWhenNoPendingRequests) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     server.stop_accepting();
 
     auto start = std::chrono::steady_clock::now();
@@ -197,7 +223,7 @@ TEST_F(GracefulShutdownTest, DrainImmediateWhenNoPendingRequests) {
 }
 
 TEST_F(GracefulShutdownTest, DrainWaitsForPendingRequests) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     server.stop_accepting();
     server.increment_pending();
 
@@ -219,7 +245,7 @@ TEST_F(GracefulShutdownTest, DrainWaitsForPendingRequests) {
 }
 
 TEST_F(GracefulShutdownTest, DrainTimesOut) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     server.stop_accepting();
     server.increment_pending();  // This won't be decremented
 
@@ -238,7 +264,7 @@ TEST_F(GracefulShutdownTest, DrainTimesOut) {
 // ========== Graceful Shutdown Tests ==========
 
 TEST_F(GracefulShutdownTest, GracefulShutdownTransitionsAllPhases) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     std::vector<ShutdownPhase> observed_phases;
 
     // Track phase transitions via hooks
@@ -259,7 +285,7 @@ TEST_F(GracefulShutdownTest, GracefulShutdownTransitionsAllPhases) {
 }
 
 TEST_F(GracefulShutdownTest, GracefulShutdownDrainsRequests) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     server.increment_pending();
     server.increment_pending();
 
@@ -282,7 +308,7 @@ TEST_F(GracefulShutdownTest, GracefulShutdownDrainsRequests) {
 }
 
 TEST_F(GracefulShutdownTest, GracefulShutdownProceedsOnDrainTimeout) {
-    Server server;
+    auto server = Server::new_(rusty::None);
     server.increment_pending();  // Won't be decremented
 
     auto start = std::chrono::steady_clock::now();

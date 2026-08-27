@@ -75,13 +75,13 @@ namespace sync_util {
 
                 //start_advancer();
                 Warning("the watermark is exchanging within the cluster: %s",cluster.c_str());
-                // erpc server - busy loop
+                // rpc server - busy loop
                 thread server_thread(&sync_logger::server_watermark_exchange);
                 server_thread.detach();
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-                // erpc client
+                // rpc client
                 thread client_thread(&sync_logger::client_watermark_exchange);
                 client_thread.detach(); 
             }
@@ -291,7 +291,7 @@ namespace sync_util {
 
         static void client_watermark_exchange() {
             uint32_t watermark = 0;
-            // erpc ports: 
+            // rpc ports: 
             //   0-warehouses-1: db worker threads
             //   warehouses: server receiver
             //   warehouses+1: exchange watermark server
@@ -361,7 +361,7 @@ namespace sync_util {
         }
 
         // for the control:4, send the req to the exchange-watermark server,
-        //   for the rest, send the req to the erpc server.
+        //   for the rest, send the req to the rpc server.
         static void client_control(int control, uint32_t value) {
             auto id = config->warehouses + 3;
             TThread::set_nshards(nshards);

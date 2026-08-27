@@ -19,15 +19,14 @@
 
 
 #include <rusty/arc.hpp>
+#include <rusty/sync/weak.hpp>  // rusty::sync::downgrade
 #include <rusty/box.hpp>
-#include <rusty/hashmap.hpp>
-#include <rusty/hashset.hpp>
 #include <rusty/refcell.hpp>
-#include <rusty/vec.hpp>
 
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 import rrr.internal_protocol;
 
 namespace rrr {
@@ -53,9 +52,9 @@ class StubChannel {
     void set_on_error (OnErrorCallback cb) { on_error_  = std::move(cb); }
 
     void deliver(const std::vector<std::uint8_t>& payload) {
-        if (!on_frame_) return;
+        if (!on_frame_.has_value()) return;
         ChannelFrame f{payload.data(), payload.size()};
-        on_frame_(f);
+        on_frame_.callable()(f);
     }
 
     const std::vector<std::vector<std::uint8_t>>& captured() const { return captured_; }
@@ -94,16 +93,13 @@ inline ChannelConnectionProxy make_stub_proxy(
 //   [xid:v64][rpc_id:i32][user-data...]
 inline std::vector<std::uint8_t> build_request_frame(
         i64 xid, i32 rpc_id, const std::string& user = std::string()) {
-    Marshal m;
-    m << v64(xid);
-    m << rpc_id;
-    if (!user.empty()) m << user;
-    std::size_t size = m.content_size();
-    std::vector<std::uint8_t> bytes(size);
-    if (size > 0) {
-        verify(m.read(bytes.data(), size) == size);
-    }
-    return bytes;
+    rrr::BufferSink sink;
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::Serialize_::serialize(v64(xid), war);
+    rrr::Serialize_::serialize(rpc_id, war);
+    if (!user.empty()) rrr::Serialize_::serialize(user, war);
+    return std::vector<std::uint8_t>(
+        sink.bytes.data(), sink.bytes.data() + sink.bytes.len());
 }
 
 // Tiny test service that records each dispatch and replies with
@@ -120,14 +116,15 @@ class RecordingService {
         last_rpc_id_ = rpc_id;
         last_xid_    = req->xid;
         std::string echo;
-        req->m >> echo;
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(echo, __req_ar__);
         last_payload_ = echo;
         ++dispatch_count_;
         // Reply back to the client, echoing the payload.
         auto sconn_opt = sconn.upgrade();
         if (sconn_opt.is_some()) {
             sconn_opt.unwrap()->reply(*req, /*err=*/0,
-                [&](BinaryWriteArchive& out) { out << echo; });
+                [&](BinaryWriteArchive& out) { rrr::Serialize_::serialize(echo, out); });
         }
     }
 
@@ -155,7 +152,17 @@ class RecordingService {
     i64 last_xid_       = 0;
     std::string last_payload_;
 };
-static_assert(ServiceLike<RecordingService>);
+static_assert(requires(
+    RecordingService& svc,
+    Server& server,
+    std::size_t svc_index,
+    i32 rpc_id,
+    rusty::Box<Request> req,
+    WeakServerConnection weak_sconn) {
+  { svc.__reg_to__(server, svc_index) } -> std::convertible_to<int>;
+  { svc.__dispatch__(rpc_id, std::move(req), std::move(weak_sconn)) }
+      -> std::same_as<void>;
+});
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -175,16 +182,17 @@ class ServerChannelRecvTest : public ::testing::Test {
         rusty::HashMap<i32, std::size_t> rpc_to_service;
         rusty::HashSet<i32> fast_rpc_ids;
         rusty::Vec<rusty::RefCell<ServiceProxy>> services;
-        auto pending = rusty::Arc<std::atomic<int>>::make(0);
-        auto drop = rusty::Arc<std::atomic<bool>>::make(false);
-        ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
-            std::move(rpc_to_service),
-            std::move(fast_rpc_ids),
-            std::move(services),
-            std::string("0.0.0.0:0"),
-            std::move(pending),
-            std::move(drop),
-            kFakeServerInstanceId));
+        auto pending = rusty::Arc<ServerPendingRequestsAtomic>::make(0);
+        auto drop = rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false);
+        ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
+            RpcServiceContext::new_(
+                std::move(rpc_to_service),
+                std::move(fast_rpc_ids),
+                std::move(services),
+                std::string("0.0.0.0:0"),
+                std::move(pending),
+                std::move(drop),
+                kFakeServerInstanceId)));
         sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
             ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
         // Wire `weak_self_` so the on_frame callback can upgrade.
@@ -219,13 +227,15 @@ TEST_F(ServerChannelRecvTest, UnhandledRpcRepliesEnoent) {
     stub->deliver(frame);
 
     ASSERT_EQ(stub->count(), 1u);
-    Marshal body;
-    body.write(stub->captured().front().data(),
+    rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
     v64 v_xid;
     v32 v_err;
     v64 v_inst;
-    body >> v_xid >> v_err >> v_inst;
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(v_err, rar);
+    rrr::Deserialize_::deserialize(v_inst, rar);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 77);
     EXPECT_EQ(v_err.get(), ENOENT);
     EXPECT_EQ(static_cast<uint64_t>(v_inst.get()), kFakeServerInstanceId);
@@ -244,13 +254,15 @@ TEST_F(ServerChannelRecvTest, HeartbeatRpcRepliesZero) {
     stub->deliver(frame);
 
     ASSERT_EQ(stub->count(), 1u);
-    Marshal body;
-    body.write(stub->captured().front().data(),
+    rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
     v64 v_xid;
     v32 v_err;
     v64 v_inst;
-    body >> v_xid >> v_err >> v_inst;
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(v_err, rar);
+    rrr::Deserialize_::deserialize(v_inst, rar);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 3);
     EXPECT_EQ(v_err.get(), 0);
     EXPECT_EQ(static_cast<uint64_t>(v_inst.get()), kFakeServerInstanceId);
@@ -264,20 +276,21 @@ TEST_F(ServerChannelRecvTest, MalformedFrameRepliesEinval) {
     auto stub = std::make_shared<StubChannel>();
     mut_sconn().bind_channel(make_stub_proxy(stub));
 
-    Marshal m;
-    m << v64(/*xid=*/55);  // only xid, no rpc_id
-    std::size_t size = m.content_size();
-    std::vector<std::uint8_t> bytes(size);
-    verify(m.read(bytes.data(), size) == size);
+    rrr::BufferSink sink;
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::Serialize_::serialize(v64(/*xid=*/55), war);  // only xid, no rpc_id
+    std::vector<std::uint8_t> bytes(
+        sink.bytes.data(), sink.bytes.data() + sink.bytes.len());
     stub->deliver(bytes);
 
     ASSERT_EQ(stub->count(), 1u);
-    Marshal body;
-    body.write(stub->captured().front().data(),
+    rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
     v64 v_xid;
     v32 v_err;
-    body >> v_xid >> v_err;
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(v_err, rar);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 55);
     EXPECT_EQ(v_err.get(), EINVAL);
 }
@@ -303,16 +316,17 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     rpc_to_service.insert(RecordingService::kEchoRpcId, std::size_t{0});
     rusty::HashSet<i32> fast_rpc_ids;
     fast_rpc_ids.insert(RecordingService::kEchoRpcId);
-    auto pending = rusty::Arc<std::atomic<int>>::make(0);
-    auto drop = rusty::Arc<std::atomic<bool>>::make(false);
-    ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
-        std::move(rpc_to_service),
-        std::move(fast_rpc_ids),
-        std::move(services),
-        std::string("0.0.0.0:0"),
-        std::move(pending),
-        std::move(drop),
-        kFakeServerInstanceId));
+    auto pending = rusty::Arc<ServerPendingRequestsAtomic>::make(0);
+    auto drop = rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false);
+    ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
+        RpcServiceContext::new_(
+            std::move(rpc_to_service),
+            std::move(fast_rpc_ids),
+            std::move(services),
+            std::string("0.0.0.0:0"),
+            std::move(pending),
+            std::move(drop),
+            kFakeServerInstanceId)));
     sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
         ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
     const_cast<ServerConnection&>(*sconn_.as_ref().unwrap().get())
@@ -333,14 +347,17 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
 
     // The handler's reply was captured by the stub.
     ASSERT_EQ(stub->count(), 1u);
-    Marshal body;
-    body.write(stub->captured().front().data(),
+    rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
     v64 v_xid;
     v32 v_err;
     v64 v_inst;
     std::string echo;
-    body >> v_xid >> v_err >> v_inst >> echo;
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(v_err, rar);
+    rrr::Deserialize_::deserialize(v_inst, rar);
+    rrr::Deserialize_::deserialize(echo, rar);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 100);
     EXPECT_EQ(v_err.get(), 0);
     EXPECT_EQ(echo, "ping");

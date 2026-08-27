@@ -129,7 +129,7 @@ void gc_layer_rcu_callback<P>::operator()(threadinfo& ti)
     while (!root_->is_root())
         root_ = root_->maybe_parent();
     if (!root_->deleted()) {    // if not destroying tree...
-        tcursor<P> lp(root_, s_, len_);
+        auto lp = tcursor<P>::from_root_chars(root_, s_, len_);
         bool do_remove = lp.gc_layer(ti);
         if (!do_remove || !lp.finish_remove(ti))
             lp.n_->unlock();

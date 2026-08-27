@@ -6,6 +6,7 @@
  *
  **********************************************************************/
 
+#include <std_compat.hpp>  // textual STL before `import std` (mixed with module → abi_tag clash)
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -78,7 +79,7 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
 
     // Create server to listen for incoming requests
     // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
-    server_ = new rrr::Server(poll_thread_worker_.as_ref().unwrap().clone());
+    server_ = new rrr::Server(rrr::Server::new_(poll_thread_worker_.as_ref().unwrap().clone()));
 
     // Register TransportBackendService to handle all request types in the range
     auto svc = rusty::make_box<TransportBackendService>(
@@ -86,10 +87,10 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
         static_cast<rrr::i32>(st_nr_req_types),
         static_cast<rrr::i32>(end_nr_req_types)
     );
-    server_->reg_service(std::move(svc));
+    server_->reg_service_typed(std::move(svc));
 
     // Start listening on the port
-    int ret = server_->start(("0.0.0.0:" + port_str).c_str());
+    int ret = server_->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + port_str).c_str()));
     if (ret != 0) {
         Panic("Failed to start rrr::Server on port %s", port_str.c_str());
         return ret;
@@ -174,7 +175,7 @@ rusty::Option<rusty::Arc<rrr::Client>> RrrRpcBackend::GetOrCreateClient(uint8_t 
                                                           int force_center) {
     int clusterRoleSentTo = cluster_role_;
 
-    // Handle shard failure scenarios (same logic as eRPC)
+    // Handle shard failure scenarios
     auto session_key = std::make_tuple(LOCALHOST_CENTER_INT, shard_idx, server_id);
 
     if (sync_util::sync_logger::failed_shard_index >= 0) {
@@ -233,7 +234,7 @@ rusty::Option<rusty::Arc<rrr::Client>> RrrRpcBackend::GetOrCreateClient(uint8_t 
 
     Debug("GetOrCreateClient: Connecting to %s", addr.c_str());
 
-    int ret = client->connect(addr.c_str());
+    int ret = client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
     if (ret != 0) {
         //Warning("Failed to connect to %s (error %d)", addr.c_str(), ret);
         clients_lock_.unlock();
@@ -278,8 +279,8 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
     Debug("RrrRpcBackend::SendToShard: Got client, calling request");
 
     // Send request with lambda API
-    auto fu_result = client->request(req_type, [&](rrr::BinaryWriteArchive& out) {
-        out.write_bytes(tls_buffers.request_buffer.data(), msg_len);
+    auto fu_result = client->request(req_type, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& out) {
+        out.write_bytes(reinterpret_cast<const std::uint8_t*>(tls_buffers.request_buffer.data()), msg_len);
     });
     if (fu_result.is_err()) {
         Warning("Failed to send request for req_type %d", req_type);
@@ -321,7 +322,7 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
     // Read response (guard ensures lifetime safety)
     auto resp_guard = fu->get_reply();
     std::vector<char> resp_buffer(tls_buffers.response_len);
-    resp_guard->read(resp_buffer.data(), tls_buffers.response_len);
+    resp_guard->src.read_bytes(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), tls_buffers.response_len);
 
     // Deliver response to receiver (only if not stopping)
     if (!stop_ && src) {
@@ -368,8 +369,8 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
 
         Debug("RrrRpcBackend::SendToAll: Got client for shard %d, calling request", shard_idx);
 
-        auto fu_result = client->request(req_type, [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(tls_buffers.request_buffer.data(), req_len);
+        auto fu_result = client->request(req_type, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& out) {
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(tls_buffers.request_buffer.data()), req_len);
         });
         if (fu_result.is_err()) {
             Warning("Failed to send request for shard %d", shard_idx);
@@ -416,7 +417,7 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
         // Read response (guard ensures lifetime safety)
         auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_guard->read(resp_buffer.data(), resp_len);
+        resp_guard->src.read_bytes(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
@@ -453,8 +454,8 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         if (client_opt.is_none()) continue;
         rusty::Arc<rrr::Client> client = client_opt.unwrap();
 
-        auto fu_result = client->request(req_type, [raw_data, req_len](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(raw_data, req_len);
+        auto fu_result = client->request(req_type, rrr::FutureAttr(), [raw_data, req_len](rrr::BinaryWriteArchive& out) {
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(raw_data), req_len);
         });
         if (fu_result.is_err()) continue;
         auto fu = fu_result.unwrap();
@@ -494,7 +495,7 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         // Read response (guard ensures lifetime safety)
         auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_guard->read(resp_buffer.data(), resp_len);
+        resp_guard->src.read_bytes(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
@@ -527,7 +528,7 @@ void RrrRpcBackend::RunEventLoop() {
             auto server_id = it.first;
             auto* server_queue = it.second;
 
-            erpc::ReqHandle* req_handle_ptr;
+            void* req_handle_ptr;
             size_t msg_size = 0;
 
             // Fetch responses from helper thread queue
@@ -564,7 +565,7 @@ void RrrRpcBackend::RunEventLoop() {
                 // Send response back via rrr/rpc
                 const_cast<rrr::ServerConnection&>(*rrr_handle->sconn).reply(
                     *rrr_handle->original_request, 0, [&](rrr::BinaryWriteArchive& out) {
-                        out.write_bytes(rrr_handle->response_data.data(), msg_size);
+                        out.write_bytes(reinterpret_cast<const std::uint8_t*>(rrr_handle->response_data.data()), msg_size);
                     });
 
                 msg_size_resp_sent_.fetch_add(msg_size, std::memory_order_relaxed);
@@ -718,7 +719,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
         // Read request
         basic_request_t basic_req;
-        req->m.read(&basic_req, sizeof(basic_req));
+        req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&basic_req), sizeof(basic_req));
 
         // Prepare response
         get_int_response_t resp;
@@ -729,7 +730,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
         // Send response
         const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(&resp, sizeof(resp));
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&resp), sizeof(resp));
         });
 
         backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
@@ -741,7 +742,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         Debug("Received warmupReqType");
 
         warmup_request_t warmup_req;
-        req->m.read(&warmup_req, sizeof(warmup_req));
+        req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&warmup_req), sizeof(warmup_req));
 
         get_int_response_t resp;
         resp.result = 1;
@@ -750,7 +751,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.shard_index = TThread::get_shard_index();
 
         const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(&resp, sizeof(resp));
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&resp), sizeof(resp));
         });
 
         backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
@@ -760,7 +761,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
     if (req_type == controlReqType) {
         control_request_t ctrl_req;
-        req->m.read(&ctrl_req, sizeof(ctrl_req));
+        req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&ctrl_req), sizeof(ctrl_req));
 
         Warning("Received controlReqType, control: %d, shardIndex: %lld, target_server_id: %llu",
                 ctrl_req.control, ctrl_req.value, ctrl_req.targert_server_id);
@@ -782,7 +783,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.shard_index = TThread::get_shard_index();
 
         const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(&resp, sizeof(resp));
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&resp), sizeof(resp));
         });
 
         backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
@@ -792,7 +793,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
     // Normal requests: enqueue to helper queue
     // Extract request size first to determine server ID before creating RrrRequestHandle
-    size_t req_size = req->m.content_size();
+    size_t req_size = req->src.remaining();
     if (req_size < sizeof(TargetServerIDReader)) {
         Warning("Request too small to contain server ID: %zu < %zu", req_size, sizeof(TargetServerIDReader));
         return;
@@ -800,7 +801,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
     // Peek at request data to extract server ID
     std::vector<char> temp_buffer(req_size);
-    req->m.read(temp_buffer.data(), req_size);
+    req->src.read_bytes(reinterpret_cast<std::uint8_t*>(temp_buffer.data()), req_size);
     auto* target_server_id_reader = (TargetServerIDReader*)temp_buffer.data();
     uint16_t target_server_id = target_server_id_reader->targert_server_id;
 
@@ -832,8 +833,8 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
     backend->rrr_request_map_[key] = std::move(rrr_handle);
     backend->rrr_request_map_lock_.unlock();
 
-    // Enqueue to helper queue (cast void* to erpc::ReqHandle* for compatibility)
-    helper_queue->add_one_req(reinterpret_cast<erpc::ReqHandle*>(key), 0);
+    // Enqueue to helper queue (opaque token)
+    helper_queue->add_one_req(key, 0);
 }
 
 // RrrRequestHandle::EnqueueResponse - enqueues response to response queue
@@ -853,5 +854,5 @@ void RrrRequestHandle::EnqueueResponse(size_t msg_size) {
     auto* response_queue = it->second;
 
     // Enqueue response (using GetOpaqueHandle as the key, same as for requests)
-    response_queue->add_one_req(reinterpret_cast<erpc::ReqHandle*>(GetOpaqueHandle()), msg_size);
+    response_queue->add_one_req(GetOpaqueHandle(), msg_size);
 }

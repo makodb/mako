@@ -44,7 +44,7 @@ A comprehensive developer guide for the Mako distributed transactional datastore
 
 **Authors**: Weihai Shen, Yang Cui, Siddhartha Sen, Sebastian Angel, Shuai Mu
 
-The codebase also contains **Janus**, a related protocol from OSDI'16 (*Consolidating Concurrency Control and Consensus for Commits under Conflicts*).
+Mako descends from the **Janus** codebase associated with the OSDI'16 paper *Consolidating Concurrency Control and Consensus for Commits under Conflicts*. The standalone Janus protocol implementation has since been retired.
 
 ### When to Use Mako
 
@@ -103,7 +103,7 @@ Mako has a layered architecture:
 |  | TCP/IP   | Fibers    | Reactor  | Event    |               |
 |  | Sockets  |           | Pattern  | Loop     |               |
 |  +----------+----------+----------+----------+               |
-|         (Optional: DPDK / RDMA / eRPC)                        |
+|         (Optional: DPDK / RDMA)                               |
 +------------------------------+-------------------------------+
                                |
 +------------------------------v-------------------------------+
@@ -141,7 +141,7 @@ Mako has a layered architecture:
 **RRR Communication Layer** (`src/rrr/`):
 - Custom RPC framework with asynchronous, fiber-based I/O
 - Reactor pattern for event-driven networking
-- Supports TCP/IP, DPDK, RDMA, eRPC
+- Supports TCP/IP, DPDK, RDMA
 
 **Storage Engines** (`src/mako/masstree/`):
 - Masstree: in-memory concurrent B+tree for primary storage
@@ -155,22 +155,18 @@ mako/
     deptran/          # Transaction protocol implementations
       paxos/          # Paxos consensus
       raft/           # Raft consensus
-      janus/          # Janus protocol (OSDI'16)
-      2pl/            # Two-phase locking
       occ/            # Optimistic concurrency control
-      rcc/            # Rococo protocol
     mako/             # Mako core
       masstree/       # Masstree storage engine
       lib/            # Transport backends, configuration
       benchmarks/     # Benchmark harness (TPC-C, TPC-A, RW)
     rrr/              # RPC framework and fibers
     bench/            # Benchmark workload implementations
-    memdb/            # In-memory datastore
   config/             # YAML configuration files
   ci/                 # CI test scripts
   examples/           # Example scripts and tests
   tests/              # Unit and integration tests
-  third-party/        # Dependencies (rusty-cpp, eRPC, etc.)
+  third-party/        # Dependencies (rusty-cpp, yaml-cpp, googletest, etc.)
   rust-lib/           # Rust components
 ```
 
@@ -790,8 +786,8 @@ t->put(lcdf::Str("k"), "value");   // same code either way
 - `masstree_ordered_index` — plain Masstree (L1), no transactions;
   owns value memory with RCU-deferred frees; the transactional
   virtuals abort loudly.
-- `mbta_ordered_index` — Silo's table; each non-txn op is an internal
-  one-op OCC transaction (Encode/strip handled internally).
+- `mbta_ordered_index` — STO/MassTrans transactional table; each non-txn op
+  is an internal one-op OCC transaction (Encode/strip handled internally).
 - `mbta_sharded_ordered_index` — per-key routing; remote keys travel
   self-contained non-txn RPCs, and writes on a replicated leader
   reach the replication log through the normal commit path.
@@ -802,27 +798,23 @@ Design and semantics: [`storage-interface.md`](storage-interface.md).
 
 ## 7. Networking and RPC
 
-### Transport Backends
+### Transport Backend
 
-Mako supports two RPC backends, switchable at runtime:
+Mako has a single RPC backend:
 
-| Feature | rrr/rpc (default) | eRPC |
-|---------|-------------------|------|
-| Latency | ~10-50 us (TCP/IP) | ~1-2 us (RDMA) |
-| Hardware | Standard Ethernet | RDMA-capable NICs |
-| Portability | Any platform | Linux + RDMA drivers |
-| Use case | Dev, testing, cloud | Production clusters |
+| Feature | rrr/rpc |
+|---------|---------|
+| Latency | ~10-50 us (TCP/IP) |
+| Hardware | Standard Ethernet |
+| Portability | Any platform |
+| Use case | Dev, testing, cloud, production |
 
-**Switching backends:**
 ```bash
-# Default (rrr/rpc)
 ./build/dbtest config/tpcc.yml
-
-# eRPC
-MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
 ```
 
-Both backends implement the `TransportBackend` interface, making worker threads transport-agnostic:
+Worker threads never see the transport: they reach requests through the
+`TransportRequestHandle` interface, implemented by `RrrRequestHandle`.
 
 ```cpp
 class TransportRequestHandle {
@@ -1042,7 +1034,7 @@ Port assignment: Shard N uses base_port + N*100 (e.g., 31000, 31100, 31200).
 | Binary | Description |
 |--------|-------------|
 | `build/dbtest` | Main Mako binary (Paxos or Raft) |
-| `build/deptran_server` | Standalone Raft server |
+| `build/deptran_server` | Raft lab harness (`make raft-test` only) |
 | `build/simpleRaft` | Simple Raft replication test |
 | `build/test_rocksdb_persistence` | RocksDB persistence test |
 
@@ -1088,9 +1080,6 @@ make -j$(nproc)
 | `shardFaultTolerance` | Shard crash/reboot resilience |
 | `multiShardSingleProcess` | Multi-shard in one process |
 | `cpuThrottlingScaling` | CPU throttle scaling test |
-| `eRPCshardNoReplication` | eRPC transport test |
-| `eRPCshard1Replication` | eRPC with replication |
-| `eRPCshard2Replication` | eRPC with 2 shards + replication |
 
 ### Optional Quick Build Path
 
@@ -1278,9 +1267,8 @@ jemalloc for optimized allocation; per-CPU memory allocators for reduced content
 | Submodule not found | `git submodule update --init --recursive` |
 | Out of memory during build | `make -j2` (reduce parallelism) |
 | Borrow checker parse errors | Ensure LIBCLANG_PATH matches system clang version |
-| Raft leader churn | Increase heartbeat interval in `config/none_raft.yml` |
+| Raft leader churn | Increase `MAKO_RAFT_HEARTBEAT_INTERVAL_US` |
 | Hanging test processes | `./ci/ci_mako_raft.sh cleanup` |
-| eRPC "Failed to create Nexus" | Check RDMA drivers (`ibstat`), configure hugepages |
 
 ### Debugging
 
@@ -1310,11 +1298,10 @@ perf report
 | **ACID** | Atomicity, Consistency, Isolation, Durability |
 | **Ballot** | Unique proposal identifier in Paxos, ordered for precedence |
 | **Epoch** | Time period for garbage collection and failure recovery |
-| **eRPC** | High-performance RDMA-based RPC library |
 | **Fiber** | Lightweight cooperative thread used by Mako |
 | **Follower** | Replica that accepts proposals from the leader |
 | **Frame** | Protocol-specific transaction processing module |
-| **Janus** | OSDI'16 distributed transaction protocol in this codebase |
+| **Janus** | OSDI'16 protocol that influenced Mako; its standalone implementation is retired |
 | **Leader** | Replica that proposes values and coordinates consensus |
 | **Local Timestamp** | Per-partition timestamp of most recently committed transaction |
 | **Mako** | Speculative distributed transaction system (named for the fast mako shark) |

@@ -64,7 +64,7 @@ class TcpFactoryTest : public ::testing::Test {
  protected:
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
-        factory_arc_ = rusty::Some(rusty::Arc<TcpFactory>::make(poll_thread_.as_ref().unwrap().clone()));
+        factory_arc_ = rusty::Some(rusty::Arc<TcpFactory>::new_(TcpFactory::new_(poll_thread_.as_ref().unwrap().clone())));
     }
 
     void TearDown() override {
@@ -93,11 +93,11 @@ class TcpFactoryTest : public ::testing::Test {
 // ---------------------------------------------------------------------------
 
 TEST_F(TcpFactoryTest, BackendNameIsTcp) {
-    EXPECT_STREQ(factory().backend_name(), "tcp");
+    EXPECT_EQ(factory().backend_name(), "tcp");
 }
 
 TEST_F(TcpFactoryTest, ConnectInvalidAddressFails) {
-    auto r = mut_factory().connect("not-an-address");
+    auto r = tcp_factory_connect(mut_factory(), "not-an-address");
     EXPECT_EQ(r.error, ChannelError::AddressInvalid);
     EXPECT_TRUE(r.connection.is_none());
 }
@@ -122,7 +122,7 @@ TEST_F(TcpFactoryTest, ConnectUnboundPortFailsConnectionRefused) {
     char addr[64];
     std::snprintf(addr, sizeof(addr), "127.0.0.1:%d", port);
 
-    auto r = mut_factory().connect(addr);
+    auto r = tcp_factory_connect(mut_factory(), addr);
     // We accept either ConnectionRefused or, if a TIME_WAIT shadow
     // intercepts, ConnectionReset / Timeout. Localhost loopback in
     // a quiet test process should produce ConnectionRefused, but
@@ -140,7 +140,7 @@ TEST_F(TcpFactoryTest, ConnectUnboundPortFailsConnectionRefused) {
 
 TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     // Server side: factory-built listener.
-    auto listener = mut_factory().make_listener().unwrap();
+    auto listener = tcp_factory_make_listener(mut_factory()).unwrap();
     ASSERT_EQ(listener->listen("127.0.0.1:0"), ChannelError::None);
     const std::string local_addr = listener->local_address();
     ASSERT_FALSE(local_addr.empty());
@@ -152,26 +152,26 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     rusty::Option<ChannelConnectionProxy> server_side_conn;
     std::vector<std::vector<std::uint8_t>> server_received;
 
-    listener->set_on_accept([&](ChannelConnectionProxy proxy) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy proxy) {
         std::lock_guard<std::mutex> g(accept_mu);
-        proxy->set_on_frame([&](const ChannelFrame& f) {
+        proxy->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
             std::lock_guard<std::mutex> g2(accept_mu);
             server_received.emplace_back(f.payload, f.payload + f.size);
-        });
+        }));
         server_side_conn = rusty::Some(std::move(proxy));
-    });
+    }));
 
     // Client side: factory.connect().
-    auto cresult = mut_factory().connect(local_addr);
+    auto cresult = tcp_factory_connect(mut_factory(), local_addr);
     ASSERT_EQ(cresult.error, ChannelError::None);
     ASSERT_TRUE(cresult.connection.is_some());
 
     std::mutex client_mu;
     std::vector<std::vector<std::uint8_t>> client_received;
-    cresult.connection.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
+    cresult.connection.as_mut().unwrap()->set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
         std::lock_guard<std::mutex> g(client_mu);
         client_received.emplace_back(f.payload, f.payload + f.size);
-    });
+    }));
 
     // Wait for accept to surface on the poll thread.
     EXPECT_TRUE(wait_for([&] {
@@ -231,23 +231,23 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
-    auto listener = mut_factory().make_listener().unwrap();
+    auto listener = tcp_factory_make_listener(mut_factory()).unwrap();
     ASSERT_EQ(listener->listen("127.0.0.1:0"), ChannelError::None);
     const std::string local_addr = listener->local_address();
 
     std::mutex mu;
     rusty::Option<ChannelConnectionProxy> server_conn;
     int server_closes = 0;
-    listener->set_on_accept([&](ChannelConnectionProxy proxy) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy proxy) {
         std::lock_guard<std::mutex> g(mu);
-        proxy->set_on_closed([&](ChannelError) {
+        proxy->set_on_closed(OnClosedCallback::from_callable([&](ChannelError) {
             std::lock_guard<std::mutex> g2(mu);
             ++server_closes;
-        });
+        }));
         server_conn = rusty::Some(std::move(proxy));
-    });
+    }));
 
-    auto cresult = mut_factory().connect(local_addr);
+    auto cresult = tcp_factory_connect(mut_factory(), local_addr);
     ASSERT_EQ(cresult.error, ChannelError::None);
 
     EXPECT_TRUE(wait_for([&] {
@@ -275,23 +275,23 @@ TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TcpFactoryTest, MultipleSequentialConnects) {
-    auto listener = mut_factory().make_listener().unwrap();
+    auto listener = tcp_factory_make_listener(mut_factory()).unwrap();
     ASSERT_EQ(listener->listen("127.0.0.1:0"), ChannelError::None);
     const std::string local_addr = listener->local_address();
 
     std::mutex mu;
     int accepts = 0;
     std::vector<ChannelConnectionProxy> server_conns;
-    listener->set_on_accept([&](ChannelConnectionProxy proxy) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy proxy) {
         std::lock_guard<std::mutex> g(mu);
         ++accepts;
         server_conns.push_back(std::move(proxy));
-    });
+    }));
 
     constexpr int kClients = 5;
     std::vector<ChannelConnectionProxy> client_conns;
     for (int i = 0; i < kClients; ++i) {
-        auto r = mut_factory().connect(local_addr);
+        auto r = tcp_factory_connect(mut_factory(), local_addr);
         ASSERT_EQ(r.error, ChannelError::None) << "client " << i;
         client_conns.push_back(std::move(r.connection).unwrap());
     }
@@ -322,7 +322,7 @@ TEST_F(TcpFactoryTest, MultipleSequentialConnects) {
 TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
     auto proxy = make_tcp_factory_proxy(factory_arc_.as_ref().unwrap().clone());
 
-    EXPECT_STREQ(proxy->backend_name(), "tcp");
+    EXPECT_EQ(proxy->backend_name(), "tcp");
 
     auto listener = proxy->make_listener().unwrap();
     ASSERT_EQ(listener->listen("127.0.0.1:0"), ChannelError::None);
@@ -333,10 +333,10 @@ TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
     // accepted connection on the listener side.
     std::mutex mu;
     rusty::Option<ChannelConnectionProxy> server_conn;
-    listener->set_on_accept([&](ChannelConnectionProxy p) {
+    listener->set_on_accept(OnAcceptCallback::from_callable([&](ChannelConnectionProxy p) {
         std::lock_guard<std::mutex> g(mu);
         server_conn = rusty::Some(std::move(p));
-    });
+    }));
 
     auto r = proxy->connect(local_addr);
     ASSERT_EQ(r.error, ChannelError::None);

@@ -5,6 +5,8 @@
 #include <time.h>
 
 #include "../rrr.hpp"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 import std;
 
@@ -21,7 +23,7 @@ int main() {
     Log_info("Fragile minimal test starting...");
 
     // Test 2: Basic timer
-    Timer timer;
+    auto timer = Timer::new_();
     timer.start();
 
     // Test 3: Simple loop with time measurement
@@ -33,12 +35,12 @@ int main() {
     timer.stop();
 
     // Test 4: Print results
-    Log_info("Sum: %d", sum);
-    Log_info("Elapsed: %f seconds", timer.elapsed());
+    Log_info("Sum: {}", sum);
+    Log_info("Elapsed: {:f} seconds", timer.elapsed());
 
-    // Test 5: Test Time::now()
+    // Test 5: Test Time::now(false)
     uint64_t now = Time::now(true);
-    Log_info("Current time (ns): %lu", now);
+    Log_info("Current time (ns): {}", now);
 
     // Test 6: Test lambda with std::function
     timer.start();
@@ -50,7 +52,7 @@ int main() {
         });
     }
     timer.stop();
-    Log_info("Lambda test sum: %lu, time: %f seconds", ret, timer.elapsed());
+    Log_info("Lambda test sum: {}, time: {:f} seconds", ret, timer.elapsed());
 
     Log_info("All tests passed!");
     return 0;

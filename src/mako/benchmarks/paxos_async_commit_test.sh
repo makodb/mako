@@ -196,13 +196,13 @@ functionCompileC() {
 
 functionC1() {
     nthreads=4
-    ./out-perf.masstree/benchmarks/paxos_async_commit_test -F third-party/paxos/config/1leader_2followers/paxos$nthreads\_shardidx0.yml  -F third-party/paxos/config/occ_paxos.yml -P p1 --partitions $nthreads > ./results/follower-p1.log 2>&1 &
+    ./out-perf.masstree/benchmarks/paxos_async_commit_test -F third-party/paxos/config/1leader_2followers/paxos$nthreads\_shardidx0.yml  -F config/paxos.yml -P p1 --partitions $nthreads > ./results/follower-p1.log 2>&1 &
     sleep 0.2
-    ./out-perf.masstree/benchmarks/paxos_async_commit_test -F third-party/paxos/config/1leader_2followers/paxos$nthreads\_shardidx0.yml  -F third-party/paxos/config/occ_paxos.yml -P p2 --partitions $nthreads > ./results/follower-p2.log 2>&1 &
+    ./out-perf.masstree/benchmarks/paxos_async_commit_test -F third-party/paxos/config/1leader_2followers/paxos$nthreads\_shardidx0.yml  -F config/paxos.yml -P p2 --partitions $nthreads > ./results/follower-p2.log 2>&1 &
     sleep 0.2
-    ./out-perf.masstree/benchmarks/paxos_async_commit_test -F third-party/paxos/config/1leader_2followers/paxos$nthreads\_shardidx0.yml  -F third-party/paxos/config/occ_paxos.yml -P localhost --partitions $nthreads > ./results/leader.log 2>&1 &
+    ./out-perf.masstree/benchmarks/paxos_async_commit_test -F third-party/paxos/config/1leader_2followers/paxos$nthreads\_shardidx0.yml  -F config/paxos.yml -P localhost --partitions $nthreads > ./results/leader.log 2>&1 &
     sleep 0.2
-    ./out-perf.masstree/benchmarks/paxos_async_commit_test -F third-party/paxos/config/1leader_2followers/paxos$nthreads\_shardidx0.yml  -F third-party/paxos/config/occ_paxos.yml -P learner --partitions $nthreads > ./results/learner.log 2>&1 &
+    ./out-perf.masstree/benchmarks/paxos_async_commit_test -F third-party/paxos/config/1leader_2followers/paxos$nthreads\_shardidx0.yml  -F config/paxos.yml -P learner --partitions $nthreads > ./results/learner.log 2>&1 &
     sleep 5
 }
 

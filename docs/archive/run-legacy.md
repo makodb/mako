@@ -38,14 +38,14 @@ In addition to the hosts file and the number of servers and replicas, other conf
 
 Consider the following command line:
 
-    ./run_all.py -hh config/hosts-local.yml -s '1:4:1' -c '1:3:1' -r '3' -cc config/rw.yml -cc config/client_closed.yml -cc config/brq.yml -b rw -m brq:brq --allow-client-overlap testing
+    ./run_all.py -hh config/hosts-local.yml -s '1:4:1' -c '1:3:1' -r '3' -cc config/rw.yml -cc config/client_closed.yml -cc config/tpl_ww_paxos.yml -b rw -m 2pl_ww:multi_paxos --allow-client-overlap testing
 
 Where $janus/config/hosts-local.yml contains the following:
     
     host:
         localhost: localhost
     
-This command specifies that we want to run with 1 to 3 shards, a replication level of 3, and 1 to 2 clients. We will run the Read/Write workload (1 key update) with the janus protocol (this is called brq for historical reasons). This gives a total of 6 separate experiments. One can specify multiple -cc <config-file> arguments, which will get aggregated together as one virtual config file. An example of the aggregated config file, $janus/config/sample.yml, is located in the config dir; or different options can be combined with multiple -cc options. The run_all.py script will generate a yaml file in $janus/tmp directory (with 'final' in the name) that can be used for debugging. The test results will be collected in the $PWD/archive directory, and the latest execution is in $PWD/log. run_all.py should be invoked from the $janus directory.
+This command specifies that we want to run with 1 to 3 shards, a replication level of 3, and 1 to 2 clients. It runs the Read/Write workload (1 key update) with two-phase locking and Multi-Paxos. This gives a total of 6 separate experiments. One can specify multiple -cc <config-file> arguments, which will get aggregated together as one virtual config file. An example of the aggregated config file, $janus/config/sample.yml, is located in the config dir; or different options can be combined with multiple -cc options. The run_all.py script will generate a yaml file in $janus/tmp directory (with 'final' in the name) that can be used for debugging. The test results will be collected in the $PWD/archive directory, and the latest execution is in $PWD/log. run_all.py should be invoked from the $janus directory.
 
 Possible values for the -m parameter are [listed here](https://github.com/NYU-NEWS/janus/blob/master/run_all.py#L23). Additional examples can be found in the $janus/scripts/aws/run_single.sh and $janus/scripts/aws/run_multi.sh files.
 
@@ -59,4 +59,3 @@ Add this line to /etc/security/limits.conf (Ubuntu) to enable core dump globally
 ```
 *  soft  core  unlimited
 ```
-

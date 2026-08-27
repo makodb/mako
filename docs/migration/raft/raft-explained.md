@@ -1,8 +1,8 @@
 # Raft in Mako – Plain-English Guide
 
 **Location**: `src/deptran/raft`  
-**Audience**: Anyone trying to understand, run, or debug the Raft path (including Jetpack recovery) without digging through every source file.  
-**Updated**: 2025-10-30
+**Audience**: Anyone trying to understand, run, or debug the supported Raft path without digging through every source file.
+**Updated**: 2026-08-22
 
 ---
 
@@ -10,7 +10,9 @@
 
 - Mako stores client commands in a replicated log so that all replicas execute the same sequence.
 - The Raft module makes sure **one leader** orders log entries, **followers** copy them, and everyone applies them in order.
-- Jetpack recovery is layered on top to replay in-flight commands quickly when leadership changes.
+- Legacy Jetpack recovery entry points are layered on top, but the Rule protocol
+  that supplied their witness data is retired. The generic recovery stack is
+  unsupported while it undergoes a separate audit.
 
 ---
 
@@ -24,8 +26,8 @@
 | `service.h/.cc` | Incoming RPC handlers that delegate to `RaftServer`. |
 | `frame.h/.cc` | Connects the Raft pieces into the generic deptran framework (creates scheduler, coordinator, communicator, RPC service). |
 | `test*.h/.cc` | Coroutine-based lab test harness (optional) that mimics MIT 6.824’s Raft suite. |
-| `config/*.yml` | Ready-made configurations: `none_raft` (plain), `rule_raft` (Jetpack), `raft_lab_test` (five-node lab). |
-| `../scheduler.cc` | Jetpack recovery functions (`JetpackRecoveryEntry`, `JetpackRecovery`). Raft calls into these. |
+| `config/*.yml` | Ready-made configurations: `none_raft` (plain), `occ_raft` (OCC), `raft_lab_test` (five-node lab). |
+| `../scheduler.cc` | Legacy generic Jetpack recovery functions (`JetpackRecoveryEntry`, `JetpackRecovery`), pending a separate audit. |
 
 ---
 
@@ -37,7 +39,8 @@
 - **Log entry**: A command (`shared_ptr<Marshallable>`) plus Raft metadata (`term`, `slot_id`, etc.).
 - **commitIndex**: Highest log index known to be committed (stored on a majority).
 - **executeIndex**: Highest index whose command has been applied to the state machine.
-- **Jetpack**: A recovery layer that exchanges witness sets after failover to ensure all committed work is re-applied quickly.
+- **Jetpack**: A legacy recovery layer that exchanges witness sets after
+  failover. It has no supported configuration after Rule retirement.
 
 ---
 
@@ -76,11 +79,11 @@ RaftData {
      - quorum replies collected via RaftVoteQuorumEvent
   • votes? -> setIsLeader(true)
              reset match_index_/next_index_
-             call JetpackRecoveryEntry()
+             call legacy JetpackRecoveryEntry()
 ```
 
 - `resetTimer()` runs on every heartbeat or acceptable `AppendEntries`. It keeps the node from triggering an election.
-- `setIsLeader()` also updates `new_view_` (so Jetpack knows who is in charge) and tells the communicator about the new leader.
+- `setIsLeader()` also updates `new_view_` for the legacy recovery path and tells the communicator about the new leader.
 - If a follower sees a higher term in `AppendEntries`, it steps down (`setIsLeader(false)`).
 
 ---
@@ -126,15 +129,19 @@ Follower OnAppendEntries()
 
 ## 7. How Jetpack Recovery Fits In
 
-Jetpack only kicks in on the **leader** when `setIsLeader(true)` fires.
+The generic Jetpack entry points remain in the replication stack and are
+reached on the **leader** when `setIsLeader(true)` fires:
 
 1. `RaftServer::setIsLeader(true)` updates the view and calls `TxLogServer::JetpackRecoveryEntry()`.
 2. `JetpackRecoveryEntry()` does two things (`src/deptran/scheduler.cc`):
    - `JetpackBeginRecovery()`: broadcasts a “begin recovery” message to the old view and waits for a majority acknowledgement.
    - `JetpackRecovery()`: gathers witness sets (IDs of commands that might need re-application) from replicas, merges them, and ensures those commands are re-run.
-3. After Jetpack completes, the new leader resumes normal log replication.
+3. After the recovery routine completes, the new leader resumes normal log replication.
 
-To **enable Jetpack**, use `config/rule_raft.yml` (sets concurrency control mode to `rule`, which includes witness tracking). `config/none_raft.yml` skips Jetpack entirely.
+This is an implementation map, not a supported deployment recipe. The Rule
+transaction protocol that populated witness sets and all of its configurations
+are retired. Keep the remaining generic recovery path disabled until its
+separate audit is complete.
 
 ---
 
@@ -155,7 +162,7 @@ The CMake flag links in coroutine-based tests and extra tracing. Production buil
 
 ## 9. Quick Start – Running Raft
 
-### Single client / single shard / three replicas (no Jetpack)
+### Single client / single shard / three replicas
 
 ```bash
 ./build/deptran_server \
@@ -164,7 +171,7 @@ The CMake flag links in coroutine-based tests and extra tracing. Production buil
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
 
 ### Higher concurrency (12 clients × 12 threads)
@@ -176,25 +183,17 @@ The CMake flag links in coroutine-based tests and extra tracing. Production buil
   -f config/rw.yml \
   -f config/client_closed.yml \
   -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
+  -d 30 -P localhost
 ```
 
-### Jetpack failover scenario
+### Failover scope
 
-```bash
-./build/deptran_server \
-  -f config/rule_raft.yml \
-  -f config/1c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_1.yml \
-  -f config/failover.yml \
-  -d 30 -m 100 -P localhost
-```
+The former Rule/Jetpack failover scenario is retired. Plain Raft configurations
+can exercise consensus leader failover, but they do not validate the legacy
+generic Jetpack recovery subsystem.
 
 **Flags**  
 - `-d` duration in seconds  
-- `-m` warmup seconds  
 - `-P` host alias from `config/hosts*.yml` (default `localhost`)  
 - Use `src/mako/update_config.sh` to refresh host mappings for distributed runs.
 
@@ -213,7 +212,7 @@ tail -f leader.log follower1.log follower2.log
 Look for:
 - `setIsLeader` messages when leadership changes.
 - `Heartbeat` / `AppendEntries` logs showing follower progress.
-- `[JETPACK-RECOVERY]` blocks after failover (if Jetpack enabled).
+- No legacy `[JETPACK-RECOVERY]` activity in supported configurations.
 
 ### Raft lab suite (optional but powerful)
 
@@ -245,12 +244,12 @@ Look for:
 | Followers “reject” append | Ensure `prevLogIndex` and `prevLogTerm` match; inspect `next_index_` adjustments in `HeartbeatLoop()`. |
 | Commands stuck uncommitted | Confirm majority of followers reachable; look at `match_index_` values and network connectivity. |
 | WRONG_LEADER errors in clients | `CoordinatorRaft::Submit()` attaches latest `View`; inspect `View` in logs, verify communicator knows the correct leader. |
-| Jetpack not triggering | Make sure `config/rule_raft.yml` (or equivalent) is used. Check for `[JETPACK-RECOVERY]` logs and `setIsLeader(true)` calls. |
+| Legacy Jetpack output appears | Treat the recovery subsystem as unsupported; keep it disabled and record the configuration and `[JETPACK-RECOVERY]` logs for the separate audit. |
 | Lab tests hang | Requires 5 servers (as defined in `config/raft_lab_test.yml`). Ensure `RAFT_TEST` build and that all services are on localhost ports 9000–9004. |
 
 Useful debug macros:
 - `RAFT_LEADER_ELECTION_DEBUG` – verbose election traces.
-- `JETPACK_RECOVERY_DEBUG` – extra logging inside Jetpack.
+- `JETPACK_RECOVERY_DEBUG` – extra logging for auditing the legacy recovery code.
 
 ---
 
@@ -287,7 +286,8 @@ applyLogs()
 
 - Read `server.cc` from the top; every major action logs via `Log_info` / `Log_debug`.
 - `CoordinatorRaft::AppendEntries()` (`coordinator.cc`) shows exactly how client callbacks are wired.
-- `TxLogServer::JetpackRecovery()` (`scheduler.cc`) documents witness handling step-by-step.
+- `TxLogServer::JetpackRecovery()` (`scheduler.cc`) documents the legacy witness
+  handling that remains under separate audit.
 - Still confused? Open an issue with exact log snippets and the command you ran; include `config/*.yml` used.
 
 ---

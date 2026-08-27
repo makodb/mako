@@ -156,8 +156,6 @@ These are the primary source files discussed across the documentation, organized
 | `src/deptran/raft/service.cc` | ~100 | RPC handler implementations |
 | `src/deptran/raft/frame.h` | ~80 | `RaftFrame`: factory for protocol components |
 | `src/deptran/raft/frame.cc` | ~120 | Factory method implementations |
-| `src/deptran/raft/exec.h` | ~40 | `RaftExecutor`: command execution |
-| `src/deptran/raft/exec.cc` | ~60 | Executor implementation |
 | `src/deptran/raft/macros.h` | ~77 | RPC handler code generation macros |
 
 ### Raft-Mako Bridge

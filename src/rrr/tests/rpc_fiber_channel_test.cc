@@ -54,16 +54,16 @@ class FakeChannelStub {
     // Test helpers — synchronous; both this and the recv fiber run
     // on the reactor thread.
     void deliver(const std::vector<std::uint8_t>& bytes) {
-        if (on_frame_) {
+        if (on_frame_.has_value()) {
             ChannelFrame f{bytes.data(), bytes.size()};
-            on_frame_(f);
+            on_frame_.callable()(f);
         }
     }
     void deliver_closed(ChannelError reason = ChannelError::None) {
-        if (on_closed_) on_closed_(reason);
+        if (on_closed_.has_value()) on_closed_.callable()(reason);
     }
     void deliver_error(ChannelError e, std::string_view m) {
-        if (on_error_) on_error_(e, m);
+        if (on_error_.has_value()) on_error_.callable()(e, m);
     }
     void set_send_result(ChannelError e) { next_send_result_ = e; }
     const std::vector<std::vector<std::uint8_t>>& sent() const { return sent_; }
@@ -105,7 +105,7 @@ inline ChannelConnectionProxy make_fake_proxy(
 template <typename F>
 void run_in_fiber(F&& body) {
     auto reactor = Reactor::get_reactor();
-    auto done = Reactor::create_sp_event<IntEvent>();
+    auto done = create_sp_int_event(1);
     reactor->create_run_fiber([done, body = std::forward<F>(body)]() mutable {
         body();
         done->set(1);
@@ -115,8 +115,8 @@ void run_in_fiber(F&& body) {
     // pumping the reactor until the event fires. The reactor's
     // `loop()` runs ready fibers; once the body's fiber completes,
     // `done` is set and we exit.
-    while (done->value_ < 1) {
-        reactor->loop();
+    while (done->value_.get() < 1) {
+        reactor->run_loop(false, true);
     }
 }
 
@@ -127,6 +127,7 @@ void run_in_fiber(F&& body) {
 TEST(FiberChannelTest, SendFrameForwardsToProxy) {
     auto stub = std::make_shared<FakeChannelStub>();
     FiberChannel fc(make_fake_proxy(stub));
+    fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     const std::uint8_t bytes[] = {0x01, 0x02, 0x03};
     EXPECT_EQ(fc.send_frame(ChannelFrame{bytes, sizeof(bytes)}),
@@ -141,6 +142,7 @@ TEST(FiberChannelTest, SendFramePropagatesError) {
     auto stub = std::make_shared<FakeChannelStub>();
     stub->set_send_result(ChannelError::ConnectionReset);
     FiberChannel fc(make_fake_proxy(stub));
+    fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     const std::uint8_t b = 0xAB;
     EXPECT_EQ(fc.send_frame(ChannelFrame{&b, 1}),
@@ -150,6 +152,7 @@ TEST(FiberChannelTest, SendFramePropagatesError) {
 TEST(FiberChannelTest, RecvFrameReturnsEnqueuedFrameImmediately) {
     auto stub = std::make_shared<FakeChannelStub>();
     FiberChannel fc(make_fake_proxy(stub));
+    fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     // Deliver a frame BEFORE the fiber waits — recv should return
     // it without suspending.
@@ -161,7 +164,10 @@ TEST(FiberChannelTest, RecvFrameReturnsEnqueuedFrameImmediately) {
         auto opt = fc.recv_frame();
         ASSERT_TRUE(opt.is_some());
         auto frame = std::move(opt).unwrap();
-        EXPECT_EQ(frame.bytes, payload);
+        // frame.bytes is rusty::Vec<uint8_t> (the rustc port); compare to the
+        // std::vector payload by size + bytes.
+        EXPECT_EQ(frame.bytes.size(), payload.size());
+        EXPECT_EQ(0, std::memcmp(frame.bytes.data(), payload.data(), payload.size()));
         got = true;
     });
     EXPECT_TRUE(got);
@@ -170,13 +176,14 @@ TEST(FiberChannelTest, RecvFrameReturnsEnqueuedFrameImmediately) {
 TEST(FiberChannelTest, RecvFrameSuspendsThenWakesOnDelivery) {
     auto stub = std::make_shared<FakeChannelStub>();
     FiberChannel fc(make_fake_proxy(stub));
+    fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     int frames_received = 0;
     std::vector<std::uint8_t> last_frame;
 
     run_in_fiber([&]() {
         auto reactor = Reactor::get_reactor();
-        auto recv_done = Reactor::create_sp_event<IntEvent>();
+        auto recv_done = create_sp_int_event(1);
 
         // Spawn the recv fiber. `create_run_fiber` runs the fiber
         // synchronously up to its first yield (the wait() inside
@@ -185,7 +192,11 @@ TEST(FiberChannelTest, RecvFrameSuspendsThenWakesOnDelivery) {
             auto opt = fc.recv_frame();
             if (opt.is_some()) {
                 ++frames_received;
-                last_frame = std::move(opt).unwrap().bytes;
+                // OwnedFrame::bytes is rusty::Vec<uint8_t> (the rustc port);
+                // copy it into the std::vector capture.
+                auto owned = std::move(opt).unwrap();
+                last_frame.assign(owned.bytes.data(),
+                                  owned.bytes.data() + owned.bytes.size());
             }
             recv_done->set(1);
         });
@@ -209,6 +220,7 @@ TEST(FiberChannelTest, RecvFrameSuspendsThenWakesOnDelivery) {
 TEST(FiberChannelTest, RecvFrameReturnsNoneAfterClose) {
     auto stub = std::make_shared<FakeChannelStub>();
     FiberChannel fc(make_fake_proxy(stub));
+    fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     // Pre-close: the fiber should observe None on first recv.
     stub->deliver_closed(ChannelError::None);
@@ -225,6 +237,7 @@ TEST(FiberChannelTest, RecvFrameReturnsNoneAfterClose) {
 TEST(FiberChannelTest, RecvDrainsQueuedFramesBeforeReturningNone) {
     auto stub = std::make_shared<FakeChannelStub>();
     FiberChannel fc(make_fake_proxy(stub));
+    fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     // Pre-deliver three frames, then close. Recv should return all
     // three before returning None.
@@ -239,7 +252,10 @@ TEST(FiberChannelTest, RecvDrainsQueuedFramesBeforeReturningNone) {
         for (int i = 0; i < 4; ++i) {
             auto opt = fc.recv_frame();
             if (opt.is_some()) {
-                got.push_back(std::move(opt).unwrap().bytes);
+                // OwnedFrame::bytes is rusty::Vec<uint8_t>; copy into std::vector.
+                auto owned = std::move(opt).unwrap();
+                got.push_back(std::vector<std::uint8_t>(
+                    owned.bytes.data(), owned.bytes.data() + owned.bytes.size()));
             } else {
                 saw_none = true;
                 break;
@@ -258,11 +274,12 @@ TEST(FiberChannelTest, RecvDrainsQueuedFramesBeforeReturningNone) {
 TEST(FiberChannelTest, ParkedRecvWakesOnClose) {
     auto stub = std::make_shared<FakeChannelStub>();
     FiberChannel fc(make_fake_proxy(stub));
+    fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     bool got_none = false;
     run_in_fiber([&]() {
         auto reactor = Reactor::get_reactor();
-        auto done = Reactor::create_sp_event<IntEvent>();
+        auto done = create_sp_int_event(1);
 
         // Spawn recv fiber — it parks on IntEvent inside recv_frame.
         reactor->create_run_fiber([&, done]() {
@@ -286,6 +303,7 @@ TEST(FiberChannelTest, ParkedRecvWakesOnClose) {
 TEST(FiberChannelTest, MultipleSequentialFramesCaptureInOrder) {
     auto stub = std::make_shared<FakeChannelStub>();
     FiberChannel fc(make_fake_proxy(stub));
+    fc.bind_callbacks();  // install on_frame/on_closed/on_error (required post-ctor)
 
     constexpr int kCount = 10;
     std::vector<std::uint8_t> got_first_bytes;

@@ -21,9 +21,9 @@
 #include <unistd.h>
 #include <getopt.h>
 
-#include "../txn.h"
 #include "../macros.h"
 #include "../scopedperf.hh"
+#include "../small_unordered_map.h"
 #include "../spinlock.h"
 
 #if defined(__APPLE__)
@@ -3143,13 +3143,13 @@ tpcc_worker::txn_order_status()
   //   max_read_set_size : 81
   //   max_write_set_size : 0
   //   num_txn_contexts : 4
-  const uint64_t read_only_mask =
-    g_disable_read_only_scans ? 0 : transaction_base::TXN_FLAG_READ_ONLY;
   const abstract_db::TxnProfileHint hint =
     g_disable_read_only_scans ?
       abstract_db::HINT_TPCC_ORDER_STATUS :
       abstract_db::HINT_TPCC_ORDER_STATUS_READ_ONLY;
-  void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags() | read_only_mask, arena, txn_buf(), hint);
+  // Preserve the profile tag as metadata. The STO/MassTrans wrapper ignores
+  // both this tag and the retired original-Silo read-only flag.
+  void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), hint);
   scoped_str_arena s_arena(arena);
   // NB: since txn_order_status() is a RO txn, we assume that
   // locking is un-necessary (since we can just read from some old snapshot)
@@ -3327,13 +3327,13 @@ tpcc_worker::txn_stock_level()
   //   n_node_scan_large_instances : 1
   //   n_read_set_large_instances : 2
   //   num_txn_contexts : 3
-  const uint64_t read_only_mask =
-    g_disable_read_only_scans ? 0 : transaction_base::TXN_FLAG_READ_ONLY;
   const abstract_db::TxnProfileHint hint =
     g_disable_read_only_scans ?
       abstract_db::HINT_TPCC_STOCK_LEVEL :
       abstract_db::HINT_TPCC_STOCK_LEVEL_READ_ONLY;
-  void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags() | read_only_mask, arena, txn_buf(), hint);
+  // Preserve the profile tag as metadata. The STO/MassTrans wrapper ignores
+  // both this tag and the retired original-Silo read-only flag.
+  void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), hint);
   scoped_str_arena s_arena(arena);
   // NB: since txn_stock_level() is a RO txn, we assume that
   // locking is un-necessary (since we can just read from some old snapshot)
@@ -3742,7 +3742,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
 {
   if (run==1){
     ((tpcc_bench_runner*)rc)->run();
-    mako::stop_erpc_server();
+    mako::stop_rpc_server();
     return rc; // rc is same object as r below
   }
   if (BenchmarkConfig::getInstance().getIsMicro()) {
@@ -3839,8 +3839,8 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
 
   tpcc_bench_runner *r = NULL;
   r = new tpcc_bench_runner(db, f_mode==1);
-  // the erpc server and redirect requests to helper threads on the server side
-  mako::setup_erpc_server();
+  // the rpc server and redirect requests to helper threads on the server side
+  mako::setup_rpc_server();
   std::map<int, abstract_ordered_index *> open_tables_by_id;
   for (const auto &entry : r->get_open_tables_ref()) {
     abstract_ordered_index *tbl = entry.second;
@@ -3867,7 +3867,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run, bench_runner *rc, 
 {
   if (run==1){
     ((tpcc_bench_runner*)rc)->run();
-    mako::stop_erpc_server();
+    mako::stop_rpc_server();
     return rc;
   }
   if (BenchmarkConfig::getInstance().getIsMicro()) {
@@ -3953,7 +3953,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run, bench_runner *rc, 
   auto* config = BenchmarkConfig::getInstance().getConfig();
   bool multi_shard_mode = config && config->multi_shard_mode;
   if (!multi_shard_mode) {
-    mako::setup_erpc_server();
+    mako::setup_rpc_server();
     std::map<int, abstract_ordered_index *> open_tables_by_id;
     for (const auto &entry : r->get_open_tables_ref()) {
       abstract_ordered_index *tbl = entry.second;

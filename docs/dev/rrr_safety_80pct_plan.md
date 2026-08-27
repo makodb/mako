@@ -1,5 +1,11 @@
 # rrr safety annotation push — plan to reach 80% @safe LOC
 
+> Historical annotation campaign. Current Goal-0 ownership, carrier counts,
+> and terminal exceptions are tracked in
+> [`goal0_completion_plan.md`](goal0_completion_plan.md). References below to
+> `base/basetypes.cpp` describe the now-deleted carrier; canonical
+> `src/rrr/src/basetypes.rs` owns that module today.
+
 ## Goal
 
 Grow the share of rrr LOC that is explicitly `// @safe` (function-level
