@@ -58,6 +58,11 @@ struct versioned_str_struct : public versioned_str {
   void copy_value_atomic(std::string& out) const {
     this->copy_payload_atomic(out);
   }
+
+  bool copy_value_atomic(std::string& out,
+                         version_type expected_version) const {
+    return this->copy_payload_atomic(out, expected_version);
+  }
   
   inline version_type& version() {
     return stuff();

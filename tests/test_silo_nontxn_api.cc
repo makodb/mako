@@ -116,6 +116,34 @@ TEST_F(SiloNonTxnApi, MassTransPutGetRoundTrip) {
     EXPECT_FALSE(mt.get(lcdf::Str("absent"), out));
 }
 
+TEST_F(SiloNonTxnApi, SingleVersionReaderSeesMultiversionOverwriteHead) {
+    abstract_ordered_index* tbl = make_table("mixed_mode_payload_head");
+    struct RestoreSingleVersion {
+        ~RestoreSingleVersion() {
+            Sto::silent_abort();
+            TThread::disable_multiversion();
+        }
+    } restore;
+
+    // Distributed helper threads install multiversion values, while local
+    // verification and cache readers may use the single-version atomic-copy
+    // path. Both same-size and growing overwrites must follow flex_buf_ to the
+    // newest published payload rather than copying the retained inline head.
+    TThread::enable_multiverison();
+    ASSERT_TRUE(tbl->put(lcdf::Str("same"), "one"));
+    ASSERT_FALSE(tbl->put(lcdf::Str("same"), "two"));
+    ASSERT_TRUE(tbl->put(lcdf::Str("grow"), "short"));
+    const std::string grown(4096, 'g');
+    ASSERT_FALSE(tbl->put(lcdf::Str("grow"), grown));
+
+    TThread::disable_multiversion();
+    std::string out;
+    ASSERT_TRUE(tbl->get(lcdf::Str("same"), out, std::string::npos));
+    EXPECT_EQ(out, "two");
+    ASSERT_TRUE(tbl->get(lcdf::Str("grow"), out, std::string::npos));
+    EXPECT_EQ(out, grown);
+}
+
 TEST_F(SiloNonTxnApi, MassTransInsertIsPutIfAbsent) {
     mbta_type& mt = make_masstrans(9002, "mt_insert");
 

@@ -1165,16 +1165,20 @@ protected:
   }
 
   template <typename PublishedValue>
-  static void assign_published_value(value_type& val, PublishedValue *e) {
+  static bool assign_published_value(value_type& val, PublishedValue *e,
+                                     Version) {
     assign_val(val, e->read_value());
+    return true;
   }
 
-  static void assign_published_value(std::string& val,
-                                     versioned_str_struct *e) {
-    if (TThread::is_multiversion())
+  static bool assign_published_value(std::string& val,
+                                     versioned_str_struct *e,
+                                     Version expected_version) {
+    if (TThread::is_multiversion()) {
       assign_val(val, e->read_value());
-    else
-      e->copy_value_atomic(val);
+      return true;
+    }
+    return e->copy_value_atomic(val, expected_version);
   }
 
   [[noreturn]] static void propagate_atomic_read_conflict() {
@@ -1199,7 +1203,8 @@ protected:
       // versioned_str_struct copies its published length and bytes through
       // atomic_ref. The generic fallback retains the historical behavior for
       // non-boundary boxes; Item 4's local profile always uses versioned_str.
-      assign_published_value(val, e);
+      if (!assign_published_value(val, e, before))
+        continue;
       fence();
       vers = TransactionTid::atomic_load(e->version());
       fence();

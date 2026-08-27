@@ -8,9 +8,14 @@ static_assert(std::atomic_ref<char>::is_always_lock_free,
               "MassTrans string payload bytes must be lock-free atomics");
 static_assert(std::atomic_ref<uint32_t>::is_always_lock_free,
               "MassTrans string payload lengths must be lock-free atomics");
+static_assert(std::atomic_ref<char*>::is_always_lock_free,
+              "MassTrans string payload pointers must be lock-free atomics");
 static_assert(alignof(uint32_t) >=
                   std::atomic_ref<uint32_t>::required_alignment,
               "MassTrans string lengths must satisfy atomic_ref alignment");
+static_assert(alignof(char*) >=
+                  std::atomic_ref<char*>::required_alignment,
+              "MassTrans string payload pointers must satisfy atomic_ref alignment");
 
 template <typename Stuff> 
 // Stuff -> uint64_t
@@ -125,12 +130,11 @@ public:
   }
 
   void modifyData(char* p){
-    flex_buf_ = p;
+    store_data(p, std::memory_order_release);
   }
 
   char *data() {
-    return flex_buf_;
-    // return buf_;
+    return load_data(std::memory_order_acquire);
   }
   
   int length() const {
@@ -142,13 +146,30 @@ public:
   }
 
   void copy_payload_atomic(std::string& out) const {
+    while (!copy_payload_atomic(out, load_stuff())) {
+    }
+  }
+
+  bool copy_payload_atomic(std::string& out,
+                           const Stuff& expected_version) const {
+    // Multiversion installs publish a separately allocated newest value by
+    // redirecting flex_buf_. Snapshot that published head rather than always
+    // copying the original inline buffer, which is retained as history.
+    char* const payload = load_data(std::memory_order_acquire);
     const uint32_t length = load_size(std::memory_order_acquire);
-    assert(length <= capacity_);
+    // Pointer and length are separate atomic words. A writer may change one
+    // between these loads, so validate the tuple against atomicRead's initial
+    // unlocked version before using it. The caller retains its post-copy
+    // version check for writers that begin after this point.
+    if (load_stuff() != expected_version)
+      return false;
+    if (payload == buf_)
+      assert(length <= capacity_);
     out.resize(length);
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     const uint32_t midpoint = length / 2;
     for (uint32_t i = 0; i != midpoint; ++i)
-      out[i] = std::atomic_ref<char>(const_cast<char&>(buf_[i]))
+      out[i] = std::atomic_ref<char>(payload[i])
                    .load(std::memory_order_relaxed);
     // Consume the thread-local hook before invoking it so a version retry
     // cannot park twice. This seam exists only in hook-enabled boundary tests.
@@ -158,16 +179,17 @@ public:
     if (hook != nullptr)
       hook(context);
     for (uint32_t i = midpoint; i != length; ++i)
-      out[i] = std::atomic_ref<char>(const_cast<char&>(buf_[i]))
+      out[i] = std::atomic_ref<char>(payload[i])
                    .load(std::memory_order_relaxed);
 #else
     for (uint32_t i = 0; i != length; ++i)
-      out[i] = std::atomic_ref<char>(const_cast<char&>(buf_[i]))
+      out[i] = std::atomic_ref<char>(payload[i])
                    .load(std::memory_order_relaxed);
 #endif
     // If any size/payload load read a store sequenced after replace's release
     // fence, synchronize before MassTrans performs its final version load.
     std::atomic_thread_fence(std::memory_order_acquire);
+    return true;
   }
   
   int capacity() {
@@ -195,6 +217,14 @@ private:
 
   void store_size(uint32_t size, std::memory_order order) {
     std::atomic_ref<uint32_t>(size_).store(size, order);
+  }
+
+  char* load_data(std::memory_order order) const {
+    return std::atomic_ref<char*>(const_cast<char*&>(flex_buf_)).load(order);
+  }
+
+  void store_data(char* data, std::memory_order order) {
+    std::atomic_ref<char*>(flex_buf_).store(data, order);
   }
 
   Stuff load_stuff() const {
