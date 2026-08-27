@@ -1249,7 +1249,17 @@ class CheckedInCanaryTests(unittest.TestCase):
         # 1961 provider-owned strong ABI symbols from the generated C++.
         # 13654 -> 13639: -15, retiring Rule's leader-aware quorum policy and
         # its three counters from reactor.rs along with the Rule protocol.
-        self.assertEqual(canonical_lines, 13639)
+        # 13639 -> 13641: +2 net, bounding the frame size so a desynchronised
+        # stream is rejected instead of wedging the connection. +3 for the
+        # `payload_size > kMaxFramePayloadSize` check in
+        # `frame_codec.rs::frame_codec_peek_header` (which is what makes the
+        # Malformed arm reachable at all), -1 for the
+        # `#[allow(clippy::absurd_extreme_comparisons)]` that waived the
+        # unsatisfiable guard and is no longer needed. The constant, the
+        # `saturating_add` and the derived `TCP_MAX_FRAME_PAYLOAD_SIZE` each
+        # replace a line rather than adding one. The dual-compile gate still
+        # reports the same 1961 provider-owned strong ABI symbols.
+        self.assertEqual(canonical_lines, 13641)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
