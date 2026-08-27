@@ -86,7 +86,7 @@ Wait - looking at the TODO.md more carefully:
 
 > - [ ] On fsync complete: send `AppendEntriesResponse` with `ackType: Durable`
 
-This implies a second response, not a new RPC. But rrr RPC framework doesn't support
+This implies a second response, not a new RPC. But srpc RPC framework doesn't support
 multiple responses per request. So we have two options:
 
 **Option A: New AppendEntriesDurable RPC (simpler)**

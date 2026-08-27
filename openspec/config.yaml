@@ -7,7 +7,7 @@ context: |
 
   Layout: src/deptran (protocols - janus, 2pl, occ, rcc, paxos, raft,
   tapir), src/mako (Masstree storage + speculative execution),
-  src/bench (TPC-C, TPC-A, RW, micro), src/rrr (RPC framework),
+  src/bench (TPC-C, TPC-A, RW, micro), src/srpc (RPC framework),
   src/cluster (sharding/config, a C++23 named module), config/*.yml.
 
   Conventions that matter more than usual here:
@@ -19,7 +19,7 @@ context: |
     surgery. See docs/porting-cpp-to-rust-dsl.md and
     docs/storage-interface.md.
   - Prefer rusty:: types over STL (Box/Arc/Cell/RefCell/Option/Vec/
-    Mutex/Function). Exceptions: rrr wire types, third-party APIs
+    Mutex/Function). Exceptions: srpc wire types, third-party APIs
     (rocksdb, lz4, yaml-cpp), and code outside the change's blast
     radius.
   - Every function carries a @safe or @unsafe annotation.

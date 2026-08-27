@@ -16,13 +16,13 @@ class RaftServer;
 // executable. Production Mako creates RaftWorker/PaxosWorker directly.
 class ServerWorker {
  public:
-  rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
+  rusty::Option<rusty::Arc<srpc::PollThread>> svr_poll_thread_worker_;
   // Services are now owned by rpc_server_ via reg_service()
-  rrr::Server *rpc_server_ = nullptr;
+  srpc::Server *rpc_server_ = nullptr;
 
-  rusty::Option<rusty::Arc<rrr::PollThread>> svr_hb_poll_thread_worker_g;
+  rusty::Option<rusty::Arc<srpc::PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
-  rrr::Server *hb_rpc_server_ = nullptr;
+  srpc::Server *hb_rpc_server_ = nullptr;
 
   RaftFrame* rep_frame_ = nullptr;
   Config::SiteInfo *site_info_ = nullptr;

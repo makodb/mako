@@ -4,7 +4,7 @@
 mako libmako.a
 cluster libcluster.a
 masstree src/masstree/libmasstree.a
-rrr src/rrr/librrr.a
+srpc src/srpc/libsrpc.a
 rusty third-party/rusty-cpp/librusty.a
 rusty_async third-party/rusty-cpp/librusty_async.a
 binary_heap_port third-party/rusty-cpp/libbinary_heap_port.a

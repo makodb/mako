@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Assert that a `rrr_goal0_crate_codegen` build regenerated the crate C++ AND
+# Assert that a `srpc_goal0_crate_codegen` build regenerated the crate C++ AND
 # that the generator reached each named output.
 #
-# Usage: assert_crate_codegen.sh <rrr.x.cppm> [rrr.y.cppm ...]  < captured-build-output
+# Usage: assert_crate_codegen.sh <srpc.x.cppm> [srpc.y.cppm ...]  < captured-build-output
 #
 # Why this exists instead of comparing mtimes.
 #
@@ -10,7 +10,7 @@
 # `stat -c %Y <output>` had increased. That measures "the file was rewritten",
 # which is NOT the invariant anyone wants and is only true by accident. The
 # emitters deliberately skip writing byte-identical output (see the
-# `unchanged <label>` path in scripts/extract_rrr_rust.py) -- rewriting
+# `unchanged <label>` path in scripts/extract_srpc_rust.py) -- rewriting
 # identical files would spuriously invalidate all 38 downstream .cppm
 # compilations on every emitter touch. So touching an input regenerates,
 # produces identical bytes, skips the write, leaves mtime alone, and the
@@ -26,7 +26,7 @@
 # That is strictly more meaningful than an mtime, which anything could bump.
 #
 # NOTE: the `wrote`/`unchanged`/`validated` dispositions belong to
-# scripts/extract_rrr_rust.py, which owns `src/rrr/src/*.rs`. The crate codegen
+# scripts/extract_srpc_rust.py, which owns `src/srpc/src/*.rs`. The crate codegen
 # checked here is the transpiler's crate mode, which owns
 # `goal0-crate-cpp/*.cppm` and reports per output with the mapping line above.
 set -euo pipefail
@@ -38,7 +38,7 @@ fi
 
 output="$(cat)"
 
-if ! grep -Fq 'Generating Goal-0 rrr crate C++ child modules' <<<"${output}"; then
+if ! grep -Fq 'Generating Goal-0 srpc crate C++ child modules' <<<"${output}"; then
     echo "crate generation did not re-run" >&2
     exit 1
 fi

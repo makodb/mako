@@ -70,7 +70,7 @@ classification decisions. There is no RPC-specific exception type.
 
 ## File Structure
 
-New file: `src/rrr/rpc/errors.hpp`
+New file: `src/srpc/rpc/errors.hpp`
 
 ## Estimated LOC
 

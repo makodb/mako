@@ -49,7 +49,7 @@ ABI_IMPLEMENTATION = "src/mako/storage/mako_local_abi.cc"
 
 RECIPE_FILES = (
     "CMakeLists.txt",
-    "src/rrr/CMakeLists.txt",
+    "src/srpc-cmake/CMakeLists.txt",
     "src/masstree/CMakeLists.txt",
     "src/masstree/ConfigureMasstree.cmake",
     "src/masstree/config-cmake.h.in",

@@ -3,7 +3,7 @@
 /**
  * @file channel_transport.hpp
  * @brief In-process Raft transport built on rusty::sync::mpsc. Enables
- *        raft tests to run without sockets, rrr, or PollThreads.
+ *        raft tests to run without sockets, srpc, or PollThreads.
  *
  * Architecture:
  *   - ChannelSwitchboard owns one mpsc channel per site and a small

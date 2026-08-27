@@ -118,7 +118,7 @@ private:
 
 ## Implementation
 
-### File: `src/rrr/rpc/file_snapshot_manager.hpp`
+### File: `src/srpc/rpc/file_snapshot_manager.hpp`
 
 Contains FileSnapshotManager, FileSnapshotWriter, FileSnapshotReader implementations.
 
@@ -131,7 +131,7 @@ Contains FileSnapshotManager, FileSnapshotWriter, FileSnapshotReader implementat
 
 ## Files Created
 
-- `src/rrr/rpc/file_snapshot_manager.hpp` (~350 LOC)
+- `src/srpc/rpc/file_snapshot_manager.hpp` (~350 LOC)
 
 ## LOC Estimate
 

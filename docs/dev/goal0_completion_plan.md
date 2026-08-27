@@ -1,15 +1,15 @@
 # Goal 0 completion plan
 
-Goal 0 has two required halves: **no hand-written C++ in `src/rrr`**, and
+Goal 0 has two required halves: **no hand-written C++ in `src/srpc`**, and
 the actual Rust source authored there must compile both with rustc and through
 rusty-cpp. The old parallel hand-port was not that source and has
 been removed; it cannot be used as evidence for either half.
 
 ## Current canonical-Rust ratchet (2026-08-12)
 
-The actual Cargo package starts at `src/rrr/Cargo.toml`. Seventeen checked-in
-modules below `src/rrr/src` are now canonical Rust, with their exact ownership
-recorded in `src/rrr/rust-modules.toml`: `basetypes`, `callback_wrapper`,
+The actual Cargo package starts at `src/srpc/Cargo.toml`. Seventeen checked-in
+modules below `src/srpc/src` are now canonical Rust, with their exact ownership
+recorded in `src/srpc/rust-modules.toml`: `basetypes`, `callback_wrapper`,
 `internal_protocol`, `stat`, `errors`, `connection_metrics`,
 `completion_tracker`, `rand`, `request_options`, `reconnect_policy`,
 `circuit_breaker`, `connection_state`, `heartbeat`, `request_queue`,
@@ -28,13 +28,13 @@ inline Rust payload now owned by the canonical files, 2,498 lines of regenerable
 blank lines, and generated-region markers). Thus these promotions cumulatively
 retired exactly 374 hand-authored C++ scaffold lines.
 
-The generated modules preserve the production `rrr.basetypes`,
-`rrr::detail::CallbackWrapper`,
-`rrr.internal_protocol`, `rrr.stat`, `rrr.errors`,
-`rrr.connection_metrics`, `rrr.completion_tracker`, `rrr.rand`,
-`rrr.request_options`, `rrr.reconnect_policy`, `rrr.circuit_breaker`,
-`rrr.connection_state`, `rrr.heartbeat`, `rrr.request_queue`,
-`rrr.load_balancer`, `rrr.utils`, and `rrr.frame_codec` surfaces, their exact 263-symbol
+The generated modules preserve the production `srpc.basetypes`,
+`srpc::detail::CallbackWrapper`,
+`srpc.internal_protocol`, `srpc.stat`, `srpc.errors`,
+`srpc.connection_metrics`, `srpc.completion_tracker`, `srpc.rand`,
+`srpc.request_options`, `srpc.reconnect_policy`, `srpc.circuit_breaker`,
+`srpc.connection_state`, `srpc.heartbeat`, `srpc.request_queue`,
+`srpc.load_balancer`, `srpc.utils`, and `srpc.frame_codec` surfaces, their exact 263-symbol
 combined provider-owned strong ABI, the callback, `AvgStat`, and public
 18-field `ConnectionMetrics` layouts and runtime behavior, every public
 RPC-error discriminant, name, category, and retry predicate. The callback
@@ -75,7 +75,7 @@ Request options preserves the live 32-bit `TimeoutType` enum and 32-byte
 `RequestOptions` POD while replacing its dependency on the adapted
 `RandomGenerator` owner with one private, source-owned flat import of
 `randgen_rand_raw` and `randgen_rand_max`. The generated provider retains
-`import rrr.rand;`, but emits no C++ alias or `using`; the import stays private
+`import srpc.rand;`, but emits no C++ alias or `using`; the import stays private
 and the existing 12-symbol request-options API is unchanged. Rust and both C++
 build paths pin every factory, retry/timeout boundary, exponential cap,
 jitter endpoint/draw count, NaN/nonpositive no-draw path, negative clamp, and
@@ -83,7 +83,7 @@ saturating float-to-integer conversion.
 
 Reconnect policy preserves the 32-byte policy aggregate, the calculator's
 16-byte borrowed-policy-plus-Cell layout, all four policy factories, and all
-seven calculator methods. Its private `rrr.rand` dependency is expressed by
+seven calculator methods. Its private `srpc.rand` dependency is expressed by
 the same source-owned flat import as request options, and its scalar
 `raw / RAND_MAX + 0.5` expression consumes exactly one draw whenever positive
 jitter is enabled. Explicit `wrapping_add` makes retry-count overflow agree in
@@ -147,8 +147,8 @@ Utils preserves the 16-byte move-only `AddrInfo` owner, its raw-pointer
 constructor/getter/validity surface, `find_open_port`, and `get_host_name`.
 The existing `srpc_find_open_port` terminal-C seam remains the sole port-scan
 kernel; a checked source type map retains exact `addrinfo*` and `std::string`
-C++ spellings. The private indexed import names module `rrr.logging` while
-resolving `log_line` in export namespace `rrr`; its raw file-pointer contract
+C++ spellings. The private indexed import names module `srpc.logging` while
+resolving `log_line` in export namespace `srpc`; its raw file-pointer contract
 remains explicit unsafe Rust, and all three audited Utils sites pass null.
 There is no exported import, namespace alias, new ABI provider, or facade leak.
 Rust pins the layout, empty/null ownership state, trait contract, port
@@ -175,7 +175,7 @@ and seventeen of the original 39 hand-authored module-source units have been
 removed. The remaining 21 named modules and 22 module-source units still own
 367 inline DSL blocks and 9,199 nonblank, non-`//` DSL lines. The fixed
 pre-promotion baseline is 446 blocks and 11,482 lines. `cargo test
---manifest-path src/rrr/Cargo.toml` must never be reported as full Goal 0
+--manifest-path src/srpc/Cargo.toml` must never be reported as full Goal 0
 completion until the remaining graph is canonical Rust and the
 hand-written-C++ half below also reaches zero.
 
@@ -193,7 +193,7 @@ Per construct, exactly one of:
 | hand-written **C++** | **not acceptable** — this is what we are removing |
 
 The order of attack per kernel stays the standing rule
-(`rrr_migration_policy.md`): fix the translator > rewrite the call site >
+(`srpc_migration_policy.md`): fix the translator > rewrite the call site >
 demote to external C. C is last because it is *permanently* not Rust —
 every line sent to C is a line the eventual rustc pass can never cover.
 
@@ -216,7 +216,7 @@ What remains is still material Goal-0 work:
   to canonical Rust.
 
 The immediate path is to repeat the canonical-source promotion in batches:
-move each module's Rust into `src/rrr/src`, describe any required global-module
+move each module's Rust into `src/srpc/src`, describe any required global-module
 fragment through structured preamble metadata, make the generated child its
 sole provider, and delete the old carrier. Compatibility headers follow once
 their direct consumers import modules instead. The C kernels and assembly
@@ -263,7 +263,7 @@ current Goal-0 status; the current boundary is the census above.
 > | remainder | ~1270 |
 > | **TOTAL** | **5453** |
 >
-> Whole-file shares: src/rrr non-test is 33,074 lines = 16,874 GEN +
+> Whole-file shares: src/srpc non-test is 33,074 lines = 16,874 GEN +
 > 4,489 DSL + 11,711 hand-written (35.4%).
 >
 > **This reorders the plan.** `reactor.cpp` and `client.cpp` are 46% of
@@ -397,7 +397,7 @@ Re-read under the tolerate-C rule. The character is **different from the
 default-construction family**: these are not "the DSL can't spell it"
 claims that dissolve on re-measurement. They are C++ language features
 with no Rust *or* C equivalent, and several are API surface consumed from
-outside `src/rrr`.
+outside `src/srpc`.
 
 | # | kernel | verdict |
 |---|---|---|
@@ -419,8 +419,8 @@ other four are the operator/variadic surface that `src/deptran` calls.
 
 **Two things this changes about the plan:**
 
-1. **The blast radius leaves `src/rrr`.** `deserialize_from` alone is 88
-   call sites in `deptran`. Any plan that says "finish `src/rrr`" has to
+1. **The blast radius leaves `src/srpc`.** `deserialize_from` alone is 88
+   call sites in `deptran`. Any plan that says "finish `src/srpc`" has to
    decide whether rewriting `deptran` call sites is in scope — this is
    the same shape as the tests question, and bigger.
 
@@ -484,7 +484,7 @@ missed.
 
 **Detect by shape, not by comment.** A nullary `inline T f() { return
 {}; }` (or `T{}` / `T()` / `T::new_()`) is the shape; matching it across
-src/rrr finds six, five of which the phrase grep missed. The sixth is in
+src/srpc finds six, five of which the phrase grep missed. The sixth is in
 `serializable.cpp` (`varint_buf_new`), which is Phase 4.
 
 ### A wrong-type transpiler bug, caught before it cost a gate

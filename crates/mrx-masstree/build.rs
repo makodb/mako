@@ -37,12 +37,12 @@ fn main() {
     // ORDER MATTERS, and it is the usual static-archive rule rather than
     // anything specific to this project: an archive only resolves symbols
     // that are already undefined when the linker reaches it. mtree_abi.cc
-    // (in libmako) pulls in masstree and rrr, so those must come after.
+    // (in libmako) pulls in masstree and srpc, so those must come after.
     let archives: [(&str, &str); 4] = [
         ("mako", "libmako.a"),
         ("cluster", "libcluster.a"),
         ("masstree", "src/masstree/libmasstree.a"),
-        ("rrr", "src/rrr/librrr.a"),
+        ("srpc", "src/srpc/libsrpc.a"),
     ];
     for (lib, rel) in archives {
         let path = build.join(rel);

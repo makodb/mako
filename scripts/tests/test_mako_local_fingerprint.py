@@ -40,7 +40,7 @@ class FingerprintTests(unittest.TestCase):
             ("txlog_core_obj", "src/deptran/replication_helper.cc"),
             ("masstree", "src/masstree/compiler.cc"),
             ("cluster", "src/cluster/cluster_config.cc"),
-            ("rrr", "src/rrr/base/logging.cpp"),
+            ("srpc", "src/srpc/base/logging.cpp"),
         ]
         covered_targets = {target for target, _relative in members}
         members.extend(
@@ -98,19 +98,19 @@ class FingerprintTests(unittest.TestCase):
             manifest.write_text(
                 "# consumer before provider\n"
                 "mako libmako.a\n"
-                "rrr src/rrr/librrr.a\n",
+                "srpc src/srpc/libsrpc.a\n",
                 encoding="utf-8",
             )
             self.assertEqual(
                 fingerprint.read_native_link_archives(manifest),
-                (("mako", "libmako.a"), ("rrr", "src/rrr/librrr.a")),
+                (("mako", "libmako.a"), ("srpc", "src/srpc/libsrpc.a")),
             )
 
             invalid_cases = (
                 ("mako libmako.a extra\n", "exactly"),
                 ("mako ../libmako.a\n", "relative"),
                 ("mako libmako.a\nmako other.a\n", "repeats library"),
-                ("rrr src/rrr/librrr.a\n", "must start"),
+                ("srpc src/srpc/libsrpc.a\n", "must start"),
             )
             for contents, diagnostic in invalid_cases:
                 with self.subTest(contents=contents):

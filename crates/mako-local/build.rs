@@ -57,7 +57,7 @@ fn main() {
     );
     // Keep the same consumer-before-provider archive closure used by CMake's
     // native executables. The smaller historical closure stopped working once
-    // real transaction tests selected rrr/deptran objects whose out-of-line
+    // real transaction tests selected srpc/deptran objects whose out-of-line
     // implementations live in rusty-cpp port archives.
     for (lib, rel) in native_link_archives() {
         let path = build.join(rel);

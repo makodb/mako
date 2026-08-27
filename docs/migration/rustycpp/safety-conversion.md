@@ -1,7 +1,7 @@
-# RRR Code Rusty-cpp Safety Conversion Plan
+# SRPC Code Rusty-cpp Safety Conversion Plan
 
 ## Current Status
-- 15 RRR files are under borrow checking (reactor, base, misc, rpc)
+- 15 SRPC files are under borrow checking (reactor, base, misc, rpc)
 - 12 remaining files need safety annotations and conversion
 
 ## Files to Convert
@@ -35,12 +35,12 @@
 1. Add safety annotations (@safe/@unsafe) to all functions
 2. Mark low-level operations (system calls, raw pointers) as @unsafe
 3. Convert STL containers to rusty equivalents where beneficial
-4. Add file to RRR_BORROW_SRC in CMakeLists.txt
+4. Add file to SRPC_BORROW_SRC in CMakeLists.txt
 5. Run borrow checker and fix any violations
 6. Run tests to verify no regressions
 
 ## Success Criteria
-- All RRR files have safety annotations
+- All SRPC files have safety annotations
 - Only system calls and low-level operations remain in @unsafe blocks
 - All files pass borrow checking
 - All tests pass

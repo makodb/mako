@@ -41,11 +41,11 @@ regardless of which protocol is active.  The `raft_main_helper.cc` dispatcher
 | `rep_sched_` | `TxLogServer*` | Points to the `RaftServer` instance |
 | `rep_commo_` | `Communicator*` | Points to `RaftCommo` for peer RPCs |
 | `svr_poll_thread_worker_` | `rusty::Option<rusty::Arc<PollThread>>` | Main RPC poll thread |
-| `rpc_server_` | `rrr::Server*` | Raft RPC server (AppendEntries, Vote, etc.) |
+| `rpc_server_` | `srpc::Server*` | Raft RPC server (AppendEntries, Vote, etc.) |
 | `thread_pool_g` | `base::ThreadPool*` | Thread pool for RPC handler dispatch |
 | `svr_hb_poll_thread_worker_g` | `rusty::Option<rusty::Arc<PollThread>>` | Heartbeat RPC poll thread |
 | `server_status_` | `rusty::Option<rusty::Arc<ServerStatus>>` | Status for heartbeat service |
-| `hb_rpc_server_` | `rrr::Server*` | Heartbeat/control RPC server |
+| `hb_rpc_server_` | `srpc::Server*` | Heartbeat/control RPC server |
 | `un_replay_logs_` | `std::queue<std::tuple<...>>` | Unreplayed logs (safety failures) |
 | `is_leader` | `int` | Cached leadership flag (0 or 1) |
 | `cur_epoch` | `int` | Current epoch from `ElectionState` |
@@ -107,7 +107,7 @@ SetupBase()
 SetupService()
   +-- PollThread::create()                → svr_poll_thread_worker_
   +-- new ThreadPool(1)                   → thread_pool_g
-  +-- new rrr::Server(poll_worker)        → rpc_server_
+  +-- new srpc::Server(poll_worker)        → rpc_server_
   +-- rep_frame_->CreateRpcServices(...)  → RaftServiceImpl
   +-- rpc_server_->reg_service(svc)       // ownership transferred
   +-- rpc_server_->start(bind_addr)
@@ -141,7 +141,7 @@ SetupHeartbeat()
   +-- if (!config->do_heart_beat()) return
   +-- PollThread::create()                         → svr_hb_poll_thread_worker_g
   +-- new ThreadPool(1)                            → hb_thread_pool_g
-  +-- new rrr::Server(hb_poll_worker)              → hb_rpc_server_
+  +-- new srpc::Server(hb_poll_worker)              → hb_rpc_server_
   +-- Arc<ServerStatus>::make()                    → server_status_
   +-- make_box<ServerControlServiceImpl>(status)
   +-- hb_rpc_server_->start(port + 10000)

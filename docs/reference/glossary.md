@@ -42,7 +42,7 @@ A situation where two transactions access the same key and at least one writes. 
 The component that orchestrates distributed transactions across multiple shards. The coordinator manages the two-phase commit protocol.
 
 ### Coroutine
-A lightweight cooperative thread that can yield control voluntarily. Mako's RRR framework uses coroutines for efficient concurrent I/O.
+A lightweight cooperative thread that can yield control voluntarily. Mako's SRPC framework uses coroutines for efficient concurrent I/O.
 
 ---
 
@@ -182,7 +182,7 @@ The minimum number of replicas required to make progress. For N replicas, quorum
 A consensus protocol similar to Paxos but designed for understandability. Mako supports both Paxos and Raft.
 
 ### Reactor
-The event loop pattern used in RRR for handling I/O. Each reactor manages multiple coroutines in a single thread.
+The event loop pattern used in SRPC for handling I/O. Each reactor manages multiple coroutines in a single thread.
 
 ### Replica
 A copy of a shard's data maintained for fault tolerance. Multiple replicas form a Paxos/Raft group.
@@ -192,9 +192,6 @@ Copying data across multiple replicas for durability and availability. Mako uses
 
 ### RocksDB
 An embedded key-value store used for persistent storage. Mako uses RocksDB for durability.
-
-### RRR
-"Repeatable Research Runtime" - Mako's custom RPC and coroutine framework.
 
 ### RustyCpp
 A library providing Rust-like smart pointers and borrow checking for C++. Used for memory safety in Mako.
@@ -226,6 +223,9 @@ Executing a transaction before full consensus is reached, optimistically assumin
 
 ### Speculative 2PC
 Mako's protocol that returns to clients before replication completes, using watermarks for safety.
+
+### SRPC
+"Simple RPC" - Mako's custom RPC and coroutine framework.
 
 ---
 

@@ -27,7 +27,7 @@ This document presents a head-to-head comparison of Mako's two replication backe
 | Parameter | Value |
 |-----------|-------|
 | Host | Single localhost machine (all replicas on 127.0.0.1) |
-| Transport | rrr (TCP/IP RPC) |
+| Transport | srpc (TCP/IP RPC) |
 | Build | Release (`build/dbtest`, `build/simpleTransactionRep`, `build/simpleTransactionRepRaft`) |
 | Worker threads per replica | 6 |
 | Warehouses | 6 (1-shard) / 12 total (2-shard, 6 per shard) |

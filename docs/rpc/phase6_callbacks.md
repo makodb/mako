@@ -83,7 +83,7 @@ Add callback registration methods to `Client` class:
 
 ## Implementation Steps
 
-1. Create `src/rrr/rpc/callbacks.hpp` with:
+1. Create `src/srpc/rpc/callbacks.hpp` with:
    - Callback type definitions
    - ConnectionCallbacks struct
    - CallbackManager class (~100-150 LOC)
@@ -116,9 +116,9 @@ Unit tests (`test/rpc_callbacks_test.cc`):
 
 | File | Change |
 |------|--------|
-| `src/rrr/rpc/callbacks.hpp` | New file: CallbackManager class |
-| `src/rrr/rpc/client.hpp` | Add callback registration methods |
-| `src/rrr/rpc/client.cpp` | Invoke callbacks, add CallbackManager |
+| `src/srpc/rpc/callbacks.hpp` | New file: CallbackManager class |
+| `src/srpc/rpc/client.hpp` | Add callback registration methods |
+| `src/srpc/rpc/client.cpp` | Invoke callbacks, add CallbackManager |
 | `test/rpc_callbacks_test.cc` | New test file |
 | `CMakeLists.txt` | Add test target |
 

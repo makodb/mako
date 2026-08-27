@@ -1,7 +1,7 @@
 # Design note: converting `class Reactor` to DSL
 
 `reactor.cpp` is the largest remaining block of hand-written C++ in
-`src/rrr` (1483 code lines, 27%), and unlike every file converted so far
+`src/srpc` (1483 code lines, 27%), and unlike every file converted so far
 it is not "a DSL struct with helper kernels" — `class Reactor`
 (lines 1803-2067, ~31 methods, ~24 fields) was never converted.
 
@@ -49,7 +49,7 @@ the precedent that is already in the file.
    than hoist it.
  - **`clients_` is live cross-module.** `src/deptran/communicator.cc`
    calls `Reactor::clients_.contains_key / .insert / .get` (3 sites), so
-   hoisting it to namespace scope is an API change outside `src/rrr` —
+   hoisting it to namespace scope is an API change outside `src/srpc` —
    small, but it lands in the same category as `deserialize_from`'s 88
    call sites: the blast radius leaves the module.
 

@@ -27,7 +27,7 @@
 //   dynamic_pointer_cast: [safe, (shared_ptr<T>) -> shared_ptr<U>],
 //   static_pointer_cast: [safe, (shared_ptr<T>) -> shared_ptr<U>],
 //   dynamic_cast: [safe, (T*) -> U*],
-//   rrr::PollThread::create: [safe, () -> Arc<PollThread>],
+//   srpc::PollThread::create: [safe, () -> Arc<PollThread>],
 //   rusty::make_box: [safe, (...) -> Box<T>],
 //   std::this_thread::sleep_for: [safe, (duration) -> void],
 //   std::max: [safe, (T, T) -> T],
@@ -109,12 +109,12 @@ public:
   // RPC infrastructure
   rusty::Option<rusty::Arc<PollThread>> svr_poll_thread_worker_;
   // Services are now owned by rpc_server_ via reg_service()
-  rrr::Server* rpc_server_ = nullptr;
+  srpc::Server* rpc_server_ = nullptr;
 
   // Heartbeat/control RPC
   rusty::Option<rusty::Arc<PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
-  rrr::Server* hb_rpc_server_ = nullptr;
+  srpc::Server* hb_rpc_server_ = nullptr;
 
   // Queue for unreplayed logs (follower only)
   std::queue<std::tuple<int, int, int, int, const char*>> un_replay_logs_;

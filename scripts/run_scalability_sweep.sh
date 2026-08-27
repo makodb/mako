@@ -395,7 +395,7 @@ case "$BACKEND" in
     raft-single) echo "  Replication:    Raft single-instance (3 replicas, 1 Raft group for all partitions)" ;;
     raft-multi)  echo "  Replication:    Raft multi-instance (3 replicas, 1 Raft group per partition)" ;;
 esac
-echo "  Transport:      rrr/rpc (TCP/IP)"
+echo "  Transport:      srpc/rpc (TCP/IP)"
 echo "  Host:           $(hostname)"
 echo "  Runs/config:    $NUM_RUNS"
 echo "  Git branch:     $(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"

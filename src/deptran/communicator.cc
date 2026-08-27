@@ -7,9 +7,9 @@ import std;
 
 namespace janus {
 
-void RpcPeer::ReplaceClient(rusty::Arc<rrr::Client> client) {
+void RpcPeer::ReplaceClient(rusty::Arc<srpc::Client> client) {
   std::unique_lock<std::mutex> lock(request_mutex_);
-  rusty::Arc<rrr::Client> old_client = std::move(client_);
+  rusty::Arc<srpc::Client> old_client = std::move(client_);
   client_ = std::move(client);
   lock.unlock();
   old_client->close();
@@ -26,10 +26,10 @@ void RpcPeer::Close() {
 }
 
 Communicator::Communicator(
-    rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker) {
+    rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_worker) {
   Log_info("setup replication communicator");
   if (poll_thread_worker.is_none()) {
-    rpc_poll_ = rusty::Some(rrr::PollThread::create());
+    rpc_poll_ = rusty::Some(srpc::PollThread::create());
     owns_poll_thread_ = true;
   } else {
     rpc_poll_ = rusty::Some(
@@ -71,11 +71,11 @@ Communicator::~Communicator() {
   }
 }
 
-rusty::Option<rusty::Arc<rrr::Client>> Communicator::ConnectToAddress(
+rusty::Option<rusty::Arc<srpc::Client>> Communicator::ConnectToAddress(
     const std::string& address,
     std::chrono::milliseconds timeout) const {
   verify(rpc_poll_.is_some());
-  auto client = rrr::Client::create(rpc_poll_.as_ref().unwrap());
+  auto client = srpc::Client::create(rpc_poll_.as_ref().unwrap());
   const auto start = std::chrono::steady_clock::now();
   int attempt = 0;
 
@@ -181,7 +181,7 @@ bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
   return true;
 }
 
-rusty::Option<rusty::Arc<rrr::PollThread>> Communicator::PollThread() const {
+rusty::Option<rusty::Arc<srpc::PollThread>> Communicator::PollThread() const {
   if (rpc_poll_.is_none()) {
     return rusty::None;
   }

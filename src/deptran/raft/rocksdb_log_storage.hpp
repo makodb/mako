@@ -22,9 +22,9 @@
 #include <rusty/option.hpp>
 
 #include "log_storage.hpp"
-#include "rrr/rrr.hpp"
-// the variadic Log_* wrappers live outside src/rrr now
-#include "rrr_log.h"
+#include "srpc/srpc.hpp"
+// the variadic Log_* wrappers live outside src/srpc now
+#include "srpc_log.h"
 
 namespace janus {
 namespace raft {
@@ -96,8 +96,8 @@ private:
     // BufferSink. Wire format byte-for-byte unchanged (the former
     // Marshal + MarshalSink scratch pair is gone).
     bool serialize_entry(const LogEntry& entry, std::string* out) const {
-        rrr::BufferSink sink;
-        BinaryWriteArchive writer(rrr::make_sink_proxy_buffer(&sink));
+        srpc::BufferSink sink;
+        BinaryWriteArchive writer(srpc::make_sink_proxy_buffer(&sink));
         entry.save(writer);
         out->assign(reinterpret_cast<const char*>(sink.bytes.data()),
                     sink.bytes.len());
@@ -111,9 +111,9 @@ private:
     // bounds reads to the value's size, same as the former
     // MarshalSource satisfied.)
     bool deserialize_entry(const std::string& data, LogEntry* out) const {
-        rrr::BufferSource src(reinterpret_cast<const std::uint8_t*>(data.data()),
+        srpc::BufferSource src(reinterpret_cast<const std::uint8_t*>(data.data()),
                               data.size());
-        BinaryReadArchive reader(rrr::make_source_proxy_buffer(&src));
+        BinaryReadArchive reader(srpc::make_source_proxy_buffer(&src));
         out->load(reader);
         return true;
     }
@@ -131,7 +131,7 @@ public:
         read_options_ = rocksdb_readoptions_create();
 
         if (options_ == nullptr || write_options_ == nullptr || read_options_ == nullptr) {
-            rrr::Log_error("[RocksDBLogStorage] Failed to allocate RocksDB C API options");
+            srpc::Log_error("[RocksDBLogStorage] Failed to allocate RocksDB C API options");
             return;
         }
 
@@ -182,7 +182,7 @@ public:
         }
 
         if (options_ == nullptr || write_options_ == nullptr || read_options_ == nullptr) {
-            rrr::Log_error("[RocksDBLogStorage] Options not initialized");
+            srpc::Log_error("[RocksDBLogStorage] Options not initialized");
             return false;
         }
 
@@ -190,14 +190,14 @@ public:
         db_ = rocksdb_open(options_, db_path_.c_str(), &err);
         if (err != nullptr || db_ == nullptr) {
             std::string err_str = take_rocksdb_error(&err);
-            rrr::Log_error("[RocksDBLogStorage] Failed to open {}: {}",
+            srpc::Log_error("[RocksDBLogStorage] Failed to open {}: {}",
                       db_path_.c_str(), err_str.empty() ? "null handle" : err_str.c_str());
             db_ = nullptr;
             return false;
         }
 
         is_open_.set(true);
-        rrr::Log_info("[RocksDBLogStorage] Opened database at {}", db_path_.c_str());
+        srpc::Log_info("[RocksDBLogStorage] Opened database at {}", db_path_.c_str());
         return true;
     }
 

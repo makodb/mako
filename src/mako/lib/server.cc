@@ -1088,7 +1088,7 @@ namespace mako
                     req_handle->GetResponseBuffer());
 
                 // Enqueue response via transport-agnostic interface
-                // This calls RrrRequestHandle::EnqueueResponse().
+                // This calls SrpcRequestHandle::EnqueueResponse().
                 req_handle->EnqueueResponse(msgLen);
             }
 

@@ -12,7 +12,7 @@
 #include "application_log.h"
 #include "../replication_log_entry.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 import std;
 

@@ -2,7 +2,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include "__dep__.h"
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include "../mako_commands.h"
 #include <string>
 #include <vector>
@@ -42,8 +42,8 @@ struct KVOperation {
 // top of the archive serde surface via save/load — this
 // keeps the existing test.cc round-trip sites compiling unchanged.
 class ReplicatedDBCommand
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, ReplicatedDBCommand>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, ReplicatedDBCommand>::KIND> {
 public:
     ReplicatedDBOp op_ = ReplicatedDBOp::PUT;
     std::string key_;

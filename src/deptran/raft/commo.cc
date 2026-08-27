@@ -9,7 +9,7 @@ import std;
 
 namespace janus {
 
-RaftCommo::RaftCommo(rusty::Option<rusty::Arc<rrr::PollThread>> poll)
+RaftCommo::RaftCommo(rusty::Option<rusty::Arc<srpc::PollThread>> poll)
     : Communicator(std::move(poll)) {}
 
 shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
@@ -34,17 +34,17 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
   }
 
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [response, site_id](rusty::Arc<Future> future) {
         if (future->get_error_code() != 0) {
           Log_debug("[APPEND_RPC] Error response from site {}, error_code={}",
                     site_id, future->get_error_code());
           return;
         }
-        rrr::deserialize_from(future->get_reply(), response->status);
-        rrr::deserialize_from(future->get_reply(), response->term);
-        rrr::deserialize_from(future->get_reply(), response->last_log_index);
-        rrr::deserialize_from(future->get_reply(), response->ack_type);
+        srpc::deserialize_from(future->get_reply(), response->status);
+        srpc::deserialize_from(future->get_reply(), response->term);
+        srpc::deserialize_from(future->get_reply(), response->last_log_index);
+        srpc::deserialize_from(future->get_reply(), response->ack_type);
         Log_debug("[APPEND_RPC] Success response from site {}: status={}, "
                   "term={}, lastLogIndex={}, ackType={}",
                   site_id, response->status, response->term,
@@ -52,7 +52,7 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
         response->event.as_ref().unwrap()->set(1);
       });
 
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     if (!cmd.has_value()) {
       Log_debug("Heartbeat AppendEntries to site {} prevLogIndex={}",
@@ -116,18 +116,18 @@ shared_ptr<SendAppendEntriesResults> RaftCommo::SendAppendEntries(
   }
 
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [result_data, cmd, site_id](rusty::Arc<Future> future) {
         if (future->get_error_code() != 0) {
           Log_debug("[APPEND_RPC] Error response from site {}, error_code={}",
                     site_id, future->get_error_code());
           return;
         }
-        rrr::deserialize_from(future->get_reply(), result_data->ok);
-        rrr::deserialize_from(future->get_reply(), result_data->followerTerm);
-        rrr::deserialize_from(future->get_reply(),
+        srpc::deserialize_from(future->get_reply(), result_data->ok);
+        srpc::deserialize_from(future->get_reply(), result_data->followerTerm);
+        srpc::deserialize_from(future->get_reply(),
                               result_data->followerLastLogIndex);
-        rrr::deserialize_from(future->get_reply(),
+        srpc::deserialize_from(future->get_reply(),
                               result_data->followerAckType);
         result_data->empty = !cmd.has_value();
         result_data->done = !(result_data->ok == false &&
@@ -135,7 +135,7 @@ shared_ptr<SendAppendEntriesResults> RaftCommo::SendAppendEntries(
                               result_data->followerLastLogIndex == 0);
       });
 
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     if (!cmd.has_value()) {
       Log_debug("Heartbeat AppendEntries to site {} prevLogIndex={} "
@@ -193,7 +193,7 @@ shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
     }
 
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [event, site_id](rusty::Arc<Future> future) {
           if (future->get_error_code() != 0) {
             Log_debug("[VOTE_RPC] Error response from site {}, error_code={}",
@@ -202,8 +202,8 @@ shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
           }
           ballot_t term = 0;
           bool_t vote = false;
-          rrr::deserialize_from(future->get_reply(), term);
-          rrr::deserialize_from(future->get_reply(), vote);
+          srpc::deserialize_from(future->get_reply(), term);
+          srpc::deserialize_from(future->get_reply(), vote);
           event->FeedResponse(vote, term, site_id);
         });
     RaftProxy::RpcVoteRequest req{};
@@ -211,7 +211,7 @@ shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
     req.lst_log_term = lst_log_term;
     req.site_id = self_id;
     req.cur_term = cur_term;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       RaftProxy proxy(client);
       auto result = proxy.async_Vote(req, attr);
       _RPC_COUNT();
@@ -239,7 +239,7 @@ void RaftCommo::SendTimeoutNow(
   }
 
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [callback, site_id](rusty::Arc<Future> future) {
         if (future->get_error_code() != 0) {
           Log_debug("[TIMEOUT-NOW-RPC] Network error from site {} (code={})",
@@ -251,8 +251,8 @@ void RaftCommo::SendTimeoutNow(
         }
         uint64_t follower_term = 0;
         bool_t success = false;
-        rrr::deserialize_from(future->get_reply(), follower_term);
-        rrr::deserialize_from(future->get_reply(), success);
+        srpc::deserialize_from(future->get_reply(), follower_term);
+        srpc::deserialize_from(future->get_reply(), success);
         if (callback) {
           callback(success, follower_term);
         }
@@ -261,7 +261,7 @@ void RaftCommo::SendTimeoutNow(
   RaftProxy::RpcTimeoutNowRequest req{};
   req.leaderTerm = leader_term;
   req.leaderSiteId = leader_site_id;
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     auto result = proxy.async_TimeoutNow(req, attr);
     _RPC_COUNT();
@@ -283,7 +283,7 @@ void RaftCommo::SendVoteDurable(
   }
 
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [candidate_id](rusty::Arc<Future> future) {
         if (future->get_error_code() != 0) {
           Log_debug("[SPEC-RAFT] VoteDurable RPC to {} failed with error {}",
@@ -291,14 +291,14 @@ void RaftCommo::SendVoteDurable(
           return;
         }
         bool_t acknowledged = false;
-        rrr::deserialize_from(future->get_reply(), acknowledged);
+        srpc::deserialize_from(future->get_reply(), acknowledged);
         Log_debug("[SPEC-RAFT] VoteDurable RPC to {} completed, ack={}",
                   candidate_id, acknowledged);
       });
   RaftProxy::RpcVoteDurableRequest req{};
   req.term = term;
   req.voter_id = voter_id;
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     auto result = proxy.async_VoteDurable(req, attr);
     _RPC_COUNT();
@@ -321,7 +321,7 @@ void RaftCommo::SendAppendEntriesDurable(
   }
 
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [leader_id](rusty::Arc<Future> future) {
         if (future->get_error_code() != 0) {
           Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to {} failed with "
@@ -329,7 +329,7 @@ void RaftCommo::SendAppendEntriesDurable(
           return;
         }
         bool_t acknowledged = false;
-        rrr::deserialize_from(future->get_reply(), acknowledged);
+        srpc::deserialize_from(future->get_reply(), acknowledged);
         Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to {} completed, ack={}",
                   leader_id, acknowledged);
       });
@@ -337,7 +337,7 @@ void RaftCommo::SendAppendEntriesDurable(
   req.term = term;
   req.follower_id = follower_id;
   req.lastLogIndex = lastLogIndex;
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     auto result = proxy.async_AppendEntriesDurable(req, attr);
     _RPC_COUNT();
@@ -373,7 +373,7 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
     }
 
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [state, site_id, generation](rusty::Arc<Future> future) {
           if (future->get_error_code() != 0) {
             Log_warn("[NOTIFY-RESTART] Failed to notify site {} - error {} "
@@ -381,7 +381,7 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
             return;
           }
           bool_t acknowledged = false;
-          rrr::deserialize_from(future->get_reply(), acknowledged);
+          srpc::deserialize_from(future->get_reply(), acknowledged);
           std::lock_guard<std::mutex> lock(state->mutex);
           if (state->generation != generation) {
             return;
@@ -398,7 +398,7 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
         });
     RaftProxy::RpcNotifyRestartRequest req{};
     req.restartedSiteId = self_id;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       RaftProxy proxy(client);
       auto result = proxy.async_NotifyRestart(req, attr);
       _RPC_COUNT();
@@ -437,7 +437,7 @@ void RaftCommo::RetryPendingNotifyRestart() {
       continue;
     }
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [state, site_id, generation](rusty::Arc<Future> future) {
           if (future->get_error_code() != 0) {
             Log_warn("[NOTIFY-RESTART] Retry failed for site {} - error {}",
@@ -445,7 +445,7 @@ void RaftCommo::RetryPendingNotifyRestart() {
             return;
           }
           bool_t acknowledged = false;
-          rrr::deserialize_from(future->get_reply(), acknowledged);
+          srpc::deserialize_from(future->get_reply(), acknowledged);
           std::lock_guard<std::mutex> lock(state->mutex);
           if (state->generation != generation) {
             return;
@@ -462,7 +462,7 @@ void RaftCommo::RetryPendingNotifyRestart() {
         });
     RaftProxy::RpcNotifyRestartRequest req{};
     req.restartedSiteId = self_id;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       RaftProxy proxy(client);
       auto result = proxy.async_NotifyRestart(req, attr);
       _RPC_COUNT();
@@ -500,7 +500,7 @@ void RaftCommo::SendInstallSnapshot(
   }
 
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [callback, site_id](rusty::Arc<Future> future) {
         if (future->get_error_code() != 0) {
           Log_debug("[INSTALL-SNAPSHOT-RPC] Failed to send to site {} - error {}",
@@ -511,7 +511,7 @@ void RaftCommo::SendInstallSnapshot(
           return;
         }
         uint64_t follower_term = 0;
-        rrr::deserialize_from(future->get_reply(), follower_term);
+        srpc::deserialize_from(future->get_reply(), follower_term);
         if (callback) {
           callback(follower_term);
         }
@@ -522,7 +522,7 @@ void RaftCommo::SendInstallSnapshot(
   req.last_included_index = last_included_index;
   req.last_included_term = last_included_term;
   req.data = data;
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     auto result = proxy.async_InstallSnapshot(req, attr);
     _RPC_COUNT();
@@ -555,7 +555,7 @@ void RaftCommo::SendAppendEntriesCb(
 
   auto cmd_keep = cmd;
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [on_reply, cmd_keep, site_id](rusty::Arc<Future> future) {
         if (future->get_error_code() != 0) {
           Log_debug("[APPEND_RPC_CB] Error from site {} code={}",
@@ -563,15 +563,15 @@ void RaftCommo::SendAppendEntriesCb(
           return;
         }
         raft::AppendEntriesReply reply{};
-        rrr::deserialize_from(future->get_reply(), reply.follower_append_ok);
-        rrr::deserialize_from(future->get_reply(), reply.follower_current_term);
-        rrr::deserialize_from(future->get_reply(),
+        srpc::deserialize_from(future->get_reply(), reply.follower_append_ok);
+        srpc::deserialize_from(future->get_reply(), reply.follower_current_term);
+        srpc::deserialize_from(future->get_reply(),
                               reply.follower_last_log_index);
-        rrr::deserialize_from(future->get_reply(), reply.follower_ack_type);
+        srpc::deserialize_from(future->get_reply(), reply.follower_ack_type);
         on_reply(site_id, reply);
       });
 
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     if (!cmd.has_value()) {
       RaftProxy::RpcEmptyAppendEntriesRequest req{};
@@ -621,7 +621,7 @@ void RaftCommo::BroadcastVoteCb(
       continue;
     }
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [on_reply, site_id](rusty::Arc<Future> future) {
           if (future->get_error_code() != 0) {
             Log_debug("[VOTE_RPC_CB] Error from site {} code={}",
@@ -631,8 +631,8 @@ void RaftCommo::BroadcastVoteCb(
           raft::VoteReply reply{};
           ballot_t term = 0;
           bool_t vote = false;
-          rrr::deserialize_from(future->get_reply(), term);
-          rrr::deserialize_from(future->get_reply(), vote);
+          srpc::deserialize_from(future->get_reply(), term);
+          srpc::deserialize_from(future->get_reply(), vote);
           reply.max_ballot = term;
           reply.vote_granted = vote;
           on_reply(site_id, reply);
@@ -642,7 +642,7 @@ void RaftCommo::BroadcastVoteCb(
     req.lst_log_term = lst_log_term;
     req.site_id = self_id;
     req.cur_term = cur_term;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       RaftProxy proxy(client);
       auto result = proxy.async_Vote(req, attr);
       _RPC_COUNT();

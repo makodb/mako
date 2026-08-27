@@ -1,7 +1,7 @@
 #include "__dep__.h"
 #include "benchmark_control_rpc.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 namespace janus {
 std::vector<ServerControlServiceImpl *> ServerControlServiceImpl::scsi_s{};
@@ -29,7 +29,7 @@ void ServerControlServiceImpl::do_shutdown() {
 void ServerControlServiceImpl::server_shutdown(
     const ServerControlService::RpcServerShutdownRequest& rpc_req,
     ServerControlService::RpcServerShutdownResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   (void)rpc_resp;
   do_shutdown();
@@ -39,7 +39,7 @@ void ServerControlServiceImpl::server_shutdown(
 void ServerControlServiceImpl::server_ready(
     const ServerControlService::RpcServerReadyRequest& rpc_req,
     ServerControlService::RpcServerReadyResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   rpc_resp.res = status_->is_ready() ? 1 : 0;
   defer.reply();
@@ -48,7 +48,7 @@ void ServerControlServiceImpl::server_ready(
 void ServerControlServiceImpl::server_heart_beat(
     const ServerControlService::RpcServerHeartBeatRequest& rpc_req,
     ServerControlService::RpcServerHeartBeatResponse& rpc_resp,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
   (void)rpc_req;
   (void)rpc_resp;
   if (!sig_handler_set_)

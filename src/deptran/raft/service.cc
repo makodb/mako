@@ -1,7 +1,7 @@
 #include "service.h"
 #include "server.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 // @external: {
 //   Log_info:   [safe, (...) -> void]
@@ -20,8 +20,8 @@ using rusty::Result;
 // =====================================================================
 // Fiber-RPC handlers.
 //
-// Each method here is invoked by the rrr-generated wrapper on a fresh
-// Fiber (see src/rrr/pylib/simplerpcgen/lang_cpp.py). We do synchronous
+// Each method here is invoked by the srpc-generated wrapper on a fresh
+// Fiber (see src/srpc/pylib/simplerpcgen/lang_cpp.py). We do synchronous
 // work — including any PersistState fsync from RaftServer — and return
 // the response struct by value. The framework marshals and sends the
 // reply when the fiber completes; no DeferredReply anywhere.
@@ -34,34 +34,34 @@ using rusty::Result;
 // depend on (e.g., lost-RPC detection in SendAppendEntries).
 // =====================================================================
 
-Result<RaftService::RpcVoteResponse, rrr::i32>
+Result<RaftService::RpcVoteResponse, srpc::i32>
 RaftServiceImpl::Vote(const RpcVoteRequest& req) {
   RpcVoteResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
     resp.max_ballot = req.cur_term;
     resp.vote_granted = false;
-    return Result<RpcVoteResponse, rrr::i32>::Ok(resp);
+    return Result<RpcVoteResponse, srpc::i32>::Ok(resp);
   }
   svr->OnRequestVote(req.lst_log_idx, req.lst_log_term,
                      req.site_id, req.cur_term,
                      &resp.max_ballot, &resp.vote_granted);
-  return Result<RpcVoteResponse, rrr::i32>::Ok(resp);
+  return Result<RpcVoteResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcVoteDurableResponse, rrr::i32>
+Result<RaftService::RpcVoteDurableResponse, srpc::i32>
 RaftServiceImpl::VoteDurable(const RpcVoteDurableRequest& req) {
   RpcVoteDurableResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
     resp.acknowledged = false;
-    return Result<RpcVoteDurableResponse, rrr::i32>::Ok(resp);
+    return Result<RpcVoteDurableResponse, srpc::i32>::Ok(resp);
   }
   svr->OnVoteDurable(req.term, req.voter_id, &resp.acknowledged);
-  return Result<RpcVoteDurableResponse, rrr::i32>::Ok(resp);
+  return Result<RpcVoteDurableResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcAppendEntriesResponse, rrr::i32>
+Result<RaftService::RpcAppendEntriesResponse, srpc::i32>
 RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
   RpcAppendEntriesResponse resp{};
   RaftServer* svr = GetServer();
@@ -70,7 +70,7 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
     resp.followerAckType = 0;  // Memory
-    return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
+    return Result<RpcAppendEntriesResponse, srpc::i32>::Ok(resp);
   }
   resp.followerAckType = 0;  // Memory — response precedes fsync
   svr->OnAppendEntries(req.slot, req.ballot, req.leaderCurrentTerm,
@@ -79,10 +79,10 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
                        req.cmd, req.leaderNextLogTerm,
                        &resp.followerAppendOK, &resp.followerCurrentTerm,
                        &resp.followerLastLogIndex);
-  return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
+  return Result<RpcAppendEntriesResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcEmptyAppendEntriesResponse, rrr::i32>
+Result<RaftService::RpcEmptyAppendEntriesResponse, srpc::i32>
 RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
   Log_debug("RaftServiceImpl: EmptyAppendEntries answering leader {}", req.leaderSiteId);
   RpcEmptyAppendEntriesResponse resp{};
@@ -92,7 +92,7 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
     resp.followerAckType = 0;
-    return Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(resp);
+    return Result<RpcEmptyAppendEntriesResponse, srpc::i32>::Ok(resp);
   }
   resp.followerAckType = 0;
   // OnAppendEntries uses the same fields as the non-empty variant with
@@ -106,37 +106,37 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
                        &resp.followerAppendOK, &resp.followerCurrentTerm,
                        &resp.followerLastLogIndex,
                        req.trigger_election_now);
-  return Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(resp);
+  return Result<RpcEmptyAppendEntriesResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcAppendEntriesDurableResponse, rrr::i32>
+Result<RaftService::RpcAppendEntriesDurableResponse, srpc::i32>
 RaftServiceImpl::AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) {
   RpcAppendEntriesDurableResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
     resp.acknowledged = false;
-    return Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(resp);
+    return Result<RpcAppendEntriesDurableResponse, srpc::i32>::Ok(resp);
   }
   svr->OnAppendEntriesDurable(req.term, req.follower_id,
                               req.lastLogIndex, &resp.acknowledged);
-  return Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(resp);
+  return Result<RpcAppendEntriesDurableResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcTimeoutNowResponse, rrr::i32>
+Result<RaftService::RpcTimeoutNowResponse, srpc::i32>
 RaftServiceImpl::TimeoutNow(const RpcTimeoutNowRequest& req) {
   RpcTimeoutNowResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
     resp.followerTerm = 0;
     resp.success = false;
-    return Result<RpcTimeoutNowResponse, rrr::i32>::Ok(resp);
+    return Result<RpcTimeoutNowResponse, srpc::i32>::Ok(resp);
   }
   svr->OnTimeoutNow(req.leaderTerm, req.leaderSiteId,
                     &resp.followerTerm, &resp.success);
-  return Result<RpcTimeoutNowResponse, rrr::i32>::Ok(resp);
+  return Result<RpcTimeoutNowResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcNotifyRestartResponse, rrr::i32>
+Result<RaftService::RpcNotifyRestartResponse, srpc::i32>
 RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
   Log_info("[NOTIFY-RESTART] Received restart notification from site {}",
            req.restartedSiteId);
@@ -144,7 +144,7 @@ RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
     resp.acknowledged = false;
-    return Result<RpcNotifyRestartResponse, rrr::i32>::Ok(resp);
+    return Result<RpcNotifyRestartResponse, srpc::i32>::Ok(resp);
   }
   auto commo = svr->commo();
   if (commo != nullptr) {
@@ -160,24 +160,24 @@ RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
   }
   // Invalidate speculative state for the peer that just restarted.
   svr->OnPeerRestart(req.restartedSiteId);
-  return Result<RpcNotifyRestartResponse, rrr::i32>::Ok(resp);
+  return Result<RpcNotifyRestartResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcInstallSnapshotResponse, rrr::i32>
+Result<RaftService::RpcInstallSnapshotResponse, srpc::i32>
 RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
   RpcInstallSnapshotResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
     resp.term_out = 0;
-    return Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(resp);
+    return Result<RpcInstallSnapshotResponse, srpc::i32>::Ok(resp);
   }
   svr->OnInstallSnapshot(req.term, req.leader_id,
                          req.last_included_index, req.last_included_term,
                          req.data, &resp.term_out);
-  return Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(resp);
+  return Result<RpcInstallSnapshotResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcAddServerResponse, rrr::i32>
+Result<RaftService::RpcAddServerResponse, srpc::i32>
 RaftServiceImpl::AddServer(const RpcAddServerRequest& req) {
   RpcAddServerResponse resp{};
   RaftServer* svr = GetServer();
@@ -185,14 +185,14 @@ RaftServiceImpl::AddServer(const RpcAddServerRequest& req) {
     resp.success = false;
     resp.error_msg = "server down";
     resp.leader_hint = 0;
-    return Result<RpcAddServerResponse, rrr::i32>::Ok(resp);
+    return Result<RpcAddServerResponse, srpc::i32>::Ok(resp);
   }
   svr->OnAddServer(req.term, req.new_server_id, req.new_server_addr,
                    &resp.success, &resp.error_msg, &resp.leader_hint);
-  return Result<RpcAddServerResponse, rrr::i32>::Ok(resp);
+  return Result<RpcAddServerResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcRemoveServerResponse, rrr::i32>
+Result<RaftService::RpcRemoveServerResponse, srpc::i32>
 RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) {
   RpcRemoveServerResponse resp{};
   RaftServer* svr = GetServer();
@@ -200,11 +200,11 @@ RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) {
     resp.success = false;
     resp.error_msg = "server down";
     resp.leader_hint = 0;
-    return Result<RpcRemoveServerResponse, rrr::i32>::Ok(resp);
+    return Result<RpcRemoveServerResponse, srpc::i32>::Ok(resp);
   }
   svr->OnRemoveServer(req.term, req.server_id,
                       &resp.success, &resp.error_msg, &resp.leader_hint);
-  return Result<RpcRemoveServerResponse, rrr::i32>::Ok(resp);
+  return Result<RpcRemoveServerResponse, srpc::i32>::Ok(resp);
 }
 
 // =====================================================================
@@ -214,7 +214,7 @@ RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) {
 std::map<siteid_t, RaftServiceImpl*> RaftServiceImpl::service_registry_;
 std::mutex RaftServiceImpl::registry_mutex_;
 
-RaftServiceImpl::RaftServiceImpl(RaftServer *sched, rusty::Arc<rrr::PollThread> poll_thread)
+RaftServiceImpl::RaftServiceImpl(RaftServer *sched, rusty::Arc<srpc::PollThread> poll_thread)
     : poll_thread_(rusty::Some(std::move(poll_thread))) {
   svr_.store(sched, std::memory_order_release);
   site_id_ = sched->site_id_;
@@ -242,7 +242,7 @@ RaftServer* RaftServiceImpl::GetServer() {
   return svr_.load(std::memory_order_acquire);
 }
 
-rusty::Option<rusty::Arc<rrr::PollThread>>
+rusty::Option<rusty::Arc<srpc::PollThread>>
 RaftServiceImpl::GetPollThread(siteid_t site_id) {
   std::lock_guard<std::mutex> lock(registry_mutex_);
   auto it = service_registry_.find(site_id);
