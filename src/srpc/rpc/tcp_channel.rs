@@ -58,7 +58,9 @@ const TCP_ERR_WOULD_BLOCK: i32 = TCP_ERR_AGAIN;
 const TCP_POLL_READ: i32 = 1;
 const TCP_POLL_WRITE: i32 = 2;
 const TCP_POLL_NO_CHANGE: i32 = -1;
-const TCP_MAX_FRAME_PAYLOAD_SIZE: usize = 0x7fff_ffffusize;
+// Derived from the decoder's bound so the two can never drift: a frame this
+// side is willing to send must be one the peer's decoder will accept.
+const TCP_MAX_FRAME_PAYLOAD_SIZE: usize = crate::frame_codec::kMaxFramePayloadSize as usize;
 
 extern "C" {
     fn srpc_tcp_connect_socket(

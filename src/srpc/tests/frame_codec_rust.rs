@@ -5,6 +5,7 @@ use srpc::frame_codec::{
     frame_decode_status_to_string, kFrameHeaderSize, kMaxFramePayloadSize, FrameDecodeStatus,
     FrameHeader, FrameStreamReader, FrameView,
 };
+use srpc::internal_protocol::encode_response_size;
 
 fn native_bytes(value: i32) -> [u8; 4] {
     value.to_ne_bytes()
@@ -13,7 +14,10 @@ fn native_bytes(value: i32) -> [u8; 4] {
 #[test]
 fn header_boundaries_and_transactional_encode() {
     assert_eq!(kFrameHeaderSize, 4);
-    assert_eq!(kMaxFramePayloadSize, i32::MAX);
+    assert_eq!(kMaxFramePayloadSize, 64 * 1024 * 1024);
+    // The bound must leave room for the 4-byte header, or
+    // total_frame_size() would be the very overflow it exists to prevent.
+    assert!(kMaxFramePayloadSize <= i32::MAX - kFrameHeaderSize as i32);
     assert_eq!(
         frame_decode_status_to_string(FrameDecodeStatus::NeedMoreBytes),
         "NeedMoreBytes"
@@ -36,10 +40,17 @@ fn header_boundaries_and_transactional_encode() {
     assert!(frame_codec_write_header(&mut bytes, 0, true));
     assert_eq!(&bytes[..4], &native_bytes(i32::MIN));
     assert_eq!(bytes[4], 0xa5);
-    assert!(frame_codec_write_header(&mut bytes, i32::MAX, false));
-    assert_eq!(&bytes[..4], &native_bytes(i32::MAX));
-    assert!(frame_codec_write_header(&mut bytes, i32::MAX, true));
-    assert_eq!(&bytes[..4], &native_bytes(-1));
+    // The encoder now refuses sizes past the bound, so it can never put a
+    // header on the wire that the peer's decoder is obliged to reject.
+    assert!(!frame_codec_write_header(&mut bytes, i32::MAX, false));
+    assert!(!frame_codec_write_header(&mut bytes, kMaxFramePayloadSize + 1, false));
+    assert!(frame_codec_write_header(&mut bytes, kMaxFramePayloadSize, false));
+    assert_eq!(&bytes[..4], &native_bytes(kMaxFramePayloadSize));
+    assert!(frame_codec_write_header(&mut bytes, kMaxFramePayloadSize, true));
+    assert_eq!(
+        &bytes[..4],
+        &native_bytes(encode_response_size(kMaxFramePayloadSize, true))
+    );
 
     let mut decoded = FrameHeader {
         payload_size: 17,
@@ -54,9 +65,13 @@ fn header_boundaries_and_transactional_encode() {
 
     for (encoded, payload, extended) in [
         (0, 0, false),
-        (i32::MAX, i32::MAX, false),
+        (kMaxFramePayloadSize, kMaxFramePayloadSize, false),
         (i32::MIN, 0, true),
-        (-1, i32::MAX, true),
+        (
+            encode_response_size(kMaxFramePayloadSize, true),
+            kMaxFramePayloadSize,
+            true,
+        ),
     ] {
         let mut header = FrameHeader {
             payload_size: -7,
@@ -69,14 +84,62 @@ fn header_boundaries_and_transactional_encode() {
         assert_eq!(header.payload_size, payload);
         assert_eq!(header.extended_header_flag, extended);
     }
+    // An all-ones word -- the canonical shape of a corrupted or
+    // desynchronised read -- used to decode as a perfectly valid header
+    // claiming an i32::MAX payload. It is now rejected.
+    {
+        let mut header = FrameHeader {
+            payload_size: 0,
+            extended_header_flag: false,
+        };
+        assert_eq!(
+            frame_codec_peek_header(&native_bytes(-1), &mut header),
+            FrameDecodeStatus::Malformed
+        );
+    }
+
+    // Regression: this used to assert `i32::MIN + 3` -- it PINNED the
+    // wrapping overflow as correct, so it could never fail on the bug.
+    // total_frame_size() must never be negative: every caller does
+    // `as usize`, which sign-extends a negative into ~1.8e19 and makes the
+    // "do I have the whole frame yet?" guard true forever.
+    for payload in [0, 1, kMaxFramePayloadSize, i32::MAX - 1, i32::MAX] {
+        let total = FrameHeader {
+            payload_size: payload,
+            extended_header_flag: false,
+        }
+        .total_frame_size();
+        assert!(total >= 0, "total_frame_size wrapped negative for {payload}");
+        assert!(total >= kFrameHeaderSize as i32);
+    }
     assert_eq!(
         FrameHeader {
-            payload_size: i32::MAX,
+            payload_size: kMaxFramePayloadSize,
             extended_header_flag: false,
         }
         .total_frame_size(),
-        i32::MIN + 3
+        kMaxFramePayloadSize + kFrameHeaderSize as i32
     );
+
+    // A desynchronised stream must be REJECTED, not waited on forever.
+    // Before the bound existed, peek_header accepted every 4-byte pattern and
+    // the connection wedged silently instead of erroring and reconnecting.
+    {
+        let mut header = FrameHeader {
+            payload_size: 0,
+            extended_header_flag: false,
+        };
+        let oversize = encode_response_size(kMaxFramePayloadSize + 1, false);
+        assert_eq!(
+            frame_codec_peek_header(&native_bytes(oversize), &mut header),
+            FrameDecodeStatus::Malformed
+        );
+        let way_oversize = encode_response_size(i32::MAX, false);
+        assert_eq!(
+            frame_codec_peek_header(&native_bytes(way_oversize), &mut header),
+            FrameDecodeStatus::Malformed
+        );
+    }
 
     let mut encoded = rusty::StdVector::from(vec![9, 8]);
     let before = encoded.to_vec();

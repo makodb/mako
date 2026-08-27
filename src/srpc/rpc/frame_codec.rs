@@ -7,7 +7,28 @@ use crate::internal_protocol::{
 };
 
 pub const kFrameHeaderSize: usize = 4;
-pub const kMaxFramePayloadSize: i32 = 0x7fffffff;
+// Largest payload a single frame may carry.
+//
+// This is a STREAM-INTEGRITY bound, not a resource policy. The 4-byte header
+// is the only framing signal on the wire, so if a connection ever
+// desynchronises -- a short write, a reconnect that resumes mid-frame, a bug
+// upstream -- the decoder reads payload bytes as a header and gets a garbage
+// length. With no bound it ACCEPTS that length and waits for bytes that will
+// never arrive: next_frame() returns NeedMoreBytes forever, consume_frame()
+// never advances the cursor, the buffer is never compacted, and the
+// connection wedges silently -- no error, no log, no close, no reconnect.
+//
+// A bound turns that into Malformed -> error -> close -> reconnect, which is
+// a failure the caller can see and recover from.
+//
+// 64 MiB is far above any real srpc message and rejects 127/128 of the
+// 31-bit size space, so a desync is caught on the first bad header with high
+// probability. It is the only knob: raise it if a legitimate message ever
+// needs to be larger.
+//
+// It must also stay <= i32::MAX - kFrameHeaderSize, so that
+// FrameHeader::total_frame_size() cannot overflow.
+pub const kMaxFramePayloadSize: i32 = 64 * 1024 * 1024;
 
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, PartialEq, Eq))]
 #[repr(i32)]
@@ -39,11 +60,16 @@ pub struct FrameHeader {
 
 impl FrameHeader {
     pub fn total_frame_size(&self) -> i32 {
-        self.payload_size.wrapping_add(kFrameHeaderSize as i32)
+        // Saturating, not wrapping. Every caller does `total_frame_size() as
+        // usize`, and casting a NEGATIVE i32 to usize sign-extends: a wrapped
+        // -2147483645 becomes 18446744071562067971, which makes the
+        // `rem.len() < total` guard true forever and wedges the stream.
+        // Saturation keeps a malformed header merely unsatisfiable rather
+        // than catastrophically so; peek_header rejects it before that.
+        self.payload_size.saturating_add(kFrameHeaderSize as i32)
     }
 }
 
-#[allow(clippy::absurd_extreme_comparisons)]
 pub fn frame_codec_write_header(
     out_buf: &mut [u8],
     payload_size: i32,
@@ -74,7 +100,15 @@ pub fn frame_codec_peek_header(buf: &[u8], out_header: &mut FrameHeader) -> Fram
     let encoded = i32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]);
     let extended_header_flag = response_has_extended_header(encoded);
     let payload_size = response_payload_size(encoded);
+    // response_payload_size() masks with kResponseSizeMask, so payload_size
+    // is never negative -- this arm is defence in depth, not the live check.
     if payload_size < 0 {
+        return FrameDecodeStatus::Malformed;
+    }
+    // The live check. Before kMaxFramePayloadSize had a real value this was
+    // unsatisfiable and the decoder could not reject ANY header, so a
+    // desynchronised stream was indistinguishable from a slow one.
+    if payload_size > kMaxFramePayloadSize {
         return FrameDecodeStatus::Malformed;
     }
     out_header.payload_size = payload_size;
