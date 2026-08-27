@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `rpcbench` tool is a performance benchmarking utility for the RRR RPC framework. It measures throughput and latency of RPC calls under various configurations.
+The `rpcbench` tool is a performance benchmarking utility for the SRPC RPC framework. It measures throughput and latency of RPC calls under various configurations.
 
 ## Building
 
@@ -200,5 +200,5 @@ _depend("test/benchmark_service.h", "test/benchmark_service.rpc",
 
 ## Related Documentation
 
-- [RRR RPC Guide](rrr-rpc.md) - Complete RPC framework documentation
+- [SRPC RPC Guide](srpc-rpc.md) - Complete RPC framework documentation
 - [Performance Profiling](profile.md) - General profiling guide

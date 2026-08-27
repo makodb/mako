@@ -256,7 +256,7 @@ mako/
 │   │   └── ...
 │   ├── mako/              # Mako core (Masstree, watermarks)
 │   ├── bench/             # Benchmarks (TPC-C, TPC-A, RW)
-│   └── rrr/               # RPC framework
+│   └── srpc/               # RPC framework
 ├── config/                # YAML configurations
 ├── ci/
 │   ├── ci.sh              # Mako + Paxos tests

@@ -123,7 +123,7 @@ grep "borrow_check" CMakeLists.txt
 # Temporarily disable for debugging
 # In CMakeLists.txt, comment out the borrow_check target
 
-# See doc/rrr-rustycpp-migration-plan.md for migration guide
+# See doc/srpc-rustycpp-migration-plan.md for migration guide
 ```
 
 ---

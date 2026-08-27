@@ -42,7 +42,7 @@ constexpr RaftGroupMode kDefaultRaftGroupMode = RaftGroupMode::kPerPartitionGrou
 static RaftGroupMode raft_group_mode_g = kDefaultRaftGroupMode;
 // File-scope storage for local site infos and stub servers.
 static std::vector<Config::SiteInfo*> all_site_infos_g;
-static std::vector<rrr::Server*> stub_rpc_servers_g;
+static std::vector<srpc::Server*> stub_rpc_servers_g;
 static std::vector<rusty::Arc<PollThread>> stub_poll_threads_g;
 static std::unordered_map<uint32_t, std::shared_ptr<RaftWorker>> workers_by_partition_g;
 
@@ -252,11 +252,11 @@ void create_stub_servers() {
     std::string bind_addr = site_info->GetBindAddress();
 
     // Create a PollThread for this stub
-    auto poll_thread = rrr::PollThread::create();
+    auto poll_thread = srpc::PollThread::create();
     stub_poll_threads_g.push_back(poll_thread);
 
     // Create RPC server
-    auto* rpc_server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread.clone())));
+    auto* rpc_server = new srpc::Server(srpc::Server::new_(rusty::Some(poll_thread.clone())));
 
     // Register RaftServiceImpl pointing to the single RaftServer
     rpc_server->reg_service_typed(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread.clone()));

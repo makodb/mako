@@ -148,8 +148,8 @@ public:
     BinaryWriteArchive& operator<<(double v);
 
     // Variable-length integer encoding (current `v32` / `v64`).
-    BinaryWriteArchive& operator<<(rrr::v32 v);
-    BinaryWriteArchive& operator<<(rrr::v64 v);
+    BinaryWriteArchive& operator<<(srpc::v32 v);
+    BinaryWriteArchive& operator<<(srpc::v64 v);
 
     // Variable-length byte sequences — length-prefix + payload.
     BinaryWriteArchive& operator<<(std::string_view s);
@@ -269,7 +269,7 @@ Each phase is committable independently with full RPC-suite green:
 - Workstream N entry in `docs/TODO-srpc.md`.
 
 ### Phase 1 — New abstractions (parallel, no caller migration)
-- `src/rrr/misc/marshal_archive.{hpp,cpp}` defines:
+- `src/srpc/misc/marshal_archive.{hpp,cpp}` defines:
   - `SinkFacade` / `SinkProxy` and `SourceFacade` / `SourceProxy`
   - `BufferSink`, `FdSink`, `BufferSource`, `FdSource` (initial set)
   - `BinaryWriteArchive` and `BinaryReadArchive` covering all primitives + std/rusty containers currently supported by `Marshal`.

@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "config.h"
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 namespace janus {
 

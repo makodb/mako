@@ -4,7 +4,7 @@ namespace janus {
 
 void EnsureViewDataRegistered() {
   static const int registered =
-      rrr::SerializableRegistry::reg<ViewData>(ViewData::static_kind());
+      srpc::SerializableRegistry::reg<ViewData>(ViewData::static_kind());
   (void)registered;
 }
 

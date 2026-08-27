@@ -1,0 +1,5 @@
+*.pyc
+*.swp
+event/build/*
+/target/
+/build*/

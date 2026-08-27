@@ -4,7 +4,7 @@
 
 ## Overview
 
-This phase implements server restart detection for the rrr/rpc module. When a server restarts, clients can detect this by checking if the server's instance ID has changed.
+This phase implements server restart detection for the srpc/rpc module. When a server restarts, clients can detect this by checking if the server's instance ID has changed.
 
 ## Goals
 
@@ -99,10 +99,10 @@ This gives us the building blocks without requiring protocol changes.
 
 | File | Changes |
 |------|---------|
-| `src/rrr/rpc/server.hpp` | Add instance_id_, getter |
-| `src/rrr/rpc/server.cpp` | Generate ID in constructor |
-| `src/rrr/rpc/client.hpp` | Add server_instance_id_, callback |
-| `src/rrr/rpc/client.cpp` | Implement restart detection |
+| `src/srpc/rpc/server.hpp` | Add instance_id_, getter |
+| `src/srpc/rpc/server.cpp` | Generate ID in constructor |
+| `src/srpc/rpc/client.hpp` | Add server_instance_id_, callback |
+| `src/srpc/rpc/client.cpp` | Implement restart detection |
 | `test/rpc_restart_detection_test.cc` | Unit tests |
 | `CMakeLists.txt` | Add test target |
 

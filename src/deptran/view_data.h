@@ -14,8 +14,8 @@ namespace janus {
 // MakoCommands discriminant; keep the field order and fixed-width archive
 // encoding stable for persisted logs and RPC compatibility.
 class ViewData
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, ViewData>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, ViewData>::KIND> {
  public:
   View view_;
   parid_t partition_id_ = 0;
@@ -29,32 +29,32 @@ class ViewData
   const View& GetView() const { return view_; }
   View& GetView() { return view_; }
 
-  void save(rrr::BinaryWriteArchive& ar) const {
-    rrr::Serialize_::serialize(view_.n_, ar);
-    rrr::Serialize_::serialize(view_.view_id_, ar);
-    rrr::Serialize_::serialize(view_.timestamp_, ar);
-    rrr::Serialize_::serialize(static_cast<int32_t>(view_.leaders_.size()), ar);
+  void save(srpc::BinaryWriteArchive& ar) const {
+    srpc::Serialize_::serialize(view_.n_, ar);
+    srpc::Serialize_::serialize(view_.view_id_, ar);
+    srpc::Serialize_::serialize(view_.timestamp_, ar);
+    srpc::Serialize_::serialize(static_cast<int32_t>(view_.leaders_.size()), ar);
     for (int leader : view_.leaders_) {
-      rrr::Serialize_::serialize(leader, ar);
+      srpc::Serialize_::serialize(leader, ar);
     }
-    rrr::Serialize_::serialize(partition_id_, ar);
+    srpc::Serialize_::serialize(partition_id_, ar);
   }
 
-  void load(rrr::BinaryReadArchive& ar) {
-    rrr::Deserialize_::deserialize(view_.n_, ar);
-    rrr::Deserialize_::deserialize(view_.view_id_, ar);
-    rrr::Deserialize_::deserialize(view_.timestamp_, ar);
+  void load(srpc::BinaryReadArchive& ar) {
+    srpc::Deserialize_::deserialize(view_.n_, ar);
+    srpc::Deserialize_::deserialize(view_.view_id_, ar);
+    srpc::Deserialize_::deserialize(view_.timestamp_, ar);
     int32_t leader_count;
-    rrr::Deserialize_::deserialize(leader_count, ar);
-    rrr::verify(leader_count >= 0 && leader_count <= 10000);
+    srpc::Deserialize_::deserialize(leader_count, ar);
+    srpc::verify(leader_count >= 0 && leader_count <= 10000);
     view_.leaders_.clear();
     view_.leaders_.reserve(leader_count);
     for (int i = 0; i < leader_count; ++i) {
       int leader;
-      rrr::Deserialize_::deserialize(leader, ar);
+      srpc::Deserialize_::deserialize(leader, ar);
       view_.leaders_.push_back(leader);
     }
-    rrr::Deserialize_::deserialize(partition_id_, ar);
+    srpc::Deserialize_::deserialize(partition_id_, ar);
   }
 
   std::string ToString() const {

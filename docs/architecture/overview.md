@@ -34,7 +34,7 @@ Mako is a **distributed transactional key-value store** with a layered architect
 └──────────────────────┬───────────────────────────────────────┘
                        │
 ┌──────────────────────▼───────────────────────────────────────┐
-│              RRR Communication Layer                          │
+│              SRPC Communication Layer                          │
 │  ┌─────────────┬──────────────┬────────────┬──────────────┐ │
 │  │ TCP Sockets │  Coroutines  │  Reactor   │  Event Loop  │ │
 │  └─────────────┴──────────────┴────────────┴──────────────┘ │
@@ -100,9 +100,9 @@ Each **Shard** manages a partition of data:
 - `TxLogServer`: Shared replication scheduler base for each shard
 - `CoordinatorMultiPaxos`: Paxos consensus implementation
 
-### RRR Communication Layer
+### SRPC Communication Layer
 
-**RRR** (Custom RPC framework) provides:
+**SRPC** (Custom RPC framework) provides:
 
 **Features**:
 - **Asynchronous RPC**: Non-blocking remote procedure calls
@@ -371,7 +371,7 @@ Disk:
 
 ## Network Communication
 
-### RRR Framework
+### SRPC Framework
 
 **Architecture**:
 ```
@@ -461,7 +461,7 @@ Mako is migrating to **RustyCpp** for memory safety:
 - Prevent use-after-free
 - Catch memory leaks
 
-See **[RustyCpp Migration Plan](rrr-rustycpp-migration-plan.md)** for details.
+See **[RustyCpp Migration Plan](srpc-rustycpp-migration-plan.md)** for details.
 
 ---
 

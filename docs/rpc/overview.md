@@ -1,4 +1,4 @@
-# RRR RPC Library User Guide
+# SRPC RPC Library User Guide
 
 ## Table of Contents
 - [Overview](#overview)
@@ -13,7 +13,7 @@
 
 ## Overview
 
-The RRR (Repeatable Research Runtime) RPC library is a high-performance, code-generation based RPC framework designed for distributed systems. 
+The SRPC (Simple RPC) library is a high-performance, code-generation based RPC framework designed for distributed systems. 
 
 ## Quick Start
 
@@ -50,12 +50,12 @@ This generates `counter.h` with service interfaces and proxy classes.
 class CounterServiceImpl : public example::CounterService {
     int counter_ = 0;
 public:
-    void increment(const rrr::i32& delta, rrr::i32* new_value) override {
+    void increment(const srpc::i32& delta, srpc::i32* new_value) override {
         counter_ += delta;
         *new_value = counter_;
     }
     
-    void get_value(rrr::i32* current_value) override {
+    void get_value(srpc::i32* current_value) override {
         *current_value = counter_;
     }
     
@@ -66,9 +66,9 @@ public:
 
 int main() {
     // Create server infrastructure
-    rrr::PollMgr* poll = new rrr::PollMgr(1);
-    rrr::ThreadPool* tp = new rrr::ThreadPool(4);
-    rrr::Server* server = new rrr::Server(poll, tp);
+    srpc::PollMgr* poll = new srpc::PollMgr(1);
+    srpc::ThreadPool* tp = new srpc::ThreadPool(4);
+    srpc::Server* server = new srpc::Server(poll, tp);
     
     // Register service
     CounterServiceImpl* service = new CounterServiceImpl();
@@ -91,8 +91,8 @@ int main() {
 
 int main() {
     // Create client infrastructure
-    rrr::PollMgr* poll = new rrr::PollMgr(1);
-    rrr::Client* client = new rrr::Client(poll);
+    srpc::PollMgr* poll = new srpc::PollMgr(1);
+    srpc::Client* client = new srpc::Client(poll);
     
     // Connect to server
     int ret = client->connect("localhost:8000");
@@ -105,7 +105,7 @@ int main() {
     example::CounterProxy proxy(client);
     
     // Make RPC calls
-    rrr::i32 result;
+    srpc::i32 result;
     proxy.increment(5, &result);
     printf("New value: %d\n", result.get());
 
@@ -225,7 +225,7 @@ For `myservice.rpc`, the generator creates:
 
 ```cpp
 // Abstract service interface
-class MyService : public rrr::Service {
+class MyService : public srpc::Service {
 public:
     enum {
         METHOD1 = 0xXXXXXXXX,  // Auto-generated method IDs
@@ -237,19 +237,19 @@ public:
 // Client proxy
 class MyServiceProxy {
 public:
-    MyServiceProxy(rrr::Client* cl);
+    MyServiceProxy(srpc::Client* cl);
     
     // Synchronous methods
     void method1(...);
     
     // Asynchronous methods
-    rrr::Future* async_method1(...);
+    srpc::Future* async_method1(...);
 };
 
 // Marshaling support for custom structs
-struct MyStruct : public rrr::Marshallable {
-    rrr::Marshal& marshal(rrr::Marshal&) const;
-    rrr::Marshal& unmarshal(rrr::Marshal&);
+struct MyStruct : public srpc::Marshallable {
+    srpc::Marshal& marshal(srpc::Marshal&) const;
+    srpc::Marshal& unmarshal(srpc::Marshal&);
 };
 ```
 
@@ -259,10 +259,10 @@ struct MyStruct : public rrr::Marshallable {
 
 ```cpp
 // Create poll manager (handles I/O events)
-rrr::PollMgr* poll_mgr = new rrr::PollMgr(1);
+srpc::PollMgr* poll_mgr = new srpc::PollMgr(1);
 
 // Create client
-rrr::Client* client = new rrr::Client(poll_mgr);
+srpc::Client* client = new srpc::Client(poll_mgr);
 
 // Connect to server
 int ret = client->connect("server.example.com:8000");
@@ -278,7 +278,7 @@ MyServiceProxy proxy(client);
 
 ```cpp
 // Simple call
-rrr::i32 result;
+srpc::i32 result;
 proxy.get_value(&result);
 
 // Call with multiple parameters
@@ -297,8 +297,8 @@ if (fu->get_error_code() != 0) {
 
 ```cpp
 // Single async call
-rrr::i32 result;
-rrr::Future* future = proxy.async_get_value(&result);
+srpc::i32 result;
+srpc::Future* future = proxy.async_get_value(&result);
 
 // Do other work...
 
@@ -307,7 +307,7 @@ future->wait();
 future->release();  // Always release futures
 
 // Multiple async calls
-rrr::FutureGroup fg;
+srpc::FutureGroup fg;
 for (int i = 0; i < 10; i++) {
     fg.add(proxy.async_increment(1, &results[i]));
 }
@@ -318,10 +318,10 @@ fg.wait_all();  // Wait for all to complete
 
 ```cpp
 // Create connection pool (4 connections per server)
-rrr::ClientPool* pool = new rrr::ClientPool(poll_mgr, 4);
+srpc::ClientPool* pool = new srpc::ClientPool(poll_mgr, 4);
 
 // Get client from pool
-rrr::Client* client = pool->get_client("server:8000");
+srpc::Client* client = pool->get_client("server:8000");
 
 // Use client normally
 MyServiceProxy proxy(client);
@@ -349,11 +349,11 @@ int retry_rpc(MyServiceProxy& proxy, int max_retries = 3) {
 
 // Scatter-gather pattern
 void scatter_gather(vector<string> servers) {
-    rrr::FutureGroup fg;
-    vector<rrr::i32> results(servers.size());
+    srpc::FutureGroup fg;
+    vector<srpc::i32> results(servers.size());
     
     for (size_t i = 0; i < servers.size(); i++) {
-        rrr::Client* cl = new rrr::Client(poll_mgr);
+        srpc::Client* cl = new srpc::Client(poll_mgr);
         cl->connect(servers[i]);
         MyServiceProxy* proxy = new MyServiceProxy(cl);
         fg.add(proxy->async_get_value(&results[i]));
@@ -370,13 +370,13 @@ void scatter_gather(vector<string> servers) {
 
 ```cpp
 // Create poll manager
-rrr::PollMgr* poll_mgr = new rrr::PollMgr(1);
+srpc::PollMgr* poll_mgr = new srpc::PollMgr(1);
 
 // Create thread pool for defer methods
-rrr::ThreadPool* thread_pool = new rrr::ThreadPool(8);
+srpc::ThreadPool* thread_pool = new srpc::ThreadPool(8);
 
 // Create server
-rrr::Server* server = new rrr::Server(poll_mgr, thread_pool);
+srpc::Server* server = new srpc::Server(poll_mgr, thread_pool);
 
 // Register services
 MyServiceImpl* service = new MyServiceImpl();
@@ -400,15 +400,15 @@ private:
     map<i64, Order> orders_;
     
 public:
-    void create_order(const rrr::i64& user_id, 
-                     const rrr::double& amount,
-                     rrr::i64* order_id) override {
+    void create_order(const srpc::i64& user_id, 
+                     const srpc::double& amount,
+                     srpc::i64* order_id) override {
         lock_guard<mutex> lock(mtx_);
         *order_id = generate_order_id();
         orders_[*order_id] = Order{*order_id, user_id, amount, "pending"};
     }
     
-    void get_order(const rrr::i64& order_id,
+    void get_order(const srpc::i64& order_id,
                    Order* order) override {
         lock_guard<mutex> lock(mtx_);
         auto it = orders_.find(order_id);
@@ -439,12 +439,12 @@ server->reg(new PaymentServiceImpl());
 class MyServiceImpl : public MyService {
 public:
     // Called when client connects
-    void client_connected(rrr::Client* client) {
+    void client_connected(srpc::Client* client) {
         printf("Client connected: %s\n", client->addr().c_str());
     }
     
     // Called when client disconnects
-    void client_disconnected(rrr::Client* client) {
+    void client_disconnected(srpc::Client* client) {
         printf("Client disconnected: %s\n", client->addr().c_str());
     }
 };
@@ -455,16 +455,16 @@ public:
 ### Custom Marshaling
 
 ```cpp
-struct ComplexType : public rrr::Marshallable {
+struct ComplexType : public srpc::Marshallable {
     int field1;
     string field2;
     vector<int> field3;
     
-    rrr::Marshal& marshal(rrr::Marshal& m) const override {
+    srpc::Marshal& marshal(srpc::Marshal& m) const override {
         return m << field1 << field2 << field3;
     }
     
-    rrr::Marshal& unmarshal(rrr::Marshal& m) override {
+    srpc::Marshal& unmarshal(srpc::Marshal& m) override {
         return m >> field1 >> field2 >> field3;
     }
 };
@@ -475,10 +475,10 @@ struct ComplexType : public rrr::Marshallable {
 ```cpp
 class MyServiceImpl : public MyService {
 public:
-    void raw_handler(rrr::Request* req, rrr::Reply* reply) {
+    void raw_handler(srpc::Request* req, srpc::Reply* reply) {
         // Direct access to marshaled data
-        rrr::Marshal* in = &req->m;
-        rrr::Marshal* out = &reply->m;
+        srpc::Marshal* in = &req->m;
+        srpc::Marshal* out = &reply->m;
         
         i32 input;
         *in >> input;
@@ -493,7 +493,7 @@ public:
 
 ```cpp
 // Custom event
-class MyEvent : public rrr::Event {
+class MyEvent : public srpc::Event {
 public:
     void trigger() {
         // Handle event
@@ -501,13 +501,13 @@ public:
 };
 
 // Timeout event
-rrr::TimeoutEvent* timeout = new rrr::TimeoutEvent(5000, []{
+srpc::TimeoutEvent* timeout = new srpc::TimeoutEvent(5000, []{
     printf("Timeout occurred\n");
 });
 poll_mgr->add(timeout);
 
 // Quorum event (triggers when N events complete)
-rrr::QuorumEvent* quorum = new rrr::QuorumEvent(3);
+srpc::QuorumEvent* quorum = new srpc::QuorumEvent(3);
 for (auto& future : futures) {
     quorum->add_child(future);
 }
@@ -518,13 +518,13 @@ quorum->wait();
 
 ```cpp
 // Configure thread pool size
-rrr::ThreadPool* tp = new rrr::ThreadPool(
+srpc::ThreadPool* tp = new srpc::ThreadPool(
     16,     // number of threads
     1000    // queue size
 );
 
 // Configure poll manager
-rrr::PollMgr* pm = new rrr::PollMgr(
+srpc::PollMgr* pm = new srpc::PollMgr(
     2,      // number of poll threads
     10000   // max events per poll
 );
@@ -556,7 +556,7 @@ enum ErrorCode {
 };
 
 // Return error codes
-void method(const Input& in, Output* out, rrr::i32* error) {
+void method(const Input& in, Output* out, srpc::i32* error) {
     if (!validate(in)) {
         *error = INVALID_PARAM;
         return;
@@ -584,15 +584,15 @@ void method(const Input& in, Output* out, rrr::i32* error) {
 
 ```cpp
 // Always release futures
-rrr::Future* f = proxy.async_method();
+srpc::Future* f = proxy.async_method();
 f->wait();
 f->release();  // Don't forget!
 
 // Use RAII for automatic cleanup
 class FutureGuard {
-    rrr::Future* f_;
+    srpc::Future* f_;
 public:
-    FutureGuard(rrr::Future* f) : f_(f) {}
+    FutureGuard(srpc::Future* f) : f_(f) {}
     ~FutureGuard() { if (f_) f_->release(); }
 };
 ```
@@ -633,7 +633,7 @@ public:
 
 1. **Enable logging**:
 ```cpp
-rrr::Log::set_level(rrr::Log::DEBUG);
+srpc::Log::set_level(srpc::Log::DEBUG);
 ```
 
 2. **Monitor RPC statistics**:
@@ -686,13 +686,13 @@ class TracingService : public MyService {
 ### With Janus/Mako
 
 ```cpp
-// Transaction coordinator using RRR
+// Transaction coordinator using SRPC
 class TxCoordinator {
-    rrr::PollMgr* poll_;
-    map<int, rrr::Client*> replicas_;
+    srpc::PollMgr* poll_;
+    map<int, srpc::Client*> replicas_;
     
     void prepare_transaction(TxnId tid) {
-        rrr::FutureGroup fg;
+        srpc::FutureGroup fg;
         for (auto& [id, client] : replicas_) {
             ReplicaProxy proxy(client);
             fg.add(proxy.async_prepare(tid));
@@ -718,11 +718,11 @@ class MessageBridge : public MessageService {
 
 ## Conclusion
 
-The RRR RPC library provides a robust, high-performance foundation for building distributed systems. Its code generation approach eliminates boilerplate while maintaining type safety, and its event-driven architecture enables efficient resource utilization.
+The SRPC RPC library provides a robust, high-performance foundation for building distributed systems. Its code generation approach eliminates boilerplate while maintaining type safety, and its event-driven architecture enables efficient resource utilization.
 
 For more examples, see:
-- `src/rrr/rpc_test/` - Simple test cases
+- `src/srpc/rpc_test/` - Simple test cases
 - `src/deptran/` - Production usage in transaction processing
 - `examples/` - Standalone examples
 
-For questions or issues, consult the source code in `src/rrr/` or review the implementation patterns in the Janus/Mako codebase.
+For questions or issues, consult the source code in `src/srpc/` or review the implementation patterns in the Janus/Mako codebase.

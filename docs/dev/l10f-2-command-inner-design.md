@@ -202,7 +202,7 @@ Options:
 * (b) Drop the `Marshal&` operators on Command and migrate the 3
   call sites to `BinaryWriteArchive&` instead.  Requires changing
   the legacy reply path (`fu->get_reply() >> reply`) to use a
-  BinaryReadArchive bridge — non-trivial since the rrr framework
+  BinaryReadArchive bridge — non-trivial since the srpc framework
   exposes Marshal& at that boundary.
 
 (a) is less invasive.
@@ -445,7 +445,7 @@ The end-state retirement requires a coordinated change to:
    populated at static-init by `reg_serializable_in_deputy<T>(kind)`.
    The registry concept is independent of MarshallDeputy — only
    the namespace ties it.  Extract to a free
-   `rrr::SerializableProxyRegistry` (or rename the existing class
+   `srpc::SerializableProxyRegistry` (or rename the existing class
    without the `MarshallDeputy::` prefix) and update all
    registration / lookup sites.
 
@@ -512,7 +512,7 @@ The largest remaining items are interconnected and substantial:
 
 4. **Drop `MarshallDeputy`** class.  Production has zero runtime
    declarations; only test code and a few source-level aliases
-   (`using rrr::MarshallDeputy;`) remain.  Depends on (2).
+   (`using srpc::MarshallDeputy;`) remain.  Depends on (2).
 
 5. **Drop `Marshallable`** abstract base.  The final retirement.
 
@@ -568,7 +568,7 @@ MarshallDeputy at all.
 
 The L10 series is complete.  Production code paths use
 `janus::Command` (closed-set, kind-tagged) for replicated commands
-and `rrr::AnyMessage` (open-set, name-tagged) for graph-shaped
+and `srpc::AnyMessage` (open-set, name-tagged) for graph-shaped
 RPC payloads.  Both serialize through
 `pro::proxy<SerializableFacade>` value members; no
 `shared_ptr<Marshallable>` storage anywhere.

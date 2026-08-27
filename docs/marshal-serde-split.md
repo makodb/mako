@@ -2,7 +2,7 @@
 
 ## Background
 
-`Marshal` (in `src/rrr/misc/marshal.cpp`) bundles three responsibilities that
+`Marshal` (in `src/srpc/misc/marshal.cpp`) bundles three responsibilities that
 serde keeps separate:
 
 | serde concept           | Marshal today              |
@@ -34,7 +34,7 @@ In a serde-shaped design:
 After the migration:
 
 ```
-Vec<u8>                  ← byte storage (rusty::Vec<uint8_t>, no rrr wrapper)
+Vec<u8>                  ← byte storage (rusty::Vec<uint8_t>, no srpc wrapper)
    ↑ borrowed by
 ByteCursor               ← read cursor: { Span<const u8> view, size_t pos }
    ↑ wrapped by

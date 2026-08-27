@@ -160,7 +160,7 @@ run_X() {
 | Memory limits | No | `run_with_memory_limit()` for heavy tests |
 | `update_config.sh` | Not called | Called in `compile()` and `simplePaxos` |
 | RocksDB cleanup | No | Cleans `/tmp/${USER}_mako_rocksdb_shard*` |
-| RRR unit tests | No | `run_rrr_unit_tests()` via ctest |
+| SRPC unit tests | No | `run_srpc_unit_tests()` via ctest |
 | Process kill approach | Direct `pkill -9` patterns | Filters out own PID/PPID tree |
 
 ### 5.2 Raft Tests in `ci.sh`

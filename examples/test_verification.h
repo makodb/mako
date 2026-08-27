@@ -35,7 +35,7 @@ public:
     }
 
     // Main verification
-    // Note: Named 'run_verification' to avoid collision with rrr 'verify' macro
+    // Note: Named 'run_verification' to avoid collision with srpc 'verify' macro
     bool run_verification(const std::vector<kv_pair>& records) {
         printf("\n");
         printf("========================================\n");

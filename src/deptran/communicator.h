@@ -20,7 +20,7 @@ class RpcPeer {
  public:
   RpcPeer(siteid_t site_id,
           std::string address,
-          rusty::Arc<rrr::Client> client)
+          rusty::Arc<srpc::Client> client)
       : site_id_(site_id),
         address_(std::move(address)),
         client_(std::move(client)) {}
@@ -35,13 +35,13 @@ class RpcPeer {
   decltype(auto) WithClient(Fn&& fn) const {
     std::lock_guard<std::mutex> lock(request_mutex_);
     return std::forward<Fn>(fn)(
-        const_cast<rrr::Client*>(client_.get()));
+        const_cast<srpc::Client*>(client_.get()));
   }
 
  private:
   friend class Communicator;
 
-  void ReplaceClient(rusty::Arc<rrr::Client> client);
+  void ReplaceClient(rusty::Arc<srpc::Client> client);
   void Close();
 
   const siteid_t site_id_;
@@ -49,7 +49,7 @@ class RpcPeer {
   mutable std::mutex request_mutex_;
   std::mutex reconnect_mutex_;
   bool closed_ = false;  // guarded by reconnect_mutex_
-  rusty::Arc<rrr::Client> client_;
+  rusty::Arc<srpc::Client> client_;
 };
 
 class Communicator {
@@ -58,7 +58,7 @@ class Communicator {
   static constexpr int CONNECT_SLEEP_MS = 1000;
 
   explicit Communicator(
-      rusty::Option<rusty::Arc<rrr::PollThread>> rpc_poll = rusty::None);
+      rusty::Option<rusty::Arc<srpc::PollThread>> rpc_poll = rusty::None);
   virtual ~Communicator();
 
   Communicator(const Communicator&) = delete;
@@ -77,7 +77,7 @@ class Communicator {
   }
 
   // Return an owned PollThread handle without exposing communicator storage.
-  rusty::Option<rusty::Arc<rrr::PollThread>> PollThread() const;
+  rusty::Option<rusty::Arc<srpc::PollThread>> PollThread() const;
 
  protected:
   using Peer = std::shared_ptr<RpcPeer>;
@@ -87,11 +87,11 @@ class Communicator {
   Peer PeerForSite(parid_t par_id, siteid_t site_id) const;
 
  private:
-  rusty::Option<rusty::Arc<rrr::Client>> ConnectToAddress(
+  rusty::Option<rusty::Arc<srpc::Client>> ConnectToAddress(
       const std::string& address,
       std::chrono::milliseconds timeout) const;
 
-  rusty::Option<rusty::Arc<rrr::PollThread>> rpc_poll_;
+  rusty::Option<rusty::Arc<srpc::PollThread>> rpc_poll_;
   bool owns_poll_thread_ = false;
   std::map<siteid_t, Peer> peers_;
   std::map<parid_t, Peers> partition_peers_;

@@ -14,7 +14,7 @@ This plan addresses two problems:
 - `client_decoupling_design.md` - Main design doc (completed work)
 - `client_rpc_implementation_plan.md` - RPC implementation details (completed work)
 - `multi_client_support_plan.md` - Multi-client worker slots (planned, not implemented)
-- `rrr_rpc_refactoring_plan.md` - RRR framework migration (planned, not implemented)
+- `srpc_rpc_refactoring_plan.md` - SRPC framework migration (planned, not implemented)
 - `avoid_duplication_client_server_plan.md` - Code consolidation (completed work)
 
 **Interface differences:**
@@ -43,7 +43,7 @@ This plan addresses two problems:
 
 Merge into 2 documents:
 1. `client_server_architecture.md` - Design doc covering current implementation
-2. `client_server_roadmap.md` - Future plans (multi-client, RRR migration)
+2. `client_server_roadmap.md` - Future plans (multi-client, SRPC migration)
 
 ### Part 2: Interface Unification
 

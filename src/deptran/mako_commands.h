@@ -3,7 +3,7 @@
 // Central `MakoCommands` closed payload set.
 //
 // Closes the closed-set half of the dual-envelope architecture
-// (counterpart to the open-set `rrr::AnyMessage` envelope from L7):
+// (counterpart to the open-set `srpc::AnyMessage` envelope from L7):
 // Every polymorphic Command type carried by the closed-set Serializable
 // envelope has one explicit marker registration here. Its numeric kind is
 // an immutable wire value rather than an implicit position in a type list.
@@ -15,20 +15,20 @@
 //   1. Add a forward declaration below.
 //   2. Append a new explicitly numbered `MakoCommandKind` variant and a
 //      `PayloadMember<MakoCommands>` impl. Never change an existing value.
-//   3. Define `class T : public rrr::Serializable<
-//          rrr::PayloadMember<janus::MakoCommands, T>::KIND>`.
+//   3. Define `class T : public srpc::Serializable<
+//          srpc::PayloadMember<janus::MakoCommands, T>::KIND>`.
 //   4. Add a registration line in T's .cc:
 //      `static int volatile g_reg_T =
-//          rrr::SerializableRegistry::reg<T>(T::static_kind());`
+//          srpc::SerializableRegistry::reg<T>(T::static_kind());`
 //
 // For OPEN-set polymorphic types (graph payloads, anything where the
 // receiver may not know about every possible carried type at compile
-// time), use `rrr::AnyMessage` instead — see `rrr/misc/any_message.hpp`.
+// time), use `srpc::AnyMessage` instead — see `srpc/misc/any_message.hpp`.
 
 #include <rusty/arc.hpp>
 
-#include "rrr/misc/serializable.hpp"
-#include "rrr/misc/serializable_envelope.hpp"
+#include "srpc/misc/serializable.hpp"
+#include "srpc/misc/serializable_envelope.hpp"
 
 namespace janus {
 
@@ -90,101 +90,101 @@ mod janus {
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::LogEntry {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::LogEntry {
     const KIND: i32 = janus::MakoCommandKind::LogEntry as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::TpcPrepareCommand {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::TpcPrepareCommand {
     const KIND: i32 = janus::MakoCommandKind::TpcPrepareCommand as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::TpcCommitCommand {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::TpcCommitCommand {
     const KIND: i32 = janus::MakoCommandKind::TpcCommitCommand as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::VecPieceData {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::VecPieceData {
     const KIND: i32 = janus::MakoCommandKind::VecPieceData as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::BulkPaxosCmd {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::BulkPaxosCmd {
     const KIND: i32 = janus::MakoCommandKind::BulkPaxosCmd as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::BulkPrepareLog {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::BulkPrepareLog {
     const KIND: i32 = janus::MakoCommandKind::BulkPrepareLog as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::HeartBeatLog {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::HeartBeatLog {
     const KIND: i32 = janus::MakoCommandKind::HeartBeatLog as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::SyncLogRequest {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::SyncLogRequest {
     const KIND: i32 = janus::MakoCommandKind::SyncLogRequest as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::SyncLogResponse {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::SyncLogResponse {
     const KIND: i32 = janus::MakoCommandKind::SyncLogResponse as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::SyncNoOpRequest {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::SyncNoOpRequest {
     const KIND: i32 = janus::MakoCommandKind::SyncNoOpRequest as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::PaxosPrepCmd {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::PaxosPrepCmd {
     const KIND: i32 = janus::MakoCommandKind::PaxosPrepCmd as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::TpcEmptyCommand {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::TpcEmptyCommand {
     const KIND: i32 = janus::MakoCommandKind::TpcEmptyCommand as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::TpcNoopCommand {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::TpcNoopCommand {
     const KIND: i32 = janus::MakoCommandKind::TpcNoopCommand as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::TpcBatchCommand {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::TpcBatchCommand {
     const KIND: i32 = janus::MakoCommandKind::TpcBatchCommand as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::VecRecData {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::VecRecData {
     const KIND: i32 = janus::MakoCommandKind::VecRecData as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::ViewData {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::ViewData {
     const KIND: i32 = janus::MakoCommandKind::ViewData as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::SimpleRWCommand {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::SimpleRWCommand {
     const KIND: i32 = janus::MakoCommandKind::SimpleRWCommand as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::KeyCmdBatchData {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::KeyCmdBatchData {
     const KIND: i32 = janus::MakoCommandKind::KeyCmdBatchData as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
-impl rrr::PayloadMember<janus::MakoCommands> for janus::ReplicatedDBCommand {
+impl srpc::PayloadMember<janus::MakoCommands> for janus::ReplicatedDBCommand {
     const KIND: i32 = janus::MakoCommandKind::ReplicatedDBCommand as i32;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=mako_commands.1 version=1 rust_sha256=ca969b1f29a6c1bd909b75dce30ecf9da225f0a57ff1baf39a3488a46c4070c2*/
+/*RUSTYCPP:GEN-BEGIN id=mako_commands.1 version=1 rust_sha256=497d42d963fff7776bc6afb6456dba45e8a2e2420c3ff55633f9104463dce149*/
 namespace janus {
     enum class MakoCommandKind;
     constexpr MakoCommandKind MakoCommandKind_Unknown();
@@ -210,7 +210,7 @@ namespace janus {
     struct MakoCommands;
 }
 
-namespace rrr {
+namespace srpc {
 }
 
 // mod janus
@@ -291,115 +291,115 @@ namespace janus {
 }
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::LogEntry> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::LogEntry> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_LogEntry());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::TpcPrepareCommand> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::TpcPrepareCommand> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_TpcPrepareCommand());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::TpcCommitCommand> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::TpcCommitCommand> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_TpcCommitCommand());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::VecPieceData> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::VecPieceData> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_VecPieceData());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::BulkPaxosCmd> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::BulkPaxosCmd> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_BulkPaxosCmd());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::BulkPrepareLog> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::BulkPrepareLog> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_BulkPrepareLog());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::HeartBeatLog> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::HeartBeatLog> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_HeartBeatLog());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::SyncLogRequest> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::SyncLogRequest> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_SyncLogRequest());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::SyncLogResponse> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::SyncLogResponse> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_SyncLogResponse());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::SyncNoOpRequest> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::SyncNoOpRequest> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_SyncNoOpRequest());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::PaxosPrepCmd> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::PaxosPrepCmd> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_PaxosPrepCmd());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::TpcEmptyCommand> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::TpcEmptyCommand> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_TpcEmptyCommand());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::TpcNoopCommand> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::TpcNoopCommand> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_TpcNoopCommand());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::TpcBatchCommand> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::TpcBatchCommand> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_TpcBatchCommand());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::VecRecData> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::VecRecData> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_VecRecData());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::ViewData> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::ViewData> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_ViewData());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::SimpleRWCommand> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::SimpleRWCommand> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_SimpleRWCommand());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::KeyCmdBatchData> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::KeyCmdBatchData> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_KeyCmdBatchData());
 };
 
 template<>
-struct rrr::PayloadMember<::janus::MakoCommands, janus::ReplicatedDBCommand> {
+struct srpc::PayloadMember<::janus::MakoCommands, janus::ReplicatedDBCommand> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_ReplicatedDBCommand());
 };
@@ -422,17 +422,17 @@ namespace janus {
 // MarshallDeputy → Command are pure C++ API changes with no on-the-
 // wire impact for matched kind→type mappings.
 // `Command` is a thin deptran-local subclass rather than a plain alias.
-// rrr::SerializableEnvelope is now generated from the inline-Rust DSL,
+// srpc::SerializableEnvelope is now generated from the inline-Rust DSL,
 // and a generated struct cannot host a templated converting constructor
 // or a templated operator= (no Rust trait maps to either). Both are pure
 // call-site ergonomics — `Command cmd = rusty::Arc<T>::make(...)` at 61
 // deptran sites — so they live here, on deptran's side of the boundary,
-// instead of pinning 20 hand-written lines inside rrr. Adds no data
+// instead of pinning 20 hand-written lines inside srpc. Adds no data
 // members (so slicing to the base is harmless) and no virtuals; the base
 // remains deducible for marshallable_cast/serialize/deserialize.
-class Command : public rrr::SerializableEnvelope<MakoCommands> {
+class Command : public srpc::SerializableEnvelope<MakoCommands> {
  public:
-  using Base = rrr::SerializableEnvelope<MakoCommands>;
+  using Base = srpc::SerializableEnvelope<MakoCommands>;
 
   Command() = default;
   // Adopt a base-typed envelope (Base::pack/pack_aliased return Base).

@@ -9,7 +9,7 @@
 #include <rusty/option.hpp>
 
 #include "config.h"
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 namespace janus {
 
@@ -25,12 +25,12 @@ class Frame {
 
   virtual TxLogServer *CreateScheduler() = 0;
   virtual Communicator *CreateCommo(
-      rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker =
+      rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_worker =
           rusty::None) = 0;
-  virtual std::vector<rrr::ServiceProxy> CreateRpcServices(
+  virtual std::vector<srpc::ServiceProxy> CreateRpcServices(
       uint32_t site_id,
       TxLogServer *rep_sched,
-      rusty::Arc<rrr::PollThread> poll_thread_worker) = 0;
+      rusty::Arc<srpc::PollThread> poll_thread_worker) = 0;
 };
 
 } // namespace janus

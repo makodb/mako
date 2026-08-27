@@ -159,7 +159,7 @@ fact worse for the module form — it crashes inside the rusty container
 modules / cluster interface partitions (no in-tree workaround, it's library
 code), whereas clang 22 gets far enough that the remaining failures are in
 first-party cluster code we can refactor. clang 21 additionally frontend-
-crashes on `rrr.reactor`'s module codegen (the reason `CMakeLists.txt`
+crashes on `srpc.reactor`'s module codegen (the reason `CMakeLists.txt`
 gates to clang >= 22 in the first place). (Related, independently observed
 mangler crashes with rusty-cpp are noted in the project memory as the
 "clang22 hashbrown mangler crash".)

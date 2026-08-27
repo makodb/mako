@@ -78,7 +78,7 @@ Header (commo.h):
 ## Running the Checker
 ```bash
 ./third-party/rusty-cpp/target/release/rusty-cpp-checker \
-    -I src -I src/rrr -I third-party/rusty-cpp/include \
+    -I src -I src/srpc -I third-party/rusty-cpp/include \
     src/deptran/raft/commo.cc
 ```
 

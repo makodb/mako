@@ -37,12 +37,12 @@ class RaftFrame : public Frame {
   std::unique_ptr<RaftServer> svr_;  // @unsafe - unique_ptr kept for test file compatibility
   TxLogServer *CreateScheduler() override;
   Communicator *CreateCommo(
-      rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker =
+      rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_worker =
           rusty::None) override;
-  std::vector<rrr::ServiceProxy> CreateRpcServices(
+  std::vector<srpc::ServiceProxy> CreateRpcServices(
       uint32_t site_id,
       TxLogServer *rep_sched,
-      rusty::Arc<rrr::PollThread> poll_thread_worker) override;
+      rusty::Arc<srpc::PollThread> poll_thread_worker) override;
 };
 
 } // namespace janus

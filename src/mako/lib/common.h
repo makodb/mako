@@ -459,7 +459,7 @@ namespace mako
     // vlen==0 for remove and get).
     // MUST start with targert_server_id: the transport backends peek
     // the first uint16_t of every shard request to pick the helper
-    // queue (see TargetServerIDReader in rrr_rpc_backend.cc).
+    // queue (see TargetServerIDReader in srpc_rpc_backend.cc).
     struct nontxn_write_request_t
     {
         uint16_t targert_server_id; // requesting client's global warehouse id

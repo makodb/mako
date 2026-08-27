@@ -28,7 +28,7 @@ class CoordinatorMultiPaxos : public Coordinator {
   phase_t phase_ = 0;
   bool committed_ = false;
   std::recursive_mutex mtx_{};
-  rusty::Function<void()> commit_callback_ = [] { rrr::verify(false); };
+  rusty::Function<void()> commit_callback_ = [] { srpc::verify(false); };
 
   CoordinatorMultiPaxos() = default;
   ~CoordinatorMultiPaxos() override = default;

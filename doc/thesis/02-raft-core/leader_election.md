@@ -8,7 +8,7 @@ This document provides a complete walkthrough of the Raft leader election mechan
 - `src/deptran/raft/server.cc` — `RequestVote()`, `StartElectionTimer()`, `OnRequestVote()`, `doVote()`
 - `src/deptran/raft/commo.cc` — `BroadcastVote()`
 - `src/deptran/raft/commo.h` — `RaftVoteQuorumEvent`
-- `src/rrr/reactor/quorum_event.h` — `QuorumEvent` base class
+- `src/srpc/reactor/quorum_event.h` — `QuorumEvent` base class
 
 ---
 
@@ -152,7 +152,7 @@ The quorum threshold is `n/2` (not `n/2 + 1`) because the candidate already coun
 
 ## 4. RaftVoteQuorumEvent — Quorum Detection
 
-**Location**: `commo.h:11-38`, inherits from `QuorumEvent` (`src/rrr/reactor/quorum_event.h:18-112`)
+**Location**: `commo.h:11-38`, inherits from `QuorumEvent` (`src/srpc/reactor/quorum_event.h:18-112`)
 
 ### Class Hierarchy
 

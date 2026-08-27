@@ -9,7 +9,7 @@
 #include "deptran/replication_log_entry.h"
 #include "deptran/tpc_command.h"
 #include "deptran/view_data.h"
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 namespace {
 
@@ -30,14 +30,14 @@ rusty::Arc<janus::TpcCommitCommand> MakeCommit(
 }
 
 janus::Command RoundTrip(const janus::Command& outgoing) {
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive writer{rrr::make_sink_proxy_buffer(&sink)};
-  rrr::Serialize_::serialize(outgoing, writer);
+  srpc::BufferSink sink;
+  srpc::BinaryWriteArchive writer{srpc::make_sink_proxy_buffer(&sink)};
+  srpc::Serialize_::serialize(outgoing, writer);
 
   janus::Command incoming;
-  rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive reader{rrr::make_source_proxy_buffer(&source)};
-  rrr::Deserialize_::deserialize(incoming, reader);
+  srpc::BufferSource source(sink.bytes.data(), sink.bytes.len());
+  srpc::BinaryReadArchive reader{srpc::make_source_proxy_buffer(&source)};
+  srpc::Deserialize_::deserialize(incoming, reader);
   EXPECT_TRUE(source.eof());
   return incoming;
 }
@@ -109,11 +109,11 @@ TEST(RaftApplicationLogTest, RoundTripsCommitThroughCommandRegistry) {
   janus::Command outgoing{MakeCommit(input, 19, 42)};
   const janus::Command incoming = RoundTrip(outgoing);
 
-  const auto commit = rrr::marshallable_cast<janus::TpcCommitCommand>(incoming);
+  const auto commit = srpc::marshallable_cast<janus::TpcCommitCommand>(incoming);
   ASSERT_TRUE(commit.is_some());
   EXPECT_EQ(commit.unwrap()->tx_id_, 42u);
   EXPECT_EQ(commit.unwrap()->term, 11);
-  const auto raw = rrr::marshallable_cast<janus::LogEntry>(
+  const auto raw = srpc::marshallable_cast<janus::LogEntry>(
       commit.unwrap()->cmd_);
   ASSERT_TRUE(raw.is_some());
 
@@ -136,12 +136,12 @@ TEST(RaftApplicationLogTest, RoundTripsNativePayloadsInCommitBatch) {
   const janus::Command incoming = RoundTrip(
       janus::Command{rusty::Arc<janus::TpcBatchCommand>::make(
           std::move(batch))});
-  const auto decoded = rrr::marshallable_cast<janus::TpcBatchCommand>(incoming);
+  const auto decoded = srpc::marshallable_cast<janus::TpcBatchCommand>(incoming);
   ASSERT_TRUE(decoded.is_some());
   ASSERT_EQ(decoded.unwrap()->cmds_.size(), 2u);
 
   for (size_t i = 0; i < decoded.unwrap()->cmds_.size(); ++i) {
-    const auto raw = rrr::marshallable_cast<janus::LogEntry>(
+    const auto raw = srpc::marshallable_cast<janus::LogEntry>(
         decoded.unwrap()->cmds_[i]->cmd_);
     ASSERT_TRUE(raw.is_some());
     const char* payload = nullptr;
@@ -167,9 +167,9 @@ TEST(RaftApplicationLogTest, ViewDataKindAndWireFormatRemainStable) {
 
   const janus::Command outgoing{
       rusty::Arc<janus::ViewData>::make(view_data)};
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive writer{rrr::make_sink_proxy_buffer(&sink)};
-  rrr::Serialize_::serialize(outgoing, writer);
+  srpc::BufferSink sink;
+  srpc::BinaryWriteArchive writer{srpc::make_sink_proxy_buffer(&sink)};
+  srpc::Serialize_::serialize(outgoing, writer);
 
   // Kind 16's v32 tag is followed by the historical payload layout: n, view
   // id, timestamp, leader count, leaders, then partition id. The archive uses
@@ -190,12 +190,12 @@ TEST(RaftApplicationLogTest, ViewDataKindAndWireFormatRemainStable) {
   }
 
   janus::Command incoming;
-  rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
-  rrr::BinaryReadArchive reader{rrr::make_source_proxy_buffer(&source)};
-  rrr::Deserialize_::deserialize(incoming, reader);
+  srpc::BufferSource source(sink.bytes.data(), sink.bytes.len());
+  srpc::BinaryReadArchive reader{srpc::make_source_proxy_buffer(&source)};
+  srpc::Deserialize_::deserialize(incoming, reader);
   EXPECT_TRUE(source.eof());
 
-  const auto decoded = rrr::marshallable_cast<janus::ViewData>(incoming);
+  const auto decoded = srpc::marshallable_cast<janus::ViewData>(incoming);
   ASSERT_TRUE(decoded.is_some());
   EXPECT_EQ(decoded.unwrap()->view_.n_, 3);
   EXPECT_EQ(decoded.unwrap()->view_.view_id_, 9u);

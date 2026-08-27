@@ -143,7 +143,7 @@ Each leaf:
 2. Preserves wire-format byte-for-byte (each commit verifies via
    the existing round-trip tests).
 3. Runs the full RPC test suite green (`./docker_build.sh ci
-   rrrTests`).
+   srpcTests`).
 4. Lands as one commit; merges to mako-dev; pushes.
 
 ## Notes

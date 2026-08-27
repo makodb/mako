@@ -71,7 +71,7 @@ struct ConnectionMetrics {
 ### Implementation Tasks
 
 #### Task 1: Create ConnectionMetrics Class (~80 LOC)
-- Create `src/rrr/rpc/connection_metrics.hpp`
+- Create `src/srpc/rpc/connection_metrics.hpp`
 - Add all metric fields using rusty::Cell for thread-safety
 - Implement accessor methods
 - Implement mutator methods
@@ -96,9 +96,9 @@ struct ConnectionMetrics {
 
 | File | Changes |
 |------|---------|
-| `src/rrr/rpc/connection_metrics.hpp` | New file - ConnectionMetrics class |
-| `src/rrr/rpc/client.hpp` | Add metrics_ member, accessor |
-| `src/rrr/rpc/client.cpp` | Update methods to record metrics |
+| `src/srpc/rpc/connection_metrics.hpp` | New file - ConnectionMetrics class |
+| `src/srpc/rpc/client.hpp` | Add metrics_ member, accessor |
+| `src/srpc/rpc/client.cpp` | Update methods to record metrics |
 | `test/rpc_metrics_test.cc` | Unit tests |
 | `CMakeLists.txt` | Add test target |
 

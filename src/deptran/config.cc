@@ -14,10 +14,10 @@
 #include <yaml-cpp/yaml.h>
 
 #include "config.h"
-#include "rrr_log.h"
+#include "srpc_log.h"
 
 using namespace std;
-using namespace rrr;
+using namespace srpc;
 
 /*
  * Config owns only process/topology and replication settings. The retired

@@ -7,7 +7,7 @@
 #include "deptran/legacy_raft_log_payload.h"
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/tpc_command.h"
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 namespace {
 
@@ -56,8 +56,8 @@ std::string ToHex(const std::string& bytes) {
 }
 
 std::string Serialize(const janus::raft::LogEntry& entry) {
-  rrr::BufferSink sink;
-  rrr::BinaryWriteArchive writer{rrr::make_sink_proxy_buffer(&sink)};
+  srpc::BufferSink sink;
+  srpc::BinaryWriteArchive writer{srpc::make_sink_proxy_buffer(&sink)};
   entry.save(writer);
   return std::string(reinterpret_cast<const char*>(sink.bytes.data()),
                      sink.bytes.len());
@@ -66,7 +66,7 @@ std::string Serialize(const janus::raft::LogEntry& entry) {
 TEST(LegacyRaftLogTest, FreezesCanonicalKind4RocksDbValue) {
   // Explicit registration both selects the MDB-free kind-4 reader and forces
   // its translation unit out of txlog_core's static archive.
-  rrr::SerializableRegistry::reg<janus::TpcCommitCommand>(
+  srpc::SerializableRegistry::reg<janus::TpcCommitCommand>(
       janus::TpcCommitCommand::static_kind());
   janus::EnsureLegacyRaftLogPayloadRegistered();
 
@@ -75,9 +75,9 @@ TEST(LegacyRaftLogTest, FreezesCanonicalKind4RocksDbValue) {
   EXPECT_EQ(ToHex(encoded), kGoldenHex);
 
   janus::raft::LogEntry decoded;
-  rrr::BufferSource source(
+  srpc::BufferSource source(
       reinterpret_cast<const uint8_t*>(encoded.data()), encoded.size());
-  rrr::BinaryReadArchive reader{rrr::make_source_proxy_buffer(&source)};
+  srpc::BinaryReadArchive reader{srpc::make_source_proxy_buffer(&source)};
   decoded.load(reader);
   EXPECT_TRUE(source.eof());
   EXPECT_EQ(decoded.slot_id, 17u);
@@ -88,11 +88,11 @@ TEST(LegacyRaftLogTest, FreezesCanonicalKind4RocksDbValue) {
   EXPECT_FALSE(decoded.is_no_op);
 
   const auto commit =
-      rrr::marshallable_cast<janus::TpcCommitCommand>(decoded.command);
+      srpc::marshallable_cast<janus::TpcCommitCommand>(decoded.command);
   ASSERT_TRUE(commit.is_some());
   EXPECT_EQ(commit.unwrap()->tx_id_, 0x0102030405060708ULL);
   EXPECT_EQ(commit.unwrap()->term, 37);
-  const auto legacy = rrr::marshallable_cast<janus::LegacyVecPieceData>(
+  const auto legacy = srpc::marshallable_cast<janus::LegacyVecPieceData>(
       commit.unwrap()->cmd_);
   ASSERT_TRUE(legacy.is_some());
   ASSERT_EQ(legacy.unwrap()->pieces.size(), 1u);
