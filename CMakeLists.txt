@@ -3048,6 +3048,14 @@ if(BUILD_TESTS)
         # under the CMake build tree rather than the source worktree.
         if(MAKO_LOCAL_TEST_HOOKS)
             add_custom_target(run_mako_cache_mutation_tests
+                # The isolated lockfile normalization is deliberately
+                # offline. Prime every locked target dependency first so a
+                # clean host also has archives such as windows-link that the
+                # Linux build itself never compiles.
+                COMMAND ${CMAKE_COMMAND} -E env
+                        ${MAKO_RUST_TOOLCHAIN_ENV}
+                        ${CARGO_EXECUTABLE} fetch --locked
+                        --manifest-path "${CMAKE_SOURCE_DIR}/crates/Cargo.toml"
                 COMMAND ${CMAKE_COMMAND} -E env
                         ${MAKO_RUST_TOOLCHAIN_ENV}
                         "MAKO_CACHE_MUTATION_TEMP_ROOT=${CMAKE_BINARY_DIR}/mako-cache-mutation-work"
