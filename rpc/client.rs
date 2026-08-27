@@ -1014,6 +1014,25 @@ impl ClientConnection {
     // clippy::explicit_auto_deref -- measured: 42 of the 68 sites change emitted C++ (std::move out of an Arc field, a by-value bind of a borrow guard, a pointer where a value was passed). See the Task-2 measurement block above.
     #[allow(clippy::explicit_auto_deref)]
     fn invalidate_pending_futures(&self) {
+        // Drain the disconnect buffer FIRST. A request queued by the
+        // `!is_connected()` branch of clientconn_request_via_channel never
+        // enters `pending_fu_` -- it returns as soon as the enqueue succeeds,
+        // so the queued callback is the ONLY thing holding that future's
+        // notification path. Draining `pending_cb_slots_` and `pending_fu_`
+        // below cannot reach it, and without this the callback was simply
+        // destroyed with the queue: the waiter got a 1s timeout and
+        // ETIMEDOUT instead of a connection error, and a callback-style
+        // caller (which is what mako's generated proxies use) was never
+        // called at all.
+        //
+        // There is no double-notify: the buffered and in-flight paths are
+        // disjoint by construction, as above.
+        //
+        // Safe from Drop as well as from close()/mark_closing(): this runs in
+        // `Drop::drop` before any field is dropped, so the raw `conn_ptr` the
+        // queued callback uses to reach `metrics_` is still live.
+        self.pending_queue_.clear_all(CLIENT_ERR_NOT_CONNECTED);
+
         // Drain the slim async-callback slots first. Take each callback out
         // under the lock via Option::take (mem::take leaves None behind, so
         // the fixed-size slot vector keeps its shape), then fire them outside
@@ -2121,7 +2140,12 @@ where F: FnMut(&mut BinaryWriteArchive) {
             let conn_ptr: *const ClientConnection = &raw const *conn;
             let cb_fn = move |err: i32| {
                 // SAFETY: the queue belongs to this connection and is drained
-                // before the connection storage is released.
+                // before the connection storage is released -- by
+                // invalidate_pending_futures(), which Drop::drop calls before
+                // any field is dropped. That drain is what makes this raw
+                // `conn_ptr` deref sound; until it was added the callback was
+                // never invoked at all, so this note described an invariant
+                // nothing established.
                 unsafe { (*conn_ptr).metrics_.record_queue_drop() };
                 (*fu_for_cb).error_code_.set(err);
                 (*fu_for_cb).notify_ready(fu_for_cb.clone());
