@@ -1560,7 +1560,7 @@ ABI_SPECS = {
                 "export bool frame_codec_encode_into(FrameBytes& out, const uint8_t* payload, int32_t payload_size, bool extended_header_flag);",
                 "export void fsr_append(FrameStreamReader& reader, const uint8_t* data, size_t size);",
                 "export void fsr_consume_frame(FrameStreamReader& reader);",
-                "rusty::wrapping_add(this->payload_size",
+                "rusty::saturating_add(this->payload_size",
                 "static constexpr bool is_send = true;",
                 "static constexpr bool is_sync = true;",
             }
@@ -6433,7 +6433,7 @@ static_assert(std::is_same_v<
 static_assert(sizeof(srpc::FrameDecodeStatus) == 4);
 static_assert(alignof(srpc::FrameDecodeStatus) == 4);
 static_assert(srpc::kFrameHeaderSize == 4);
-static_assert(srpc::kMaxFramePayloadSize == INT32_MAX);
+static_assert(srpc::kMaxFramePayloadSize == 64 * 1024 * 1024);
 static_assert(std::is_standard_layout_v<srpc::FrameHeader>);
 static_assert(std::is_trivially_copyable_v<srpc::FrameHeader>);
 static_assert(srpc::FrameHeader::is_send && srpc::FrameHeader::is_sync);
@@ -8855,10 +8855,19 @@ int main() {
         std::memcmp(frame_header_bytes.data(),
                     frame_native_bytes(INT32_MIN).data(), 4) != 0 ||
         frame_header_bytes[4] != 0xa5 ||
-        !srpc::frame_codec_write_header(
+        // A size past the bound must be refused, so this side can never put a
+        // header on the wire that the peer's decoder is obliged to reject.
+        srpc::frame_codec_write_header(
             frame_header_bytes, INT32_MAX, true) ||
+        srpc::frame_codec_write_header(
+            frame_header_bytes, srpc::kMaxFramePayloadSize + 1, true) ||
+        !srpc::frame_codec_write_header(
+            frame_header_bytes, srpc::kMaxFramePayloadSize, true) ||
         std::memcmp(frame_header_bytes.data(),
-                    frame_native_bytes(-1).data(), 4) != 0) {
+                    frame_native_bytes(srpc::encode_response_size(
+                        srpc::kMaxFramePayloadSize, true))
+                        .data(),
+                    4) != 0) {
         return 198;
     }
 
@@ -8873,9 +8882,13 @@ int main() {
     for (const auto [encoded, payload, extended] :
          std::array{
              std::tuple{0, 0, false},
-             std::tuple{INT32_MAX, INT32_MAX, false},
+             std::tuple{srpc::encode_response_size(
+                            srpc::kMaxFramePayloadSize, false),
+                        srpc::kMaxFramePayloadSize, false},
              std::tuple{INT32_MIN, 0, true},
-             std::tuple{-1, INT32_MAX, true},
+             std::tuple{srpc::encode_response_size(
+                            srpc::kMaxFramePayloadSize, true),
+                        srpc::kMaxFramePayloadSize, true},
          }) {
         const auto bytes = frame_native_bytes(encoded);
         decoded_frame_header = srpc::FrameHeader{-7, !extended};
@@ -8886,9 +8899,32 @@ int main() {
             return 200;
         }
     }
-    if (srpc::FrameHeader{INT32_MAX, false}.total_frame_size() !=
-        INT32_MIN + 3) {
+    // Was `!= INT32_MIN + 3`, which PINNED the wrapping overflow as correct.
+    // Every caller casts this to size_t, and casting a negative int32_t
+    // sign-extends: a wrapped -2147483645 becomes 18446744071562067971, so
+    // the "do I have the whole frame yet?" guard is true forever and the
+    // stream wedges silently. It must saturate, never wrap.
+    if (srpc::FrameHeader{INT32_MAX, false}.total_frame_size() < 0 ||
+        srpc::FrameHeader{srpc::kMaxFramePayloadSize, false}
+                .total_frame_size() !=
+            srpc::kMaxFramePayloadSize +
+                static_cast<std::int32_t>(srpc::kFrameHeaderSize)) {
         return 201;
+    }
+    // A desynchronised read must be REJECTED, not accepted as a valid header
+    // claiming a payload that will never arrive. An all-ones word is the
+    // canonical shape of one.
+    {
+        srpc::FrameHeader desync_header{0, false};
+        if (srpc::frame_codec_peek_header(frame_native_bytes(-1),
+                                          desync_header) !=
+                srpc::FrameDecodeStatus::Malformed ||
+            srpc::frame_codec_peek_header(
+                frame_native_bytes(srpc::encode_response_size(
+                    srpc::kMaxFramePayloadSize + 1, false)),
+                desync_header) != srpc::FrameDecodeStatus::Malformed) {
+            return 202;
+        }
     }
 
     std::vector<std::uint8_t> encoded_frame{9, 8};
