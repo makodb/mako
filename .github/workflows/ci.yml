@@ -333,7 +333,7 @@ jobs:
           CARGO_HOME="${tsan_cargo_home}" \
           RUSTUP_HOME="${tsan_rustup_home}" \
             "${tsan_cargo_home}/bin/rustup" toolchain install "${toolchain}" \
-            --profile minimal --component rust-src
+            --profile minimal --component rust-src --component rustfmt
           CARGO_HOME="${tsan_cargo_home}" \
           RUSTUP_HOME="${tsan_rustup_home}" \
             "${tsan_cargo_home}/bin/rustup" toolchain link \
