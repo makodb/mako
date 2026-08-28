@@ -5,15 +5,16 @@
 > **Implementation status:** `sto-core`, the raw and safe Masstree boundary,
 > transactional Masstree point operations, copied scans, membership validation,
 > bounded registries, and the upper commit-hook seam exist on this branch.
-> The optional opacity profile, graceful native shutdown, production upper-layer
-> facade/cutover, and performance acceptance remain deferred milestones.
+> A reproducible zoo-2 point-workload comparison is complete; the optional
+> opacity profile, graceful native shutdown, production upper-layer
+> facade/cutover, and production-wide performance acceptance remain deferred.
 >
 > **Audience:** STO core, transactional-datatype, Masstree ABI, and Mako integration developers
 >
 > **Baseline:** Mako `mako-dev` at `abfb6ea96739`; compatibility oracle
 > `worktree-masstree-rocks` at `1daec550f`
 >
-> **Last updated:** 2026-08-27
+> **Last updated:** 2026-08-28
 
 This document defines the intended semantics and architecture of Mako's native
 Rust implementation of STO. It is a living design contract: implementation
@@ -2036,13 +2037,28 @@ must be represented in transaction state and released on every outcome.
 
 ### 13.3 Foreign RCU
 
-No C++ Masstree node, cursor, key pointer, or RCU token crosses the v1 ABI. Each
-ordinary ABI call opens and closes its own native RCU region. Rust MUST NOT keep
-that region open across application code, a transaction, I/O, blocking, or
-`.await`.
+No dereferenceable C++ Masstree node, value, cursor, or raw RCU guard crosses
+the v1 ABI. `mt_read_scope` is an ABI POD containing a generation-tagged,
+implementation-owned owner cookie; that cookie may encode a native TLS address
+but MUST be treated as opaque and MUST NOT be interpreted or dereferenced. The
+actual RCU objects remain in native TLS.
 
-If repeated calls need amortization, prefer one C ABI batch operation. A public
-long-lived RCU pin is deferred.
+Each ordinary scalar, one-shot strided, or scan ABI call opens and closes its
+own native RCU region. The opt-in retention mode is an explicit worker-affine
+point read scope, which the safe Rust facade owns through RAII. It may cover the
+point-access execution phase of a transaction. While active, it retains
+structural-reader admission and RCU protection, rejects unrelated operations
+through that worker, and makes same-tree structural writers on any worker wait
+for scope exit. Callers MUST keep the scope synchronous and SHOULD keep it
+short; they MUST NOT deliberately hold it across I/O, blocking waits, `.await`,
+or reentrant native work. A safe fixed-batch helper may grow caller-owned result
+storage while the scope is active, so v1 does not claim allocation-free or hard
+duration-bounded scopes. Any higher-layer visitor or callback executed while a
+scope is active inherits the same caller contract.
+
+Repeated fixed-width calls SHOULD use the strided batch or explicit scoped
+capability. Implicit ambient pins, raw RCU-implementation guards, and
+cross-worker scope transfer remain deferred.
 
 ### 13.4 Reclamation policy
 
@@ -2393,10 +2409,13 @@ recycled. The ABI MUST report exhaustion rather than reaching an assertion or
 Every tree operation validates the worker's current OS thread, the worker's
 runtime, and the tree's runtime before traversal.
 
-Ordinary calls enter and leave native RCU internally. No caller-supplied,
-foreign, or arbitrary callback executes while RCU is held. A bridge-internal,
-allocation-free, nonblocking collector may copy scan results into caller
-buffers. No native pointer escapes.
+Ordinary scalar, one-shot strided, and scan calls enter and leave native RCU
+internally. The explicit read-scope capability is the only public retention
+mode; it is RAII-owned and worker-affine, admits only point reads on its tree,
+and follows the synchronous caller contract in Section 13.3. A
+bridge-internal, allocation-free, nonblocking collector may copy scan results
+into caller buffers. The scoped capability carries an opaque owner cookie, but
+no dereferenceable node, value, cursor, or raw guard escapes in either mode.
 
 ### 15.5 Tree and runtime shutdown
 
@@ -2740,6 +2759,54 @@ Track throughput, p50/p99 latency, abort rate, allocations, item bytes,
 lock-hold time, scan chunk cost, and false conflicts from the coarse membership
 item. Performance changes never weaken a stated correctness gate.
 
+The second line of the ladder now has a reproducible development comparison on
+`zoo-002`; the first line remains to be characterized separately. The workload
+uses 100,000 prepopulated eight-byte keys and values, ten unique point
+operations per transaction, 0%, 5%, or 50% writes, and 1–64 physical cores.
+Each cell has three adjacent C++/Rust pairs, with a one-second warmup and
+five-second measurement. Within each shuffled repetition, the first engine
+alternates by schedule position; that does not guarantee a balanced first
+engine for every individual cell. `Rust/C++` below is the median same-seed
+paired throughput ratio:
+
+| Threads | Ten reads | 5% writes | 50% writes |
+| ---: | ---: | ---: | ---: |
+| 1 | 79.85% | 78.02% | 78.58% |
+| 2 | 80.29% | 78.18% | 78.15% |
+| 4 | 80.25% | 78.19% | 77.91% |
+| 8 | 83.42% | 78.33% | 74.86% |
+| 16 | 84.14% | 85.88% | 80.32% |
+| 32 | 87.12% | 104.72% | 86.54% |
+| 64 | 110.55% | 140.99% | 106.26% |
+
+The unweighted geometric mean across the 21 cells is 86.14%, with a range of
+74.86–140.99%. Rust remains about 20–25% behind at low thread counts, approaches
+or crosses C++ at 32 cores depending on the write mix, and is faster in each
+64-core cell. This meets the development goal of roughly comparable
+committed-operation throughput for this bounded point workload; it is not
+uniform parity or a production-wide acceptance result. The raw samples, exact
+builds, independent audit, and five-pair confirmation of the one flagged cell
+are archived in
+[`sto-rust-zoo2-optimized-2026-08-28`](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md).
+
+This is an end-to-end comparison of two integrations, not an isolated STO
+measurement or a language benchmark. C++ stores a direct pointer to a typed
+versioned-`u64` record in each Masstree leaf. Rust stores a `RecordId`, resolves
+a general binary-value Rust registry, and runs the typed Rust item protocol;
+the benchmark explicitly selects the bounded eager-contiguous registry rather
+than the public lazy-segmented default. Conversely, Rust uses a fixed/fused
+batch lookup, while each C++ write performs scalar `transGet` followed by a
+`transPut` that traverses Masstree again. C++ has read-your-writes disabled, but
+the unique transaction keys make that immaterial to abstract results.
+
+The run counts committed logical operations and includes retry cost, so abort
+rate is part of the result. It uses `taskset`, not per-worker pinning, on one
+shared non-isolated host with three repetitions. Both effective timed paths use
+native `-O2`; Rust uses fat LTO and one codegen unit while the C++ repository
+target does not use LTO. Latency percentiles, scans, misses and interning,
+non-eight-byte values, allocations, lock-hold time, false-conflict cost, and
+application traces remain unmeasured.
+
 ### 18.6 Implementation conformance record
 
 The experimental v1 implementation corresponding to this contract is split as
@@ -2753,19 +2820,22 @@ follows:
 | Safe runtime, worker, tree, point, and scan facade | [`crates/masstree`](../../crates/masstree) | Implemented; native cursors, pointers, and RCU guards remain private. |
 | Transactional records, tombstones, quotas, membership predicate, and scan overlay | [`crates/sto-masstree`](../../crates/sto-masstree) | Implemented for the conservative table-membership profile. |
 | Upper metadata reservation and pre-install coordination | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`. |
-| Opacity, graceful native shutdown, upper backend cutover, and performance acceptance | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
+| Opacity, graceful native shutdown, and upper backend cutover | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
+| Bounded point-workload performance characterization | [`sto-rust-zoo2-optimized-2026-08-28`](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md) | Complete on `zoo-002`; production-wide budget acceptance remains deferred. |
 
 The branch-level validation record for this implementation includes the full
 workspace suite in debug and release modes on Rust 1.95, strict Clippy and
 rustdoc builds, C11 header compilation, the exact 41-symbol native allowlist,
 required feature mask `0x0f7f`, export-manifest FNV-1a fingerprint
 `0xdb5bed9b8f1490e3`, the raw ABI suite, native safe-wrapper and
-transactional-adapter integration, and ASan, UBSan, and unsuppressed TSan
-stress. The production cutover record
-still needs explicit native fault injection for allocation failure, ordinary
-C++ exceptions, and publication-unknown insertion, plus the upper-backend
-differential histories, performance budgets, and the deferred capabilities in
-the table above.
+transactional-adapter integration. Earlier branch baselines included ASan,
+UBSan, and unsuppressed TSan stress, but those sanitizer suites were not rerun
+against the exact scoped/strided ABI performance commit and therefore are not a
+current cutover claim. The production cutover record still needs explicit
+native fault injection for allocation failure, ordinary C++ exceptions, and
+publication-unknown insertion, plus the upper-backend differential histories,
+accepted production-wide throughput, latency, and false-conflict budgets, the
+exact sanitizer reruns, and the deferred capabilities in the table above.
 
 This table records implementation presence, not authorization to make the Rust
 backend the production default. That decision still requires the cutover gates
@@ -2792,8 +2862,9 @@ in Section 19.2.
    shadow or feature-flag production before changing the default.
 7. **Optional opacity profile.** Add execution-time revalidation as a separate
    negotiated capability milestone after the nonopaque cutover gates pass.
-8. **Optimize.** Profile item representation, ordering, batching, and predicate
-   precision without weakening the selected profile's gates.
+8. **Optimize.** Profile and optimize item representation, ordering, batching,
+   and predicate precision without weakening the selected profile's gates;
+   continue against application and production-wide budgets.
 
 ### 19.2 Cutover gates
 
@@ -2810,6 +2881,9 @@ Native Rust becomes the default only when:
 The C++ reference backend remains available for at least one compatibility
 release after cutover.
 
+The zoo-2 development comparison is evidence toward, but does not by itself
+satisfy, the performance and false-conflict gate.
+
 ## 20. Decision record and change policy
 
 ### 20.1 Accepted v1 decisions
@@ -2821,13 +2895,13 @@ release after cutover.
 | D3 | RUST | Generic adapters use deferred writes in v1. | Makes abort and memory safety tractable. |
 | D4 | RUST | Masstree stores immutable nonzero `RecordId`s. | No Rust or C++ record pointer crosses the ABI. |
 | D5 | RUST | Point misses intern tombstones; logical deletes retain them. | Gives stable absence witnesses without native leaf tokens. |
-| D6 | RUST | One lockable membership item per table protects scan phantoms. | Correct, conservative baseline with per-call RCU. |
+| D6 | RUST | One lockable membership item per table protects scan phantoms. | Correct, conservative baseline; copied scans and structural exclusion keep native traversal behind the ABI. |
 | D7 | RUST | Published/publication-unknown records and all consumed IDs are not reclaimed or reused in v1; proven-unpublished candidates may be dropped. | Avoids premature cross-language reclamation without leaking proved losers. |
 | D8 | RUST | Explicit thread-affine worker contexts replace core TLS. | Makes ownership and finite worker resources visible. |
 | D9 | RUST | V1 deduplicates and sorts canonical physical `LockIdentity` requests. | Prevents deadlock even when logical resources share coarse locks. |
 | D10 | STO/COMPAT | Serializable nonopaque OCC lands first; opacity is explicit. | Matches controlled Silo usage without claiming silent opacity. |
 | D11 | RUST | Installation and mandatory cleanup are infallible. | Prevents reporting a partially installed transaction as aborted. |
-| D12 | RUST | Native RCU is scoped inside ABI calls. | No foreign pointer or process-wide epoch stall leaks into Rust code. |
+| D12 | RUST | Native RCU remains behind ABI-owned one-shot regions or an explicit scoped-read capability that safe Rust owns through RAII. | The generation-tagged owner cookie is opaque, no dereferenceable native object escapes, and retained state remains worker-affine under a synchronous caller contract. |
 | D13 | COMPAT | The pre-install hook runs once after lock+validation and before install. | Preserves the upper branch's commit seam. |
 | D14 | RUST | Distributed prepared state is outside core v1. | Network waiting while locks are held needs a separate liveness design. |
 | D15 | RUST | Native version encoding is private; the C++ layout is a parity oracle. | Rust records do not exchange atomic objects with C++. |
@@ -2838,10 +2912,10 @@ release after cutover.
 
 | Topic | V1 position | Revisit when |
 | --- | --- | --- |
-| Compact/arena items | Correctness-first erased storage | Profiling attributes material cost to allocation or dispatch. |
+| Ordinary heterogeneous erased item lane | Typed unique batches and pooling are implemented; mixed external adapter items retain private erasure. | Profiling attributes material cost to the remaining heterogeneous allocation or dispatch. |
 | Unsorted write locking | Sorted total order | Benchmarks show sorting material and an unsorted proof/test suite exists. |
 | Precise range witnesses | Table membership item | False conflicts exceed an accepted workload budget. |
-| Long RCU pin or batching | Per-call RCU | ABI overhead is material and a nonblocking scope can be enforced. |
+| Implicit, raw, or cross-worker RCU pin | Fixed-width strided calls and an explicit worker-affine point scope (RAII-owned in safe Rust) are implemented; no raw RCU guard or ambient/cross-worker pin is exposed. | A use case requires a broader lifetime model with enforceable ownership and progress rules. |
 | Commutative multi-owner locks | Exclusive locks plus semantic intents | Counter/queue workloads justify the additional protocol. |
 | Physical record GC | No reclamation | Growth is material and a grace-period design is proven. |
 | Distributed `PreparedTransaction` | Not exposed | `sto-mako` specifies IDs, terms, idempotence, recovery, and liveness. |

@@ -1,0 +1,2 @@
+[ perf record: Woken up 2 times to write data ]
+[ perf record: Captured and wrote 0.523 MB /var/tmp/mako-sto-bench-20260827.J2TZj6/profile-cpp-1t-read-20260828/perf.data (4786 samples) ]

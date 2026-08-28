@@ -633,7 +633,10 @@ pub struct Table {
 /// The mutable transaction borrow ensures commit and abort cannot begin while
 /// this session is reachable. The caller must likewise avoid using another
 /// transaction or tree with the same shared native worker until the session is
-/// closed or dropped.
+/// closed or dropped. Because an open session may retain native RCU protection,
+/// keep it synchronous and short. Caller-supplied visitor callbacks must not
+/// deliberately block, perform I/O, suspend at `.await`, or re-enter native
+/// work. Batch scratch storage may grow and is not claimed to be allocation-free.
 #[must_use = "a point session must remain alive while its batched lookups run"]
 pub struct PointSession<'session, 'context> {
     table: &'session Table,

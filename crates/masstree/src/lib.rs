@@ -438,7 +438,8 @@ impl Tree {
     /// is not a snapshot. Drop or explicitly close it before calling
     /// [`Self::get_or_insert`], [`Self::scan_chunk`], worker quiescence, or an
     /// operation on another tree with the same worker. A miss does not close
-    /// the scope automatically.
+    /// the scope automatically. Do not retain it across blocking work, I/O,
+    /// `.await`, or native calls outside this scope's point-read methods.
     pub fn read_scope<'tree, 'worker>(
         &'tree self,
         worker: &'worker Worker,
@@ -523,11 +524,16 @@ impl Tree {
     }
 }
 
-/// A bounded native structural-read and RCU scope for one tree and worker.
+/// An explicit RAII native structural-read and RCU scope for one tree and worker.
 ///
 /// The borrowed [`Worker`] makes this type thread-affine; it cannot be sent or
 /// shared across threads. Native cleanup runs during ordinary return and Rust
-/// unwinding through this type's `Drop` implementation.
+/// unwinding through this type's `Drop` implementation. While the scope is
+/// active, unrelated operations through the same worker are rejected and a
+/// same-tree structural writer on any worker waits for scope exit. Keep the
+/// scope synchronous and short; do not deliberately retain it across blocking
+/// waits, I/O, `.await`, or reentrant native work. Fixed-batch helpers may grow
+/// caller-owned result storage and are not claimed to be allocation-free.
 pub struct ReadScope<'tree, 'worker> {
     tree: &'tree Tree,
     _worker: &'worker Worker,

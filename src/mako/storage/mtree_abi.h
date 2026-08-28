@@ -288,8 +288,11 @@ mt_status mt_get_strided(mt_tree *tree, mt_thread *thread, const void *keys,
  *
  * While a scope is active, ordinary operations using the same worker fail with
  * MT_ERR_ACTIVE_GUARDS. In particular, end the scope before mt_get_or_insert,
- * including after a miss. mt_read_scope_end invalidates token even when the
- * tree facade was concurrently closed or the runtime became poisoned.
+ * including after a miss. Keep the scope synchronous and short; do not retain
+ * it across I/O, blocking waits, or reentrant native work. The ABI cannot
+ * enforce that progress contract for a C caller. mt_read_scope_end invalidates
+ * token even when the tree facade was concurrently closed or the runtime
+ * became poisoned.
  */
 mt_status mt_read_scope_begin(mt_tree *tree, mt_thread *thread,
                               mt_read_scope *token) MT_NOEXCEPT;
