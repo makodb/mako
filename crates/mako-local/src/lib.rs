@@ -645,13 +645,24 @@ fn validate_build_identity(
     Ok(())
 }
 
+#[inline]
 fn status(code: i32) -> Result<()> {
+    if code == sys::MAKO_LOCAL_OK {
+        return Ok(());
+    }
+    status_error(code)
+}
+
+#[cold]
+#[inline(never)]
+fn status_error(code: i32) -> Result<()> {
     match sys::KnownStatus::from_code(code) {
         Some(known) => known_status(known),
         None => Err(Error::UnknownStatus(code)),
     }
 }
 
+#[inline]
 fn known_status(status: sys::KnownStatus) -> Result<()> {
     match status {
         sys::KnownStatus::Ok => Ok(()),
@@ -685,6 +696,7 @@ enum OperationEffect {
     Uncertain,
 }
 
+#[inline]
 fn operation_effect(code: i32) -> OperationEffect {
     let Some(status) = sys::KnownStatus::from_code(code) else {
         return OperationEffect::Uncertain;
@@ -716,7 +728,17 @@ fn operation_effect(code: i32) -> OperationEffect {
     }
 }
 
+#[inline]
 fn commit_disposition(code: i32) -> CommitDisposition {
+    if code == sys::MAKO_LOCAL_OK {
+        return CommitDisposition::Committed;
+    }
+    commit_disposition_error(code)
+}
+
+#[cold]
+#[inline(never)]
+fn commit_disposition_error(code: i32) -> CommitDisposition {
     let Some(status) = sys::KnownStatus::from_code(code) else {
         return CommitDisposition::Unknown(Error::UnknownStatus(code));
     };
@@ -774,6 +796,7 @@ fn attach_current_thread() -> Result<()> {
     result
 }
 
+#[inline]
 fn ensure_current_thread_attached() -> Result<()> {
     #[cfg(not(test))]
     if SAFE_WRAPPER_ATTACHED.with(Cell::get) {
@@ -861,6 +884,7 @@ impl LocalDb {
     ///
     /// Conflicts are returned by [`Transaction::commit`]; this method never
     /// retries user code implicitly.
+    #[inline]
     pub fn transaction(&self) -> Result<Transaction<'_>> {
         ensure_current_thread_attached()?;
         let mut raw = std::ptr::null_mut();
@@ -1270,6 +1294,7 @@ fn copy_scan_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
 }
 
 impl<'db> Transaction<'db> {
+    #[inline]
     fn active_raw(&self) -> Result<*mut sys::mako_local_txn> {
         if !self.active {
             return Err(Error::TransactionFinished);
@@ -1280,7 +1305,17 @@ impl<'db> Transaction<'db> {
             .as_ptr())
     }
 
+    #[inline]
     fn operation_status(&mut self, code: i32) -> Result<()> {
+        if code == sys::MAKO_LOCAL_OK {
+            return Ok(());
+        }
+        self.operation_status_error(code)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn operation_status_error(&mut self, code: i32) -> Result<()> {
         // A finished or terminal-uncertain native transaction must never be
         // used for another operation or commit. Drop still calls destroy once,
         // which either consumes a clean terminal facade or observes
@@ -1388,6 +1423,7 @@ impl<'db> Transaction<'db> {
 
     /// Upsert `key`, returning `true` when it was absent immediately before
     /// this operation, including after an earlier same-transaction removal.
+    #[inline]
     pub fn put(&mut self, table: &Table<'db>, key: &[u8], value: &[u8]) -> Result<bool> {
         let mut created = 0u8;
         // SAFETY: input slices live through the call. C++ copies/encodes the
@@ -1460,6 +1496,7 @@ impl<'db> Transaction<'db> {
     /// A non-conflict error can theoretically be handle cleanup failing after
     /// a successful install; durability integrations must use
     /// [`Self::commit_report`] so they do not lose that distinction.
+    #[inline]
     pub fn commit(self) -> Result<()> {
         let report = self.commit_report();
         match report.disposition {
@@ -1475,6 +1512,7 @@ impl<'db> Transaction<'db> {
     /// durable write-back even when `cleanup` is an error. Conversely, an
     /// [`CommitDisposition::Unknown`] result must not be treated as an abort;
     /// pinning the corresponding durability obligation is the safe response.
+    #[inline]
     pub fn commit_report(self) -> CommitReport {
         self.finish_commit(|raw| {
             // SAFETY: handle is live, active, and cannot have moved threads.
@@ -1517,6 +1555,7 @@ impl<'db> Transaction<'db> {
         })
     }
 
+    #[inline(always)]
     fn finish_commit<F>(mut self, native_commit: F) -> CommitReport
     where
         F: FnOnce(*mut sys::mako_local_txn) -> i32,
@@ -1618,6 +1657,7 @@ unsafe extern "C" fn test_commit_observer_trampoline(
 }
 
 impl Drop for Transaction<'_> {
+    #[inline]
     fn drop(&mut self) {
         let Some(raw) = self.raw.take() else {
             return;
