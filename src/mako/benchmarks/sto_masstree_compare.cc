@@ -28,6 +28,22 @@ using Clock = std::chrono::steady_clock;
 constexpr std::uint64_t kSplitMixGamma = UINT64_C(0x9E3779B97F4A7C15);
 constexpr std::size_t kPrepopulateBatch = 64;
 
+std::uint64_t splitmix_scramble(std::uint64_t value) {
+  value = (value ^ (value >> 30U)) * UINT64_C(0xBF58476D1CE4E5B9);
+  value = (value ^ (value >> 27U)) * UINT64_C(0x94D049BB133111EB);
+  return value ^ (value >> 31U);
+}
+
+std::uint64_t worker_random_state(std::uint64_t seed,
+                                  std::uint64_t thread_id) {
+  /*
+   * A direct thread_id * kSplitMixGamma offset selects nearby positions in
+   * one stream. Workers two IDs apart then reuse almost every key/write pair.
+   * Scramble the selector to choose distant deterministic starting points.
+   */
+  return splitmix_scramble(seed + (thread_id + 1) * kSplitMixGamma);
+}
+
 struct Config {
   std::uint64_t threads = 1;
   std::uint64_t keyspace = 100000;
@@ -306,7 +322,7 @@ void worker_main(std::uint64_t thread_id, Table& table, const Config& config,
                  ThreadResult& result) {
   initialize_sto_thread(thread_id, false);
   const std::uint64_t initial_state =
-      config.seed + (thread_id + 1) * kSplitMixGamma;
+      worker_random_state(config.seed, thread_id);
   SplitMix64 random(initial_state);
   std::vector<Operation> operations;
   operations.reserve(static_cast<std::size_t>(config.ops_per_txn));

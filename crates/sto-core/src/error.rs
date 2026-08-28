@@ -55,6 +55,7 @@ pub enum InvalidUse {
     WorkerBusy,
     TransactionFinished,
     TransactionDoomed,
+    UniqueBatchRequiresEmptyTransaction,
     DuplicateResourceClass,
     ResourceTypeMismatch,
     IllegalItemState,
@@ -372,6 +373,7 @@ pub enum VersionError {
         proposed: OccCommitId,
     },
     GuardAlreadyReleased,
+    GuardTargetMismatch,
     LostOwnership {
         expected_owner: OwnerId,
     },

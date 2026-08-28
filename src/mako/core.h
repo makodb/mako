@@ -87,6 +87,16 @@ public:
    */
   static int try_current_core_id();
 
+  /**
+   * Constant-time, non-lazy proof that this thread still has exactly the
+   * assignment established by an owning runtime.  Unlike
+   * try_current_core_id(), this does not rediscover the current runtime; the
+   * caller has already proved the runtime identity and supplies its ID.
+   */
+  static inline bool matches_current_assignment(int runtime_id, int core_id) {
+    return tl_runtime_id == runtime_id && tl_core_id == core_id;
+  }
+
   // actual number of CPUs online for the system
   static unsigned num_cpus_online();
 

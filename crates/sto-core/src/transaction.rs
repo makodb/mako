@@ -2,24 +2,26 @@
 
 use std::{
     any::TypeId,
-    collections::HashMap,
     hash::{Hash, Hasher},
     marker::PhantomData,
+    num::NonZeroUsize,
     panic::{catch_unwind, AssertUnwindSafe},
     rc::Rc,
     sync::Arc,
 };
 
 use crate::{
-    adapter::{FinishDisposition, TransactionalResource},
+    adapter::{FinishDisposition, ResourceKey, TransactionalResource},
     error::{
         AbortInfo, AbortReason, AccessError, AcquireError, AdapterFault, AdapterPhase, BeginError,
         CheckError, CommitFailure, CommitInfo, CommitOutcome, DefiniteOutcome, FailurePhase,
         IndeterminateInfo, InternalError, InvalidUse, ItemInitError, PoisonInfo, PrepareError,
     },
     hook::{CommitHook, CommitHookError},
-    item::{Entry, ErasedItem, ItemBox},
-    lock::{FinishContext, LockDisposition, LockPlan},
+    item::{BatchFinishStage, Entry, ErasedItem, ErasedItemBatch, ItemBox, TypedItemBatch},
+    lock::{
+        FinishContext, LockDisposition, LockPlan, LockPlanStorage, PreflightFreeValidationContext,
+    },
     runtime::{IsolationMode, RegisteredResource, Runtime, WorkerContext},
 };
 
@@ -27,27 +29,434 @@ use crate::{
 #[derive(Debug)]
 pub struct Active;
 
+/// Exact proof that a borrowed key batch contains no duplicate logical keys.
+///
+/// Core constructs this proof by comparing every key with full [`Eq`]
+/// equality. Hashes are deliberately not involved, so colliding keys remain
+/// distinct. The keys must retain their logical meaning while this value is
+/// alive, as required by the [`ResourceKey`] contract.
+#[derive(Clone, Copy)]
+pub struct UniqueItemKeys<'keys, K: ResourceKey> {
+    keys: &'keys [K],
+}
+
+impl<'keys, K: ResourceKey> UniqueItemKeys<'keys, K> {
+    /// Returns an exact uniqueness proof, or `None` when any key repeats.
+    ///
+    /// This allocation-free constructor is intended for small transaction
+    /// batches. It performs pairwise equality checks so the proof is
+    /// independent of `Hash` quality and cannot admit a collision alias.
+    pub fn try_new(keys: &'keys [K]) -> Option<Self> {
+        for (index, key) in keys.iter().enumerate() {
+            if keys[..index].iter().any(|prior| prior == key) {
+                return None;
+            }
+        }
+        Some(Self { keys })
+    }
+
+    /// Returns the proven-unique keys in their original order.
+    pub const fn as_slice(&self) -> &'keys [K] {
+        self.keys
+    }
+
+    /// Returns the number of proven-unique keys.
+    pub const fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    /// Returns whether the proven batch is empty.
+    pub const fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+}
+
+impl<K: ResourceKey> std::fmt::Debug for UniqueItemKeys<'_, K> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("UniqueItemKeys")
+            .field("keys", &self.keys)
+            .finish()
+    }
+}
+
+struct ItemHasher {
+    state: u64,
+}
+
+impl ItemHasher {
+    const MULTIPLIER: u64 = 0x517c_c1b7_2722_0a95;
+
+    #[inline]
+    fn for_resource<A: TransactionalResource>(resource: &RegisteredResource<A>) -> Self {
+        Self {
+            state: resource.object_id().get()
+                ^ (u64::from(resource.resource_class().get()) << 32)
+                ^ Self::MULTIPLIER,
+        }
+    }
+
+    /// The same word-at-a-time recurrence used by rustc's fast non-cryptographic
+    /// hasher. Transaction identities are bounded and always verified with the
+    /// full erased identity, so collision resistance is a correctness property
+    /// of the index rather than something this hot-path hash must provide.
+    #[inline]
+    fn mix(&mut self, value: u64) {
+        self.state = (self.state.rotate_left(5) ^ value).wrapping_mul(Self::MULTIPLIER);
+    }
+}
+
+impl Hasher for ItemHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.state ^ (self.state >> 32)
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            self.mix(u64::from_le_bytes(
+                chunk.try_into().expect("eight-byte hash chunk"),
+            ));
+        }
+        let remainder = chunks.remainder();
+        if !remainder.is_empty() {
+            let mut tail = [0_u8; 8];
+            tail[..remainder.len()].copy_from_slice(remainder);
+            self.mix(u64::from_le_bytes(tail) ^ ((remainder.len() as u64) << 56));
+        }
+        self.mix(bytes.len() as u64);
+    }
+
+    #[inline]
+    fn write_u32(&mut self, value: u32) {
+        self.mix(u64::from(value));
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.mix(value);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.mix(value as u64);
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct ItemIndexEntry {
+    identity_hash: u64,
+    generation: u32,
+    item_slot: u32,
+}
+
+/// Worker-local open-addressed item index.
+///
+/// Every logical item occupies one table entry, including items whose identity
+/// hashes collide. Entries are tagged with the current transaction generation,
+/// so beginning a transaction is O(1) and never clears the table. Growth is
+/// bounded by the worker's peak transaction size and disappears from the
+/// steady-state path once that peak is stable.
+#[derive(Default)]
+struct ItemIndex {
+    entries: Vec<ItemIndexEntry>,
+    generation: u32,
+    len: usize,
+}
+
+impl ItemIndex {
+    const MIN_CAPACITY: usize = 8;
+
+    fn begin_transaction(&mut self) {
+        self.len = 0;
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            // This is reachable only after 2^32 transactions on one attached
+            // worker. Reset the tags so generation one remains unambiguous.
+            for entry in &mut self.entries {
+                entry.generation = 0;
+            }
+            self.generation = 1;
+        }
+    }
+
+    #[inline]
+    fn find(&self, identity_hash: u64, mut matches: impl FnMut(usize) -> bool) -> Option<usize> {
+        if self.entries.is_empty() {
+            return None;
+        }
+
+        let mask = self.entries.len() - 1;
+        let mut bucket = identity_hash as usize & mask;
+        loop {
+            let entry = &self.entries[bucket];
+            if entry.generation != self.generation {
+                return None;
+            }
+            let item_slot = entry.item_slot as usize;
+            if entry.identity_hash == identity_hash && matches(item_slot) {
+                return Some(item_slot);
+            }
+            bucket = (bucket + 1) & mask;
+        }
+    }
+
+    #[inline]
+    fn try_reserve_for_insert(&mut self) -> Result<(), crate::error::CapacityError> {
+        let needed = self
+            .len
+            .checked_add(1)
+            .ok_or(crate::error::CapacityError::ItemLimit)?;
+        self.try_reserve_for_len(needed)
+    }
+
+    #[inline]
+    fn try_reserve_for_len(&mut self, needed: usize) -> Result<(), crate::error::CapacityError> {
+        if needed <= self.entries.len() / 2 {
+            return Ok(());
+        }
+        self.try_grow(needed)
+    }
+
+    #[cold]
+    fn try_grow(&mut self, needed: usize) -> Result<(), crate::error::CapacityError> {
+        let minimum_capacity = needed
+            .checked_mul(2)
+            .ok_or(crate::error::CapacityError::ItemLimit)?;
+        let new_capacity = minimum_capacity
+            .max(Self::MIN_CAPACITY)
+            .checked_next_power_of_two()
+            .ok_or(crate::error::CapacityError::ItemLimit)?;
+        let mut replacement = Vec::new();
+        replacement
+            .try_reserve_exact(new_capacity)
+            .map_err(|_| crate::error::CapacityError::ItemLimit)?;
+        replacement.resize(new_capacity, ItemIndexEntry::default());
+
+        for entry in self
+            .entries
+            .iter()
+            .copied()
+            .filter(|entry| entry.generation == self.generation)
+        {
+            Self::insert_into(&mut replacement, entry);
+        }
+        self.entries = replacement;
+        Ok(())
+    }
+
+    #[inline]
+    fn insert(&mut self, identity_hash: u64, item_slot: usize) {
+        debug_assert!(self.len < self.entries.len() / 2);
+        Self::insert_into(
+            &mut self.entries,
+            ItemIndexEntry {
+                identity_hash,
+                generation: self.generation,
+                item_slot: u32::try_from(item_slot)
+                    .expect("runtime item limit keeps item slots within u32"),
+            },
+        );
+        self.len += 1;
+    }
+
+    #[inline]
+    fn insert_into(entries: &mut [ItemIndexEntry], entry: ItemIndexEntry) {
+        let mask = entries.len() - 1;
+        let mut bucket = entry.identity_hash as usize & mask;
+        while entries[bucket].generation == entry.generation {
+            bucket = (bucket + 1) & mask;
+        }
+        entries[bucket] = entry;
+    }
+
+    #[cfg(test)]
+    fn capacity(&self) -> usize {
+        self.entries.len() / 2
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CommitShape {
+    has_writes: bool,
+    has_predicates: bool,
+}
+
+pub(crate) struct TransactionScratch {
+    // Keep one worker-affine runtime handle paired with the reusable frame.
+    // Moving it between scratch and the active frame avoids a shared Arc
+    // increment/decrement on every transaction boundary.
+    runtime: Arc<Runtime>,
+    items: Vec<Option<Box<dyn ErasedItem>>>,
+    // The leading ordinary boxes whose retained resource handles have already
+    // been disposed. This avoids repeating erased calls and unwind boundaries
+    // after a transaction switches to the separate typed-batch pool.
+    ordinary_disposed_prefix: usize,
+    unique_batch: Option<Box<dyn ErasedItemBatch>>,
+    item_index: ItemIndex,
+    lock_storage: LockPlanStorage,
+}
+
+impl TransactionScratch {
+    pub(crate) fn new(runtime: Arc<Runtime>) -> Self {
+        Self {
+            runtime,
+            items: Vec::new(),
+            ordinary_disposed_prefix: 0,
+            unique_batch: None,
+            item_index: ItemIndex::default(),
+            lock_storage: LockPlanStorage::default(),
+        }
+    }
+
+    /// Drops every adapter binding retained by this idle worker scratch under
+    /// an unwind boundary. On failure the caller must poison the runtime and
+    /// quarantine the returned scratch rather than run any more destructors.
+    #[allow(
+        clippy::result_large_err,
+        reason = "the unwind path must return the allocation itself for no-allocation quarantine"
+    )]
+    pub(crate) fn dispose_retained_resources(mut self) -> Result<(), Self> {
+        debug_assert!(self.ordinary_disposed_prefix <= self.items.len());
+        for item_slot in self.ordinary_disposed_prefix..self.items.len() {
+            let Some(item) = self.items[item_slot].as_mut() else {
+                continue;
+            };
+            let disposal = catch_unwind(AssertUnwindSafe(|| {
+                item.dispose_retained_resource();
+            }));
+            if disposal.is_err() {
+                return Err(self);
+            }
+        }
+        if let Some(batch) = self.unique_batch.as_mut() {
+            let disposal = catch_unwind(AssertUnwindSafe(|| {
+                batch.dispose_retained_resources();
+            }));
+            if disposal.is_err() {
+                return Err(self);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for TransactionScratch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TransactionScratch")
+            .field("runtime_id", &self.runtime.id())
+            .field("item_capacity", &self.items.capacity())
+            .field("ordinary_disposed_prefix", &self.ordinary_disposed_prefix)
+            .field("has_unique_batch_pool", &self.unique_batch.is_some())
+            .field("item_index_capacity", &self.item_index.entries.capacity())
+            .finish()
+    }
+}
+
 struct TransactionFrame {
     runtime: Arc<Runtime>,
     isolation: IsolationMode,
     items: Vec<Option<Box<dyn ErasedItem>>>,
-    by_hash: HashMap<u64, Vec<usize>>,
+    ordinary_disposed_prefix: usize,
+    unique_batch: Option<Box<dyn ErasedItemBatch>>,
+    batch_active: bool,
+    item_index: ItemIndex,
+    item_count: usize,
+    // A successful access retains this binding in a live item. If item
+    // creation fails first, the transaction is doomed and cannot consult the
+    // cache again. Core compares this erased address only while the allocation
+    // is alive and never dereferences it.
+    last_validated_binding: Option<NonZeroUsize>,
+    lock_storage: LockPlanStorage,
     doomed: bool,
 }
 
 impl TransactionFrame {
-    fn new(runtime: Arc<Runtime>, isolation: IsolationMode) -> Self {
+    fn new(isolation: IsolationMode, mut scratch: TransactionScratch) -> Self {
+        scratch.item_index.begin_transaction();
+        debug_assert!(scratch
+            .unique_batch
+            .as_ref()
+            .is_none_or(|batch| batch.active_len() == 0));
+        debug_assert!(scratch.ordinary_disposed_prefix <= scratch.items.len());
         Self {
-            runtime,
+            runtime: scratch.runtime,
             isolation,
-            items: Vec::new(),
-            by_hash: HashMap::new(),
+            items: scratch.items,
+            ordinary_disposed_prefix: scratch.ordinary_disposed_prefix,
+            unique_batch: scratch.unique_batch,
+            batch_active: false,
+            item_index: scratch.item_index,
+            item_count: 0,
+            last_validated_binding: None,
+            lock_storage: scratch.lock_storage,
             doomed: false,
         }
     }
 
-    fn has_writes(&self) -> bool {
-        self.items.iter().flatten().any(|item| item.has_intent())
+    fn into_scratch(self) -> TransactionScratch {
+        debug_assert!(!self.batch_active);
+        debug_assert!(self
+            .unique_batch
+            .as_ref()
+            .is_none_or(|batch| batch.active_len() == 0));
+        debug_assert!(self.ordinary_disposed_prefix <= self.items.len());
+        TransactionScratch {
+            runtime: self.runtime,
+            items: self.items,
+            ordinary_disposed_prefix: self.ordinary_disposed_prefix,
+            unique_batch: self.unique_batch,
+            item_index: self.item_index,
+            lock_storage: self.lock_storage,
+        }
+    }
+
+    fn commit_shape(&self) -> CommitShape {
+        if self.batch_active {
+            let (has_writes, has_predicates) = self
+                .unique_batch
+                .as_ref()
+                .expect("an active unique batch retains its storage")
+                .commit_shape();
+            return CommitShape {
+                has_writes,
+                has_predicates,
+            };
+        }
+        let mut shape = CommitShape {
+            has_writes: false,
+            has_predicates: false,
+        };
+        for item in self.items[..self.item_count]
+            .iter()
+            .map(|slot| slot.as_ref().expect("commit owns every live item slot"))
+        {
+            shape.has_writes |= item.has_intent();
+            shape.has_predicates |= item.has_predicate();
+            if shape.has_writes && shape.has_predicates {
+                break;
+            }
+        }
+        shape
+    }
+
+    #[inline]
+    fn is_preflight_free_read_only(&self) -> bool {
+        if self.batch_active {
+            return self
+                .unique_batch
+                .as_ref()
+                .expect("an active unique batch retains its storage")
+                .is_preflight_free_read_only();
+        }
+        self.items[..self.item_count].iter().all(|slot| {
+            slot.as_ref()
+                .expect("commit owns every live item slot")
+                .is_preflight_free_read_candidate()
+        })
     }
 }
 
@@ -67,6 +476,92 @@ pub struct Transaction<'worker, State = Active> {
     not_send_sync: PhantomData<Rc<()>>,
 }
 
+/// Scoped access to one validated typed resource within an active transaction.
+///
+/// A session amortizes transaction-state and resource-capability validation
+/// across several [`Self::with_resolved_item`] calls. It is created only by
+/// [`Transaction::with_item_session`], cannot escape that method's closure,
+/// and is structurally neither `Send` nor `Sync`.
+pub struct ResolvedItemSession<'session, A: TransactionalResource> {
+    frame: &'session mut TransactionFrame,
+    resource: &'session RegisteredResource<A>,
+    failure: Option<AccessError>,
+    not_send_sync: PhantomData<Rc<()>>,
+}
+
+impl<A: TransactionalResource> ResolvedItemSession<'_, A> {
+    /// Resolves, looks up or creates, and accesses one logical item.
+    ///
+    /// This has the same resolver and capacity contract as
+    /// [`Transaction::with_resolved_item`]. The session has already validated
+    /// its resource capability, so that check and the outer transaction
+    /// failure boundary are not repeated for every item.
+    ///
+    /// The first failed access dooms the entire session. Later accesses return
+    /// [`InvalidUse::TransactionDoomed`], and the enclosing session call
+    /// reports the first error even if its closure catches it.
+    #[inline]
+    pub fn with_resolved_item<C, R>(
+        &mut self,
+        lookup: impl FnOnce() -> Result<Option<(A::Key, C)>, AccessError>,
+        create: impl FnOnce() -> Result<(A::Key, C), AccessError>,
+        operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>, C) -> Result<R, AccessError>,
+    ) -> Result<R, AccessError> {
+        if self.failure.is_some() {
+            return Err(InvalidUse::TransactionDoomed.into());
+        }
+
+        let result = with_resolved_item_inner_validated(
+            self.frame,
+            self.resource,
+            lookup,
+            create,
+            operation,
+        );
+        if let Err(error) = result {
+            self.failure = Some(error);
+            if access_error_poisons_runtime(error) {
+                self.frame.runtime.poison();
+            }
+        }
+        result
+    }
+
+    /// Tries to append an exactly unique batch while this transaction is
+    /// still empty.
+    ///
+    /// `Ok(true)` means every operation ran and the unique batch was appended
+    /// without populating the item index. `Ok(false)` means an earlier item
+    /// made the transaction ineligible; no operation ran and no state changed,
+    /// so the caller may immediately fall back to [`Self::with_resolved_item`]
+    /// within this session. Errors retain the session's ordinary first-error,
+    /// doom, and runtime-poisoning behavior.
+    #[inline]
+    pub fn try_with_unique_item_batch(
+        &mut self,
+        keys: UniqueItemKeys<'_, A::Key>,
+        operation: impl for<'entry> FnMut(usize, &mut Entry<'entry, A>) -> Result<(), AccessError>,
+    ) -> Result<bool, AccessError> {
+        if self.failure.is_some() {
+            return Err(InvalidUse::TransactionDoomed.into());
+        }
+
+        let result = try_append_unique_item_batch_inner_validated(
+            self.frame,
+            self.resource,
+            keys,
+            operation,
+        );
+        if let Err(error) = result {
+            self.failure = Some(error);
+            if access_error_poisons_runtime(error) {
+                self.frame.runtime.poison();
+            }
+        }
+        result
+    }
+}
+
 impl<State> std::fmt::Debug for Transaction<'_, State> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -74,7 +569,7 @@ impl<State> std::fmt::Debug for Transaction<'_, State> {
             .field("active", &self.frame.is_some())
             .field(
                 "items",
-                &self.frame.as_ref().map_or(0, |frame| frame.items.len()),
+                &self.frame.as_ref().map_or(0, |frame| frame.item_count),
             )
             .field(
                 "doomed",
@@ -97,10 +592,14 @@ impl WorkerContext {
         isolation: IsolationMode,
     ) -> Result<Transaction<'_, Active>, BeginError> {
         self.begin_isolation(isolation)?;
-        let runtime = Arc::clone(&self.runtime);
+        let scratch = self
+            .transaction_scratch
+            .take()
+            .expect("idle worker retains transaction scratch");
+        debug_assert!(Arc::ptr_eq(&scratch.runtime, &self.runtime));
         Ok(Transaction {
             worker: Some(self),
-            frame: Some(TransactionFrame::new(runtime, isolation)),
+            frame: Some(TransactionFrame::new(isolation, scratch)),
             state: PhantomData,
             not_send_sync: PhantomData,
         })
@@ -123,6 +622,7 @@ impl<'worker> Transaction<'worker, Active> {
 
     /// Looks up or creates one typed logical item, then scopes adapter access
     /// to `operation`.
+    #[inline]
     pub fn with_item<A, R>(
         &mut self,
         resource: &RegisteredResource<A>,
@@ -149,6 +649,166 @@ impl<'worker> Transaction<'worker, Active> {
             result,
             Err(AccessError::Fault(_) | AccessError::Poisoned(_) | AccessError::Internal(_))
         ) {
+            frame.runtime.poison();
+        }
+        result
+    }
+
+    /// Resolves a datatype-specific stable item identity under the same
+    /// failure boundary as the item operation, then looks up or creates that
+    /// item.
+    ///
+    /// This is useful for index-backed resources whose public key is not the
+    /// cheapest or most stable transaction identity. For example, a tree can
+    /// resolve a byte string to a compact record ID and use that ID as its STO
+    /// item key. A resolution error dooms the transaction exactly like an
+    /// error from [`Self::with_item`].
+    ///
+    /// `lookup` must be nonmutating. When it returns `None`, core checks item
+    /// capacity before invoking `create`, so an index-backed adapter cannot
+    /// accidentally publish a new identity for a transaction that has no room
+    /// to retain it. A successful lookup may still reuse an existing
+    /// transaction item when the transaction is otherwise at capacity.
+    #[inline]
+    pub fn with_resolved_item<A, C, R>(
+        &mut self,
+        resource: &RegisteredResource<A>,
+        lookup: impl FnOnce() -> Result<Option<(A::Key, C)>, AccessError>,
+        create: impl FnOnce() -> Result<(A::Key, C), AccessError>,
+        operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>, C) -> Result<R, AccessError>,
+    ) -> Result<R, AccessError>
+    where
+        A: TransactionalResource,
+    {
+        let Some(frame) = self.frame.as_mut() else {
+            return Err(InvalidUse::TransactionFinished.into());
+        };
+        if frame.doomed {
+            return Err(InvalidUse::TransactionDoomed.into());
+        }
+
+        frame.doomed = true;
+        let result = (|| {
+            // Validate the typed capability before either resolver can perform
+            // a datatype-specific operation. The inner helper accepts this
+            // proof by construction and does not repeat the checks.
+            validate_item_resource(frame, resource)?;
+            with_resolved_item_inner_validated(frame, resource, lookup, create, operation)
+        })();
+        if result.is_ok() {
+            frame.doomed = false;
+        } else if matches!(
+            result,
+            Err(AccessError::Fault(_) | AccessError::Poisoned(_) | AccessError::Internal(_))
+        ) {
+            frame.runtime.poison();
+        }
+        result
+    }
+
+    /// Runs several resolved-item accesses for one typed resource under a
+    /// single transaction failure boundary.
+    ///
+    /// The resource capability is validated before `operation` runs. Each
+    /// [`ResolvedItemSession::with_resolved_item`] call otherwise preserves
+    /// the lookup, create, capacity, item-reuse, and error semantics of
+    /// [`Self::with_resolved_item`]. If any access fails, the transaction stays
+    /// doomed and this method reports the first such error even when
+    /// `operation` catches it. An unwind likewise leaves the transaction
+    /// doomed.
+    #[inline]
+    pub fn with_item_session<A, R>(
+        &mut self,
+        resource: &RegisteredResource<A>,
+        operation: impl for<'session> FnOnce(
+            &mut ResolvedItemSession<'session, A>,
+        ) -> Result<R, AccessError>,
+    ) -> Result<R, AccessError>
+    where
+        A: TransactionalResource,
+    {
+        let Some(frame) = self.frame.as_mut() else {
+            return Err(InvalidUse::TransactionFinished.into());
+        };
+        if frame.doomed {
+            return Err(InvalidUse::TransactionDoomed.into());
+        }
+
+        // Keep the boundary armed for the whole batch. In particular, a panic
+        // in a resolver or caller operation must not briefly make the
+        // transaction committable between item accesses.
+        frame.doomed = true;
+        let result = (|| {
+            validate_item_resource(frame, resource)?;
+            let mut session = ResolvedItemSession {
+                frame,
+                resource,
+                failure: None,
+                not_send_sync: PhantomData,
+            };
+            let operation_result = operation(&mut session);
+            session.failure.map_or(operation_result, Err)
+        })();
+        if result.is_ok() {
+            frame.doomed = false;
+        } else if result
+            .as_ref()
+            .is_err_and(|error| access_error_poisons_runtime(*error))
+        {
+            frame.runtime.poison();
+        }
+        result
+    }
+
+    /// Appends one exactly unique batch to an otherwise empty transaction.
+    ///
+    /// The [`UniqueItemKeys`] proof lets core omit per-item hashing, index
+    /// probing, identity dispatch, and index insertion. Each key still gets
+    /// the ordinary typed [`Entry`] surface in input order, so adapters may
+    /// record observations, predicates, or intents normally. If a later
+    /// ordinary item access follows this batch, core materializes the exact
+    /// collision-safe item index once before performing that access.
+    ///
+    /// This lane requires a completely empty transaction. That restriction,
+    /// together with the exact uniqueness proof and this call's single
+    /// resource binding, proves that direct append cannot create two logical
+    /// items with the same full identity. Misuse, capacity failure, an item
+    /// initialization error, or an operation error dooms the transaction just
+    /// like [`Self::with_item`]. An unwind likewise leaves it doomed.
+    #[inline]
+    pub fn with_unique_item_batch<A>(
+        &mut self,
+        resource: &RegisteredResource<A>,
+        keys: UniqueItemKeys<'_, A::Key>,
+        operation: impl for<'entry> FnMut(usize, &mut Entry<'entry, A>) -> Result<(), AccessError>,
+    ) -> Result<(), AccessError>
+    where
+        A: TransactionalResource,
+    {
+        let Some(frame) = self.frame.as_mut() else {
+            return Err(InvalidUse::TransactionFinished.into());
+        };
+        if frame.doomed {
+            return Err(InvalidUse::TransactionDoomed.into());
+        }
+
+        // Arm before capability checks, allocation, key cloning,
+        // initialization, and every adapter operation. A panic at any point
+        // leaves normal transaction Drop responsible for definite abort.
+        frame.doomed = true;
+        let result = (|| {
+            validate_item_resource(frame, resource)?;
+            if !try_append_unique_item_batch_inner_validated(frame, resource, keys, operation)? {
+                return Err(InvalidUse::UniqueBatchRequiresEmptyTransaction.into());
+            }
+            Ok(())
+        })();
+        if result.is_ok() {
+            frame.doomed = false;
+        } else if result
+            .as_ref()
+            .is_err_and(|error| access_error_poisons_runtime(*error))
+        {
             frame.runtime.poison();
         }
         result
@@ -217,6 +877,7 @@ impl<State> Drop for Transaction<'_, State> {
     }
 }
 
+#[inline]
 fn with_item_inner<A, R>(
     frame: &mut TransactionFrame,
     resource: &RegisteredResource<A>,
@@ -226,101 +887,540 @@ fn with_item_inner<A, R>(
 where
     A: TransactionalResource,
 {
-    if resource.runtime_id() != frame.runtime.id() {
-        return Err(InvalidUse::WrongRuntime.into());
-    }
-    resource.validate_binding()?;
+    validate_item_resource(frame, resource)?;
+    with_item_inner_validated(frame, resource, key, operation)
+}
 
-    let identity_hash = item_hash(resource, &key);
-    let existing = frame.by_hash.get(&identity_hash).and_then(|candidates| {
-        candidates.iter().copied().find(|slot| {
-            let Some(item) = frame.items.get(*slot).and_then(Option::as_ref) else {
-                return false;
-            };
-            item.object_id() == resource.object_id()
-                && item.resource_class() == resource.resource_class()
-                && item.adapter_type_id() == TypeId::of::<A>()
-                && item.key_type_id() == TypeId::of::<A::Key>()
-                && item.key_eq(&key)
-        })
-    });
-
-    let slot = if let Some(slot) = existing {
-        slot
+#[inline(always)]
+fn with_resolved_item_inner_validated<A, C, R>(
+    frame: &mut TransactionFrame,
+    resource: &RegisteredResource<A>,
+    lookup: impl FnOnce() -> Result<Option<(A::Key, C)>, AccessError>,
+    create: impl FnOnce() -> Result<(A::Key, C), AccessError>,
+    operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>, C) -> Result<R, AccessError>,
+) -> Result<R, AccessError>
+where
+    A: TransactionalResource,
+{
+    let resolved = lookup()?;
+    let (key, context) = if let Some(existing) = resolved {
+        existing
     } else {
-        if frame.items.len() >= frame.runtime.config().max_items_per_transaction() {
+        if frame.item_count >= frame.runtime.config().max_items_per_transaction() {
             return Err(crate::error::CapacityError::ItemLimit.into());
         }
+        create()?
+    };
+    with_item_inner_validated(frame, resource, key, |entry| operation(entry, context))
+}
+
+#[inline(always)]
+fn access_error_poisons_runtime(error: AccessError) -> bool {
+    matches!(
+        error,
+        AccessError::Fault(_) | AccessError::Poisoned(_) | AccessError::Internal(_)
+    )
+}
+
+#[inline(always)]
+fn validate_item_resource<A>(
+    frame: &mut TransactionFrame,
+    resource: &RegisteredResource<A>,
+) -> Result<(), AccessError>
+where
+    A: TransactionalResource,
+{
+    let binding_identity = resource.binding_identity();
+    if frame.last_validated_binding == Some(binding_identity) {
+        return Ok(());
+    }
+    validate_item_resource_miss(frame, resource, binding_identity)
+}
+
+#[cold]
+#[inline(never)]
+fn validate_item_resource_miss<A>(
+    frame: &mut TransactionFrame,
+    resource: &RegisteredResource<A>,
+    binding_identity: NonZeroUsize,
+) -> Result<(), AccessError>
+where
+    A: TransactionalResource,
+{
+    resource.validate_for_runtime(frame.runtime.id())?;
+    frame.last_validated_binding = Some(binding_identity);
+    Ok(())
+}
+
+#[inline]
+fn with_item_inner_validated<A, R>(
+    frame: &mut TransactionFrame,
+    resource: &RegisteredResource<A>,
+    key: A::Key,
+    operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>) -> Result<R, AccessError>,
+) -> Result<R, AccessError>
+where
+    A: TransactionalResource,
+{
+    materialize_item_index(frame)?;
+    let identity_hash = item_hash(resource, &key);
+    let object_id = resource.object_id();
+    let resource_class = resource.resource_class();
+    let adapter_type_id = TypeId::of::<A>();
+    let key_type_id = TypeId::of::<A::Key>();
+    let existing = frame.item_index.find(identity_hash, |item_slot| {
         frame
             .items
-            .try_reserve(1)
-            .map_err(|_| crate::error::CapacityError::ItemLimit)?;
-        frame
-            .by_hash
-            .try_reserve(1)
-            .map_err(|_| crate::error::CapacityError::ItemLimit)?;
-
-        let local = match catch_unwind(AssertUnwindSafe(|| resource.adapter().new_local(&key))) {
-            Ok(Ok(local)) => local,
-            Ok(Err(error)) => return Err(item_init_access_error(error)),
-            Err(_) => {
-                frame.runtime.poison();
-                return Err(AdapterFault::new(
-                    AdapterPhase::ItemInit,
-                    crate::error::AdapterFaultKind::Panic,
+            .get(item_slot)
+            .and_then(Option::as_ref)
+            .is_some_and(|item| {
+                item.matches_identity(
+                    object_id,
+                    resource_class,
+                    adapter_type_id,
+                    key_type_id,
+                    &key,
                 )
-                .into());
-            }
-        };
-
-        let slot = frame.items.len();
-        frame.items.push(Some(Box::new(ItemBox::new(
-            resource.clone(),
-            key.clone(),
-            local,
-        ))));
-        let candidates = frame.by_hash.entry(identity_hash).or_default();
-        candidates
-            .try_reserve(1)
-            .map_err(|_| crate::error::CapacityError::ItemLimit)?;
-        candidates.push(slot);
-        slot
-    };
-
-    let item = frame
-        .items
-        .get_mut(slot)
-        .and_then(Option::as_mut)
-        .ok_or_else(|| {
-            AccessError::Internal(InternalError::new(
-                FailurePhase::Execution,
-                "item index references an empty slot",
-            ))
-        })?;
-    if item.adapter_type_id() != TypeId::of::<A>() || item.key_type_id() != TypeId::of::<A::Key>() {
-        frame.runtime.poison();
-        return Err(InvalidUse::ResourceTypeMismatch.into());
-    }
-    let typed = item
-        .as_any_mut()
-        .downcast_mut::<ItemBox<A>>()
-        .ok_or_else(|| {
-            AccessError::Fault(AdapterFault::new(
+            })
+    });
+    if let Some(item_slot) = existing {
+        let item = frame
+            .items
+            .get_mut(item_slot)
+            .and_then(Option::as_mut)
+            .expect("item index references an empty slot");
+        let Some(typed) = item.as_any_mut().downcast_mut::<ItemBox<A>>() else {
+            frame.runtime.poison();
+            return Err(AdapterFault::new(
                 AdapterPhase::Execute,
                 crate::error::AdapterFaultKind::TypeMismatch,
-            ))
-        })?;
+            )
+            .into());
+        };
+        return operation(&mut Entry::new(typed));
+    }
+
+    let maximum_items = frame.runtime.config().max_items_per_transaction();
+    if frame.item_count >= maximum_items {
+        return Err(crate::error::CapacityError::ItemLimit.into());
+    }
+    let TransactionFrame {
+        runtime,
+        items,
+        ordinary_disposed_prefix,
+        item_index,
+        item_count,
+        ..
+    } = frame;
+    let item_slot = *item_count;
+    if item_slot == items.len() {
+        items
+            .try_reserve(1)
+            .map_err(|_| crate::error::CapacityError::ItemLimit)?;
+    }
+    item_index.try_reserve_for_insert()?;
+
+    if let Some(pooled) = items.get_mut(item_slot) {
+        let item = pooled
+            .as_mut()
+            .expect("an allocated pooled slot remains occupied");
+        if let Some(typed) = item.as_any_mut().downcast_mut::<ItemBox<A>>() {
+            if !typed.retains_binding(resource) && dispose_pooled_resource(runtime, typed).is_err()
+            {
+                return Err(pooled_resource_panic());
+            }
+            let local = initialize_local(runtime, resource, &key)?;
+            typed.reinitialize(resource, key, local);
+            *ordinary_disposed_prefix = 0;
+            item_index.insert(identity_hash, item_slot);
+            *item_count += 1;
+            return operation(&mut Entry::new(typed));
+        }
+
+        if dispose_pooled_resource(runtime, item.as_mut()).is_err() {
+            return Err(pooled_resource_panic());
+        }
+        let local = initialize_local(runtime, resource, &key)?;
+        *pooled = Some(Box::new(ItemBox::new(resource.clone(), key, local)));
+    } else {
+        let local = initialize_local(runtime, resource, &key)?;
+        items.push(Some(Box::new(ItemBox::new(resource.clone(), key, local))));
+    }
+    *ordinary_disposed_prefix = 0;
+    item_index.insert(identity_hash, item_slot);
+    *item_count += 1;
+
+    let item = items[item_slot]
+        .as_mut()
+        .expect("newly inserted item remains occupied");
+    let Some(typed) = item.as_any_mut().downcast_mut::<ItemBox<A>>() else {
+        runtime.poison();
+        return Err(AdapterFault::new(
+            AdapterPhase::Execute,
+            crate::error::AdapterFaultKind::TypeMismatch,
+        )
+        .into());
+    };
     operation(&mut Entry::new(typed))
 }
 
-fn item_hash<A: TransactionalResource>(resource: &RegisteredResource<A>, key: &A::Key) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    resource.object_id().hash(&mut hasher);
-    resource.resource_class().hash(&mut hasher);
-    TypeId::of::<A>().hash(&mut hasher);
-    TypeId::of::<A::Key>().hash(&mut hasher);
+/// Lazily indexes a directly appended unique prefix before ordinary lookup.
+///
+/// The unique-batch lane starts from an empty frame and leaves the whole live
+/// prefix unindexed. Ordinary insertion always indexes its new slot, so in a
+/// committable transaction the index is either complete or is exactly this
+/// prefix. Reserving the final table size first means capacity failure cannot
+/// expose a partially materialized index to another successful access.
+#[inline]
+fn materialize_item_index(frame: &mut TransactionFrame) -> Result<(), AccessError> {
+    materialize_unique_batch(frame)?;
+    if frame.item_index.len == frame.item_count {
+        return Ok(());
+    }
+    debug_assert_eq!(frame.item_index.len, 0);
+
+    let TransactionFrame {
+        items,
+        item_index,
+        item_count,
+        ..
+    } = frame;
+    item_index.try_reserve_for_len(*item_count)?;
+    for (item_slot, item) in items[..*item_count].iter().enumerate() {
+        let identity_hash = item
+            .as_ref()
+            .expect("live unindexed item slot remains occupied")
+            .identity_hash();
+        item_index.insert(identity_hash, item_slot);
+    }
+    Ok(())
+}
+
+/// Converts the active typed batch into the ordinary erased-item prefix.
+///
+/// Every recoverable allocation is reserved before either pool changes. The
+/// ordinary prefix's retained bindings are then disposed under their existing
+/// per-item unwind boundaries. The unused ordinary tail remains pooled, which
+/// preserves the direct lane's resource-lifetime and future-rebinding order.
+/// Once draining starts, only infallible moves and the workspace's existing
+/// infallible `Box` allocation policy remain. The batch is completely
+/// materialized before user-defined key hashing begins, so a hashing unwind
+/// leaves Drop with one coherent ordinary item sequence.
+fn materialize_unique_batch(frame: &mut TransactionFrame) -> Result<(), AccessError> {
+    if !frame.batch_active {
+        return Ok(());
+    }
+    debug_assert_eq!(frame.item_index.len, 0);
+    let item_count = frame.item_count;
+    frame.item_index.try_reserve_for_len(item_count)?;
+    if item_count > frame.items.len() {
+        frame
+            .items
+            .try_reserve_exact(item_count - frame.items.len())
+            .map_err(|_| crate::error::CapacityError::ItemLimit)?;
+        frame.items.resize_with(item_count, || None);
+    }
+
+    dispose_ordinary_pool_prefix(
+        &frame.runtime,
+        &mut frame.items,
+        &mut frame.ordinary_disposed_prefix,
+        item_count,
+    )?;
+
+    frame
+        .unique_batch
+        .as_mut()
+        .expect("an active unique batch retains its storage")
+        .drain_active_into(&mut frame.items[..item_count]);
+    // The newly materialized live prefix now retains resources again. Any
+    // sanitized ordinary tail is no longer a leading prefix and therefore
+    // cannot be skipped by this compact marker.
+    frame.ordinary_disposed_prefix = 0;
+    frame.batch_active = false;
+    Ok(())
+}
+
+/// Shared unique-batch implementation for a direct transaction call and an
+/// already validated resolved-item session. Ineligibility is deliberately a
+/// successful, mutation-free result so a session can preserve composition by
+/// taking its ordinary exact-lookup fallback.
+#[inline]
+fn try_append_unique_item_batch_inner_validated<A>(
+    frame: &mut TransactionFrame,
+    resource: &RegisteredResource<A>,
+    keys: UniqueItemKeys<'_, A::Key>,
+    mut operation: impl for<'entry> FnMut(usize, &mut Entry<'entry, A>) -> Result<(), AccessError>,
+) -> Result<bool, AccessError>
+where
+    A: TransactionalResource,
+{
+    if frame.item_count != 0 {
+        return Ok(false);
+    }
+    debug_assert!(!frame.batch_active);
+    debug_assert_eq!(frame.item_index.len, 0);
+
+    if keys.len() > frame.runtime.config().max_items_per_transaction() {
+        return Err(crate::error::CapacityError::ItemLimit.into());
+    }
+    if keys.is_empty() {
+        return Ok(true);
+    }
+
+    let TransactionFrame {
+        runtime,
+        items,
+        ordinary_disposed_prefix,
+        unique_batch,
+        batch_active,
+        item_count,
+        ..
+    } = frame;
+    let batch = prepare_typed_unique_batch(runtime, unique_batch, keys.len())?;
+
+    // Before the typed lane existed, an empty transaction reused these same
+    // ordinary worker-pool slots. Preserve that rebinding boundary: replacing
+    // a retained adapter in any slot this batch would occupy must still run
+    // its destructor under per-item containment before item initialization.
+    // The remaining ordinary tail is untouched, just as direct append was.
+    // Batch storage has already been reserved, so a recoverable allocation
+    // failure cannot shorten any retained ordinary resource lifetime.
+    dispose_ordinary_pool_prefix(runtime, items, ordinary_disposed_prefix, keys.len())?;
+
+    *batch_active = true;
+    for (index, key) in keys.as_slice().iter().enumerate() {
+        append_typed_batch_item(runtime, batch, item_count, resource, key.clone(), |entry| {
+            operation(index, entry)
+        })?;
+    }
+    Ok(true)
+}
+
+fn dispose_ordinary_pool_prefix(
+    runtime: &Runtime,
+    items: &mut [Option<Box<dyn ErasedItem>>],
+    disposed_prefix: &mut usize,
+    prefix_len: usize,
+) -> Result<(), AccessError> {
+    debug_assert!(*disposed_prefix <= items.len());
+    let target = prefix_len.min(items.len());
+    let start = *disposed_prefix;
+    for (offset, pooled) in items[start..target].iter_mut().enumerate() {
+        let disposal = pooled.as_mut().map_or(Ok(()), |item| {
+            dispose_pooled_resource(runtime, item.as_mut())
+        });
+        // `dispose_retained_resource` takes the handle before it can unwind,
+        // so this slot is sanitized on both the success and panic paths.
+        *disposed_prefix = start + offset + 1;
+        if disposal.is_err() {
+            return Err(pooled_resource_panic());
+        }
+    }
+    Ok(())
+}
+
+#[inline]
+fn append_typed_batch_item<A, R>(
+    runtime: &Runtime,
+    batch: &mut TypedItemBatch<A>,
+    item_count: &mut usize,
+    resource: &RegisteredResource<A>,
+    key: A::Key,
+    operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>) -> Result<R, AccessError>,
+) -> Result<R, AccessError>
+where
+    A: TransactionalResource,
+{
+    let item_slot = *item_count;
+    debug_assert_eq!(batch.active_len(), item_slot);
+    if item_slot < batch.pooled_len() {
+        {
+            let pooled = batch
+                .pooled_item_mut(item_slot)
+                .expect("typed batch pooled slot remains allocated");
+            if !pooled.retains_binding(resource)
+                && dispose_pooled_resource(runtime, pooled).is_err()
+            {
+                return Err(pooled_resource_panic());
+            }
+            let local = initialize_local(runtime, resource, &key)?;
+            pooled.reinitialize(resource, key, local);
+        }
+        batch.activate_reinitialized();
+    } else {
+        let local = initialize_local(runtime, resource, &key)?;
+        batch.push_active(ItemBox::new(resource.clone(), key, local));
+    }
+    *item_count += 1;
+    operation(&mut Entry::new(batch.active_item_mut(item_slot)))
+}
+
+fn prepare_typed_unique_batch<'batch, A: TransactionalResource>(
+    runtime: &Runtime,
+    batch_slot: &'batch mut Option<Box<dyn ErasedItemBatch>>,
+    needed: usize,
+) -> Result<&'batch mut TypedItemBatch<A>, AccessError> {
+    let replace = batch_slot.as_mut().is_some_and(|batch| {
+        batch
+            .as_any_mut()
+            .downcast_mut::<TypedItemBatch<A>>()
+            .is_none()
+    });
+
+    if replace || batch_slot.is_none() {
+        // Reserve the complete candidate before disposing an incompatible
+        // retained pool. A recoverable allocation failure is therefore
+        // mutation-free with respect to adapter/resource lifetime.
+        let mut replacement = TypedItemBatch::<A>::new();
+        replacement.try_reserve_for_len(needed)?;
+
+        if replace {
+            let batch = batch_slot
+                .as_mut()
+                .expect("a replacement candidate remains present");
+            if dispose_pooled_batch_resources(runtime, batch.as_mut()).is_err() {
+                return Err(pooled_resource_panic());
+            }
+        }
+        *batch_slot = Some(Box::new(replacement));
+    }
+
+    let batch = batch_slot
+        .as_mut()
+        .expect("typed batch storage was installed");
+    if batch.active_len() != 0 {
+        runtime.poison();
+        return Err(AdapterFault::invariant(AdapterPhase::Execute).into());
+    }
+    let batch = batch
+        .as_any_mut()
+        .downcast_mut::<TypedItemBatch<A>>()
+        .ok_or_else(|| {
+            runtime.poison();
+            AdapterFault::new(
+                AdapterPhase::Execute,
+                crate::error::AdapterFaultKind::TypeMismatch,
+            )
+        })?;
+    if !replace {
+        batch.try_reserve_for_len(needed)?;
+    }
+    Ok(batch)
+}
+
+#[inline]
+fn initialize_local<A: TransactionalResource>(
+    runtime: &Runtime,
+    resource: &RegisteredResource<A>,
+    key: &A::Key,
+) -> Result<A::Local, AccessError> {
+    match catch_unwind(AssertUnwindSafe(|| resource.adapter().new_local(key))) {
+        Ok(Ok(local)) => Ok(local),
+        Ok(Err(error)) => Err(item_init_access_error(error)),
+        Err(_) => {
+            runtime.poison();
+            Err(AdapterFault::new(
+                AdapterPhase::ItemInit,
+                crate::error::AdapterFaultKind::Panic,
+            )
+            .into())
+        }
+    }
+}
+
+#[inline]
+pub(crate) fn item_hash<A: TransactionalResource>(
+    resource: &RegisteredResource<A>,
+    key: &A::Key,
+) -> u64 {
+    let mut hasher = ItemHasher::for_resource(resource);
     key.hash(&mut hasher);
     hasher.finish()
+}
+
+fn dispose_pooled_resource(runtime: &Runtime, item: &mut dyn ErasedItem) -> Result<(), ()> {
+    match catch_unwind(AssertUnwindSafe(|| item.dispose_retained_resource())) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            runtime.poison();
+            Err(())
+        }
+    }
+}
+
+fn dispose_pooled_batch_resources(
+    runtime: &Runtime,
+    batch: &mut dyn ErasedItemBatch,
+) -> Result<(), ()> {
+    match catch_unwind(AssertUnwindSafe(|| batch.dispose_retained_resources())) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            runtime.poison();
+            Err(())
+        }
+    }
+}
+
+#[cold]
+fn pooled_resource_panic() -> AccessError {
+    AdapterFault::new(
+        AdapterPhase::ItemInit,
+        crate::error::AdapterFaultKind::Panic,
+    )
+    .into()
+}
+
+#[cfg(test)]
+mod item_index_tests {
+    use super::{ItemIndex, ItemIndexEntry};
+    use crate::CapacityError;
+
+    #[test]
+    fn compact_index_entry_remains_two_machine_words() {
+        assert_eq!(std::mem::size_of::<ItemIndexEntry>(), 16);
+        assert_eq!(std::mem::align_of::<ItemIndexEntry>(), 8);
+    }
+
+    #[test]
+    fn colliding_entries_remain_distinct_across_generation_reuse() {
+        let mut index = ItemIndex::default();
+        index.begin_transaction();
+        for slot in 0..32 {
+            index.try_reserve_for_insert().unwrap();
+            index.insert(7, slot);
+        }
+        for wanted in 0..32 {
+            assert_eq!(index.find(7, |slot| slot == wanted), Some(wanted));
+        }
+        assert_eq!(index.find(7, |_| false), None);
+
+        let allocation = index.entries.as_ptr();
+        let capacity = index.capacity();
+        index.begin_transaction();
+        assert_eq!(index.find(7, |_| true), None);
+
+        for slot in 32..64 {
+            index.try_reserve_for_insert().unwrap();
+            index.insert(7, slot);
+        }
+        assert_eq!(index.entries.as_ptr(), allocation);
+        assert_eq!(index.capacity(), capacity);
+        for wanted in 32..64 {
+            assert_eq!(index.find(7, |slot| slot == wanted), Some(wanted));
+        }
+    }
+
+    #[test]
+    fn impossible_index_growth_reports_the_public_item_limit() {
+        let mut index = ItemIndex::default();
+        index.begin_transaction();
+        index.len = usize::MAX;
+        assert_eq!(
+            index.try_reserve_for_insert(),
+            Err(CapacityError::ItemLimit)
+        );
+    }
 }
 
 fn item_init_access_error(error: ItemInitError) -> AccessError {
@@ -339,7 +1439,6 @@ enum CommitBoundary {
 
 struct CommitDriver<'worker, 'hook> {
     worker: &'worker mut WorkerContext,
-    runtime: Arc<Runtime>,
     frame: Option<TransactionFrame>,
     locks: Option<LockPlan>,
     commit_id: Option<crate::identity::OccCommitId>,
@@ -355,10 +1454,8 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         frame: TransactionFrame,
         hook: Option<&'hook mut dyn CommitHook>,
     ) -> Self {
-        let runtime = Arc::clone(&frame.runtime);
         Self {
             worker,
-            runtime,
             frame: Some(frame),
             locks: None,
             commit_id: None,
@@ -372,30 +1469,56 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
     fn run(&mut self) -> Result<CommitOutcome, CommitFailure> {
         self.phase = FailurePhase::Preflight;
         if self.frame().doomed {
-            let poison = self.runtime.ensure_healthy(FailurePhase::Execution).err();
+            let poison = self
+                .worker
+                .runtime
+                .ensure_healthy(FailurePhase::Execution)
+                .err();
             return self.abort_commit(AbortReason::Doomed, poison);
         }
         if let Err(info) = self.frame().runtime.ensure_healthy(FailurePhase::Preflight) {
             return self.abort_commit(AbortReason::Doomed, Some(info));
         }
 
-        let lock_plan = match LockPlan::new(
-            self.frame().runtime.id(),
-            self.frame().runtime.config().max_locks_per_transaction(),
-        ) {
+        // The empty transaction and a transaction made entirely from the
+        // explicit prepared-free ordinary-read capability own no physical
+        // lock uses. Certify them directly, preserving the same final
+        // validation cut while leaving the worker's pooled lock plan intact.
+        if self.frame().is_preflight_free_read_only() {
+            return self.commit_preflight_free_read_only();
+        }
+
+        let runtime_id = self.frame().runtime.id();
+        let max_locks = self.frame().runtime.config().max_locks_per_transaction();
+        // Consume the per-owner generation before invoking any adapter
+        // preflight callback. Even if preflight aborts or unwinds after
+        // retaining a LockUse, no later plan can reuse that token's identity.
+        let plan_nonce = match self.worker.reserve_lock_plan_nonce() {
+            Ok(nonce) => nonce,
+            Err(error) => return self.abort_commit(error.into(), None),
+        };
+        let storage = std::mem::take(
+            &mut self
+                .frame
+                .as_mut()
+                .expect("commit driver owns its frame")
+                .lock_storage,
+        );
+        let lock_plan = match LockPlan::with_storage(runtime_id, max_locks, plan_nonce, storage) {
             Ok(plan) => plan,
             Err(error) => return self.abort_commit(error.into(), None),
         };
         self.locks = Some(lock_plan);
 
-        for slot in 0..self.frame().items.len() {
+        if self.frame().batch_active {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 let (frame, locks) = self.parts_mut();
-                let item = frame.items[slot]
-                    .as_mut()
-                    .expect("commit owns every live item slot");
                 let mut cx = locks.preflight_context()?;
-                item.preflight(&mut cx)
+                frame
+                    .unique_batch
+                    .as_mut()
+                    .expect("an active unique batch retains its storage")
+                    .preflight(&mut cx)
             }));
             match result {
                 Ok(Ok(())) => {}
@@ -410,7 +1533,39 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
                     );
                 }
             }
+        } else {
+            for item_slot in 0..self.frame().item_count {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    let (frame, locks) = self.parts_mut();
+                    let mut cx = locks.preflight_context()?;
+                    frame.items[item_slot]
+                        .as_mut()
+                        .expect("commit owns every live item slot")
+                        .preflight(&mut cx)
+                }));
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => return self.handle_prepare_error(error),
+                    Err(_) => {
+                        return self.abort_commit(
+                            AbortReason::Internal(InternalError::new(
+                                FailurePhase::Preflight,
+                                "preflight callback panicked",
+                            )),
+                            Some(
+                                self.poison(FailurePhase::Preflight, "preflight callback panicked"),
+                            ),
+                        );
+                    }
+                }
+            }
         }
+
+        // Preflight cannot add/remove an intent or observation through its
+        // restricted item view, so this shape remains stable for the rest of
+        // the attempt. Cache it once instead of rescanning every item at each
+        // commit phase.
+        let commit_shape = self.frame().commit_shape();
 
         self.phase = FailurePhase::Acquire;
         let owner = self.worker.owner;
@@ -421,7 +1576,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
             Err(_) => return self.handle_acquire_panic(),
         }
 
-        if self.frame().has_writes() {
+        if commit_shape.has_writes {
             self.phase = FailurePhase::UpperMetadata;
             let reservation = catch_unwind(AssertUnwindSafe(|| {
                 self.hook
@@ -446,37 +1601,69 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
             }
         }
 
-        self.phase = FailurePhase::PredicateUpgrade;
-        for slot in 0..self.frame().items.len() {
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                let (frame, locks) = self.parts_mut();
-                let cx = locks.predicate_context().map_err(CheckError::from)?;
-                frame.items[slot]
-                    .as_mut()
-                    .expect("commit owns every live item slot")
-                    .upgrade_predicate(&cx)
-            }));
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    return self.handle_check_error(error, FailurePhase::PredicateUpgrade)
+        if commit_shape.has_predicates {
+            self.phase = FailurePhase::PredicateUpgrade;
+            if self.frame().batch_active {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    let (frame, locks) = self.parts_mut();
+                    let cx = locks.predicate_context().map_err(CheckError::from)?;
+                    frame
+                        .unique_batch
+                        .as_mut()
+                        .expect("an active unique batch retains its storage")
+                        .upgrade_predicates(&cx)
+                }));
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        return self.handle_check_error(error, FailurePhase::PredicateUpgrade)
+                    }
+                    Err(_) => {
+                        return self.abort_commit(
+                            AbortReason::Internal(InternalError::new(
+                                FailurePhase::PredicateUpgrade,
+                                "predicate callback panicked",
+                            )),
+                            Some(self.poison(
+                                FailurePhase::PredicateUpgrade,
+                                "predicate callback panicked",
+                            )),
+                        )
+                    }
                 }
-                Err(_) => {
-                    return self.abort_commit(
-                        AbortReason::Internal(InternalError::new(
-                            FailurePhase::PredicateUpgrade,
-                            "predicate callback panicked",
-                        )),
-                        Some(self.poison(
-                            FailurePhase::PredicateUpgrade,
-                            "predicate callback panicked",
-                        )),
-                    )
+            } else {
+                for item_slot in 0..self.frame().item_count {
+                    let result = catch_unwind(AssertUnwindSafe(|| {
+                        let (frame, locks) = self.parts_mut();
+                        let cx = locks.predicate_context().map_err(CheckError::from)?;
+                        frame.items[item_slot]
+                            .as_mut()
+                            .expect("commit owns every live item slot")
+                            .upgrade_predicate(&cx)
+                    }));
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            return self.handle_check_error(error, FailurePhase::PredicateUpgrade)
+                        }
+                        Err(_) => {
+                            return self.abort_commit(
+                                AbortReason::Internal(InternalError::new(
+                                    FailurePhase::PredicateUpgrade,
+                                    "predicate callback panicked",
+                                )),
+                                Some(self.poison(
+                                    FailurePhase::PredicateUpgrade,
+                                    "predicate callback panicked",
+                                )),
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        if self.frame().has_writes() {
+        if commit_shape.has_writes {
             self.phase = FailurePhase::CommitMetadata;
             self.commit_id = match self.frame().runtime.reserve_commit_id() {
                 Ok(commit_id) => Some(commit_id),
@@ -485,16 +1672,17 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         }
 
         self.phase = FailurePhase::Validation;
-        for slot in 0..self.frame().items.len() {
+        if self.frame().batch_active {
             let commit_id = self.commit_id;
             let result = catch_unwind(AssertUnwindSafe(|| {
                 let (frame, locks) = self.parts_mut();
                 let cx = locks
                     .validation_context(commit_id)
                     .map_err(CheckError::from)?;
-                frame.items[slot]
+                frame
+                    .unique_batch
                     .as_ref()
-                    .expect("commit owns every live item slot")
+                    .expect("an active unique batch retains its storage")
                     .validate(&cx)
             }));
             match result {
@@ -510,9 +1698,43 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
                     )
                 }
             }
+        } else {
+            for item_slot in 0..self.frame().item_count {
+                let commit_id = self.commit_id;
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    let (frame, locks) = self.parts_mut();
+                    let cx = locks
+                        .validation_context(commit_id)
+                        .map_err(CheckError::from)?;
+                    frame.items[item_slot]
+                        .as_ref()
+                        .expect("commit owns every live item slot")
+                        .validate(&cx)
+                }));
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        return self.handle_check_error(error, FailurePhase::Validation)
+                    }
+                    Err(_) => {
+                        return self.abort_commit(
+                            AbortReason::Internal(InternalError::new(
+                                FailurePhase::Validation,
+                                "validation callback panicked",
+                            )),
+                            Some(
+                                self.poison(
+                                    FailurePhase::Validation,
+                                    "validation callback panicked",
+                                ),
+                            ),
+                        )
+                    }
+                }
+            }
         }
 
-        if self.frame().has_writes() {
+        if commit_shape.has_writes {
             self.phase = FailurePhase::PreinstallHook;
             let acceptance = catch_unwind(AssertUnwindSafe(|| {
                 self.hook
@@ -537,28 +1759,49 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         }
 
         self.boundary = CommitBoundary::Irrevocable;
-        self.phase = FailurePhase::Install;
-        for slot in 0..self.frame().items.len() {
-            if !self.frame().items[slot]
-                .as_ref()
-                .expect("commit owns every live item slot")
-                .has_intent()
-            {
-                continue;
-            }
-            let commit_id = self.commit_id;
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                let (frame, locks) = self.parts_mut();
-                let mut cx = locks
-                    .install_context(commit_id)
-                    .expect("held plan must construct an install context");
-                frame.items[slot]
-                    .as_mut()
-                    .expect("commit owns every live item slot")
-                    .install(&mut cx);
-            }));
-            if result.is_err() {
-                return self.indeterminate(FailurePhase::Install, "install callback panicked");
+        if commit_shape.has_writes {
+            self.phase = FailurePhase::Install;
+            if self.frame().batch_active {
+                let commit_id = self.commit_id;
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    let (frame, locks) = self.parts_mut();
+                    let mut cx = locks
+                        .install_context(commit_id)
+                        .expect("held plan must construct an install context");
+                    frame
+                        .unique_batch
+                        .as_mut()
+                        .expect("an active unique batch retains its storage")
+                        .install(&mut cx);
+                }));
+                if result.is_err() {
+                    return self.indeterminate(FailurePhase::Install, "install callback panicked");
+                }
+            } else {
+                for item_slot in 0..self.frame().item_count {
+                    if !self.frame().items[item_slot]
+                        .as_ref()
+                        .expect("commit owns every live item slot")
+                        .has_intent()
+                    {
+                        continue;
+                    }
+                    let commit_id = self.commit_id;
+                    let result = catch_unwind(AssertUnwindSafe(|| {
+                        let (frame, locks) = self.parts_mut();
+                        let mut cx = locks
+                            .install_context(commit_id)
+                            .expect("held plan must construct an install context");
+                        frame.items[item_slot]
+                            .as_mut()
+                            .expect("commit owns every live item slot")
+                            .install(&mut cx);
+                    }));
+                    if result.is_err() {
+                        return self
+                            .indeterminate(FailurePhase::Install, "install callback panicked");
+                    }
+                }
             }
         }
 
@@ -597,7 +1840,93 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
             });
         }
 
-        self.frame.take();
+        self.recycle_frame();
+        self.complete_worker();
+        Ok(CommitOutcome::Committed(commit_info))
+    }
+
+    fn commit_preflight_free_read_only(&mut self) -> Result<CommitOutcome, CommitFailure> {
+        debug_assert!(self.frame().is_preflight_free_read_only());
+        debug_assert!(self.locks.is_none());
+        debug_assert!(self.commit_id.is_none());
+
+        self.phase = FailurePhase::Validation;
+        let mut validation_scope = ();
+        let cx = PreflightFreeValidationContext::without_locks(None, &mut validation_scope);
+        if self.frame().batch_active {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                self.frame
+                    .as_mut()
+                    .expect("commit driver owns its frame")
+                    .unique_batch
+                    .as_mut()
+                    .expect("an active unique batch retains its storage")
+                    .validate_preflight_free_reads(&cx)
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => return self.handle_check_error(error, FailurePhase::Validation),
+                Err(_) => {
+                    return self.abort_commit(
+                        AbortReason::Internal(InternalError::new(
+                            FailurePhase::Validation,
+                            "preflight-free validation callback panicked",
+                        )),
+                        Some(self.poison(
+                            FailurePhase::Validation,
+                            "preflight-free validation callback panicked",
+                        )),
+                    )
+                }
+            }
+        } else {
+            for item_slot in 0..self.frame().item_count {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    self.frame
+                        .as_mut()
+                        .expect("commit driver owns its frame")
+                        .items[item_slot]
+                        .as_mut()
+                        .expect("commit owns every live item slot")
+                        .validate_preflight_free_read(&cx)
+                }));
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        return self.handle_check_error(error, FailurePhase::Validation)
+                    }
+                    Err(_) => {
+                        return self.abort_commit(
+                            AbortReason::Internal(InternalError::new(
+                                FailurePhase::Validation,
+                                "preflight-free validation callback panicked",
+                            )),
+                            Some(self.poison(
+                                FailurePhase::Validation,
+                                "preflight-free validation callback panicked",
+                            )),
+                        )
+                    }
+                }
+            }
+        }
+
+        // A read-only commit has no installation or publication callback.
+        // Successful final certification is therefore its definite commit
+        // boundary; cleanup panics after this assignment cannot turn it into
+        // an abort or an indeterminate outcome.
+        self.boundary = CommitBoundary::Published;
+        self.phase = FailurePhase::Finish;
+        let commit_info = CommitInfo::new(None);
+        if let Err(info) = self.finish_items(FinishDisposition::Committed, FailurePhase::Finish) {
+            self.complete_worker();
+            return Err(CommitFailure::Poisoned {
+                outcome: DefiniteOutcome::Committed(commit_info),
+                info,
+            });
+        }
+
+        self.recycle_frame();
         self.complete_worker();
         Ok(CommitOutcome::Committed(commit_info))
     }
@@ -725,11 +2054,19 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
                     });
                 }
             }
-            if teardown_lock_plan(locks).is_err() {
-                poison = Some(self.poison(
-                    FailurePhase::Release,
-                    "aborted lock-plan destruction panicked",
-                ));
+            match teardown_lock_plan(locks) {
+                Ok(storage) => {
+                    self.frame
+                        .as_mut()
+                        .expect("reversible abort retains its transaction frame")
+                        .lock_storage = storage;
+                }
+                Err(()) => {
+                    poison = Some(self.poison(
+                        FailurePhase::Release,
+                        "aborted lock-plan destruction panicked",
+                    ));
+                }
             }
         }
 
@@ -738,7 +2075,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         {
             poison = Some(finish_poison);
         }
-        self.frame.take();
+        self.recycle_frame();
         self.complete_worker();
 
         match poison {
@@ -755,7 +2092,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         phase: FailurePhase,
         reason: &'static str,
     ) -> Result<CommitOutcome, CommitFailure> {
-        self.runtime.mark_indeterminate();
+        self.worker.runtime.mark_indeterminate();
         if let Some(mut locks) = self.locks.take() {
             let disposition = LockDisposition::Indeterminate {
                 occ_commit_id: self.commit_id,
@@ -763,6 +2100,9 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
             let released = catch_unwind(AssertUnwindSafe(|| locks.release_all(disposition)));
             match released {
                 Ok(Ok(())) => {
+                    // An indeterminate transaction never places its plan back
+                    // into the worker pool, even if all releases returned. The
+                    // runtime and transaction frame are quarantined below.
                     let _ = teardown_lock_plan(locks);
                 }
                 Ok(Err(_)) | Err(_) => {
@@ -787,7 +2127,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         phase: FailurePhase,
         reason: &'static str,
     ) -> Result<CommitOutcome, CommitFailure> {
-        self.runtime.mark_indeterminate();
+        self.worker.runtime.mark_indeterminate();
         if let Some(mut locks) = self.locks.take() {
             let disposition = LockDisposition::Indeterminate {
                 occ_commit_id: self.commit_id,
@@ -810,21 +2150,26 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         let Some(locks) = self.locks.take() else {
             return Ok(());
         };
-        teardown_lock_plan(locks)
+        let storage = teardown_lock_plan(locks)?;
+        self.frame
+            .as_mut()
+            .expect("released plan retains its transaction frame")
+            .lock_storage = storage;
+        Ok(())
     }
 
     fn finish_committed_with_poison(
         &mut self,
         mut info: PoisonInfo,
     ) -> Result<CommitOutcome, CommitFailure> {
-        self.runtime.poison();
+        self.worker.runtime.poison();
         self.phase = FailurePhase::Finish;
         if let Err(finish_poison) =
             self.finish_items(FinishDisposition::Committed, FailurePhase::Finish)
         {
             info = finish_poison;
         }
-        self.frame.take();
+        self.recycle_frame();
         self.complete_worker();
         Err(CommitFailure::Poisoned {
             outcome: DefiniteOutcome::Committed(CommitInfo::new(self.commit_id)),
@@ -862,7 +2207,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
 
         match self.boundary {
             CommitBoundary::Reversible => {
-                self.runtime.poison();
+                self.worker.runtime.poison();
                 let reason = AbortReason::Internal(InternalError::new(
                     phase,
                     "panic containment itself failed before installation",
@@ -873,7 +2218,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
                 })
             }
             CommitBoundary::Irrevocable => {
-                self.runtime.mark_indeterminate();
+                self.worker.runtime.mark_indeterminate();
                 Err(CommitFailure::Indeterminate(IndeterminateInfo::new(
                     phase,
                     self.commit_id,
@@ -881,7 +2226,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
                 )))
             }
             CommitBoundary::Published => {
-                self.runtime.poison();
+                self.worker.runtime.poison();
                 Err(CommitFailure::Poisoned {
                     outcome: DefiniteOutcome::Committed(CommitInfo::new(self.commit_id)),
                     info: PoisonInfo::new(
@@ -901,9 +2246,35 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         let Some(frame) = self.frame.as_mut() else {
             return Ok(());
         };
-        for slot in (0..frame.items.len()).rev() {
+        if frame.batch_active {
+            let mut stage = BatchFinishStage::Callback;
+            let cleanup = catch_unwind(AssertUnwindSafe(|| {
+                let batch = frame
+                    .unique_batch
+                    .as_mut()
+                    .expect("an active unique batch retains its storage");
+                let mut cx = FinishContext::new();
+                batch.finish_and_teardown(disposition, &mut cx, &mut stage);
+            }));
+            if cleanup.is_err() {
+                frame.runtime.poison();
+                let retained = self
+                    .frame
+                    .take()
+                    .expect("frame exists during typed batch cleanup");
+                std::mem::forget(retained);
+                let reason = match stage {
+                    BatchFinishStage::Callback => "finish callback panicked",
+                    BatchFinishStage::Teardown => "adapter-owned state drop panicked",
+                };
+                return Err(PoisonInfo::new(phase, reason));
+            }
+            frame.batch_active = false;
+            return Ok(());
+        }
+        for item_slot in (0..frame.item_count).rev() {
             let callback = catch_unwind(AssertUnwindSafe(|| {
-                let item = frame.items[slot]
+                let item = frame.items[item_slot]
                     .as_mut()
                     .expect("finish owns every remaining item slot");
                 let mut cx = FinishContext::new();
@@ -917,7 +2288,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
             }
 
             let teardown = catch_unwind(AssertUnwindSafe(|| {
-                frame.items[slot]
+                frame.items[item_slot]
                     .as_mut()
                     .expect("finished item remains owned during teardown")
                     .teardown_after_finish();
@@ -929,15 +2300,8 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
                 return Err(PoisonInfo::new(phase, "adapter-owned state drop panicked"));
             }
 
-            let item = frame.items[slot]
-                .take()
-                .expect("successful finish retains its item until drop");
-            if catch_unwind(AssertUnwindSafe(|| drop(item))).is_err() {
-                frame.runtime.poison();
-                let retained = self.frame.take().expect("frame exists during finish");
-                std::mem::forget(retained);
-                return Err(PoisonInfo::new(phase, "adapter-owned state drop panicked"));
-            }
+            // Keep the now-empty typed item in its worker-affine slot. The
+            // next transaction can reinitialize it in place.
         }
         Ok(())
     }
@@ -962,13 +2326,20 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
     }
 
     fn poison(&self, phase: FailurePhase, reason: &'static str) -> PoisonInfo {
-        self.runtime.poison();
+        self.worker.runtime.poison();
         PoisonInfo::new(phase, reason)
     }
 
     fn quarantine_items(&mut self) {
         if let Some(frame) = self.frame.take() {
             std::mem::forget(frame);
+        }
+    }
+
+    fn recycle_frame(&mut self) {
+        if let Some(frame) = self.frame.take() {
+            self.worker
+                .recycle_transaction_scratch(frame.into_scratch());
         }
     }
 
@@ -980,13 +2351,15 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
     }
 }
 
-fn teardown_lock_plan(mut locks: LockPlan) -> Result<(), ()> {
+fn teardown_lock_plan(mut locks: LockPlan) -> Result<LockPlanStorage, ()> {
     let teardown = catch_unwind(AssertUnwindSafe(|| locks.teardown_adapter_state()));
     if !matches!(teardown, Ok(Ok(()))) {
         std::mem::forget(locks);
         return Err(());
     }
-    catch_unwind(AssertUnwindSafe(|| drop(locks))).map_err(|_| ())
+    catch_unwind(AssertUnwindSafe(|| locks.into_reusable_storage()))
+        .map_err(|_| ())
+        .and_then(std::convert::identity)
 }
 
 impl Drop for CommitDriver<'_, '_> {
@@ -1009,22 +2382,32 @@ fn abort_without_locks(
     reason: AbortReason,
 ) -> AbortInfo {
     let cleanup = catch_unwind(AssertUnwindSafe(|| {
-        for slot in (0..frame.items.len()).rev() {
-            let Some(item) = frame.items[slot].as_mut() else {
-                continue;
-            };
+        if frame.batch_active {
+            let batch = frame
+                .unique_batch
+                .as_mut()
+                .expect("an active unique batch retains its storage");
             let mut cx = FinishContext::new();
-            item.finish(FinishDisposition::Aborted, &mut cx);
-            item.teardown_after_finish();
-            let item = frame.items[slot]
-                .take()
-                .expect("finished item remains owned");
-            drop(item);
+            let mut stage = BatchFinishStage::Callback;
+            batch.finish_and_teardown(FinishDisposition::Aborted, &mut cx, &mut stage);
+            frame.batch_active = false;
+        } else {
+            for item_slot in (0..frame.item_count).rev() {
+                let item = frame.items[item_slot]
+                    .as_mut()
+                    .expect("finish owns every remaining item slot");
+                let mut cx = FinishContext::new();
+                item.finish(FinishDisposition::Aborted, &mut cx);
+                item.teardown_after_finish();
+                // Retain the empty typed item for the worker's next transaction.
+            }
         }
     }));
     if cleanup.is_err() {
         frame.runtime.poison();
         std::mem::forget(frame);
+    } else {
+        worker.recycle_transaction_scratch(frame.into_scratch());
     }
     worker.finish_transaction();
     AbortInfo::new(reason)

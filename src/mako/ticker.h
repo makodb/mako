@@ -224,8 +224,17 @@ private:
                   thread_cur_tick == cur_tick);
         if (thread_cur_tick == cur_tick)
           continue;
-        lock_guard<spinlock> lg(ti.lock_);
+        // An epoch guard can span a complete transaction.  If the ticker and
+        // its owner are scheduled on the same CPU, an unconditional spin here
+        // can consume the owner's whole time slice and prevent the guard from
+        // ever making progress.  Briefly sleep while waiting: this path runs
+        // only once per tick, so a small scheduling delay is immaterial to the
+        // 40 ms epoch while guaranteeing that an oversubscribed owner runs.
+        const struct timespec guard_wait = {0, 1000};
+        while (!ti.lock_.try_lock())
+          nanosleep(&guard_wait, nullptr);
         ti.current_tick_.store(cur_tick, std::memory_order_release);
+        ti.lock_.unlock();
       }
 
       last_tick_inclusive_.store(last_tick, std::memory_order_release);

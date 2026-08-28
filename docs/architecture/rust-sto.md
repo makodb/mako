@@ -602,11 +602,12 @@ example as `Unobserved | Read | Predicate | UpgradedPredicate`, rather than
 permit unchecked combinations of observation fields.
 
 External adapters implement the typed protocol in Section 8.
-`Transaction::with_item` is the only typed-to-erased insertion path. The core
-stores a private erased entry and performs `TypeId`-checked key and item
-downcasts; no public `Any`, caller-supplied vtable, or unchecked extraction
-exists. Applications normally call adapter methods such as `get` and `put`, not
-this adapter-author surface directly.
+`Transaction::with_item`, resolved access, item sessions, and the exactly
+unique batch-append lane feed the same private typed item storage. The core
+performs `TypeId`-checked key and item downcasts; no public `Any`,
+caller-supplied vtable, or unchecked extraction exists. Applications normally
+call adapter methods such as `get` and `put`, not this adapter-author surface
+directly.
 
 ### 7.4 Total physical lock order
 
@@ -667,7 +668,7 @@ hierarchy or ask adapters to implement type erasure.
 | `TObject::unlock` | `TransactionLock::release` | One core-owned guard selects abort, commit, or indeterminate publication. |
 | `TObject::cleanup` | `A::finish` | Runs after all physical locks are released on definite outcomes. |
 | `Sto::commit_id()` | `InstallContext::occ_commit_id` and committed `LockDisposition` | Core OCC identity is phase-scoped and remains distinct from upper timestamps. |
-| `new_item`, `fresh_item`, `read_item`, `check_item` | the one `with_item` path plus `ObservationState` transitions | V1 forbids duplicate fresh items and does not expose unchecked lookup variants. |
+| `new_item`, `fresh_item`, `read_item`, `check_item` | `with_item`, resolved access, `with_unique_item_batch`, and `ObservationState` transitions | The fast lane requires a core-checked exact uniqueness proof and an empty transaction; it exposes no unchecked item access. |
 | clear/user flags | private observation/preparation states and `A::Local` | Adapters own typed local data, not core flag bits. |
 | `TObject::print` | ordinary adapter diagnostics outside the commit protocol | No formatting callback runs while committing. |
 | Mako `get_table_id` / `get_is_remote` extensions | upper integration layer | Distribution and table-routing policy are not STO callbacks. |
@@ -684,9 +685,12 @@ One transactional object can expose several resource classes. For example, one
 Masstree table registers a record resource and a membership resource under the
 same `ObjectId`. Each `(ObjectId, ResourceClass)` pair binds exactly one
 adapter type and key type for the lifetime of the registration.
-`RegisteredResource<A>` is a cloneable `Send + Sync` handle that retains the
-object lease, runtime identity, class, and `Arc<A>`; dropping an
-`ObjectRegistration` cannot invalidate a live resource or transaction item.
+`RegisteredResource<A>` is a cloneable `Send + Sync`, one-`Arc` handle to a
+private immutable typed binding. That allocation contains the adapter, object
+lease, runtime/object identity, resource class, and cached registration type
+proof. Dropping an `ObjectRegistration` cannot invalidate a live resource or
+transaction item, and cloning a handle preserves exact binding identity with
+one reference-count operation.
 
 ```rust
 use std::{fmt, hash::Hash, sync::Arc};
@@ -704,6 +708,14 @@ impl<T> ResourceKey for T where
 pub struct ObjectRegistration { /* private RuntimeId and ObjectId lease */ }
 pub struct RegisteredResource<A: TransactionalResource> { /* private */ }
 pub struct Entry<'entry, A: TransactionalResource> { /* private */ }
+pub struct ResolvedItemSession<'session, A: TransactionalResource> { /* private */ }
+pub struct UniqueItemKeys<'keys, K: ResourceKey> { /* private */ }
+
+impl<'keys, K: ResourceKey> UniqueItemKeys<'keys, K> {
+    pub fn try_new(keys: &'keys [K]) -> Option<Self> {
+        unimplemented!("signature-only design target")
+    }
+}
 
 impl<A: TransactionalResource> Clone for RegisteredResource<A> {
     fn clone(&self) -> Self {
@@ -747,6 +759,47 @@ impl<'worker> Transaction<'worker, Active> {
     where
         A: TransactionalResource,
     {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn with_unique_item_batch<A>(
+        &mut self,
+        resource: &RegisteredResource<A>,
+        keys: UniqueItemKeys<'_, A::Key>,
+        operation: impl for<'entry> FnMut(
+            usize,
+            &mut Entry<'entry, A>,
+        ) -> Result<(), AccessError>,
+    ) -> Result<(), AccessError>
+    where
+        A: TransactionalResource,
+    {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn with_item_session<A, R>(
+        &mut self,
+        resource: &RegisteredResource<A>,
+        operation: impl for<'session> FnOnce(
+            &mut ResolvedItemSession<'session, A>,
+        ) -> Result<R, AccessError>,
+    ) -> Result<R, AccessError>
+    where
+        A: TransactionalResource,
+    {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl<A: TransactionalResource> ResolvedItemSession<'_, A> {
+    pub fn try_with_unique_item_batch(
+        &mut self,
+        keys: UniqueItemKeys<'_, A::Key>,
+        operation: impl for<'entry> FnMut(
+            usize,
+            &mut Entry<'entry, A>,
+        ) -> Result<(), AccessError>,
+    ) -> Result<bool, AccessError> {
         unimplemented!("signature-only design target")
     }
 }
@@ -801,9 +854,49 @@ Abstract datatype outcomes such as `NotFound` or `DuplicateKey` belong inside
 `R`, not in the outer `AccessError`; for example, an adapter may return
 `Result<Result<Value, NotFound>, AccessError>`. Such an inner outcome is still a
 completed abstract operation and must leave the item in its documented state;
-a partially completed adapter operation returns the outer error instead. V1
-exposes no `fresh_item` or other API that can create duplicate entries for one
-logical identity.
+a partially completed adapter operation returns the outer error instead.
+
+The frame may cache the most recently successful binding validation by the
+nonzero allocation-address identity of its compact `RegisteredResource`
+binding. An address-equal hit can skip repeated runtime and `TypeId` checks,
+but the erased address is never dereferenced or converted back into an `Arc`. Successful item
+access retains a strong binding handle in the live item; any failure before
+that retention dooms the transaction, so the token cannot be consulted again.
+The cache is reset at every transaction begin. Distinct classes, adapter types,
+and runtimes always have distinct live binding allocations and take the full
+validation path.
+
+`with_unique_item_batch` is a safe optimization for a small batch whose stable
+item identities are already available. `UniqueItemKeys::try_new` compares each
+key with full `Eq` equality and returns no proof if any key repeats; hashes are
+not part of the proof. The operation requires an otherwise empty transaction
+and one registered resource binding, so exact key uniqueness implies uniqueness
+of every full `(ObjectId, ResourceClass, key)` identity. Core checks the whole
+batch against the configured item limit and reserves its item-vector capacity
+before initialization. It then appends pooled typed boxes in input order
+without hashing, probing, or populating the item index.
+
+The operation receives the ordinary full `Entry`, so observations, predicates,
+and intents retain their normal transition rules. If a later ordinary or
+resolved access follows the batch, core notices that the index length trails
+the live item count, reserves the complete open-addressed table, hashes the
+unique prefix once, and installs every entry before the later lookup. Full
+erased-identity equality still resolves hash collisions, and a later access to
+a batched identity therefore reuses its snapshot or staged intent. A commit or
+abort needs no item index and leaves an all-batch transaction unindexed. Any
+misuse, capacity failure, callback error, or unwind dooms the transaction; only
+fully initialized prefix items participate in abort cleanup. Successful finish
+retains the same worker-local typed boxes and adapter bindings as the ordinary
+path.
+
+The same append operation is available inside `ResolvedItemSession` as
+`try_with_unique_item_batch`. It returns `Ok(false)` without invoking the
+operation or changing transaction state when an earlier item makes the frame
+nonempty. An adapter can therefore perform lookup and prefetch work once, try
+the append lane, and take ordinary per-item session lookup on `false` without
+opening another failure boundary. A real append error is latched as the
+session's first error, and later session operations report a doomed
+transaction.
 
 ### 8.3 The transactional-resource trait
 
@@ -821,6 +914,37 @@ pub enum ObservationOrder {
     Unordered,
 }
 
+pub type PreflightFreeReadValidate<A> = for<'context> fn(
+    &A,
+    &<A as TransactionalResource>::Key,
+    &<A as TransactionalResource>::Observation,
+    &PreflightFreeValidationContext<'context>,
+) -> Result<(), CheckError>;
+
+pub type PreflightFreeReadFinish<A> = for<'item, 'context> fn(
+    &A,
+    &<A as TransactionalResource>::Key,
+    FinishItem<'item, A>,
+    &mut FinishContext<'context>,
+);
+
+pub struct PreflightFreeReadCapability<A: TransactionalResource> { /* private */ }
+
+impl<A: TransactionalResource> PreflightFreeReadCapability<A> {
+    pub const fn new(
+        validate: PreflightFreeReadValidate<A>,
+        finish_committed: PreflightFreeReadFinish<A>,
+    ) -> Self {
+        unimplemented!("signature-only design target")
+    }
+
+    pub const fn new_drop_only(
+        validate: PreflightFreeReadValidate<A>,
+    ) -> Self {
+        unimplemented!("signature-only design target")
+    }
+}
+
 pub trait TransactionalResource: Send + Sync + Sized + 'static {
     type Key: ResourceKey;
     type Local: 'static;
@@ -833,6 +957,12 @@ pub trait TransactionalResource: Send + Sync + Sized + 'static {
         &self,
         key: &Self::Key,
     ) -> Result<Self::Local, ItemInitError>;
+
+    fn preflight_free_read_capability(
+        &self,
+    ) -> Option<&'static PreflightFreeReadCapability<Self>> {
+        None
+    }
 
     fn preflight(
         &self,
@@ -971,12 +1101,17 @@ or drain cleanup stored in `Local` and `Prepared`. None exposes the enclosing
 `Transaction` or permits insertion of another item.
 
 After a successful `finish`, the core drops any untaken intent, then prepared
-state, observation/predicate state, local state, key, and resource handle, all
-outside transaction locks and inside panic containment. Each step first leaves
-an empty core slot and then drops the removed value. On a cleanup panic the core
-does not retry a partially run callback or continue destructing uncertain
-adapter state; it retains the remaining item frame and poisons with the
-already-known outcome.
+state, observation/predicate state, local state, and key, all outside
+transaction locks and inside panic containment. A reusable worker-local item
+box may retain its immutable typed resource binding, avoiding shared reference-
+count writes when the next transaction uses the same binding. Retention is
+bounded by that worker's peak item count and therefore by
+`max_items_per_transaction`. The binding is disposed under its own panic
+boundary when the slot is rebound or the worker is dropped. Each cleanup step
+first leaves an empty core slot and then drops the removed value. On a cleanup
+panic the core does not retry a partially run callback or continue destructing
+uncertain adapter state; it quarantines the remaining frame or scratch and
+poisons with the already-known outcome.
 
 ### 8.4 Core-owned item state and operation-time entry
 
@@ -1053,6 +1188,7 @@ impl<A: TransactionalResource> Entry<'_, A> {
         unimplemented!("signature-only design target")
     }
 }
+
 ```
 
 The upgraded form moves the old predicate into the separate retained field so
@@ -1065,9 +1201,9 @@ on the first destructor panic it retains the rest. These retained values and
 the optional item fields make teardown order enforceable even when an associated
 type has a nontrivial destructor.
 
-In the implemented serializable profile, `Entry` is a scoped typed borrow of
-the already `TypeId`-checked `ItemBox<A>`; it is never a pointer into erased
-storage, and the higher-ranked `with_item` closure prevents it from escaping.
+In the implemented serializable profile, `Entry` is a scoped typed borrow of an
+already `TypeId`-checked `ItemBox<A>`; it is not a pointer into erased storage,
+and its higher-ranked operation closure prevents it from escaping.
 An opaque profile may replace that internal representation with a transaction
 reference plus slot index so `record_read` and `record_predicate` can trigger
 whole-transaction execution-time revalidation before exposing a result. That
@@ -1089,9 +1225,13 @@ transaction, and is never repaired by discarding the earlier observation.
 ### 8.5 Canonical physical-lock trait
 
 Logical callbacks plan locks, but the core owns every acquired guard. V1
-requires an owned `'static` guard rather than a borrowed `MutexGuard<'a, T>`;
-this avoids self-referential transaction storage. A guard may be `!Send` and
-`!Sync` because the transaction is worker-affine.
+requires a `'static` guard rather than a borrowed `MutexGuard<'a, T>`; this
+avoids self-referential transaction storage. The guard may own its target, or
+it may be a detached token: the lock frame retains the canonical `Arc<L>` at a
+stable address until `release` and guard destruction have both completed. A
+callback or destructor unwind quarantines that frame, retaining the target
+rather than invalidating such a token. A guard may be `!Send` and `!Sync`
+because the transaction is worker-affine.
 
 ```rust
 pub trait TransactionLock: Send + Sync + 'static {
@@ -1099,6 +1239,7 @@ pub trait TransactionLock: Send + Sync + 'static {
 
     fn try_acquire(
         &self,
+        identity: &LockIdentity,
         cx: &AcquireContext<'_>,
     ) -> Result<Self::Guard, AcquireError>;
 
@@ -1547,11 +1688,12 @@ The normative local protocol is:
 1. **Preflight.** Deduplicate and finalize items; allocate all write snapshots,
    adapter scratch, and lock vectors; derive, deduplicate, and sort the canonical
    physical lock plan by calling `TransactionalResource::preflight` for each
-   item. `Conflict` or `Capacity` returns `Ok(CommitOutcome::Aborted(..))` with
-   no locks held. `Fault` performs the same definite-abort cleanup but returns
+   item except an eligible prepared-free ordinary read. `Conflict` or
+   `Capacity` returns `Ok(CommitOutcome::Aborted(..))` with no locks held.
+   `Fault` performs the same definite-abort cleanup but returns
    `CommitFailure::Poisoned` with `DefiniteOutcome::Aborted`.
 2. **Acquire planned locks.** For each unique `LockIdentity` in total order,
-   call its `TransactionLock::try_acquire` and place the owned guard in the
+   call its `TransactionLock::try_acquire` and place the `'static` guard in the
    preallocated erased lock frame. On `Conflict`, call
    `TransactionLock::release` with
    `LockDisposition::Aborted` for already acquired guards exactly once in
@@ -1575,13 +1717,14 @@ The normative local protocol is:
    allocation remains separate.
 6. **Validate reads.** Define the **certification cut** immediately before the
    first check in the final validating pass. Call
-   `TransactionalResource::validate_read` for every read and upgraded predicate.
-   A value may match the observed version or that version locked by this
-   transaction. Because covering versions cannot wrap or return to an old
-   observable value, success of the whole pass retrospectively certifies that
-   every observation held at this cut. A `CheckError::Conflict` is a normal
-   abort; `CheckError::Fault` abort-cleans and returns poisoned with a definite
-   aborted outcome.
+   `TransactionalResource::validate_read` for each ordinary prepared item and
+   upgraded predicate, and the capability's restricted validation callback for
+   each prepared-free read. A value may match the observed version or that
+   version locked by this transaction. Because covering versions cannot wrap
+   or return to an old observable value, success of the whole pass
+   retrospectively certifies that every observation held at this cut. A
+   `CheckError::Conflict` is a normal abort; `CheckError::Fault` abort-cleans
+   and returns poisoned with a definite aborted outcome.
 7. **Run the optional pre-install hook.** For a non-read-only compatibility
    transaction, invoke the hook exactly once after all local writes are locked
    and reads validate, but before the first install. It receives the previously
@@ -1602,9 +1745,12 @@ The normative local protocol is:
 10. **Unlock and finish.** Call `TransactionLock::release` with
     `LockDisposition::Committed` in reverse acquisition order, publishing new
     generations. This releases Masstree record resources before their table
-    membership resource. Then call `TransactionalResource::finish` with
-    `FinishDisposition::Committed` in reverse item order. Return committed only
-    after required cleanup and worker-state restoration complete.
+    membership resource. Then finish items in reverse order. Ordinary items use
+    `TransactionalResource::finish` with `FinishDisposition::Committed`;
+    prepared-free reads use their committed-finish callback, or core-owned
+    teardown alone when their capability was constructed with `new_drop_only`.
+    Return committed only after required cleanup and worker-state restoration
+    complete.
 
 The paper's basic protocol uses lock → predicate → validate → version →
 install → cleanup. **[RUST/OPAQUE]** This design reserves an opacity-ordering
@@ -1612,6 +1758,37 @@ ID immediately before the final validating pass, matching the standard clock-
 then-validate proof even if a worker is preempted. Upper metadata reservation
 and the pre-install hook are Mako compatibility seams; they are not part of the
 original paper.
+
+#### Prepared-free ordinary reads
+
+An adapter may explicitly expose a stable
+`PreflightFreeReadCapability<Self>` for an ordinary `Read` item that has no
+intent or predicate. This capability skips only that item's adapter `preflight`
+and `Prepared` allocation. Other, heterogeneous items still preflight normally,
+the core constructs and acquires the same globally ordered physical lock plan,
+and the prepared-free read is certified in the same final validation pass and
+at the same certification cut described above. Its capability callback must
+therefore implement final certification, not merely execution-time opacity or
+an advisory recheck.
+
+`PreflightFreeReadCapability::new` supplies an explicit committed-finish
+callback without a `Prepared` value. `new_drop_only` is a stronger adapter
+promise: after successful certification, dropping the core-owned item fields is
+the complete cleanup, so no adapter committed-finish callback runs. On every
+definite abort both forms instead use the ordinary adapter `finish` callback
+with `prepared == None` and `FinishDisposition::Aborted`. Capability discovery,
+validation, optional committed finish, ordinary abort finish, and teardown all
+remain inside the existing per-item panic/fault boundaries. Returning a
+capability is a stable adapter contract for the lifetime of an item; callbacks
+must be nonpanicking and must preserve the same cleanup obligations as the
+ordinary path. Items with an intent, a predicate, or no observation always take
+the ordinary preflight path.
+
+For a mixed transaction this is a per-item optimization and retains the normal
+heterogeneous lock and validation protocol. If every item is an eligible
+prepared-free ordinary read, the core additionally skips creation of the empty
+lock plan and runs the restricted final-certification pass directly. Neither
+form substitutes execution-time `revalidate_read` for final certification.
 
 ### 10.3 Serialization and irreversible points
 
@@ -1871,11 +2048,14 @@ long-lived RCU pin is deferred.
 
 Published Masstree directory entries and published or publication-unknown Rust
 records are append-only in v1. Their `RecordId`s are never reused. A candidate
-proved never to have entered the directory may be dropped, but its numeric ID
-remains consumed. Logical deletion installs a tombstone; it does not free the
-record or remove the directory key. These rules apply during live runtime
-operation; a successful whole-runtime shutdown may free the entire ownership
-unit after quiescence.
+proved never to have entered the directory may release directory-reachable
+record and key-byte quota, but its numeric ID remains consumed. An
+implementation may drop separately allocated candidate backing or retain its
+in-place arena slot; in the latter case the consumed-ID limit is also the hard
+bound on failed-candidate slot memory. Logical deletion installs a tombstone;
+it does not free the record or remove the directory key. These rules apply
+during live runtime operation; a successful whole-runtime shutdown may free the
+entire ownership unit after quiescence.
 
 Physical reclamation requires all of:
 
@@ -1936,8 +2116,9 @@ a `Ready` candidate is conservatively treated as possibly published.
 
 Only `OK, inserted=false, winner!=candidate`, or another ABI outcome explicitly
 guaranteed to mean that the candidate never entered the directory, permits
-`ProvenUnpublished` and dropping its record. A success that chose the candidate
-becomes `Published`. Any ambiguous native error becomes `PublicationUnknown`:
+`ProvenUnpublished`, retained-quota release, and dropping any separately owned
+backing. A success that chose the candidate becomes `Published`. Any ambiguous
+native error becomes `PublicationUnknown`:
 the ready record and its quota remain retained permanently, its ID is not
 reused, and the table is poisoned or quarantined before further access.
 
@@ -1946,17 +2127,36 @@ reused, and the table is poisoned or quarantined before further access.
 proven-unpublished/publication-unknown slots outside quarantine diagnostics.
 
 An implementation may use segmented append-only storage or another design that
-keeps registry lookup stable while the registry grows. Copying the current
-prototype's unchecked wrapping `fetch_add` allocator is forbidden.
+keeps registry lookup stable while the registry grows. The default
+`RegistryLayout::LazySegmented` publishes fixed-size `RegistrySegment`s through
+segment-level `OnceLock`s. A published segment already contains eagerly
+initialized, stable `RegistryEntry` slots; an atomic `UNALLOCATED -> RESERVED ->
+READY` transition claims and publishes a slot. There is no per-slot `OnceLock`.
+Each entry owns its `Record` in place, and both `Ready` and `Published`
+resolution borrow the same address. This removes a second
+candidate/published-pointer layer while preserving the race in which the native
+directory exposes a winner before its inserter records `Published`.
+
+`RegistryLayout::EagerContiguous { max_bytes }` is an explicit alternative for
+a bounded table that expects to consume most of its configured ID space. Table
+construction allocates and initializes the entire stable arena and all record
+lock targets, making resolution a direct base-plus-index operation. Construction
+fails with `Capacity` if the accounted slot and lock storage exceeds
+`max_bytes`; it never silently falls back to segmented storage. The lazy layout
+remains the public default. Copying the current prototype's unchecked wrapping
+`fetch_add` allocator is forbidden.
 
 Because a point miss can intern a new key, each runtime/table MUST enforce
 configured retained-record and retained-key-byte quotas. Quota is reserved
 atomically before candidate creation so concurrent misses cannot overcommit it.
 Exhaustion returns `Capacity` before native publication. A proven-unpublished
 loser may release retained-record and key-byte quota, although its numeric ID
-and registry slot remain consumed. A publication-unknown candidate retains its
-quota. A deployment may configure very large limits, but unbounded miss-driven
-allocation is not an acceptable implicit policy.
+and registry slot remain consumed. In the stable in-place arena it also retains
+the initialized tombstone/version/lock slot until whole-table destruction;
+`max_consumed_record_ids`, not retained-record quota, bounds that physical arena
+memory. A publication-unknown candidate retains both quotas. A deployment may
+configure very large limits, but unbounded miss-driven allocation is not an
+acceptable implicit policy.
 
 ### 14.3 Record representation
 
@@ -1964,16 +2164,39 @@ Conceptually:
 
 ```rust
 struct Record {
-    key: Arc<[u8]>,
     version: AtomicVersion,
-    state: AtomicImmutableSnapshot<RecordState>,
+    state: CommittedRecordState,
 }
 
-struct RecordState {
-    live: bool,
-    value: Arc<[u8]>,
+enum RecordState {
+    Tombstone,
+    Live(Value),
+}
+
+struct CommittedRecordState {
+    inline: AtomicU64,
+    shared: ArcSwapOption<Vec<u8>>,
+    tag: AtomicU8,
 }
 ```
+
+The implemented registry entry has a measured 48-byte stride. Values of up to
+eight bytes are copied through the inline atomic payload; larger immutable
+values use the protected shared pointer. Per-record physical lock targets are
+stored separately in `Arc`-owned 16-record segments. A detached guard names the
+exact inline `AtomicVersion`, while its core lock frame retains the owning slot
+arena through release. Thus point reads pay neither an `Arc` clone for the
+record nor a separately allocated lock object.
+
+The exact binary key is owned once by the private append-only directory. A
+successful directory lookup returns a `RecordId` capability into this table's
+private registry; safe callers cannot forge IDs, insert through another handle,
+or pair one registry with another directory. Repeating every key in `Record`
+and comparing it on each hit would therefore duplicate the trusted directory
+binding rather than strengthen the safe contract. Likewise, the per-record
+lock identity is reconstructed without allocation from table identity plus
+`RecordId` only for a changed record during preflight; it is not stored in the
+read-hot slot.
 
 `AtomicImmutableSnapshot` is descriptive, not a commitment to a specific crate.
 Its implementation must have a sound reference-count and memory-order proof.
@@ -1994,9 +2217,11 @@ Point access proceeds as follows:
 3. If the native strong-scan guarantee is unavailable, lock the table's
    structural version; then call atomic `get_or_insert` and complete the
    advance/unlock disposition from Section 14.6.
-4. Resolve the winning `RecordId`, verify its immutable key equals the requested
-   key, and poison the table on mismatch. Drop only a candidate whose
-   nonpublication was positively proved by the ABI outcome.
+4. Resolve the winning `RecordId` through the table-private stable registry.
+   The exact key-to-ID association is the trusted result of the exclusively
+   owned safe directory boundary; no duplicate Rust key comparison is needed.
+   Release retained quota only for a candidate whose nonpublication was
+   positively proved by the ABI outcome.
 5. Read a sound immutable state snapshot with a stable version-before/version-
    after check.
 6. Record the version and logical present/absent result in the transaction item.
@@ -2036,8 +2261,8 @@ A scan:
 
 1. observes the table membership item;
 2. obtains copied key/`RecordId` chunks from Masstree;
-3. privately resolves every returned ID, verifies its immutable key equals the
-   copied directory key, and poisons the table on any mismatch;
+3. privately resolves every returned ID through the exclusively owned
+   directory-to-registry capability;
 4. soundly snapshots every returned record, including tombstones, treating a
    locked record as a conflict;
 5. adds a record read observation for each returned live value;
@@ -2114,7 +2339,8 @@ The initial operation families are:
 - same-thread worker attachment and quiescence;
 - tree creation and capability-gated runtime shutdown, both with a matching
   worker;
-- point lookup;
+- scalar point lookup, a scoped repeated-read form, and fixed-width strided
+  batch lookup (`mt_get_strided`);
 - atomic get-or-insert with explicit publication disposition, `inserted`, and
   `winner` outputs; and
 - copied forward/reverse scan chunks.
@@ -2523,7 +2749,7 @@ follows:
 | --- | --- | --- |
 | Typed STO protocol, private erasure, lock planning, failure dispositions | [`crates/sto-core`](../../crates/sto-core) | Implemented for serializable non-opaque transactions. |
 | Raw stable declarations | [`crates/mtree-sys`](../../crates/mtree-sys) | Implemented for ABI version 1. |
-| Native C boundary | [`mtree_abi.h`](../../src/mako/storage/mtree_abi.h) and [`mtree_abi.cc`](../../src/mako/storage/mtree_abi.cc) | Implemented for point operations and copied bounded scans. |
+| Native C boundary | [`mtree_abi.h`](../../src/mako/storage/mtree_abi.h) and [`mtree_abi.cc`](../../src/mako/storage/mtree_abi.cc) | Implemented for scalar/scoped/strided point operations and copied bounded scans. |
 | Safe runtime, worker, tree, point, and scan facade | [`crates/masstree`](../../crates/masstree) | Implemented; native cursors, pointers, and RCU guards remain private. |
 | Transactional records, tombstones, quotas, membership predicate, and scan overlay | [`crates/sto-masstree`](../../crates/sto-masstree) | Implemented for the conservative table-membership profile. |
 | Upper metadata reservation and pre-install coordination | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`. |
@@ -2531,9 +2757,11 @@ follows:
 
 The branch-level validation record for this implementation includes the full
 workspace suite in debug and release modes on Rust 1.95, strict Clippy and
-rustdoc builds, C11 header compilation, the exact 34-symbol native allowlist,
-the raw ABI suite, native safe-wrapper and transactional-adapter integration,
-and ASan, UBSan, and unsuppressed TSan stress. The production cutover record
+rustdoc builds, C11 header compilation, the exact 41-symbol native allowlist,
+required feature mask `0x0f7f`, export-manifest FNV-1a fingerprint
+`0xdb5bed9b8f1490e3`, the raw ABI suite, native safe-wrapper and
+transactional-adapter integration, and ASan, UBSan, and unsuppressed TSan
+stress. The production cutover record
 still needs explicit native fault injection for allocation failure, ordinary
 C++ exceptions, and publication-unknown insertion, plus the upper-backend
 differential histories, performance budgets, and the deferred capabilities in

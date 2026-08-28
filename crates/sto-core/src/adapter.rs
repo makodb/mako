@@ -13,7 +13,7 @@ use crate::{
 
 pub use crate::lock::{
     ExecutionCheckContext, FinishContext, InstallContext, PredicateContext, PreflightContext,
-    ValidationContext,
+    PreflightFreeValidationContext, ValidationContext,
 };
 
 /// An owned, stable logical key for a transactional resource.
@@ -53,6 +53,104 @@ impl OpacityToken for NoPredicate {
     }
 }
 
+/// Final-certification callback for an ordinary read that needs no preflight
+/// state or physical lock of its own.
+pub type PreflightFreeReadValidate<A> = for<'context> fn(
+    &A,
+    &<A as TransactionalResource>::Key,
+    &<A as TransactionalResource>::Observation,
+    &PreflightFreeValidationContext<'context>,
+) -> Result<(), CheckError>;
+
+/// Post-publication cleanup callback for a committed ordinary read that never
+/// produced [`TransactionalResource::Prepared`] state.
+pub type PreflightFreeReadFinish<A> = for<'item, 'context> fn(
+    &A,
+    &<A as TransactionalResource>::Key,
+    FinishItem<'item, A>,
+    &mut FinishContext<'context>,
+);
+
+/// Explicit adapter proof that some ordinary reads need no preflight state.
+///
+/// This capability removes the adapter's per-item [`TransactionalResource::preflight`]
+/// callback and `Prepared` value. It never removes final certification. In a
+/// heterogeneous transaction, the core validates the read at the same cut as
+/// every locked item. If every live item carries this capability, the core can
+/// omit the empty physical lock plan and certify the read-only transaction
+/// directly.
+///
+/// The core selects this capability only for an ordinary read with no staged
+/// intent or predicate. `validate` must certify the same abstract observation
+/// as [`TransactionalResource::validate_read`] would, but without relying on a
+/// `Prepared` value or any physical lock. Its restricted
+/// [`PreflightFreeValidationContext`] intentionally cannot resolve lock
+/// guards. [`Self::new`] supplies an adapter callback that finishes a committed
+/// item without `Prepared` state. It runs exactly once after the transaction's
+/// successful certification (and, for a mixed transaction, after all locks
+/// have been released). [`Self::new_drop_only`] instead explicitly promises
+/// that committed items need only core-owned teardown, so no adapter finish
+/// callback runs for that committed prepared-free read. Validation and any
+/// required finish callback are commit callbacks and therefore must not panic.
+///
+/// An adapter that advertises this capability must return the same capability
+/// for its entire registered lifetime. Violating these requirements can break
+/// transactional correctness, although the core still contains callback
+/// panics and faults for memory safety.
+pub struct PreflightFreeReadCapability<A: TransactionalResource> {
+    validate: PreflightFreeReadValidate<A>,
+    // `None` is an explicit adapter-selected policy, installed only through
+    // `new_drop_only`; it is never inferred from callback behavior.
+    finish_committed: Option<PreflightFreeReadFinish<A>>,
+}
+
+impl<A: TransactionalResource> PreflightFreeReadCapability<A> {
+    /// Constructs an explicit prepared-free ordinary-read capability.
+    pub const fn new(
+        validate: PreflightFreeReadValidate<A>,
+        finish_committed: PreflightFreeReadFinish<A>,
+    ) -> Self {
+        Self {
+            validate,
+            finish_committed: Some(finish_committed),
+        }
+    }
+
+    /// Constructs a prepared-free capability whose committed finish is
+    /// core-owned teardown only.
+    ///
+    /// This is an explicit adapter correctness promise: after successful
+    /// final certification, dropping the item's intent, observation,
+    /// predicate, local state, and key must be the complete committed cleanup.
+    /// In particular, committed cleanup must not need to mutate shared state,
+    /// consume transaction-local state through [`FinishItem`], or observe a
+    /// [`FinishContext`]. The core still invokes
+    /// [`TransactionalResource::finish`] exactly once for an aborted item and
+    /// contains both abort-finish and teardown panics. The registered resource
+    /// remains alive while its adapter-owned item state is dropped.
+    pub const fn new_drop_only(validate: PreflightFreeReadValidate<A>) -> Self {
+        Self {
+            validate,
+            finish_committed: None,
+        }
+    }
+
+    pub(crate) fn validate(
+        &self,
+        adapter: &A,
+        key: &A::Key,
+        observation: &A::Observation,
+        cx: &PreflightFreeValidationContext<'_>,
+    ) -> Result<(), CheckError> {
+        (self.validate)(adapter, key, observation, cx)
+    }
+
+    #[inline]
+    pub(crate) const fn finish_committed_callback(&self) -> Option<PreflightFreeReadFinish<A>> {
+        self.finish_committed
+    }
+}
+
 /// The safe Rust counterpart of an STO `TObject` implementation.
 ///
 /// The associated types replace the untyped read, predicate, write, and stash
@@ -76,6 +174,15 @@ pub trait TransactionalResource: Send + Sync + Sized + 'static {
     ///
     /// This callback must not perform an unrecorded shared read.
     fn new_local(&self, key: &Self::Key) -> Result<Self::Local, ItemInitError>;
+
+    /// Optionally advertises prepared-free final certification for ordinary
+    /// reads with no staged intent or predicate.
+    ///
+    /// The default retains the full preflight protocol. Returning `Some` is an
+    /// explicit, stable adapter contract; see [`PreflightFreeReadCapability`].
+    fn preflight_free_read_capability(&self) -> Option<&'static PreflightFreeReadCapability<Self>> {
+        None
+    }
 
     /// Finalizes the item and plans every physical lock it will need.
     fn preflight(

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::error::{AcquireError, Conflict, VersionError};
 use crate::identity::{OccCommitId, OccVersion, OwnerId};
+use crate::lock::{AcquireContext, LockDisposition, ReleaseContext, TransactionLock};
 
 const OWNER_BITS: u32 = 16;
 const OWNER_MASK: u64 = (1_u64 << OWNER_BITS) - 1;
@@ -110,6 +111,41 @@ impl AtomicVersion {
     /// returned owned guard retains the `Arc`, so it remains valid and
     /// `'static` without borrowing a movable atomic object.
     pub fn try_acquire(self: &Arc<Self>, owner: OwnerId) -> Result<VersionGuard, AcquireError> {
+        Arc::clone(self).try_acquire_owned(owner)
+    }
+
+    /// Makes one bounded attempt to acquire a stable inline version without
+    /// retaining an [`Arc`] or borrowing this value.
+    ///
+    /// The returned token records this value's address and every release
+    /// operation must be given the same, unmoved `AtomicVersion`. Passing a
+    /// different or moved target is rejected and leaves the lock held. This
+    /// permits a canonical owner with a longer lifetime to keep versions
+    /// inline while still giving the transaction core a `'static` guard.
+    pub fn try_acquire_detached(
+        &self,
+        owner: OwnerId,
+    ) -> Result<DetachedVersionGuard, AcquireError> {
+        let before = self.try_acquire_version(owner)?;
+        Ok(DetachedVersionGuard {
+            target_address: self.address(),
+            before,
+            owner,
+            held: true,
+        })
+    }
+
+    fn try_acquire_owned(self: Arc<Self>, owner: OwnerId) -> Result<VersionGuard, AcquireError> {
+        let before = self.try_acquire_version(owner)?;
+        Ok(VersionGuard {
+            target: self,
+            before,
+            owner,
+            held: true,
+        })
+    }
+
+    fn try_acquire_version(&self, owner: OwnerId) -> Result<OccVersion, AcquireError> {
         let current = self.word.load(Ordering::Acquire);
         let VersionState::Unlocked(version) = decode(current) else {
             return Err(Conflict::LockBusy.into());
@@ -120,12 +156,7 @@ impl AtomicVersion {
             .compare_exchange(current, desired, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| AcquireError::from(Conflict::LockBusy))?;
 
-        Ok(VersionGuard {
-            target: Arc::clone(self),
-            before: version,
-            owner,
-            held: true,
-        })
+        Ok(version)
     }
 
     /// Validates only an unchanged, unlocked observation.
@@ -138,11 +169,70 @@ impl AtomicVersion {
         let current = self.word.load(Ordering::Acquire);
         current == encode_unlocked(observed) || current == encode_locked(observed, owner)
     }
+
+    fn address(&self) -> usize {
+        std::ptr::from_ref(self).addr()
+    }
+
+    fn release_word(
+        &self,
+        before: OccVersion,
+        owner: OwnerId,
+        new_word: u64,
+    ) -> Result<(), VersionError> {
+        let expected = encode_locked(before, owner);
+        self.word
+            .compare_exchange(expected, new_word, Ordering::Release, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(|_| VersionError::LostOwnership {
+                expected_owner: owner,
+            })
+    }
 }
 
 impl Default for AtomicVersion {
     fn default() -> Self {
         Self::new(OccVersion::INITIAL)
+    }
+}
+
+impl TransactionLock for AtomicVersion {
+    type Guard = DetachedVersionGuard;
+
+    fn try_acquire(
+        &self,
+        _identity: &crate::identity::LockIdentity,
+        cx: &AcquireContext<'_>,
+    ) -> Result<Self::Guard, AcquireError> {
+        self.try_acquire_detached(cx.owner())
+    }
+
+    fn release(
+        &self,
+        guard: &mut Self::Guard,
+        disposition: LockDisposition,
+        cx: &ReleaseContext<'_>,
+    ) {
+        if guard.owner() != cx.owner() || !guard.is_for(self) {
+            panic!("sto-core invariant: mismatched AtomicVersion guard");
+        }
+
+        let result = match disposition {
+            LockDisposition::Aborted => guard.release_abort(self).map(|()| None),
+            LockDisposition::Committed {
+                occ_commit_id: Some(commit_id),
+            } => guard.release_commit(self, commit_id).map(Some),
+            LockDisposition::Committed {
+                occ_commit_id: None,
+            } => panic!("sto-core invariant: committed AtomicVersion write has no OCC commit ID"),
+            LockDisposition::Indeterminate { occ_commit_id } => {
+                guard.release_indeterminate(self, occ_commit_id).map(Some)
+            }
+        };
+
+        if let Err(error) = result {
+            panic!("sto-core invariant: AtomicVersion release failed: {error}");
+        }
     }
 }
 
@@ -239,14 +329,114 @@ impl VersionGuard {
     }
 
     fn release_word(&self, new_word: u64) -> Result<(), VersionError> {
-        let expected = encode_locked(self.before, self.owner);
-        self.target
-            .word
-            .compare_exchange(expected, new_word, Ordering::Release, Ordering::Acquire)
-            .map(|_| ())
-            .map_err(|_| VersionError::LostOwnership {
-                expected_owner: self.owner,
-            })
+        self.target.release_word(self.before, self.owner, new_word)
+    }
+}
+
+/// Detached proof that one stable inline [`AtomicVersion`] is locked.
+///
+/// This token owns no reference to its target. Every release method therefore
+/// requires the original, unmoved `AtomicVersion` and checks its address before
+/// touching the version word. The owner of the containing allocation must keep
+/// that target alive and at a stable address until the token is released.
+///
+/// Dropping a held guard deliberately does not unlock the version. The core
+/// must select an explicit abort, commit, or indeterminate disposition; an
+/// accidentally dropped or quarantined guard therefore fails closed.
+#[derive(Debug)]
+pub struct DetachedVersionGuard {
+    target_address: usize,
+    before: OccVersion,
+    owner: OwnerId,
+    held: bool,
+}
+
+impl DetachedVersionGuard {
+    /// Generation observed when ownership was acquired.
+    pub const fn before(&self) -> OccVersion {
+        self.before
+    }
+
+    /// Owner encoded in the held atomic version.
+    pub const fn owner(&self) -> OwnerId {
+        self.owner
+    }
+
+    /// Whether this guard still owns the version.
+    pub const fn is_held(&self) -> bool {
+        self.held
+    }
+
+    /// Tests whether this token was acquired from `target` at its current
+    /// address. A target moved after acquisition no longer matches.
+    pub fn is_for(&self, target: &AtomicVersion) -> bool {
+        self.target_address == target.address()
+    }
+
+    /// Abort-unlocks to the exact pre-acquisition generation.
+    ///
+    /// Success uses Release ordering. A released token, wrong target, or lost
+    /// ownership leaves the supplied atomic word unchanged and keeps this
+    /// token's held state unchanged.
+    pub fn release_abort(&mut self, target: &AtomicVersion) -> Result<(), VersionError> {
+        self.ensure_releasable(target)?;
+        target.release_word(self.before, self.owner, encode_unlocked(self.before))?;
+        self.held = false;
+        Ok(())
+    }
+
+    /// Commit-unlocks at an ordered commit generation strictly newer than the
+    /// pre-acquisition generation.
+    pub fn release_commit(
+        &mut self,
+        target: &AtomicVersion,
+        commit_id: OccCommitId,
+    ) -> Result<OccVersion, VersionError> {
+        self.ensure_releasable(target)?;
+        let version = commit_id.to_version();
+        if version <= self.before {
+            return Err(VersionError::CommitVersionNotNewer {
+                current: self.before,
+                proposed: commit_id,
+            });
+        }
+        target.release_word(self.before, self.owner, encode_unlocked(version))?;
+        self.held = false;
+        Ok(version)
+    }
+
+    /// Conservatively publishes an unlocked generation after an indeterminate
+    /// post-irrevocable failure.
+    ///
+    /// A supplied commit ID is used when it advances the old generation;
+    /// otherwise the old generation is checked-incremented. Exhaustion leaves
+    /// the version locked for quarantine rather than restoring the old value.
+    pub fn release_indeterminate(
+        &mut self,
+        target: &AtomicVersion,
+        commit_id: Option<OccCommitId>,
+    ) -> Result<OccVersion, VersionError> {
+        self.ensure_releasable(target)?;
+        let version = match commit_id.map(OccCommitId::to_version) {
+            Some(candidate) if candidate > self.before => candidate,
+            _ => self
+                .before
+                .checked_next()
+                .ok_or(VersionError::GenerationExhausted(self.before))?,
+        };
+        target.release_word(self.before, self.owner, encode_unlocked(version))?;
+        self.held = false;
+        Ok(version)
+    }
+
+    fn ensure_releasable(&self, target: &AtomicVersion) -> Result<(), VersionError> {
+        if !self.held {
+            Err(VersionError::GuardAlreadyReleased)
+        } else if !self.is_for(target) {
+            Err(VersionError::GuardTargetMismatch)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -294,7 +484,7 @@ mod tests {
     #[test]
     fn acquire_and_own_validation_preserve_the_observed_generation() {
         let atomic = Arc::new(AtomicVersion::new(version(7)));
-        let guard = atomic.try_acquire(owner(3)).unwrap();
+        let guard = AtomicVersion::try_acquire(&atomic, owner(3)).unwrap();
 
         assert_eq!(guard.before(), version(7));
         assert!(guard.is_for(&atomic));
@@ -314,7 +504,7 @@ mod tests {
     #[test]
     fn abort_release_restores_the_exact_observation() {
         let atomic = Arc::new(AtomicVersion::new(version(9)));
-        let mut guard = atomic.try_acquire(owner(0)).unwrap();
+        let mut guard = AtomicVersion::try_acquire(&atomic, owner(0)).unwrap();
         guard.release_abort().unwrap();
 
         assert!(!guard.is_held());
@@ -328,7 +518,7 @@ mod tests {
     #[test]
     fn commit_release_requires_and_publishes_a_newer_generation() {
         let atomic = Arc::new(AtomicVersion::new(version(10)));
-        let mut stale = atomic.try_acquire(owner(1)).unwrap();
+        let mut stale = AtomicVersion::try_acquire(&atomic, owner(1)).unwrap();
         assert_eq!(
             stale.release_commit(commit(10)),
             Err(VersionError::CommitVersionNotNewer {
@@ -339,7 +529,7 @@ mod tests {
         assert!(stale.is_held());
         stale.release_abort().unwrap();
 
-        let mut guard = atomic.try_acquire(owner(1)).unwrap();
+        let mut guard = AtomicVersion::try_acquire(&atomic, owner(1)).unwrap();
         assert_eq!(guard.release_commit(commit(12)).unwrap(), version(12));
         assert_eq!(atomic.observe().unwrap(), version(12));
     }
@@ -347,11 +537,11 @@ mod tests {
     #[test]
     fn indeterminate_release_advances_and_never_abort_restores() {
         let atomic = Arc::new(AtomicVersion::new(version(20)));
-        let mut guard = atomic.try_acquire(owner(2)).unwrap();
+        let mut guard = AtomicVersion::try_acquire(&atomic, owner(2)).unwrap();
         assert_eq!(guard.release_indeterminate(None).unwrap(), version(21));
         assert_eq!(atomic.observe().unwrap(), version(21));
 
-        let mut guard = atomic.try_acquire(owner(2)).unwrap();
+        let mut guard = AtomicVersion::try_acquire(&atomic, owner(2)).unwrap();
         assert_eq!(
             guard.release_indeterminate(Some(commit(25))).unwrap(),
             version(25)
@@ -363,7 +553,7 @@ mod tests {
     fn indeterminate_exhaustion_fails_closed_with_the_lock_held() {
         let max = version(OccVersion::MAX_VALUE);
         let atomic = Arc::new(AtomicVersion::new(max));
-        let mut guard = atomic.try_acquire(owner(5)).unwrap();
+        let mut guard = AtomicVersion::try_acquire(&atomic, owner(5)).unwrap();
         assert_eq!(
             guard.release_indeterminate(None),
             Err(VersionError::GenerationExhausted(max))
@@ -384,7 +574,7 @@ mod tests {
             let barrier = Arc::clone(&barrier);
             joins.push(thread::spawn(move || {
                 barrier.wait();
-                atomic.try_acquire(owner(owner_value))
+                AtomicVersion::try_acquire(&atomic, owner(owner_value))
             }));
         }
         barrier.wait();
@@ -408,8 +598,145 @@ mod tests {
     fn maximum_owner_round_trips_through_the_packed_state() {
         let atomic = Arc::new(AtomicVersion::default());
         let max_owner = owner(OwnerId::MAX_VALUE);
-        let mut guard = atomic.try_acquire(max_owner).unwrap();
+        let mut guard = AtomicVersion::try_acquire(&atomic, max_owner).unwrap();
         assert_eq!(atomic.state().owner(), Some(max_owner));
         guard.release_abort().unwrap();
+    }
+
+    #[test]
+    fn detached_guard_acquires_and_abort_releases_the_exact_target() {
+        let atomic = AtomicVersion::new(version(31));
+        let mut guard = atomic.try_acquire_detached(owner(7)).unwrap();
+
+        assert_eq!(guard.before(), version(31));
+        assert_eq!(guard.owner(), owner(7));
+        assert!(guard.is_held());
+        assert!(guard.is_for(&atomic));
+        assert_eq!(
+            atomic.state(),
+            VersionState::Locked {
+                version: version(31),
+                owner: owner(7),
+            }
+        );
+
+        guard.release_abort(&atomic).unwrap();
+        assert!(!guard.is_held());
+        assert_eq!(atomic.observe().unwrap(), version(31));
+        assert_eq!(
+            guard.release_abort(&atomic),
+            Err(VersionError::GuardAlreadyReleased)
+        );
+    }
+
+    #[test]
+    fn detached_guard_rejects_a_different_target_without_touching_either_word() {
+        let target = AtomicVersion::new(version(41));
+        let other = AtomicVersion::new(version(52));
+        let mut guard = target.try_acquire_detached(owner(8)).unwrap();
+
+        assert!(!guard.is_for(&other));
+        assert_eq!(
+            guard.release_abort(&other),
+            Err(VersionError::GuardTargetMismatch)
+        );
+        assert!(guard.is_held());
+        assert_eq!(other.observe().unwrap(), version(52));
+        assert_eq!(
+            target.state(),
+            VersionState::Locked {
+                version: version(41),
+                owner: owner(8),
+            }
+        );
+
+        guard.release_abort(&target).unwrap();
+    }
+
+    #[test]
+    fn detached_guard_fails_closed_if_the_atomic_is_moved() {
+        let mut original_slot = AtomicVersion::new(version(61));
+        let mut replacement_slot = AtomicVersion::new(version(62));
+        let mut guard = original_slot.try_acquire_detached(owner(9)).unwrap();
+
+        std::mem::swap(&mut original_slot, &mut replacement_slot);
+        assert!(!guard.is_for(&replacement_slot));
+        assert_eq!(
+            guard.release_abort(&replacement_slot),
+            Err(VersionError::GuardTargetMismatch)
+        );
+        assert_eq!(
+            guard.release_abort(&original_slot),
+            Err(VersionError::LostOwnership {
+                expected_owner: owner(9),
+            })
+        );
+        assert!(guard.is_held());
+        assert!(matches!(
+            replacement_slot.state(),
+            VersionState::Locked { .. }
+        ));
+
+        std::mem::swap(&mut original_slot, &mut replacement_slot);
+        guard.release_abort(&original_slot).unwrap();
+    }
+
+    #[test]
+    fn detached_commit_and_indeterminate_release_match_owned_guards() {
+        let atomic = AtomicVersion::new(version(70));
+        let mut stale = atomic.try_acquire_detached(owner(10)).unwrap();
+        assert_eq!(
+            stale.release_commit(&atomic, commit(70)),
+            Err(VersionError::CommitVersionNotNewer {
+                current: version(70),
+                proposed: commit(70),
+            })
+        );
+        assert!(stale.is_held());
+        assert_eq!(
+            stale.release_commit(&atomic, commit(72)).unwrap(),
+            version(72)
+        );
+
+        let mut indeterminate = atomic.try_acquire_detached(owner(10)).unwrap();
+        assert_eq!(
+            indeterminate.release_indeterminate(&atomic, None).unwrap(),
+            version(73)
+        );
+        assert_eq!(atomic.observe().unwrap(), version(73));
+    }
+
+    #[test]
+    fn dropping_a_held_detached_guard_deliberately_leaves_the_lock_held() {
+        let atomic = AtomicVersion::new(version(80));
+        {
+            let _guard = atomic.try_acquire_detached(owner(11)).unwrap();
+        }
+
+        assert!(matches!(
+            atomic.try_acquire_detached(owner(12)),
+            Err(AcquireError::Conflict(Conflict::LockBusy))
+        ));
+        assert_eq!(
+            atomic.state(),
+            VersionState::Locked {
+                version: version(80),
+                owner: owner(11),
+            }
+        );
+    }
+
+    #[test]
+    fn detached_guard_is_a_plain_static_token_with_bounded_layout() {
+        fn assert_static_send_sync<T: 'static + Send + Sync>() {}
+
+        assert_static_send_sync::<DetachedVersionGuard>();
+        assert!(!std::mem::needs_drop::<DetachedVersionGuard>());
+        assert_eq!(std::mem::size_of::<AtomicVersion>(), 8);
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert_eq!(std::mem::size_of::<DetachedVersionGuard>(), 24);
+            assert_eq!(std::mem::align_of::<DetachedVersionGuard>(), 8);
+        }
     }
 }

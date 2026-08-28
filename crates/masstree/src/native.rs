@@ -5,7 +5,7 @@
 use std::{ffi::c_void, mem, num::NonZeroUsize, ptr};
 
 use crate::{
-    status_result, Error, InsertError, InsertOutcome, KeyBound, NativeStatus,
+    status_result, Error, InsertError, InsertOutcome, KeyBound, NativeStatus, PointReadResult,
     PublicationDisposition, RecordId, RuntimeConfig, RuntimeHealth, ScanChunk, ScanDirection,
     ScanEntry, ScanRequest, ScanResume, ScanStopReason,
 };
@@ -17,6 +17,9 @@ pub(crate) struct AcquiredRuntime {
     pub features: u64,
     pub build_id: mtree_sys::BuildId,
 }
+
+#[derive(Debug)]
+pub(crate) struct ReadScopeHandle(mtree_sys::ReadScope);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeHandle(NonZeroUsize);
@@ -182,6 +185,8 @@ fn verify_static_abi() -> Result<(), Error> {
                 != mem::align_of::<mtree_sys::RuntimeConfig>()
             || mtree_sys::mt_build_id_size() != mem::size_of::<mtree_sys::BuildId>()
             || mtree_sys::mt_build_id_alignment() != mem::align_of::<mtree_sys::BuildId>()
+            || mtree_sys::mt_read_scope_size() != mem::size_of::<mtree_sys::ReadScope>()
+            || mtree_sys::mt_read_scope_alignment() != mem::align_of::<mtree_sys::ReadScope>()
             || mtree_sys::mt_get_or_insert_result_size()
                 != mem::size_of::<mtree_sys::GetOrInsertResult>()
             || mtree_sys::mt_get_or_insert_result_alignment()
@@ -285,6 +290,7 @@ pub(crate) fn runtime_shutdown(runtime: RuntimeHandle, thread: ThreadHandle) -> 
     })
 }
 
+#[inline]
 pub(crate) fn get(tree: TreeHandle, thread: ThreadHandle, key: &[u8]) -> Result<u64, Error> {
     let mut result = u64::MAX;
     // SAFETY: the key slice remains live for the call and output points to a
@@ -305,6 +311,140 @@ pub(crate) fn get(tree: TreeHandle, thread: ThreadHandle, key: &[u8]) -> Result<
         return Err(Error::Native(status));
     }
     Ok(result)
+}
+
+#[inline]
+pub(crate) fn get_strided<const KEY_LENGTH: usize>(
+    tree: TreeHandle,
+    thread: ThreadHandle,
+    keys: &[[u8; KEY_LENGTH]],
+    results: &mut [PointReadResult],
+) -> Result<(), Error> {
+    debug_assert_eq!(keys.len(), results.len());
+    // SAFETY: both slices contain exactly `keys.len()` contiguous elements.
+    // `[u8; KEY_LENGTH]` has stride KEY_LENGTH and `PointReadResult` is a
+    // transparent u64 result slot. The safe facade checked worker ownership,
+    // runtime identity, and the negotiated key limit before this call.
+    let status = unsafe {
+        mtree_sys::mt_get_strided(
+            tree.as_mut_ptr(),
+            thread.as_mut_ptr(),
+            keys.as_ptr().cast::<c_void>(),
+            keys.len(),
+            KEY_LENGTH,
+            mem::size_of::<[u8; KEY_LENGTH]>(),
+            results.as_mut_ptr().cast::<u64>(),
+        )
+    };
+    if let Some(status) = NativeStatus::from_raw(status) {
+        if results
+            .iter()
+            .any(|result| result.0 != mtree_sys::RECORD_ID_NONE)
+        {
+            return Err(Error::AbiMismatch(
+                "failed strided lookup did not clear every output",
+            ));
+        }
+        return Err(Error::Native(status));
+    }
+    Ok(())
+}
+
+pub(crate) fn read_scope_begin(
+    tree: TreeHandle,
+    thread: ThreadHandle,
+) -> Result<ReadScopeHandle, Error> {
+    let mut token = mtree_sys::ReadScope::default();
+    // SAFETY: both handles were validated by the safe facade and `token` is
+    // writable exact-layout storage. Native scope state remains thread-local.
+    let status = unsafe {
+        mtree_sys::mt_read_scope_begin(tree.as_mut_ptr(), thread.as_mut_ptr(), &mut token)
+    };
+    if let Some(status) = NativeStatus::from_raw(status) {
+        if token != mtree_sys::ReadScope::default() {
+            return Err(Error::AbiMismatch(
+                "failed read-scope begin returned a capability",
+            ));
+        }
+        return Err(Error::Native(status));
+    }
+    if token.owner == 0 || token.generation == 0 {
+        return Err(Error::AbiMismatch(
+            "read-scope begin returned an invalid capability",
+        ));
+    }
+    Ok(ReadScopeHandle(token))
+}
+
+#[inline]
+pub(crate) fn read_scope_get(scope: &ReadScopeHandle, key: &[u8]) -> Result<u64, Error> {
+    let mut result = u64::MAX;
+    // SAFETY: the safe ReadScope retains this live same-thread token; the key
+    // and output remain valid for the duration of the call.
+    let status = unsafe {
+        mtree_sys::mt_read_scope_get(
+            &scope.0,
+            key.as_ptr().cast::<c_void>(),
+            key.len(),
+            &mut result,
+        )
+    };
+    if let Some(status) = NativeStatus::from_raw(status) {
+        if result != mtree_sys::RECORD_ID_NONE {
+            return Err(Error::AbiMismatch(
+                "failed scoped lookup did not clear output",
+            ));
+        }
+        return Err(Error::Native(status));
+    }
+    Ok(result)
+}
+
+#[inline]
+pub(crate) fn read_scope_get_strided<const KEY_LENGTH: usize>(
+    scope: &ReadScopeHandle,
+    keys: &[[u8; KEY_LENGTH]],
+    results: &mut [PointReadResult],
+) -> Result<(), Error> {
+    debug_assert_eq!(keys.len(), results.len());
+    // SAFETY: both slices contain exactly `keys.len()` contiguous elements.
+    // `[u8; KEY_LENGTH]` has stride KEY_LENGTH, `PointReadResult` is a
+    // transparent u64 result slot, and the safe ReadScope retains the live
+    // same-thread token for the whole call.
+    let status = unsafe {
+        mtree_sys::mt_read_scope_get_strided(
+            &scope.0,
+            keys.as_ptr().cast::<c_void>(),
+            keys.len(),
+            KEY_LENGTH,
+            mem::size_of::<[u8; KEY_LENGTH]>(),
+            results.as_mut_ptr().cast::<u64>(),
+        )
+    };
+    if let Some(status) = NativeStatus::from_raw(status) {
+        if results
+            .iter()
+            .any(|result| result.0 != mtree_sys::RECORD_ID_NONE)
+        {
+            return Err(Error::AbiMismatch(
+                "failed strided scoped lookup did not clear every output",
+            ));
+        }
+        return Err(Error::Native(status));
+    }
+    Ok(())
+}
+
+pub(crate) fn read_scope_end(scope: &mut ReadScopeHandle) -> Result<(), Error> {
+    // SAFETY: safe ownership calls end at most once for this live same-thread
+    // token. Native end invalidates the token before returning success.
+    status_result(unsafe { mtree_sys::mt_read_scope_end(&mut scope.0) })?;
+    if scope.0 != mtree_sys::ReadScope::default() {
+        return Err(Error::AbiMismatch(
+            "read-scope end did not invalidate its capability",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn get_or_insert(

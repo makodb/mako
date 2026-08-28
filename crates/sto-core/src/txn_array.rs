@@ -265,10 +265,7 @@ impl<T: Clone + Send + Sync + 'static> ArrayAdapter<T> {
         })?;
         let valid = if let Some(lock_use) = prepared.lock_use.as_ref() {
             let guard = cx.guard(lock_use)?;
-            if !guard.is_for(&slot.version)
-                || guard.owner() != cx.owner()
-                || guard.before() != observation.version
-            {
+            if !guard.is_for(&slot.version) || guard.owner() != cx.owner() {
                 return Err(AdapterFault::new(
                     AdapterPhase::Validation,
                     AdapterFaultKind::LockIdentityMismatch,
@@ -565,6 +562,33 @@ mod tests {
             reader.commit().unwrap(),
             CommitOutcome::Aborted(AbortReason::Conflict(Conflict::ReadValidation))
         ));
+    }
+
+    #[test]
+    fn stale_read_then_write_is_a_retryable_conflict_not_a_runtime_fault() {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        let mut stale_worker = runtime.attach().unwrap();
+        let array = TxnArray::new(&runtime, [5_i64]).unwrap();
+        let mut stale = stale_worker.begin().unwrap();
+        assert_eq!(get_value(&array, &mut stale, 0), 5);
+        set_value(&array, &mut stale, 0, 7);
+
+        let writer_runtime = Arc::clone(&runtime);
+        let writer_array = array.clone();
+        thread::spawn(move || {
+            let mut worker = writer_runtime.attach().unwrap();
+            let mut transaction = worker.begin().unwrap();
+            set_value(&writer_array, &mut transaction, 0, 6);
+            assert_committed(transaction.commit().unwrap());
+        })
+        .join()
+        .unwrap();
+
+        assert!(matches!(
+            stale.commit().unwrap(),
+            CommitOutcome::Aborted(AbortReason::Conflict(Conflict::ReadValidation))
+        ));
+        assert_eq!(runtime.health(), crate::RuntimeHealth::Healthy);
     }
 
     #[test]

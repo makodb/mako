@@ -21,6 +21,7 @@ namespace {
 
 static_assert(std::is_standard_layout_v<mt_runtime_config>);
 static_assert(std::is_standard_layout_v<mt_build_id>);
+static_assert(std::is_standard_layout_v<mt_read_scope>);
 static_assert(std::is_standard_layout_v<mt_get_or_insert_result>);
 static_assert(std::is_standard_layout_v<mt_scan_bound>);
 static_assert(std::is_standard_layout_v<mt_scan_entry>);
@@ -28,6 +29,8 @@ static_assert(std::is_standard_layout_v<mt_scan_result>);
 static_assert(sizeof(mt_record_id) == sizeof(uint64_t));
 static_assert(sizeof(mt_get_or_insert_result) == 16);
 static_assert(alignof(mt_get_or_insert_result) == alignof(uint64_t));
+static_assert(sizeof(mt_read_scope) == 16);
+static_assert(alignof(mt_read_scope) == alignof(uint64_t));
 
 mt_runtime *default_runtime() {
   mt_runtime_config config{};
@@ -36,7 +39,9 @@ mt_runtime *default_runtime() {
       MT_FEATURE_POINT_GET | MT_FEATURE_ATOMIC_GET_OR_INSERT |
       MT_FEATURE_EXPLICIT_HANDLES | MT_FEATURE_BINARY_KEYS |
       MT_FEATURE_INTEGRAL_RECORD_IDS | MT_FEATURE_RUNTIME_HEALTH |
-      MT_FEATURE_SINGLETON_RUNTIME | MT_FEATURE_COPIED_RANGE_SCANS;
+      MT_FEATURE_SINGLETON_RUNTIME | MT_FEATURE_COPIED_RANGE_SCANS |
+      MT_FEATURE_SCOPED_POINT_READS | MT_FEATURE_SCOPED_STRIDED_POINT_READS |
+      MT_FEATURE_STRIDED_POINT_READS;
   mt_runtime *runtime = nullptr;
   EXPECT_EQ(mt_runtime_acquire(&config, &runtime), MT_OK);
   EXPECT_NE(runtime, nullptr);
@@ -74,6 +79,14 @@ std::array<uint8_t, 8> ordered_key(uint64_t value) {
   for (size_t index = 0; index != key.size(); ++index) {
     key[index] = static_cast<uint8_t>(value >> ((key.size() - index - 1) * 8));
   }
+  return key;
+}
+
+std::array<uint8_t, 24> layered_key(uint64_t value) {
+  std::array<uint8_t, 24> key{};
+  key.fill(UINT8_C(0xa5));
+  const auto tail = ordered_key(value);
+  std::copy(tail.begin(), tail.end(), key.end() - tail.size());
   return key;
 }
 
@@ -159,6 +172,12 @@ TEST(MtreeAbiIdentity, ReportsExactPublicLayoutsAndLimits) {
             MT_FEATURE_SINGLETON_RUNTIME);
   EXPECT_EQ(mt_feature_bits() & MT_FEATURE_COPIED_RANGE_SCANS,
             MT_FEATURE_COPIED_RANGE_SCANS);
+  EXPECT_EQ(mt_feature_bits() & MT_FEATURE_SCOPED_POINT_READS,
+            MT_FEATURE_SCOPED_POINT_READS);
+  EXPECT_EQ(mt_feature_bits() & MT_FEATURE_SCOPED_STRIDED_POINT_READS,
+            MT_FEATURE_SCOPED_STRIDED_POINT_READS);
+  EXPECT_EQ(mt_feature_bits() & MT_FEATURE_STRIDED_POINT_READS,
+            MT_FEATURE_STRIDED_POINT_READS);
   EXPECT_EQ(mt_feature_bits() & MT_FEATURE_GRACEFUL_SHUTDOWN, 0u);
   EXPECT_TRUE(mt_endianness() == MT_BYTE_ORDER_LITTLE_ENDIAN ||
               mt_endianness() == MT_BYTE_ORDER_BIG_ENDIAN);
@@ -171,6 +190,8 @@ TEST(MtreeAbiIdentity, ReportsExactPublicLayoutsAndLimits) {
   EXPECT_EQ(mt_runtime_config_alignment(), alignof(mt_runtime_config));
   EXPECT_EQ(mt_build_id_size(), sizeof(mt_build_id));
   EXPECT_EQ(mt_build_id_alignment(), alignof(mt_build_id));
+  EXPECT_EQ(mt_read_scope_size(), sizeof(mt_read_scope));
+  EXPECT_EQ(mt_read_scope_alignment(), alignof(mt_read_scope));
   EXPECT_EQ(mt_get_or_insert_result_size(), sizeof(mt_get_or_insert_result));
   EXPECT_EQ(mt_get_or_insert_result_alignment(),
             alignof(mt_get_or_insert_result));
@@ -180,7 +201,7 @@ TEST(MtreeAbiIdentity, ReportsExactPublicLayoutsAndLimits) {
   EXPECT_EQ(mt_scan_entry_alignment(), alignof(mt_scan_entry));
   EXPECT_EQ(mt_scan_result_size(), sizeof(mt_scan_result));
   EXPECT_EQ(mt_scan_result_alignment(), alignof(mt_scan_result));
-  EXPECT_EQ(mt_exported_symbols_fingerprint(), UINT64_C(0x310302479698ded0));
+  EXPECT_EQ(mt_exported_symbols_fingerprint(), UINT64_C(0xdb5bed9b8f1490e3));
 
   mt_build_id first{};
   mt_build_id second{};
@@ -328,6 +349,460 @@ TEST(MtreeAbiPoint, KeyLimitIsCheckedBeforeMasstreeSeesTheInput) {
   EXPECT_EQ(mt_get(tree, worker, oversized.data(), oversized.size(), &value),
             MT_ERR_KEY_TOO_LARGE);
   EXPECT_EQ(value, MT_RECORD_ID_NONE);
+}
+
+TEST(MtreeAbiPoint, ScopedReadsRetainGuardsAndRejectStaleGenerations) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *worker = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, worker);
+  const std::array<uint8_t, 4> present = {'s', 0, 'c', 'p'};
+  const std::array<uint8_t, 4> missing = {'m', 'i', 's', 's'};
+  insert_key(tree, worker, present.data(), present.size(), 91);
+
+  mt_read_scope scope;
+  std::memset(&scope, 0xa5, sizeof(scope));
+  ASSERT_EQ(mt_read_scope_begin(tree, worker, &scope), MT_OK);
+  ASSERT_NE(scope.owner, 0u);
+  ASSERT_NE(scope.generation, 0u);
+  const mt_read_scope stale = scope;
+
+  mt_record_id found = 99;
+  EXPECT_EQ(mt_read_scope_get(&scope, present.data(), present.size(), &found),
+            MT_OK);
+  EXPECT_EQ(found, 91u);
+  EXPECT_EQ(mt_read_scope_get(&scope, missing.data(), missing.size(), &found),
+            MT_OK);
+  EXPECT_EQ(found, MT_RECORD_ID_NONE);
+
+  std::vector<uint8_t> oversized(mt_max_key_length() + 1, 0xa5);
+  found = 99;
+  EXPECT_EQ(
+      mt_read_scope_get(&scope, oversized.data(), oversized.size(), &found),
+      MT_ERR_KEY_TOO_LARGE);
+  EXPECT_EQ(found, MT_RECORD_ID_NONE);
+  EXPECT_EQ(mt_read_scope_get(&scope, present.data(), present.size(), &found),
+            MT_OK);
+  EXPECT_EQ(found, 91u);
+
+  mt_read_scope nested{uintptr_t{1}, UINT64_C(1)};
+  EXPECT_EQ(mt_read_scope_begin(tree, worker, &nested), MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(nested.owner, 0u);
+  EXPECT_EQ(nested.generation, 0u);
+
+  found = 99;
+  EXPECT_EQ(mt_get(tree, worker, present.data(), present.size(), &found),
+            MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(found, MT_RECORD_ID_NONE);
+  mt_get_or_insert_result blocked_insert;
+  std::memset(&blocked_insert, 0xa5, sizeof(blocked_insert));
+  EXPECT_EQ(mt_get_or_insert(tree, worker, missing.data(), missing.size(), 92,
+                             &blocked_insert),
+            MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(blocked_insert.winner, MT_RECORD_ID_NONE);
+  EXPECT_EQ(blocked_insert.inserted, 0u);
+  EXPECT_EQ(blocked_insert.publication,
+            MT_PUBLICATION_FAILURE_BEFORE_PUBLICATION);
+  const mt_scan_bound absent = absent_bound();
+  mt_scan_entry entry{};
+  std::array<uint8_t, 8> arena{};
+  mt_scan_result scan_result;
+  std::memset(&scan_result, 0xa5, sizeof(scan_result));
+  EXPECT_EQ(mt_scan(tree, worker, MT_SCAN_FORWARD, &absent, &absent, &entry, 1,
+                    arena.data(), arena.size(), &scan_result),
+            MT_ERR_ACTIVE_GUARDS);
+  expect_initialized_scan_result(scan_result);
+  mt_tree *blocked_tree = reinterpret_cast<mt_tree *>(uintptr_t{1});
+  EXPECT_EQ(mt_tree_create(runtime, worker, &blocked_tree),
+            MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(blocked_tree, nullptr);
+  mt_thread *blocked_attach = reinterpret_cast<mt_thread *>(uintptr_t{1});
+  EXPECT_EQ(mt_thread_attach(runtime, &blocked_attach), MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(blocked_attach, nullptr);
+  EXPECT_EQ(mt_runtime_shutdown(runtime, worker), MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(mt_tree_release(tree), MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(mt_thread_quiesce(worker), MT_ERR_ACTIVE_GUARDS);
+
+  EXPECT_EQ(mt_read_scope_end(&scope), MT_OK);
+  EXPECT_EQ(scope.owner, 0u);
+  EXPECT_EQ(scope.generation, 0u);
+  found = 99;
+  EXPECT_EQ(mt_read_scope_get(&stale, present.data(), present.size(), &found),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, MT_RECORD_ID_NONE);
+  mt_read_scope stale_for_end = stale;
+  EXPECT_EQ(mt_read_scope_end(&stale_for_end), MT_ERR_INVALID);
+
+  ASSERT_EQ(mt_get_or_insert(tree, worker, missing.data(), missing.size(), 92,
+                             &blocked_insert),
+            MT_OK);
+  EXPECT_EQ(blocked_insert.winner, 92u);
+
+  mt_read_scope next{};
+  ASSERT_EQ(mt_read_scope_begin(tree, worker, &next), MT_OK);
+  EXPECT_EQ(next.owner, stale.owner);
+  EXPECT_NE(next.generation, stale.generation);
+  found = 99;
+  EXPECT_EQ(mt_read_scope_get(&stale, present.data(), present.size(), &found),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, MT_RECORD_ID_NONE);
+  EXPECT_EQ(mt_read_scope_get(&next, missing.data(), missing.size(), &found),
+            MT_OK);
+  EXPECT_EQ(found, 92u);
+  EXPECT_EQ(mt_read_scope_end(&next), MT_OK);
+  EXPECT_EQ(mt_thread_quiesce(worker), MT_OK);
+}
+
+TEST(MtreeAbiPoint, OneShotStridedReadsValidateOnceAndReleaseEveryGuard) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *worker = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, worker);
+  const std::array<uint8_t, 4> first = {'o', 0, '0', '1'};
+  const std::array<uint8_t, 4> missing = {'o', 0, '0', '2'};
+  const std::array<uint8_t, 4> third = {'o', 0, '0', '3'};
+  const std::array<uint8_t, 4> fourth = {'o', 0, '0', '4'};
+  insert_key(tree, worker, first.data(), first.size(), 201);
+  insert_key(tree, worker, third.data(), third.size(), 203);
+  insert_key(tree, worker, nullptr, 0, 204);
+
+  struct padded_key {
+    std::array<uint8_t, 4> key;
+    std::array<uint8_t, 5> padding;
+  };
+  static_assert(offsetof(padded_key, key) == 0);
+  const std::array<padded_key, 3> keys = {
+      padded_key{first, {}}, padded_key{missing, {}}, padded_key{third, {}}};
+
+  std::array<mt_record_id, 3> found = {99, 99, 99};
+  EXPECT_EQ(mt_get_strided(tree, worker, keys.front().key.data(), keys.size(),
+                           first.size(), sizeof(padded_key), found.data()),
+            MT_OK);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{201, 0, 203}));
+
+  /* Both native guards end inside the one-shot boundary. */
+  EXPECT_EQ(mt_thread_quiesce(worker), MT_OK);
+  mt_get_or_insert_result inserted{};
+  EXPECT_EQ(mt_get_or_insert(tree, worker, fourth.data(), fourth.size(), 205,
+                             &inserted),
+            MT_OK);
+  EXPECT_EQ(inserted.winner, 205u);
+
+  /* Empty keys need no input storage and retain one result per lookup. */
+  found = {99, 99, 99};
+  EXPECT_EQ(
+      mt_get_strided(tree, worker, nullptr, found.size(), 0, 0, found.data()),
+      MT_OK);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{204, 204, 204}));
+
+  /* A zero-count call still validates handles and the common key shape. */
+  EXPECT_EQ(mt_get_strided(tree, worker, nullptr, 0, first.size(), first.size(),
+                           nullptr),
+            MT_OK);
+  EXPECT_EQ(mt_get_strided(nullptr, worker, nullptr, 0, 0, 0, nullptr),
+            MT_ERR_INVALID);
+  EXPECT_EQ(mt_get_strided(tree, worker, nullptr, 0, mt_max_key_length() + 1,
+                           mt_max_key_length() + 1, nullptr),
+            MT_ERR_KEY_TOO_LARGE);
+
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_get_strided(tree, worker, nullptr, found.size(), first.size(),
+                           first.size(), found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_get_strided(tree, worker, keys.front().key.data(), found.size(),
+                           first.size(), first.size() - 1, found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_get_strided(tree, worker, keys.front().key.data(), found.size(),
+                           mt_max_key_length() + 1, mt_max_key_length() + 1,
+                           found.data()),
+            MT_ERR_KEY_TOO_LARGE);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+
+  std::array<mt_record_id, 2> overflow_found = {99, 99};
+  EXPECT_EQ(mt_get_strided(tree, worker, first.data(), overflow_found.size(), 1,
+                           std::numeric_limits<size_t>::max(),
+                           overflow_found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(overflow_found, (std::array<mt_record_id, 2>{0, 0}));
+
+  found = {99, 99, 99};
+  const void *wrapping_keys = reinterpret_cast<const void *>(
+      std::numeric_limits<uintptr_t>::max() - first.size() + 2);
+  EXPECT_EQ(mt_get_strided(tree, worker, wrapping_keys, found.size(),
+                           first.size(), first.size(), found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+
+  auto *wrapping_output = reinterpret_cast<mt_record_id *>(
+      std::numeric_limits<uintptr_t>::max() - sizeof(mt_record_id) + 2);
+  EXPECT_EQ(mt_get_strided(tree, worker, first.data(), 1, first.size(),
+                           first.size(), wrapping_output),
+            MT_ERR_INVALID);
+  EXPECT_EQ(mt_get_strided(tree, worker, first.data(), 1, first.size(),
+                           first.size(), nullptr),
+            MT_ERR_INVALID);
+  EXPECT_EQ(mt_get_strided(
+                tree, worker, first.data(),
+                std::numeric_limits<size_t>::max() / sizeof(mt_record_id) + 1,
+                first.size(), first.size(), found.data()),
+            MT_ERR_INVALID);
+
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_get_strided(reinterpret_cast<mt_tree *>(uintptr_t{1}), worker,
+                           keys.front().key.data(), found.size(), first.size(),
+                           sizeof(padded_key), found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+
+  mt_read_scope scope{};
+  ASSERT_EQ(mt_read_scope_begin(tree, worker, &scope), MT_OK);
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_get_strided(tree, worker, keys.front().key.data(), found.size(),
+                           first.size(), sizeof(padded_key), found.data()),
+            MT_ERR_ACTIVE_GUARDS);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+  ASSERT_EQ(mt_read_scope_end(&scope), MT_OK);
+  EXPECT_EQ(mt_thread_quiesce(worker), MT_OK);
+}
+
+TEST(MtreeAbiPoint, ScopedStridedReadsValidateOnceAndClearEveryFailure) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *worker = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, worker);
+  const std::array<uint8_t, 4> first = {'b', 0, '0', '1'};
+  const std::array<uint8_t, 4> missing = {'b', 0, '0', '2'};
+  const std::array<uint8_t, 4> third = {'b', 0, '0', '3'};
+  insert_key(tree, worker, first.data(), first.size(), 101);
+  insert_key(tree, worker, third.data(), third.size(), 103);
+  insert_key(tree, worker, nullptr, 0, 104);
+
+  struct padded_key {
+    std::array<uint8_t, 4> key;
+    std::array<uint8_t, 5> padding;
+  };
+  static_assert(offsetof(padded_key, key) == 0);
+  const std::array<padded_key, 3> keys = {
+      padded_key{first, {}}, padded_key{missing, {}}, padded_key{third, {}}};
+
+  mt_read_scope scope{};
+  ASSERT_EQ(mt_read_scope_begin(tree, worker, &scope), MT_OK);
+  const mt_read_scope stale = scope;
+
+  std::array<mt_record_id, 3> found = {99, 99, 99};
+  EXPECT_EQ(mt_read_scope_get_strided(&scope, keys.front().key.data(),
+                                      keys.size(), first.size(),
+                                      sizeof(padded_key), found.data()),
+            MT_OK);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{101, 0, 103}));
+
+  /* Empty keys need no input storage and retain one result per lookup. */
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_read_scope_get_strided(&scope, nullptr, found.size(), 0, 0,
+                                      found.data()),
+            MT_OK);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{104, 104, 104}));
+
+  /* A zero-count call still validates both the capability and common shape. */
+  EXPECT_EQ(mt_read_scope_get_strided(&scope, nullptr, 0, first.size(),
+                                      first.size(), nullptr),
+            MT_OK);
+  EXPECT_EQ(mt_read_scope_get_strided(nullptr, nullptr, 0, 0, 0, nullptr),
+            MT_ERR_INVALID);
+
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_read_scope_get_strided(&scope, nullptr, found.size(),
+                                      first.size(), first.size(), found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_read_scope_get_strided(&scope, keys.front().key.data(),
+                                      found.size(), first.size(),
+                                      first.size() - 1, found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_read_scope_get_strided(&scope, keys.front().key.data(),
+                                      found.size(), mt_max_key_length() + 1,
+                                      mt_max_key_length() + 1, found.data()),
+            MT_ERR_KEY_TOO_LARGE);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+
+  std::array<mt_record_id, 2> overflow_found = {99, 99};
+  EXPECT_EQ(mt_read_scope_get_strided(
+                &scope, first.data(), overflow_found.size(), 1,
+                std::numeric_limits<size_t>::max(), overflow_found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(overflow_found, (std::array<mt_record_id, 2>{0, 0}));
+
+  found = {99, 99, 99};
+  const void *wrapping_keys = reinterpret_cast<const void *>(
+      std::numeric_limits<uintptr_t>::max() - first.size() + 2);
+  EXPECT_EQ(mt_read_scope_get_strided(&scope, wrapping_keys, found.size(),
+                                      first.size(), first.size(), found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+
+  auto *wrapping_output = reinterpret_cast<mt_record_id *>(
+      std::numeric_limits<uintptr_t>::max() - sizeof(mt_record_id) + 2);
+  EXPECT_EQ(mt_read_scope_get_strided(&scope, first.data(), 1, first.size(),
+                                      first.size(), wrapping_output),
+            MT_ERR_INVALID);
+
+  EXPECT_EQ(mt_read_scope_get_strided(&scope, first.data(), 1, first.size(),
+                                      first.size(), nullptr),
+            MT_ERR_INVALID);
+  ASSERT_EQ(mt_read_scope_end(&scope), MT_OK);
+
+  found = {99, 99, 99};
+  EXPECT_EQ(mt_read_scope_get_strided(&stale, keys.front().key.data(),
+                                      found.size(), first.size(),
+                                      sizeof(padded_key), found.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(found, (std::array<mt_record_id, 3>{0, 0, 0}));
+  EXPECT_EQ(mt_thread_quiesce(worker), MT_OK);
+}
+
+TEST(MtreeAbiPoint, ScopedReadTokenCannotCrossAnOsThread) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *worker = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, worker);
+  const auto key = ordered_key(7);
+  insert_key(tree, worker, key.data(), key.size(), 8);
+
+  mt_read_scope scope{};
+  ASSERT_EQ(mt_read_scope_begin(tree, worker, &scope), MT_OK);
+  const mt_read_scope copied = scope;
+  std::atomic<mt_status> status{MT_OK};
+  std::atomic<mt_status> strided_status{MT_OK};
+  std::atomic<mt_record_id> output{99};
+  std::atomic<mt_record_id> strided_output{99};
+  std::thread other([&]() {
+    mt_record_id found = 99;
+    status.store(mt_read_scope_get(&copied, key.data(), key.size(), &found),
+                 std::memory_order_release);
+    output.store(found, std::memory_order_release);
+    found = 99;
+    strided_status.store(mt_read_scope_get_strided(&copied, key.data(), 1,
+                                                   key.size(), key.size(),
+                                                   &found),
+                         std::memory_order_release);
+    strided_output.store(found, std::memory_order_release);
+  });
+  other.join();
+  EXPECT_EQ(status.load(std::memory_order_acquire), MT_ERR_INVALID);
+  EXPECT_EQ(output.load(std::memory_order_acquire), MT_RECORD_ID_NONE);
+  EXPECT_EQ(strided_status.load(std::memory_order_acquire), MT_ERR_INVALID);
+  EXPECT_EQ(strided_output.load(std::memory_order_acquire), MT_RECORD_ID_NONE);
+
+  mt_record_id found = 99;
+  EXPECT_EQ(mt_read_scope_get(&scope, key.data(), key.size(), &found), MT_OK);
+  EXPECT_EQ(found, 8u);
+  EXPECT_EQ(mt_read_scope_end(&scope), MT_OK);
+}
+
+TEST(MtreeAbiPoint, ScopedReaderDrainsBeforeStructuralWriterEnters) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *reader = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, reader);
+  const auto stable_key = layered_key(1);
+  const auto inserted_key = layered_key(2);
+  insert_key(tree, reader, stable_key.data(), stable_key.size(), 1);
+
+  mt_read_scope scope{};
+  ASSERT_EQ(mt_read_scope_begin(tree, reader, &scope), MT_OK);
+  std::barrier ready(2);
+  std::atomic<bool> writer_started{false};
+  std::atomic<bool> writer_returned{false};
+  std::atomic<mt_status> attach_status{MT_ERR_INTERNAL};
+  std::atomic<mt_status> insert_status{MT_ERR_INTERNAL};
+  std::atomic<mt_status> quiesce_status{MT_ERR_INTERNAL};
+  mt_get_or_insert_result inserted{};
+  std::thread writer([&]() {
+    mt_thread *worker = nullptr;
+    attach_status.store(mt_thread_attach(runtime, &worker),
+                        std::memory_order_release);
+    ready.arrive_and_wait();
+    if (attach_status.load(std::memory_order_acquire) != MT_OK) {
+      return;
+    }
+    writer_started.store(true, std::memory_order_release);
+    insert_status.store(mt_get_or_insert(tree, worker, inserted_key.data(),
+                                         inserted_key.size(), 2, &inserted),
+                        std::memory_order_release);
+    writer_returned.store(true, std::memory_order_release);
+    quiesce_status.store(mt_thread_quiesce(worker), std::memory_order_release);
+  });
+
+  ready.arrive_and_wait();
+  ASSERT_EQ(attach_status.load(std::memory_order_acquire), MT_OK);
+  while (!writer_started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  for (size_t iteration = 0; iteration != 256; ++iteration) {
+    mt_record_id found = 99;
+    ASSERT_EQ(
+        mt_read_scope_get(&scope, stable_key.data(), stable_key.size(), &found),
+        MT_OK);
+    ASSERT_EQ(found, 1u);
+    std::this_thread::yield();
+  }
+  EXPECT_FALSE(writer_returned.load(std::memory_order_acquire));
+
+  ASSERT_EQ(mt_read_scope_end(&scope), MT_OK);
+  writer.join();
+  EXPECT_TRUE(writer_returned.load(std::memory_order_acquire));
+  EXPECT_EQ(insert_status.load(std::memory_order_acquire), MT_OK);
+  EXPECT_EQ(inserted.winner, 2u);
+  EXPECT_EQ(inserted.inserted, 1u);
+  EXPECT_EQ(quiesce_status.load(std::memory_order_acquire), MT_OK);
+}
+
+TEST(MtreeAbiPoint, ThreadExitClosesAnUnendedReadScope) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *creator = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, creator);
+  const auto stable_key = ordered_key(31);
+  const auto inserted_key = ordered_key(32);
+  insert_key(tree, creator, stable_key.data(), stable_key.size(), 31);
+
+  std::atomic<mt_status> attach_status{MT_ERR_INTERNAL};
+  std::atomic<mt_status> begin_status{MT_ERR_INTERNAL};
+  std::atomic<mt_status> get_status{MT_ERR_INTERNAL};
+  std::thread exiting([&]() {
+    mt_thread *worker = nullptr;
+    attach_status.store(mt_thread_attach(runtime, &worker),
+                        std::memory_order_release);
+    if (attach_status.load(std::memory_order_acquire) != MT_OK) {
+      return;
+    }
+    mt_read_scope leaked{};
+    begin_status.store(mt_read_scope_begin(tree, worker, &leaked),
+                       std::memory_order_release);
+    mt_record_id found = 99;
+    if (begin_status.load(std::memory_order_acquire) == MT_OK) {
+      get_status.store(mt_read_scope_get(&leaked, stable_key.data(),
+                                         stable_key.size(), &found),
+                       std::memory_order_release);
+    }
+    /* Deliberately rely on TLS scope-state destruction at thread exit. */
+  });
+  exiting.join();
+  ASSERT_EQ(attach_status.load(std::memory_order_acquire), MT_OK);
+  ASSERT_EQ(begin_status.load(std::memory_order_acquire), MT_OK);
+  ASSERT_EQ(get_status.load(std::memory_order_acquire), MT_OK);
+
+  mt_get_or_insert_result inserted{};
+  ASSERT_EQ(mt_get_or_insert(tree, creator, inserted_key.data(),
+                             inserted_key.size(), 32, &inserted),
+            MT_OK);
+  EXPECT_EQ(inserted.winner, 32u);
+  EXPECT_EQ(inserted.inserted, 1u);
 }
 
 TEST(MtreeAbiPoint, RecordIdsPreserveEveryBitWithoutPointerInterpretation) {
@@ -818,8 +1293,10 @@ TEST(MtreeAbiThreading, WorkerCannotBeUsedFromAnotherOsThread) {
   mt_thread *worker = current_worker(runtime);
   mt_tree *tree = new_tree(runtime, worker);
   const uint8_t key = 1;
+  const std::array<uint8_t, 2> batch_keys = {1, 2};
 
   std::atomic<mt_status> get_status{MT_OK};
+  std::atomic<mt_status> strided_status{MT_OK};
   std::atomic<mt_status> insert_status{MT_OK};
   std::atomic<mt_status> scan_status{MT_OK};
   std::atomic<mt_status> quiesce_status{MT_OK};
@@ -830,11 +1307,16 @@ TEST(MtreeAbiThreading, WorkerCannotBeUsedFromAnotherOsThread) {
   std::array<uint8_t, 8> scan_arena{};
   mt_scan_result scan_result;
   std::memset(&scan_result, 0xa5, sizeof(scan_result));
+  std::array<mt_record_id, 2> strided_output = {99, 99};
   std::thread other([&]() {
     mt_record_id value = 99;
     get_status.store(mt_get(tree, worker, &key, 1, &value),
                      std::memory_order_release);
     EXPECT_EQ(value, MT_RECORD_ID_NONE);
+    strided_status.store(mt_get_strided(tree, worker, batch_keys.data(),
+                                        batch_keys.size(), 1, 1,
+                                        strided_output.data()),
+                         std::memory_order_release);
     insert_status.store(
         mt_get_or_insert(tree, worker, &key, 1, 1, &insert_result),
         std::memory_order_release);
@@ -847,6 +1329,9 @@ TEST(MtreeAbiThreading, WorkerCannotBeUsedFromAnotherOsThread) {
   other.join();
 
   EXPECT_EQ(get_status.load(std::memory_order_acquire), MT_ERR_WRONG_THREAD);
+  EXPECT_EQ(strided_status.load(std::memory_order_acquire),
+            MT_ERR_WRONG_THREAD);
+  EXPECT_EQ(strided_output, (std::array<mt_record_id, 2>{0, 0}));
   EXPECT_EQ(insert_status.load(std::memory_order_acquire), MT_ERR_WRONG_THREAD);
   EXPECT_EQ(insert_result.winner, MT_RECORD_ID_NONE);
   EXPECT_EQ(insert_result.inserted, 0u);
@@ -897,8 +1382,9 @@ TEST(MtreeAbiThreading, RebindingAnAttachedWorkerRejectsTheWrongRuntime) {
   rusty::Arc<SiloRuntime> foreign_runtime = SiloRuntime::Create();
   ASSERT_NE(foreign_runtime.as_ptr(), SiloRuntime::GlobalDefault());
 
-  std::array<mt_status, 7> statuses{};
+  std::array<mt_status, 8> statuses{};
   mt_record_id found = 99;
+  std::array<mt_record_id, 2> strided_found = {99, 99};
   mt_get_or_insert_result insert_result;
   std::memset(&insert_result, 0xa5, sizeof(insert_result));
   mt_scan_result scan_result;
@@ -913,6 +1399,8 @@ TEST(MtreeAbiThreading, RebindingAnAttachedWorkerRejectsTheWrongRuntime) {
     }
     foreign_runtime.as_ptr()->BindToCurrentThread();
     statuses[1] = mt_get(tree, worker, nullptr, 0, &found);
+    statuses[7] = mt_get_strided(tree, worker, nullptr, strided_found.size(), 0,
+                                 0, strided_found.data());
     statuses[2] = mt_get_or_insert(tree, worker, nullptr, 0, 1, &insert_result);
 
     const mt_scan_bound absent = absent_bound();
@@ -929,6 +1417,8 @@ TEST(MtreeAbiThreading, RebindingAnAttachedWorkerRejectsTheWrongRuntime) {
   ASSERT_EQ(statuses[0], MT_OK);
   EXPECT_EQ(statuses[1], MT_ERR_WRONG_RUNTIME);
   EXPECT_EQ(found, MT_RECORD_ID_NONE);
+  EXPECT_EQ(statuses[7], MT_ERR_WRONG_RUNTIME);
+  EXPECT_EQ(strided_found, (std::array<mt_record_id, 2>{0, 0}));
   EXPECT_EQ(statuses[2], MT_ERR_WRONG_RUNTIME);
   EXPECT_EQ(insert_result.winner, MT_RECORD_ID_NONE);
   EXPECT_EQ(insert_result.inserted, 0u);
@@ -1014,6 +1504,395 @@ TEST(MtreeAbiThreading, ConcurrentGetOrInsertReturnsOneWinner) {
   }
 }
 
+TEST(MtreeAbiThreading,
+     ValidOperationsSurviveConcurrentHandleRegistryPublication) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *creator = current_worker(runtime);
+  mt_tree *stable_tree = new_tree(runtime, creator);
+  const auto stable_key = ordered_key(UINT64_C(0x123456));
+  constexpr mt_record_id kStableValue = UINT64_C(0xfeedface);
+  insert_key(stable_tree, creator, stable_key.data(), stable_key.size(),
+             kStableValue);
+
+  constexpr size_t kPublishers = 4;
+  constexpr size_t kTreesPerPublisher = 16;
+  constexpr size_t kMinimumReaderPasses = 4096;
+  std::array<std::atomic<mt_status>, kPublishers + 1> attach_statuses;
+  for (auto &status : attach_statuses) {
+    status.store(MT_ERR_INTERNAL, std::memory_order_relaxed);
+  }
+  std::array<mt_status, kPublishers + 1> quiesce_statuses{};
+  std::atomic<size_t> publishers_done{0};
+  std::atomic<size_t> violations{0};
+  std::barrier start(kPublishers + 1);
+
+  std::thread reader([&]() {
+    mt_thread *worker = nullptr;
+    attach_statuses[0].store(mt_thread_attach(runtime, &worker),
+                             std::memory_order_release);
+    start.arrive_and_wait();
+    if (attach_statuses[0].load(std::memory_order_acquire) != MT_OK) {
+      return;
+    }
+
+    size_t passes = 0;
+    do {
+      mt_record_id found = MT_RECORD_ID_NONE;
+      if (mt_get(stable_tree, worker, stable_key.data(), stable_key.size(),
+                 &found) != MT_OK ||
+          found != kStableValue) {
+        violations.fetch_add(1, std::memory_order_relaxed);
+      }
+
+      if ((passes & 63) == 0) {
+        auto *foreign_thread = reinterpret_cast<mt_thread *>(uintptr_t{1});
+        auto *foreign_tree = reinterpret_cast<mt_tree *>(uintptr_t{1});
+        found = 99;
+        if (mt_get(stable_tree, foreign_thread, stable_key.data(),
+                   stable_key.size(), &found) != MT_ERR_INVALID ||
+            found != MT_RECORD_ID_NONE) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+        }
+        found = 99;
+        if (mt_get(foreign_tree, worker, stable_key.data(), stable_key.size(),
+                   &found) != MT_ERR_INVALID ||
+            found != MT_RECORD_ID_NONE) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+      ++passes;
+    } while (passes < kMinimumReaderPasses ||
+             publishers_done.load(std::memory_order_acquire) != kPublishers);
+    quiesce_statuses[0] = mt_thread_quiesce(worker);
+  });
+
+  std::array<std::thread, kPublishers> publishers;
+  for (size_t publisher = 0; publisher != kPublishers; ++publisher) {
+    publishers[publisher] = std::thread([&, publisher]() {
+      start.arrive_and_wait();
+      mt_thread *worker = nullptr;
+      attach_statuses[publisher + 1].store(mt_thread_attach(runtime, &worker),
+                                           std::memory_order_release);
+      if (attach_statuses[publisher + 1].load(std::memory_order_acquire) !=
+          MT_OK) {
+        publishers_done.fetch_add(1, std::memory_order_release);
+        return;
+      }
+
+      for (size_t index = 0; index != kTreesPerPublisher; ++index) {
+        mt_tree *tree = nullptr;
+        if (mt_tree_create(runtime, worker, &tree) != MT_OK ||
+            tree == nullptr) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+          continue;
+        }
+        const uint64_t coordinate =
+            UINT64_C(0x200000) + publisher * kTreesPerPublisher + index;
+        const auto key = ordered_key(coordinate);
+        const mt_record_id candidate = coordinate + 1;
+        mt_get_or_insert_result inserted{};
+        if (mt_get_or_insert(tree, worker, key.data(), key.size(), candidate,
+                             &inserted) != MT_OK ||
+            inserted.winner != candidate || inserted.inserted != 1 ||
+            inserted.publication != MT_PUBLICATION_CANDIDATE_INSERTED) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+          continue;
+        }
+        mt_record_id found = MT_RECORD_ID_NONE;
+        if (mt_get(tree, worker, key.data(), key.size(), &found) != MT_OK ||
+            found != candidate) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+      quiesce_statuses[publisher + 1] = mt_thread_quiesce(worker);
+      publishers_done.fetch_add(1, std::memory_order_release);
+    });
+  }
+
+  for (auto &publisher : publishers) {
+    publisher.join();
+  }
+  reader.join();
+
+  for (size_t index = 0; index != attach_statuses.size(); ++index) {
+    EXPECT_EQ(attach_statuses[index].load(std::memory_order_acquire), MT_OK);
+    EXPECT_EQ(quiesce_statuses[index], MT_OK);
+  }
+  EXPECT_EQ(violations.load(std::memory_order_relaxed), 0u);
+}
+
+TEST(MtreeAbiThreading, PointReadersRemainExactAcrossConcurrentSplits) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *creator = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, creator);
+  constexpr size_t kStableKeys = 1024;
+  constexpr size_t kReaders = 4;
+  constexpr size_t kWriters = 2;
+  constexpr size_t kMinimumReaderPasses = 8;
+  for (size_t index = 0; index != kStableKeys; ++index) {
+    const uint64_t coordinate = index * 2;
+    const auto key = ordered_key(coordinate);
+    insert_key(tree, creator, key.data(), key.size(), coordinate + 1);
+  }
+
+  constexpr size_t kWorkers = kReaders + kWriters;
+  std::array<std::atomic<mt_status>, kWorkers> attach_statuses;
+  for (auto &status : attach_statuses) {
+    status.store(MT_ERR_INTERNAL, std::memory_order_relaxed);
+  }
+  std::array<mt_status, kWorkers> quiesce_statuses{};
+  std::atomic<size_t> writers_done{0};
+  std::atomic<size_t> violations{0};
+  std::barrier start(kWorkers);
+  std::array<std::thread, kWorkers> workers;
+
+  for (size_t reader = 0; reader != kReaders; ++reader) {
+    workers[reader] = std::thread([&, reader]() {
+      mt_thread *worker = nullptr;
+      attach_statuses[reader].store(mt_thread_attach(runtime, &worker),
+                                    std::memory_order_release);
+      start.arrive_and_wait();
+      if (attach_statuses[reader].load(std::memory_order_acquire) != MT_OK) {
+        return;
+      }
+
+      size_t passes = 0;
+      do {
+        for (size_t index = 0; index != kStableKeys; ++index) {
+          const uint64_t coordinate = index * 2;
+          const auto key = ordered_key(coordinate);
+          mt_record_id found = MT_RECORD_ID_NONE;
+          if (mt_get(tree, worker, key.data(), key.size(), &found) != MT_OK ||
+              found != coordinate + 1) {
+            violations.fetch_add(1, std::memory_order_relaxed);
+          }
+        }
+        ++passes;
+      } while (passes < kMinimumReaderPasses ||
+               writers_done.load(std::memory_order_acquire) != kWriters);
+      quiesce_statuses[reader] = mt_thread_quiesce(worker);
+    });
+  }
+
+  for (size_t writer = 0; writer != kWriters; ++writer) {
+    const size_t worker_index = kReaders + writer;
+    workers[worker_index] = std::thread([&, writer, worker_index]() {
+      mt_thread *worker = nullptr;
+      attach_statuses[worker_index].store(mt_thread_attach(runtime, &worker),
+                                          std::memory_order_release);
+      start.arrive_and_wait();
+      if (attach_statuses[worker_index].load(std::memory_order_acquire) !=
+          MT_OK) {
+        writers_done.fetch_add(1, std::memory_order_release);
+        return;
+      }
+
+      for (size_t index = writer; index < kStableKeys; index += kWriters) {
+        const uint64_t coordinate = index * 2 + 1;
+        const auto key = ordered_key(coordinate);
+        mt_get_or_insert_result inserted{};
+        if (mt_get_or_insert(tree, worker, key.data(), key.size(),
+                             coordinate + 1, &inserted) != MT_OK ||
+            inserted.winner != coordinate + 1 || inserted.inserted != 1 ||
+            inserted.publication != MT_PUBLICATION_CANDIDATE_INSERTED) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+        }
+        if ((index & 7) == 0) {
+          std::this_thread::yield();
+        }
+      }
+      quiesce_statuses[worker_index] = mt_thread_quiesce(worker);
+      writers_done.fetch_add(1, std::memory_order_release);
+    });
+  }
+
+  for (auto &worker : workers) {
+    worker.join();
+  }
+  for (size_t index = 0; index != kWorkers; ++index) {
+    EXPECT_EQ(attach_statuses[index].load(std::memory_order_acquire), MT_OK);
+    EXPECT_EQ(quiesce_statuses[index], MT_OK);
+  }
+  EXPECT_EQ(violations.load(std::memory_order_relaxed), 0u);
+
+  for (uint64_t coordinate = 0; coordinate != kStableKeys * 2; ++coordinate) {
+    const auto key = ordered_key(coordinate);
+    mt_record_id found = MT_RECORD_ID_NONE;
+    ASSERT_EQ(mt_get(tree, creator, key.data(), key.size(), &found), MT_OK);
+    EXPECT_EQ(found, coordinate + 1);
+  }
+}
+
+TEST(MtreeAbiThreading, LayeredPointReadersRemainExactAcrossConcurrentSplits) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *creator = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, creator);
+  constexpr size_t kStableKeys = 256;
+  constexpr size_t kReaders = 3;
+  constexpr size_t kWriters = 2;
+  constexpr size_t kMinimumReaderPasses = 4;
+  for (size_t index = 0; index != kStableKeys; ++index) {
+    const uint64_t coordinate = index * 2;
+    const auto key = layered_key(coordinate);
+    insert_key(tree, creator, key.data(), key.size(), coordinate + 1);
+  }
+
+  constexpr size_t kWorkers = kReaders + kWriters;
+  std::array<std::atomic<mt_status>, kWorkers> attach_statuses;
+  for (auto &status : attach_statuses) {
+    status.store(MT_ERR_INTERNAL, std::memory_order_relaxed);
+  }
+  std::array<mt_status, kWorkers> quiesce_statuses{};
+  std::atomic<size_t> writers_done{0};
+  std::atomic<size_t> violations{0};
+  std::barrier start(kWorkers);
+  std::array<std::thread, kWorkers> workers;
+
+  for (size_t reader = 0; reader != kReaders; ++reader) {
+    workers[reader] = std::thread([&, reader]() {
+      mt_thread *worker = nullptr;
+      attach_statuses[reader].store(mt_thread_attach(runtime, &worker),
+                                    std::memory_order_release);
+      start.arrive_and_wait();
+      if (attach_statuses[reader].load(std::memory_order_acquire) != MT_OK) {
+        return;
+      }
+
+      size_t passes = 0;
+      do {
+        for (size_t index = 0; index != kStableKeys; ++index) {
+          const uint64_t coordinate = index * 2;
+          const auto key = layered_key(coordinate);
+          mt_record_id found = MT_RECORD_ID_NONE;
+          if (mt_get(tree, worker, key.data(), key.size(), &found) != MT_OK ||
+              found != coordinate + 1) {
+            violations.fetch_add(1, std::memory_order_relaxed);
+          }
+        }
+        ++passes;
+      } while (passes < kMinimumReaderPasses ||
+               writers_done.load(std::memory_order_acquire) != kWriters);
+      quiesce_statuses[reader] = mt_thread_quiesce(worker);
+    });
+  }
+
+  for (size_t writer = 0; writer != kWriters; ++writer) {
+    const size_t worker_index = kReaders + writer;
+    workers[worker_index] = std::thread([&, writer, worker_index]() {
+      mt_thread *worker = nullptr;
+      attach_statuses[worker_index].store(mt_thread_attach(runtime, &worker),
+                                          std::memory_order_release);
+      start.arrive_and_wait();
+      if (attach_statuses[worker_index].load(std::memory_order_acquire) !=
+          MT_OK) {
+        writers_done.fetch_add(1, std::memory_order_release);
+        return;
+      }
+
+      for (size_t index = writer; index < kStableKeys; index += kWriters) {
+        const uint64_t coordinate = index * 2 + 1;
+        const auto key = layered_key(coordinate);
+        mt_get_or_insert_result inserted{};
+        if (mt_get_or_insert(tree, worker, key.data(), key.size(),
+                             coordinate + 1, &inserted) != MT_OK ||
+            inserted.winner != coordinate + 1 || inserted.inserted != 1 ||
+            inserted.publication != MT_PUBLICATION_CANDIDATE_INSERTED) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+        }
+        if ((index & 7) == 0) {
+          std::this_thread::yield();
+        }
+      }
+      quiesce_statuses[worker_index] = mt_thread_quiesce(worker);
+      writers_done.fetch_add(1, std::memory_order_release);
+    });
+  }
+
+  for (auto &worker : workers) {
+    worker.join();
+  }
+  for (size_t index = 0; index != kWorkers; ++index) {
+    EXPECT_EQ(attach_statuses[index].load(std::memory_order_acquire), MT_OK);
+    EXPECT_EQ(quiesce_statuses[index], MT_OK);
+  }
+  EXPECT_EQ(violations.load(std::memory_order_relaxed), 0u);
+
+  for (uint64_t coordinate = 0; coordinate != kStableKeys * 2; ++coordinate) {
+    const auto key = layered_key(coordinate);
+    mt_record_id found = MT_RECORD_ID_NONE;
+    ASSERT_EQ(mt_get(tree, creator, key.data(), key.size(), &found), MT_OK);
+    EXPECT_EQ(found, coordinate + 1);
+  }
+}
+
+TEST(MtreeAbiLifecycle, CloseRacingWithGetIsFailClosedAndMemorySafe) {
+  mt_runtime *runtime = default_runtime();
+  mt_thread *creator = current_worker(runtime);
+  mt_tree *tree = new_tree(runtime, creator);
+  const auto key = ordered_key(UINT64_C(0xabcdef));
+  constexpr mt_record_id kValue = UINT64_C(0xdecafbad);
+  insert_key(tree, creator, key.data(), key.size(), kValue);
+
+  std::atomic<mt_status> attach_status{MT_ERR_INTERNAL};
+  std::atomic<mt_status> quiesce_status{MT_ERR_INTERNAL};
+  std::atomic<size_t> successful_gets{0};
+  std::atomic<size_t> closed_gets{0};
+  std::atomic<size_t> violations{0};
+  std::barrier attached(2);
+  std::thread reader([&]() {
+    mt_thread *worker = nullptr;
+    attach_status.store(mt_thread_attach(runtime, &worker),
+                        std::memory_order_release);
+    attached.arrive_and_wait();
+    if (attach_status.load(std::memory_order_acquire) != MT_OK) {
+      return;
+    }
+    for (;;) {
+      mt_record_id found = 99;
+      const mt_status status =
+          mt_get(tree, worker, key.data(), key.size(), &found);
+      if (status == MT_OK) {
+        if (found != kValue) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+        }
+        successful_gets.fetch_add(1, std::memory_order_release);
+      } else if (status == MT_ERR_CLOSED) {
+        if (found != MT_RECORD_ID_NONE) {
+          violations.fetch_add(1, std::memory_order_relaxed);
+        }
+        closed_gets.fetch_add(1, std::memory_order_relaxed);
+        break;
+      } else {
+        violations.fetch_add(1, std::memory_order_relaxed);
+        break;
+      }
+    }
+    quiesce_status.store(mt_thread_quiesce(worker), std::memory_order_release);
+  });
+
+  attached.arrive_and_wait();
+  if (attach_status.load(std::memory_order_acquire) != MT_OK) {
+    reader.join();
+    FAIL() << "reader worker attachment failed";
+  }
+  while (successful_gets.load(std::memory_order_acquire) < 128) {
+    std::this_thread::yield();
+  }
+  ASSERT_EQ(mt_tree_release(tree), MT_OK);
+  reader.join();
+
+  EXPECT_GE(successful_gets.load(std::memory_order_relaxed), 128u);
+  EXPECT_EQ(closed_gets.load(std::memory_order_relaxed), 1u);
+  EXPECT_EQ(violations.load(std::memory_order_relaxed), 0u);
+  EXPECT_EQ(quiesce_status.load(std::memory_order_acquire), MT_OK);
+
+  mt_record_id found = 99;
+  EXPECT_EQ(mt_get(tree, creator, key.data(), key.size(), &found),
+            MT_ERR_CLOSED);
+  EXPECT_EQ(found, MT_RECORD_ID_NONE);
+  EXPECT_EQ(mt_tree_release(tree), MT_ERR_CLOSED);
+}
+
 TEST(MtreeAbiHandles, UnknownPointersAreRejectedBeforeDereference) {
   mt_runtime *runtime = default_runtime();
   mt_thread *worker = current_worker(runtime);
@@ -1031,6 +1910,16 @@ TEST(MtreeAbiHandles, UnknownPointersAreRejectedBeforeDereference) {
   EXPECT_EQ(value, MT_RECORD_ID_NONE);
   EXPECT_EQ(mt_get(tree, foreign_thread, nullptr, 0, &value), MT_ERR_INVALID);
   EXPECT_EQ(value, MT_RECORD_ID_NONE);
+  std::array<mt_record_id, 2> values = {99, 99};
+  EXPECT_EQ(mt_get_strided(foreign_tree, worker, nullptr, values.size(), 0, 0,
+                           values.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(values, (std::array<mt_record_id, 2>{0, 0}));
+  values = {99, 99};
+  EXPECT_EQ(mt_get_strided(tree, foreign_thread, nullptr, values.size(), 0, 0,
+                           values.data()),
+            MT_ERR_INVALID);
+  EXPECT_EQ(values, (std::array<mt_record_id, 2>{0, 0}));
   EXPECT_EQ(mt_thread_quiesce(foreign_thread), MT_ERR_INVALID);
 }
 
@@ -1043,6 +1932,11 @@ TEST(MtreeAbiLifecycle, ReleasingFacadeNeverDestroysNativeTree) {
   mt_record_id value = 99;
   EXPECT_EQ(mt_get(tree, worker, nullptr, 0, &value), MT_ERR_CLOSED);
   EXPECT_EQ(value, MT_RECORD_ID_NONE);
+  std::array<mt_record_id, 2> values = {99, 99};
+  EXPECT_EQ(
+      mt_get_strided(tree, worker, nullptr, values.size(), 0, 0, values.data()),
+      MT_ERR_CLOSED);
+  EXPECT_EQ(values, (std::array<mt_record_id, 2>{0, 0}));
 
   mt_get_or_insert_result insert_result;
   std::memset(&insert_result, 0xa5, sizeof(insert_result));

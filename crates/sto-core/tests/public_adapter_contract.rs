@@ -5,12 +5,13 @@ use std::sync::{
 
 use sto_core::{
     AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
-    AdapterPhase, AtomicVersion, CheckError, Conflict, Entry, ExecutionCheckContext, FinishContext,
-    FinishDisposition, FinishItem, InstallContext, InstallItem, LockClass, LockDisposition,
-    LockIdentity, LockNamespaceId, LockRequest, LockUse, NoPredicate, ObservationOrder,
-    ObservationRef, OccVersion, OpacityToken, PredicateContext, PreflightContext, PreflightItem,
-    PrepareError, RegisteredResource, ReleaseContext, ResourceClass, Runtime, RuntimeConfig,
-    Transaction, TransactionLock, TransactionalResource, ValidationContext, VersionGuard,
+    AdapterPhase, AtomicVersion, CheckError, Conflict, DetachedVersionGuard, Entry,
+    ExecutionCheckContext, FinishContext, FinishDisposition, FinishItem, InstallContext,
+    InstallItem, LockClass, LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse,
+    NoPredicate, ObservationOrder, ObservationRef, OccVersion, OpacityToken, PredicateContext,
+    PreflightContext, PreflightItem, PrepareError, RegisteredResource, ReleaseContext,
+    ResourceClass, Runtime, RuntimeConfig, Transaction, TransactionLock, TransactionalResource,
+    ValidationContext,
 };
 
 const FIRST_RESOURCE_CLASS: u32 = 41;
@@ -22,15 +23,19 @@ struct SharedVersionLock {
 }
 
 struct SharedVersionGuard {
-    inner: VersionGuard,
+    inner: DetachedVersionGuard,
 }
 
 impl TransactionLock for SharedVersionLock {
     type Guard = SharedVersionGuard;
 
-    fn try_acquire(&self, cx: &AcquireContext<'_>) -> Result<Self::Guard, AcquireError> {
+    fn try_acquire(
+        &self,
+        _identity: &LockIdentity,
+        cx: &AcquireContext<'_>,
+    ) -> Result<Self::Guard, AcquireError> {
         self.version
-            .try_acquire(cx.owner())
+            .try_acquire_detached(cx.owner())
             .map(|inner| SharedVersionGuard { inner })
     }
 
@@ -41,19 +46,25 @@ impl TransactionLock for SharedVersionLock {
         cx: &ReleaseContext<'_>,
     ) {
         assert_eq!(guard.inner.owner(), cx.owner());
-        assert!(guard.inner.is_for(&self.version));
+        assert!(guard.inner.is_for(self.version.as_ref()));
         match disposition {
-            LockDisposition::Aborted => guard.inner.release_abort().unwrap(),
+            LockDisposition::Aborted => guard.inner.release_abort(self.version.as_ref()).unwrap(),
             LockDisposition::Committed {
                 occ_commit_id: Some(commit_id),
             } => {
-                guard.inner.release_commit(commit_id).unwrap();
+                guard
+                    .inner
+                    .release_commit(self.version.as_ref(), commit_id)
+                    .unwrap();
             }
             LockDisposition::Committed {
                 occ_commit_id: None,
             } => panic!("writing contract fixture must receive a commit ID"),
             LockDisposition::Indeterminate { occ_commit_id } => {
-                guard.inner.release_indeterminate(occ_commit_id).unwrap();
+                guard
+                    .inner
+                    .release_indeterminate(self.version.as_ref(), occ_commit_id)
+                    .unwrap();
             }
         }
     }

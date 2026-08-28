@@ -62,6 +62,9 @@ typedef uint64_t mt_feature_set;
 #define MT_FEATURE_SINGLETON_RUNTIME (UINT64_C(1) << 6)
 #define MT_FEATURE_GRACEFUL_SHUTDOWN (UINT64_C(1) << 7)
 #define MT_FEATURE_COPIED_RANGE_SCANS (UINT64_C(1) << 8)
+#define MT_FEATURE_SCOPED_POINT_READS (UINT64_C(1) << 9)
+#define MT_FEATURE_SCOPED_STRIDED_POINT_READS (UINT64_C(1) << 10)
+#define MT_FEATURE_STRIDED_POINT_READS (UINT64_C(1) << 11)
 
 typedef uint32_t mt_byte_order;
 enum {
@@ -92,6 +95,17 @@ typedef struct mt_build_id {
   uint64_t low;
   uint64_t high;
 } mt_build_id;
+
+/*
+ * Generation-tagged capability for one worker-affine, one-tree point-read
+ * scope. Both words are implementation-owned. Callers must initialize a token
+ * only through mt_read_scope_begin and must not modify or reuse it after a
+ * successful mt_read_scope_end.
+ */
+typedef struct mt_read_scope {
+  uintptr_t owner;
+  uint64_t generation;
+} mt_read_scope;
 
 typedef uint32_t mt_publication_disposition;
 enum {
@@ -192,6 +206,8 @@ size_t mt_runtime_config_size(void) MT_NOEXCEPT;
 size_t mt_runtime_config_alignment(void) MT_NOEXCEPT;
 size_t mt_build_id_size(void) MT_NOEXCEPT;
 size_t mt_build_id_alignment(void) MT_NOEXCEPT;
+size_t mt_read_scope_size(void) MT_NOEXCEPT;
+size_t mt_read_scope_alignment(void) MT_NOEXCEPT;
 size_t mt_get_or_insert_result_size(void) MT_NOEXCEPT;
 size_t mt_get_or_insert_result_alignment(void) MT_NOEXCEPT;
 size_t mt_scan_bound_size(void) MT_NOEXCEPT;
@@ -243,9 +259,71 @@ mt_status mt_get(mt_tree *tree, mt_thread *thread, const void *key,
                  size_t key_length, mt_record_id *out) MT_NOEXCEPT;
 
 /*
+ * Looks up key_count fixed-length keys in one operation. Handles, worker
+ * affinity, runtime health, and the common key shape are validated once. For
+ * a nonempty batch, one structural-reader admission and one native RCU region
+ * cover the complete lookup loop and both are released before return. Unlike
+ * mt_read_scope_get_strided, this call creates no persistent scope token and
+ * leaves the worker immediately available for another ordinary operation.
+ *
+ * The first key begins at keys and each later key begins key_stride bytes
+ * after the preceding one; key_stride must be at least key_length. The caller
+ * must provide readable storage through the final key and exactly key_count
+ * writable output elements; the key and output regions must not overlap.
+ * Every output is initialized to MT_RECORD_ID_NONE before handle or key
+ * validation and is reset to MT_RECORD_ID_NONE on failure. For key_count == 0,
+ * keys and out may be null, but handles and the common key shape are still
+ * validated.
+ */
+mt_status mt_get_strided(mt_tree *tree, mt_thread *thread, const void *keys,
+                         size_t key_count, size_t key_length, size_t key_stride,
+                         mt_record_id *out) MT_NOEXCEPT;
+
+/*
+ * Amortizes tree/thread validation, structural-reader admission, and native
+ * RCU protection across multiple point lookups. A worker may own at most one
+ * active scope, and that scope is bound to exactly one tree. Scoped reads are
+ * not a snapshot: append-only directory publication may occur before begin or
+ * after end, while publication on this tree waits for the scope to end.
+ *
+ * While a scope is active, ordinary operations using the same worker fail with
+ * MT_ERR_ACTIVE_GUARDS. In particular, end the scope before mt_get_or_insert,
+ * including after a miss. mt_read_scope_end invalidates token even when the
+ * tree facade was concurrently closed or the runtime became poisoned.
+ */
+mt_status mt_read_scope_begin(mt_tree *tree, mt_thread *thread,
+                              mt_read_scope *token) MT_NOEXCEPT;
+mt_status mt_read_scope_get(const mt_read_scope *token, const void *key,
+                            size_t key_length, mt_record_id *out) MT_NOEXCEPT;
+
+/*
+ * Looks up key_count fixed-length keys in one validated scope boundary. The
+ * first key begins at keys and each later key begins key_stride bytes after
+ * the preceding one; key_stride must be at least key_length. This permits
+ * both tightly packed key arrays and keys embedded at the same offset in a
+ * fixed-size C record. The caller must provide readable storage through the
+ * final key and exactly key_count writable output elements; the key and
+ * output regions must not overlap.
+ *
+ * Token affinity, tree liveness, runtime health, and the common key shape are
+ * checked once per call. Every output is initialized to MT_RECORD_ID_NONE
+ * before native lookup. On success, absence remains MT_RECORD_ID_NONE; on
+ * failure, all outputs are reset to MT_RECORD_ID_NONE. For key_count == 0,
+ * keys and out may be null, but token and the common key shape are still
+ * validated.
+ */
+mt_status mt_read_scope_get_strided(const mt_read_scope *token,
+                                    const void *keys, size_t key_count,
+                                    size_t key_length, size_t key_stride,
+                                    mt_record_id *out) MT_NOEXCEPT;
+mt_status mt_read_scope_end(mt_read_scope *token) MT_NOEXCEPT;
+
+/*
  * Atomically publishes candidate when the key is absent and always reports
  * whether that candidate was inserted, proved unpublished, or may have been
- * published. candidate must be nonzero.
+ * published. candidate must be nonzero. The whole call owns exclusive native
+ * structural access; concurrent point reads and scans drain before it enters
+ * Masstree.
  */
 mt_status mt_get_or_insert(mt_tree *tree, mt_thread *thread, const void *key,
                            size_t key_length, mt_record_id candidate,
@@ -253,8 +331,12 @@ mt_status mt_get_or_insert(mt_tree *tree, mt_thread *thread, const void *key,
 
 /*
  * Copies one bounded ascending or descending chunk into caller storage.
- * The bridge serializes a possible structural insertion against scans and
- * point lookups for this tree; concurrent read-only calls may proceed together.
+ * Point reads and scans may proceed concurrently. Each publishes structural
+ * read activity in a cacheline-private worker slot rather than updating one
+ * shared reader counter. get-or-insert excludes and drains those readers, so a
+ * call never overlaps Masstree's plain structural writes. A single scan chunk
+ * therefore sees stable native structure; insertion may occur between scan
+ * calls.
  * `lower` and `upper` are required pointers; use MT_SCAN_BOUND_ABSENT for an
  * unbounded side. `entries`/`key_arena` may be null exactly when their
  * respective capacities are zero. `out` is required.

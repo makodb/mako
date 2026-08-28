@@ -5,8 +5,9 @@ use std::rc::Rc;
 use sto_core::{
     AcquireContext, AcquireError, CheckError, ExecutionCheckContext, FinishContext,
     FinishDisposition, FinishItem, InstallContext, InstallItem, ItemInitError, LockDisposition,
-    NoPredicate, ObservationOrder, OpacityToken, PredicateContext, PreflightContext, PreflightItem,
-    PrepareError, ReleaseContext, TransactionLock, TransactionalResource, ValidationContext,
+    LockIdentity, NoPredicate, ObservationOrder, OpacityToken, PredicateContext, PreflightContext,
+    PreflightItem, PrepareError, ReleaseContext, TransactionLock, TransactionalResource,
+    ValidationContext,
 };
 
 pub struct Adapter;
@@ -106,7 +107,11 @@ pub struct LocalGuard(pub Rc<()>);
 impl TransactionLock for LocalLock {
     type Guard = LocalGuard;
 
-    fn try_acquire(&self, _cx: &AcquireContext<'_>) -> Result<Self::Guard, AcquireError> {
+    fn try_acquire(
+        &self,
+        _identity: &LockIdentity,
+        _cx: &AcquireContext<'_>,
+    ) -> Result<Self::Guard, AcquireError> {
         Ok(LocalGuard(Rc::new(())))
     }
 

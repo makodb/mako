@@ -25,7 +25,7 @@ use crate::lock::{
     ValidationContext,
 };
 use crate::runtime::{RegisteredResource, Runtime};
-use crate::version::{AtomicVersion, VersionGuard};
+use crate::version::{AtomicVersion, DetachedVersionGuard};
 use crate::{Active, Entry, Transaction};
 
 const CELL_RESOURCE_CLASS_VALUE: u32 = 1;
@@ -54,10 +54,14 @@ impl VersionLock {
 }
 
 impl TransactionLock for VersionLock {
-    type Guard = VersionGuard;
+    type Guard = DetachedVersionGuard;
 
-    fn try_acquire(&self, cx: &AcquireContext<'_>) -> Result<Self::Guard, AcquireError> {
-        self.version.try_acquire(cx.owner())
+    fn try_acquire(
+        &self,
+        identity: &LockIdentity,
+        cx: &AcquireContext<'_>,
+    ) -> Result<Self::Guard, AcquireError> {
+        <AtomicVersion as TransactionLock>::try_acquire(self.version.as_ref(), identity, cx)
     }
 
     fn release(
@@ -66,26 +70,7 @@ impl TransactionLock for VersionLock {
         disposition: LockDisposition,
         cx: &ReleaseContext<'_>,
     ) {
-        if guard.owner() != cx.owner() || !guard.is_for(&self.version) {
-            panic!("sto-core TxnCell invariant: mismatched AtomicVersion guard");
-        }
-
-        let result = match disposition {
-            LockDisposition::Aborted => guard.release_abort().map(|()| None),
-            LockDisposition::Committed {
-                occ_commit_id: Some(commit_id),
-            } => guard.release_commit(commit_id).map(Some),
-            LockDisposition::Committed {
-                occ_commit_id: None,
-            } => panic!("sto-core TxnCell invariant: committed write has no OCC commit ID"),
-            LockDisposition::Indeterminate { occ_commit_id } => {
-                guard.release_indeterminate(occ_commit_id).map(Some)
-            }
-        };
-
-        if let Err(error) = result {
-            panic!("sto-core TxnCell invariant: AtomicVersion release failed: {error}");
-        }
+        <AtomicVersion as TransactionLock>::release(self.version.as_ref(), guard, disposition, cx);
     }
 }
 
@@ -376,10 +361,43 @@ mod tests {
         let clone = cell.clone();
 
         assert_eq!(cell.object_id(), clone.object_id());
+        assert!(cell.resource.is_same_binding(&clone.resource));
+        assert!(std::ptr::eq(
+            cell.resource.adapter(),
+            clone.resource.adapter()
+        ));
         assert_eq!(
             cell.resource.adapter().value.load_full().as_ref(),
             "initial"
         );
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn registered_resource_handle_is_one_arc_wide() {
+        assert_eq!(
+            std::mem::size_of::<RegisteredResource<CellAdapter<u64>>>(),
+            8
+        );
+        assert_eq!(
+            std::mem::size_of::<Option<RegisteredResource<CellAdapter<u64>>>>(),
+            8
+        );
+        assert_eq!(std::mem::size_of::<TxnCell<u64>>(), 8);
+    }
+
+    #[test]
+    fn resource_clones_retain_the_object_lease_until_the_last_handle() {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        let cell = TxnCell::new(&runtime, 1_u64).unwrap();
+        let object_id = cell.object_id();
+        let clone = cell.clone();
+
+        assert!(runtime.has_registered_object(object_id));
+        drop(cell);
+        assert!(runtime.has_registered_object(object_id));
+        drop(clone);
+        assert!(!runtime.has_registered_object(object_id));
     }
 
     #[test]

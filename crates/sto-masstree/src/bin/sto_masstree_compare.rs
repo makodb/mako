@@ -35,7 +35,9 @@ mod benchmark {
     use sto_core::{
         AbortReason, AccessError, CommitOutcome, Runtime, RuntimeConfig, WorkerContext,
     };
-    use sto_masstree::{Table, TableConfig};
+    use sto_masstree::{
+        PointMutation, PointReadBatch, PointSession, RegistryLayout, Table, TableConfig, Value,
+    };
 
     const DEFAULT_THREADS: usize = 1;
     const DEFAULT_KEYSPACE: u64 = 100_000;
@@ -54,9 +56,21 @@ mod benchmark {
     const PHASE_STOP: u8 = 4;
     const PHASE_FAILED: u8 = 5;
 
-    // SplitMix64's Weyl-sequence increment. The same value also separates
-    // each worker's initial stream, matching the paired C++ benchmark.
+    // SplitMix64's Weyl-sequence increment.
     const SPLITMIX_GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
+
+    fn splitmix_scramble(mut value: u64) -> u64 {
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+
+    fn worker_random_state(seed: u64, thread_id: usize) -> u64 {
+        // A direct thread offset by SPLITMIX_GAMMA selects nearby positions in
+        // one stream. Scramble the selector so workers do not reuse shifted
+        // copies of almost every key/write pair.
+        splitmix_scramble(seed.wrapping_add((thread_id as u64 + 1).wrapping_mul(SPLITMIX_GAMMA)))
+    }
 
     #[derive(Clone, Copy, Debug)]
     struct Config {
@@ -140,7 +154,6 @@ mod benchmark {
     #[derive(Clone, Copy)]
     struct Operation {
         key_number: u64,
-        key: [u8; 8],
         write: bool,
     }
 
@@ -174,6 +187,12 @@ mod benchmark {
     enum AttemptOutcome {
         Committed(u64),
         Retry,
+    }
+
+    enum AttemptBody {
+        Ready(u64),
+        Retry,
+        Fatal(String),
     }
 
     pub(super) fn run() -> Result<(), String> {
@@ -224,7 +243,13 @@ mod benchmark {
             TableConfig::new()
                 .with_max_retained_records(config.keyspace)
                 .with_max_retained_key_bytes(retained_key_bytes)
-                .with_max_consumed_record_ids(config.keyspace),
+                .with_max_consumed_record_ids(config.keyspace)
+                // The benchmark preloads its complete bounded keyspace, so
+                // paying the arena's startup/memory cost removes lazy segment
+                // lookup from the timed RecordId resolution path.
+                .with_registry_layout(RegistryLayout::EagerContiguous {
+                    max_bytes: 8 * 1024 * 1024,
+                }),
         )
         .map_err(|error| format!("create STO Masstree table: {error:?}"))?;
 
@@ -460,13 +485,13 @@ mod benchmark {
         let native_worker = native_worker?;
         let mut sto_worker = sto_worker?;
 
-        let initial_state = config
-            .seed
-            .wrapping_add((thread_id as u64 + 1).wrapping_mul(SPLITMIX_GAMMA));
+        let initial_state = worker_random_state(config.seed, thread_id);
         let mut random = SplitMix64::new(initial_state);
         let mut previous_phase = PHASE_WAIT;
         let mut reported_quiescence = false;
         let mut operations = Vec::with_capacity(config.ops_per_txn);
+        let mut keys = Vec::with_capacity(config.ops_per_txn);
+        let mut read_batch = PointReadBatch::with_capacity(config.ops_per_txn);
         let mut stats = WorkerStats::default();
 
         loop {
@@ -498,6 +523,7 @@ mod benchmark {
             reported_quiescence = false;
 
             operations.clear();
+            keys.clear();
             for _ in 0..config.ops_per_txn {
                 let mut key = random.next_u64() % config.keyspace;
                 while operations
@@ -509,9 +535,9 @@ mod benchmark {
                 let write = random.next_u64() % 100 < u64::from(config.write_percent);
                 operations.push(Operation {
                     key_number: key,
-                    key: key.to_be_bytes(),
                     write,
                 });
+                keys.push(key.to_be_bytes());
             }
 
             let mut logical_attempts = 0_u64;
@@ -521,7 +547,14 @@ mod benchmark {
                     break None;
                 }
                 logical_attempts = logical_attempts.wrapping_add(1);
-                match attempt_transaction(table, &native_worker, &mut sto_worker, &operations)? {
+                match attempt_transaction(
+                    table,
+                    &native_worker,
+                    &mut sto_worker,
+                    &operations,
+                    &keys,
+                    &mut read_batch,
+                )? {
                     AttemptOutcome::Committed(checksum) => break Some(checksum),
                     AttemptOutcome::Retry => {
                         logical_aborts = logical_aborts.wrapping_add(1);
@@ -554,36 +587,116 @@ mod benchmark {
         native_worker: &Worker,
         sto_worker: &mut WorkerContext,
         operations: &[Operation],
+        keys: &[[u8; 8]],
+        read_batch: &mut PointReadBatch,
     ) -> Result<AttemptOutcome, String> {
         let mut transaction = sto_worker
             .begin()
             .map_err(|error| format!("begin timed transaction: {error:?}"))?;
-        let mut checksum = 0_u64;
+        let body = {
+            let mut session = table.point_session(&mut transaction, native_worker);
+            let body = execute_operations(&mut session, operations, keys, read_batch);
+            match session.close() {
+                Ok(()) => body,
+                Err(AccessError::Conflict(_)) if !matches!(&body, AttemptBody::Fatal(_)) => {
+                    AttemptBody::Retry
+                }
+                Err(error) => {
+                    AttemptBody::Fatal(format!("close timed point session failed: {error:?}"))
+                }
+            }
+        };
 
-        for operation in operations {
-            let value = match table.get(&mut transaction, native_worker, &operation.key) {
-                Ok(Some(value)) => value,
-                Ok(None) => {
-                    transaction.abort();
-                    return Err(format!(
+        let checksum = match body {
+            AttemptBody::Ready(checksum) => checksum,
+            AttemptBody::Retry => {
+                transaction.abort();
+                return Ok(AttemptOutcome::Retry);
+            }
+            AttemptBody::Fatal(error) => {
+                transaction.abort();
+                return Err(error);
+            }
+        };
+
+        match transaction
+            .commit()
+            .map_err(|error| format!("timed commit failed: {error:?}"))?
+        {
+            CommitOutcome::Committed(_) => Ok(AttemptOutcome::Committed(checksum)),
+            CommitOutcome::Aborted(AbortReason::Conflict(_)) => Ok(AttemptOutcome::Retry),
+            CommitOutcome::Aborted(reason) => Err(format!("timed transaction aborted: {reason:?}")),
+        }
+    }
+
+    fn execute_operations(
+        session: &mut PointSession<'_, '_>,
+        operations: &[Operation],
+        keys: &[[u8; 8]],
+        read_batch: &mut PointReadBatch,
+    ) -> AttemptBody {
+        if keys.len() != operations.len() {
+            return AttemptBody::Fatal("timed key batch has the wrong operation count".into());
+        }
+
+        if operations.iter().all(|operation| !operation.write) {
+            let mut checksum = 0_u64;
+            let mut fatal = None;
+            let visited = match session.visit_fixed(keys, read_batch, |index, snapshot| {
+                if fatal.is_some() {
+                    return;
+                }
+                let operation = &operations[index];
+                let Some(value) = snapshot else {
+                    fatal = Some(format!(
                         "prepopulated key {} disappeared during timed run",
                         operation.key_number
                     ));
-                }
-                Err(AccessError::Conflict(_)) => {
-                    transaction.abort();
-                    return Ok(AttemptOutcome::Retry);
-                }
+                    return;
+                };
+                let value_bytes: [u8; 8] = match value.as_ref().try_into() {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        fatal = Some("timed read returned a non-u64 value".into());
+                        return;
+                    }
+                };
+                checksum = checksum.wrapping_add(u64::from_le_bytes(value_bytes));
+            }) {
+                Ok(visited) => visited,
+                Err(AccessError::Conflict(_)) => return AttemptBody::Retry,
                 Err(error) => {
-                    transaction.abort();
-                    return Err(format!("timed read failed: {error:?}"));
+                    return AttemptBody::Fatal(format!("timed batch visit failed: {error:?}"));
                 }
+            };
+            if let Some(error) = fatal {
+                return AttemptBody::Fatal(error);
+            }
+            if visited != operations.len() {
+                return AttemptBody::Fatal("timed batch visited the wrong item count".into());
+            }
+            return AttemptBody::Ready(checksum);
+        }
+
+        let mut checksum = 0_u64;
+        let mut fatal = None;
+        let visited = match session.modify_fixed_visit(keys, read_batch, |index, snapshot| {
+            if fatal.is_some() {
+                return PointMutation::Keep;
+            }
+            let operation = &operations[index];
+            let Some(value) = snapshot else {
+                fatal = Some(format!(
+                    "prepopulated key {} disappeared during timed run",
+                    operation.key_number
+                ));
+                return PointMutation::Keep;
             };
             let value_bytes: [u8; 8] = match value.as_ref().try_into() {
                 Ok(bytes) => bytes,
                 Err(_) => {
-                    transaction.abort();
-                    return Err("timed read returned a non-u64 value".into());
+                    fatal = Some("timed read returned a non-u64 value".into());
+                    return PointMutation::Keep;
                 }
             };
             let current = u64::from_le_bytes(value_bytes);
@@ -594,39 +707,23 @@ mod benchmark {
 
             if operation.write {
                 let replacement = current.wrapping_add(1).to_le_bytes();
-                match table.put(
-                    &mut transaction,
-                    native_worker,
-                    &operation.key,
-                    &replacement,
-                ) {
-                    Ok(Some(_)) => {}
-                    Ok(None) => {
-                        transaction.abort();
-                        return Err(format!(
-                            "prepopulated key {} disappeared before write",
-                            operation.key_number
-                        ));
-                    }
-                    Err(AccessError::Conflict(_)) => {
-                        transaction.abort();
-                        return Ok(AttemptOutcome::Retry);
-                    }
-                    Err(error) => {
-                        transaction.abort();
-                        return Err(format!("timed write failed: {error:?}"));
-                    }
-                }
+                PointMutation::Put(Value::from(replacement.as_slice()))
+            } else {
+                PointMutation::Keep
             }
+        }) {
+            Ok(visited) => visited,
+            Err(AccessError::Conflict(_)) => return AttemptBody::Retry,
+            Err(error) => {
+                return AttemptBody::Fatal(format!("timed fused batch failed: {error:?}"));
+            }
+        };
+        if let Some(error) = fatal {
+            return AttemptBody::Fatal(error);
         }
-
-        match transaction
-            .commit()
-            .map_err(|error| format!("timed commit failed: {error:?}"))?
-        {
-            CommitOutcome::Committed(_) => Ok(AttemptOutcome::Committed(checksum)),
-            CommitOutcome::Aborted(AbortReason::Conflict(_)) => Ok(AttemptOutcome::Retry),
-            CommitOutcome::Aborted(reason) => Err(format!("timed transaction aborted: {reason:?}")),
+        if visited != operations.len() {
+            return AttemptBody::Fatal("timed fused batch visited the wrong item count".into());
         }
+        AttemptBody::Ready(checksum)
     }
 }

@@ -50,6 +50,22 @@ impl From<RecordId> for u64 {
     }
 }
 
+/// One result slot produced by a fixed-key point-read batch.
+///
+/// The zero representation denotes an absent key. Native record IDs are
+/// nonzero, so callers can inspect a reusable result buffer without a second
+/// allocation or sentinel side table.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct PointReadResult(u64);
+
+impl PointReadResult {
+    /// Returns the immutable record ID, or `None` when the key was absent.
+    pub const fn record_id(self) -> Option<RecordId> {
+        RecordId::new(self.0)
+    }
+}
+
 /// Stable classification of every native status code.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NativeStatus {
@@ -318,15 +334,19 @@ impl fmt::Debug for Worker {
 }
 
 impl Worker {
+    #[inline]
     pub fn quiesce(&self) -> Result<(), Error> {
         self.ensure(&self.runtime)?;
         native::thread_quiesce(self.raw)
     }
 
+    #[inline]
     fn ensure(&self, runtime: &Arc<RuntimeInner>) -> Result<(), Error> {
-        if thread::current().id() != self.owner {
-            return Err(Error::WrongThread);
-        }
+        // `Worker` is neither `Send` nor `Sync`, so safe Rust cannot move this
+        // capability away from its attaching thread. Keep the assertion in
+        // diagnostic builds without paying for a TLS/thread-ID lookup on
+        // every point operation in release builds.
+        debug_assert_eq!(thread::current().id(), self.owner);
         if !Arc::ptr_eq(&self.runtime, runtime) {
             return Err(Error::WrongRuntime);
         }
@@ -368,9 +388,69 @@ impl fmt::Debug for Tree {
 }
 
 impl Tree {
+    #[inline]
     pub fn get(&self, worker: &Worker, key: &[u8]) -> Result<Option<RecordId>, Error> {
         self.check(worker, key)?;
         native::get(self.inner.raw, worker.raw, key).map(RecordId::new)
+    }
+
+    /// Looks up a contiguous array of equally sized binary keys in one native
+    /// operation.
+    ///
+    /// Handles, worker affinity, runtime health, and the common key shape are
+    /// validated once. Native structural-read and RCU guards cover the whole
+    /// nonempty batch and end before this method returns. `results` is resized
+    /// and reused; after success it contains exactly one result per input key.
+    /// An empty key type (`KEY_LENGTH == 0`) repeatedly addresses the
+    /// directory's empty binary key.
+    pub fn get_fixed<const KEY_LENGTH: usize>(
+        &self,
+        worker: &Worker,
+        keys: &[[u8; KEY_LENGTH]],
+        results: &mut Vec<PointReadResult>,
+    ) -> Result<(), Error> {
+        if let Err(error) = worker.ensure(&self.inner.runtime) {
+            results.clear();
+            return Err(error);
+        }
+        if KEY_LENGTH > self.inner.runtime.max_key_length {
+            results.clear();
+            return Err(Error::KeyTooLarge {
+                length: KEY_LENGTH,
+                maximum: self.inner.runtime.max_key_length,
+            });
+        }
+        let additional = keys.len().saturating_sub(results.len());
+        if results.try_reserve_exact(additional).is_err() {
+            results.clear();
+            return Err(Error::AllocationLimit {
+                requested: keys.len(),
+            });
+        }
+        results.resize(keys.len(), PointReadResult::default());
+        native::get_strided(self.inner.raw, worker.raw, keys, results)
+    }
+
+    /// Begins one worker-affine point-read scope for this tree.
+    ///
+    /// The scope amortizes native handle validation, structural-reader
+    /// admission, and RCU protection across its [`ReadScope::get`] calls. It
+    /// is not a snapshot. Drop or explicitly close it before calling
+    /// [`Self::get_or_insert`], [`Self::scan_chunk`], worker quiescence, or an
+    /// operation on another tree with the same worker. A miss does not close
+    /// the scope automatically.
+    pub fn read_scope<'tree, 'worker>(
+        &'tree self,
+        worker: &'worker Worker,
+    ) -> Result<ReadScope<'tree, 'worker>, Error> {
+        worker.ensure(&self.inner.runtime)?;
+        let raw = native::read_scope_begin(self.inner.raw, worker.raw)?;
+        Ok(ReadScope {
+            tree: self,
+            _worker: worker,
+            raw: Some(raw),
+            not_send_sync: PhantomData,
+        })
     }
 
     pub fn get_or_insert(
@@ -417,6 +497,7 @@ impl Tree {
         Ok(chunk)
     }
 
+    #[inline]
     fn check(&self, worker: &Worker, key: &[u8]) -> Result<(), Error> {
         worker.ensure(&self.inner.runtime)?;
         if key.len() > self.inner.runtime.max_key_length {
@@ -439,6 +520,100 @@ impl Tree {
             });
         }
         Ok(())
+    }
+}
+
+/// A bounded native structural-read and RCU scope for one tree and worker.
+///
+/// The borrowed [`Worker`] makes this type thread-affine; it cannot be sent or
+/// shared across threads. Native cleanup runs during ordinary return and Rust
+/// unwinding through this type's `Drop` implementation.
+pub struct ReadScope<'tree, 'worker> {
+    tree: &'tree Tree,
+    _worker: &'worker Worker,
+    raw: Option<native::ReadScopeHandle>,
+    not_send_sync: PhantomData<Rc<()>>,
+}
+
+impl fmt::Debug for ReadScope<'_, '_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ReadScope")
+            .field("active", &self.raw.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ReadScope<'_, '_> {
+    /// Looks up one binary key while retaining this scope's native guards.
+    #[inline]
+    pub fn get(&mut self, key: &[u8]) -> Result<Option<RecordId>, Error> {
+        if key.len() > self.tree.inner.runtime.max_key_length {
+            return Err(Error::KeyTooLarge {
+                length: key.len(),
+                maximum: self.tree.inner.runtime.max_key_length,
+            });
+        }
+        let raw = self
+            .raw
+            .as_ref()
+            .expect("a publicly reachable read scope is active");
+        native::read_scope_get(raw, key).map(RecordId::new)
+    }
+
+    /// Looks up a contiguous array of equally sized binary keys in one native
+    /// boundary crossing.
+    ///
+    /// Token affinity, tree/runtime health, and the common key length are
+    /// validated once for the batch. `results` is resized and reused; after a
+    /// successful call it contains exactly one entry per input key. An empty
+    /// key type (`KEY_LENGTH == 0`) is valid and repeatedly addresses the
+    /// directory's empty binary key.
+    pub fn get_fixed<const KEY_LENGTH: usize>(
+        &mut self,
+        keys: &[[u8; KEY_LENGTH]],
+        results: &mut Vec<PointReadResult>,
+    ) -> Result<(), Error> {
+        if KEY_LENGTH > self.tree.inner.runtime.max_key_length {
+            results.clear();
+            return Err(Error::KeyTooLarge {
+                length: KEY_LENGTH,
+                maximum: self.tree.inner.runtime.max_key_length,
+            });
+        }
+        let additional = keys.len().saturating_sub(results.len());
+        if results.try_reserve_exact(additional).is_err() {
+            results.clear();
+            return Err(Error::AllocationLimit {
+                requested: keys.len(),
+            });
+        }
+        results.resize(keys.len(), PointReadResult::default());
+        let raw = self
+            .raw
+            .as_ref()
+            .expect("a publicly reachable read scope is active");
+        native::read_scope_get_strided(raw, keys, results)
+    }
+
+    /// Ends the native scope and reports any boundary invariant failure.
+    pub fn close(mut self) -> Result<(), Error> {
+        self.end()
+    }
+
+    fn end(&mut self) -> Result<(), Error> {
+        let Some(raw) = self.raw.as_mut() else {
+            return Ok(());
+        };
+        native::read_scope_end(raw)?;
+        self.raw = None;
+        Ok(())
+    }
+}
+
+impl Drop for ReadScope<'_, '_> {
+    fn drop(&mut self) {
+        let _ = self.end();
     }
 }
 
@@ -657,6 +832,23 @@ mod tests {
     fn record_ids_reject_the_reserved_zero() {
         assert_eq!(RecordId::new(0), None);
         assert_eq!(RecordId::new(u64::MAX).unwrap().get(), u64::MAX);
+    }
+
+    #[test]
+    fn point_read_result_is_one_native_record_id_slot() {
+        assert_eq!(
+            std::mem::size_of::<PointReadResult>(),
+            std::mem::size_of::<u64>()
+        );
+        assert_eq!(
+            std::mem::align_of::<PointReadResult>(),
+            std::mem::align_of::<u64>()
+        );
+        assert_eq!(PointReadResult::default().record_id(), None);
+        assert_eq!(
+            PointReadResult(u64::MAX).record_id().unwrap().get(),
+            u64::MAX
+        );
     }
 
     #[test]

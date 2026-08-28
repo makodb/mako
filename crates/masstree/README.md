@@ -22,3 +22,11 @@ platform/build dependent; CMake remains authoritative.
 
 Without `MAKO_MTREE_NATIVE_INTEGRATION=1`, even `cargo test --all-features`
 does not require native symbols.
+
+For fixed-width point-read batches, `Tree::get_fixed` is the default one-shot
+API: it validates the tree and worker once, keeps one native structural/RCU
+region around the lookup loop, and releases every native guard before it
+returns. Its result `Vec` is resized in place and can be reused across calls.
+Use `Tree::read_scope` and `ReadScope::get_fixed` only when several separate
+calls must deliberately share one longer native read scope; ordinary worker
+operations remain blocked until that scope is closed or dropped.

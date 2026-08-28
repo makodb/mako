@@ -47,6 +47,9 @@ pub const FEATURE_RUNTIME_HEALTH: FeatureSet = 1 << 5;
 pub const FEATURE_SINGLETON_RUNTIME: FeatureSet = 1 << 6;
 pub const FEATURE_GRACEFUL_SHUTDOWN: FeatureSet = 1 << 7;
 pub const FEATURE_COPIED_RANGE_SCANS: FeatureSet = 1 << 8;
+pub const FEATURE_SCOPED_POINT_READS: FeatureSet = 1 << 9;
+pub const FEATURE_SCOPED_STRIDED_POINT_READS: FeatureSet = 1 << 10;
+pub const FEATURE_STRIDED_POINT_READS: FeatureSet = 1 << 11;
 
 pub type ByteOrder = u32;
 pub const BYTE_ORDER_UNKNOWN: ByteOrder = 0;
@@ -94,6 +97,13 @@ pub struct RuntimeConfig {
 pub struct BuildId {
     pub low: u64,
     pub high: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReadScope {
+    pub owner: usize,
+    pub generation: u64,
 }
 
 #[repr(C)]
@@ -161,13 +171,17 @@ pub const REQUIRED_V1_FEATURES: FeatureSet = FEATURE_POINT_GET
     | FEATURE_INTEGRAL_RECORD_IDS
     | FEATURE_RUNTIME_HEALTH
     | FEATURE_SINGLETON_RUNTIME
-    | FEATURE_COPIED_RANGE_SCANS;
+    | FEATURE_COPIED_RANGE_SCANS
+    | FEATURE_SCOPED_POINT_READS
+    | FEATURE_SCOPED_STRIDED_POINT_READS
+    | FEATURE_STRIDED_POINT_READS;
 
 const EXPORTED_SYMBOLS: &str = concat!(
     "mt_abi_version;mt_feature_bits;mt_endianness;mt_pointer_width;",
     "mt_max_key_length;mt_max_threads;mt_record_id_limit;",
     "mt_runtime_config_size;mt_runtime_config_alignment;mt_build_id_size;",
-    "mt_build_id_alignment;mt_get_or_insert_result_size;",
+    "mt_build_id_alignment;mt_read_scope_size;mt_read_scope_alignment;",
+    "mt_get_or_insert_result_size;",
     "mt_get_or_insert_result_alignment;mt_scan_bound_size;",
     "mt_scan_bound_alignment;mt_scan_entry_size;mt_scan_entry_alignment;",
     "mt_scan_result_size;mt_scan_result_alignment;",
@@ -175,7 +189,8 @@ const EXPORTED_SYMBOLS: &str = concat!(
     "mt_get_build_fingerprint;mt_runtime_config_init;mt_runtime_acquire;",
     "mt_runtime_health;mt_runtime_max_key_length;mt_runtime_max_threads;",
     "mt_runtime_shutdown;mt_thread_attach;mt_thread_quiesce;mt_tree_create;",
-    "mt_tree_release;mt_get;mt_get_or_insert;mt_scan"
+    "mt_tree_release;mt_get;mt_get_strided;mt_read_scope_begin;mt_read_scope_get;",
+    "mt_read_scope_get_strided;mt_read_scope_end;mt_get_or_insert;mt_scan"
 );
 
 const fn fnv1a(bytes: &[u8]) -> u64 {
@@ -190,7 +205,7 @@ const fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 pub const EXPORTED_SYMBOLS_FINGERPRINT: u64 = fnv1a(EXPORTED_SYMBOLS.as_bytes());
-pub const EXPORTED_SYMBOL_COUNT: usize = 34;
+pub const EXPORTED_SYMBOL_COUNT: usize = 41;
 
 unsafe extern "C" {
     pub fn mt_abi_version() -> u32;
@@ -204,6 +219,8 @@ unsafe extern "C" {
     pub fn mt_runtime_config_alignment() -> usize;
     pub fn mt_build_id_size() -> usize;
     pub fn mt_build_id_alignment() -> usize;
+    pub fn mt_read_scope_size() -> usize;
+    pub fn mt_read_scope_alignment() -> usize;
     pub fn mt_get_or_insert_result_size() -> usize;
     pub fn mt_get_or_insert_result_alignment() -> usize;
     pub fn mt_scan_bound_size() -> usize;
@@ -235,6 +252,35 @@ unsafe extern "C" {
         key_length: usize,
         out: *mut RecordId,
     ) -> Status;
+    pub fn mt_get_strided(
+        tree: *mut Tree,
+        thread: *mut Thread,
+        keys: *const c_void,
+        key_count: usize,
+        key_length: usize,
+        key_stride: usize,
+        out: *mut RecordId,
+    ) -> Status;
+    pub fn mt_read_scope_begin(
+        tree: *mut Tree,
+        thread: *mut Thread,
+        token: *mut ReadScope,
+    ) -> Status;
+    pub fn mt_read_scope_get(
+        token: *const ReadScope,
+        key: *const c_void,
+        key_length: usize,
+        out: *mut RecordId,
+    ) -> Status;
+    pub fn mt_read_scope_get_strided(
+        token: *const ReadScope,
+        keys: *const c_void,
+        key_count: usize,
+        key_length: usize,
+        key_stride: usize,
+        out: *mut RecordId,
+    ) -> Status;
+    pub fn mt_read_scope_end(token: *mut ReadScope) -> Status;
     pub fn mt_get_or_insert(
         tree: *mut Tree,
         thread: *mut Thread,
@@ -267,6 +313,8 @@ mod tests {
         assert_eq!(core::mem::align_of::<RuntimeConfig>(), 8);
         assert_eq!(core::mem::size_of::<BuildId>(), 16);
         assert_eq!(core::mem::align_of::<BuildId>(), 8);
+        assert_eq!(core::mem::size_of::<ReadScope>(), 16);
+        assert_eq!(core::mem::align_of::<ReadScope>(), 8);
         assert_eq!(core::mem::size_of::<GetOrInsertResult>(), 16);
         assert_eq!(core::mem::align_of::<GetOrInsertResult>(), 8);
         assert_eq!(core::mem::size_of::<ScanBound>(), 24);
@@ -288,7 +336,10 @@ mod tests {
         assert_eq!(FEATURE_SINGLETON_RUNTIME, 1 << 6);
         assert_eq!(FEATURE_GRACEFUL_SHUTDOWN, 1 << 7);
         assert_eq!(FEATURE_COPIED_RANGE_SCANS, 1 << 8);
-        assert_eq!(REQUIRED_V1_FEATURES, 0x17f);
+        assert_eq!(FEATURE_SCOPED_POINT_READS, 1 << 9);
+        assert_eq!(FEATURE_SCOPED_STRIDED_POINT_READS, 1 << 10);
+        assert_eq!(FEATURE_STRIDED_POINT_READS, 1 << 11);
+        assert_eq!(REQUIRED_V1_FEATURES, 0xf7f);
         assert_eq!(REQUIRED_V1_FEATURES & FEATURE_GRACEFUL_SHUTDOWN, 0);
     }
 
@@ -364,9 +415,9 @@ mod tests {
 
     #[test]
     fn complete_exported_symbol_manifest_matches_the_finalized_header() {
-        assert_eq!(EXPORTED_SYMBOL_COUNT, 34);
+        assert_eq!(EXPORTED_SYMBOL_COUNT, 41);
         assert_eq!(EXPORTED_SYMBOLS.split(';').count(), EXPORTED_SYMBOL_COUNT);
-        assert_eq!(EXPORTED_SYMBOLS_FINGERPRINT, 0x3103_0247_9698_ded0);
+        assert_eq!(EXPORTED_SYMBOLS_FINGERPRINT, 0xdb5b_ed9b_8f14_90e3);
     }
 
     #[test]

@@ -164,10 +164,7 @@ impl CounterAdapter {
     ) -> Result<(), CheckError> {
         let valid = if let Some(lock_use) = prepared.lock_use.as_ref() {
             let guard = cx.guard(lock_use)?;
-            if !guard.is_for(&self.version)
-                || guard.owner() != cx.owner()
-                || guard.before() != observation.version
-            {
+            if !guard.is_for(&self.version) || guard.owner() != cx.owner() {
                 return Err(AdapterFault::new(
                     AdapterPhase::Validation,
                     AdapterFaultKind::LockIdentityMismatch,
@@ -326,6 +323,7 @@ mod tests {
     use crate::error::{AbortReason, CommitOutcome};
     use crate::runtime::RuntimeConfig;
     use crate::TxnCell;
+    use std::thread;
 
     fn assert_committed(outcome: CommitOutcome) {
         assert!(matches!(outcome, CommitOutcome::Committed(_)));
@@ -402,5 +400,32 @@ mod tests {
         assert_eq!(counter.get(&mut transaction).unwrap(), 4);
         assert_eq!(cell.get(&mut transaction).unwrap(), "after");
         assert_committed(transaction.commit().unwrap());
+    }
+
+    #[test]
+    fn stale_read_then_increment_is_a_retryable_conflict_not_a_runtime_fault() {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        let mut stale_worker = runtime.attach().unwrap();
+        let counter = TxnCounter::new(&runtime, 5).unwrap();
+        let mut stale = stale_worker.begin().unwrap();
+        assert_eq!(counter.get(&mut stale).unwrap(), 5);
+        counter.increment(&mut stale, 2).unwrap();
+
+        let writer_runtime = Arc::clone(&runtime);
+        let writer_counter = counter.clone();
+        thread::spawn(move || {
+            let mut worker = writer_runtime.attach().unwrap();
+            let mut transaction = worker.begin().unwrap();
+            writer_counter.increment(&mut transaction, 1).unwrap();
+            assert_committed(transaction.commit().unwrap());
+        })
+        .join()
+        .unwrap();
+
+        assert!(matches!(
+            stale.commit().unwrap(),
+            CommitOutcome::Aborted(AbortReason::Conflict(Conflict::ReadValidation))
+        ));
+        assert_eq!(runtime.health(), crate::RuntimeHealth::Healthy);
     }
 }
