@@ -1,5 +1,12 @@
 # RRR/RPC Memory Safety Roadmap with RustyCpp
 
+> **Historical snapshot.** This roadmap predates the canonical-Rust Goal 0
+> ownership model and is not the current status or execution order. See
+> `docs/dev/goal0_completion_plan.md` and `src/rrr/RUST_CANARY.md` for the live
+> plan. In particular, `rrr.basetypes` is now owned by
+> `src/rrr/src/basetypes.rs`; the `basetypes.hpp/cpp` actions below are
+> superseded.
+
 ## Current Status
 ✅ **Phase 1 Complete**: RustyCpp infrastructure is already integrated in CMake
 - `enable_borrow_checking()` is configured

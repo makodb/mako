@@ -51,10 +51,27 @@ class Coordinator {
   slotid_t slot_id_ = 0;
   ballot_t curr_ballot_ = 1;
 
-  std::shared_ptr<SingleRPCEvent> rpc_event;
-	std::vector<shared_ptr<QuorumEvent>> quorum_events_;
-  std::shared_ptr<QuorumEvent> sp_quorum_event;
-  std::shared_ptr<IntEvent> sp_int_event;
+	std::vector<rusty::Arc<QuorumEvent>> quorum_events_;
+  // Currently unused; nullable,
+  // was a default-null shared_ptr — Option<Arc> keeps the empty state without
+  // eagerly constructing a placeholder QuorumEvent.
+  rusty::Option<rusty::Arc<QuorumEvent>> sp_quorum_event;
+  // Assigned from BroadcastDispatch() (which returns Arc<IntEvent>) before
+  // every use in classic/coordinator.cc. Option<Arc> keeps the empty state
+  // (mako-dev parity: this was a default-NULL shared_ptr<IntEvent>) instead of
+  // eagerly creating a throwaway event. The eager
+  // `{create_sp_int_event(1)}` default initializer this replaces
+  // was a real bug, not just waste: coordinators are constructed on ARBITRARY
+  // submitter threads (PaxosWorker::_Submit), including mako worker threads
+  // running their thread_local destructors (~StringAllocator flushes the log
+  // tail via add_log_to_nc at thread exit) — at which point the submitting
+  // thread's thread_local Reactor is already destroyed, and create_sp_event
+  // wrote into its freed event queue (ASan-verified heap-use-after-free; the
+  // intermittent shard1Replication leader segfaults / empty-BulkPaxosCmd
+  // broadcasts in CI). Construction must not touch the calling thread's
+  // reactor; the event is created on the thread that actually runs the
+  // dispatch (BroadcastDispatch).
+  rusty::Option<rusty::Arc<IntEvent>> sp_int_event{rusty::None};
   int benchmark_;
   // Shared client status for statistics tracking
   rusty::Option<rusty::Arc<ClientStatus>> client_status_;
@@ -67,8 +84,10 @@ class Coordinator {
   // written or read in production paths.
 	bool slow_ = false;
   bool retry_wait_;
-  shared_ptr<IntEvent> sp_ev_commit_{};
-  shared_ptr<IntEvent> sp_ev_done_{};
+  // Nullable: client_worker.cc creates these lazily (rusty::Some(...)) and
+  // resets them to rusty::None after each transaction, so they must be Option.
+  rusty::Option<rusty::Arc<IntEvent>> sp_ev_commit_{};
+  rusty::Option<rusty::Arc<IntEvent>> sp_ev_done_{};
 
   std::atomic<uint64_t> next_pie_id_;
   std::atomic<uint64_t> next_txn_id_;
@@ -78,9 +97,7 @@ class Coordinator {
   // — only assignment was `recorder_ = NULL;` in the constructor;
   // no surviving `recorder_ = new Recorder(...)` call site, so the
   // field was always nullptr.  The `if (recorder_) delete recorder_;`
-  // destructor cleanup was dead-after-null-check-only.  The
-  // `JanusCoordinator::recorder_` shadow declaration is also removed
-  // in this phase.
+  // destructor cleanup was dead-after-null-check-only.
   CmdData *cmd_{nullptr};
   phase_t phase_ = 0;
   map<innid_t, bool> dispatch_acks_ = {};
@@ -170,11 +187,11 @@ class Coordinator {
     }
 
     void output() {
-      Log::info("SERV_TCH: %lu, TXN_CNT: %lu, MEAN_SERV_TCH_PER_TXN: %lf",
+      Log_info("SERV_TCH: {}, TXN_CNT: {}, MEAN_SERV_TCH_PER_TXN: {:f}",
                 n_serv_tch, n_txn, ((double)n_serv_tch) / n_txn);
 
       for (auto& it : piece_cnt) {
-        Log::info("\tPIECE: %d, PIECE_CNT: %lu, MEAN_PIECE_PER_TXN: %lf",
+        Log_info("\tPIECE: {}, PIECE_CNT: {}, MEAN_PIECE_PER_TXN: {:f}",
                   it.first, it.second, ((double)it.second) / n_txn);
       }
     }

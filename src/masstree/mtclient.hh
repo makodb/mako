@@ -33,7 +33,7 @@
 #include <netinet/tcp.h>
 #include <string>
 #include <queue>
-#include <vector>
+#include <rusty/vec.hpp>
 
 // @unsafe - network client owns raw sockets and byte buffers without RustyCpp tracking
 class KVConn {
@@ -100,7 +100,7 @@ class KVConn {
         j_[3] = col;
         send();
     }
-    void sendget(Str key, const std::vector<unsigned>& f, unsigned seq) {
+    void sendget(Str key, const rusty::Vec<unsigned>& f, unsigned seq) {
         j_.resize(4);
         j_[0] = seq;
         j_[1] = Cmd_Get;
@@ -142,7 +142,7 @@ class KVConn {
         j_[3] = numpairs;
         send();
     }
-    void sendscan(Str firstkey, const std::vector<unsigned>& f,
+    void sendscan(Str firstkey, const rusty::Vec<unsigned>& f,
                   int numpairs, unsigned seq) {
         j_.resize(5);
         j_[0] = seq;
@@ -193,7 +193,7 @@ class KVConn {
     char* inbuf_;
     int inbufpos_;
     int inbuflen_;
-    std::vector<char*> oldinbuf_;
+    rusty::Vec<char*> oldinbuf_;
     int infd_;
 
     struct kvout *out_;

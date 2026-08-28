@@ -33,34 +33,64 @@ struct Str : public String_base<Str> {
     int len;
 
     Str()
-        : s(0), len(0) {
+        : Str(empty()) {
     }
     template <typename T>
     Str(const String_base<T>& x)
-        : s(x.data()), len(x.length()) {
+        : Str(from_string_base(x)) {
     }
     Str(const char* s_)
-        : s(s_), len(strlen(s_)) {
+        : Str(from_cstring(s_)) {
     }
     Str(const char* s_, int len_)
         : s(s_), len(len_) {
     }
     Str(const unsigned char* s_, int len_)
-        : s(reinterpret_cast<const char*>(s_)), len(len_) {
+        : Str(from_bytes(s_, len_)) {
     }
     Str(const char *first, const char *last)
-        : s(first), len(last - first) {
-        precondition(first <= last);
+        : Str(from_range(first, last)) {
     }
     Str(const unsigned char *first, const unsigned char *last)
-        : s(reinterpret_cast<const char*>(first)), len(last - first) {
-        precondition(first <= last);
+        : Str(from_byte_range(first, last)) {
     }
     Str(const std::string& str)
-        : s(str.data()), len(str.length()) {
+        : Str(from_std_string(str)) {
     }
     Str(const uninitialized_type &unused) {
         (void) unused;
+    }
+
+    static Str empty() {
+        return Str(static_cast<const char*>(0), 0);
+    }
+    template <typename T>
+    static Str from_string_base(const String_base<T>& x) {
+        return from_chars(x.data(), x.length());
+    }
+    static Str from_cstring(const char* s_) {
+        return from_chars(s_, strlen(s_));
+    }
+    static Str from_chars(const char* s_, int len_) {
+        return Str(s_, len_);
+    }
+    static Str from_bytes(const unsigned char* s_, int len_) {
+        return from_chars(reinterpret_cast<const char*>(s_), len_);
+    }
+    static Str from_range(const char *first, const char *last) {
+        precondition(first <= last);
+        return from_chars(first, last - first);
+    }
+    static Str from_byte_range(const unsigned char *first, const unsigned char *last) {
+        precondition(first <= last);
+        return from_chars(reinterpret_cast<const char*>(first), last - first);
+    }
+    static Str from_std_string(const std::string& str) {
+        return from_chars(str.data(), str.length());
+    }
+    static Str from_uninitialized(const uninitialized_type &unused) {
+        (void) unused;
+        return Str(uninitialized_type());
     }
 
     static const Str maxkey;
@@ -96,28 +126,28 @@ struct Str : public String_base<Str> {
     }
 
     Str prefix(int lenx) const {
-        return Str(s, lenx < len ? lenx : len);
+        return Str::from_chars(s, lenx < len ? lenx : len);
     }
     Str substring(const char *first, const char *last) const {
         if (first <= last && first >= s && last <= s + len)
-            return Str(first, last);
+            return Str::from_range(first, last);
         else
-            return Str();
+            return Str::empty();
     }
     Str substring(const unsigned char *first, const unsigned char *last) const {
         const unsigned char *u = reinterpret_cast<const unsigned char*>(s);
         if (first <= last && first >= u && last <= u + len)
-            return Str(first, last);
+            return Str::from_byte_range(first, last);
         else
-            return Str();
+            return Str::empty();
     }
     Str fast_substring(const char *first, const char *last) const {
         assert(begin() <= first && first <= last && last <= end());
-        return Str(first, last);
+        return Str::from_range(first, last);
     }
     Str fast_substring(const unsigned char *first, const unsigned char *last) const {
         assert(ubegin() <= first && first <= last && last <= uend());
-        return Str(first, last);
+        return Str::from_byte_range(first, last);
     }
     // @unsafe - pointer arithmetic on string data
     Str ltrim() const {
@@ -145,7 +175,7 @@ struct Str : public String_base<Str> {
         va_start(val, fmt);
         int n = vsnprintf(buf, size, fmt, val);
         va_end(val);
-        return Str(buf, n);
+        return Str::from_chars(buf, n);
     }
 };
 

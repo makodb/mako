@@ -105,7 +105,7 @@ trap cleanup_temp_config EXIT
 trap handle_interrupt INT TERM
 
 # Determine transport type and create unique log prefix
-transport="${MAKO_TRANSPORT:-rrr}"
+transport="rrr"
 log_prefix="${script_name}_${transport}"
 
 # Kill only dbtest worker processes by executable name.

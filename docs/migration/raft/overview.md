@@ -36,7 +36,7 @@ Migrate Mako's replication layer from Multi-Paxos to Raft while preserving the w
 ### Key Benefits
 - **Simpler protocol:** Raft is more understandable and debuggable than Paxos
 - **Better tooling:** Leverage existing Raft implementation in codebase
-- **Unified codebase:** Janus uses Paxos, Mako can use Raft for comparison
+- **Historical continuity:** Mako inherited its Paxos integration from the original Janus codebase and can use Raft for comparison; the standalone Janus protocol has since been retired
 - **Research flexibility:** Easier to experiment with protocol variations
 
 ### Non-Goals

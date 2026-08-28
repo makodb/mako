@@ -2,6 +2,8 @@
 #include "row.h"
 #include "schema.h"
 #include "table.h"
+// the variadic Log_* wrappers live outside src/rrr now
+#include "rrr_log.h"
 
 namespace mdb {
 
@@ -105,7 +107,7 @@ Value Row::get_column(int column_id) const {
         v = Value(std::string(b.data, b.len));
         break;
     default:
-        Log::fatal("unexpected value type %d", info->type);
+        rrr::Log_fatal("unexpected value type {}", (int)info->type);
         verify(0);
         break;
     }
@@ -158,7 +160,7 @@ blob Row::get_blob(int column_id) const {
         }
         break;
     default:
-        Log::fatal("unexpected value type %d", info->type);
+        rrr::Log_fatal("unexpected value type {}", (int)info->type);
         verify(0);
         break;
     }
@@ -254,7 +256,7 @@ void Row::update(int column_id, const Value& v) {
         this->update(column_id, v.get_str());
         break;
     default:
-        Log::fatal("unexpected value type %d", v.get_kind());
+        rrr::Log_fatal("unexpected value type {}", (int)v.get_kind());
         verify(0);
         break;
     }
@@ -303,7 +305,7 @@ Row* Row::create(Row* raw_row, const Schema* schema, const std::vector<const Val
             var_part_size += it->get_str().size();
             break;
         default:
-            Log::fatal("unexpected value type %d", it->get_kind());
+            rrr::Log_fatal("unexpected value type {}", (int)it->get_kind());
             verify(0);
             break;
         }
@@ -323,7 +325,7 @@ Row* Row::create(Row* raw_row, const Schema* schema, const std::vector<const Val
         case Value::STR:
             break;
         default:
-            Log::fatal("unexpected value type %d", schema->col_info_[i].type);
+            rrr::Log_fatal("unexpected value type {}", (int)schema->col_info_[i].type);
             verify(0);
             break;
         }
@@ -355,34 +357,6 @@ Row* Row::create(Row* raw_row, const Schema* schema, const std::vector<const Val
     }
     return row;
 }
-
-// **** deprecated **** //
-FineLockedRow::type_2pl_t FineLockedRow::type_2pl_ = FineLockedRow::TIMEOUT;
-uint64_t FineLockedRow::reg_rlock(colid_t column_id,
-        std::function<void(uint64_t)> succ_callback,
-        std::function<void(void)> fail_callback) {
-    verify(0);
-    //return lock_[column_id]->lock(succ_callback, fail_callback, rrr::ALock::RLOCK);
-}
-
-uint64_t FineLockedRow::reg_wlock(colid_t column_id,
-        std::function<void(uint64_t)> succ_callback,
-        std::function<void(void)> fail_callback) {
-    verify(0);
-    //return lock_[column_id]->lock(succ_callback, fail_callback, rrr::ALock::WLOCK);
-}
-
-void FineLockedRow::abort_lock_req(colid_t column_id, uint64_t lock_req_id) {
-    verify(0);
-    //lock_[column_id]->abort(lock_req_id);
-}
-
-void FineLockedRow::unlock_column_by(colid_t column_id, uint64_t lock_req_id) {
-    verify(0);
-    //lock_[column_id]->abort(lock_req_id);
-}
-
-// **** deprecated **** //
 
 } // namespace mdb
 

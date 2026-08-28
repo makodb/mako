@@ -100,7 +100,7 @@ void TpccWorkload::RegStockLevel() {
                                            mdb::ORD_ASC,
                                            cmd.id_);
          Log_debug(
-             "tid: %llx, stock_level: piece 1: d_next_o_id: %d, ol_w_id: %d, ol_d_id: %d",
+             "tid: {:x}, stock_level: piece 1: d_next_o_id: {}, ol_w_id: {}, ol_d_id: {}",
              cmd.root_id_,
              cmd.input[TPCC_VAR_D_NEXT_O_ID].get_i32(),
              cmd.input[TPCC_VAR_W_ID].get_i32(),
@@ -133,7 +133,7 @@ void TpccWorkload::RegStockLevel() {
 
   BEGIN_CB(TPCC_STOCK_LEVEL, TPCC_STOCK_LEVEL_1)
     TpccProcedure *tpcc_ch = (TpccProcedure*) ch;
-    Log_debug("tid %llx: stock_level: outptu_size: %u",
+    Log_debug("tid {:x}: stock_level: outptu_size: {}",
               tpcc_ch->txn_id_, output.size());
     // verify(output_size >= 20 * 5);
     // verify(output_size <= 20 * 15); // TODO fix this verification

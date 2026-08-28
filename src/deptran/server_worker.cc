@@ -20,27 +20,27 @@ void ServerWorker::SetupHeartbeat() {
   int n_io_threads = 1;
 //  svr_hb_poll_thread_worker_g = new rrr::PollThread(n_io_threads);
   svr_hb_poll_thread_worker_g = svr_poll_thread_worker_.clone();
-  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
-  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), timeout));
+  hb_rpc_server_->reg_service_typed(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), timeout));
 
   auto port = this->site_info_->port + ServerWorker::CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
       std::to_string(port);
-  hb_rpc_server_->start(addr_port.c_str());
+  hb_rpc_server_->start(reinterpret_cast<const int8_t*>(addr_port.c_str()));
   if (hb_rpc_server_ != nullptr) {
-    // Log_info("notify ready to control script for %s", bind_addr.c_str());
+    // Log_info("notify ready to control script for {}", bind_addr.c_str());
     server_status_.as_ref().unwrap()->set_ready();
   }
-  Log_info("heartbeat setup for %s on %s",
+  Log_info("heartbeat setup for {} on {}",
            this->site_info_->name.c_str(), addr_port.c_str());
 }
 
 void ServerWorker::SetupBase() {
   auto config = Config::GetConfig();
-  Log_info("tx_proto_=%d replica_proto_=%d", config->tx_proto_, config->replica_proto_);
+  Log_info("tx_proto_={} replica_proto_={}", config->tx_proto_, config->replica_proto_);
 
 #ifdef RAFT_TEST_CORO
   // In test mode, only initialize replication frame services
@@ -135,7 +135,7 @@ void ServerWorker::PopTable() {
   // get all tables
   std::vector<std::string> table_names;
 
-  Log_info("start data population for site %d", site_info_->id);
+  Log_info("start data population for site {}", site_info_->id);
   ret = sharding_->GetTableNames(site_info_->partition_id_, table_names);
   verify(ret > 0);
 
@@ -162,7 +162,7 @@ void ServerWorker::PopTable() {
   }
   verify(sharding_);
   sharding_->PopulateTables(site_info_->partition_id_);
-  Log_info("data populated for site: %x, partition: %x",
+  Log_info("data populated for site: {:x}, partition: {:x}",
            site_info_->id, site_info_->partition_id_);
   verify(ret > 0);
 #endif
@@ -184,7 +184,7 @@ void ServerWorker::RegisterWorkload() {
 }
 
 void ServerWorker::SetupService() {
-  Log_info("enter %s for %s @ %s", __FUNCTION__,
+  Log_info("enter {} for {} @ {}", __FUNCTION__,
            this->site_info_->name.c_str(),
            site_info_->GetBindAddress().c_str());
 
@@ -201,7 +201,7 @@ void ServerWorker::SetupService() {
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
   // init rrr::Server first (before registering services)
-  rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
+  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_worker.clone())));
 
   // Create and register services (ownership transferred to rpc_server_)
 #ifdef RAFT_TEST_CORO
@@ -241,20 +241,20 @@ void ServerWorker::SetupService() {
 //  thread_pool_g = new base::ThreadPool(num_threads);
 
   // start rpc server
-  Log_debug("starting server at %s", bind_addr.c_str());
-  ret = rpc_server_->start(bind_addr.c_str());
+  Log_debug("starting server at {}", bind_addr.c_str());
+  ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
     Log_fatal("server launch failed.");
   }
 
-  Log_info("Server %s ready at %s",
+  Log_info("Server {} ready at {}",
            site_info_->name.c_str(),
            bind_addr.c_str());
 
 }
 
 void ServerWorker::WaitForShutdown() {
-  Log_debug("%s", __FUNCTION__);
+  Log_debug("{}", __FUNCTION__);
   if (hb_rpc_server_ != nullptr) {
     hb_rpc_server_->wait_for_shutdown();
     delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
@@ -263,11 +263,11 @@ void ServerWorker::WaitForShutdown() {
 
     // removed `for_each_service(...) { if
     // (auto* s = dynamic_cast<DepTranServiceImpl*>(...)) { auto&
-    // recorder = s->recorder_; if (recorder) { Log::info(...) } } }`
+    // recorder = s->recorder_; if (recorder) { Log_info(...) } } }`
     // block — `Service::recorder_` field is always nullptr (now
     // gone); the `if (recorder)` branch was unreachable.
   }
-  Log_debug("exit %s", __FUNCTION__);
+  Log_debug("exit {}", __FUNCTION__);
 }
 
 void ServerWorker::SetupCommo() {
@@ -292,7 +292,7 @@ void ServerWorker::SetupCommo() {
 
   Reactor::get_reactor()->server_id_.set(site_info_->id);
 //  svr_thread_pool_ = new rrr::ThreadPool(1);
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
+  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(
     [this]() {
       if (rep_sched_) {
         rep_sched_->Setup();
@@ -307,7 +307,7 @@ void ServerWorker::SetupCommo() {
 // dead loop this thread for coroutine scheduling 
 // TODO, figure out a better approach
   if (rep_sched_->site_id_ == 0) {
-    Reactor::get_reactor()->loop(true, true);
+    Reactor::get_reactor()->run_loop(true, true);
   }
 #endif
 }
@@ -364,7 +364,7 @@ void ServerWorker::ShutDown() {
 int ServerWorker::DbChecksum() {
   // auto cs = this->tx_sched_->mdb_txn_mgr_->Checksum();
   uint32_t cs = this->tx_sched_->ChecksumXor();
-  Log_info("site_id: %d shard_id: %d checksum: %x", (int)this->site_info_->id,
+  Log_info("site_id: {} shard_id: {} checksum: {:x}", (int)this->site_info_->id,
            (int)this->site_info_->partition_id_, (int) cs);
   return cs;
 }
@@ -395,7 +395,7 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
   // Create storage backend
   auto storage = recovery_manager.create_storage();
   if (!storage) {
-    Log_error("Failed to create storage for partition %u replica %u", partition_id, locale_id);
+    Log_error("Failed to create storage for partition {} replica {}", partition_id, locale_id);
     return;
   }
 
@@ -416,10 +416,10 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
         });
 
     if (!result.success) {
-      Log_error("Raft recovery failed for partition %u replica %u: %s",
+      Log_error("Raft recovery failed for partition {} replica {}: {}",
                 partition_id, locale_id, result.error_message.c_str());
     } else {
-      Log_info("Raft recovery: partition=%u replica=%u mode=%d entries=%lu term=%lu time=%lums",
+      Log_info("Raft recovery: partition={} replica={} mode={} entries={} term={} time={}ms",
                partition_id, locale_id, static_cast<int>(result.mode),
                result.recovered_entries, result.recovered_term, result.recovery_time_ms);
     }
@@ -443,17 +443,17 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
         });
 
     if (!result.success) {
-      Log_error("Paxos recovery failed for partition %u replica %u: %s",
+      Log_error("Paxos recovery failed for partition {} replica {}: {}",
                 partition_id, locale_id, result.error_message.c_str());
     } else {
-      Log_info("Paxos recovery: partition=%u replica=%u mode=%d entries=%lu epoch=%lu time=%lums",
+      Log_info("Paxos recovery: partition={} replica={} mode={} entries={} epoch={} time={}ms",
                partition_id, locale_id, static_cast<int>(result.mode),
                result.recovered_entries, result.recovered_epoch, result.recovery_time_ms);
     }
     return;
   }
 
-  Log_debug("No Raft or Paxos server found for recovery in partition %u replica %u",
+  Log_debug("No Raft or Paxos server found for recovery in partition {} replica {}",
             partition_id, locale_id);
 }
 

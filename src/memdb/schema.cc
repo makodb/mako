@@ -1,5 +1,7 @@
 
 #include "schema.h"
+// the variadic Log_* wrappers live outside src/rrr now
+#include "rrr_log.h"
 
 import std;
 
@@ -42,13 +44,13 @@ int Schema::do_add_column(const char* name, Value::kind type, bool key) {
             fixed_part_size_ += sizeof(double);
             break;
         default:
-            Log::fatal("value type %d not recognized", (int) type);
+            rrr::Log_fatal("value type {} not recognized", (int) type);
             verify(0);
             break;
         }
     }
 
-    insert_into_map(col_name_to_id_, string(name), col_info.id);
+    col_name_to_id_.emplace(string(name), col_info.id);
     col_info_.push_back(col_info);
     return col_info.id;
 }

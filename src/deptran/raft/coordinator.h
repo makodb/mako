@@ -11,7 +11,7 @@
 //   Log_debug: [safe, (...) -> void],
 //   verify: [safe, (bool) -> void],
 //   Config::GetConfig: [safe, () -> Config*],
-//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
+//   Reactor::create_sp_event: [safe, () -> rusty::Arc<IntEvent>],
 //   std::make_shared: [safe, (...) -> shared_ptr<T>],
 //   dynamic_pointer_cast: [safe, (shared_ptr<T>) -> shared_ptr<U>]
 // }
@@ -39,8 +39,8 @@ class CoordinatorRaft : public Coordinator {
   bool in_submission_ = false; // debug;
   // removed `in_prepare_` and `in_accept`
   // debug-guard fields — neither was ever written or read in the
-  // raft path (the comparable guards on the paxos / mencius
-  // coordinators ARE used; CoordinatorRaft just had the shape
+  // raft path (the comparable guards on the paxos coordinator are
+  // used; CoordinatorRaft just had the shape
   // copied over).
   bool in_append_entries = false; // debug
   uint64_t minIndex = 0;

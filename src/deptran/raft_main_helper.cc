@@ -131,7 +131,7 @@ std::optional<RaftGroupMode> parse_raft_group_mode_from_env() {
   if (equals_ignore_case(value, "multi") || equals_ignore_case(value, "per-partition")) {
     return RaftGroupMode::kPerPartitionGroup;
   }
-  Log_warn("[RAFT-SETUP] Ignoring invalid MAKO_RAFT_GROUP_MODE=%s (expected single|multi)",
+  Log_warn("[RAFT-SETUP] Ignoring invalid MAKO_RAFT_GROUP_MODE={} (expected single|multi)",
            env);
   return std::nullopt;
 }
@@ -144,7 +144,7 @@ void configure_raft_group_mode(int argc, char* argv[]) {
   if (auto from_args = parse_raft_group_mode_from_args(argc, argv); from_args.has_value()) {
     raft_group_mode_g = *from_args;
   }
-  Log_info("[RAFT-SETUP] raft group mode: %s",
+  Log_info("[RAFT-SETUP] raft group mode: {}",
            raft_group_mode_g == RaftGroupMode::kSingleGroup ? "single" : "multi");
 }
 
@@ -180,7 +180,7 @@ void build_config_argv_without_raft_group_mode(
 }
 
 void log_wait_outcome(uint32_t par_id, bool success, std::chrono::milliseconds waited) {
-  Log_info("[RAFT-WAIT-LEADERSHIP] par_id=%u status=%s waited_ms=%lld",
+  Log_info("[RAFT-WAIT-LEADERSHIP] par_id={} status={} waited_ms={}",
            par_id,
            success ? "leader" : "still_follower",
            static_cast<long long>(waited.count()));
@@ -193,7 +193,7 @@ bool wait_for_local_leadership(RaftWorker* worker,
   if (!worker) {
     return false;
   }
-  Log_info("[RAFT-WAIT-LEADERSHIP] par_id=%u initial_leader=%s timeout_ms=%lld",
+  Log_info("[RAFT-WAIT-LEADERSHIP] par_id={} initial_leader={} timeout_ms={}",
            par_id,
            worker->IsLeader(par_id) ? "true" : "false",
            static_cast<long long>(timeout.count()));
@@ -258,23 +258,23 @@ void create_stub_servers() {
     stub_poll_threads_g.push_back(poll_thread);
 
     // Create RPC server
-    auto* rpc_server = new rrr::Server(rusty::Some(poll_thread.clone()));
+    auto* rpc_server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread.clone())));
 
     // Register RaftServiceImpl pointing to the single RaftServer
-    rpc_server->reg_service(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread.clone()));
+    rpc_server->reg_service_typed(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread.clone()));
 
     // Bind to the site's port
-    int ret = rpc_server->start(bind_addr.c_str());
+    int ret = rpc_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
     if (ret != 0) {
-      Log_fatal("[SINGLE-RAFT] Stub server failed to bind at %s", bind_addr.c_str());
+      Log_fatal("[SINGLE-RAFT] Stub server failed to bind at {}", bind_addr.c_str());
     }
 
     stub_rpc_servers_g.push_back(rpc_server);
-    Log_info("[SINGLE-RAFT] Created stub server on %s for site %d (partition %d)",
+    Log_info("[SINGLE-RAFT] Created stub server on {} for site {} (partition {})",
              bind_addr.c_str(), site_info->id, site_info->partition_id_);
   }
 
-  Log_info("[SINGLE-RAFT] Created %zu stub servers", stub_rpc_servers_g.size());
+  Log_info("[SINGLE-RAFT] Created {} stub servers", stub_rpc_servers_g.size());
 }
 
 // SINGLE-RAFT: Shutdown and clean up stub servers
@@ -301,7 +301,7 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
   }
 
   if (raft_group_mode_g == RaftGroupMode::kSingleGroup) {
-    Log_info("[SINGLE-RAFT] server_sites.size()=%zu raft_workers_g.size()=%zu",
+    Log_info("[SINGLE-RAFT] server_sites.size()={} raft_workers_g.size()={}",
              server_sites.size(), raft_workers_g.size());
 
     if (raft_workers_g.empty() || !raft_workers_g[0]) {
@@ -317,8 +317,8 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
     if (auto raft_server = worker->GetRaftServer()) {
       auto poll_worker_opt = worker->GetPollThreadWorker();
       if (poll_worker_opt.is_some()) {
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([raft_server]() {
-          Log_info("[RAFTPOLL] EnsureSetup executing (site=%d par=%d)",
+        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([raft_server]() {
+          Log_info("[RAFTPOLL] EnsureSetup executing (site={} par={})",
                    raft_server->site_id_, raft_server->partition_id_);
           raft_server->EnsureSetup();
         }));
@@ -334,7 +334,7 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
     return;
   }
 
-  Log_info("[RAFT-LAUNCH] server_sites.size()=%zu raft_workers_g.size()=%zu",
+  Log_info("[RAFT-LAUNCH] server_sites.size()={} raft_workers_g.size()={}",
            server_sites.size(), raft_workers_g.size());
 
   for (auto& worker : raft_workers_g) {
@@ -352,8 +352,8 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
     if (auto raft_server = worker->GetRaftServer()) {
       auto poll_worker_opt = worker->GetPollThreadWorker();
       if (poll_worker_opt.is_some()) {
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([raft_server]() {
-          Log_info("[RAFTPOLL] EnsureSetup executing (site=%d par=%d)",
+        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([raft_server]() {
+          Log_info("[RAFTPOLL] EnsureSetup executing (site={} par={})",
                    raft_server->site_id_, raft_server->partition_id_);
           raft_server->EnsureSetup();
         }));
@@ -439,7 +439,7 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     setenv("MAKO_DISABLE_JETPACK", "1", 1);
     Log_info("[JETPACK-RUNTIME] MAKO_DISABLE_JETPACK unset; forcing helper default of 1");
   } else {
-    Log_info("[JETPACK-RUNTIME] MAKO_DISABLE_JETPACK=%s", std::getenv("MAKO_DISABLE_JETPACK"));
+    Log_info("[JETPACK-RUNTIME] MAKO_DISABLE_JETPACK={}", std::getenv("MAKO_DISABLE_JETPACK"));
   }
 
   configure_raft_group_mode(argc, argv);
@@ -459,11 +459,11 @@ std::vector<std::string> setup(int argc, char* argv[]) {
   // Verify that replica_proto_ is set to MODE_RAFT via occ_raft.yml config
   auto config = Config::GetConfig();
   if (config->replica_proto_ != MODE_RAFT) {
-    Log_warn("[RAFT-SETUP] replica_proto_=%d is not MODE_RAFT (%d). "
+    Log_warn("[RAFT-SETUP] replica_proto_={} is not MODE_RAFT ({}). "
              "Make sure to use config/occ_raft.yml with 'ab: raft' setting.",
              config->replica_proto_, MODE_RAFT);
   } else {
-    Log_info("[RAFT-SETUP] replica_proto_ correctly set to MODE_RAFT (%d)",
+    Log_info("[RAFT-SETUP] replica_proto_ correctly set to MODE_RAFT ({})",
              config->replica_proto_);
   }
 
@@ -491,7 +491,7 @@ std::vector<std::string> setup(int argc, char* argv[]) {
       for (auto* site : all_site_infos_g) {
         workers_by_partition_g[site->partition_id_] = worker;
       }
-      Log_info("[SINGLE-RAFT] Created 1 worker for site %d (partition %d), total sites=%zu",
+      Log_info("[SINGLE-RAFT] Created 1 worker for site {} (partition {}), total sites={}",
                all_site_infos_g[0]->id, all_site_infos_g[0]->partition_id_,
                all_site_infos_g.size());
     }
@@ -570,7 +570,7 @@ int setup2(int action, int shardIndex) {
 
         if (preferred_site_id != INVALID_SITEID) {
           raft_server->SetPreferredLeader(preferred_site_id);
-          Log_info("[SINGLE-RAFT] Partition %d, Site %d: Set preferred leader to site %d",
+          Log_info("[SINGLE-RAFT] Partition {}, Site {}: Set preferred leader to site {}",
                    partition_id, my_site_id, preferred_site_id);
         }
       }
@@ -599,7 +599,7 @@ int setup2(int action, int shardIndex) {
 
       if (preferred_site_id != INVALID_SITEID) {
         raft_server->SetPreferredLeader(preferred_site_id);
-        Log_info("[PREFERRED-REPLICA] Partition %d, Site %d: Set preferred leader to site %d",
+        Log_info("[PREFERRED-REPLICA] Partition {}, Site {}: Set preferred leader to site {}",
                  partition_id, my_site_id, preferred_site_id);
       }
     }
@@ -611,13 +611,13 @@ int setup2(int action, int shardIndex) {
     es->set_state(0);   // Will become leader via election
     es->set_epoch(0);
     es->set_leader(0);
-    Log_info("[RAFT-SETUP] Machine %d: Preferred leader (will win elections naturally)",
+    Log_info("[RAFT-SETUP] Machine {}: Preferred leader (will win elections naturally)",
              es->machine_id);
   } else {
     es->set_state(0);
     es->set_epoch(0);
     es->set_leader(0);
-    Log_info("[RAFT-SETUP] Machine %d: Non-preferred replica (can take over if preferred fails)",
+    Log_info("[RAFT-SETUP] Machine {}: Non-preferred replica (can take over if preferred fails)",
              es->machine_id);
   }
 
@@ -658,7 +658,7 @@ std::map<std::string, std::string> getHosts(std::string filename) {
 int get_outstanding_logs(uint32_t par_id) {
   auto* worker = find_worker(par_id);
   if (!worker) {
-    Log_warn("get_outstanding_logs(): unknown partition %u", par_id);
+    Log_warn("get_outstanding_logs(): unknown partition {}", par_id);
     return -1;
   }
   auto* raft_server = worker->GetRaftServer();
@@ -769,7 +769,7 @@ void register_for_leader_par_id_return(
 void submit(const char* log, int len, uint32_t par_id) {
   auto* worker = find_worker(par_id);
   if (!worker) {
-    Log_warn("submit(): unknown partition %u", par_id);
+    Log_warn("submit(): unknown partition {}", par_id);
     return;
   }
   // Do not pre-check leadership here. RaftServer::Start() performs the
@@ -790,10 +790,10 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id) {
 // @unsafe - checks leadership, enqueues log, returns false with leader hint if not leader
 bool add_log_to_nc(const char* log, int len, uint32_t par_id,
                    int batch_size, siteid_t* leader_hint_out /* = nullptr */) {
-  // Log_debug("[RAFT-ADD-LOG] par_id=%u len=%d batch=%d", par_id, len, batch_size);
+  // Log_debug("[RAFT-ADD-LOG] par_id={} len={} batch={}", par_id, len, batch_size);
   auto* worker = find_worker(par_id);
   if (!worker) {
-    Log_warn("[RAFT-ADD-LOG] no worker found for par_id=%u", par_id);
+    Log_warn("[RAFT-ADD-LOG] no worker found for par_id={}", par_id);
     if (leader_hint_out) {
       // @unsafe
       { *leader_hint_out = INVALID_SITEID; }
@@ -806,7 +806,7 @@ bool add_log_to_nc(const char* log, int len, uint32_t par_id,
     siteid_t hint = worker->GetLeaderHint();
     // @unsafe
     {
-    Log_warn("[RAFT-ADD-LOG] par_id=%u: not leader, leader_hint=%d", par_id, hint);
+    Log_warn("[RAFT-ADD-LOG] par_id={}: not leader, leader_hint={}", par_id, hint);
     }
     if (leader_hint_out) {
       // @unsafe
@@ -815,7 +815,7 @@ bool add_log_to_nc(const char* log, int len, uint32_t par_id,
     return false;
   }
   enqueue_to_worker(worker, log, len, par_id, std::max(1, batch_size));
-  // Log_debug("[RAFT-ADD-LOG] enqueued par_id=%u len=%d batch=%d", par_id, len, batch_size);
+  // Log_debug("[RAFT-ADD-LOG] enqueued par_id={} len={} batch={}", par_id, len, batch_size);
   if (leader_hint_out) {
     // @unsafe
     { *leader_hint_out = INVALID_SITEID; }
@@ -827,7 +827,7 @@ bool add_log_to_nc(const char* log, int len, uint32_t par_id,
 void wait_for_submit(uint32_t par_id) {
   auto* worker = find_worker(par_id);
   if (!worker) {
-    Log_warn("wait_for_submit(): unknown partition %u", par_id);
+    Log_warn("wait_for_submit(): unknown partition {}", par_id);
     return;
   }
   worker->WaitForSubmit();
@@ -886,7 +886,7 @@ void worker_info_stats(size_t /*worker_id*/) {
     if (!worker || !worker->site_info_) {
       continue;
     }
-    Log_info("partition %u, n_tot=%d, n_current=%d",
+    Log_info("partition {}, n_tot={}, n_current={}",
              worker->site_info_->partition_id_,
              worker->n_tot.load(),
              worker->n_current.load());
@@ -918,7 +918,7 @@ void worker_info_stats(size_t /*worker_id*/) {
 void set_preferred_leader(int site_id) {
   siteid_t preferred = static_cast<siteid_t>(site_id);
 
-  Log_info("[PREFERRED-REPLICA-API] Setting preferred leader to site_id=%d", site_id);
+  Log_info("[PREFERRED-REPLICA-API] Setting preferred leader to site_id={}", site_id);
 
   int count = 0;
   for (auto& worker : raft_workers_g) {
@@ -934,14 +934,14 @@ void set_preferred_leader(int site_id) {
     raft_server->SetPreferredLeader(preferred);
     count++;
 
-    Log_info("[PREFERRED-REPLICA-API] Updated worker %d: site_id=%d, preferred=%d",
+    Log_info("[PREFERRED-REPLICA-API] Updated worker {}: site_id={}, preferred={}",
              count, raft_server->site_id_, preferred);
   }
 
   if (count == 0) {
     Log_warn("[PREFERRED-REPLICA-API] No Raft workers found to update!");
   } else {
-    Log_info("[PREFERRED-REPLICA-API] Successfully updated %d Raft workers with preferred_leader=%d",
+    Log_info("[PREFERRED-REPLICA-API] Successfully updated {} Raft workers with preferred_leader={}",
              count, site_id);
   }
 }

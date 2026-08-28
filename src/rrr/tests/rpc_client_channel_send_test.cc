@@ -147,7 +147,7 @@ TEST_F(ClientChannelSendTest, RequestRoutesFrameThroughChannel) {
 
     constexpr i32 kRpcId = 0x42;
     auto fr = mut_conn().request(kRpcId, FutureAttr{}, [](BinaryWriteArchive& m) {
-        m << static_cast<i32>(0xDEADBEEF);
+        rrr::Serialize_::serialize(static_cast<i32>(0xDEADBEEF), m);
     });
     ASSERT_TRUE(fr.is_ok());
 
@@ -156,13 +156,15 @@ TEST_F(ClientChannelSendTest, RequestRoutesFrameThroughChannel) {
     ASSERT_EQ(frames.size(), 1u);
 
     // Decode the captured body: [v64 xid][i32 rpc_id][i32 0xDEADBEEF].
-    Marshal m;
-    m.write(frames[0].data(), frames[0].size());
+    rrr::BufferSource src(frames[0].data(), frames[0].size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
 
     v64 v_xid;
     i32 rpc_id;
     i32 user_arg;
-    m >> v_xid >> rpc_id >> user_arg;
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(rpc_id, rar);
+    rrr::Deserialize_::deserialize(user_arg, rar);
 
     EXPECT_EQ(rpc_id, kRpcId);
     EXPECT_EQ(static_cast<std::uint32_t>(user_arg), 0xDEADBEEFu);
@@ -197,7 +199,7 @@ TEST_F(ClientChannelSendTest, MultipleRequestsCaptureInOrder) {
     constexpr int kCount = 5;
     for (int i = 0; i < kCount; ++i) {
         auto fr = mut_conn().request(0x100 + i, FutureAttr{}, [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         ASSERT_TRUE(fr.is_ok()) << "iteration " << i;
     }
@@ -205,12 +207,14 @@ TEST_F(ClientChannelSendTest, MultipleRequestsCaptureInOrder) {
     ASSERT_EQ(stub_->capture_count(), static_cast<std::size_t>(kCount));
     auto frames = stub_->captured();
     for (int i = 0; i < kCount; ++i) {
-        Marshal m;
-        m.write(frames[i].data(), frames[i].size());
+        rrr::BufferSource src(frames[i].data(), frames[i].size());
+        rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
         v64 v_xid;
         i32 rpc_id;
         i32 user_arg;
-        m >> v_xid >> rpc_id >> user_arg;
+        rrr::Deserialize_::deserialize(v_xid, rar);
+        rrr::Deserialize_::deserialize(rpc_id, rar);
+        rrr::Deserialize_::deserialize(user_arg, rar);
         EXPECT_EQ(rpc_id, 0x100 + i) << "iteration " << i;
         EXPECT_EQ(user_arg, i)       << "iteration " << i;
     }
@@ -225,7 +229,7 @@ TEST_F(ClientChannelSendTest, MultipleRequestsCaptureInOrder) {
 // `borrow_state` int races and either throws `std::runtime_error` from
 // `add_writer` (best case — observable) or silently corrupts state.
 //
-// Post-fix: `fiber_channel_` is `SpinMutex<Option<Box<…>>>`. The lock
+// Post-fix: `fiber_channel_` is `rusty::Mutex<Option<Box<…>>>`. The lock
 // serialises concurrent dispatchers; every request must succeed and every
 // frame must reach the stub.
 // ---------------------------------------------------------------------------
@@ -245,8 +249,8 @@ TEST_F(ClientChannelSendTest, ConcurrentDispatchIsThreadSafe) {
                 const i32 rpc_id = (t << 8) | i;
                 auto fr = mut_conn().request(rpc_id, FutureAttr{},
                                              [t, i](BinaryWriteArchive& m) {
-                                                 m << static_cast<i32>(t);
-                                                 m << static_cast<i32>(i);
+                                                 rrr::Serialize_::serialize(static_cast<i32>(t), m);
+                                                 rrr::Serialize_::serialize(static_cast<i32>(i), m);
                                              });
                 if (fr.is_ok()) {
                     ok_count.fetch_add(1, std::memory_order_relaxed);

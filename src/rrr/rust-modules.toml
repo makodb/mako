@@ -1,0 +1,157 @@
+# Canonical Rust ownership for modules compiled directly by rustc and
+# translated into complete C++ module providers by rusty-cpp crate mode.
+schema_version = 2
+
+# Crate-level flat-import namespace: crate mode passes
+# --flat-import-namespace rrr, so every private
+# `use crate::<child>::<Name leaves>;` item in a canonical source carries an
+# implicit cpp_import_namespace(rrr) contract; per-item markers are gone.
+flat_import_namespace = "rrr"
+
+[[module]]
+cpp_module = "rrr.basetypes"
+source = "src/rrr/base/basetypes.rs"
+
+[[module]]
+cpp_module = "rrr.callback_wrapper"
+source = "src/rrr/base/callback_wrapper.rs"
+
+[[module]]
+cpp_module = "rrr.internal_protocol"
+source = "src/rrr/rpc/internal_protocol.rs"
+
+[[module]]
+cpp_module = "rrr.stat"
+source = "src/rrr/misc/stat.rs"
+
+[[module]]
+cpp_module = "rrr.errors"
+source = "src/rrr/rpc/errors.rs"
+
+[[module]]
+cpp_module = "rrr.connection_metrics"
+source = "src/rrr/rpc/connection_metrics.rs"
+
+[[module]]
+cpp_module = "rrr.completion_tracker"
+source = "src/rrr/rpc/completion_tracker.rs"
+
+[[module]]
+cpp_module = "rrr.rand"
+source = "src/rrr/misc/rand.rs"
+
+[[module]]
+cpp_module = "rrr.request_options"
+source = "src/rrr/rpc/request_options.rs"
+
+[[module]]
+cpp_module = "rrr.reconnect_policy"
+source = "src/rrr/rpc/reconnect_policy.rs"
+
+[[module]]
+cpp_module = "rrr.circuit_breaker"
+source = "src/rrr/rpc/circuit_breaker.rs"
+
+[[module]]
+cpp_module = "rrr.connection_state"
+source = "src/rrr/rpc/connection_state.rs"
+
+[[module]]
+cpp_module = "rrr.heartbeat"
+source = "src/rrr/rpc/heartbeat.rs"
+
+[[module]]
+cpp_module = "rrr.request_queue"
+source = "src/rrr/rpc/request_queue.rs"
+
+[[module]]
+cpp_module = "rrr.load_balancer"
+source = "src/rrr/rpc/load_balancer.rs"
+
+[[module]]
+cpp_module = "rrr.debugging"
+source = "src/rrr/base/debugging.rs"
+
+[[module]]
+cpp_module = "rrr.logging"
+source = "src/rrr/base/logging.rs"
+
+[[module]]
+cpp_module = "rrr.utils"
+source = "src/rrr/rpc/utils.rs"
+
+[[module]]
+cpp_module = "rrr.frame_codec"
+source = "src/rrr/rpc/frame_codec.rs"
+
+[[module]]
+cpp_module = "rrr.serializable"
+source = "src/rrr/misc/serializable.rs"
+
+[[module]]
+cpp_module = "rrr.serializable_envelope"
+source = "src/rrr/misc/serializable_envelope.rs"
+
+[[module]]
+cpp_module = "rrr.epoll_wrapper"
+source = "src/rrr/reactor/epoll_wrapper.rs"
+
+[[module]]
+cpp_module = "rrr.misc"
+source = "src/rrr/base/misc.rs"
+
+[[module]]
+cpp_module = "rrr.pollable_proxy"
+source = "src/rrr/rpc/pollable_proxy.rs"
+
+[[module]]
+cpp_module = "rrr.reactor"
+source = "src/rrr/reactor/reactor.rs"
+
+[[module]]
+cpp_module = "rrr.future"
+source = "src/rrr/reactor/future.rs"
+
+[[module]]
+cpp_module = "rrr.idempotency"
+source = "src/rrr/rpc/idempotency.rs"
+
+[[module]]
+cpp_module = "rrr.fiber"
+source = "src/rrr/reactor/fiber.rs"
+
+[[module]]
+cpp_module = "rrr.channel"
+source = "src/rrr/rpc/channel.rs"
+
+[[module]]
+cpp_module = "rrr.callbacks"
+source = "src/rrr/rpc/callbacks.rs"
+
+[[module]]
+cpp_module = "rrr.inmemory_channel"
+source = "src/rrr/rpc/inmemory_channel.rs"
+
+[[module]]
+cpp_module = "rrr.fiber_channel"
+source = "src/rrr/rpc/fiber_channel.rs"
+
+[[module]]
+cpp_module = "rrr.threading"
+source = "src/rrr/base/threading.rs"
+
+[[module]]
+cpp_module = "rrr.any_message"
+source = "src/rrr/misc/any_message.rs"
+
+[[module]]
+cpp_module = "rrr.tcp_channel"
+source = "src/rrr/rpc/tcp_channel.rs"
+
+[[module]]
+cpp_module = "rrr.server"
+source = "src/rrr/rpc/server.rs"
+
+[[module]]
+cpp_module = "rrr.client"
+source = "src/rrr/rpc/client.rs"

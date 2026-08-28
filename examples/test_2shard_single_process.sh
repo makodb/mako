@@ -67,7 +67,7 @@ trap cleanup_process EXIT
 trap handle_interrupt INT TERM
 
 # Determine transport type and create unique log prefix
-transport="${MAKO_TRANSPORT:-rrr}"
+transport="rrr"
 log_prefix="${script_name}_${transport}"
 log_file="${log_prefix}_2shard_single-$trd.log"
 

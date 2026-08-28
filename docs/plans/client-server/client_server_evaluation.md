@@ -134,7 +134,7 @@ Best for:
 - Low-latency trading systems
 - Database clustering
 
-Note: Requires MAKO_TRANSPORT=erpc and RDMA-capable NICs
+Note: Required the (since removed) eRPC backend and RDMA-capable NICs
 ```
 
 ## Comparison: Colocated vs Client-Server

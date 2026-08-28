@@ -9,7 +9,6 @@
 #include "communicator.h"
 #include "config.h"
 #include "coordinator.h"
-#include "janus/scheduler.h"
 #include "procedure.h"
 #include "rcc/dep_graph.h"
 #include "rrr/misc/serializable.hpp"  // wrap_serializable_aliased
@@ -60,11 +59,11 @@ void ClassicServiceImpl::Prepare(const ClassicService::RpcPrepareRequest& req, C
 }
 
 void ClassicServiceImpl::Commit(const ClassicService::RpcCommitRequest& req, ClassicService::RpcCommitResponse& resp, rrr::DeferredReply defer) {
-  this->Commit(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.profile, &resp.view_data, std::move(defer));
+  this->Commit(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.view_data, std::move(defer));
 }
 
 void ClassicServiceImpl::Abort(const ClassicService::RpcAbortRequest& req, ClassicService::RpcAbortResponse& resp, rrr::DeferredReply defer) {
-  this->Abort(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.profile, &resp.view_data, std::move(defer));
+  this->Abort(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.view_data, std::move(defer));
 }
 
 void ClassicServiceImpl::EarlyAbort(const ClassicService::RpcEarlyAbortRequest& req, ClassicService::RpcEarlyAbortResponse& resp, rrr::DeferredReply defer) {
@@ -125,44 +124,16 @@ void ClassicServiceImpl::RccNotifyGlobalValidation(const ClassicService::RpcRccN
   this->RccNotifyGlobalValidation(req.tx_id, req.rank, req.res, std::move(defer));
 }
 
-void ClassicServiceImpl::JanusDispatch(const ClassicService::RpcJanusDispatchRequest& req, ClassicService::RpcJanusDispatchResponse& resp, rrr::DeferredReply defer) {
-  this->JanusDispatch(req.cmd, &resp.res, &resp.output, &resp.ret_graph, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusCommit(const ClassicService::RpcJanusCommitRequest& req, ClassicService::RpcJanusCommitResponse& resp, rrr::DeferredReply defer) {
-  this->JanusCommit(req.id, req.rank, req.need_validation, req.graph, &resp.res, &resp.output, std::move(defer));
-}
-
 void ClassicServiceImpl::RccCommit(const ClassicService::RpcRccCommitRequest& req, ClassicService::RpcRccCommitResponse& resp, rrr::DeferredReply defer) {
   this->RccCommit(req.id, req.rank, req.need_validation, req.parents, &resp.res, &resp.output, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusCommitWoGraph(const ClassicService::RpcJanusCommitWoGraphRequest& req, ClassicService::RpcJanusCommitWoGraphResponse& resp, rrr::DeferredReply defer) {
-  this->JanusCommitWoGraph(req.id, req.rank, req.need_validation, &resp.res, &resp.output, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusInquire(const ClassicService::RpcJanusInquireRequest& req, ClassicService::RpcJanusInquireResponse& resp, rrr::DeferredReply defer) {
-  this->JanusInquire(req.epoch, req.txn_id, &resp.ret_graph, std::move(defer));
 }
 
 void ClassicServiceImpl::RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req, ClassicService::RpcRccPreAcceptResponse& resp, rrr::DeferredReply defer) {
   this->RccPreAccept(req.txn_id, req.rank, req.cmd, &resp.res, &resp.x, std::move(defer));
 }
 
-void ClassicServiceImpl::JanusPreAccept(const ClassicService::RpcJanusPreAcceptRequest& req, ClassicService::RpcJanusPreAcceptResponse& resp, rrr::DeferredReply defer) {
-  this->JanusPreAccept(req.txn_id, req.rank, req.cmd, req.graph, &resp.res, &resp.ret_graph, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusPreAcceptWoGraph(const ClassicService::RpcJanusPreAcceptWoGraphRequest& req, ClassicService::RpcJanusPreAcceptWoGraphResponse& resp, rrr::DeferredReply defer) {
-  this->JanusPreAcceptWoGraph(req.txn_id, req.rank, req.cmd, &resp.res, &resp.ret_graph, std::move(defer));
-}
-
 void ClassicServiceImpl::RccAccept(const ClassicService::RpcRccAcceptRequest& req, ClassicService::RpcRccAcceptResponse& resp, rrr::DeferredReply defer) {
   this->RccAccept(req.txn_id, req.rank, req.ballot, req.p, &resp.res, std::move(defer));
-}
-
-void ClassicServiceImpl::JanusAccept(const ClassicService::RpcJanusAcceptRequest& req, ClassicService::RpcJanusAcceptResponse& resp, rrr::DeferredReply defer) {
-  this->JanusAccept(req.txn_id, req.rank, req.ballot, req.graph, &resp.res, std::move(defer));
 }
 
 void ClassicServiceImpl::JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) {
@@ -258,17 +229,17 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   // usleep(20000);
 
 #ifdef LATENCY_LOG_DEBUG
-  Log_info("!!!!!!!!!!!!! cmd %d enter ClassicServiceImpl::Dispatch (after client RPC) at loc_id %d", cmd_id, dtxn_sched()->loc_id_);
+  Log_info("!!!!!!!!!!!!! cmd {} enter ClassicServiceImpl::Dispatch (after client RPC) at loc_id {}", cmd_id, dtxn_sched()->loc_id_);
 #endif
 
 #ifdef FULL_LOG_DEBUG
-  Log_info("[Jetpack] cmd<%d, %d> entered ClassicServiceImpl::Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);
+  Log_info("[Jetpack] cmd<{}, {}> entered ClassicServiceImpl::Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);
 #endif
 
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[Jetpack] [C+] Received Dispatch %.3f", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[Jetpack] [C+] Received Dispatch {:.3f}", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
 
   Log_debug("The server side receives a message from the client worker");
@@ -293,28 +264,32 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   // Check if this is a recovery command
   bool is_recovery = false;
   if (md.has_value() && md.kind_ == VecPieceData::static_kind()) {
-    auto vec_piece_data = marshallable_cast<VecPieceData>(md);
-    if (vec_piece_data && vec_piece_data->is_recovery_command_) {
+    const auto vec_piece_data = marshallable_cast<VecPieceData>(md);
+    if (vec_piece_data.is_some() && vec_piece_data.unwrap()->is_recovery_command_) {
       is_recovery = true;
     }
   }
 
+  // TxLogServer::Dispatch still takes std::shared_ptr<ViewData>&
+  // (rrr boundary, scheduler.h); convert to the Arc-based envelope
+  // at the edge below.
   std::shared_ptr<ViewData> view;
   // TxLogServer::Dispatch now takes janus::Command;
   // pass `md` (RPC param) directly.
   *res = dtxn_sched()->Dispatch(cmd_id, md, *output, view);
-  
+
   // Set the view data in the output parameter
   if (view) {
-    *view_data = view;
+    // @unsafe { boundary copy: shared_ptr<ViewData> out-param -> Arc envelope }
+    *view_data = rusty::Arc<ViewData>::make(*view);
   } else {
     // Initialize with empty view data if not set
-    *view_data = std::make_shared<ViewData>();
+    *view_data = rusty::Arc<ViewData>::make();
   }
   
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   defer.reply();
   // }, __FILE__, cmd_id);
@@ -326,7 +301,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   //   }
   //   auto coro_opt = Fiber::current_fiber();
   //   if (coro_opt.is_some()) {
-  //     *coro_id = coro_opt.unwrap()->id;
+  //     *coro_id = coro_opt.unwrap()->id.get();
   //   }
   //   defer.reply();
   // };
@@ -358,13 +333,13 @@ void ClassicServiceImpl::FailoverPauseSocketOut(
     // TODO: yidawu need to test with multi clients in diff machines
     int wait_int = 50 * 1000; // 50ms
     while (clt_cnt_.load() == 0) {
-      auto e = Reactor::create_sp_event<NeverEvent>();
-      e->wait(wait_int);
+      auto e = create_sp_never_event();
+      e->wait_timeout(wait_int);
     }
     clt_cnt_--;
     while (clt_cnt_.load() != 0) {
-      auto e = Reactor::create_sp_event<NeverEvent>();
-      e->wait(wait_int);
+      auto e = create_sp_never_event();
+      e->wait_timeout(wait_int);
     }
     dtxn_sched_->rep_sched_->Pause();
     // pause() not implemented in PollThreadWorker;
@@ -400,12 +375,12 @@ void ClassicServiceImpl::FailoverResumeSocketOut(
 void ClassicServiceImpl::SimpleCmd(
     const SimpleCommand& cmd, rrr::i32* res, rrr::DeferredReply defer) {
   Fiber::create_run([res, defer = std::move(defer), this]() mutable {
-    auto empty_cmd = std::make_shared<TpcEmptyCommand>();
+    auto empty_cmd = rusty::Arc<TpcEmptyCommand>::make();
     // aliased wrap preserves event-member aliasing — the
     // apply path's Done() must wake this empty_cmd's Wait() below.
     auto sched = (SchedulerClassic*)dtxn_sched_;
     sched->CreateRepCoord(0)->Submit(
-        janus::Command::pack_aliased<TpcEmptyCommand>(empty_cmd));
+        janus::Command::pack_aliased<TpcEmptyCommand>(empty_cmd.clone()));
     empty_cmd->Wait();
     *res = SUCCESS;
     defer.reply();
@@ -436,17 +411,17 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
   auto sched = (SchedulerClassic*) dtxn_sched_;
   bool null_cmd = false;
   bool ret = sched->OnPrepare(tid, sids, dep_id, null_cmd);
-  //Log_info("slow1: %d", sched->slow_);
+  //Log_info("slow1: {}", sched->slow_);
   *slow = sched->slow_;
   *res = ret ? SUCCESS : REJECT;
   if(null_cmd) *res = REPEAT;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   defer.reply();
   //auto coro = Fiber::create_run(func);
-  //Log_info("coro id on service side: %d", coro->id);
+  //Log_info("coro id on service side: {}", coro->id);
 // TODO move the stat to somewhere else.
 #ifdef PIECE_COUNT
   std::map<piece_count_key_t, uint64_t>::iterator pc_it;
@@ -455,11 +430,11 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
   else
       piece_count_prepare_success_++;
   if (piece_count_timer_.elapsed() >= 5.0) {
-      Log::info("PIECE_COUNT: txn served: %u", piece_count_tid_.size());
-      Log::info("PIECE_COUNT: prepare success: %llu, failed: %llu",
+      Log_info("PIECE_COUNT: txn served: {}", piece_count_tid_.size());
+      Log_info("PIECE_COUNT: prepare success: {}, failed: {}",
         piece_count_prepare_success_, piece_count_prepare_fail_);
       for (pc_it = piece_count_.begin(); pc_it != piece_count_.end(); pc_it++)
-          Log::info("PIECE_COUNT: t_type: %d, p_type: %d, started: %llu",
+          Log_info("PIECE_COUNT: t_type: {}, p_type: {}, started: {}",
             pc_it->first.t_type, pc_it->first.p_type, pc_it->second);
       piece_count_timer_.start();
   }
@@ -471,26 +446,22 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
                                 rrr::i32* res,
 																bool_t* slow,
                                 uint64_t* coro_id,
-																Profiling* profile,
                                 janus::Command* view_data,
                                 rrr::DeferredReply defer) {
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   int ret = sched->OnCommit(tid, dep_id, SUCCESS);
 
-  std::vector<double> result = rrr::CPUInfo::cpu_stat();
-  *profile = {result[0], result[1], result[2], result[3]};
-  //*profile = {0.0, 0.0, 0.0, 0.0};
-  //Log_info("slow2: %d", sched->slow_);
+  //Log_info("slow2: {}", sched->slow_);
   *slow = sched->slow_;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
 
   if (ret == WRONG_LEADER) {
     *res = WRONG_LEADER;
-    Log_info("[WRONG_LEADER] ServiceImpl::Commit returning WRONG_LEADER for tx_id: %lu", tid);
+    Log_info("[WRONG_LEADER] ServiceImpl::Commit returning WRONG_LEADER for tx_id: {}", tid);
     // removed the
     // `dynamic_cast<TxData*>(sp_tx->cmd_.inner_marshallable().get())`
     // escape hatch.  After L10f-1, TxData no longer inherits
@@ -502,10 +473,10 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
     *res = SUCCESS;
     // Set view data from replication scheduler if available
     if (sched->rep_sched_ != nullptr) {
-      *view_data = std::make_shared<ViewData>(sched->rep_sched_->new_view_);
+      *view_data = rusty::Arc<ViewData>::make(sched->rep_sched_->new_view_);
     } else {
       // If no replication scheduler, set an empty ViewData
-      *view_data = std::make_shared<ViewData>();
+      *view_data = rusty::Arc<ViewData>::make();
     }
   }
 
@@ -517,28 +488,25 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
                                rrr::i32* res,
 															 bool_t* slow,
                                uint64_t* coro_id,
-															 Profiling* profile,
                                janus::Command* view_data,
                                rrr::DeferredReply defer) {
-  Log_debug("get abort_txn: tid: %ld", tid);
+  Log_debug("get abort_txn: tid: {}", tid);
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   sched->OnCommit(tid, dep_id, REJECT);
-  std::vector<double> result = rrr::CPUInfo::cpu_stat();
-  *profile = {result[0], result[1], result[2]};
-  Log_info("slow3: %d", sched->slow_);
+  Log_info("slow3: {}", sched->slow_);
   *slow = sched->slow_;
   *res = SUCCESS;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   // Set view data from replication scheduler if available
   if (sched->rep_sched_ != nullptr) {
-    *view_data = std::make_shared<ViewData>(sched->rep_sched_->new_view_);
+    *view_data = rusty::Arc<ViewData>::make(sched->rep_sched_->new_view_);
   } else {
     // If no replication scheduler, set an empty ViewData
-    *view_data = std::make_shared<ViewData>();
+    *view_data = rusty::Arc<ViewData>::make();
   }
   defer.reply();
 }
@@ -546,7 +514,7 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
 void ClassicServiceImpl::EarlyAbort(const rrr::i64& tid,
                                     rrr::i32* res,
                                     rrr::DeferredReply defer) {
-  Log_debug("get abort_txn: tid: %ld", tid);
+  Log_debug("get abort_txn: tid: {}", tid);
 //  std::lock_guard<std::mutex> guard(mtx_);
 //  const auto& func = [tid, res, defer, this]() {
   auto sched = (SchedulerClassic*) dtxn_sched_;
@@ -603,10 +571,11 @@ void ClassicServiceImpl::RccDispatch(const vector<SimpleCommand>& cmd,
                                      rrr::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(this->mtx_);
   RccServer* sched = (RccServer*) dtxn_sched_;
-  auto p = std::make_shared<RccGraph>();
-  // graph reply rides directly as `AnyMessage`.
-  *p_md_graph = *rrr::AnyMessage::pack(p);
-  *res = sched->OnDispatch(cmd, output, p);
+  auto p = rusty::Arc<RccGraph>::make();
+  // graph reply rides directly as `AnyMessage` (aliased: OnDispatch's
+  // fills through the shared payload stay visible to the packed reply).
+  *p_md_graph = rrr::AnyMessage::pack(p.clone());
+  *res = sched->OnDispatch(cmd, output, std::move(p));
   defer.reply();
 }
 
@@ -615,9 +584,9 @@ void ClassicServiceImpl::RccFinish(const cmdid_t& cmd_id,
                                    TxnOutput* output,
                                    rrr::DeferredReply defer) {
   // graph rides directly as AnyMessage.
-  auto sp_graph = md_graph.unpack<RccGraph>();
-  verify(sp_graph);
-  const RccGraph& graph = *sp_graph;
+  const auto sp_graph = md_graph.unpack<RccGraph>();
+  verify(sp_graph.is_some());
+  const RccGraph& graph = *sp_graph.unwrap();
   verify(graph.size() > 0);
   verify(0);
 //  std::lock_guard<std::mutex> guard(mtx_);
@@ -670,41 +639,6 @@ void ClassicServiceImpl::RccNotifyGlobalValidation(
   defer.reply();
 }
 
-void ClassicServiceImpl::JanusDispatch(const vector<SimpleCommand>& cmd,
-                                       int32_t* p_res,
-                                       TxnOutput* p_output,
-                                       rrr::AnyMessage* p_md_res_graph,
-                                       rrr::DeferredReply defer) {
-//    std::lock_guard<std::mutex> guard(this->mtx_); // TODO remove the lock.
-    auto sp_graph = std::make_shared<RccGraph>();
-    auto* sched = (SchedulerJanus*) dtxn_sched_;
-    *p_res = sched->OnDispatch(cmd, p_output, sp_graph);
-    if (sp_graph->size() <= 1) {
-      // graph reply rides directly as AnyMessage.
-      *p_md_res_graph =
-          *rrr::AnyMessage::pack(std::make_shared<EmptyGraph>());
-    } else {
-      *p_md_res_graph = *rrr::AnyMessage::pack(sp_graph);
-    }
-    verify(!p_md_res_graph->type_name().empty());
-    defer.reply();
-}
-
-void ClassicServiceImpl::JanusCommit(const cmdid_t& cmd_id,
-                                     const rank_t& rank,
-                                     const int32_t& need_validation,
-                                     const rrr::AnyMessage& graph,
-                                     int32_t* res,
-                                     TxnOutput* output,
-                                     rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  verify(0);
-  auto sp_graph = graph.unpack<RccGraph>();
-  auto p_sched = (RccServer*) dtxn_sched_;
-  *res = p_sched->OnCommit(cmd_id, rank, need_validation, sp_graph, output);
-  defer.reply();
-}
-
 void ClassicServiceImpl::RccCommit(const cmdid_t& cmd_id,
                                    const rank_t& rank,
                                    const int32_t& need_validation,
@@ -716,33 +650,6 @@ void ClassicServiceImpl::RccCommit(const cmdid_t& cmd_id,
   auto p_sched = (RccServer*) dtxn_sched_;
   *res = p_sched->OnCommit(cmd_id, rank, need_validation, parents, output);
   defer.reply();
-}
-
-void ClassicServiceImpl::JanusCommitWoGraph(const cmdid_t& cmd_id,
-                                            const rank_t& rank,
-                                            const int32_t& need_validation,
-                                            int32_t* res,
-                                            TxnOutput* output,
-                                            rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  verify(0);
-  auto sched = (SchedulerJanus*) dtxn_sched_;
-  *res = sched->OnCommit(cmd_id, rank, need_validation, nullptr, output);
-  defer.reply();
-}
-
-void ClassicServiceImpl::JanusInquire(const epoch_t& epoch,
-                                      const cmdid_t& tid,
-                                      rrr::AnyMessage* p_md_graph,
-                                      rrr::DeferredReply defer) {
-  verify(0);
-//  std::lock_guard<std::mutex> guard(mtx_);
-//  *p_md_graph = std::make_shared<RccGraph>();
-//  auto p_sched = (SchedulerJanus*) dtxn_sched_;
-//  p_sched->OnInquire(epoch,
-//                     tid,
-//                     dynamic_pointer_cast<RccGraph>(p_md_graph->sp_data_));
-//  defer.reply();
 }
 
 void ClassicServiceImpl::RccPreAccept(const cmdid_t& txnid,
@@ -757,38 +664,6 @@ void ClassicServiceImpl::RccPreAccept(const cmdid_t& txnid,
   defer.reply();
 }
 
-void ClassicServiceImpl::JanusPreAccept(const cmdid_t& txnid,
-                                        const rank_t& rank,
-                                        const vector<SimpleCommand>& cmds,
-                                        const rrr::AnyMessage& md_graph,
-                                        int32_t* res,
-                                        rrr::AnyMessage* p_md_res_graph,
-                                        rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  auto ret_sp_graph = std::make_shared<RccGraph>();
-  *p_md_res_graph = *rrr::AnyMessage::pack(ret_sp_graph);
-  auto sp_graph = md_graph.unpack<RccGraph>();
-  verify(sp_graph);
-  verify(ret_sp_graph);
-  auto sched = (SchedulerJanus*) dtxn_sched_;
-  *res = sched->OnPreAccept(txnid, rank, cmds, sp_graph, ret_sp_graph);
-  defer.reply();
-}
-
-void ClassicServiceImpl::JanusPreAcceptWoGraph(const cmdid_t& txnid,
-                                               const rank_t& rank,
-                                               const vector<SimpleCommand>& cmds,
-                                               int32_t* res,
-                                               rrr::AnyMessage* res_graph,
-                                               rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  auto sp_ret_graph = std::make_shared<RccGraph>();
-  *res_graph = *rrr::AnyMessage::pack(sp_ret_graph);
-  auto* p_sched = (SchedulerJanus*) dtxn_sched_;
-  *res = p_sched->OnPreAccept(txnid, rank, cmds, nullptr, sp_ret_graph);
-  defer.reply();
-}
-
 void ClassicServiceImpl::RccAccept(const cmdid_t& txnid,
                                    const rank_t& rank,
                                    const ballot_t& ballot,
@@ -797,20 +672,6 @@ void ClassicServiceImpl::RccAccept(const cmdid_t& txnid,
                                    rrr::DeferredReply defer) {
   auto sched = (RccServer*) dtxn_sched_;
   *res = sched->OnAccept(txnid, rank, ballot, parents);
-  defer.reply();
-}
-
-void ClassicServiceImpl::JanusAccept(const cmdid_t& txnid,
-                                     const int32_t& rank,
-                                     const ballot_t& ballot,
-                                     const rrr::AnyMessage& md_graph,
-                                     int32_t* res,
-                                     rrr::DeferredReply defer) {
-  // graph rides directly as AnyMessage.
-  auto graph = md_graph.unpack<RccGraph>();
-  verify(graph);
-  auto sched = (SchedulerJanus*) dtxn_sched_;
-  sched->OnAccept(txnid, rank, ballot, graph, res);
   defer.reply();
 }
 
@@ -831,9 +692,11 @@ void ClassicServiceImpl::JetpackPullIdSet(const epoch_t& jepoch,
                                           janus::Command* reply_new_view,
                                           janus::Command* id_set, 
                                           rrr::DeferredReply defer) {
-  *id_set = std::make_shared<VecRecData>();
-  shared_ptr<VecRecData> sp_ret_id_set = marshallable_cast<VecRecData>(id_set);
-  dtxn_sched()->OnJetpackPullIdSet(jepoch, oepoch, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, sp_ret_id_set);
+  // Fill-then-wrap: the handler populates a local, which is packed
+  // once complete — no mutation through a packed handle.
+  VecRecData ret_id_set;
+  dtxn_sched()->OnJetpackPullIdSet(jepoch, oepoch, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, ret_id_set);
+  *id_set = rusty::Arc<VecRecData>::make(std::move(ret_id_set));
   defer.reply();
 }
 
@@ -847,14 +710,16 @@ void ClassicServiceImpl::JetpackPullCmd(const epoch_t& jepoch,
                                         janus::Command* reply_new_view,
                                         janus::Command* cmd_batch, 
                                         rrr::DeferredReply defer) {
-  auto vec_keys = marshallable_cast<VecRecData>(key_batch);
+  const auto vec_keys = marshallable_cast<VecRecData>(key_batch);
   std::vector<key_t> keys;
-  if (vec_keys && vec_keys->key_data_) {
-    keys.assign(vec_keys->key_data_->begin(), vec_keys->key_data_->end());
+  if (vec_keys.is_some() && vec_keys.unwrap()->key_data_) {
+    keys.assign(vec_keys.unwrap()->key_data_->begin(),
+                vec_keys.unwrap()->key_data_->end());
   }
-  auto batch_result = std::make_shared<KeyCmdBatchData>();
+  // Fill-then-wrap: handler fills a local, packed after completion.
+  KeyCmdBatchData batch_result;
   dtxn_sched()->OnJetpackPullCmd(jepoch, oepoch, keys, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, batch_result);
-  *cmd_batch = batch_result;
+  *cmd_batch = janus::Command::pack_aliased(rusty::Arc<KeyCmdBatchData>::make(std::move(batch_result)));
   defer.reply();
 
 }
@@ -865,11 +730,11 @@ void ClassicServiceImpl::JetpackRecordCmd(const epoch_t& jepoch,
                                           const int32_t& rid,
                                           const janus::Command& md, 
                                           rrr::DeferredReply defer) {
-  auto batch = marshallable_cast<KeyCmdBatchData>(md);
-  if (!batch) {
-    batch = std::make_shared<KeyCmdBatchData>();
-  }
-  dtxn_sched()->OnJetpackRecordCmd(jepoch, oepoch, sid, rid, batch);
+  const auto batch = marshallable_cast<KeyCmdBatchData>(md);
+  const KeyCmdBatchData empty_batch;
+  dtxn_sched()->OnJetpackRecordCmd(jepoch, oepoch, sid, rid,
+                                   batch.is_some() ? *batch.unwrap()
+                                                   : empty_batch);
   defer.reply();
 }
 
@@ -926,7 +791,7 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
                                               janus::Command* reply_new_view,
                                               janus::Command* cmd, 
                                               rrr::DeferredReply defer) {
-  *cmd = std::make_shared<TpcCommitCommand>();
+  *cmd = janus::Command::pack_aliased(rusty::Arc<TpcCommitCommand>::make());
   dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view);
   defer.reply();
 }

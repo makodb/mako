@@ -1,99 +1,39 @@
-# Transport Backend Configuration Guide
+# Transport Layer
 
-This document describes how to switch between the two RPC transport backends available in the Mako system.
+Mako uses a single RPC transport: **rrr/rpc**, the portable TCP/IP RPC provided
+by the in-tree rrr library (`src/rrr/`). It is implemented by the concrete
+`RrrRpcBackend` class in `src/mako/lib/rrr_rpc_backend.{h,cc}`.
 
-## Overview
+There is no transport abstraction and no transport selection. The former
+`TransportBackend` interface, its second implementation (the eRPC/RDMA backend),
+and the `MAKO_TRANSPORT` environment variable were all removed: a
+one-implementation interface only added a virtual dispatch on the RPC hot path
+and a runtime switch that could not select anything.
 
-The Mako distributed transaction system supports two transport backends:
+## Characteristics
 
-1. **rrr/rpc** (default) - Portable TCP/IP-based RPC
-2. **eRPC** - High-performance RDMA-based RPC
+| Property | rrr/rpc |
+|----------|---------|
+| **Transport** | TCP/IP sockets (event-driven) |
+| **Latency** | ~10-50 μs round-trip |
+| **Hardware** | Standard Ethernet, any platform |
+| **Debugging** | Works with standard tools (`tcpdump`, Wireshark) |
 
-Both backends implement the same `TransportBackend` interface, providing transport-agnostic request/response handling.
-
-## Backend Comparison
-
-| Feature | eRPC | rrr/rpc |
-|---------|------|---------|
-| **Latency** | ~1-2 μs (RDMA) | ~10-50 μs (TCP/IP) |
-| **Hardware** | Requires RDMA-capable NICs | Standard Ethernet |
-| **Portability** | Linux with RDMA drivers | Any platform |
-| **Scalability** | Excellent (kernel bypass) | Good |
-| **Use Case** | Production clusters, benchmarks | Development, testing, portability |
-
-## Switching Between Backends
-
-### Method 1: Environment Variable (Recommended)
-
-Set the `MAKO_TRANSPORT` environment variable before running:
+No special hardware or configuration is required:
 
 ```bash
-# Use rrr/rpc backend (default)
 ./build/dbtest config/tpcc.yml
-
-# Use eRPC backend
-export MAKO_TRANSPORT=erpc
-./build/dbtest config/tpcc.yml
-
-# Or inline
-MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
-```
-
-### Method 2: Configuration File
-
-Add the transport type to your YAML configuration file:
-
-```yaml
-# config/tpcc.yml
-transport:
-  type: erpc  # Options: rrr (default), erpc
-  # ... other transport settings
-```
-
-### Method 3: Build-Time Configuration
-
-Set the default backend at build time (CMake):
-
-```bash
-# Build with rrr/rpc as default (standard)
-cmake -DMAKO_DEFAULT_TRANSPORT=rrr ..
-make -j32
-
-# Build with eRPC as default
-cmake -DMAKO_DEFAULT_TRANSPORT=erpc ..
-make -j32
-```
-
-## Testing Both Backends
-
-### Single-Shard Tests
-
-```bash
-# Test rrr/rpc (default)
-./ci/ci.sh simpleTransaction
-
-# Test eRPC
-MAKO_TRANSPORT=erpc ./ci/ci.sh simpleTransaction
-```
-
-### Multi-Shard Tests
-
-```bash
-# Test rrr/rpc with 2 shards, no replication (default)
-./ci/ci.sh shardNoReplication
-
-# Test eRPC with 2 shards, no replication
-MAKO_TRANSPORT=erpc ./ci/ci.sh shardNoReplication
-
-# Test with replication
-./ci/ci.sh shard1Replication
 ```
 
 ## Architecture
 
-### Transport-Agnostic Design
+`FastTransport` (`src/mako/lib/fasttransport.{h,cc}`) owns an `RrrRpcBackend`
+directly and forwards `Transport`'s virtual API to it.
 
-The system uses an abstract `TransportRequestHandle` interface that both backends implement:
+Worker threads in `src/mako/lib/server.cc` never see the backend type: the
+backend hands each in-flight request to the helper queue as an opaque token and
+the worker accesses it through the `TransportRequestHandle` interface
+(`src/mako/lib/transport_request_handle.h`):
 
 ```cpp
 class TransportRequestHandle {
@@ -105,202 +45,43 @@ class TransportRequestHandle {
 };
 ```
 
-### Backend Implementations
+`RrrRequestHandle` is its only implementation.
 
-**eRPC Backend** (`ErpcBackend`, `ErpcRequestHandle`):
-- Located in `src/mako/lib/erpc_backend.{h,cc}`
-- Uses RDMA for zero-copy, kernel-bypass networking
-- Optimal for production clusters with RDMA hardware
+## Reliability features
 
-**rrr/rpc Backend** (`RrrRpcBackend`, `RrrRequestHandle`):
-- Located in `src/mako/lib/rrr_rpc_backend.{h,cc}`
-- Uses standard TCP/IP sockets via rrr library
-- Portable across all platforms, no special hardware required
+The rrr/rpc client/server carries the reliability machinery used in production
+deployments:
 
-### Worker Thread Independence
+- **Connection state machine** — NEW, CONNECTING, CONNECTED, DISCONNECTING,
+  DISCONNECTED, FAILED
+- **Automatic reconnection** — configurable retry with exponential backoff and
+  jitter
+- **Circuit breaker** — fail fast instead of cascading
+- **Request buffering** — queue during disconnection, replay after reconnect
+- **Timeouts and idempotent retry**
+- **Heartbeat / TCP keepalive**
+- **Graceful shutdown** — drain in-flight requests before stopping
+- **Observability** — connection metrics, event callbacks, structured errors
 
-Worker threads in `src/mako/lib/server.cc` use only the abstract interface:
+## Testing
 
-```cpp
-// Transport-agnostic request processing
-size_t msgLen = shardReceiver->ReceiveRequest(
-    req_handle->GetRequestType(),
-    req_handle->GetRequestBuffer(),
-    req_handle->GetResponseBuffer());
+```bash
+# Focused rrr/rpc transport coverage (real network I/O)
+ctest -R test_transport_integration
 
-// Transport-agnostic response enqueueing
-req_handle->EnqueueResponse(msgLen);
+# Full unit-test suite
+./ci/ci.sh rrrTests
+
+# End-to-end suites
+./ci/ci.sh simpleTransaction
+./ci/ci.sh shardNoReplication
 ```
-
-This design allows:
-- Easy switching between backends at runtime
-- No code changes required when switching transports
-- Ability to add new transport backends without modifying worker code
-
-## Performance Characteristics
-
-### eRPC Backend
-
-**Advantages:**
-- Ultra-low latency (~1-2 μs round-trip)
-- High throughput (millions of requests/second)
-- Zero-copy, kernel-bypass networking
-- Excellent for CPU-bound workloads
-
-**Requirements:**
-- RDMA-capable network interface cards (Mellanox, Intel)
-- RDMA drivers (libibverbs, librdmacm)
-- Privileged access for huge pages
-
-**Typical Use Cases:**
-- Production datacenter deployments
-- Performance benchmarking
-- Research experiments requiring low latency
-
-### rrr/rpc Backend
-
-**Advantages:**
-- No special hardware requirements
-- Works on any Linux/Unix system
-- Easy to debug with standard network tools (tcpdump, wireshark)
-- Suitable for development and testing
-- **Built-in reliability features** (see below)
-
-**Characteristics:**
-- Moderate latency (~10-50 μs round-trip)
-- Good throughput (~100k-500k requests/second)
-- TCP/IP with event-driven I/O (epoll)
-
-**Typical Use Cases:**
-- Development and debugging
-- Testing on laptops/VMs without RDMA
-- Deployment on cloud instances without RDMA
-- Cross-platform compatibility
-
-## rrr/rpc Reliability Features
-
-The rrr/rpc backend includes comprehensive reliability features for production deployments:
-
-### Connection Management
-- **Connection State Machine** - Tracks connection lifecycle (NEW, CONNECTING, CONNECTED, DISCONNECTING, DISCONNECTED, FAILED)
-- **Automatic Reconnection** - Configurable retry with exponential backoff and jitter
-- **Circuit Breaker** - Fail-fast pattern to prevent cascade failures
-
-### Request Handling
-- **Request Buffering** - Queue requests during disconnection for replay after reconnection
-- **Timeout Configuration** - Per-request timeout with retry support
-- **Idempotent Retry** - Safe retry for idempotent operations with backoff
-
-### Health Monitoring
-- **Heartbeat/Keep-Alive** - Track connection liveness
-- **TCP Keepalive** - Detect dead connections at OS level
-- **Connection Validation** - Proactive health checks
-
-### Server Features
-- **Graceful Shutdown** - Drain pending requests before stopping
-- **Request Tracking** - Track pending requests for clean shutdown
-- **Restart Detection** - Clients detect server restarts via instance IDs
-
-### Observability
-- **Connection Metrics** - Track latency, success/failure rates, bytes transferred
-- **Event Callbacks** - Hook into connection state changes
-- **Structured Errors** - Detailed error types for handling
-
-For detailed documentation, see [RPC Reliability Features](rpc_reliability.md).
-
-## Verified Performance
-
-Both backends have been tested and verified:
-
-| Test | eRPC | rrr/rpc |
-|------|------|---------|
-| **Single-shard transactions** | ✅ PASSED | ✅ PASSED |
-| **Multi-shard (2 shards)** | ✅ PASSED | ✅ PASSED (387k req/30s) |
-| **With replication** | ✅ PASSED | ✅ TESTED |
-| **Cross-partition txns** | ✅ PASSED | ✅ PASSED |
-| **Helper queue integration** | ✅ PASSED | ✅ PASSED |
 
 ## Troubleshooting
 
-### eRPC Issues
+**"Failed to connect to address"**
+- Verify the target host/port is reachable and the firewall allows TCP.
 
-**Problem**: "eRPC Nexus: Failed to create"
-- **Solution**: Check RDMA drivers are installed (`ibstat`, `ibv_devices`)
-- **Solution**: Ensure huge pages are configured (`echo 2048 > /proc/sys/vm/nr_hugepages`)
-
-**Problem**: "Failed to create session"
-- **Solution**: Verify network connectivity and firewall rules
-- **Solution**: Check that ports are not already in use
-
-### rrr/rpc Issues
-
-**Problem**: "Failed to connect to address"
-- **Solution**: Verify target host/port is reachable
-- **Solution**: Check firewall allows TCP connections
-
-**Problem**: "Address already in use"
-- **Solution**: Wait for TIME_WAIT to expire or use different ports
-- **Solution**: Kill lingering processes (`killall -9 dbtest`)
-
-### General Debugging
-
-Enable verbose logging:
-```bash
-# Set log level
-export MAKO_LOG_LEVEL=debug
-
-# Run with logging
-MAKO_TRANSPORT=rrr ./build/dbtest config/tpcc.yml 2>&1 | tee test.log
-```
-
-Check statistics:
-- Both backends print request/response statistics at shutdown
-- Look for "msg_size_req_sent", "msg_counter_req_sent" in logs
-- Verify non-zero response counts
-
-## Adding New Transport Backends
-
-To add a new transport backend:
-
-1. **Create backend class** inheriting from `TransportBackend`:
-   ```cpp
-   class MyBackend : public TransportBackend {
-       // Implement all virtual methods
-   };
-   ```
-
-2. **Create request handle** inheriting from `TransportRequestHandle`:
-   ```cpp
-   class MyRequestHandle : public TransportRequestHandle {
-       // Implement all virtual methods including EnqueueResponse()
-   };
-   ```
-
-3. **Register in configuration**:
-   - Add new enum value to `TransportType`
-   - Update `FastTransport` to instantiate your backend
-
-4. **Test thoroughly**:
-   - Single-shard transactions
-   - Multi-shard distributed transactions
-   - Cross-partition transactions
-   - With/without replication
-
-## References
-
-- eRPC library: https://github.com/erpc-io/eRPC
-- rrr/rpc library: `src/rrr/` (internal)
-- Transport backend interface: `src/mako/lib/transport_backend.h`
-- Request handle interface: `src/mako/lib/transport_request_handle.h`
-- Example configurations: `config/mako_*.yml`
-
-## Summary
-
-The dual transport backend architecture provides:
-- **Flexibility**: Choose the right backend for your deployment
-- **Portability**: Run on any hardware (rrr/rpc) or optimize for performance (eRPC)
-- **Maintainability**: Transport-agnostic worker code simplifies development
-- **Extensibility**: Easy to add new transport backends
-
-By default, the system uses **rrr/rpc** for maximum portability and ease of development.
-For production deployments with RDMA hardware, switch to **eRPC** for best performance.
+**"Address already in use"**
+- Wait for `TIME_WAIT` to expire, pick different ports, or kill lingering
+  processes (`killall -9 dbtest`).

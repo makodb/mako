@@ -4,12 +4,7 @@
 #include "dep_graph.h"
 
 namespace janus {
-template<typename T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const Vertex<T> *&v) {
-  verify(0);
-  int64_t u = std::uintptr_t(v);
-  m << u;
-  return m;
-}
+// Marshal-deprecation slice A: the dead verify(0) Vertex<T>* Marshal
+// serialize template is deleted (never instantiated).
 
 } // namespace janus

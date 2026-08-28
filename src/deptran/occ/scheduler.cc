@@ -46,7 +46,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
 
   // only do version check on leader.
   if (tx_box->is_leader_hint_ && !txn->version_check()) {
-    Log_debug("txn: occ validation failed. id %" PRIx64 "site: %x",
+    Log_debug("txn: occ validation failed. id {:x}site: {:x}",
         (int64_t) tx_id, (int) this->site_id_);
     txn->__debug_abort_ = 1;
     return false;
@@ -55,7 +55,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
     for (auto &it : txn->ver_check_read_) {
       Row *row = it.first.row;
       auto *v_row = (VersionedRow *) row;
-      Log_debug("r_lock row: %llx", row);
+      Log_debug("r_lock row: {}", (void*)row);
       if (!v_row->rlock_row_by(txn->id())) {
 #ifdef CONFLICT_COUNT
         const Table *tbl = v_row->get_table();
@@ -72,17 +72,17 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
           vr->unlock_row_by(txn->id());
         }
         txn->locks_.clear();
-        Log_debug("txn: occ read locks failed. id %" PRIx64 ", site: %x, is-leader: %d",
+        Log_debug("txn: occ read locks failed. id {:x}, site: {:x}, is-leader: {}",
             (int64_t)tx_id, (int)this->site_id_, tx_box->is_leader_hint_);
         txn->__debug_abort_ = 1;
         return false;
       }
-      insert_into_map(txn->locks_, row, -1);
+      txn->locks_.emplace(row, -1);
     }
     for (auto &it : txn->updates_) {
       Row *row = it.first;
       auto v_row = (VersionedRow *) row;
-      Log_debug("w_lock row: %llx", row);
+      Log_debug("w_lock row: {}", (void*)row);
       if (!v_row->wlock_row_by(txn->id())) {
 #ifdef CONFLICT_COUNT
         const Table *tbl = v_row->get_table();
@@ -99,13 +99,13 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
           vr->unlock_row_by(txn->id());
         }
         txn->locks_.clear();
-        Log_debug("txn: occ write locks failed. id %" PRIx64 "site: %x", (int64_t)tx_id, (int)this->site_id_);
+        Log_debug("txn: occ write locks failed. id {:x}site: {:x}", (int64_t)tx_id, (int)this->site_id_);
         txn->__debug_abort_ = 1;
         return false;
       }
-      insert_into_map(txn->locks_, row, -1);
+      txn->locks_.emplace(row, -1);
     }
-    Log_debug("txn: %llx occ locks succeed.", (int64_t)tx_id);
+    Log_debug("txn: {:x} occ locks succeed.", (int64_t)tx_id);
     txn->__debug_abort_ = 0;
     txn->verified_ = true;
   }
@@ -121,7 +121,7 @@ void SchedulerOcc::DoCommit(Tx& tx) {
 
   auto txn = dynamic_cast<mdb::TxnOCC*>(mdb_txn_);
   if (txn->__debug_abort_) {
-    Log_fatal("2pc commit request received after prepare failure for %" PRIx64,
+    Log_fatal("2pc commit request received after prepare failure for {:x}",
               tx.tid_);
   }
   verify(txn->outcome_ == symbol_t::NONE);

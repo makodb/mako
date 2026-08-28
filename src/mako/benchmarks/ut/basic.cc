@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include "benchmarks/common.h"
 #include "util.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 
 import std;
 using namespace std;
@@ -78,7 +78,7 @@ void request_trim() {
         request_trim(rand() % 690);
 }
 
-void erpc_instance_exp(int id) {
+void rpc_instance_exp(int id) {
     std::string file="./config/local-shards2-warehouses4.yml";
     auto config = new transport::Configuration(file);
     std::string local_uri = config->shard(0).host;
@@ -93,7 +93,7 @@ void erpc_instance_exp(int id) {
     system("rdma resource >> b.log");
 }
 
-void erpc_instance_exp_seq(int num) {
+void rpc_instance_exp_seq(int num) {
     std::string file="./config/local-shards2-warehouses4.yml";
     auto config = new transport::Configuration(file);
     std::string local_uri = config->shard(0).host;
@@ -221,13 +221,13 @@ int main(int argc, char ** argv)
 {
     test_static_scope();
     request_trim();
-    erpc_instance_exp_seq(3);
+    rpc_instance_exp_seq(3);
     testing_map_get();
 
     if (argc > 1) {
        std::vector<std::thread> threads(atoi(argv[1]));
        for (auto i=0; i< atoi(argv[1]); i++) {
-           threads[i] = std::thread(erpc_instance_exp, i+1);
+           threads[i] = std::thread(rpc_instance_exp, i+1);
        }
        for (auto i=0; i< atoi(argv[1]); i++) {
            threads[i].join() ;

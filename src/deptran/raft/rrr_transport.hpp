@@ -69,7 +69,7 @@ class RrrTransportAdapter : public TransportBase {
   // @unsafe { std::function bridge at rrr boundary }
   AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) override {
     auto slot  = std::make_shared<AppendEntriesReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
+    auto ready = create_sp_int_event(1);
     commo_->SendAppendEntriesCb(
         dst, par_, req.slot, req.ballot,
         /*isLeader=*/true,
@@ -89,7 +89,7 @@ class RrrTransportAdapter : public TransportBase {
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
                                                     EmptyAppendEntriesReq req) override {
     auto slot  = std::make_shared<AppendEntriesReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
+    auto ready = create_sp_int_event(1);
     commo_->SendAppendEntriesCb(
         dst, par_, req.slot, req.ballot,
         /*isLeader=*/true,
@@ -116,7 +116,7 @@ class RrrTransportAdapter : public TransportBase {
   //            and park on a dedicated IntEvent. }
   VoteReply send_vote(siteid_t dst, VoteReq req) override {
     auto slot  = std::make_shared<VoteReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
+    auto ready = create_sp_int_event(1);
     commo_->BroadcastVoteCb(
         par_, req.last_log_idx, req.last_log_term,
         req.candidate_site_id, req.current_term,
@@ -133,7 +133,7 @@ class RrrTransportAdapter : public TransportBase {
   // @unsafe { std::function bridge }
   TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
     auto slot  = std::make_shared<TimeoutNowReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
+    auto ready = create_sp_int_event(1);
     commo_->SendTimeoutNow(
         dst, par_, req.leader_term, req.leader_site_id,
         [slot, ready](bool success, uint64_t follower_term) {
@@ -149,7 +149,7 @@ class RrrTransportAdapter : public TransportBase {
   //           a std::function — we just wire it into a slot+event. }
   InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) override {
     auto slot  = std::make_shared<InstallSnapshotReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
+    auto ready = create_sp_int_event(1);
     commo_->SendInstallSnapshot(
         dst, par_, req.term, req.leader_id,
         req.last_included_index, req.last_included_term, req.data,

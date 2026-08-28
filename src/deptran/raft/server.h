@@ -8,6 +8,7 @@
 #include <deque>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
@@ -20,7 +21,7 @@
 //   Log_fatal: [safe, (...) -> void],
 //   verify: [safe, (bool) -> void],
 //   Config::GetConfig: [safe, () -> Config*],
-//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
+//   Reactor::create_sp_event: [safe, () -> rusty::Arc<IntEvent>],
 //   Fiber::create_run: [safe, (...) -> void],
 //   Fiber::sleep: [safe, (int) -> void],
 //   RandomGenerator::rand_double: [safe, (double, double) -> double],
@@ -345,7 +346,7 @@ class RaftServer : public TxLogServer {
       }
 #ifdef RAFT_LEADER_ELECTION_DEBUG
       siteid_t prev_vote_for = vote_for_;
-      Log_info("[RAFT_VOTE] server %d (loc %d) vote=%d candidate=%d can_term=%lu cur_term=%lu prev_vote_for=%d is_leader=%d lst_idx=%lu lst_term=%lu",
+      Log_info("[RAFT_VOTE] server {} (loc {}) vote={} candidate={} can_term={} cur_term={} prev_vote_for={} is_leader={} lst_idx={} lst_term={}",
                site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, is_leader_, lst_log_idx, lst_log_term);
 #endif
 
@@ -372,7 +373,7 @@ class RaftServer : public TxLogServer {
           vote_for_ = can_id ;
 
 #ifdef RAFT_LEADER_ELECTION_DEBUG
-          Log_info("[RAFT_VOTE] server %d recorded vote_for=%d at term=%lu", site_id_, vote_for_, currentTerm);
+          Log_info("[RAFT_VOTE] server {} recorded vote_for={} at term={}", site_id_, vote_for_, currentTerm);
 #endif
           // Reset timeout
           resetTimer("granted vote");
@@ -474,7 +475,7 @@ class RaftServer : public TxLogServer {
                         epoch_t* reply_oepoch,
                         janus::Command* reply_old_view,
                         janus::Command* reply_new_view,
-                        shared_ptr<KeyCmdBatchData>& batch) override;
+                        KeyCmdBatchData& batch) override;
 
   // @unsafe - const char* parameter type requires unsafe context
   void resetTimer(const char* reason = "unspecified") {
@@ -482,10 +483,10 @@ class RaftServer : public TxLogServer {
     {
       const char* why = reason ? reason : "unspecified";
       auto prev_time = last_heartbeat_time_;
-      last_heartbeat_time_ = Time::now();
+      last_heartbeat_time_ = Time::now(false);
       // Log only important timer resets (elections, votes), not routine heartbeats
       if (strcmp(why, "granted vote") == 0 || strcmp(why, "start election timer") == 0) {
-        Log_info("[TIMER_RESET] Site %d: reset timer (%s) - prev_hb_time=%lu new_hb_time=%lu delta=%lu",
+        Log_info("[TIMER_RESET] Site {}: reset timer ({}) - prev_hb_time={} new_hb_time={} delta={}",
                  site_id_, why, prev_time, last_heartbeat_time_, last_heartbeat_time_ - prev_time);
       }
     }
@@ -506,7 +507,7 @@ class RaftServer : public TxLogServer {
   void PersistState(uint64_t term, siteid_t voted_for, const char* reason = "unspecified") {
     if (!log_storage_ || !log_storage_->is_open()) return;
     PersistTermAndVoteToLogStorage();
-    Log_debug("[RAFT-PERSISTENCE] Persisted: term=%lu votedFor=%u (%s)",
+    Log_debug("[RAFT-PERSISTENCE] Persisted: term={} votedFor={} ({})",
               term, voted_for, reason);
   }
 
@@ -514,7 +515,7 @@ class RaftServer : public TxLogServer {
   void PersistLogEntry(slotid_t slot_id, const RaftData& entry, const char* reason = "unspecified") {
     if (!log_storage_ || !log_storage_->is_open()) return;
     PersistLogEntryToLogStorage(slot_id, entry);
-    Log_debug("[RAFT-PERSISTENCE] Persisted log: slot=%lu (%s)", slot_id, reason);
+    Log_debug("[RAFT-PERSISTENCE] Persisted log: slot={} ({})", slot_id, reason);
   }
 
   // @unsafe - Uses LogStorage for persistence
@@ -561,7 +562,9 @@ class RaftServer : public TxLogServer {
 
   // For looping_ control usage, once ready_for_replication_ is ready (set to 1), a specific coroutine will do replication
   std::recursive_mutex ready_for_replication_mtx_{};
-  shared_ptr<IntEvent> ready_for_replication_;
+  // Nullable event handle: default-empty, assigned via create_sp_event in the
+  // heartbeat loop and reset to None when the loop exits.
+  rusty::Option<rusty::Arc<IntEvent>> ready_for_replication_{rusty::None};
 
   // @safe - election timer setup (threading via @unsafe blocks in implementation)
   void StartElectionTimer() ;
@@ -645,12 +648,12 @@ class RaftServer : public TxLogServer {
     {
 #ifndef RAFT_TEST_CORO
       if (cmd.kind_ == TpcCommitCommand::static_kind()){
-        auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-        auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
-        verify(vec_piece_data != nullptr);
-        auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
+        const auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+        const auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd.unwrap()->cmd_);
+        verify(vec_piece_data.is_some());
+        auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
 
-        // Check if this is Mako data (STR values) vs Janus data (I32 values)
+        // Check if this is Mako data (STR values) versus legacy I32 data.
         bool is_mako_data = false;
         if (sp_vec_piece && !sp_vec_piece->empty()) {
           auto first_cmd = (*sp_vec_piece)[0];
@@ -712,7 +715,7 @@ class RaftServer : public TxLogServer {
   // @unsafe - map access and shared_ptr mutation
    shared_ptr<RaftData> GetRaftInstance(slotid_t id) {
     if (id < min_active_slot_ && id != 0) {
-      Log_info("[RAFT_LOG] expanding min_active_slot_ from %lu to %lu", min_active_slot_, id);
+      Log_info("[RAFT_LOG] expanding min_active_slot_ from {} to {}", min_active_slot_, id);
       min_active_slot_ = id;
     }
     auto& sp_instance = raft_logs_[id];
@@ -1116,13 +1119,13 @@ class RaftServer : public TxLogServer {
     preferred_leader_site_id_ = site_id;
 
     if (old_preferred != site_id) {
-      Log_info("[LEADERSHIP-TRANSFER] Site %d: Preferred leader set to %d",
+      Log_info("[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}",
                site_id_, site_id);
     }
 
     // If I'm a non-preferred leader, start monitoring for transfer opportunity
     if (!AmIPreferredLeader() && is_leader_ && looping_) {
-      Log_info("[LEADERSHIP-TRANSFER] Site %d: I'm non-preferred leader, starting transfer monitoring",
+      Log_info("[LEADERSHIP-TRANSFER] Site {}: I'm non-preferred leader, starting transfer monitoring",
                site_id_);
       StartLeadershipTransferMonitoring();
     }

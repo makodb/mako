@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <time.h>
 #include "../rrr.hpp"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 
 import std;
@@ -39,7 +41,7 @@ TEST(lambda, simple) {
     }
     uint64_t t1 = rrr::Time::now(true);
 
-    Log_info("ret: %lu, time interval: %lf", ret, CALL_TIMES / ((double)(t1 - t0) / 1000 / 1000));
+    Log_info("ret: {}, time interval: {:f}", ret, CALL_TIMES / ((double)(t1 - t0) / 1000 / 1000));
 
 }
 
@@ -56,7 +58,7 @@ TEST(lambda, no_copy) {
     }
     uint64_t t1 = rrr::Time::now(true);
 
-    Log_info("ret: %lu, time interval: %lf", ret, 
+    Log_info("ret: {}, time interval: {:f}", ret, 
 	     CALL_TIMES / ((double)(t1 - t0) / 1000 / 1000));
 
 }

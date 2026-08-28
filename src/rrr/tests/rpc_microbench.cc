@@ -12,6 +12,8 @@
 
 #include "../rrr.hpp"
 #include "benchmark_service.h"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 import std;
 
@@ -44,7 +46,7 @@ using namespace std;
 //pthread_cond_t g_stop_cond;
 //
 //static void signal_handler(int sig) {
-//    Log_info("caught signal %d, stopping server now", sig);
+//    Log_info("caught signal {}, stopping server now", sig);
 //    should_stop = true;
 //    Pthread_mutex_lock(&g_stop_mutex);
 //    Pthread_cond_signal(&g_stop_cond);
@@ -59,7 +61,7 @@ using namespace std;
 //        response_index++;
 //        if (last_cnt != 0) {
 //            qps[i] = cnt - last_cnt;
-//            Log::info("qps: %ld", cnt - last_cnt);
+//            Log_info("qps: {}", cnt - last_cnt);
 //        } else {
 //            qps[i] = 0;
 //        }
@@ -214,17 +216,17 @@ using namespace std;
 //    }
 //    verify(is_server || is_client);
 //    if (is_server) {
-//        Log::info("server will start at     %s", svr_addr);
+//        Log_info("server will start at     {}", svr_addr);
 //    } else {
-//        Log::info("client will connect to   %s", svr_addr);
+//        Log_info("client will connect to   {}", svr_addr);
 //    }
-//    Log::info("packet byte size:        %d", byte_size);
-//    Log::info("epoll instances:         %d", epoll_instances);
-//    Log::info("fast reqeust:            %s", fast_requests ? "true" : "false");
-//    Log::info("running seconds:         %d", seconds);
-//    Log::info("outgoing requests:       %d", outgoing_requests);
-//    Log::info("client threads:          %d", client_threads);
-//    Log::info("worker threads:          %d", worker_threads);
+//    Log_info("packet byte size:        {}", byte_size);
+//    Log_info("epoll instances:         {}", epoll_instances);
+//    Log_info("fast reqeust:            {}", fast_requests ? "true" : "false");
+//    Log_info("running seconds:         {}", seconds);
+//    Log_info("outgoing requests:       {}", outgoing_requests);
+//    Log_info("client threads:          {}", client_threads);
+//    Log_info("worker threads:          {}", worker_threads);
 //
 //    request_str = string(byte_size, 'x');
 //    thrpool = new ThreadPool(worker_threads);

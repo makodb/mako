@@ -42,7 +42,7 @@ rusty::MutPtr<value_versioned_array> value_versioned_array::make_sized_row(int n
 
 // @unsafe { Uses memcpy() on cols_[], modifies storage via pointer }
 void value_versioned_array::snapshot(rusty::MutPtr<value_versioned_array>& storage,
-                                     const std::vector<index_type>& f, threadinfo& ti) const {
+                                     const rusty::Vec<index_type>& f, threadinfo& ti) const {
     if (!storage || storage->ncol_cap_ < ncol_) {
         if (storage)
             storage->deallocate(ti);

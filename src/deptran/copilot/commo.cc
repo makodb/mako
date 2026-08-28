@@ -19,18 +19,18 @@ void CopilotFastAcceptQuorumEvent::FeedResponse(bool y, bool ok) {
 }
 
 void CopilotFastAcceptQuorumEvent::FeedRetDep(uint64_t dep) {
-  verify(ret_deps_.size() < n_total_);
+  verify(ret_deps_.size() < q().n_total_);
   ret_deps_.push_back(dep);
 }
 
 uint64_t CopilotFastAcceptQuorumEvent::GetFinalDep() {
-  verify(ret_deps_.size() >= n_total_ / 2 + 1);
+  verify(ret_deps_.size() >= q().n_total_ / 2 + 1);
   std::sort(ret_deps_.begin(), ret_deps_.end());
-  return ret_deps_[n_total_ / 2];
+  return ret_deps_[q().n_total_ / 2];
 }
 
 bool CopilotFastAcceptQuorumEvent::FastYes() {
-  return n_fastac_ok_ >= CopilotCommo::fastQuorumSize(n_total_);
+  return n_fastac_ok_ >= CopilotCommo::fastQuorumSize(q().n_total_);
 }
 
 bool CopilotFastAcceptQuorumEvent::FastNo() {
@@ -47,7 +47,7 @@ inline void CopilotPrepareQuorumEvent::FeedRetCmd(ballot_t ballot,
   // int_status &= CLR_FLAG_TAKEOVER;
   verify(int_status <= n_status);
   if (int_status >= Status::COMMITED) { // committed or executed
-    committed_seen_ = true;
+    q().committed_seen_.set(true);
     int_status = Status::COMMITED;  // reduce all status greater than COMMIT to COMMIT
   } else if (int_status == Status::FAST_ACCEPTED) {
     int_status = Status::FAST_ACCEPTED_EQ; // reduce FAST_ACCEPTED to FAST_ACCEPTED_EQ
@@ -63,29 +63,8 @@ vector<CopilotData>& CopilotPrepareQuorumEvent::GetCmds(enum Status status) {
   return ret_cmds_by_status_[status];
 }
 
-bool CopilotPrepareQuorumEvent::is_ready() {
-  if (timeouted_) {
-    // TODO add time out support
-    return true;
-  }
-  if (committed_seen_) {
-    return true;
-  }
-  if (yes()) {
-    //      Log_info("voted: %d is equal or greater than quorum: %d",
-    //                (int)n_voted_yes_, (int) quorum_);
-    // ready_time = std::chrono::steady_clock::now();
-    return true;
-  } else if (no()) {
-    return true;
-  }
-  //    Log_debug("voted: %d is smaller than quorum: %d",
-  //              (int)n_voted_, (int) quorum_);
-  return false;
-}
-
 void CopilotPrepareQuorumEvent::Show() {
-  std::cout << committed_seen_ << std::endl;
+  std::cout << q().committed_seen_.get() << std::endl;
   for (int i = 0; i < ret_cmds_by_status_.size(); i++)
     std::cout << i << ":" << ret_cmds_by_status_[i].size() << std::endl;
 }
@@ -99,7 +78,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
                                slotid_t slot_id,
                                ballot_t ballot) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<CopilotPrepareQuorumEvent>(n, quorumSize(n));
+  auto e = std::make_shared<CopilotPrepareQuorumEvent>(n, quorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 
@@ -109,7 +88,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
     auto site = p.first;
 
     FutureAttr fuattr;
-    fuattr.callback = [e, ballot, is_pilot, slot_id, site](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, ballot, is_pilot, slot_id, site](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         Log_info("Get a error message in reply");
         return;
@@ -118,7 +97,10 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
       ballot_t b;
       uint64_t dep;
       status_t status;
-      fu->get_reply() >> md >> b >> dep >> status;
+      rrr::deserialize_from(fu->get_reply(), md);
+      rrr::deserialize_from(fu->get_reply(), b);
+      rrr::deserialize_from(fu->get_reply(), dep);
+      rrr::deserialize_from(fu->get_reply(), status);
       bool ok = (ballot == b);
 
       if (ok) {
@@ -132,7 +114,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
       e->FeedResponse(ok);
 
       e->remove_xid(site);
-    };
+    });
 
     CopilotProxy::RpcPrepareRequest req;
     req.is_pilot = is_pilot;
@@ -157,11 +139,11 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
                                   uint64_t dep,
                                   const janus::Command& cmd_env) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<CopilotFastAcceptQuorumEvent>(n, fastQuorumSize(n));
+  auto e = std::make_shared<CopilotFastAcceptQuorumEvent>(n, fastQuorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CopilotCommo::BroadcastFastAccept", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_);
+  Log_info("cmd<{}, {}> entered site {} CopilotCommo::BroadcastFastAccept", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_);
 #endif
   WAN_WAIT;
   for (auto& p : proxies) {
@@ -180,7 +162,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
       e->FeedRetDep(dep);
     } else {
       FutureAttr fuattr;
-      fuattr.callback = [e, dep, ballot, site, cmd_env](rusty::Arc<Future> fu) {
+      fuattr.callback = rrr::FutureCallback::from_callable([e, dep, ballot, site, cmd_env](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
@@ -188,10 +170,11 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
         ballot_t b;
         slotid_t sgst_dep;
 
-        fu->get_reply() >> b >> sgst_dep;
+        rrr::deserialize_from(fu->get_reply(), b);
+        rrr::deserialize_from(fu->get_reply(), sgst_dep);
         bool ok = (ballot == b);
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> sgst_dep=%" PRId64 " dep=%" PRId64 "", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, sgst_dep, dep);
+  Log_info("cmd<{}, {}> sgst_dep={} dep={}", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, sgst_dep, dep);
 #endif
         e->FeedResponse(ok, sgst_dep == dep);
         if (ok) {
@@ -199,14 +182,14 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
         }
 
         e->remove_xid(site);
-      };
+      });
 
       verify(cmd_env.has_value());
 
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[1-] [tx=%d] async_FastAccept called by Submit %.3f", marshallable_cast<TpcBatchCommand>(cmd_env)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[1-] [tx={}] async_FastAccept called by Submit {:.3f}", marshallable_cast<TpcBatchCommand>(cmd_env).unwrap()->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
       CopilotProxy::RpcFastAcceptRequest req;
       req.is_pilot = is_pilot;
@@ -234,7 +217,7 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
                               uint64_t dep,
                               const janus::Command& cmd_env) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<CopilotAcceptQuorumEvent>(n, quorumSize(n));
+  auto e = std::make_shared<CopilotAcceptQuorumEvent>(n, quorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 
@@ -253,17 +236,17 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
       e->FeedResponse(true);
     } else {
       FutureAttr fuattr;
-      fuattr.callback = [e, ballot, site](rusty::Arc<Future> fu) {
+      fuattr.callback = rrr::FutureCallback::from_callable([e, ballot, site](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
         }
         ballot_t b;
-        fu->get_reply() >> b;
+        rrr::deserialize_from(fu->get_reply(), b);
         e->FeedResponse(ballot == b);
 
         e->remove_xid(site);
-      };
+      });
 
       CopilotProxy::RpcAcceptRequest req;
       req.is_pilot = is_pilot;
@@ -290,7 +273,7 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
                                    uint64_t dep,
                                    const janus::Command& cmd_env) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<CopilotFakeQuorumEvent>(n);
+  auto e = std::make_shared<CopilotFakeQuorumEvent>(n);
   auto proxies = rpc_par_proxies_[par_id];
 
   // WAN_WAIT;
@@ -302,9 +285,9 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
     if (site == 1) continue;
 #endif
     FutureAttr fuattr;
-    fuattr.callback = [e, site](rusty::Arc<Future> fu) {
+    fuattr.callback = rrr::FutureCallback::from_callable([e, site](rusty::Arc<Future> fu) {
       e->remove_xid(site);
-    };
+    });
     CopilotProxy::RpcCommitRequest req;
     req.is_pilot = is_pilot;
     req.slot = slot_id;

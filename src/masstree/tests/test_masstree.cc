@@ -10,6 +10,7 @@
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 using TestTree = single_threaded_btree;
 
@@ -23,12 +24,14 @@ inline varkey vk(const std::string& s) {
 
 class MasstreeTest : public ::testing::Test {
  protected:
+  // Explicit noexcept destructor. rusty::Vec's destructor is now
+  // unconditionally noexcept(false) (it used to be conditional on T's
+  // noexcept-ness), so the implicit ~MasstreeTest() would be noexcept(false) —
+  // more lax than ::testing::Test's noexcept virtual destructor. Forcing
+  // noexcept keeps the override well-formed; the Vec destructors never throw.
+  ~MasstreeTest() noexcept {}
+
   TestTree tree_;
-  // Possible thanks to the rusty::Vec destructor being conditional
-  // on T's noexcept-ness — uint64_t and rusty::Box<uint64_t> are
-  // both noexcept-destructible, so Vec<Box<uint64_t>> is too, and
-  // MasstreeTest's implicit ~MasstreeTest() remains noexcept and
-  // does not violate ::testing::Test's noexcept virtual destructor.
   rusty::Vec<rusty::Box<uint64_t>> storage_;
 
   TestTree::value_type MakeValue(uint64_t v) {
@@ -88,6 +91,7 @@ TEST_F(MasstreeTest, RangeScanReturnsSortedKeys) {
 
   class CollectCallback : public TestTree::search_range_callback {
    public:
+    ~CollectCallback() noexcept {}  // rusty::Vec member -> force noexcept dtor
     bool invoke(const TestTree::string_type& key, TestTree::value_type) override {
       results.push(std::string(key.data(), key.length()));
       return true;
@@ -97,7 +101,7 @@ TEST_F(MasstreeTest, RangeScanReturnsSortedKeys) {
 
   CollectCallback cb;
   TestTree::key_type lower = keys.front();
-  tree_.search_range_call(lower, nullptr, cb);
+  tree_.search_range_call_unbounded(lower, cb);
 
   ASSERT_EQ(cb.results.size(), kCount);
   ASSERT_TRUE(std::is_sorted(cb.results.begin(), cb.results.end()));
@@ -123,8 +127,10 @@ class MasstreeKeyShape
 
 namespace {
 
-rusty::Vec<KeyShape> AllShapes() {
-  return rusty::Vec<KeyShape>({
+// Returns std::vector (not rusty::Vec) so gtest's ValuesIn can deduce the
+// element type — rusty::Vec has no STL value_type/array shape.
+std::vector<KeyShape> AllShapes() {
+  return std::vector<KeyShape>({
       {"1byte",         "x"},
       {"7byte",         "1234567"},
       {"8byte_boundary","12345678"},
@@ -155,7 +161,7 @@ TEST_P(MasstreeKeyShape, InsertDuplicateOverwritesAndReturnsFalse) {
   const auto& key = GetParam().key;
   ASSERT_TRUE(tree_.insert(vk(key), MakeValue(1)));
   TestTree::value_type old = nullptr;
-  EXPECT_FALSE(tree_.insert(vk(key), MakeValue(2), &old));
+  EXPECT_FALSE(tree_.insert_with_old(vk(key), MakeValue(2), old));
   ASSERT_NE(old, nullptr);
   EXPECT_EQ(Decode(old), 1u);
   EXPECT_EQ(tree_.size(), 1u);
@@ -341,6 +347,7 @@ namespace {
 
 class Collect : public TestTree::search_range_callback {
  public:
+  ~Collect() noexcept {}  // rusty::Vec members -> force noexcept dtor
   rusty::Vec<std::string> keys;
   rusty::Vec<uint64_t> values;
   size_t limit = std::numeric_limits<size_t>::max();
@@ -363,7 +370,7 @@ TEST_F(MasstreeTest, ForwardScanRespectsExclusiveUpper) {
   Collect cb;
   TestTree::key_type lo = keys[10];
   TestTree::key_type hi = keys[20];
-  tree_.search_range_call(lo, &hi, cb);
+  tree_.search_range_call_bounded(lo, hi, cb);
   ASSERT_EQ(cb.values.size(), 10u);
   EXPECT_EQ(cb.values.front(), 10u);
   EXPECT_EQ(cb.values.back(),  19u);
@@ -378,7 +385,7 @@ TEST_F(MasstreeTest, ForwardScanNullUpperIsUnbounded) {
   }
   Collect cb;
   TestTree::key_type lo = keys.front();
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_EQ(cb.values.size(), kCount);
 }
 
@@ -392,7 +399,7 @@ TEST_F(MasstreeTest, ReverseScanRespectsInclusiveUpperAndExclusiveLower) {
   Collect cb;
   TestTree::key_type up = keys[20];
   TestTree::key_type lo = keys[10];
-  tree_.rsearch_range_call(up, &lo, cb);
+  tree_.rsearch_range_call_bounded(up, lo, cb);
   ASSERT_EQ(cb.values.size(), 10u);
   EXPECT_EQ(cb.values.front(), 20u);
   EXPECT_EQ(cb.values.back(),  11u);
@@ -407,14 +414,14 @@ TEST_F(MasstreeTest, ReverseScanNullLowerIsUnbounded) {
   }
   Collect cb;
   TestTree::key_type up = keys.back();
-  tree_.rsearch_range_call(up, nullptr, cb);
+  tree_.rsearch_range_call_unbounded(up, cb);
   EXPECT_EQ(cb.values.size(), kCount);
 }
 
 TEST_F(MasstreeTest, ScanOnEmptyTreeYieldsNothing) {
   Collect cb;
   u64_varkey lo(0);
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_TRUE(cb.values.is_empty());
 }
 
@@ -428,7 +435,7 @@ TEST_F(MasstreeTest, ScanStopsWhenCallbackReturnsFalse) {
   Collect cb;
   cb.limit = 7;
   TestTree::key_type lo = keys.front();
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_EQ(cb.values.size(), 7u);
 }
 
@@ -449,7 +456,7 @@ TEST_F(MasstreeTest, ScanCrossesLayers) {
   Collect cb;
   const std::string lower_raw(p1);
   varkey lo = vk(lower_raw);
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_EQ(cb.values.size(), 16u);
   EXPECT_TRUE(std::is_sorted(cb.keys.begin(), cb.keys.end()));
 }
@@ -463,7 +470,7 @@ TEST_F(MasstreeTest, ScanStartKeyJustRemovedSkipsIt) {
   ASSERT_TRUE(tree_.remove(keys[3]));
   Collect cb;
   TestTree::key_type lo = keys[3];
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   ASSERT_FALSE(cb.values.is_empty());
   EXPECT_EQ(cb.values.front(), 4u);
   EXPECT_EQ(cb.values.size(), 6u);  // 4..9
@@ -494,6 +501,7 @@ TEST_F(MasstreeTest, InsertDuringScanIsWeaklyConsistent) {
 
   class MutatingCallback : public TestTree::search_range_callback {
    public:
+    ~MutatingCallback() noexcept {}  // rusty::Vec member -> force noexcept dtor
     TestTree* tree;
     const rusty::Vec<u64_varkey>* keys;
     const rusty::Vec<TestTree::value_type>* vals;
@@ -514,7 +522,7 @@ TEST_F(MasstreeTest, InsertDuringScanIsWeaklyConsistent) {
   cb.vals = &later_values;
 
   u64_varkey lo(0);
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
 
   EXPECT_GE(cb.observed.size(), 50u);
   EXPECT_TRUE(std::is_sorted(cb.observed.begin(), cb.observed.end()));
@@ -539,6 +547,7 @@ TEST_F(MasstreeTest, RemoveDuringScanIsWeaklyConsistent) {
   }
   class RemovingCallback : public TestTree::search_range_callback {
    public:
+    ~RemovingCallback() noexcept {}  // rusty::Vec member -> force noexcept dtor
     TestTree* tree;
     const rusty::Vec<u64_varkey>* keys;
     rusty::Vec<std::string> observed;
@@ -555,6 +564,6 @@ TEST_F(MasstreeTest, RemoveDuringScanIsWeaklyConsistent) {
   cb.tree = &tree_;
   cb.keys = &keys;
   u64_varkey lo(0);
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_TRUE(std::is_sorted(cb.observed.begin(), cb.observed.end()));
 }

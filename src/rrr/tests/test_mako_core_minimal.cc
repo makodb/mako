@@ -7,6 +7,8 @@
 #include "../rrr.hpp"
 #include "mako/varint.h"
 #include "mako/macros.h"
+// the variadic Log_* wrappers now live outside src/rrr
+#include "rrr_log.h"
 
 import std;
 
@@ -31,17 +33,17 @@ int main() {
             read_uvint32(buffer, &decoded);
 
             if (decoded != val) {
-                Log_error("Varint test failed: expected %u, got %u", val, decoded);
+                Log_error("Varint test failed: expected {}, got {}", val, decoded);
                 return 1;
             }
-            Log_info("  Varint %u: encoded %zu bytes, decoded correctly", val, encoded_len);
+            Log_info("  Varint {}: encoded {} bytes, decoded correctly", val, encoded_len);
         }
     }
 
     // Test 2: Timer test (from librrr)
     Log_info("Testing timer...");
     {
-        Timer timer;
+        auto timer = Timer::new_();
         timer.start();
 
         volatile int sum = 0;
@@ -50,7 +52,7 @@ int main() {
         }
 
         timer.stop();
-        Log_info("  Sum = %d, elapsed = %f seconds", sum, timer.elapsed());
+        Log_info("  Sum = {}, elapsed = {:f} seconds", sum, timer.elapsed());
     }
 
     // Test 3: ALWAYS_ASSERT macro (from mako/macros.h)

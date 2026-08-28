@@ -31,7 +31,7 @@ class RwWorkload : public Workload {
   // For Frequency check
   Frequency frequency_;
   ~RwWorkload() {
-    Log_info("Generated Frequency: %s", frequency_.top_keys_pcts().c_str());
+    Log_info("Generated Frequency: {}", frequency_.top_keys_pcts().c_str());
   }
  protected:
   int32_t GetId(uint32_t cid);

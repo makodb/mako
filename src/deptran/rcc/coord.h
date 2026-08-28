@@ -25,8 +25,6 @@ class RccCoord : public CoordinatorClassic {
 
   bool fast_commit_{false};
   map<parid_t, int> n_commit_oks_{};
-  bool mocking_janus_{false};
-
   set<parid_t> par_i_{};
   set<parid_t> par_d_{};
 
@@ -45,7 +43,7 @@ class RccCoord : public CoordinatorClassic {
   virtual void DispatchAck(phase_t phase,
                            int res,
                            TxnOutput& cmd,
-                           RccGraph& graph);
+                           const RccGraph& graph);
   void Finish();
   void FinishAck(phase_t phase,
                  int res,

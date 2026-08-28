@@ -16,13 +16,14 @@
 #include <gtest/gtest.h>
 
 #include <rusty/box.hpp>
-#include <rusty/btreemap.hpp>
 #include <rusty/vec.hpp>
+#include <rusty/array.hpp>  // rusty::range (BTreeMap::range bounds)
 
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 using TestTree = single_threaded_btree;
 
@@ -67,7 +68,8 @@ rusty::Vec<std::string> BuildKeyPool(std::mt19937_64& rng, size_t count) {
 
 struct PropertyState {
   TestTree tree;
-  rusty::BTreeMap<std::string, uint64_t> oracle;
+  rusty::BTreeMap<std::string, uint64_t> oracle =
+      rusty::BTreeMap<std::string, uint64_t>::new_();
   rusty::Vec<rusty::Box<uint64_t>> value_storage;
 
   TestTree::value_type Make(uint64_t v) {
@@ -82,6 +84,7 @@ struct PropertyState {
   void FullScanMatchesOracle(uint64_t seed, size_t step) const {
     class Cb : public TestTree::search_range_callback {
      public:
+      ~Cb() noexcept {}  // rusty::Vec member -> force noexcept dtor
       rusty::Vec<std::pair<std::string, uint64_t>> seen;
       bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
         seen.push(std::pair<std::string, uint64_t>(
@@ -93,13 +96,17 @@ struct PropertyState {
     Cb cb;
     const std::string empty;
     varkey lo = vk(empty);
-    tree.search_range_call(lo, nullptr, cb);
+    tree.search_range_call_unbounded(lo, cb);
 
     ASSERT_EQ(cb.seen.len(), oracle.len())
         << "seed=" << std::hex << seed << " step=" << std::dec << step;
 
     size_t i = 0;
-    for (const auto& [k, v] : oracle) {
+    auto scan_it = oracle.iter();
+    while (true) {
+      auto scan_e = scan_it.next();
+      if (scan_e.is_none()) break;
+      auto [k, v] = scan_e.unwrap();
       ASSERT_EQ(cb.seen[i].first, k)
           << "seed=" << std::hex << seed << " step=" << std::dec
           << step << " i=" << i;
@@ -171,6 +178,7 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
 
       class CollectAll : public TestTree::search_range_callback {
        public:
+        ~CollectAll() noexcept {}  // rusty::Vec member -> force noexcept dtor
         rusty::Vec<std::string> seen;
         bool invoke(const TestTree::string_type& k, TestTree::value_type) override {
           seen.push(std::string(k.data(), k.length()));
@@ -180,9 +188,18 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
       CollectAll cb;
       varkey lo = vk(lo_s);
       varkey hi = vk(hi_s);
-      s.tree.search_range_call(lo, &hi, cb);
+      s.tree.search_range_call_bounded(lo, hi, cb);
 
-      auto expected = s.oracle.range_rusty(lo_s, hi_s);
+      rusty::Vec<std::pair<std::string, uint64_t>> expected;
+      {
+        auto rng_it = s.oracle.range(rusty::range<std::string>(lo_s, hi_s));
+        while (true) {
+          auto rng_e = rng_it.next();
+          if (rng_e.is_none()) break;
+          auto [rk, rv] = rng_e.unwrap();
+          expected.push(std::pair<std::string, uint64_t>(rk, rv));
+        }
+      }
       ASSERT_EQ(cb.seen.len(), expected.len())
           << "seed=" << std::hex << seed << " step=" << std::dec << step
           << " lo.size=" << lo_s.size() << " hi.size=" << hi_s.size();

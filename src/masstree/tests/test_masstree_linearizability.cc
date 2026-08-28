@@ -32,8 +32,8 @@
 
 #include <gtest/gtest.h>
 
-#include <rusty/btreemap.hpp>
 #include <rusty/option.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -42,6 +42,7 @@
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 volatile mrcu_epoch_type globalepoch = 1;
 
@@ -191,7 +192,7 @@ void RunLinearizabilitySession(uint64_t seed) {
   std::mt19937_64 master_rng(seed);
   TestTree tree;
 
-  std::atomic<uint64_t> clock{0};
+  rusty::sync::atomic::Atomic<uint64_t> clock{0};
   constexpr int kThreads = 4;
   constexpr int kOpsPerThread = 30;
   constexpr int kKeyspace = 8;
@@ -220,7 +221,7 @@ void RunLinearizabilitySession(uint64_t seed) {
         op.value = any_val(rng);
       }
 
-      op.begin_seq = clock.fetch_add(1, std::memory_order_seq_cst);
+      op.begin_seq = clock.fetch_add(1, rusty::sync::atomic::Ordering::SeqCst);
 
       switch (op.kind) {
         case OpKind::Insert:
@@ -240,19 +241,19 @@ void RunLinearizabilitySession(uint64_t seed) {
         }
       }
 
-      op.end_seq = clock.fetch_add(1, std::memory_order_seq_cst);
+      op.end_seq = clock.fetch_add(1, rusty::sync::atomic::Ordering::SeqCst);
       log.push(op);
     }
   };
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kThreads);
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(kThreads);
   for (int t = 0; t < kThreads; ++t) {
     threads.push(rusty::thread::spawn(thread_body, t));
   }
   for (auto& th : threads) { auto _ = th.join(); }
 
   // Bucket ops by key.
-  rusty::BTreeMap<uint64_t, rusty::Vec<Op>> per_key;
+  auto per_key = rusty::BTreeMap<uint64_t, rusty::Vec<Op>>::new_();
   for (auto& pt : per_thread) {
     for (auto& op : pt) {
       if (!per_key.contains_key(op.key)) {
@@ -262,8 +263,18 @@ void RunLinearizabilitySession(uint64_t seed) {
     }
   }
 
-  for (auto entry : per_key) {
-    auto& [k, ops] = entry;
+  rusty::Vec<uint64_t> keys;
+  {
+    auto key_it = per_key.iter();
+    while (true) {
+      auto key_e = key_it.next();
+      if (key_e.is_none()) break;
+      keys.push(std::get<0>(key_e.unwrap()));
+    }
+  }
+  for (size_t ki = 0; ki < keys.len(); ++ki) {
+    const uint64_t k = keys[ki];
+    rusty::Vec<Op>& ops = per_key.get_mut(k).unwrap();
     const bool ok = CheckPerKeyLinearizability(ops);
     ASSERT_TRUE(ok)
         << "non-linearizable history at key=" << k

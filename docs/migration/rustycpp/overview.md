@@ -6,7 +6,7 @@
 **Original Estimated Duration**: 5-6 weeks
 **Actual Progress**: Phases 0-2 complete (3 weeks ahead of schedule)
 
-**⚠️ IMPORTANT**: Phase 3 (migrate to rusty structures) is **BLOCKED** because `shared_ptr<Marshallable>` is used in virtual function interfaces (`Coordinator::Submit()`) that are shared across ALL protocol modules (Paxos, MongoDB, Copilot, Janus, etc.). Migrating Raft alone would break polymorphism. See [Phase 3](#phase-3-migrate-data-structures-week-3) for details.
+**⚠️ IMPORTANT**: Phase 3 (migrate to rusty structures) is **BLOCKED** because `shared_ptr<Marshallable>` is used in virtual function interfaces (`Coordinator::Submit()`) that are shared across multiple protocol modules (Paxos, MongoDB, Copilot, etc.). Migrating Raft alone would break polymorphism. The Janus module included in the original impact analysis has since been retired. See [Phase 3](#phase-3-migrate-data-structures-week-3) for details.
 
 ---
 
@@ -984,7 +984,7 @@ class CoordinatorRaft : public Coordinator {
   - `paxos/coordinator.h`
   - `mongodb/coordinator.h`
   - `copilot/coordinator.h`
-  - `janus/coordinator.h`
+  - `janus/coordinator.h` (retired after this analysis)
   - 10+ other modules
 - ❌ `shared_ptr<Marshallable>` is used in 20+ files across the codebase
 

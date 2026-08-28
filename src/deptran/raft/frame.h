@@ -10,7 +10,6 @@
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
-#include <rusty/rc.hpp>
 
 namespace janus {
 
@@ -21,7 +20,9 @@ class RaftFrame : public Frame {
   rusty::Arc<rusty::Cell<slotid_t>> slot_hint_ = rusty::Arc<rusty::Cell<slotid_t>>::make(1);
 #ifdef RAFT_TEST_CORO
   static std::mutex raft_test_mutex_;
-  static rusty::Option<rusty::Rc<Fiber>> raft_test_fiber_;
+  // raft_test_fiber_ demoted to a file-scope static in frame.cc because
+  // rusty::Rc is now module-only (no header). All references live in
+  // frame.cc; nothing outside this TU consumes the field.
   static uint16_t n_replicas_;
   static map<siteid_t, RaftFrame*> frames_;
   static bool all_sites_created_s;

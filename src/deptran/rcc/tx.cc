@@ -234,19 +234,6 @@ bool RccTx::ReadColumn(mdb::Row *row,
     switch (hint_flag) {
       case TXN_IMMEDIATE:
       case TXN_DEFERRED:
-        if (mocking_janus_) {
-          mdb_txn()->read_column(r, col_id, value);
-          if (mocking_janus_) {
-            verify(r->rtti() == symbol_t::ROW_VERSIONED);
-            auto c = r->get_column(col_id);
-            *value = c;
-            if (mocking_janus_) {
-              auto ver_id = r->get_column_ver(col_id);
-              row->ref_copy();
-              read_vers_[row][col_id] = ver_id;
-            }
-          }
-        }
       case TXN_BYPASS:
         mdb_txn()->read_column(r, col_id, value);
         break;

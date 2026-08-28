@@ -8,14 +8,11 @@
 
 namespace janus {
 
-// registrations switched to no-arg
-// `SerializableRegistry::reg<T>()` — kind auto-derived from each
-// type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
-// base returns the type's 1-indexed position in `MakoCommands`).
-static int volatile x1 = rrr::SerializableRegistry::reg<VecPieceData>();
-static int volatile x2 = rrr::SerializableRegistry::reg<VecRecData>();
-static int volatile x3 = rrr::SerializableRegistry::reg<ViewData>();
-static int volatile x4 = rrr::SerializableRegistry::reg<KeyCmdBatchData>();
+// Registry keys come from each payload's explicit MakoCommands membership.
+static int volatile x1 = rrr::SerializableRegistry::reg<VecPieceData>(VecPieceData::static_kind());
+static int volatile x2 = rrr::SerializableRegistry::reg<VecRecData>(VecRecData::static_kind());
+static int volatile x3 = rrr::SerializableRegistry::reg<ViewData>(ViewData::static_kind());
+static int volatile x4 = rrr::SerializableRegistry::reg<KeyCmdBatchData>(KeyCmdBatchData::static_kind());
 
 TxWorkspace::TxWorkspace() {
   values_ = std::make_shared<map<int32_t, Value>>();
@@ -65,157 +62,85 @@ TxData::TxData() {
   early_return_ = Config::GetConfig()->do_early_return();
 }
 
-Marshal& operator << (Marshal& m, const TxWorkspace &ws) {
-  m << (ws.keys_);
-  auto& input_vars = *ws.values_;
-  for (int32_t k : ws.keys_) {
-    auto it = input_vars.find(k);
-    // allow some input vars not ready.
-    if (it != input_vars.end()) {
-      m << k << it->second;
-    }
-  }
-  m << -1;
-  return m;
-}
-
-Marshal& operator >> (Marshal& m, TxWorkspace &ws) {
-  m >> ws.keys_;
-  while (true) {
-    int32_t k;
-    m >> k;
-    if (k >= 0) {
-      Value v;
-      m >> v;
-      (*ws.values_)[k] = v;
-    } else {
-      break;
-    }
-  }
-  return m;
-}
-
 // archive operators for TxWorkspace.
 // Wire format byte-for-byte identical to the Marshal-based pair
 // above: keys_ (set<int32_t>), then per-present-key (k, value) pairs,
 // terminated by k=-1.
-BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws) {
-  ar << ws.keys_;
+void serialize(const TxWorkspace &ws, BinaryWriteArchive& ar) {
+  rrr::Serialize_::serialize(ws.keys_, ar);
   auto& input_vars = *ws.values_;
   for (int32_t k : ws.keys_) {
     auto it = input_vars.find(k);
     if (it != input_vars.end()) {
-      ar << k << it->second;
+      rrr::Serialize_::serialize(k, ar);
+      rrr::Serialize_::serialize(it->second, ar);
     }
   }
-  ar << static_cast<int32_t>(-1);
-  return ar;
+  rrr::Serialize_::serialize(static_cast<int32_t>(-1), ar);
 }
 
-BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace &ws) {
-  ar >> ws.keys_;
+BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const TxWorkspace &ws) { serialize(ws, ar); return ar; }
+
+void deserialize(TxWorkspace &ws, BinaryReadArchive& ar) {
+  rrr::Deserialize_::deserialize(ws.keys_, ar);
   while (true) {
     int32_t k;
-    ar >> k;
+    rrr::Deserialize_::deserialize(k, ar);
     if (k >= 0) {
       Value v;
-      ar >> v;
+      rrr::Deserialize_::deserialize(v, ar);
       (*ws.values_)[k] = v;
     } else {
       break;
     }
   }
-  return ar;
 }
 
-Marshal& operator << (Marshal& m, const TxReply& reply) {
-  m << reply.res_;
-  m << reply.output_;
-  m << reply.n_try_;
-  // TODO -- currently this is only used when marshalling
-  // replies from forwarded requests so the source
-  // (non-leader) site correctly populates this field when
-  // reporting.
-  // m << reply.start_time_;
-  m << reply.time_;
-  m << reply.txn_type_;
-  
-  // Marshal view data if present
-  bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
-  m << has_view_data;
-  if (has_view_data) {
-    janus::Command view_md;
-    view_md = reply.sp_view_data_;
-    m << view_md;
-  }
-
-  return m;
-}
-
-Marshal& operator >> (Marshal& m, TxReply& reply) {
-  m >> reply.res_;
-  m >> reply.output_;
-  m >> reply.n_try_;
-  memset(&reply.start_time_, 0, sizeof(reply.start_time_));
-  m >> reply.time_;
-  m >> reply.txn_type_;
-
-  // Unmarshal view data if present
-  bool_t has_view_data;
-  m >> has_view_data;
-  if (has_view_data) {
-    janus::Command view_md;
-    m >> view_md;
-    reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
-  } else {
-    reply.sp_view_data_ = nullptr;
-  }
-
-  return m;
-}
+BinaryReadArchive& operator>>(BinaryReadArchive& ar, TxWorkspace &ws) { deserialize(ws, ar); return ar; }
 
 // archive operators for TxReply. Wire format
 // byte-for-byte identical to the Marshal-based pair above:
 //   res_ (i32) | output_ (map<int32_t, Value>) | n_try_ (i32) |
 //   time_ (double) | txn_type_ (i32) |
 //   has_view_data (bool_t) | optional MarshallDeputy view_md
-BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply) {
-  ar << reply.res_;
-  ar << reply.output_;
-  ar << reply.n_try_;
+void serialize(const TxReply& reply, BinaryWriteArchive& ar) {
+  rrr::Serialize_::serialize(reply.res_, ar);
+  rrr::Serialize_::serialize(reply.output_, ar);
+  rrr::Serialize_::serialize(reply.n_try_, ar);
   // start_time_ is intentionally not serialized (legacy comment).
-  ar << reply.time_;
-  ar << reply.txn_type_;
+  rrr::Serialize_::serialize(reply.time_, ar);
+  rrr::Serialize_::serialize(reply.txn_type_, ar);
 
-  bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
-  ar << has_view_data;
+  bool_t has_view_data = reply.sp_view_data_.is_some() ? 1 : 0;
+  rrr::Serialize_::serialize(has_view_data, ar);
   if (has_view_data) {
-    janus::Command view_md;
-    view_md = reply.sp_view_data_;
-    ar << view_md;
+    janus::Command view_md = reply.sp_view_data_.unwrap().clone();
+    rrr::Serialize_::serialize(view_md, ar);
   }
-  return ar;
 }
 
-BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxReply& reply) {
-  ar >> reply.res_;
-  ar >> reply.output_;
-  ar >> reply.n_try_;
+BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const TxReply& reply) { serialize(reply, ar); return ar; }
+
+void deserialize(TxReply& reply, BinaryReadArchive& ar) {
+  rrr::Deserialize_::deserialize(reply.res_, ar);
+  rrr::Deserialize_::deserialize(reply.output_, ar);
+  rrr::Deserialize_::deserialize(reply.n_try_, ar);
   memset(&reply.start_time_, 0, sizeof(reply.start_time_));
-  ar >> reply.time_;
-  ar >> reply.txn_type_;
+  rrr::Deserialize_::deserialize(reply.time_, ar);
+  rrr::Deserialize_::deserialize(reply.txn_type_, ar);
 
   bool_t has_view_data;
-  ar >> has_view_data;
+  rrr::Deserialize_::deserialize(has_view_data, ar);
   if (has_view_data) {
     janus::Command view_md;
-    ar >> view_md;
+    rrr::Deserialize_::deserialize(view_md, ar);
     reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
   } else {
-    reply.sp_view_data_ = nullptr;
+    reply.sp_view_data_ = rusty::Option<rusty::Arc<ViewData>>();
   }
-  return ar;
 }
+
+BinaryReadArchive& operator>>(BinaryReadArchive& ar, TxReply& reply) { deserialize(reply, ar); return ar; }
 
 set<parid_t>& TxData::GetPartitionIds() {
   return partition_ids_;
@@ -241,7 +166,7 @@ vector<TxPieceData> TxData::GetCmdsByPartition(parid_t par_id) {
 }
 
 ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
-  // Log_info("n_pieces_dispatched_ %d n_pieces_dispatchable_ %d n_pieces_all_ %d", n_pieces_dispatched_, n_pieces_dispatchable_, n_pieces_all_);
+  // Log_info("n_pieces_dispatched_ {} n_pieces_dispatchable_ {} n_pieces_all_ {}", n_pieces_dispatched_, n_pieces_dispatchable_, n_pieces_all_);
   // n_pieces_dispatched_ = 0; // [JetPack TODO] remove this
   verify(n_pieces_dispatched_ <= n_pieces_dispatchable_); // [JetPack TODO] recover this to <
   verify(n_pieces_dispatched_ <= n_pieces_all_); // [JetPack TODO] recover this to <
@@ -273,7 +198,7 @@ ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
       map_piece_data_[pi] = piece_data;
       ready_pieces_data[piece_data->partition_id_].push_back(piece_data);
       partition_ids_.insert(piece_data->partition_id_);
-      Log_debug("getting piece data piece id: %d", pi);
+      Log_debug("getting piece data piece id: {}", pi);
       verify(status_[pi] == INIT);
       status_[pi] = DISPATCHED;
       verify(type_ == type());
@@ -305,15 +230,15 @@ bool TxData::OutputReady() {
 }
 
 // removed `void TxData::Merge(TxnOutput&)`
-// — the only call sites (`janus/coordinator.cc:228`,
-// `rcc/coord.cc:214`) were already commented out.  The live overloads
+// — the only remaining call site (`rcc/coord.cc:214`) was already
+// commented out. The live overloads
 // `Merge(CmdData&)` and `Merge(innid_t, map<int32_t, Value>&)` cover
 // the per-piece merge path.
 
 void TxData::Merge(innid_t inn_id, map<int32_t, Value>& output) {
   verify(outputs_.find(inn_id) == outputs_.end());
   n_pieces_dispatch_acked_++;
-  // Log_info("n_pieces_all_=%d n_pieces_dispatchable_=%d", n_pieces_all_, n_pieces_dispatchable_);
+  // Log_info("n_pieces_all_={} n_pieces_dispatchable_={}", n_pieces_all_, n_pieces_dispatchable_);
   verify(n_pieces_all_ >= n_pieces_dispatchable_);
   verify(n_pieces_dispatchable_ >= n_pieces_dispatched_);
   verify(n_pieces_dispatched_ >= n_pieces_dispatch_acked_);
@@ -333,14 +258,14 @@ bool TxData::HasMoreUnsentPiece() {
   verify(n_pieces_all_ >= n_pieces_dispatchable_);
   verify(n_pieces_dispatchable_ >= n_pieces_dispatched_);
   verify(n_pieces_dispatched_ >= n_pieces_dispatch_acked_);
-  //Log_info("dispatch record: %d, %d", n_pieces_dispatchable_, n_pieces_dispatched_);
+  //Log_info("dispatch record: {}, {}", n_pieces_dispatchable_, n_pieces_dispatched_);
   if (n_pieces_dispatchable_ == n_pieces_dispatched_) {
     verify(n_pieces_all_ == n_pieces_dispatched_ ||
            n_pieces_dispatch_acked_ < n_pieces_dispatched_);
     return false;
   } else {
     verify(n_pieces_dispatchable_ > n_pieces_dispatched_);
-    //Log_info("dispatch record 2: %d, %d", n_pieces_dispatchable_, n_pieces_dispatched_);
+    //Log_info("dispatch record 2: {}, {}", n_pieces_dispatchable_, n_pieces_dispatched_);
     return true;
   }
 }

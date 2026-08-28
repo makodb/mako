@@ -9,7 +9,7 @@
 #include "../util.h"
 #include "deptran/s_main.h"
 #include "mutex"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 #include "lib/common.h"
 
 import std;

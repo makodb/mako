@@ -49,7 +49,7 @@ Frequency frequency;
 #endif
 
 void client_setup_heartbeat(int num_clients) {
-  Log_info("%s in client_setup_heartbeat", __FUNCTION__);
+  Log_info("{} in client_setup_heartbeat", __FUNCTION__);
   std::map<int32_t, std::string> txn_types;
   Frame* f = Frame::GetFrame(Config::GetConfig()->tx_proto_);
   f->GetTxTypes(txn_types);
@@ -62,23 +62,23 @@ void client_setup_heartbeat(int num_clients) {
   if (hb) {
     // setup controller rpc server
     cli_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-    cli_hb_server_g = new rrr::Server(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone()));
+    cli_hb_server_g = new rrr::Server(rrr::Server::new_(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone())));
 
     // Create service with Arc<ClientStatus>, register as owned Box<Service>
-    cli_hb_server_g->reg_service(rusty::make_box<ClientControlServiceImpl>(
+    cli_hb_server_g->reg_service_typed(rusty::make_box<ClientControlServiceImpl>(
         client_status_g.as_ref().unwrap().clone()));
 
     auto ctrl_port = std::to_string(Config::GetConfig()->get_ctrl_port());
     std::string server_address = std::string("0.0.0.0:").append(ctrl_port);
-    Log_info("Start control server on port %s", ctrl_port.c_str());
-    cli_hb_server_g->start(server_address.c_str());
+    Log_info("Start control server on port {}", ctrl_port.c_str());
+    cli_hb_server_g->start(reinterpret_cast<const int8_t*>(server_address.c_str()));
   }
 }
 
 void client_launch_workers(vector<Config::SiteInfo> &client_sites) {
   // load some common configuration
   // start client workers in new threads.
-  Log_info("client enabled, number of sites: %d", client_sites.size());
+  Log_info("client enabled, number of sites: {}", client_sites.size());
   vector<ClientWorker*> workers;
 
   failover_triggers = new bool[client_sites.size()]() ;
@@ -114,7 +114,7 @@ void client_launch_workers(vector<Config::SiteInfo> &client_sites) {
     if (rc != 0) {
       std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
     } else {
-      Log_info("start a client thread on core %d, client-id:%d", core_id, client_id);
+      Log_info("start a client thread on core {}, client-id:{}", core_id, client_id);
     }
     core_id ++;
     if(core_id % 4 == 1){
@@ -130,7 +130,7 @@ void client_launch_workers(vector<Config::SiteInfo> &client_sites) {
     if (rc != 0) {
       std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
     } else {
-      Log_info("start a client thread on core %d, client-id:%d", core_id, client_id);
+      Log_info("start a client thread on core {}, client-id:{}", core_id, client_id);
     }
     core_id ++;
 
@@ -144,7 +144,7 @@ void client_launch_workers(vector<Config::SiteInfo> &client_sites) {
 // start servers in new threads.
 void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
   auto config = Config::GetConfig();
-  Log_info("server enabled, number of sites: %d", server_sites.size());
+  Log_info("server enabled, number of sites: {}", server_sites.size());
   svr_workers_g.resize(server_sites.size());
   int i=0;
   vector<std::thread> setup_ths;
@@ -154,7 +154,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
 #endif
   for (auto& site_info : server_sites) {
     auto th_ = std::thread([&site_info, &i, &config] () {
-      Log_info("launching site: %x, bind address %s",
+      Log_info("launching site: {:x}, bind address {}",
                site_info.id,
                site_info.GetBindAddress().c_str());
       auto& worker = svr_workers_g[i++];
@@ -166,7 +166,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
       worker.RegisterWorkload();
       // populate table according to benchmarks
       worker.PopTable();
-      Log_info("table popped for site %d", (int)worker.site_info_->id);
+      Log_info("table popped for site {}", (int)worker.site_info_->id);
 #ifdef DB_CHECKSUM
       worker.DbChecksum();
 #endif
@@ -181,9 +181,9 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
         worker.rep_sched_->svr_workers_g = &svr_workers_g;
 #endif
       worker.SetupService();
-      Log_info("start communication for site %d", (int)worker.site_info_->id);
+      Log_info("start communication for site {}", (int)worker.site_info_->id);
       worker.SetupCommo();
-      Log_info("site %d launched!", (int)site_info.id);
+      Log_info("site {} launched!", (int)site_info.id);
       worker.launched_ = true;
     });
 #ifdef AWS
@@ -197,7 +197,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
     if (rc != 0) {
       std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
     } else {
-      Log_info("start a server thread on core %d, site-id:%d", core_id, site_info.id);
+      Log_info("start a server thread on core {}, site-id:{}", core_id, site_info.id);
     }
 #endif
 #ifndef AWS
@@ -210,7 +210,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
     if (rc != 0) {
       std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
     } else {
-      Log_info("start a server thread on core %d, site-id:%d", core_id, site_info.id);
+      Log_info("start a server thread on core {}, site-id:{}", core_id, site_info.id);
     }
     core_id ++;
 #endif
@@ -267,7 +267,7 @@ void check_current_path() {
 }
 
 void wait_for_clients() {
-  Log_info("%s: wait for client threads to exit.", __FUNCTION__);
+  Log_info("{}: wait for client threads to exit.", __FUNCTION__);
   for (auto &th: client_threads_g) {
     th.join();
   }
@@ -279,7 +279,7 @@ int find_current_leader() {
             // Cast to RaftServer to access IsLeader()
             if (TxLogServer* server = dynamic_cast<TxLogServer*>(svr_workers_g[i].rep_sched_)) {
                 if (server->IsLeader()) {
-                    Log_info("Current leader found: index %d, site_id %d, locale_id %d",
+                    Log_info("Current leader found: index {}, site_id {}, locale_id {}",
                               i, svr_workers_g[i].site_info_->id, svr_workers_g[i].site_info_->locale_id);
                     return i;
                 }
@@ -323,7 +323,7 @@ void server_failover_co(bool random, bool leader, int srv_idx)
 
     for(int i=0;i<svr_workers_g.size();i++)
     {
-      Log_debug("failover at index %d, id %d, loc id %d part id %d", 
+      Log_debug("failover at index {}, id {}, loc id {} part id {}", 
         i, svr_workers_g[i].site_info_->id,
         svr_workers_g[i].site_info_->locale_id,  
         svr_workers_g[i].site_info_->partition_id_ );
@@ -338,7 +338,7 @@ void server_failover_co(bool random, bool leader, int srv_idx)
         }
     }    
 #ifdef FAILOVER_DEBUG
-    Log_info("!!!!!!!!!!!!!!!!! failover_server_quit %d", failover_server_quit);
+    Log_info("!!!!!!!!!!!!!!!!! failover_server_quit {}", failover_server_quit);
 #endif
     while(!failover_server_quit)
     {
@@ -348,10 +348,10 @@ void server_failover_co(bool random, bool leader, int srv_idx)
         }
         failover_server_idx = idx ;
 #ifdef FAILOVER_DEBUG
-        Log_info("!!!!!!!!!!!!!!!!!!!! before run_int wait %d s", run_int);
+        Log_info("!!!!!!!!!!!!!!!!!!!! before run_int wait {} s", run_int);
 #endif
         sleep(run_int) ;
-        // auto r = Reactor::create_sp_event<TimeoutEvent>(run_int * 1000 * 1000);
+        // auto r = create_sp_timeout_event(run_int * 1000 * 1000);
         // r->wait();
 #ifdef FAILOVER_DEBUG
         Log_info("!!!!!!!!!!!!!!!!!!!! after run_int wait");
@@ -386,13 +386,13 @@ void server_failover_co(bool random, bool leader, int srv_idx)
         idx = find_current_leader();
         if (idx == -1) break; // [Jetpack] If no leader found, do not need to pause.
 #ifdef FAILOVER_DEBUG
-        Log_info("@@@@@@@@@@@@@@@@@@@@@@@@ before pause %d", svr_workers_g[idx].site_info_->id);
-        // Log_info("client_workers_g size: %d", client_workers_g.size());
+        Log_info("@@@@@@@@@@@@@@@@@@@@@@@@ before pause {}", svr_workers_g[idx].site_info_->id);
+        // Log_info("client_workers_g size: {}", client_workers_g.size());
 #endif
         // client_workers_g[0]->Pause(idx) ;
         // Log_info("@@@@@@@@@@@@@@@@@@@@@@@@ client_workers_g paused");
         svr_workers_g[idx].Pause() ;
-        Log_info("@@@@@@@@@@@@@@@@@@@@@@@@ svr_workers_g %d paused", idx);
+        Log_info("@@@@@@@@@@@@@@@@@@@@@@@@ svr_workers_g {} paused", idx);
         for (int i = 0; i < client_workers_g.size() ; ++i)
         {
           failover_triggers[i] = true ;
@@ -400,9 +400,9 @@ void server_failover_co(bool random, bool leader, int srv_idx)
 #ifdef FAILOVER_DEBUG
         Log_info("!!!!!!!!!!!!!! before stop_int wait");
 #endif
-        Log_info("server %d paused for failover test", idx);
+        Log_info("server {} paused for failover test", idx);
         sleep(stop_int) ;
-        // auto s = Reactor::create_sp_event<TimeoutEvent>(stop_int * 1000 * 1000);
+        // auto s = create_sp_timeout_event(stop_int * 1000 * 1000);
         // s->wait() ;      
 #ifdef FAILOVER_DEBUG  
         Log_info("!!!!!!!!!!!!!! after stop_int wait");
@@ -414,13 +414,13 @@ void server_failover_co(bool random, bool leader, int srv_idx)
         //   }
         // }        
 #ifdef FAILOVER_DEBUG
-        Log_info("@@@@@@@@@@@@@@@@@@@@@@@@ before resume %d", svr_workers_g[idx].site_info_->id);
+        Log_info("@@@@@@@@@@@@@@@@@@@@@@@@ before resume {}", svr_workers_g[idx].site_info_->id);
 #endif
         // client_workers_g[0]->Resume(idx) ;
         Log_info("@@@@@@@@@@@@@@@@@@@@@@@@ failover resumed");
         svr_workers_g[idx].Resume() ;
 #ifdef FAILOVER_DEBUG
-        Log_info("server %d resumed for failover test", idx);
+        Log_info("server {} resumed for failover test", idx);
 #endif
         if(leader)
         {
@@ -465,9 +465,9 @@ void setup_ulimit() {
   struct rlimit limit;
   /* Get max number of files. */
   if (getrlimit(RLIMIT_NOFILE, &limit) != 0) {
-    Log_fatal("getrlimit() failed with errno=%d", errno);
+    Log_fatal("getrlimit() failed with errno={}", errno);
   }
-  Log_info("ulimit -n is %d", (int)limit.rlim_cur);
+  Log_info("ulimit -n is {}", (int)limit.rlim_cur);
 }
 double getMemoryUsageMB() {
     std::ifstream status_file("/proc/self/status");
@@ -534,7 +534,7 @@ CPUStats getCPUStats(int core) {
 double calculateCPUUsage(const CPUStats& oldStats, const CPUStats& newStats) {
     unsigned long long totalDiff = newStats.total() - oldStats.total();
     unsigned long long idleDiff = newStats.idleTime() - oldStats.idleTime();
-    // Log_info("idlediff : %.4f, totaldiff : %.4f",static_cast<double>(idleDiff) ,static_cast<double>(totalDiff));
+    // Log_info("idlediff : {:.4f}, totaldiff : {:.4f}",static_cast<double>(idleDiff) ,static_cast<double>(totalDiff));
     return 100.0 * (1.0 - static_cast<double>(idleDiff) / totalDiff);
 }
 double median(std::vector<double> values) {
@@ -584,7 +584,7 @@ vector<double> getUsage(int core_id, int duration){
 
 int main(int argc, char *argv[]) {
   check_current_path();
-  Log_info("starting process %ld", getpid());
+  Log_info("starting process {}", getpid());
   setup_ulimit();
 
   // read configuration
@@ -599,7 +599,7 @@ int main(int argc, char *argv[]) {
 
 
   auto client_infos = Config::GetConfig()->GetMyClients();
-  Log_info("!!!!!!!!!!!! client_infos size %d", client_infos.size());
+  Log_info("!!!!!!!!!!!! client_infos size {}", client_infos.size());
   if (client_infos.size() > 0) {
     client_setup_heartbeat(client_infos.size());
   }
@@ -632,12 +632,12 @@ int main(int argc, char *argv[]) {
     int server_core_id = 1;
     std::vector<double> cpu_usage = getUsage(server_core_id, Config::GetConfig()->duration_);
     double memory_during_test = cpu_usage[cpu_usage.size() - 1];
-    Log_info("CORE %d USAGE: ", server_core_id);
+    Log_info("CORE {} USAGE: ", server_core_id);
     for(int i = 0; i < cpu_usage.size(); i++){
-      Log_info("%.4F", cpu_usage[i]);
+      Log_info("{:.4f}", cpu_usage[i]);
     }
-    Log_info("server median : %.3f", median(cpu_usage));
-    Log_info("memory during test: %.3f", memory_during_test);
+    Log_info("server median : {:.3f}", median(cpu_usage));
+    Log_info("memory during test: {:.3f}", memory_during_test);
 #endif
 #ifndef AWS
 
@@ -647,7 +647,7 @@ int main(int argc, char *argv[]) {
     failover_server_quit = true;
     Log_info("all clients have shut down.");
   }
-  Log_info("Total throughtput is %.2f", total_throughput);
+  Log_info("Total throughtput is {:.2f}", total_throughput);
 #ifdef DB_CHECKSUM
   sleep(90); // hopefully servers can finish hanging RPCs in 90 seconds.
 #endif
@@ -669,7 +669,7 @@ int main(int argc, char *argv[]) {
     auto p = worker.site_info_->partition_id_;
     int sum = worker.DbChecksum();
     checksum_results[p].push_back(sum);
-    Log_info("partition %d checksum %d", p, sum);
+    Log_info("partition {} checksum {}", p, sum);
   }
   bool checksum_fail = false;
   for (auto& pair : checksum_results) {
@@ -693,29 +693,29 @@ int main(int argc, char *argv[]) {
   client_shutdown();
   Log_info("After client_shutdown");
   
-  Log_info("All-fast-path-attempts           statistics %s", cli2cli[0].statistics().c_str());
-  Log_info("Success-fast-path-attempts       statistics %s", cli2cli[1].statistics().c_str());
-  Log_info("Efficient-fast-path-attempts     statistics %s", cli2cli[2].statistics().c_str());
-  Log_info("All-original-path-attempts       statistics %s", cli2cli[3].statistics().c_str());
-  Log_info("Efficient-original-path-attempts statistics %s", cli2cli[4].statistics().c_str());
-  Log_info("All-efficient-attempts           statistics %s", cli2cli[5].statistics().c_str());
+  Log_info("All-fast-path-attempts           statistics {}", cli2cli[0].statistics().c_str());
+  Log_info("Success-fast-path-attempts       statistics {}", cli2cli[1].statistics().c_str());
+  Log_info("Efficient-fast-path-attempts     statistics {}", cli2cli[2].statistics().c_str());
+  Log_info("All-original-path-attempts       statistics {}", cli2cli[3].statistics().c_str());
+  Log_info("Efficient-original-path-attempts statistics {}", cli2cli[4].statistics().c_str());
+  Log_info("All-efficient-attempts           statistics {}", cli2cli[5].statistics().c_str());
 
-  Log_info("All-fast-path-attempts           distribution %s", cli2cli[0].distribution().c_str());
-  Log_info("Success-fast-path-attempts       distribution %s", cli2cli[1].distribution().c_str());
-  Log_info("Efficient-fast-path-attempts     distribution %s", cli2cli[2].distribution().c_str());
-  Log_info("All-original-path-attempts       distribution %s", cli2cli[3].distribution().c_str());
-  Log_info("Efficient-original-path-attempts distribution %s", cli2cli[4].distribution().c_str());
-  Log_info("All-efficient-attempts           distribution %s", cli2cli[5].distribution().c_str());
+  Log_info("All-fast-path-attempts           distribution {}", cli2cli[0].distribution().c_str());
+  Log_info("Success-fast-path-attempts       distribution {}", cli2cli[1].distribution().c_str());
+  Log_info("Efficient-fast-path-attempts     distribution {}", cli2cli[2].distribution().c_str());
+  Log_info("All-original-path-attempts       distribution {}", cli2cli[3].distribution().c_str());
+  Log_info("Efficient-original-path-attempts distribution {}", cli2cli[4].distribution().c_str());
+  Log_info("All-efficient-attempts           distribution {}", cli2cli[5].distribution().c_str());
   
-  Log_info("Mid throughput is %.2f", cli2cli[5].count() / (Config::GetConfig()->duration_ / 3.0));
-  Log_info("Fastpath statistics attempted %d successed %d rate(pct) %.2f efficient_successed %d efficient_rate(pct) %.2f", 
+  Log_info("Mid throughput is {:.2f}", cli2cli[5].count() / (Config::GetConfig()->duration_ / 3.0));
+  Log_info("Fastpath statistics attempted {} successed {} rate(pct) {:.2f} efficient_successed {} efficient_rate(pct) {:.2f}", 
     cli2cli[0].count(), cli2cli[1].count(), cli2cli[1].count() * 100.0 / cli2cli[0].count(), cli2cli[2].count(), cli2cli[2].count() * 100.0 / cli2cli[0].count());
-  Log_info("Frequency: %s", frequency.top_keys_pcts().c_str());
+  Log_info("Frequency: {}", frequency.top_keys_pcts().c_str());
 
   string dump_file_name = "results/recent_csv/" + Config::GetConfig()->exp_setting_name_ + ".csv";
   std::ofstream file(dump_file_name);
   if (!file.is_open()) {
-    Log_info("Failed to open file for writing %s", dump_file_name.c_str());
+    Log_info("Failed to open file for writing {}", dump_file_name.c_str());
   } else {
     file << "All-fast-path-attempts" << "," << "Success-fast-path-attempts" << "," << "Efficient-fast-path-attempts" << "," << "All-original-path-attempts" << ","  << "Efficient-original-path-attempts" << ","  << "All-efficient-attempts" << "," << "Start-Time" << "," << "End2End-Latency" << "\n";
     size_t max_size = commit_time.size();
@@ -740,17 +740,17 @@ int main(int argc, char *argv[]) {
         }
         file << "\n";
     }
-    Log_info("Dumped to %s with %d lines data", dump_file_name.c_str(), max_size);
+    Log_info("Dumped to {} with {} lines data", dump_file_name.c_str(), max_size);
     file.close();
-    Log_info("%s closed", dump_file_name.c_str());
+    Log_info("{} closed", dump_file_name.c_str());
   }
 
 #ifdef LATENCY_DEBUG
-  Log_info("client2leader 50pct %.2f 90pct %.2f 99pct %.2f", client2leader.pct50(), client2leader.pct90(), client2leader.pct99());
-  Log_info("client2test_point 50pct %.2f 90pct %.2f 99pct %.2f", client2test_point.pct50(), client2test_point.pct90(), client2test_point.pct99());
-  Log_info("client2leader_send 50pct %.2f 90pct %.2f 99pct %.2f", client2leader_send.pct50(), client2leader_send.pct90(), client2leader_send.pct99());
+  Log_info("client2leader 50pct {:.2f} 90pct {:.2f} 99pct {:.2f}", client2leader.pct50(), client2leader.pct90(), client2leader.pct99());
+  Log_info("client2test_point 50pct {:.2f} 90pct {:.2f} 99pct {:.2f}", client2test_point.pct50(), client2test_point.pct90(), client2test_point.pct99());
+  Log_info("client2leader_send 50pct {:.2f} 90pct {:.2f} 99pct {:.2f}", client2leader_send.pct50(), client2leader_send.pct90(), client2leader_send.pct99());
 #endif
-  // Log_info("FastPath-count = %d CoordinatorAccept-count = %d OriginalProtocol-count = %d", fastpath_count, coordinatoraccept_count, original_protocol_count);
+  // Log_info("FastPath-count = {} CoordinatorAccept-count = {} OriginalProtocol-count = {}", fastpath_count, coordinatoraccept_count, original_protocol_count);
   server_shutdown();
   // TODO, FIXME pending_future in rpc cause error.
   fflush(stderr);

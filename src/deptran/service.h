@@ -15,12 +15,12 @@ class SchedulerClassic;
 class ClassicServiceImpl : public ClassicService {
 
  public:
-  AvgStat stat_sz_gra_start_;
-  AvgStat stat_sz_gra_commit_;
-  AvgStat stat_sz_gra_ask_;
-  AvgStat stat_sz_scc_;
-  AvgStat stat_n_ask_;
-  AvgStat stat_ro6_sz_vector_;
+  AvgStat stat_sz_gra_start_{AvgStat::new_()};
+  AvgStat stat_sz_gra_commit_{AvgStat::new_()};
+  AvgStat stat_sz_gra_ask_{AvgStat::new_()};
+  AvgStat stat_sz_scc_{AvgStat::new_()};
+  AvgStat stat_n_ask_{AvgStat::new_()};
+  AvgStat stat_ro6_sz_vector_{AvgStat::new_()};
   uint64_t n_asking_ = 0;
 
 //  std::mutex mtx_;
@@ -95,7 +95,6 @@ class ClassicServiceImpl : public ClassicService {
               i32* res,
 							bool_t* slow,
               uint64_t* coro_id,
-	        		Profiling* profile,
               janus::Command* view_data,
               rrr::DeferredReply done);
 
@@ -104,7 +103,6 @@ class ClassicServiceImpl : public ClassicService {
              i32* res,
 						 bool_t* slow,
              uint64_t* coro_id,
-	        	 Profiling* profile,
              janus::Command* view_data,
              rrr::DeferredReply done);
 
@@ -212,54 +210,6 @@ class ClassicServiceImpl : public ClassicService {
 
   void RccInquireValidation(const txid_t& txid, const int32_t& rank, int32_t* ret, rrr::DeferredReply done);
   void RccNotifyGlobalValidation(const txid_t& txid, const int32_t& rank, const int32_t& res, rrr::DeferredReply done);
-
-  void JanusDispatch(const vector<SimpleCommand>& cmd,
-                     int32_t* p_res,
-                     TxnOutput* p_output,
-                     rrr::AnyMessage* p_md_res_graph,
-                     rrr::DeferredReply done);
-
-  void JanusCommit(const txid_t& cmd_id,
-                   const rank_t& rank,
-                   const int32_t& need_validation,
-                   const rrr::AnyMessage& graph,
-                   int32_t* res,
-                   TxnOutput* output,
-                   rrr::DeferredReply done);
-
-  void JanusCommitWoGraph(const txid_t& cmd_id,
-                          const rank_t& rank,
-                          const int32_t& need_validation,
-                          int32_t* res,
-                          TxnOutput* output,
-                          rrr::DeferredReply done);
-
-  void JanusInquire(const epoch_t& epoch,
-                    const txid_t& tid,
-                    rrr::AnyMessage* p_md_graph,
-                    rrr::DeferredReply done);
-
-  void JanusPreAccept(const txid_t& txnid,
-                      const rank_t& rank,
-                      const vector<SimpleCommand>& cmd,
-                      const rrr::AnyMessage& md_graph,
-                      int32_t* res,
-                      rrr::AnyMessage* p_md_res_graph,
-                      rrr::DeferredReply done);
-
-  void JanusPreAcceptWoGraph(const txid_t& txnid,
-                             const rank_t& rank,
-                             const vector<SimpleCommand>& cmd,
-                             int32_t* res,
-                             rrr::AnyMessage* res_graph,
-                             rrr::DeferredReply done);
-
-  void JanusAccept(const txid_t& txnid,
-                   const rank_t& rank,
-                   const ballot_t& ballot,
-                   const rrr::AnyMessage& md_graph,
-                   int32_t* res,
-                   rrr::DeferredReply done);
 
   void JetpackBeginRecovery(const janus::Command& old_view,
                             const janus::Command& new_view, 
@@ -371,16 +321,9 @@ class ClassicServiceImpl : public ClassicService {
   void RccDispatchRo(const ClassicService::RpcRccDispatchRoRequest& req, ClassicService::RpcRccDispatchRoResponse& resp, rrr::DeferredReply defer) override;
   void RccInquireValidation(const ClassicService::RpcRccInquireValidationRequest& req, ClassicService::RpcRccInquireValidationResponse& resp, rrr::DeferredReply defer) override;
   void RccNotifyGlobalValidation(const ClassicService::RpcRccNotifyGlobalValidationRequest& req, ClassicService::RpcRccNotifyGlobalValidationResponse& resp, rrr::DeferredReply defer) override;
-  void JanusDispatch(const ClassicService::RpcJanusDispatchRequest& req, ClassicService::RpcJanusDispatchResponse& resp, rrr::DeferredReply defer) override;
-  void JanusCommit(const ClassicService::RpcJanusCommitRequest& req, ClassicService::RpcJanusCommitResponse& resp, rrr::DeferredReply defer) override;
   void RccCommit(const ClassicService::RpcRccCommitRequest& req, ClassicService::RpcRccCommitResponse& resp, rrr::DeferredReply defer) override;
-  void JanusCommitWoGraph(const ClassicService::RpcJanusCommitWoGraphRequest& req, ClassicService::RpcJanusCommitWoGraphResponse& resp, rrr::DeferredReply defer) override;
-  void JanusInquire(const ClassicService::RpcJanusInquireRequest& req, ClassicService::RpcJanusInquireResponse& resp, rrr::DeferredReply defer) override;
   void RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req, ClassicService::RpcRccPreAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void JanusPreAccept(const ClassicService::RpcJanusPreAcceptRequest& req, ClassicService::RpcJanusPreAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void JanusPreAcceptWoGraph(const ClassicService::RpcJanusPreAcceptWoGraphRequest& req, ClassicService::RpcJanusPreAcceptWoGraphResponse& resp, rrr::DeferredReply defer) override;
   void RccAccept(const ClassicService::RpcRccAcceptRequest& req, ClassicService::RpcRccAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void JanusAccept(const ClassicService::RpcJanusAcceptRequest& req, ClassicService::RpcJanusAcceptResponse& resp, rrr::DeferredReply defer) override;
   void JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) override;
   void JetpackPullIdSet(const ClassicService::RpcJetpackPullIdSetRequest& req, ClassicService::RpcJetpackPullIdSetResponse& resp, rrr::DeferredReply defer) override;
   void JetpackPullCmd(const ClassicService::RpcJetpackPullCmdRequest& req, ClassicService::RpcJetpackPullCmdResponse& resp, rrr::DeferredReply defer) override;

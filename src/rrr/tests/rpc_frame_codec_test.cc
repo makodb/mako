@@ -23,6 +23,9 @@
 
 #include "../rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.internal_protocol;
+
 import std;
 
 namespace rrr {
@@ -36,10 +39,10 @@ using Bytes = std::vector<std::uint8_t>;
 
 TEST(RpcFrameCodecTest, HeaderRoundTripRequest) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr.data(), 17, /*ext=*/false));
+    EXPECT_TRUE(frame_codec_write_header(hdr, 17, /*ext=*/false));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, 17);
     EXPECT_FALSE(out.extended_header_flag);
@@ -49,10 +52,10 @@ TEST(RpcFrameCodecTest, HeaderRoundTripRequest) {
 
 TEST(RpcFrameCodecTest, HeaderRoundTripResponseWithExtendedFlag) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr.data(), 4096, /*ext=*/true));
+    EXPECT_TRUE(frame_codec_write_header(hdr, 4096, /*ext=*/true));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, 4096);
     EXPECT_TRUE(out.extended_header_flag);
@@ -60,10 +63,10 @@ TEST(RpcFrameCodecTest, HeaderRoundTripResponseWithExtendedFlag) {
 
 TEST(RpcFrameCodecTest, HeaderZeroPayloadAllowed) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr.data(), 0, /*ext=*/false));
+    EXPECT_TRUE(frame_codec_write_header(hdr, 0, /*ext=*/false));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, 0);
     EXPECT_FALSE(out.extended_header_flag);
@@ -71,12 +74,12 @@ TEST(RpcFrameCodecTest, HeaderZeroPayloadAllowed) {
 
 TEST(RpcFrameCodecTest, HeaderMaxPayloadAtBoundary) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr.data(),
+    EXPECT_TRUE(frame_codec_write_header(hdr,
                                          kMaxFramePayloadSize,
                                          /*ext=*/false));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, kMaxFramePayloadSize);
     EXPECT_FALSE(out.extended_header_flag);
@@ -84,7 +87,7 @@ TEST(RpcFrameCodecTest, HeaderMaxPayloadAtBoundary) {
 
 TEST(RpcFrameCodecTest, HeaderRejectsNegativePayloadOnEncode) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{0xFF, 0xFF, 0xFF, 0xFF};
-    EXPECT_FALSE(frame_codec_write_header(hdr.data(), -1, /*ext=*/false));
+    EXPECT_FALSE(frame_codec_write_header(hdr, -1, /*ext=*/false));
     // Encoder must not modify the buffer when refusing.
     EXPECT_EQ(hdr[0], 0xFF);
     EXPECT_EQ(hdr[3], 0xFF);
@@ -92,7 +95,7 @@ TEST(RpcFrameCodecTest, HeaderRejectsNegativePayloadOnEncode) {
 
 TEST(RpcFrameCodecTest, HeaderRejectsOverlargePayloadOnEncode) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_FALSE(frame_codec_write_header(hdr.data(),
+    EXPECT_FALSE(frame_codec_write_header(hdr,
                                           kMaxFramePayloadSize + 1,
                                           /*ext=*/false));
 }
@@ -100,7 +103,7 @@ TEST(RpcFrameCodecTest, HeaderRejectsOverlargePayloadOnEncode) {
 TEST(RpcFrameCodecTest, HeaderPeekReportsNeedMoreOnShortBuffer) {
     std::array<std::uint8_t, 3> short_buf{0x10, 0x00, 0x00};
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(short_buf.data(), short_buf.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(short_buf, out),
               FrameDecodeStatus::NeedMoreBytes);
 }
 
@@ -141,7 +144,7 @@ TEST(RpcFrameCodecTest, HeaderPeekReportsMalformedOnNegative) {
 
     FrameHeader out{};
     // High bit set + payload bits = 0 → ext flag with zero-length payload.
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_TRUE(out.extended_header_flag);
     EXPECT_EQ(out.payload_size, 0);
@@ -158,7 +161,7 @@ TEST(RpcFrameCodecTest, EncodeIntoAppendsHeaderThenPayload) {
 
     ASSERT_EQ(out.size(), kFrameHeaderSize + 4);
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(out.data(), out.size(), hdr),
+    EXPECT_EQ(frame_codec_peek_header(out, hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, 4);
     EXPECT_FALSE(hdr.extended_header_flag);
@@ -171,7 +174,7 @@ TEST(RpcFrameCodecTest, EncodeIntoSupportsZeroPayload) {
 
     ASSERT_EQ(out.size(), kFrameHeaderSize);
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(out.data(), out.size(), hdr),
+    EXPECT_EQ(frame_codec_peek_header(out, hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, 0);
     EXPECT_TRUE(hdr.extended_header_flag);
@@ -190,7 +193,7 @@ TEST(RpcFrameCodecTest, EncodeIntoCoalescesMultipleFrames) {
               3 * kFrameHeaderSize + sizeof(a) + sizeof(b) + 0);
 
     // Round-trip via FrameStreamReader to check ordering.
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(out.data(), out.size());
 
     FrameView v{};
@@ -234,7 +237,7 @@ TEST(RpcFrameCodecTest, EncodeIntoRejectsNegativeSize) {
 // ---------------------------------------------------------------------------
 
 TEST(RpcFrameCodecTest, ReaderEmptyOnConstruction) {
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     EXPECT_EQ(reader.buffered_bytes(), 0u);
     EXPECT_TRUE(reader.empty());
     FrameView v{};
@@ -248,7 +251,7 @@ TEST(RpcFrameCodecTest, ReaderHandlesByteByByteFragmentation) {
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload),
                                         /*ext=*/false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     FrameView v{};
     for (std::size_t i = 0; i + 1 < wire.size(); ++i) {
         reader.append(wire.data() + i, 1);
@@ -270,7 +273,7 @@ TEST(RpcFrameCodecTest, ReaderEmitsMultipleFramesFromOneAppend) {
     ASSERT_TRUE(frame_codec_encode_into(wire, f2, 1, false));
     ASSERT_TRUE(frame_codec_encode_into(wire, f3, 2, false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(wire.data(), wire.size());
 
     FrameView v{};
@@ -297,7 +300,7 @@ TEST(RpcFrameCodecTest, ReaderHandlesPartialHeaderThenRestOfFrame) {
     const std::uint8_t payload[] = {'a', 'b', 'c', 'd'};
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload), false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     // Feed first 2 bytes (incomplete header).
     reader.append(wire.data(), 2);
     FrameView v{};
@@ -323,7 +326,7 @@ TEST(RpcFrameCodecTest, ReaderConsumeWithoutPriorPeekIsNoOp) {
     const std::uint8_t payload[] = {0xAA, 0xBB};
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, 2, false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     // Empty buffer: consume should be a no-op.
     reader.consume_frame();
     EXPECT_TRUE(reader.empty());
@@ -340,7 +343,7 @@ TEST(RpcFrameCodecTest, ReaderResetClearsAllBufferedBytes) {
     const std::uint8_t payload[] = {1, 2, 3, 4, 5};
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, 5, false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(wire.data(), wire.size());
     EXPECT_EQ(reader.buffered_bytes(), wire.size());
     reader.reset();
@@ -358,7 +361,7 @@ TEST(RpcFrameCodecTest, ReaderTracksExtendedHeaderFlag) {
     ASSERT_TRUE(frame_codec_encode_into(wire, plain,    1, /*ext=*/false));
     ASSERT_TRUE(frame_codec_encode_into(wire, with_ext, 2, /*ext=*/true));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(wire.data(), wire.size());
 
     FrameView v{};
@@ -377,7 +380,7 @@ TEST(RpcFrameCodecTest, ReaderCompactsAfterManyConsumedFrames) {
     // Push enough small frames through that the consumed prefix grows
     // past the compaction threshold; afterwards, additional frames must
     // still decode correctly.
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     constexpr std::size_t kFrameCount = 4096;  // 4096 * (4+8) ≈ 48 KiB header bytes
     const std::uint8_t payload[8] = {0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0x0, 0x1};
 
@@ -421,7 +424,7 @@ TEST(RpcFrameCodecTest, DecodesBytesProducedByDirectI32Write) {
     std::memcpy(header, &kSize, sizeof(kSize));
     const std::uint8_t payload[6] = {'r', 'e', 'q', 'X', 'Y', 'Z'};
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(header, sizeof(header));
     reader.append(payload, sizeof(payload));
 
@@ -442,7 +445,7 @@ TEST(RpcFrameCodecTest, DecodesBytesProducedByEncodeResponseSize) {
     std::uint8_t payload[kPayloadSize];
     for (int i = 0; i < kPayloadSize; ++i) payload[i] = static_cast<std::uint8_t>(i);
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(header, sizeof(header));
     reader.append(payload, sizeof(payload));
 
@@ -474,12 +477,73 @@ TEST(RpcFrameCodecTest, EncoderProducesBytesParseableByInternalProtocolHelpers) 
 }
 
 TEST(RpcFrameCodecTest, FrameDecodeStatusStringification) {
-    EXPECT_STREQ("NeedMoreBytes",
-                 frame_decode_status_to_string(FrameDecodeStatus::NeedMoreBytes));
-    EXPECT_STREQ("Complete",
-                 frame_decode_status_to_string(FrameDecodeStatus::Complete));
-    EXPECT_STREQ("Malformed",
-                 frame_decode_status_to_string(FrameDecodeStatus::Malformed));
+    // EXPECT_EQ, not EXPECT_STREQ: the function is authored as inline
+    // Rust DSL now, and Rust's `&'static str` lowers to
+    // std::string_view rather than const char*. That lowering is
+    // correct, so the call site changes rather than the translator —
+    // rule 2 of docs/dev/rrr_migration_policy.md.
+    EXPECT_EQ("NeedMoreBytes",
+              frame_decode_status_to_string(FrameDecodeStatus::NeedMoreBytes));
+    EXPECT_EQ("Complete",
+              frame_decode_status_to_string(FrameDecodeStatus::Complete));
+    EXPECT_EQ("Malformed",
+              frame_decode_status_to_string(FrameDecodeStatus::Malformed));
+}
+
+
+// ---------------------------------------------------------------------
+// verify() semantics guard.
+//
+// `verify()` was changed from abort-on-failure to panic-on-failure (an
+// authorized semantic change). Because this tree does not define
+// RUSTY_PANIC_ABORT, "panic" means "throw and unwind", and that is a
+// property ~1,940 call sites now depend on. These pin it: a passing
+// check must be silent and free, and a failing one must throw something
+// catchable that names the caller's file and line. Without this, a
+// future flip of the panic strategy would change behaviour everywhere
+// with nothing going red.
+// ---------------------------------------------------------------------
+
+TEST(VerifySemantics, PassingCheckDoesNotThrow) {
+  EXPECT_NO_THROW(verify(true));
+  EXPECT_NO_THROW(verify(1 == 1));
+  // Pointer and integer expressions go through the same static_cast<bool>.
+  int x = 0;
+  EXPECT_NO_THROW(verify(&x));
+  EXPECT_NO_THROW(verify(42));
+}
+
+TEST(VerifySemantics, FailingCheckThrowsAndNamesCallerLocation) {
+  bool threw = false;
+  std::string what;
+  try {
+    verify(false);
+  } catch (const std::exception& e) {
+    threw = true;
+    what = e.what();
+  }
+  ASSERT_TRUE(threw) << "verify(false) must throw now, not abort";
+  // The message must carry the CALLER's location (this file), which is
+  // the whole reason the source_location default argument survives.
+  EXPECT_NE(what.find("verify failed"), std::string::npos) << what;
+  EXPECT_NE(what.find("rpc_frame_codec_test"), std::string::npos)
+      << "message should name the caller's file, got: " << what;
+}
+
+TEST(VerifySemantics, ThrowUnwindsSoDestructorsStillRun) {
+  // The practical consequence of panic=unwind: cleanup runs. If the
+  // strategy is ever switched to abort, this test is the tripwire.
+  struct Flag {
+    bool* p;
+    ~Flag() { *p = true; }
+  };
+  bool destroyed = false;
+  try {
+    Flag f{&destroyed};
+    verify(false);
+  } catch (const std::exception&) {
+  }
+  EXPECT_TRUE(destroyed) << "unwinding must run destructors";
 }
 
 }  // namespace

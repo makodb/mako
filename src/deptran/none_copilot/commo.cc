@@ -20,7 +20,7 @@ CommunicatorNoneCopilot::PilotProxyForPartition(parid_t par_id) const {
                      return site.locale_id == 0;
                    });
   if (pilot_it == partition_proxies.end())
-    Log_fatal("couldn't find pilot for partition %d", par_id);
+    Log_fatal("couldn't find pilot for partition {}", par_id);
   verify(pilot_it->second);
 
   auto copilot_it =
@@ -31,21 +31,20 @@ CommunicatorNoneCopilot::PilotProxyForPartition(parid_t par_id) const {
                      return site.locale_id == 1;
                    });
   if (copilot_it == partition_proxies.end())
-    Log_fatal("couldn't find copilot for partition %d", par_id);
+    Log_fatal("couldn't find copilot for partition {}", par_id);
   verify(copilot_it->second);
 
   return { *pilot_it, *copilot_it };  
 }
 
 void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece,
-                                                Coordinator *coo,
                                                 const std::function<void(int res, TxnOutput &)> &callback) {
   WAN_WAIT
   cmdid_t cmd_id = sp_vec_piece->at(0)->root_id_;
   verify(!sp_vec_piece->empty());
   auto par_id = sp_vec_piece->at(0)->PartitionId();
   rrr::FutureAttr fuattr;
-  fuattr.callback = [coo, this, callback, par_id](rusty::Arc<Future> fu) {
+  fuattr.callback = rrr::FutureCallback::from_callable([this, callback, par_id](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;
@@ -54,38 +53,41 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     TxnOutput outputs;
     uint64_t coro_id = 0;
     janus::Command view_md;
-    fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
+    rrr::deserialize_from(fu->get_reply(), ret);
+    rrr::deserialize_from(fu->get_reply(), outputs);
+    rrr::deserialize_from(fu->get_reply(), coro_id);
+    rrr::deserialize_from(fu->get_reply(), view_md);
     n_pending_rpc_[0]--;
     verify(n_pending_rpc_[0] >= 0);
     dispatch_quota.set(dispatch_quota.value_ + 1);
     
     // Handle WRONG_LEADER response with view data
     if (ret == WRONG_LEADER && view_md.has_value()) {
-      auto sp_view_data = marshallable_cast<ViewData>(view_md);
-      if (sp_view_data) {
-        UpdatePartitionView(par_id, sp_view_data);
+      const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+      if (sp_view_data.is_some()) {
+        UpdatePartitionView(par_id, *sp_view_data.unwrap());
       }
     }
-    
+
     callback(ret, outputs);
-  };
+  });
   // auto pair_leader_proxy = LeaderProxyForPartition(par_id);
-  // Log_debug("send dispatch to site %ld",
+  // Log_debug("send dispatch to site {}",
   //           pair_leader_proxy.first);
   // auto proxy = pair_leader_proxy.second;
   auto pair_proxies = PilotProxyForPartition(par_id);
   verify(pair_proxies.size() == 2);
-  Log_debug("send dispatch to site %d, %d", pair_proxies[0].first,
+  Log_debug("send dispatch to site {}, {}", pair_proxies[0].first,
             pair_proxies[1].first);
-  shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-  sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
-  janus::Command md(sp_vpd);
+  VecPieceData vpd;
+  vpd.sp_vec_piece_data_ = sp_vec_piece;
+  janus::Command md(rusty::Arc<VecPieceData>::make(std::move(vpd)));
 
   struct DepId di;
   di.id = cmd_id;
   di.str = __func__;
 
-  dispatch_quota.wait_until_gte(0);
+  dispatch_quota.wait_until_gte(0, /*timeout=*/0);
 
   bool send = false;
 
@@ -105,7 +107,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
   }
 
   rrr::FutureAttr fu2;
-  fu2.callback = [coo, this, callback, par_id](rusty::Arc<Future> fu) {
+  fu2.callback = rrr::FutureCallback::from_callable([this, callback, par_id](rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
       Log_info("Get a error message in reply");
       return;
@@ -114,21 +116,24 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     TxnOutput outputs;
     uint64_t coro_id = 0;
     janus::Command view_md;
-    fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
+    rrr::deserialize_from(fu->get_reply(), ret);
+    rrr::deserialize_from(fu->get_reply(), outputs);
+    rrr::deserialize_from(fu->get_reply(), coro_id);
+    rrr::deserialize_from(fu->get_reply(), view_md);
     n_pending_rpc_[1]--;
     verify(n_pending_rpc_[1] >= 0);
     dispatch_quota.set(dispatch_quota.value_ + 1);
     
     // Handle WRONG_LEADER response with view data
     if (ret == WRONG_LEADER && view_md.has_value()) {
-      auto sp_view_data = marshallable_cast<ViewData>(view_md);
-      if (sp_view_data) {
-        UpdatePartitionView(par_id, sp_view_data);
+      const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+      if (sp_view_data.is_some()) {
+        UpdatePartitionView(par_id, *sp_view_data.unwrap());
       }
     }
-    
+
     callback(ret, outputs);
-  };
+  });
 
   if (n_pending_rpc_[1] < max_pending_rpc_) {
     ClassicProxy::RpcDispatchRequest req1;

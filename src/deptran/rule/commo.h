@@ -20,7 +20,7 @@ public:
 
     ~CommunicatorRule() noexcept override {}
 
-    vector<SiteProxyPair> LeaderProxyForPartition(parid_t, int idx=-1) const;
+    vector<SiteProxyPair> LeaderProxyForPartition(parid_t) const;
 
     std::vector<int> LeadersForPartition(parid_t par_id) const;
 
@@ -34,7 +34,6 @@ public:
 
     void BroadcastDispatch(bool fastpath_broadcast_mode,
                          shared_ptr<vector<shared_ptr<SimpleCommand>>> vec_piece_data,
-                         Coordinator *coo,
                          const std::function<void(int res, TxnOutput &)> &);
 };
     

@@ -40,9 +40,9 @@ shared_ptr<Tx> RccServer::GetOrCreateTx(txnid_t tid, int rank, bool ro) {
 
 int RccServer::OnDispatch(const vector<SimpleCommand>& cmd,
                           TxnOutput* output,
-                          shared_ptr<RccGraph> graph) {
+                          rusty::Arc<RccGraph> graph) {
   std::lock_guard<std::recursive_mutex> guard(mtx_);
-  verify(graph.get());
+  verify(graph.get() != nullptr);
   txnid_t txn_id = cmd[0].root_id_;
 //  verify(RccGraph::partition_id_ == TxLogServer::partition_id_);
   verify(cmd[0].partition_id_ == TxLogServer::partition_id_);
@@ -63,7 +63,7 @@ int RccServer::OnDispatch(const vector<SimpleCommand>& cmd,
 //  auto sz = MinItfrGraph(*dtxn, graph, true, depth);
 //#ifdef DEBUG_CODE
 //    if (sz > 4) {
-//      Log_fatal("something is wrong, graph size %d", sz);
+//      Log_fatal("something is wrong, graph size {}", sz);
 //    }
 //#endif
 #ifdef DEBUG_CODE
@@ -76,7 +76,7 @@ int RccServer::OnDispatch(const vector<SimpleCommand>& cmd,
                != info2.partition_.end());
     verify(sz > 0);
     if (RandomGenerator::rand(1, 2000) <= 1)
-      Log_info("dispatch ret graph size: %d", graph->size());
+      Log_info("dispatch ret graph size: {}", graph->size());
   }
 #endif
   // removed commented-out
@@ -150,7 +150,7 @@ void RccServer::__DebugExamineFridge() {
         in_wait_anc_cmt++;
       }
     }
-//    Log_info("my partition: %d", (int) partition_id_);
+//    Log_info("my partition: {}", (int) partition_id_);
     if (tinfo.status() < TXN_CMT) {
       if (tinfo.Involve(partition_id_)) {
         in_wait_self_cmt++;
@@ -162,11 +162,11 @@ void RccServer::__DebugExamineFridge() {
     }
   }
   int sz = (int)fridge_.size();
-  Log_info("examining fridge. fridge size: %d, in_ask: %d, in_wait_self_cmt: %d"
-               " in_wait_anc_exec: %d, in wait anc cmt: %d, else %d",
+  Log_info("examining fridge. fridge size: {}, in_ask: {}, in_wait_self_cmt: {}"
+               " in_wait_anc_exec: {}, in wait anc cmt: {}, else {}",
            sz, in_ask, in_wait_self_cmt, in_wait_anc_exec, in_wait_anc_cmt,
            sz - in_ask - in_wait_anc_exec - in_wait_anc_cmt - in_wait_self_cmt);
-//  Log_info("wait for myself commit: %llx par: %d", id, (int)partition_id_);
+//  Log_info("wait for myself commit: {:x} par: {}", id, (int)partition_id_);
 #endif
 }
 
@@ -233,7 +233,7 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
     return;
   }
   if (vertex->subtx(rank).waiting_all_anc_committing_) {
-    vertex->subtx(rank).wait_all_anc_commit_done_.wait_until_gte(1);
+    vertex->subtx(rank).wait_all_anc_commit_done_.wait_until_gte(1, /*timeout=*/0);
   }
 
 
@@ -351,7 +351,7 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
 #endif
             vertex->subtx(rank).traverse_path_waitingon_ = &parent;
             vertex->subtx(rank).traverse_path_waiting_status_ = RccTx::WAITING_NO_DEADLOCK;
-            parent.subtx(rank).log_apply_finished_.wait_until_gte(1);
+            parent.subtx(rank).log_apply_finished_.wait_until_gte(1, /*timeout=*/0);
 //            parent.status_.wait_until_gte(TXN_CMT);
             self.subtx(rank).traverse_path_start_ = vertex;
             vertex->subtx(rank).traverse_path_waitingon_ = nullptr ;
@@ -581,7 +581,7 @@ void RccServer::Decide(const RccScc& scc, int rank) {
       return;
     }
     UpgradeStatus(*v, rank, TXN_DCD);
-//    Log_info("txnid: %llx, parent size: %d", v->id(), v->parents_.size());
+//    Log_info("txnid: {:x}, parent size: {}", v->id(), v->parents_.size());
   }
 }
 
@@ -637,7 +637,7 @@ bool RccServer::FullyDispatched(const RccScc& scc, rank_t rank) {
 //                             } else if (tinfo.current_rank_ < rank) {
 //                               return false;
 //                             } else {
-                               return tinfo.subtx(rank).fully_dispatched_->value_ == 1;
+                               return tinfo.subtx(rank).fully_dispatched_->value_.get() == 1;
 //                             }
                            } else {
                              return true;
@@ -688,7 +688,7 @@ void RccServer::WaitNonSccParentsExecuted(const janus::RccScc& scc1, int rank){
       auto& parent = *FindOrCreateParentVPtr(*v, pair.first, pair.second);
       if (parent.subtx(rank).Involve(partition_id_)) {
         if (parent.scchelper(rank).scc_ != scc1[0]->scchelper(rank).scc_) {
-          parent.subtx(rank).log_apply_finished_.wait_until_gte(1);
+          parent.subtx(rank).log_apply_finished_.wait_until_gte(1, /*timeout=*/0);
         }
       }
     }
@@ -758,20 +758,11 @@ void RccServer::Execute(RccScc& scc, int rank) {
   auto& v_begin = *scc.begin();
   auto& v_end = scc.back();
   if (v_begin->subtx(rank).log_apply_started_) {
-    v_end->subtx(rank).log_apply_finished_.wait_until_gte(1);
+    v_end->subtx(rank).log_apply_finished_.wait_until_gte(1, /*timeout=*/0);
   } else {
     v_begin->subtx(rank).log_apply_started_ = true;
-    if (v_begin->mocking_janus_) {
-      auto x = &scc;
-      Fiber::create_run([x, rank, this](){
-        for (auto& v : *x) {
-          Execute(*v, rank);
-        }
-      });
-    } else {
-      for (auto& v : scc) {
-        Execute(*v, rank);
-      }
+    for (auto& v : scc) {
+      Execute(*v, rank);
     }
   }
 }
@@ -780,39 +771,18 @@ void RccServer::Execute(RccTx& tx, int rank) {
   verify(rank == RANK_D || rank == RANK_I);
   verify(tx.subtx(rank).all_anc_cmt_hint);
   tx.subtx(rank).log_apply_started_ = true;
-  Log_debug("executing dtxn id %" PRIx64, tx.id());
+  Log_debug("executing dtxn id {:x}", tx.id());
   verify(tx.subtx(rank).IsDecided());
 
-  if (tx.mocking_janus_) {
-    if (tx.subtx(rank).Involve(partition_id_)) {
-      tx.subtx(rank).commit_received_.wait_until_gte(1);
-//    Fiber::create_run([sp_tx, this]() {
-      verify(rank == RANK_D);
-      tx.CommitValidate(rank);
-//      commo()->BroadcastValidation(sp_tx->id(), sp_tx->partition_,
-//          sp_tx->local_validation_result_);
-      tx.subtx(rank).sp_ev_commit_->set(1);
-      // TODO recover this?
-//      tx.subtx(rank).global_validated_->wait(40*1000*1000);
-//      verify(tx.subtx(rank).global_validated_->status_ != Event::TIMEOUT);
-      tx.CommitExecute(rank);
-//    });
-    } else {
-      // a tmp solution
-      tx.subtx(rank).__debug_local_validated_foreign_ = true;
-      tx.subtx(rank).local_validated_->set(SUCCESS);
-    }
+  if (tx.subtx(rank).Involve(partition_id_)) {
+    tx.subtx(rank).commit_received_.wait_until_gte(1, /*timeout=*/0);
+    tx.subtx(rank).local_validated_->set(SUCCESS);
+    tx.subtx(rank).sp_ev_commit_->set(1);
+    tx.CommitExecute(rank);
   } else {
-    if (tx.subtx(rank).Involve(partition_id_)) {
-      tx.subtx(rank).commit_received_.wait_until_gte(1);
-      tx.subtx(rank).local_validated_->set(SUCCESS);
-      tx.subtx(rank).sp_ev_commit_->set(1);
-      tx.CommitExecute(rank);
-    } else {
-      // a tmp solution
-      tx.subtx(rank).__debug_local_validated_foreign_ = true;
-      tx.subtx(rank).local_validated_->set(SUCCESS);
-    }
+    // a tmp solution
+    tx.subtx(rank).__debug_local_validated_foreign_ = true;
+    tx.subtx(rank).local_validated_->set(SUCCESS);
   }
 //  tx.phase_ = PHASE_RCC_COMMIT;
   tx.subtx(rank).log_apply_finished_.set(1);
@@ -827,7 +797,7 @@ void RccServer::Execute(shared_ptr<RccTx>& sp_tx) {
   }
   verify(sp_tx->all_anc_cmt_hint);
   sp_tx->log_apply_started_ = true;
-  Log_debug("executing dtxn id %" PRIx64, sp_tx->id());
+  Log_debug("executing dtxn id {:x}", sp_tx->id());
   verify(sp_tx->IsDecided());
   if (sp_tx->Involve(partition_id_)) {
     sp_tx->commit_received_.wait_until_gte(1);
@@ -842,7 +812,7 @@ void RccServer::Execute(shared_ptr<RccTx>& sp_tx) {
       sp_tx->sp_ev_commit_->set(1);
       // TODO recover this?
 //      sp_tx->global_validated_->wait();
-//      verify(sp_tx->global_validated_->status_ != Event::TIMEOUT);
+//      verify(sp_tx->global_validated_->status_ != EventStatus::TIMEOUT);
       sp_tx->CommitExecute();
 //      sp_tx->local_validated_->get();
 //    });
@@ -900,8 +870,8 @@ int RccServer::OnInquireValidation(txid_t tx_id, int rank) {
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(tx_id, rank));
   int ret = 0;
   verify(dtxn->subtx(rank).__debug_commit_received_);
-  dtxn->subtx(rank).local_validated_->wait(60*1000*1000);
-  if (dtxn->subtx(rank).local_validated_->status_.get() == Event::TIMEOUT) {
+  dtxn->subtx(rank).local_validated_->wait_timeout(60*1000*1000);
+  if (dtxn->subtx(rank).local_validated_->status_.get() == EventStatus::TIMEOUT) {
     verify(dtxn->subtx(rank).status()>=TXN_CMT);
     verify(0);
     ret = -1; //TODO come back and remove this after the correctness checker.
@@ -922,18 +892,18 @@ void RccServer::OnNotifyGlobalValidation(txid_t tx_id, int rank, int validation_
 int RccServer::OnCommit(const txnid_t cmd_id,
                         rank_t rank,
                         bool need_validation,
-                        shared_ptr<RccGraph> sp_graph,
+                        rusty::Arc<RccGraph> sp_graph,
                         TxnOutput *output) {
   verify(0);
   return 0;
 /*
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
-//    Log_info("on commit graph size: %d", graph.size());
+//    Log_info("on commit graph size: {}", graph.size());
   int ret = SUCCESS;
   // union the graph into dep graph
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id));
-  dtxn->fully_dispatched_->set(1); // TODO make this and janus the same.
+  dtxn->fully_dispatched_->set(1); // TODO make this consistent.
   verify(dtxn->p_output_reply_ == nullptr);
   dtxn->p_output_reply_ = output;
   verify(!dtxn->IsAborted());
@@ -941,11 +911,11 @@ int RccServer::OnCommit(const txnid_t cmd_id,
     verify(dtxn->local_validated_->get() != 0);
     ret = SUCCESS; // TODO no return output?
   } else {
-//    Log_info("on commit: %llx par: %d", cmd_id, (int)partition_id_);
+//    Log_info("on commit: {:x} par: {}", cmd_id, (int)partition_id_);
 //    dtxn->commit_request_received_ = true;
     if (!sp_graph) {
       // quick path without graph, no contention.
-      verify(dtxn->fully_dispatched_->value_); //cannot handle non-dispatched now.
+      verify(dtxn->fully_dispatched_->value_.get()); //cannot handle non-dispatched now.
       UpgradeStatus(*dtxn, TXN_DCD);
       Execute(dtxn);
     } else {
@@ -1072,13 +1042,13 @@ int RccServer::OnPreAccept(txnid_t txn_id,
                            rank_t rank,
                            const vector<SimpleCommand> &cmds,
                            parent_set_t& res_parents) {
-//  Log_info("on preaccept: %llx par: %d", txn_id, (int)partition_id_);
+//  Log_info("on preaccept: {:x} par: {}", txn_id, (int)partition_id_);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
-//    Log_info("on pre-accept graph size: %d", graph.size());
+//    Log_info("on pre-accept graph size: {}", graph.size());
   if ((rank == RANK_I && SKIP_I) || (rank == RANK_D && SKIP_D)) {
     return SUCCESS;
   }
-  Log_debug("pre-accept tid %" PRIx64 ", rank %d, partition: %d, site: %d",
+  Log_debug("pre-accept tid {:x}, rank {}, partition: {}, site: {}",
       txn_id, rank, (int)RccServer::partition_id_, (int)RccServer::site_id_);
   verify(txn_id > 0);
   verify(cmds[0].root_id_ == txn_id);
@@ -1108,7 +1078,7 @@ int RccServer::OnPreAccept(txnid_t txn_id,
       }
     }
   }
-  verify(!dtxn->subtx(rank).fully_dispatched_->value_);
+  verify(!dtxn->subtx(rank).fully_dispatched_->value_.get());
   dtxn->subtx(rank).fully_dispatched_->set(1);
   res_parents = parents;
   return SUCCESS;
@@ -1156,10 +1126,10 @@ int RccServer::OnCommit(const txnid_t cmd_id,
     return SUCCESS;
   }
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("committing dtxn %" PRIx64, cmd_id);
+  Log_debug("committing dtxn {:x}", cmd_id);
   verify(rank == RANK_D || rank == RANK_I);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
-//    Log_info("on commit graph size: %d", graph.size());
+//    Log_info("on commit graph size: {}", graph.size());
   auto sp_tx = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id, rank));
 //  verify(rank == dtxn->current_rank_);
 //  verify(sp_tx->p_output_reply_ == nullptr);
@@ -1170,13 +1140,13 @@ int RccServer::OnCommit(const txnid_t cmd_id,
   bool weird = subtx.HasLogApplyStarted();
 #ifdef DEBUG_CHECK
   Fiber::create_run([sp_tx, weird, rank](){
-    auto sp_e = Reactor::create_sp_event<Event>();
-    sp_e->test_ = [sp_tx, rank] (int v) -> bool {
+    auto sp_e = create_sp_int_event(1);
+    (*sp_e->state_.test_.borrow_mut()) = [sp_tx, rank] (int v) -> bool {
       auto& subtx = sp_tx->subtx(rank);
-      return subtx.local_validated_->is_set_;
+      return subtx.local_validated_->is_set_.get();
     };
-    sp_e->wait(60 * 1000 * 1000);
-    if (sp_e->status_.get() == Event::TIMEOUT) {
+    sp_e->wait_timeout(60 * 1000 * 1000);
+    if (sp_e->status_.get() == EventStatus::TIMEOUT) {
       verify(!weird);
       verify(0);
     }
@@ -1194,7 +1164,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
 //  if (sp_tx->HasLogApplyStarted()) {
 //    return SUCCESS;
 //  }
-//    Log_info("on commit: %llx par: %d", cmd_id, (int)partition_id_);
+//    Log_info("on commit: {:x} par: {}", cmd_id, (int)partition_id_);
 //    dtxn->commit_request_received_ = true;
   verify(subtx.Involve(partition_id_));
 //  if (sp_tx->status() >= TXN_CMT) {
@@ -1207,7 +1177,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
       const_cast<parent_set_t&>(parents));
   verify(subtx.commit_received_.value_ == 0);
   verify(!subtx.__debug_local_validated_foreign_);
-  verify(!subtx.local_validated_->is_set_);
+  verify(!subtx.local_validated_->is_set_.get());
   subtx.commit_received_.set(1);
   UpgradeStatus(*sp_tx, rank, TXN_CMT);
   sp_tx->__DebugCheckParents(rank);
@@ -1228,9 +1198,9 @@ int RccServer::OnCommit(const txnid_t cmd_id,
 //  subtx.local_validated_->wait();
 //  }
   // TODO verify by a wait time.
-//    dtxn->sp_ev_commit_->wait(1*1000*1000);
+//    dtxn->sp_ev_commit_->wait_timeout(1*1000*1000);
 //    dtxn->sp_ev_commit_->wait();
-//    verify(dtxn->sp_ev_commit_->status_ != Event::TIMEOUT);
+//    verify(dtxn->sp_ev_commit_->status_ != EventStatus::TIMEOUT);
 //    ret = dtxn->local_validation_result_ > 0 ? SUCCESS : REJECT;
 //  return subtx.local_validated_->get();
   return 0;

@@ -24,10 +24,15 @@
 #include "compiler.hh"
 #include <stdio.h>
 #include <stdlib.h>
+#include <utility>
 
+using c_char = char;
+
+// C++ kernels for the DSL bodies. These stay hand-written because formatted
+// stderr output and abort() are intentionally unsafe process-boundary effects.
 // @unsafe - calls fprintf() for I/O and abort() which terminates the process
-void fail_always_assert(const char* file, int line,
-                        const char* assertion, const char* message) {
+[[noreturn]] static void fail_always_assert_kernel(const char* file, int line,
+                                                   const char* assertion, const char* message) {
     if (message)
         fprintf(stderr, "assertion \"%s\" [%s] failed: file \"%s\", line %d\n",
                 message, assertion, file, line);
@@ -38,8 +43,8 @@ void fail_always_assert(const char* file, int line,
 }
 
 // @unsafe - calls fprintf() for I/O and abort() which terminates the process
-void fail_masstree_invariant(const char* file, int line,
-                             const char* assertion, const char* message) {
+[[noreturn]] static void fail_masstree_invariant_kernel(const char* file, int line,
+                                                        const char* assertion, const char* message) {
     if (message)
         fprintf(stderr, "invariant \"%s\" [%s] failed: file \"%s\", line %d\n",
                 message, assertion, file, line);
@@ -50,8 +55,8 @@ void fail_masstree_invariant(const char* file, int line,
 }
 
 // @unsafe - calls fprintf() for I/O and abort() which terminates the process
-void fail_masstree_precondition(const char* file, int line,
-                                const char* assertion, const char* message) {
+[[noreturn]] static void fail_masstree_precondition_kernel(const char* file, int line,
+                                                           const char* assertion, const char* message) {
     if (message)
         fprintf(stderr, "precondition \"%s\" [%s] failed: file \"%s\", line %d\n",
                 message, assertion, file, line);
@@ -60,3 +65,48 @@ void fail_masstree_precondition(const char* file, int line,
                 assertion, file, line);
     abort();
 }
+
+#if RUSTYCPP_RUST
+// The public failure functions are authored in the DSL. Their only behavior is
+// delegating to explicit unsafe kernels that do process I/O and terminate.
+pub fn fail_always_assert(file: *const c_char, line: i32,
+                          assertion: *const c_char, message: *const c_char) {
+    unsafe { fail_always_assert_kernel(file, line, assertion, message) }
+}
+
+pub fn fail_masstree_invariant(file: *const c_char, line: i32,
+                               assertion: *const c_char, message: *const c_char) {
+    unsafe { fail_masstree_invariant_kernel(file, line, assertion, message) }
+}
+
+pub fn fail_masstree_precondition(file: *const c_char, line: i32,
+                                  assertion: *const c_char, message: *const c_char) {
+    unsafe { fail_masstree_precondition_kernel(file, line, assertion, message) }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=masstree.compiler.failures version=1 rust_sha256=64d2b19076941fd9af35d06c32cab62d734ef837ab8d108b6a8342bfd9e7b9a4*/
+void fail_always_assert(const c_char* file, int32_t line, const c_char* assertion, const c_char* message);
+void fail_masstree_invariant(const c_char* file, int32_t line, const c_char* assertion, const c_char* message);
+void fail_masstree_precondition(const c_char* file, int32_t line, const c_char* assertion, const c_char* message);
+
+void fail_always_assert(const c_char* file, int32_t line, const c_char* assertion, const c_char* message) {
+    // @unsafe
+    {
+        fail_always_assert_kernel(file, std::move(line), assertion, message);
+    }
+}
+
+void fail_masstree_invariant(const c_char* file, int32_t line, const c_char* assertion, const c_char* message) {
+    // @unsafe
+    {
+        fail_masstree_invariant_kernel(file, std::move(line), assertion, message);
+    }
+}
+
+void fail_masstree_precondition(const c_char* file, int32_t line, const c_char* assertion, const c_char* message) {
+    // @unsafe
+    {
+        fail_masstree_precondition_kernel(file, std::move(line), assertion, message);
+    }
+}
+/*RUSTYCPP:GEN-END id=masstree.compiler.failures*/

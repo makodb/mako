@@ -4,16 +4,7 @@ namespace janus
 {
 
 vector<std::pair<siteid_t, ClassicProxy*>>
-CommunicatorRule::LeaderProxyForPartition(parid_t par_id, int idx) const {
-  if (idx > -1) { // Mencius
-    auto it = rpc_par_proxies_.find(par_id);
-    auto& partition_proxies = it->second;
-    verify(partition_proxies.size()>idx);
-    vector<std::pair<siteid_t, ClassicProxy*>> ret;
-    ret.push_back(it->second.at(idx));
-    return ret;
-  }
-
+CommunicatorRule::LeaderProxyForPartition(parid_t par_id) const {
   // First check if we have updated view information
   locid_t view_leader = GetLeaderForPartition(par_id);
   if (view_leader > 0) {
@@ -66,10 +57,10 @@ CommunicatorRule::LeaderProxyForPartition(parid_t par_id, int idx) const {
             return site.locale_id == leader_id;
           });
       if (proxy_it == partition_proxies.end()) {
-        Log_fatal("could not find leader for partition %d", par_id);
+        Log_fatal("could not find leader for partition {}", par_id);
       } else {
         cache.push_back(*proxy_it);
-        Log_debug("leader site for partition %d is %d", par_id, proxy_it->first);
+        Log_debug("leader site for partition {} is {}", par_id, proxy_it->first);
       }
       verify(proxy_it->second != nullptr);
     }
@@ -92,7 +83,7 @@ CommunicatorRule::LeaderProxyForPartition(parid_t par_id, int idx) const {
 //                      return site.locale_id == replica_id;
 //                    });
 //   if (proxy_pair == partition_proxies.end())
-//     Log_fatal("couldn't find replica %d for partition %d", replica_id, par_id);
+//     Log_fatal("couldn't find replica {} for partition {}", replica_id, par_id);
 //   verify(proxy_pair->second);
 //   return *proxy_pair;
 // }
@@ -108,10 +99,6 @@ std::vector<int> CommunicatorRule::LeadersForPartition(parid_t par_id) const {
     case MODE_COPILOT:
       leaders.push_back(0);
       leaders.push_back(1);
-      break;
-    case MODE_MENCIUS:
-      for (int replica_id = 0; replica_id < config->GetPartitionSize(par_id); replica_id++)
-        leaders.push_back(replica_id);
       break;
     default:
       Log_fatal("Rule mode do not support for this replica protocol now");
@@ -136,17 +123,18 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
   verify(!vec_piece_data->empty());
   auto par_id = vec_piece_data->at(0)->PartitionId();
   
-  shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-  sp_vpd->sp_vec_piece_data_ = vec_piece_data;
-  janus::Command md(sp_vpd);
+  VecPieceData vpd;
+  vpd.sp_vec_piece_data_ = vec_piece_data;
+  const auto sp_vpd = rusty::Arc<VecPieceData>::make(std::move(vpd));
+  janus::Command md(sp_vpd.clone());
 
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   int n_leaders = Config::GetConfig()->get_num_leaders(par_id);
-  auto e = Reactor::create_sp_event<RuleSpeculativeExecuteQuorumEvent>(n, SimpleRWCommand::RuleSuperMajority(n), n_leaders);
+  auto e = std::make_shared<RuleSpeculativeExecuteQuorumEvent>(n, SimpleRWCommand::RuleSuperMajority(n), n_leaders);
   WAN_WAIT;
   for (auto& pair : rpc_par_proxies_[par_id]) {
     rrr::FutureAttr fuattr;
-    fuattr.callback =
+    fuattr.callback = rrr::FutureCallback::from_callable(
         [e, this](rusty::Arc<Future> fu) {
           if (fu->get_error_code() != 0) {
             Log_info("Get a error message in reply");
@@ -155,9 +143,11 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
           bool_t accepted;
           value_t result;
           bool_t is_leader;
-          fu->get_reply() >> accepted >> result >> is_leader;
+          rrr::deserialize_from(fu->get_reply(), accepted);
+          rrr::deserialize_from(fu->get_reply(), result);
+          rrr::deserialize_from(fu->get_reply(), is_leader);
           e->FeedResponse(accepted, result, is_leader);
-        };
+        });
     
     DepId di;
     di.str = "dep";
@@ -168,7 +158,8 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
     // Record Time
     struct timeval tp;
     gettimeofday(&tp, NULL);
-    sp_vpd->time_sent_from_client_ = tp.tv_sec * 1000 + tp.tv_usec / 1000.0;
+    // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
+    { auto& mut_vpd = *const_cast<VecPieceData*>(sp_vpd.get()); mut_vpd.time_sent_from_client_ = tp.tv_sec * 1000 + tp.tv_usec / 1000.0; }
     
     ClassicProxy::RpcRuleSpeculativeExecuteRequest req{};
     req.md = md;
@@ -187,7 +178,6 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
 void CommunicatorRule::BroadcastDispatch(
     bool fastpath_broadcast_mode,
     shared_ptr<vector<shared_ptr<TxPieceData>>> sp_vec_piece,
-    Coordinator* coo,
     const function<void(int, TxnOutput&)> & callback) {
 
   Log_debug("Do a dispatch on client worker");
@@ -196,8 +186,8 @@ void CommunicatorRule::BroadcastDispatch(
   auto par_id = sp_vec_piece->at(0)->PartitionId();
 
   rrr::FutureAttr fuattr;
-  fuattr.callback =
-      [coo, this, callback, par_id](rusty::Arc<Future> fu) {
+  fuattr.callback = rrr::FutureCallback::from_callable(
+      [this, callback, par_id](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
@@ -206,26 +196,29 @@ void CommunicatorRule::BroadcastDispatch(
         TxnOutput outputs;
         uint64_t coro_id = 0;
         janus::Command view_md;
-        fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
+        rrr::deserialize_from(fu->get_reply(), ret);
+        rrr::deserialize_from(fu->get_reply(), outputs);
+        rrr::deserialize_from(fu->get_reply(), coro_id);
+        rrr::deserialize_from(fu->get_reply(), view_md);
         
         // Handle WRONG_LEADER response with view data
         if (ret == WRONG_LEADER && view_md.has_value()) {
-          auto sp_view_data = marshallable_cast<ViewData>(view_md);
-          if (sp_view_data) {
-            UpdatePartitionView(par_id, sp_view_data);
+          const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+          if (sp_view_data.is_some()) {
+            UpdatePartitionView(par_id, *sp_view_data.unwrap());
           }
         }
         
         callback(ret, outputs);
-      };
+      });
   
-  shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-  sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
+  VecPieceData vpd;
+  vpd.sp_vec_piece_data_ = sp_vec_piece;
 
   // Record Time
-  sp_vpd->time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
+  vpd.time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
 
-  janus::Command md(sp_vpd); // ????
+  janus::Command md(rusty::Arc<VecPieceData>::make(std::move(vpd))); // ????
 
 	DepId di;
 	di.str = "dep";
@@ -239,21 +232,7 @@ void CommunicatorRule::BroadcastDispatch(
   if (fastpath_broadcast_mode) {
     pair_leader_proxies = LeaderProxyForPartition(par_id);
   } else {
-    std::pair<siteid_t, ClassicProxy*> pair_leader_proxy;
-    if (Config::GetConfig()->replica_proto_==MODE_MENCIUS) {
-      // The logic here is: Mencius have multiple proposor, if the client is co-locate with a proposer, it give all commands to this proposor.
-      // If not, round-robin with all proposors.
-      auto server_infos = Config::GetConfig()->GetMyServers();
-      if (server_infos.size() == 1) {
-        int n = rpc_par_proxies_.find(par_id)->second.size();
-        pair_leader_proxy = Communicator::LeaderProxyForPartition(par_id, server_infos[0].id);
-      } else {
-        int n = rpc_par_proxies_.find(par_id)->second.size();
-        pair_leader_proxy = Communicator::LeaderProxyForPartition(par_id, rand() % n);
-      }
-    } else {
-      pair_leader_proxy = Communicator::LeaderProxyForPartition(par_id);
-    }
+    auto pair_leader_proxy = Communicator::LeaderProxyForPartition(par_id);
     pair_leader_proxies.push_back(pair_leader_proxy);
   }
 

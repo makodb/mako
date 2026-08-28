@@ -82,7 +82,6 @@ void ServerControlServiceImpl::server_heart_beat_with_data(
     rrr::DeferredReply defer) {
   (void)rpc_req;
   ServerResponse *res = &rpc_resp.res;
-  res->cpu_util = rrr::CPUInfo::cpu_stat()[0];
 
   // collapsed `if (recorder) { ... } else
   // {res->r_cnt_sum = 0; ... }` to just the else branch — recorder
@@ -109,7 +108,7 @@ void ServerControlServiceImpl::server_heart_beat_with_data(
     auto ss = stat->reset();
     verify(ss.sum_ >= 0);
     verify(ss.n_stat_ >= 0);
-    Log_info("stat name: %s, value: %lld, times: %lld",
+    Log_info("stat name: {}, value: {}, times: {}",
              name.c_str(), ss.sum_, ss.n_stat_);
     res->statistics[name].value = ss.sum_;
     res->statistics[name].times = ss.n_stat_;
@@ -256,25 +255,25 @@ void ClientControlServiceImpl::client_get_txn_names(
 const int MAX_LAT_LOG = 25;
 
 void ClientControlServiceImpl::LogClientResponse(ClientResponse *res) {
-  Log_debug("__%s__", __FUNCTION__);
-  Log_debug("run_sec: %ld", res->run_sec);
-  Log_debug("run_nsec: %ld", res->run_nsec);
-  Log_debug("period_sec: %ld", res->period_sec);
-  Log_debug("period_nsec: %ld", res->period_nsec);
+  Log_debug("__{}__", __FUNCTION__);
+  Log_debug("run_sec: {}", res->run_sec);
+  Log_debug("run_nsec: {}", res->run_nsec);
+  Log_debug("period_sec: {}", res->period_sec);
+  Log_debug("period_nsec: {}", res->period_nsec);
 
   unsigned int num_threads = status_->num_threads();
   auto* txn_info = status_->txn_info();
 
   for (unsigned int i = 0; i < num_threads; i++) {
     for (auto it = txn_info[i].begin(); it != txn_info[i].end(); it++) {
-      Log_debug("%d: start_txn: %d", it->first, res->txn_info[it->first].start_txn);
-      Log_debug("%d: total_txn: %d", it->first, res->txn_info[it->first].total_txn);
-      Log_debug("%d: total_try: %d", it->first, res->txn_info[it->first].total_try);
-      Log_debug("%d: commit_txn: %d", it->first, res->txn_info[it->first].commit_txn);
+      Log_debug("{}: start_txn: {}", it->first, res->txn_info[it->first].start_txn);
+      Log_debug("{}: total_txn: {}", it->first, res->txn_info[it->first].total_txn);
+      Log_debug("{}: total_try: {}", it->first, res->txn_info[it->first].total_try);
+      Log_debug("{}: commit_txn: {}", it->first, res->txn_info[it->first].commit_txn);
 
       char output[1024];
       output[0] = '\0';
-      Log_debug("%d: interval_latency: ", it->first);
+      Log_debug("{}: interval_latency: ", it->first);
       auto &interval_lat = res->txn_info[it->first].interval_latency;
       size_t cnt = 0;
       int n = 0;
@@ -284,18 +283,18 @@ void ClientControlServiceImpl::LogClientResponse(ClientResponse *res) {
         if (strlen(buf) + cnt < sizeof(output)) {
           cnt += strlen(buf);
         } else {
-          Log_debug("%s", output);
+          Log_debug("{}", output);
           output[0] = '\0';
           cnt = strlen(buf);
         }
         strcat(output, buf);
       }
       if (strlen(output) > 0) {
-        Log_debug("%s", output);
+        Log_debug("{}", output);
       }
     }
   }
-  Log_debug("__End %s__", __FUNCTION__);
+  Log_debug("__End {}__", __FUNCTION__);
 }
 
 void ClientControlServiceImpl::DispatchTxn(
@@ -306,13 +305,13 @@ void ClientControlServiceImpl::DispatchTxn(
   // TODO: fix -- we dont need to do this everytime.
   std::vector<ClientWorker*> locale0_workers;
   for (auto& worker : client_workers_g) {
-    Log_debug("%s worker %d; site %d; locale %d", __FUNCTION__, worker->id, worker->my_site_.id, worker->my_site_.locale_id);
+    Log_debug("{} worker {}; site {}; locale {}", __FUNCTION__, worker->id, worker->my_site_.id, worker->my_site_.locale_id);
     if (worker->my_site_.locale_id == 0)
       locale0_workers.push_back(worker.get());
   }
   verify(locale0_workers.size() > 0);
   auto worker = locale0_workers[rrr::RandomGenerator::rand(0, locale0_workers.size()-1)];
-  Log_info("%s: from coo %d; site %d", __FUNCTION__, req.id, worker->my_site_.id);
+  Log_info("{}: from coo {}; site {}", __FUNCTION__, req.id, worker->my_site_.id);
   verify(worker->my_site_.locale_id == 0);
   TxRequest request;
   size_t i = 0;

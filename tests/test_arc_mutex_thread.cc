@@ -91,7 +91,10 @@ TEST(ArcMutexThread, ArcToStructWithMutex) {
 // - Parent stores JoinHandle after spawn
 struct PollThreadLike {
     rusty::Mutex<std::thread::id> poll_thread_id{std::thread::id{}};
-    rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>> join_handle{rusty::None};
+    // rusty::Unit, not void: thread::spawn deduces JoinHandle<std::tuple<>>
+    // for a void closure (detail::SpawnResultType), and there is no
+    // conversion to JoinHandle<void>.
+    rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>>> join_handle{rusty::None};
     mutable std::atomic<bool> worker_started{false};  // mutable for const access via Arc
 };
 
@@ -161,7 +164,7 @@ TEST(ArcMutexThread, ExactPollThreadPattern) {
 TEST(ArcMutexThread, RapidLockUnlock) {
     auto counter = rusty::Arc<rusty::Mutex<int>>::make(0);
 
-    std::vector<rusty::thread::JoinHandle<void>> handles;
+    std::vector<rusty::thread::JoinHandle<rusty::thread::Unit>> handles;
 
     for (int i = 0; i < 10; i++) {
         auto counter_clone = counter.clone();

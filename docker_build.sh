@@ -31,11 +31,30 @@ if [ -n "${MAKO_ASAN:-}" ]; then
     : "${ASAN_OPTIONS:=abort_on_error=0:halt_on_error=0:detect_leaks=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:strict_init_order=1}"
     DOCKER_ENV_OPTS+=(-e "ASAN_OPTIONS=${ASAN_OPTIONS}")
 fi
+# Forward MAKO_CLUSTER_CONFIG so a multi-shard CI run can exercise the
+# cluster-config bootstrap (shard-0 config service + per-node watcher).
+# Off by default; the dbtest children inherit it from the outer run.
+if [ -n "${MAKO_CLUSTER_CONFIG:-}" ]; then
+    DOCKER_ENV_OPTS+=(-e "MAKO_CLUSTER_CONFIG=${MAKO_CLUSTER_CONFIG}")
+fi
 DOCKER_INIT_OPTS=(--init)
 DOCKER_SECURITY_OPTS=()
 if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=apparmor"; then
     # Rust tooling (cargo/rustc) can fail under restrictive AppArmor profiles.
     DOCKER_SECURITY_OPTS=(--security-opt apparmor=unconfined)
+fi
+# Keep kernel-assigned ephemeral source ports away from the bands the test
+# harness listens on: paxos/raft listen ports live inside the Linux default
+# ephemeral range (32768-60999), and an outbound connect() that grabs one as
+# its source port EADDRINUSE-aborts a later server bind even under
+# SO_REUSEADDR. Reserved ports stay bindable explicitly; only the automatic
+# allocator skips them. Mirrors the CI container sysctl in
+# .github/workflows/ci.yml — keep the two lists in sync.
+# Real docker only: podman's --sysctl CSV-splits the value on commas and
+# rejects the range list (verified podman 5.x); podman runs keep the
+# historical exposure and rely on the rrr self-connect guard.
+if docker --version 2>/dev/null | grep -q '^Docker version'; then
+    DOCKER_SECURITY_OPTS+=(--sysctl net.ipv4.ip_local_reserved_ports=32768-35100,37000-37400,40000-64999)
 fi
 HAS_TTY=1
 DOCKER_INTERACTIVE_OPTS=(-it)
@@ -786,7 +805,7 @@ case "$ACTION" in
             exit 1
         fi
         case "${CI_TEST}" in
-            compile|cleanup|simpleTransaction|simplePaxos|shardNoReplication|shardNoReplicationErpc|shard1Replication|shard2Replication|shard2ReplicationErpc|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|rrrTests|cpuThrottlingScaling|clientServer|all)
+            compile|cleanup|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|rrrTests|cpuThrottlingScaling|clientServer|all)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -838,7 +857,7 @@ case "$ACTION" in
                 echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' instead.${NC}"
                 exit 1
                 ;;
-            simpleTransaction|simplePaxos|shardNoReplication|shardNoReplicationErpc|shard1Replication|shard2Replication|shard2ReplicationErpc|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|cpuThrottlingScaling|clientServer)
+            simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|cpuThrottlingScaling|clientServer)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -1476,8 +1495,8 @@ case "$ACTION" in
         echo ""
         echo "CI Test Names:"
         echo "  all, compile, cleanup, simpleTransaction, simplePaxos,"
-        echo "  shardNoReplication, shardNoReplicationErpc,"
-        echo "  shard1Replication, shard2Replication, shard2ReplicationErpc,"
+        echo "  shardNoReplication,"
+        echo "  shard1Replication, shard2Replication,"
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"

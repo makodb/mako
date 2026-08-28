@@ -14,7 +14,6 @@
 #include "rpc/frame_codec.hpp"
 #include "rpc/fiber_channel.hpp"
 #include "base/all.hpp"
-#include "misc/marshal.hpp"
 #include "misc/serializable.hpp"
 // removed `#include "misc/recorder.hpp"`
 // — `Recorder` class deleted; was unused after Phase 4e-35.
@@ -26,36 +25,31 @@
 // `import std; ... #include <vector>` (the include lands after the
 // module's already-imported std), so umbrella imports for modularized
 // rrr submodules sit at the bottom of the textual chain.
-import rrr.alarm;
-import rrr.alock;
 import rrr.basetypes;
 import rrr.callbacks;
 import rrr.channel;
-import rrr.circuit_breaker;
+// import rrr.circuit_breaker;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
 import rrr.client;
-import rrr.connection_metrics;
+// import rrr.connection_metrics;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
 import rrr.connection_state;
-import rrr.cpuinfo;
-import rrr.dball;
 import rrr.debugging;
-import rrr.epoll_wrapper;
+// import rrr.epoll_wrapper;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
 import rrr.errors;
 import rrr.fiber;
 import rrr.fiber_channel;
 import rrr.future;
-import rrr.heartbeat;
-import rrr.internal_protocol;
-import rrr.load_balancer;
+// import rrr.heartbeat;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
+// import rrr.internal_protocol;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
+// import rrr.load_balancer;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
 import rrr.logging;
 import rrr.misc;
 import rrr.pollable_proxy;
 import rrr.rand;
 import rrr.reactor;
-import rrr.reconnect_policy;
-import rrr.request_options;
+// import rrr.reconnect_policy;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
+// import rrr.request_options;  // trimmed from consumer umbrella: nothing outside rrr names it (build-time opt)
 import rrr.server;
 import rrr.stat;
-import rrr.strop;
 import rrr.tcp_channel;
 import rrr.threading;
 import rrr.utils;

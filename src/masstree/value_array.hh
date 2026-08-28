@@ -88,9 +88,9 @@ inline int value_array::ncol() const {
 
 inline Str value_array::col(int i) const {
     if (unsigned(i) < unsigned(ncol_) && cols_[i])
-        return Str(cols_[i]->s, cols_[i]->len);
+        return Str::from_chars(cols_[i]->s, cols_[i]->len);
     else
-        return Str();
+        return Str::empty();
 }
 
 inline size_t value_array::shallow_size(int ncol) {

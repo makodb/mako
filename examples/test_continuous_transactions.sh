@@ -128,7 +128,7 @@ for ((i=0; i<$SHARDS; i++)); do
     sleep 0.5  # Minimal delay to avoid overwhelming the system
 done
 
-# Give shards time to initialize eRPC servers
+# Give shards time to initialize RPC servers
 echo ""
 echo "========================================="
 echo "Running continuous transactions..."

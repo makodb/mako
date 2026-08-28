@@ -1,5 +1,12 @@
 # RRR/RPC RustyCpp Memory Safety Migration Plan
 
+> **Historical snapshot.** This document predates the canonical-Rust Goal 0
+> ownership model and is not a living status tracker or current execution
+> plan. See `docs/dev/goal0_completion_plan.md` and
+> `src/rrr/RUST_CANARY.md`. The former `basetypes.hpp/cpp` provider has been
+> replaced by canonical `src/rrr/src/basetypes.rs` and generated
+> `rrr.basetypes` C++ module output.
+
 ## Overview
 This document outlines the plan to make the RRR/RPC library memory-safe using rusty-cpp borrow checking. The goal is to mark all functions as safe and only use `unsafe` when absolutely necessary.
 

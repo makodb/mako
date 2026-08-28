@@ -136,7 +136,7 @@ class FactoryStub {
         last_listener_->listened_ok_ = !next_listen_should_fail_;
         return rusty::Some(make_listener_proxy(last_listener_));
     }
-    const char* backend_name() const { return "factory-stub"; }
+    std::string backend_name() const { return "factory-stub"; }
 };
 
 class FactoryStubAdapter : public ChannelFactoryBase {
@@ -145,7 +145,7 @@ class FactoryStubAdapter : public ChannelFactoryBase {
         : stub_(std::move(p)) {}
     ConnectResult                       connect(std::string_view a) override { return stub_->connect(a); }
     rusty::Option<ChannelListenerProxy> make_listener() override             { return stub_->make_listener(); }
-    const char*                         backend_name() const override        { return stub_->backend_name(); }
+    std::string                         backend_name() const override        { return stub_->backend_name(); }
  private:
     std::shared_ptr<FactoryStub> stub_;
 };
@@ -165,7 +165,7 @@ class ServerChannelFactoryTest : public ::testing::Test {
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
         server_ = rusty::make_box<Server>(
-            rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+            Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     }
 
     void TearDown() override {
@@ -188,13 +188,13 @@ TEST_F(ServerChannelFactoryTest, StartCallsFactoryMakeListenerAndListen) {
     auto factory_stub = std::make_shared<FactoryStub>();
     server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
 
-    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), 0);
+    EXPECT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("0.0.0.0:0")), 0);
 
     EXPECT_EQ(factory_stub->make_listener_calls_, 1);
     ASSERT_TRUE(static_cast<bool>(factory_stub->last_listener_));
     EXPECT_EQ(factory_stub->last_listener_->listen_calls_, 1);
     EXPECT_EQ(factory_stub->last_listener_->listen_addr_, "0.0.0.0:0");
-    EXPECT_TRUE(static_cast<bool>(factory_stub->last_listener_->on_accept_));
+    EXPECT_TRUE(factory_stub->last_listener_->on_accept_.has_value());
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ TEST_F(ServerChannelFactoryTest, StartReturnsErrorOnListenFailure) {
     factory_stub->next_listen_should_fail_ = true;
     server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
 
-    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), -1);
+    EXPECT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("0.0.0.0:0")), -1);
 
     // make_listener() was called, listen() was called, but the
     // listener was NOT parked on the server (the failure path
@@ -228,13 +228,13 @@ TEST_F(ServerChannelFactoryTest, StartReturnsErrorOnListenFailure) {
 TEST_F(ServerChannelFactoryTest, OnAcceptParksBoundServerConnection) {
     auto factory_stub = std::make_shared<FactoryStub>();
     server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
-    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), 0);
+    EXPECT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("0.0.0.0:0")), 0);
 
     // Fire on_accept manually.
     auto conn_stub = std::make_shared<ConnStub>();
     auto& on_accept = factory_stub->last_listener_->on_accept_;
-    ASSERT_TRUE(static_cast<bool>(on_accept));
-    on_accept(make_conn_proxy(conn_stub));
+    ASSERT_TRUE(on_accept.has_value());
+    on_accept.callable()(make_conn_proxy(conn_stub));
 
     // The accepted connection survives across the on_accept call.
     // We can't reach into Server::channel_sconns_ directly, but the
@@ -245,7 +245,7 @@ TEST_F(ServerChannelFactoryTest, OnAcceptParksBoundServerConnection) {
 
     // Verify the parked connection survives a second accept too.
     auto conn_stub2 = std::make_shared<ConnStub>();
-    on_accept(make_conn_proxy(conn_stub2));
+    on_accept.callable()(make_conn_proxy(conn_stub2));
     EXPECT_FALSE(conn_stub2->is_closed());
 }
 
@@ -256,7 +256,7 @@ TEST_F(ServerChannelFactoryTest, OnAcceptParksBoundServerConnection) {
 TEST_F(ServerChannelFactoryTest, DestructorClosesChannelListener) {
     auto factory_stub = std::make_shared<FactoryStub>();
     server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
-    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), 0);
+    EXPECT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("0.0.0.0:0")), 0);
 
     auto listener_stub = factory_stub->last_listener_;
     ASSERT_TRUE(static_cast<bool>(listener_stub));
@@ -283,13 +283,13 @@ TEST_F(ServerChannelFactoryTest, DestructorClosesChannelListener) {
 TEST_F(ServerChannelFactoryTest, StopAcceptingClosesListenerOnly) {
     auto factory_stub = std::make_shared<FactoryStub>();
     server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
-    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), 0);
+    EXPECT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("0.0.0.0:0")), 0);
 
     auto listener_stub = factory_stub->last_listener_;
 
     // Accept one conn first.
     auto conn_stub = std::make_shared<ConnStub>();
-    listener_stub->on_accept_(make_conn_proxy(conn_stub));
+    listener_stub->on_accept_.callable()(make_conn_proxy(conn_stub));
     EXPECT_FALSE(conn_stub->is_closed());
 
     // Now stop_accepting → listener closed, conn untouched.
@@ -309,7 +309,7 @@ TEST_F(ServerChannelFactoryTest, StopAcceptingClosesListenerOnly) {
 TEST_F(ServerChannelFactoryTest, StartWithoutFactoryAutoInstallsDefault) {
     auto factory_stub = std::make_shared<FactoryStub>();
     // Note: factory NOT installed on the server.
-    EXPECT_EQ(server_.as_ref().unwrap()->start("127.0.0.1:0"), 0);
+    EXPECT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("127.0.0.1:0")), 0);
     // The fixture's stub was never bound, so it sees no calls.
     EXPECT_EQ(factory_stub->make_listener_calls_, 0);
     // The server is now in channel mode by virtue of auto-install

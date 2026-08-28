@@ -52,7 +52,7 @@ public:
     scoped_str_arena s_arena(arena);
     try {
       const uint64_t k = r.next() % nkeys;
-      ALWAYS_ASSERT(tbl->get(txn, u64_varkey(k).str(obj_key0), obj_v));
+      ALWAYS_ASSERT(tx_get(tbl, txn, u64_varkey(k).str(obj_key0), obj_v));
       computation_n += obj_v.size();
       //measure_txn_counters(txn, "txn_read");
       if (likely(db->commit_txn(txn)))
@@ -77,7 +77,7 @@ public:
     try {
       auto s = u64_varkey(r.next() % nkeys).str(str());
       auto s2 = str().assign(YCSBRecordSize, 'b');
-      tbl->put(txn, s, s2);
+      tx_put(tbl, txn, s, s2);
       //measure_txn_counters(txn, "txn_write");
       if (likely(db->commit_txn(txn)))
         return txn_result(true, 0);
@@ -100,9 +100,9 @@ public:
     scoped_str_arena s_arena(arena);
     try {
       const uint64_t key = r.next() % nkeys;
-      ALWAYS_ASSERT(tbl->get(txn, u64_varkey(key).str(obj_key0), obj_v));
+      ALWAYS_ASSERT(tx_get(tbl, txn, u64_varkey(key).str(obj_key0), obj_v));
       computation_n += obj_v.size();
-      tbl->put(txn, obj_key0, str().assign(YCSBRecordSize, 'c'));
+      tx_put(tbl, txn, obj_key0, str().assign(YCSBRecordSize, 'c'));
       //measure_txn_counters(txn, "txn_rmw");
       if (likely(db->commit_txn(txn)))
         return txn_result(true, 0);
@@ -118,7 +118,7 @@ public:
     return static_cast<ycsb_worker *>(w)->txn_rmw();
   }
 
-  class worker_scan_callback : public abstract_ordered_index::scan_callback {
+  class worker_scan_callback : public oi_scan_callback {
   public:
     worker_scan_callback() : n(0) {}
     virtual bool
@@ -140,7 +140,7 @@ public:
     const string &kend = u64_varkey(kstart + 100).str(obj_key1);
     worker_scan_callback c;
     try {
-      tbl->scan(txn, kbegin, &kend, c);
+      tx_scan(tbl, txn, kbegin, &kend, c);
       computation_n += c.n;
       //measure_txn_counters(txn, "txn_scan");
       if (likely(db->commit_txn(txn)))
@@ -251,7 +251,7 @@ ycsb_load_keyrange(
         ALWAYS_ASSERT(i >= keystart && i < keyend);
         const string k = u64_varkey(i).str();
         const string v(YCSBRecordSize, 'a');
-        tbl->insert(txn, k, v);
+        tx_insert(tbl, txn, k, v);
       }
       if (db->commit_txn(txn))
         batchid++;

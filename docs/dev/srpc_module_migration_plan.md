@@ -90,9 +90,11 @@ Decision rule per commit:
 1. `base/strop.hpp` + `.cpp` — pure string ops, no rrr deps.
 2. `misc/cpuinfo.hpp` — header-only.
 3. `rpc/errors.hpp` — leaf in rpc/.
-4. `rpc/request_options.hpp` — leaf.
-5. `base/basetypes.hpp` + `.cpp` — depends on logging; starts climbing.
-6. (Continue up the dependency graph; re-plan after step 5.)
+4. `src/request_options.rs` — canonical Rust module with a private `rrr.rand` dependency.
+5. `src/reconnect_policy.rs` — canonical Rust module with the same private
+   `rrr.rand` dependency; the former carrier is deleted.
+6. `base/basetypes.hpp` + `.cpp` — depends on logging; starts climbing.
+7. (Continue up the dependency graph; re-plan after step 6.)
 
 After ~5–10 conversions we should have a strong signal on whether to
 continue.
@@ -389,7 +391,7 @@ clang-22 numbers below — kept as-is rather than re-running for noise.
 | reactor/epoll_wrapper (no-shim) | 39.01 | 10 | 167.1 | 9.66 | epoll_wrapper.h deleted; 5 includers updated. `Pollable` interface + `Epoll` class with templated `Wait<>` member. Dropped the unused `class PollThreadWorker;` forward-decl (was causing global-vs-module attachment clash in reactor.h's similar forward-decl). |
 | rpc/utils (no-shim) | 38.07 | 11 | 174.9 | 9.62 | utils.hpp deleted; 2 includers updated (rrr.hpp, rpc/server.hpp). AddrInfo RAII + 3 free functions. Wallclock slightly **lower** than prior — noise band. |
 | rpc/errors (no-shim, header-only → module) | 38.36 | 12 | 175.0 | 9.63 | First header-only conversion: errors.hpp had no .cpp, so we **created** errors.cpp as the module interface unit. Only enums + inline switch helpers — 8.2 MB BMI (smaller than typical because no transitive rusty/heavy headers). 3 includers updated. |
-| rpc/request_options (header-only → module) | 38.83 | 13 | 175.2 | 9.71 | RequestOptions POD + TimeoutType enum + factory methods + jitter calc. Needed explicit `#include <cstdint>` in GMF — `import std;` alone didn't pull `uint8_t`/`uint16_t`/`uint64_t` for type aliases used in struct fields. 2 includers updated. |
+| rpc/request_options (header-only → module) | 38.83 | 13 | 175.2 | 9.71 | RequestOptions POD + TimeoutType enum + factory methods + jitter calc. Needed explicit `#include <cstdint>` in GMF — `import std;` alone didn't pull `uint16_t`/`uint64_t` for type aliases used in struct fields. 2 includers updated. |
 | rpc/internal_protocol (header-only → module) | 38.66 | 14 | 175.3 | — | Wire-protocol constants + constexpr helpers for response header extension flag. 4 includers updated (frame_codec.hpp, server.hpp, rrr.hpp, and one test). Same `<cstdint>` GMF gotcha. |
 | misc/stat + misc/netinfo (header-only → modules) | 38.23 | 16 | 175.4 | — | Two trivially-isolated headers — AvgStat (POD) and NetInfo (singleton reading /sys/class/net/...). 1 includer each (rrr.hpp). |
 | misc/alarm (header-only → module) | 38.41 | 17 | 175.5 | — | Alarm inherits FrequentJob (rrr.misc), uses rrr::PollThread* pointer-only. GMF forward-decl `namespace rrr { class PollThread; }` keeps the pointer in global-module attachment that matches reactor.h's full decl. 2 includers updated (rrr.hpp, misc/alock.hpp). |
@@ -483,4 +485,3 @@ Pre-existing breakage in `src/mako/benchmarks/tpcc.cc` (template
 SFINAE) and `src/mako/lib/erpc_backend.cc` (missing `numa_max_node` /
 libnuma) is unrelated to the migration and reproduces on the
 pre-modularization commit equally.
-

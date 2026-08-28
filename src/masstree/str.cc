@@ -23,7 +23,7 @@ namespace str_safe_file {} // Skip STL header checks (file has no functions - ju
 #include "str.hh"
 namespace lcdf {
 
-const Str Str::maxkey("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
+const Str Str::maxkey = Str::from_chars("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
                       "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
                       "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
                       "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"

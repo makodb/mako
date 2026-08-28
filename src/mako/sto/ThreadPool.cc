@@ -1,0 +1,128 @@
+// @unsafe: uses template instantiations with unknown key functions and returns references
+#include <stdint.h>
+#include <stddef.h>
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+
+// bench.h first: its textual std/rcu/ticker includes must precede
+// any header that opens namespace std into the global namespace
+// (house pattern for import-std TUs; see server.cc).
+#include "benchmarks/bench.h"
+#include "ThreadPool.h"
+#include "storage/mbta_wrapper.hh"  // mbta_ordered_index (put_mbta cast)
+#include "lib/common.h"
+
+import std;
+
+thread_local str_arena arena;
+thread_local void *buf = NULL;
+thread_local string obj_k;
+thread_local string obj_v;
+
+// @unsafe: uses memcpy and reinterpret_cast with raw pointers
+void keystore_encode3_v2(std::string& s, uint32_t x) {
+    assert(s.length()>mako::EXTRA_BITS_FOR_VALUE);
+    memcpy ((void *)(s.data() + s.length() - mako::EXTRA_BITS_FOR_VALUE), &x, mako::BITS_OF_TT);
+    // for the later on takeovering from the old leader
+    mako::Node *header = reinterpret_cast<mako::Node *>((char*)(s.data() + s.length() - mako::BITS_OF_NODE));
+    header->data_size = 0;
+}
+
+// @unsafe: uses memcpy with raw pointers
+inline uint32_t keystore_decode3_v2(const std::string& s){
+    uint32_t cid=0;
+    memcpy (&cid, (void *) (s.data () + s.length() - mako::EXTRA_BITS_FOR_VALUE), mako::BITS_OF_TT);
+    return cid;
+}
+
+// @unsafe: calls unsafe keystore_decode3_v2
+bool cmpFunc2_v2(const std::string& newValue,const std::string& oldValue)
+{
+    uint32_t commit_id_new = keystore_decode3_v2(newValue);
+    uint32_t commit_id_old = keystore_decode3_v2(oldValue);
+
+    return (commit_id_new%10 > commit_id_old%10) || (commit_id_new/10 > commit_id_old/10);
+}
+
+// @unsafe: uses reinterpret_cast and memcpy with raw pointers
+size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
+                                                 uint32_t cid,  /* timestamp on current shard */
+                                                 unsigned short int count,
+                                                 unsigned int len,
+                                                 abstract_db* db) {
+    size_t put_ops = 0;
+
+    unsigned short int *len_of_K=0, *len_of_V=0, *table_id=0;
+    size_t offset=0;
+    bool delete_true = false;
+    for(int i=0;i<count;i++) {
+        delete_true = false ;
+        // 1. len of K
+        len_of_K = reinterpret_cast<unsigned short int*>(buffer + offset);
+        offset += sizeof(unsigned short int) ;
+
+        // 2. content of K
+        obj_k.assign(buffer + offset, *len_of_K);
+        offset += *len_of_K;
+
+        // 3. len of V
+        len_of_V = reinterpret_cast<unsigned short int*>(buffer + offset);
+        offset += sizeof(unsigned short int) ;
+
+        // 4. content of V, add an extra sizeof(uint64) bytes
+        obj_v.resize(*len_of_V + mako::EXTRA_BITS_FOR_VALUE);
+        // reset next_ptr on followers (no multi-version)
+        mako::Node *next_ptr = reinterpret_cast<mako::Node *>((char*)(obj_v.data()+obj_v.length()-mako::BITS_OF_NODE));
+        next_ptr->data_size = 0;
+        memcpy((char*)obj_v.c_str(),buffer+offset, *len_of_V);
+        offset += *len_of_V;
+
+        // 5. table id
+        table_id = reinterpret_cast<unsigned short*>(buffer + offset);
+        offset += sizeof(unsigned short int) ;
+
+        if((*table_id) & (1 << 15)) {
+            delete_true = true;
+            *table_id = (*table_id) ^ (1 << 15);
+        }
+
+        if (*table_id == 0 || *table_id > 10000) {
+            Warning("the table_id: %d", *table_id);
+            exit(1);
+        }
+
+        if (delete_true) {
+            obj_v.assign(1+mako::EXTRA_BITS_FOR_VALUE, 'B'); // special flags for DELETE
+            //value = string(1+mako::EXTRA_BITS_FOR_VALUE, 'B');  // special flags for DELETE
+        }
+
+        // 6. encode value + cid_v
+        keystore_encode3_v2 (obj_v, cid);
+        //keystore_encode3_v2 (value, cid);
+
+        // 7. put it into actual tables
+        int try_cnt = 1 ;
+        while (1) {
+            try {
+                //Warning("Info of KV: # of K: %d, # of V: %d, table_id: %d, is_deleted: %d,key:%s", *len_of_K, obj_v.length(), *table_id, delete_true,mako::printStringAsBit(obj_k).c_str());
+                void *txn = db->new_txn(0, arena, buf, abstract_db::HINT_DEFAULT);
+                abstract_ordered_index *table_index = db->get_index_by_table_id(*table_id) ;
+                // put_mbta left the abstract interface (mbta-specific
+                // compare-and-put); replay tables are mbta by construction.
+                static_cast<mbta_ordered_index*>(table_index)
+                    ->put_mbta(txn, obj_k, cmpFunc2_v2, obj_v);
+                auto ret = db->commit_txn_no_paxos(txn);// we should have ret>0, then retry
+                if (try_cnt > 1 && try_cnt % 20 == 0) {
+                    std::cout << "succeed at retry#:" << try_cnt << std::endl;
+                }
+                break ;
+            } catch (...) {   // if abort happens, replay it until it succeeds
+                try_cnt += 1 ;
+            }
+        }
+        put_ops ++;
+    }
+
+    return put_ops;
+}

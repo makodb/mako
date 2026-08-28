@@ -8,6 +8,8 @@
  */
 
 #pragma once
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 
 #include "__dep__.h"
 #include "rcc/row.h"
@@ -39,9 +41,9 @@ class TxLogServer;
  */
 class Tx: public enable_shared_from_this<Tx> {
  public:
-  shared_ptr<IntEvent> fully_dispatched_{Reactor::create_sp_event<IntEvent>()};
+  rusty::Arc<IntEvent> fully_dispatched_{create_sp_int_event(1)};
 //  bool fully_dispatched_{false};
-  shared_ptr<IntEvent> ev_execute_ready_{Reactor::create_sp_event<IntEvent>()};
+  rusty::Arc<IntEvent> ev_execute_ready_{create_sp_int_event(1)};
   bool aborted_in_dispatch_{false};
   bool inuse = false;
   txnid_t tid_;
@@ -61,7 +63,7 @@ class Tx: public enable_shared_from_this<Tx> {
   // Boundary calls into APIs still taking `shared_ptr<Marshallable>`
   // use `cmd_.inner_marshallable()`.
   Command cmd_{};
-  shared_ptr<ViewData> sp_view_data_ = nullptr;
+  rusty::Option<rusty::Arc<ViewData>> sp_view_data_{};
 
 
 #ifdef CHECK_ISO

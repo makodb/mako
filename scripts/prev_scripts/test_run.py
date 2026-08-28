@@ -18,7 +18,6 @@ modes_ = [
     "occ_paxos",
     "tapir",
 #    "rcc",
-    "janus",
 #    "troad"
 ]
 sites_ = [

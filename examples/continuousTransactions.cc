@@ -12,7 +12,7 @@
 #include "examples/statistics.h"
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/spinbarrier.h"
-#include "../src/mako/benchmarks/mbta_sharded_ordered_index.hh"
+#include "../src/mako/storage/mbta_sharded_ordered_index.hh"
 
 import std;
 
@@ -73,7 +73,7 @@ public:
                         is_cross_shard = true;
                     }
 
-                    table->put(txn, key, value);
+                    tx_put(table, txn, key, value);
                 } else {
                     // Read transaction
                     stats.reads++;
@@ -89,7 +89,7 @@ public:
                     }
 
                     string value;
-                    table->get(txn, key, value);
+                    tx_get(table, txn, key, value, std::string::npos);
                 }
 
                 db_->commit_txn(txn);
@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
 
     if (benchConfig.getLeaderConfig()) {
         // pre-declare sharded tables
-        mako::setup_erpc_server();
+        mako::setup_rpc_server();
         mako::setup_helper(db, {});
         mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
     }

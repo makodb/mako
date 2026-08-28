@@ -6,7 +6,7 @@
 #include "lib/fasttransport.h"
 #include "lib/client.h"
 #include "lib/common.h"
-#include "benchmarks/sto/Interface.hh"
+#include "sto/Interface.hh"
 
 import std;
 
@@ -85,6 +85,12 @@ namespace mako
         case warmupReqType:
             HandleWarmupReply(respBuf);
             break;
+        case nontxnPutReqType:
+        case nontxnInsertReqType:
+        case nontxnRemoveReqType:
+        case nontxnGetReqType:
+            HandleNontxnWriteReply(respBuf);
+            break;
         default:
             Warning("Unrecognized request type: %d\n", reqType);
         }
@@ -122,7 +128,7 @@ namespace mako
         transport->SendRequestToAll(this,
                                       validateReqType,
                                       dstShardIdx,
-                                      config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(get_int_response_t),
                                       sizeof(basic_request_t));
     }
@@ -156,7 +162,7 @@ namespace mako
         transport->SendRequestToAll(this,
                                       getTimestampReqType,
                                       dstShardIdx,
-                                      config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(get_int_response_t),
                                       sizeof(basic_request_t));
     }
@@ -200,7 +206,7 @@ namespace mako
                                     controlReqType,
                                     dstShardIdx,
                                     is_datacenter_failure? config.warehouses+1: 
-                                        config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                        config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                     sizeof(get_int_response_t),
                                     sizeof(control_request_t)); 
     }
@@ -237,7 +243,7 @@ namespace mako
         transport->SendRequestToAll(this,
                                     warmupReqType,
                                     dstShardIdx,
-                                    config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                    config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                     sizeof(get_int_response_t),
                                     sizeof(warmup_request_t),
                                     centerId); 
@@ -325,7 +331,7 @@ namespace mako
         transport->SendRequestToAll(this,
                                       installReqType,
                                       dstShardIdx,
-                                      config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(basic_response_t),
                                       bytes_used);
     }
@@ -363,7 +369,7 @@ namespace mako
         transport->SendRequestToAll(this,
                                       serializeUtilReqType,
                                       dstShardIdx,
-                                      config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(basic_response_t),
                                       bytes_used);
 
@@ -398,7 +404,7 @@ namespace mako
         transport->SendRequestToAll(this,
                                       unLockReqType,
                                       dstShardIdx,
-                                      config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(basic_response_t),
                                       sizeof(basic_request_t));
     }
@@ -435,7 +441,7 @@ namespace mako
         transport->SendBatchRequestToAll(
             this,
             batchLockReqType,
-            config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+            config.warehouses+5+server_id%TThread::get_num_rpc_server(),
             sizeof(basic_response_t),
             data_to_send
         );
@@ -463,7 +469,7 @@ namespace mako
                             continuation,
                             error_continuation);
 
-        // TODO: find a way to get sending errors (the eRPC's enqueue_request
+        // TODO: find a way to get sending errors (the backend's enqueue_request
         // function does not return errors)
         auto *reqBuf = reinterpret_cast<lock_request_t *>(
             transport->GetRequestBuf(
@@ -484,7 +490,7 @@ namespace mako
         transport->SendRequestToShard(this,
                                       lockReqType,
                                       dstShardIdx,
-                                      config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       used_bytes);
     }
 
@@ -510,7 +516,7 @@ namespace mako
                             continuation,
                             error_continuation);
 
-        // TODO: find a way to get sending errors (the eRPC's enqueue_request
+        // TODO: find a way to get sending errors (the backend's enqueue_request
         // function does not return errors)
         auto *reqBuf = reinterpret_cast<scan_request_t *>(
             transport->GetRequestBuf(
@@ -529,7 +535,7 @@ namespace mako
         transport->SendRequestToShard(this,
                                       scanReqType,
                                       dstShardIdx,
-                                      config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(scan_request_t));
     }
 
@@ -577,7 +583,57 @@ namespace mako
         transport->SendRequestToShard(this,
                                       getReqType,
                                       dstShardIdx,
-                                      config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
+                                      bytes_used);
+    }
+
+    // @unsafe - raw transport buffers
+    void Client::InvokeNontxnWrite(uint64_t txn_nr,
+                                   int dstShardIdx,
+                                   uint16_t server_id,
+                                   const string &key,
+                                   const string &value,
+                                   uint16_t table_id,
+                                   uint8_t reqType,
+                                   resp_continuation_t continuation,
+                                   error_continuation_t error_continuation,
+                                   uint32_t timeout)
+    {
+        uint32_t reqId = ++lastReqId;
+        reqId *= 10;
+
+        Debug("invoke InvokeNontxnWrite type=%d\n", reqType);
+        crtReqK =
+            PendingRequestK(key,
+                            reqId,
+                            txn_nr,
+                            server_id,
+                            continuation,
+                            error_continuation);
+
+        auto *reqBuf = reinterpret_cast<nontxn_write_request_t *>(
+            transport->GetRequestBuf(
+                sizeof(nontxn_write_request_t),
+                sizeof(client_kv_response_t)));
+        reqBuf->targert_server_id = server_id;
+        reqBuf->req_nr = reqId + current_term;
+        reqBuf->table_id = table_id;
+        ASSERT_LT(key.size(), max_key_length);
+        ASSERT_LT(value.size(), max_value_length);
+        reqBuf->klen = key.size();
+        reqBuf->vlen = value.size();
+        memcpy(reqBuf->key_and_value, key.data(), key.size());
+        memcpy(reqBuf->key_and_value + key.size(), value.data(), value.size());
+
+        size_t bytes_used = sizeof(nontxn_write_request_t)
+            - (max_key_length + max_value_length)
+            + reqBuf->klen + reqBuf->vlen;
+
+        blocked = true;
+        transport->SendRequestToShard(this,
+                                      reqType,
+                                      dstShardIdx,
+                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       bytes_used);
     }
 
@@ -611,7 +667,7 @@ namespace mako
             transport->SendRequestToAll(this,
                                         abortReqType,
                                         dstShardIdx,
-                                        config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                        config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                         sizeof(basic_response_t),
                                         sizeof(basic_request_t));
         } catch(int n) {
@@ -623,7 +679,7 @@ namespace mako
     void Client::HandleGetReply(char *respBuf)
     {
         auto *resp = reinterpret_cast<get_response_t *>(respBuf);
-        Debug("[%lu]Received get HandleGetReply, to eRPC client receives a message, req_nr: %d, crt: %d, status: %d\n", clientid, resp->req_nr, crtReqK.req_nr, resp->status);
+        Debug("[%lu]Received get HandleGetReply, to RPC client receives a message, req_nr: %d, crt: %d, status: %d\n", clientid, resp->req_nr, crtReqK.req_nr, resp->status);
         if (resp->req_nr != crtReqK.req_nr)
         {
             Debug("Received get reply when no request was pending; req_nr = %lu, crtReqK:%lu,par_id:%d,id:%d", resp->req_nr, crtReqK.req_nr,TThread::getGlobalPartitionID(),TThread::id());
@@ -640,10 +696,31 @@ namespace mako
         }
     }
 
+    // Reply handler for the three non-txn write types; same
+    // req_nr-matching and unblocking protocol as HandleGetReply.
+    void Client::HandleNontxnWriteReply(char *respBuf)
+    {
+        auto *resp = reinterpret_cast<client_kv_response_t *>(respBuf);
+        Debug("[%lu] HandleNontxnWriteReply req_nr: %d, crt: %d, status: %d\n",
+              clientid, resp->req_nr, crtReqK.req_nr, resp->status);
+        if (resp->req_nr != crtReqK.req_nr)
+        {
+            Debug("Received nontxn-write reply when no request was pending; req_nr = %u", resp->req_nr);
+            return;
+        }
+
+        crtReqK.resp_continuation(respBuf);
+        if (num_response_waiting) num_response_waiting --;
+        if (num_response_waiting == 0) {
+            blocked = false;
+            crtReqK.req_nr = 0;
+        }
+    }
+
     void Client::HandleScanReply(char *respBuf)
     {
         auto *resp = reinterpret_cast<scan_response_t *>(respBuf);
-        Debug("[%lu]Received get HandleGetReply, to eRPC client receives a message, req_nr: %d, crt: %d, status: %d\n", clientid, resp->req_nr, crtReqK.req_nr, resp->status);
+        Debug("[%lu]Received get HandleGetReply, to RPC client receives a message, req_nr: %d, crt: %d, status: %d\n", clientid, resp->req_nr, crtReqK.req_nr, resp->status);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received get reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -663,7 +740,7 @@ namespace mako
     void Client::HandleLockReply(char *respBuf)
     {
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
-        Debug("eRPC client receives a HandleLockReply, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
+        Debug("RPC client receives a HandleLockReply, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received lock reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -683,7 +760,7 @@ namespace mako
     void Client::HandleBatchLockReply(char *respBuf)
     {
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
-        Debug("eRPC client receives a HandleLockReply, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
+        Debug("RPC client receives a HandleLockReply, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received lock reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -705,7 +782,7 @@ namespace mako
     void Client::HandleValidateReply(char *respBuf)
     {
         auto *resp = reinterpret_cast<get_int_response_t *>(respBuf);
-        Debug("eRPC client receives a HandleValidateReply, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
+        Debug("RPC client receives a HandleValidateReply, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received validate reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -724,7 +801,7 @@ namespace mako
     
     void Client::HandleWatermarkReply(char *respBuf) {
         auto *resp = reinterpret_cast<get_int_response_t *>(respBuf);
-        Debug("eRPC client receives a HandleWatermarkReply, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
+        Debug("RPC client receives a HandleWatermarkReply, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received watermark reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -743,7 +820,7 @@ namespace mako
 
     void Client::HandleControlReply(char *respBuf) {
         auto *resp = reinterpret_cast<get_int_response_t *>(respBuf);
-        Debug("eRPC client receives a HandleControlReply, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
+        Debug("RPC client receives a HandleControlReply, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received control reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -762,7 +839,7 @@ namespace mako
 
     void Client::HandleWarmupReply(char *respBuf) {
         auto *resp = reinterpret_cast<get_int_response_t *>(respBuf);
-        Debug("eRPC client receives a HandleWarmupReply, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
+        Debug("RPC client receives a HandleWarmupReply, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received warmup reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -781,7 +858,7 @@ namespace mako
     void Client::HandleGetTimestamp(char *respBuf)
     {
         auto *resp = reinterpret_cast<get_int_response_t *>(respBuf);
-        Debug("eRPC client receives a HandleGetTimestamp, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
+        Debug("RPC client receives a HandleGetTimestamp, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received get timestamp reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -801,7 +878,7 @@ namespace mako
     void Client::HandleSerializeUtil(char *respBuf)
     {
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
-        Debug("eRPC client receives a HandleSerializeUtil, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
+        Debug("RPC client receives a HandleSerializeUtil, req_nr: %d, crt: %d, status: %d\n", resp->req_nr, crtReqK.req_nr, resp->status);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received get timestamp reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -821,7 +898,7 @@ namespace mako
     void Client::HandleInstallReply(char *respBuf)
     {
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
-        Debug("eRPC client receives a message, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
+        Debug("RPC client receives a message, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received install reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -841,7 +918,7 @@ namespace mako
     void Client::HandleUnLockReply(char *respBuf)
     {
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
-        Debug("eRPC client receives a message, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
+        Debug("RPC client receives a message, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received unlock reply when no request was pending; req_nr = %lu", resp->req_nr);
@@ -861,7 +938,7 @@ namespace mako
     void Client::HandleAbortReply(char *respBuf)
     {
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
-        Debug("eRPC client receives a message, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
+        Debug("RPC client receives a message, req_nr: %d, crt: %d\n", resp->req_nr, crtReqK.req_nr);
         if (resp->req_nr != crtReqK.req_nr)
         {
             //Warning("Received abort reply when no request was pending; req_nr = %lu, crtReqK:%lu", resp->req_nr, crtReqK.req_nr);

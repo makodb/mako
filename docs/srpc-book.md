@@ -111,17 +111,33 @@ src/rrr/
     client.hpp          # Client, Future, and connection APIs
     server.hpp          # Server, listener, dispatch (684 lines)
     callbacks.hpp       # Connection lifecycle callbacks
-    circuit_breaker.hpp # Fail-fast fault tolerance
     connection_state.hpp# Connection state machine
     connection_metrics.hpp # Performance metrics
     heartbeat.hpp       # Keep-alive probes
+    frame_codec.hpp     # Frame-codec import compatibility shim
     load_balancer.hpp   # Pool load-balancing strategies
-    reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
-    request_options.hpp # Per-request configuration
     pollable_proxy.h    # Pollable proxy facade + typed Arc adapter helpers
     errors.hpp          # Error code definitions
-    utils.hpp/cpp       # RPC utilities
+
+  src/                # Canonical Rust module sources
+    basetypes.rs       # Primitive aliases, SparseInt, counters, and clocks
+    callback_wrapper.rs # Callback ownership adapter module
+    circuit_breaker.rs # Circuit-breaker state machine module
+    completion_tracker.rs # Request completion tracking module
+    connection_metrics.rs # Connection metrics module
+    connection_state.rs # Connection state machine module
+    errors.rs          # RPC error definitions
+    frame_codec.rs     # Wire framing and stream reader module
+    heartbeat.rs       # Keep-alive manager module
+    internal_protocol.rs # Internal protocol definitions
+    load_balancer.rs   # Pool load-balancing strategies
+    rand.rs            # Random generator module
+    request_options.rs # Per-request configuration module
+    request_queue.rs   # Pending-request buffering module
+    reconnect_policy.rs # Reconnect policy and backoff calculator module
+    stat.rs            # Statistics module
+    utils.rs           # RPC utility ownership, port, and hostname module
 
   reactor/            # Event loop and fiber system
     reactor.h           # Core event loop scheduler (482 lines)
@@ -135,7 +151,6 @@ src/rrr/
 
   base/               # Core utilities
     threading.hpp       # SpinLock, SpinMutex
-    basetypes.hpp       # Type aliases, NoCopy, SparseInt
     logging.hpp         # Log framework (FATAL/ERROR/WARN/INFO/DEBUG)
     misc.hpp            # General utilities
 
@@ -417,18 +432,27 @@ if (event->status_ == Event::TIMEOUT) {
 
 ### Pollable Interface
 
-Legacy path: objects can still implement `Pollable` directly:
+Legacy path: objects can still implement `Pollable` directly. The
+trait now lives as an inline-DSL `pub trait` in
+`src/rrr/reactor/epoll_wrapper.cc`:
 
-```cpp srpc-no-compile
-class Pollable {
-    virtual int fd() const = 0;             // File descriptor
-    virtual int poll_mode() const = 0;      // READ, WRITE, or both
-    virtual bool handle_read() = 0;         // Called when FD is readable
-    virtual int handle_write() = 0;         // Called when FD is writable
-    virtual void handle_error() = 0;        // Called on error
-    virtual void close() = 0;              // Cleanup
-};
+```rust srpc-no-compile
+#[cfg(rusty_cpp_rust)]
+pub trait Pollable {
+    fn fd(&self) -> i32;
+    fn poll_mode(&self) -> i32;
+    fn content_size(&mut self) -> usize;
+    fn handle_read(&mut self) -> bool;
+    fn handle_write(&mut self) -> i32;
+    fn handle_error(&mut self);
+    fn close(&mut self);
+    fn check_pending_write_update(&self) -> bool;
+    fn is_closed(&self) -> bool;
+}
 ```
+
+The rusty-cpp transpiler emits the matching `class Pollable { ...
+virtual ... = 0; }` GEN block into the same file at build time.
 
 Migration note: proxy scaffolding for `Pollable` now lives in `src/rrr/rpc/pollable_proxy.h`
 (`PollableFacade` and typed-arc adapter support). Poll-thread
@@ -724,23 +748,24 @@ if (rc != 0) {
 }
 
 // Synchronous-style call using FutureResult
-auto fu_result = client->request(RPC_METHOD_ID, [&](BinaryWriteArchive& m) {
-    m << arg1 << arg2;
+auto fu_result = client->request(RPC_METHOD_ID, FutureAttr{}, [&](BinaryWriteArchive& m) {
+    rrr::Serialize_::serialize(arg1, m);
+    rrr::Serialize_::serialize(arg2, m);
 });
 
 if (fu_result.is_ok()) {
     auto fu = fu_result.unwrap();
     fu->wait();
     int result = 0;
-    fu->get_reply() >> result;
+    rrr::deserialize_from(fu->get_reply(), result);
 }
 ```
 
 ### Async RPC
 
 ```cpp srpc-compile-client
-auto fu_result = client->request(RPC_METHOD_ID, [&](BinaryWriteArchive& m) {
-    m << arg1;
+auto fu_result = client->request(RPC_METHOD_ID, FutureAttr{}, [&](BinaryWriteArchive& m) {
+    rrr::Serialize_::serialize(arg1, m);
 });
 // ... do other work ...
 if (fu_result.is_ok()) {
@@ -778,7 +803,7 @@ if (client_opt.is_some()) {
 Per-request configuration:
 
 ```cpp srpc-no-compile
-RequestOptions opts;
+auto opts = RequestOptions::defaults();
 opts.timeout_ms = 5000;       // 5 second timeout
 opts.max_retries = 3;         // Retry up to 3 times
 opts.idempotent = true;       // Safe to retry
@@ -821,14 +846,15 @@ public:
             return;
         }
         int arg;
-        req->m >> arg;
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(arg, __req_ar__);
         int result = compute(arg);
 
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
             const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
-                out << result;
+                rrr::Serialize_::serialize(result, out);
             });
         }
     }
@@ -848,7 +874,7 @@ public:
     void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn);
 };
 
-Server server(rusty::None);
+auto server = Server::new_(rusty::None);
 server.reg_service(rusty::make_box<MyTypedService>());
 ```
 
@@ -856,11 +882,11 @@ server.reg_service(rusty::make_box<MyTypedService>());
 
 ```cpp srpc-compile-server
 auto poll_thread = PollThread::create();
-Server server(rusty::Some(poll_thread.clone()));
+auto server = Server::new_(rusty::Some(poll_thread.clone()));
 server.reg_service(rusty::make_box<MyService>());
 
 // Start listening
-int rc = server.start("0.0.0.0:8100");
+int rc = server.start(reinterpret_cast<const int8_t*>("0.0.0.0:8100"));
 
 // ... server runs ...
 
@@ -915,14 +941,17 @@ The `Marshal` class provides binary serialization/deserialization:
 Marshal m;
 
 // Serialize
-m << (i32)42;
-m << (i64)1234567890LL;
-m << std::string("hello");
-m << (double)3.14;
+rrr::Serialize_::serialize((i32)42, m);
+rrr::Serialize_::serialize((i64)1234567890LL, m);
+rrr::Serialize_::serialize(std::string("hello"), m);
+rrr::Serialize_::serialize((double)3.14, m);
 
 // Deserialize
 i32 x; i64 y; std::string s; double d;
-m >> x >> y >> s >> d;
+rrr::Deserialize_::deserialize(x, m);
+rrr::Deserialize_::deserialize(y, m);
+rrr::Deserialize_::deserialize(s, m);
+rrr::Deserialize_::deserialize(d, m);
 ```
 
 ### Supported Types
@@ -934,7 +963,7 @@ m >> x >> y >> s >> d;
 | `i32` | `int32_t` | 4 bytes |
 | `i64` | `int64_t` | 8 bytes |
 | `v32` | variable-length 32-bit | 1-5 bytes |
-| `v64` | variable-length 64-bit | 1-10 bytes |
+| `v64` | variable-length 64-bit | 1-9 bytes |
 | `double` | `double` | 8 bytes |
 | `string` | `std::string` | length-prefixed |
 | containers | `vector`, `map`, `set`, `pair` | element-wise |
@@ -966,11 +995,13 @@ struct MyTypedData {
     int32_t kind() const { return kMarshallKind; }
 
     void save(rrr::BinaryWriteArchive& ar) const {
-        ar << id << name;
+        rrr::Serialize_::serialize(id, ar);
+        rrr::Serialize_::serialize(name, ar);
     }
 
     void load(rrr::BinaryReadArchive& ar) {
-        ar >> id >> name;
+        rrr::Deserialize_::deserialize(id, ar);
+        rrr::Deserialize_::deserialize(name, ar);
     }
 };
 
@@ -1014,7 +1045,7 @@ into the envelope's storage so the receiver can pin lifetime):
 
 ```cpp srpc-no-compile
 janus::Command cmd;
-m >> cmd;  // wire decode populates kind + payload via factory + load
+rrr::Deserialize_::deserialize(cmd, m);  // wire decode populates kind + payload via factory + load
 
 if (auto* view = cmd.unpack<ViewData>()) {
     // use view
@@ -1035,7 +1066,9 @@ For recording sizes without seeking:
 ```cpp srpc-no-compile
 Marshal m;
 auto bookmark = m.set_bookmark(sizeof(i32));  // Reserve space
-m << data1 << data2 << data3;
+rrr::Serialize_::serialize(data1, m);
+rrr::Serialize_::serialize(data2, m);
+rrr::Serialize_::serialize(data3, m);
 i32 payload_size = m.get_and_reset_write_cnt();
 m.write_bookmark(bookmark, &payload_size);  // Fill in size
 ```
@@ -1056,7 +1089,8 @@ rrr::BufferSink sink;
 
 // Archive: knows the wire format (Layer 3)
 rrr::BinaryWriteArchive writer(&sink);
-writer << (rrr::i32)42 << std::string("hello");
+rrr::Serialize_::serialize((rrr::i32)42, writer);
+rrr::Serialize_::serialize(std::string("hello"), writer);
 
 // Source: drains from a byte view
 rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
@@ -1238,7 +1272,7 @@ that legacy code is also writing to:
 
 ```cpp srpc-no-compile
 rrr::Marshal m;
-m << static_cast<rrr::i32>(1);   // legacy
+rrr::Serialize_::serialize(static_cast<rrr::i32>(1), m);   // legacy
 
 {
   rrr::MarshalSink sink(&m);
@@ -1246,7 +1280,7 @@ m << static_cast<rrr::i32>(1);   // legacy
   writer << static_cast<rrr::i32>(2);  // new code, same buffer
 }
 
-m << std::string("trailing");  // legacy
+rrr::Serialize_::serialize(std::string("trailing"), m);  // legacy
 ```
 
 `MarshalSource` is the dual: a `BinaryReadArchive` over a
@@ -1400,12 +1434,13 @@ NEW --> CONNECTING --> CONNECTED --> DISCONNECTING --> DISCONNECTED
                     +-- (reconnect) -----+
 ```
 
-States tracked via `rusty::Cell<ConnectionState>` for thread-safe interior mutability.
+States are tracked via `rusty::Cell<ConnectionState>` for single-threaded
+interior mutability; `Cell` is not a thread-safety primitive.
 
 ### Automatic Reconnection
 
 ```cpp srpc-compile
-ReconnectPolicy policy;
+auto policy = ReconnectPolicy::new_();
 policy.max_retries = 10;            // 0 for unlimited
 policy.initial_delay_ms = 100;      // Initial delay
 policy.max_delay_ms = 30000;        // Max delay (30s)
@@ -1418,10 +1453,10 @@ policy.jitter_enabled = true;       // Randomize delay to avoid herd effects
 Prevents cascade failures using the CLOSED/OPEN/HALF_OPEN pattern:
 
 ```cpp srpc-compile
-CircuitBreakerConfig cb;
-cb.failure_threshold = 5;       // Open after 5 consecutive failures
-cb.success_threshold = 2;       // Close after 2 successes in half-open
-cb.timeout_ms = 5000;           // Try again after 5 seconds
+auto cb = CircuitBreakerConfig::defaults();
+cb.failure_threshold = 5;           // Open after 5 consecutive failures
+cb.success_threshold = 2;           // Close after 2 successes in half-open
+cb.timeout_ms = 5000;               // Try again after 5 seconds
 ```
 
 ### Request Buffering
@@ -1500,7 +1535,8 @@ enum class RpcError {
 };
 ```
 
-`TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in `request_options.hpp`.
+`TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in the
+`rrr.request_options` module.
 SRPC handles failures through `RpcError` values and helper predicates rather
 than an RPC-specific exception class.
 
@@ -1616,7 +1652,8 @@ Current codegen is typed-only for non-raw RPC methods:
 - Generated proxy sync/async methods use typed request/response objects end-to-end.
 - `raw` handlers remain raw (`void Method(Box<Request>, WeakServerConnection)`).
 - Generated service classes do not inherit `rrr::Service`. They register via
-  `Server::reg_service(Box<T>)` using the `ServiceLike` concept.
+  `Server::reg_service_typed(Box<T>)`, which wraps their concrete dispatch
+  methods in the server's internal type-erasure shim.
 - All in-tree generated headers (`rcc_rpc.h`, `network.h`, `helloworld.h`) use
   typed-only mode and all callsites use typed APIs.
 
@@ -1782,6 +1819,71 @@ Events hold weak references to fibers to avoid reference cycles:
 // Event -> Weak<Fiber> (not Rc<Fiber>)
 // If the fiber is destroyed, the weak ref expires gracefully
 ```
+
+### Inline Rust DSL
+
+Most newly-migrated rrr types are authored as inline Rust DSL blocks
+that the `rusty-cpp-transpiler` (third-party/rusty-cpp) regenerates
+into C++ at build time. The pattern:
+
+```cpp srpc-no-compile
+// 1. Source-of-truth Rust block, guarded so a stock C++ compiler skips it.
+#if RUSTYCPP_RUST
+struct MyConfig {
+    timeout_ms: i32,
+    retries: i32,
+}
+
+impl MyConfig {
+    fn new(timeout_ms: i32, retries: i32) -> MyConfig {
+        MyConfig { timeout_ms, retries }
+    }
+}
+#endif
+
+// 2. Transpiler-emitted C++ inside a GEN region. The `rust_sha256`
+//    field captures the Rust block's hash so stale GEN output is
+//    detectable.
+/*RUSTYCPP:GEN-BEGIN id=mymod.myconfig version=1 rust_sha256=...*/
+struct MyConfig {
+    int32_t timeout_ms;
+    int32_t retries;
+
+    static MyConfig new_(int32_t timeout_ms, int32_t retries);
+};
+
+inline MyConfig MyConfig::new_(int32_t timeout_ms, int32_t retries) {
+    return MyConfig{.timeout_ms = timeout_ms, .retries = retries};
+}
+/*RUSTYCPP:GEN-END id=mymod.myconfig*/
+```
+
+Regenerate after editing the Rust block:
+
+```bash srpc-no-compile
+third-party/rusty-cpp/target/release/rusty-cpp-transpiler \
+    inline-rust --rewrite --files src/rrr/path/to/file.cpp
+```
+
+What the DSL currently expresses, in rough order of usage:
+
+- **Plain structs / POD aggregates** — fields plus an `impl T { fn new(...) -> T { T { ... } } }` static factory.
+- **`pub trait T { fn method(&self) -> ...; }`** — emits a C++ abstract base class (pure virtual, virtual dtor, copy/move disabled) so concrete C++ implementors keep working unchanged. Examples: `Pollable`, `PollableBase`, `SerializableBase`, `Service`, `Job`, `Alarm`, `SinkBase`, `SourceBase`.
+- **Concrete classes with state + methods** — `Client`, `Server`, `CircuitBreaker`, `HeartbeatManager`, etc. The DSL impl block carries the method bodies; large method bodies stay in out-of-class `T::method(...) { ... }` C++ definitions because the DSL doesn't translate complex syscall / cast-heavy code yet.
+
+Constructs the DSL grammar does **not** accept (these stay manual C++ and show up as `needs-transpiler` or `trivial-blocked` in `docs/rrr-inventory.md`):
+
+- `void*` / `va_list` / C-style array params
+- Template methods (and class templates beyond a couple of pilot shapes)
+- Default-argument syntax on member functions
+- Operator overloading
+- Custom destructors that aren't trivially-defaulted
+- `impl Trait for Type` — parses but the emitter does not yet write `: public Trait` + `override` for the implementor, so trait *implementors* stay manual C++ while the *trait base* migrates cleanly.
+
+The `tools/rrr-inventory.py` script scans `src/rrr` and produces a
+per-decl bucket (trivial / trivial-blocked / refactor-then-dsl /
+needs-transpiler / boundary / already-dsl) along with a blocker
+histogram — see `docs/rrr-inventory.md`.
 
 ---
 
@@ -2069,7 +2171,7 @@ class Future {
     static Arc<Future> create();
     void wait();                    // Block fiber
     void timed_wait(double sec);    // With timeout
-    Marshal& get_reply();           // Access reply data
+    rusty::RefMut<ReplyBuffer> get_reply();  // Access reply data (cursor)
     int get_error_code();           // 0 = success
     bool timed_out();               // Did it timeout?
     static void safe_release(...);  // Compatibility no-op (Arc handles lifetime)
@@ -2199,3 +2301,5 @@ If the process hangs during shutdown, check the transport stop fix documentation
 ---
 
 *This document consolidates the RRR/SRPC framework documentation from across the Mako project. For detailed implementation plans, phase documents, and migration guides, see `docs/rpc/`, `docs/developer/`, and `docs/migration/rustycpp/`.*
+
+*For the ongoing manual-C++ → Rust DSL migration roadmap, see [`docs/TODO-rusty-rewrite.md`](TODO-rusty-rewrite.md) (the phased plan) and [`docs/rrr-inventory.md`](rrr-inventory.md) (the per-decl triage CSV + bucket summary, regeneratable via `python3 tools/rrr-inventory.py`).*

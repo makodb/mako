@@ -126,18 +126,18 @@ class PaxosServer : public TxLogServer {
 #endif
 
   ~PaxosServer() {
-    Log_info("site par %d, loc %d: prepare %d, accept %d, commit %d", partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
+    Log_info("site par {}, loc {}: prepare {}, accept {}, commit {}", partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
 #ifdef CHECK_KEY_DISTRIBUTION
     if (loc_id_ == 0)
       key_distribution_.Print();
 #endif
 #ifdef LATENCY_DEBUG
-    Log_info("site par %d, loc %d: client2follower 50pct: %.2f 90pct: %.2f 99pct: %.2f", partition_id_, loc_id_, client2follower_.pct50(), client2follower_.pct90(), client2follower_.pct99());
+    Log_info("site par {}, loc {}: client2follower 50pct: {:.2f} 90pct: {:.2f} 99pct: {:.2f}", partition_id_, loc_id_, client2follower_.pct50(), client2follower_.pct90(), client2follower_.pct99());
 #endif
   }
 
   shared_ptr<PaxosData> GetInstance(slotid_t id) {
-    if(id<min_active_slot_) Log_info("XXXXXX: id: %d, min_active_slot_:%d", id, min_active_slot_);
+    if(id<min_active_slot_) Log_info("XXXXXX: id: {}, min_active_slot_:{}", id, min_active_slot_);
     verify(id >= min_active_slot_);
     auto& sp_instance = logs_[id];
     if(!sp_instance)
@@ -191,11 +191,14 @@ class PaxosServer : public TxLogServer {
   // only caller was the now-deleted
   // `MultiPaxosServiceImpl::BulkPrepare2` handler.
 
+  // Fill-then-wrap: fills the caller-owned response; the caller packs
+  // it after this returns. (The old Function<void()> cb param was dead
+  // ceremony — never invoked; it only carried the DeferredReply to its
+  // destructor.)
   void OnSyncLog(const janus::Command& cmd,
                       i32* ballot,
                       i32 *valid,
-                      shared_ptr<SyncLogResponse> ret_cmd,
-                      rusty::Function<void()> cb);
+                      SyncLogResponse& ret_cmd);
 
   void OnSyncCommit(const janus::Command& cmd,
                       i32* ballot,
@@ -222,7 +225,7 @@ class PaxosServer : public TxLogServer {
     // for now just free anything 1000 slots before.
     int i = min_active_slot_;
     while (i + 100 < max_executed_slot_) {
-      //Log_info("Erasing entry number %d", i);
+      //Log_info("Erasing entry number {}", i);
       logs_.erase(i);
       i++;
     }

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <rusty/option.hpp>
+#include <rusty/thread.hpp>
+
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../scheduler.h"
@@ -61,7 +64,11 @@ class FpgaRaftServer : public TxLogServer {
 	static bool looping;
 	bool heartbeat_ = false;
 	enum { STOPPED, RUNNING } status_;
-	pthread_t loop_th_;
+	// `rusty::Unit`, not `void`: thread::spawn deduces
+	// JoinHandle<std::tuple<>> for a void closure, and Option's
+	// incompatible-type ctor panics at runtime rather than failing to
+	// compile. server.cc:40 assigns a spawn result here.
+	rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>> loop_th_;
 
   // Distribution client2follower_;
   
@@ -73,7 +80,7 @@ class FpgaRaftServer : public TxLogServer {
   
 	void setIsLeader(bool isLeader)
   {
-    Log_debug("set loc_id %d is leader %d", loc_id_, isLeader) ;
+    Log_debug("set loc_id {} is leader {}", loc_id_, isLeader) ;
     is_leader_ = isLeader ;
     // removed
     // `witness_.set_belongs_to_leader(isLeader);` — see the
@@ -82,7 +89,7 @@ class FpgaRaftServer : public TxLogServer {
 
   void setIsFPGALeader(bool isLeader)
   {
-    Log_debug("set loc_id %d is fpga leader %d", loc_id_, isLeader) ;
+    Log_debug("set loc_id {} is fpga leader {}", loc_id_, isLeader) ;
     fpga_is_leader_ = isLeader ;
 
     if (isLeader) 
@@ -103,7 +110,7 @@ class FpgaRaftServer : public TxLogServer {
                             rusty::Function<void()> cb) {
       *vote_granted = vote ;
       *reply_term = currentTerm ;
-      Log_debug("loc %d vote decision %d, for can_id %d canterm %d curterm %d isleader %d lst_log_idx %d lst_log_term %d", 
+      Log_debug("loc {} vote decision {}, for can_id {} canterm {} curterm {} isleader {} lst_log_idx {} lst_log_term {}", 
             loc_id_, vote, can_id, can_term, currentTerm, is_leader_, lst_log_idx, lst_log_term );
                     
       if( can_term > currentTerm)
@@ -191,10 +198,10 @@ class FpgaRaftServer : public TxLogServer {
     maxIndex = std::max(maxIndex, slot_id);
 
     if (cmd.kind_ == TpcCommitCommand::static_kind()){
-      auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-      auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
-      verify(vec_piece_data != nullptr);
-      auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
+      const auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+      const auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd.unwrap()->cmd_);
+      verify(vec_piece_data.is_some());
+      auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
 			vector<struct KeyValue> kv_vector;
 			int index = 0;
 			for (auto it = sp_vec_piece->begin(); it != sp_vec_piece->end(); it++){
@@ -214,7 +221,7 @@ class FpgaRaftServer : public TxLogServer {
 			// //clock_gettime(CLOCK_MONOTONIC, &begin);
       // de->wait();
 			//clock_gettime(CLOCK_MONOTONIC, &end);
-			//Log_info("Time of Write: %d", end.tv_nsec - begin.tv_nsec);
+			//Log_info("Time of Write: {}", end.tv_nsec - begin.tv_nsec);
     } else {
 			int value = -1;
 			int value_;
@@ -223,7 +230,7 @@ class FpgaRaftServer : public TxLogServer {
 			//clock_gettime(CLOCK_MONOTONIC, &begin);
       // de->wait();
 			//clock_gettime(CLOCK_MONOTONIC, &end);
-			//Log_info("Time of Write: %d", end.tv_nsec - begin.tv_nsec);
+			//Log_info("Time of Write: {}", end.tv_nsec - begin.tv_nsec);
     }
     *term = currentTerm ;
   }

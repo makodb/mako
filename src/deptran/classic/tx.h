@@ -7,8 +7,8 @@ namespace janus {
 class TxClassic: public Tx {
  public:
   using Tx::Tx;
-  shared_ptr<BoxEvent<bool>> prepare_result{Reactor::create_sp_event<BoxEvent<bool>>()};
-  shared_ptr<BoxEvent<int>> commit_result{Reactor::create_sp_event<BoxEvent<int>>()};
+  rusty::Arc<BoxEvent<bool>> prepare_result{create_sp_box_event<bool>()};
+  rusty::Arc<BoxEvent<int>> commit_result{create_sp_box_event<int>()};
   bool is_leader_hint_{false};
 };
 

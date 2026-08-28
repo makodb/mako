@@ -67,7 +67,7 @@ template <typename P>
 inline bool basic_table<P>::get(Str key, value_type &value,
                                 threadinfo& ti) const
 {
-    unlocked_tcursor<P> lp(*this, key);
+    auto lp = unlocked_tcursor<P>::from_str(*this, key);
     bool found = lp.find_unlocked(ti);
     if (found)
         value = lp.value();

@@ -20,8 +20,8 @@
 #include <gtest/gtest.h>
 
 #include <rusty/box.hpp>
-#include <rusty/hashset.hpp>
 #include <rusty/mutex.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -36,6 +36,7 @@
 #include "masstree/masstree_tcursor.hh"
 
 import std;
+import rusty;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;
@@ -73,7 +74,8 @@ inline std::string be_u64(uint64_t v) {
 // ti.rcu_start() / ti.rcu_stop()). Returns true iff the key was new.
 inline bool pure_insert(PureTable& t, threadinfo& ti, const std::string& k,
                         uint64_t* v) {
-    Masstree::tcursor<PureParams> lp(t, k.data(), static_cast<int>(k.size()));
+    auto lp = Masstree::tcursor<PureParams>::from_mutable_chars(
+        t, k.data(), static_cast<int>(k.size()));
     bool found = lp.find_insert(ti);
     if (!found) ti.observe_phantoms(lp.node());
     lp.value() = v;
@@ -85,8 +87,8 @@ inline bool pure_insert(PureTable& t, threadinfo& ti, const std::string& k,
 // the value into *out.
 inline bool pure_search(const PureTable& t, threadinfo& ti,
                         const std::string& k, uint64_t** out) {
-    Masstree::unlocked_tcursor<PureParams> lp(t, k.data(),
-                                              static_cast<int>(k.size()));
+    auto lp = Masstree::unlocked_tcursor<PureParams>::from_chars(
+        t, k.data(), static_cast<int>(k.size()));
     bool found = lp.find_unlocked(ti);
     if (found) *out = lp.value();
     return found;
@@ -94,6 +96,7 @@ inline bool pure_search(const PureTable& t, threadinfo& ti,
 
 class MasstreeMultiInstanceTest : public ::testing::Test {
 protected:
+    ~MasstreeMultiInstanceTest() noexcept {}  // rusty::Vec member -> force noexcept dtor
     void SetUp() override {
         // Create two separate contexts
         ctx1_ = MasstreeContext::Create();
@@ -144,7 +147,7 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     rusty::Mutex<rusty::Vec<threadinfo*>> ctx2_threads(rusty::Vec<threadinfo*>::new_());
 
     // Create threads bound to ctx1
-    auto threads1 = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(3);
+    auto threads1 = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(3);
     for (int i = 0; i < 3; ++i) {
         threads1.push(rusty::thread::spawn([this, i, &ctx1_threads]() {
             MasstreeContext::BindCurrentThread(ctx1_);
@@ -156,7 +159,7 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     }
 
     // Create threads bound to ctx2
-    auto threads2 = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(3);
+    auto threads2 = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(3);
     for (int i = 0; i < 3; ++i) {
         threads2.push(rusty::thread::spawn([this, i, &ctx2_threads]() {
             MasstreeContext::BindCurrentThread(ctx2_);
@@ -170,17 +173,25 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     for (auto& t : threads1) { auto _ = t.join(); }
     for (auto& t : threads2) { auto _ = t.join(); }
 
+    // NOTE (rusty-cpp pin fa7dd9d9): keyed on the ADDRESS, not the pointer.
+    // std_port's hashbrown lowers `Equivalent` to
+    //   deref_if_pointer_like(self_) == rusty::borrow(key)
+    // which dereferences a raw-pointer key and then demands `operator==` on
+    // the pointee, so `rusty::HashSet<threadinfo*>` no longer compiles (the
+    // retired hashbrown_port accepted it). uintptr_t preserves the
+    // pointer-identity semantics these assertions rely on.
+
     // Verify ctx1's thread list only contains ctx1 threads
-    rusty::HashSet<threadinfo*> ctx1_set;
+    rusty::HashSet<uintptr_t> ctx1_set;
     for (threadinfo* ti = ctx1_->get_allthreads(); ti; ti = ti->next()) {
-        ctx1_set.insert(ti);
+        ctx1_set.insert(reinterpret_cast<uintptr_t>(ti));
         EXPECT_EQ(ti->context(), ctx1_);
     }
 
     // Verify ctx2's thread list only contains ctx2 threads
-    rusty::HashSet<threadinfo*> ctx2_set;
+    rusty::HashSet<uintptr_t> ctx2_set;
     for (threadinfo* ti = ctx2_->get_allthreads(); ti; ti = ti->next()) {
-        ctx2_set.insert(ti);
+        ctx2_set.insert(reinterpret_cast<uintptr_t>(ti));
         EXPECT_EQ(ti->context(), ctx2_);
     }
 
@@ -188,15 +199,15 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     {
         auto g1 = ctx1_threads.lock().unwrap();
         for (auto* ti : *g1) {
-            EXPECT_TRUE(ctx1_set.contains(ti));
-            EXPECT_FALSE(ctx2_set.contains(ti));
+            EXPECT_TRUE(ctx1_set.contains(reinterpret_cast<uintptr_t>(ti)));
+            EXPECT_FALSE(ctx2_set.contains(reinterpret_cast<uintptr_t>(ti)));
         }
     }
     {
         auto g2 = ctx2_threads.lock().unwrap();
         for (auto* ti : *g2) {
-            EXPECT_TRUE(ctx2_set.contains(ti));
-            EXPECT_FALSE(ctx1_set.contains(ti));
+            EXPECT_TRUE(ctx2_set.contains(reinterpret_cast<uintptr_t>(ti)));
+            EXPECT_FALSE(ctx1_set.contains(reinterpret_cast<uintptr_t>(ti)));
         }
     }
 }
@@ -206,12 +217,12 @@ TEST_F(MasstreeMultiInstanceTest, ConcurrentRcuOperations) {
     const int NUM_THREADS_PER_CTX = 4;
     const int OPS_PER_THREAD = 100;
 
-    std::atomic<int> ctx1_completed{0};
-    std::atomic<int> ctx2_completed{0};
+    rusty::sync::atomic::Atomic<int> ctx1_completed{0};
+    rusty::sync::atomic::Atomic<int> ctx2_completed{0};
 
     // Worker function for RCU stress test
     auto rcu_worker = [](MasstreeContext* ctx, int thread_id,
-                         std::atomic<int>& completed, int ops) {
+                         rusty::sync::atomic::Atomic<int>& completed, int ops) {
         MasstreeContext::BindCurrentThread(ctx);
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, thread_id);
 
@@ -230,11 +241,31 @@ TEST_F(MasstreeMultiInstanceTest, ConcurrentRcuOperations) {
         }
 
         ti->rcu_stop();
-        completed++;
+        completed.fetch_add(1);
     };
 
+    // Epoch advancement threads (one per context). Spawned before the
+    // workers, and do-while so each context sees at least one increment
+    // even when a loaded scheduler runs the short-lived workers to
+    // completion (setting stop) before these threads first run.
+    rusty::sync::atomic::Atomic<bool> stop{false};
+
+    auto epoch1 = rusty::thread::spawn([this, &stop]() {
+        do {
+            ctx1_->increment_epoch(2);
+            rusty::thread::sleep(std::chrono::milliseconds(5));
+        } while (!stop.load());
+    });
+
+    auto epoch2 = rusty::thread::spawn([this, &stop]() {
+        do {
+            ctx2_->increment_epoch(2);
+            rusty::thread::sleep(std::chrono::milliseconds(5));
+        } while (!stop.load());
+    });
+
     // Spawn threads for ctx1
-    auto threads1 = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS_PER_CTX);
+    auto threads1 = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS_PER_CTX);
     for (int i = 0; i < NUM_THREADS_PER_CTX; ++i) {
         threads1.push(rusty::thread::spawn([this, i, &ctx1_completed, &rcu_worker]() {
             rcu_worker(ctx1_, 3000 + i, ctx1_completed, OPS_PER_THREAD);
@@ -242,35 +273,18 @@ TEST_F(MasstreeMultiInstanceTest, ConcurrentRcuOperations) {
     }
 
     // Spawn threads for ctx2
-    auto threads2 = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS_PER_CTX);
+    auto threads2 = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS_PER_CTX);
     for (int i = 0; i < NUM_THREADS_PER_CTX; ++i) {
         threads2.push(rusty::thread::spawn([this, i, &ctx2_completed, &rcu_worker]() {
             rcu_worker(ctx2_, 4000 + i, ctx2_completed, OPS_PER_THREAD);
         }));
     }
 
-    // Epoch advancement threads (one per context)
-    std::atomic<bool> stop{false};
-
-    auto epoch1 = rusty::thread::spawn([this, &stop]() {
-        while (!stop.load()) {
-            ctx1_->increment_epoch(2);
-            rusty::thread::sleep(std::chrono::milliseconds(5));
-        }
-    });
-
-    auto epoch2 = rusty::thread::spawn([this, &stop]() {
-        while (!stop.load()) {
-            ctx2_->increment_epoch(2);
-            rusty::thread::sleep(std::chrono::milliseconds(5));
-        }
-    });
-
     // Wait for workers
     for (auto& t : threads1) { auto _ = t.join(); }
     for (auto& t : threads2) { auto _ = t.join(); }
 
-    stop = true;
+    stop.store(true);
     { auto _ = epoch1.join(); }
     { auto _ = epoch2.join(); }
 
@@ -307,9 +321,9 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
         { auto _ = init2.join(); }
     }
 
-    std::atomic<bool> tree1_done{false};
-    std::atomic<bool> tree2_done{false};
-    std::atomic<bool> stop_epoch{false};
+    rusty::sync::atomic::Atomic<bool> tree1_done{false};
+    rusty::sync::atomic::Atomic<bool> tree2_done{false};
+    rusty::sync::atomic::Atomic<bool> stop_epoch{false};
 
     // Value storage lives across both workers; each lambda's
     // captured back-reference holds raw pointers into it.
@@ -334,7 +348,7 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
         }
 
         ti->rcu_stop();
-        tree1_done = true;
+        tree1_done.store(true);
     });
 
     auto worker2 = rusty::thread::spawn([&]() {
@@ -354,7 +368,7 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
         }
 
         ti->rcu_stop();
-        tree2_done = true;
+        tree2_done.store(true);
     });
 
     // Epoch advancement threads
@@ -374,7 +388,7 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
     { auto _ = worker1.join(); }
     { auto _ = worker2.join(); }
 
-    stop_epoch = true;
+    stop_epoch.store(true);
     { auto _ = epoch1.join(); }
     { auto _ = epoch2.join(); }
 
@@ -399,7 +413,7 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
 TEST_F(MasstreeMultiInstanceTest, RcuStressTest) {
     const int NUM_OPS = 10000;
 
-    std::atomic<bool> stop{false};
+    rusty::sync::atomic::Atomic<bool> stop{false};
 
     auto rcu_stress_worker = [](MasstreeContext* ctx, int num_ops) {
         MasstreeContext::BindCurrentThread(ctx);
@@ -461,7 +475,7 @@ TEST_F(MasstreeMultiInstanceTest, RcuStressTest) {
     { auto _ = stress1.join(); }
     { auto _ = stress2.join(); }
 
-    stop = true;
+    stop.store(true);
     { auto _ = epoch1.join(); }
     { auto _ = epoch2.join(); }
 
@@ -503,15 +517,15 @@ TEST_F(MasstreeMultiInstanceTest, ManyContextsScale) {
     // no reallocation here.
     auto trees = rusty::Vec<PureTable>::with_capacity(kContexts);
     for (int i = 0; i < kContexts; ++i) trees.push(PureTable{});
-    std::atomic<int> failures{0};
+    rusty::sync::atomic::Atomic<int> failures{0};
 
-    auto workers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kContexts);
+    auto workers = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(kContexts);
     for (int i = 0; i < kContexts; ++i) {
         workers.push(rusty::thread::spawn([i, &trees, &contexts, &failures]() {
             MasstreeContext::BindCurrentThread(contexts[i]);
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 10000 + i);
-            if (ti == nullptr) { ++failures; return; }
-            if (ti->context() != contexts[i]) { ++failures; return; }
+            if (ti == nullptr) { failures.fetch_add(1); return; }
+            if (ti->context() != contexts[i]) { failures.fetch_add(1); return; }
 
             trees[i].initialize(*ti);
             ti->rcu_start();
@@ -527,7 +541,7 @@ TEST_F(MasstreeMultiInstanceTest, ManyContextsScale) {
             for (int k = 0; k < kKeysPerWorker; ++k) {
                 const std::string key = be_u64(base + k);
                 uint64_t* out = nullptr;
-                if (!pure_search(trees[i], *ti, key, &out)) ++failures;
+                if (!pure_search(trees[i], *ti, key, &out)) failures.fetch_add(1);
             }
 
             ti->rcu_stop();
@@ -591,14 +605,14 @@ TEST_F(MasstreeMultiInstanceTest, DefaultContextFallbackIsStable) {
     // Barrier so every thread races into Current() at roughly the
     // same moment; maximizes the chance of triggering any Once-init
     // race that would let two threads see different defaults.
-    std::atomic<int> ready{0};
-    std::atomic<bool> go{false};
+    rusty::sync::atomic::Atomic<int> ready{0};
+    rusty::sync::atomic::Atomic<bool> go{false};
 
-    auto workers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kThreads);
+    auto workers = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(kThreads);
     for (int i = 0; i < kThreads; ++i) {
         workers.push(rusty::thread::spawn([i, &observed, &ready, &go]() {
-            ready.fetch_add(1, std::memory_order_release);
-            while (!go.load(std::memory_order_acquire)) {
+            ready.fetch_add(1, rusty::sync::atomic::Ordering::Release);
+            while (!go.load(rusty::sync::atomic::Ordering::Acquire)) {
                 rusty::thread::yield_now();
             }
             // No BindCurrentThread() — so Current() must fall back
@@ -606,10 +620,10 @@ TEST_F(MasstreeMultiInstanceTest, DefaultContextFallbackIsStable) {
             observed[i] = MasstreeContext::Current();
         }));
     }
-    while (ready.load(std::memory_order_acquire) < kThreads) {
+    while (ready.load(rusty::sync::atomic::Ordering::Acquire) < kThreads) {
         rusty::thread::yield_now();
     }
-    go.store(true, std::memory_order_release);
+    go.store(true, rusty::sync::atomic::Ordering::Release);
     for (auto& t : workers) { auto _ = t.join(); }
 
     // All threads must observe the same non-null singleton pointer.
@@ -759,8 +773,8 @@ TEST_F(MasstreeMultiInstanceTest, PureMasstreeAcceptsUnboundedEphemeralThreads) 
     constexpr int kEphemerals = 5000;       // ~10× Mako's NMAXCORES cap
     constexpr int kOpsPerThread = 16;
 
-    std::atomic<int> completed{0};
-    std::atomic<int> failures{0};
+    rusty::sync::atomic::Atomic<int> completed{0};
+    rusty::sync::atomic::Atomic<int> failures{0};
 
     // Sequential spawn/join — the exact pattern that aborts on
     // concurrent_btree. Each iteration is short, but the cumulative
@@ -769,7 +783,7 @@ TEST_F(MasstreeMultiInstanceTest, PureMasstreeAcceptsUnboundedEphemeralThreads) 
         auto eph = rusty::thread::spawn([this, gen, &tree, &completed, &failures]() {
             MasstreeContext::BindCurrentThread(ctx1_);
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 50001 + gen);
-            if (ti == nullptr) { ++failures; return; }
+            if (ti == nullptr) { failures.fetch_add(1); return; }
 
             ti->rcu_start();
 
@@ -785,11 +799,11 @@ TEST_F(MasstreeMultiInstanceTest, PureMasstreeAcceptsUnboundedEphemeralThreads) 
             }
             for (int i = 0; i < kOpsPerThread; ++i) {
                 uint64_t* out = nullptr;
-                if (!pure_search(tree, *ti, be_u64(base + i), &out)) ++failures;
+                if (!pure_search(tree, *ti, be_u64(base + i), &out)) failures.fetch_add(1);
             }
 
             ti->rcu_stop();
-            ++completed;
+            completed.fetch_add(1);
         });
         auto _ = eph.join();
     }

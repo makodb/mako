@@ -70,7 +70,7 @@ struct quick_istr {
 	} while (--minlen > 0 || x != 0);
     }
     lcdf::Str string() const {
-	return lcdf::Str(bbuf_, buf_ + sizeof(buf_) - 1);
+	return lcdf::Str::from_range(bbuf_, buf_ + sizeof(buf_) - 1);
     }
     const char *c_str() {
 	buf_[sizeof(buf_) - 1] = 0;

@@ -54,7 +54,7 @@ public:
     const string k = u64_varkey(r.next() % nkeys).str();
     try {
       string v;
-      ALWAYS_ASSERT(tbl->get(txn, k, v));
+      ALWAYS_ASSERT(tx_get(tbl, txn, k, v));
       if (likely(db->commit_txn(txn)))
         return txn_result(true, 0);
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -108,7 +108,7 @@ protected:
           rec.f0 = 1; rec.f1 = 1; rec.f2 = 1; rec.f3 = 1;
           rec.f4 = 1; rec.f5 = 1; rec.f6 = 1; rec.f7 = 1;
           string buf;
-          tbl->insert(txn, Encode(key), Encode(buf, rec));
+          tx_insert(tbl, txn, Encode(key), Encode(buf, rec));
         }
         if (BenchmarkConfig::getInstance().getVerbose())
           cerr << "batch 1/1 done" << endl;
@@ -123,7 +123,7 @@ protected:
             rec.f0 = 1; rec.f1 = 1; rec.f2 = 1; rec.f3 = 1;
             rec.f4 = 1; rec.f5 = 1; rec.f6 = 1; rec.f7 = 1;
             string buf;
-            tbl->insert(txn, Encode(key), Encode(buf, rec));
+            tx_insert(tbl, txn, Encode(key), Encode(buf, rec));
           }
           if (BenchmarkConfig::getInstance().getVerbose())
             cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;

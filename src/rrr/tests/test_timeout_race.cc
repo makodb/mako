@@ -1,6 +1,7 @@
 #include <stdlib.h>
 
 #include <gtest/gtest.h>
+#include <rusty/arc.hpp>
 #include "../rrr.hpp"
 
 import std;
@@ -25,7 +26,7 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
     
     // Test case 1: Event becomes ready before timeout
     {
-        auto sp_event = Reactor::create_sp_event<IntEvent>();
+        auto sp_event = create_sp_int_event(1);
         std::atomic<bool> completed{false};
         std::atomic<int> final_status{-1};
         
@@ -38,37 +39,37 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
         // Create the waiter fiber
         reactor->create_run_fiber([sp_event, &completed, &final_status]() {
             // Event should already be set, so this should complete immediately
-            sp_event->wait(100000);
+            sp_event->wait_timeout(100000);
             completed = true;
             final_status = static_cast<int>(sp_event->status_.get());
         });
         
         // Process - event is already ready, so waiter should complete
-        reactor->loop(false);
+        reactor->run_loop(false, true);
         
         EXPECT_TRUE(completed);
-        EXPECT_EQ(final_status, Event::DONE);
+        EXPECT_EQ(final_status.load(), static_cast<int>(EventStatus::DONE));
     }
     
     // Test case 2: Event times out
     {
-        auto sp_event = Reactor::create_sp_event<IntEvent>();
+        auto sp_event = create_sp_int_event(1);
         std::atomic<bool> completed{false};
         std::atomic<int> final_status{-1};
         
         reactor->create_run_fiber([sp_event, &completed, &final_status]() {
             // Wait with very short timeout
-            sp_event->wait(1000); // 1ms
+            sp_event->wait_timeout(1000); // 1ms
             completed = true;
             final_status = static_cast<int>(sp_event->status_.get());
         });
         
         // Sleep longer than timeout
         std::this_thread::sleep_for(milliseconds(10));
-        reactor->loop(false);
+        reactor->run_loop(false, true);
         
         EXPECT_TRUE(completed);
-        EXPECT_EQ(final_status, Event::TIMEOUT);
+        EXPECT_EQ(final_status.load(), static_cast<int>(EventStatus::TIMEOUT));
     }
 }
 
@@ -77,26 +78,26 @@ TEST_F(TimeoutRaceTest, DoubleListBehavior) {
     auto reactor = Reactor::get_reactor();
     
     // Create event with timeout - it goes in both lists
-    auto sp_event = Reactor::create_sp_event<IntEvent>();
+    auto sp_event = create_sp_int_event(1);
     std::atomic<int> loop_count{0};
     std::atomic<bool> completed{false};
     
     reactor->create_run_fiber([sp_event, &completed]() {
-        sp_event->wait(50000); // 50ms timeout
+        sp_event->wait_timeout(50000); // 50ms timeout
         completed = true;
     });
     
     // Process events multiple times before timeout
     for (int i = 0; i < 5; i++) {
         std::this_thread::sleep_for(milliseconds(5));
-        reactor->loop(false);
+        reactor->run_loop(false, true);
         loop_count++;
         if (completed) break;
     }
     
     // Wait for timeout
     std::this_thread::sleep_for(milliseconds(60));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_TRUE(completed);
     std::cout << "Event processed after " << loop_count 
@@ -113,7 +114,7 @@ TEST_F(TimeoutRaceTest, StaggeredTimeouts) {
     
     // Create events with different timeouts
     for (int i = 0; i < num_events; i++) {
-        auto sp_event = Reactor::create_sp_event<IntEvent>();
+        auto sp_event = create_sp_int_event(1);
         
         reactor->create_run_fiber([sp_event, i, &timeout_count, &ready_count]() {
             // Half will be set ready, half will timeout
@@ -127,11 +128,11 @@ TEST_F(TimeoutRaceTest, StaggeredTimeouts) {
             }
             
             // Wait with varying timeouts
-            sp_event->wait((10 + i * 5) * 1000);
+            sp_event->wait_timeout((10 + i * 5) * 1000);
             
-            if (sp_event->status_.get() == Event::TIMEOUT) {
+            if (sp_event->status_.get() == EventStatus::TIMEOUT) {
                 timeout_count++;
-            } else if (sp_event->status_.get() == Event::DONE) {
+            } else if (sp_event->status_.get() == EventStatus::DONE) {
                 ready_count++;
             }
         });
@@ -140,7 +141,7 @@ TEST_F(TimeoutRaceTest, StaggeredTimeouts) {
     // Process events over time
     for (int i = 0; i < 20; i++) {
         std::this_thread::sleep_for(milliseconds(10));
-        reactor->loop(false);
+        reactor->run_loop(false, true);
     }
     
     std::cout << "Results: Ready=" << ready_count 
@@ -155,28 +156,28 @@ TEST_F(TimeoutRaceTest, TimeoutEventCleanup) {
     auto reactor = Reactor::get_reactor();
     
     // Create multiple events that will timeout
-    std::vector<std::shared_ptr<IntEvent>> events;
+    std::vector<rusty::Arc<IntEvent>> events;
     std::atomic<int> completed_count{0};
     
     for (int i = 0; i < 5; i++) {
-        auto sp_event = Reactor::create_sp_event<IntEvent>();
+        auto sp_event = create_sp_int_event(1);
         events.push_back(sp_event);
         
         reactor->create_run_fiber([sp_event, &completed_count]() {
-            sp_event->wait(10000); // 10ms timeout
+            sp_event->wait_timeout(10000); // 10ms timeout
             completed_count++;
         });
     }
     
     // Wait for all timeouts
     std::this_thread::sleep_for(milliseconds(20));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_EQ(completed_count, 5);
     
     // Verify all events are in TIMEOUT state
     for (auto& event : events) {
-        EXPECT_EQ(event->status_.get(), Event::TIMEOUT);
+        EXPECT_EQ(event->status_.get(), EventStatus::TIMEOUT);
     }
 }
 
@@ -189,7 +190,7 @@ TEST_F(TimeoutRaceTest, RapidTimeoutChanges) {
     std::atomic<int> ready_count{0};
     
     for (int iter = 0; iter < num_iterations; iter++) {
-        auto sp_event = Reactor::create_sp_event<IntEvent>();
+        auto sp_event = create_sp_int_event(1);
         
         reactor->create_run_fiber([sp_event, iter, &timeout_count, &ready_count]() {
             // Randomly decide to set ready or let timeout
@@ -199,11 +200,11 @@ TEST_F(TimeoutRaceTest, RapidTimeoutChanges) {
             }
             
             // Very short timeout
-            sp_event->wait(1000); // 1ms
+            sp_event->wait_timeout(1000); // 1ms
             
-            if (sp_event->status_.get() == Event::TIMEOUT) {
+            if (sp_event->status_.get() == EventStatus::TIMEOUT) {
                 timeout_count++;
-            } else if (sp_event->status_.get() == Event::DONE) {
+            } else if (sp_event->status_.get() == EventStatus::DONE) {
                 ready_count++;
             }
         });
@@ -212,7 +213,7 @@ TEST_F(TimeoutRaceTest, RapidTimeoutChanges) {
         if (iter % 3 != 0) {
             std::this_thread::sleep_for(milliseconds(2));
         }
-        reactor->loop(false);
+        reactor->run_loop(false, true);
     }
     
     std::cout << "Results after " << num_iterations << " iterations: "
@@ -225,20 +226,20 @@ TEST_F(TimeoutRaceTest, RapidTimeoutChanges) {
 TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
     auto reactor = Reactor::get_reactor();
     
-    auto sp_event = Reactor::create_sp_event<IntEvent>();
+    auto sp_event = create_sp_int_event(1);
     std::atomic<bool> first_done{false};
     std::atomic<bool> second_done{false};
     
     // First fiber waits with timeout
     reactor->create_run_fiber([sp_event, &first_done]() {
-        sp_event->wait(5000); // 5ms timeout
+        sp_event->wait_timeout(5000); // 5ms timeout
         first_done = true;
-        EXPECT_EQ(sp_event->status_.get(), Event::TIMEOUT);
+        EXPECT_EQ(sp_event->status_.get(), EventStatus::TIMEOUT);
     });
     
     // Wait for timeout
     std::this_thread::sleep_for(milliseconds(10));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_TRUE(first_done);
     
@@ -246,14 +247,14 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
     reactor->create_run_fiber([sp_event, &second_done]() {
         // Event is already in TIMEOUT state
         // The behavior here is interesting - what happens?
-        if (sp_event->status_.get() == Event::TIMEOUT) {
+        if (sp_event->status_.get() == EventStatus::TIMEOUT) {
             std::cout << "Event already in TIMEOUT state before Wait()" << std::endl;
             second_done = true;
             // Don't try to wait on an already finished event - undefined behavior
             // The event system doesn't support reusing events after they're done/timeout
         } else {
             // This shouldn't happen, but if it does, try to wait
-            sp_event->wait(5000);
+            sp_event->wait_timeout(5000);
             second_done = true;
         }
 
@@ -261,7 +262,7 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
                   << static_cast<int>(sp_event->status_.get()) << std::endl;
     });
     
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     // The second fiber should complete
     EXPECT_TRUE(second_done);

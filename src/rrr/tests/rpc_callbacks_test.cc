@@ -17,13 +17,13 @@ using namespace rrr;
 // ============================================================================
 
 TEST(CallbackManagerTest, InitiallyEmpty) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     EXPECT_EQ(mgr.callback_count(), 0u);
     EXPECT_FALSE(mgr.has_callbacks());
 }
 
 TEST(CallbackManagerTest, AddOnConnected) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_connected([]() {});
     EXPECT_EQ(mgr.on_connected_count(), 1u);
     EXPECT_EQ(mgr.callback_count(), 1u);
@@ -31,35 +31,35 @@ TEST(CallbackManagerTest, AddOnConnected) {
 }
 
 TEST(CallbackManagerTest, AddOnDisconnected) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_disconnected([]() {});
     EXPECT_EQ(mgr.on_disconnected_count(), 1u);
     EXPECT_EQ(mgr.callback_count(), 1u);
 }
 
 TEST(CallbackManagerTest, AddOnError) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_error([](RpcError, const std::string&) {});
     EXPECT_EQ(mgr.on_error_count(), 1u);
     EXPECT_EQ(mgr.callback_count(), 1u);
 }
 
 TEST(CallbackManagerTest, AddOnReconnecting) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_reconnecting([]() {});
     EXPECT_EQ(mgr.on_reconnecting_count(), 1u);
     EXPECT_EQ(mgr.callback_count(), 1u);
 }
 
 TEST(CallbackManagerTest, AddOnReconnected) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_reconnected([](bool) {});
     EXPECT_EQ(mgr.on_reconnected_count(), 1u);
     EXPECT_EQ(mgr.callback_count(), 1u);
 }
 
 TEST(CallbackManagerTest, MultipleCallbacksPerEvent) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_connected([]() {});
     mgr.add_on_connected([]() {});
     mgr.add_on_connected([]() {});
@@ -68,7 +68,7 @@ TEST(CallbackManagerTest, MultipleCallbacksPerEvent) {
 }
 
 TEST(CallbackManagerTest, MultipleEventTypes) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_connected([]() {});
     mgr.add_on_disconnected([]() {});
     mgr.add_on_error([](RpcError, const std::string&) {});
@@ -82,7 +82,7 @@ TEST(CallbackManagerTest, MultipleEventTypes) {
 // ============================================================================
 
 TEST(CallbackManagerTest, InvokeOnConnected) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     int call_count = 0;
     mgr.add_on_connected([&call_count]() { call_count++; });
 
@@ -94,7 +94,7 @@ TEST(CallbackManagerTest, InvokeOnConnected) {
 }
 
 TEST(CallbackManagerTest, InvokeOnDisconnected) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     int call_count = 0;
     mgr.add_on_disconnected([&call_count]() { call_count++; });
 
@@ -103,7 +103,7 @@ TEST(CallbackManagerTest, InvokeOnDisconnected) {
 }
 
 TEST(CallbackManagerTest, InvokeOnErrorWithParams) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     RpcError received_error = RpcError::OK;
     std::string received_message;
 
@@ -118,7 +118,7 @@ TEST(CallbackManagerTest, InvokeOnErrorWithParams) {
 }
 
 TEST(CallbackManagerTest, InvokeOnReconnecting) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     int call_count = 0;
     mgr.add_on_reconnecting([&call_count]() { call_count++; });
 
@@ -127,7 +127,7 @@ TEST(CallbackManagerTest, InvokeOnReconnecting) {
 }
 
 TEST(CallbackManagerTest, InvokeOnReconnectedSuccess) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     bool received_success = false;
 
     mgr.add_on_reconnected([&received_success](bool success) {
@@ -139,7 +139,7 @@ TEST(CallbackManagerTest, InvokeOnReconnectedSuccess) {
 }
 
 TEST(CallbackManagerTest, InvokeOnReconnectedFailure) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     bool received_success = true;
 
     mgr.add_on_reconnected([&received_success](bool success) {
@@ -151,7 +151,7 @@ TEST(CallbackManagerTest, InvokeOnReconnectedFailure) {
 }
 
 TEST(CallbackManagerTest, InvokeMultipleCallbacks) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     std::vector<int> call_order;
 
     mgr.add_on_connected([&call_order]() { call_order.push_back(1); });
@@ -171,7 +171,7 @@ TEST(CallbackManagerTest, InvokeMultipleCallbacks) {
 // ============================================================================
 
 TEST(CallbackManagerTest, ExceptionInCallbackDoesNotPropagate) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_connected([]() { throw std::runtime_error("Test error"); });
 
     // Should not throw
@@ -179,7 +179,7 @@ TEST(CallbackManagerTest, ExceptionInCallbackDoesNotPropagate) {
 }
 
 TEST(CallbackManagerTest, ExceptionInOneCallbackDoesNotAffectOthers) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     int call_count = 0;
 
     mgr.add_on_connected([&call_count]() { call_count++; });
@@ -195,7 +195,7 @@ TEST(CallbackManagerTest, ExceptionInOneCallbackDoesNotAffectOthers) {
 // ============================================================================
 
 TEST(CallbackManagerTest, ClearAll) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_connected([]() {});
     mgr.add_on_disconnected([]() {});
     mgr.add_on_error([](RpcError, const std::string&) {});
@@ -210,7 +210,7 @@ TEST(CallbackManagerTest, ClearAll) {
 }
 
 TEST(CallbackManagerTest, ClearAllClearsAllTypes) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     mgr.add_on_connected([]() {});
     mgr.add_on_connected([]() {});
     mgr.add_on_error([](RpcError, const std::string&) {});
@@ -226,7 +226,7 @@ TEST(CallbackManagerTest, ClearAllClearsAllTypes) {
 // ============================================================================
 
 TEST(CallbackManagerTest, ConcurrentRegistration) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     std::atomic<int> total_registered{0};
 
     std::vector<std::thread> threads;
@@ -248,7 +248,7 @@ TEST(CallbackManagerTest, ConcurrentRegistration) {
 }
 
 TEST(CallbackManagerTest, ConcurrentInvocation) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     std::atomic<int> call_count{0};
 
     mgr.add_on_connected([&call_count]() { call_count++; });
@@ -270,7 +270,7 @@ TEST(CallbackManagerTest, ConcurrentInvocation) {
 }
 
 TEST(CallbackManagerTest, RegistrationDuringInvocation) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     std::atomic<int> call_count{0};
 
     mgr.add_on_connected([&mgr, &call_count]() {
@@ -291,7 +291,7 @@ TEST(CallbackManagerTest, RegistrationDuringInvocation) {
 // ============================================================================
 
 TEST(CallbackManagerTest, TypicalUsagePattern) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
     std::vector<std::string> events;
 
     mgr.add_on_connected([&events]() { events.push_back("connected"); });
@@ -320,7 +320,7 @@ TEST(CallbackManagerTest, TypicalUsagePattern) {
 }
 
 TEST(CallbackManagerTest, NoCallbacksInvocationIsSafe) {
-    CallbackManager mgr;
+    auto mgr = CallbackManager::new_();
 
     // Invoking without any registered callbacks should be safe
     EXPECT_NO_THROW(mgr.invoke_on_connected());

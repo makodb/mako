@@ -237,7 +237,7 @@ The `dbtest` binary with Raft replication runs Mako transactions but uses Raft (
 ┌─────────────────────▼───────────────────────────────────┐
 │              Transaction Coordinators                    │
 │  ┌──────────┬──────────┬──────────┬──────────┐         │
-│  │  Mako    │   2PL    │   OCC    │  Janus   │         │
+│  │  Mako    │   2PL    │   OCC    │   RCC    │         │
 │  └──────────┴──────────┴──────────┴──────────┘         │
 └─────────────────────┬───────────────────────────────────┘
                       │
@@ -250,7 +250,7 @@ The `dbtest` binary with Raft replication runs Mako transactions but uses Raft (
                       │
 ┌─────────────────────▼───────────────────────────────────┐
 │                RPC Communication Layer                   │
-│           (TCP/IP, DPDK, RDMA, eRPC)                    │
+│           (TCP/IP, DPDK, RDMA)                          │
 └─────────────────────┬───────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────┐

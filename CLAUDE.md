@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains two related distributed transaction systems:
-- **Janus**: Implementation of the OSDI'16 paper "Consolidating Concurrency Control and Consensus for Commits under Conflicts"
-- **Mako**: A speculative distributed transaction system with geo-replication (OSDI'25)
+This repository contains **Mako**, a speculative distributed transaction system
+with geo-replication (OSDI'25). Mako descends from the original Janus codebase
+(OSDI'16), but the standalone Janus and Mencius protocol implementations have
+been retired.
 
 The codebase is primarily C++17 with multiple build systems (CMake, Makefile, WAF).
 
@@ -90,15 +91,25 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 ## Code Architecture
 
 ### Core Directory Structure
-- `src/deptran/`: Transaction protocol implementations (Janus, 2PL, OCC, RCC, Paxos, TAPIR, Snow)
+- `src/deptran/`: Transaction and replication protocol implementations (2PL, OCC, RCC, Paxos, TAPIR, Snow, Raft)
 - `src/mako/`: Mako system with Masstree storage engine and speculative execution
 - `src/bench/`: Benchmark implementations (TPC-C, TPC-A, RW, Micro)
 - `src/rrr/`: Custom RPC framework and networking layer
 - `config/`: YAML configuration files for experiments and cluster topology
 
+The `rrr` Rust package is rooted at `src/rrr/Cargo.toml`. The seventeen modules
+listed in `src/rrr/rust-modules.toml` are canonical `.rs` sources: rustc
+compiles them directly and rusty-cpp translates those same sources into the
+complete C++ module providers used in every production build. Edit those Rust
+files directly; their former hand-authored `.cpp` carriers have been deleted.
+The other 20 named modules still own 367 inline `RUSTYCPP_RUST` blocks, so a
+successful Cargo build proves only the current seventeen-module coverage, not full
+Goal 0. Never recreate a top-level `crates/srpc` hand port.
+
 ### Key Protocol Implementations
-The system implements multiple distributed transaction protocols:
-- **Janus** (`src/deptran/janus/`): Main protocol with graph-based dependency tracking
+The system implements multiple distributed transaction protocols. The former
+standalone Janus and Mencius implementations are retired; the project-wide
+`janus::` C++ namespace remains for compatibility.
 - **2PL** (`src/deptran/2pl/`): Traditional two-phase locking
 - **OCC** (`src/deptran/occ/`): Optimistic concurrency control
 - **RCC/Rococo** (`src/deptran/rcc/`): Distributed consensus protocol
@@ -106,20 +117,19 @@ The system implements multiple distributed transaction protocols:
 
 ### Transport Layer Architecture
 
-**Mako supports two RPC backends** (switchable at runtime):
-- **rrr/rpc** (default): Portable TCP/IP-based RPC (~10-50 μs latency)
-- **eRPC**: High-performance RDMA-based RPC (~1-2 μs latency)
+**Mako has a single RPC backend: rrr/rpc** — portable TCP/IP-based RPC
+(~10-50 μs latency) from the in-tree rrr library (`src/rrr/`), implemented by
+`RrrRpcBackend` in `src/mako/lib/rrr_rpc_backend.{h,cc}`.
 
-**Switching backends:**
 ```bash
-# Use rrr/rpc (default)
 ./build/dbtest config/tpcc.yml
-
-# Use eRPC
-MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
 ```
 
-Both backends implement the same `TransportBackend` interface for transport-agnostic request/response handling.
+There is no transport selection. The `TransportBackend` interface, the eRPC/RDMA
+backend, and the `MAKO_TRANSPORT` environment variable have been removed.
+Worker threads still reach requests through the `TransportRequestHandle`
+interface (`src/mako/lib/transport_request_handle.h`), whose only implementation
+is `RrrRequestHandle`.
 
 **See [docs/developer/transport-backends.md](docs/developer/transport-backends.md) for complete documentation.**
 
@@ -150,7 +160,47 @@ Both backends implement the same `TransportBackend` interface for transport-agno
 
 ### RustyCpp Safety Requirements (MANDATORY)
 
-**CRITICAL: All new C++ code MUST be written to be rusty-safe.** This is not optional. Follow these requirements for every new file, function, or modification.
+#### Rust first (default for new code)
+
+**New code SHOULD be authored in Rust, not hand-written C++.** In one of the
+seventeen canonical `rrr` modules, edit its `src/rrr/src/*.rs` source directly.
+For a module that still uses an inline carrier, the DSL is the
+`#if RUSTYCPP_RUST pub trait/struct ... #endif` source block plus the generated
+`/*RUSTYCPP:GEN-BEGIN ... GEN-END*/` C++ the compiler sees. For a remaining
+`src/rrr` carrier, regenerate with the pinned transpiler:
+`third-party/rusty-cpp/target/release/rusty-cpp-transpiler inline-rust
+--rewrite --files <carrier>`, then run `scripts/rrr_dsl_check.sh`. Storage
+headers use the separate `scripts/regen_storage_dsl.sh` workflow, whose ODR
+post-pass and file census are specific to those headers; do not add `src/rrr`
+module carriers to it. See [docs/storage-interface.md](docs/storage-interface.md)
+for the storage mechanics and [docs/srpc-book.md](docs/srpc-book.md) for the
+`rrr` module workflow.
+
+**Plain C++ is for bridging, not for new logic.** Reach for hand-written
+C++ only when:
+ - you are calling *old code that has not been converted* (convert at the
+   edge, isolate it, annotate `@unsafe`); or
+ - the operation is one the DSL genuinely cannot express, kept as a
+   small `@unsafe` C++ *kernel* that the DSL body calls — the same "DSL
+   owns the shape, C++ owns the surgery" split the storage headers use.
+   Legitimate kernels: raw-pointer/iterator surgery, `std::map`/RCU/
+   allocator internals, threading, and third-party APIs (rocksdb, lz4,
+   yaml-cpp, the rrr wire types).
+
+What fits the DSL cleanly: interfaces (`pub trait`), copyable value
+types (`pub struct` + **inherent** `impl` — inherent stays a copyable
+aggregate; only `#[cpp_inherit] impl Trait for X` is move-only), and
+method bodies that are plain control flow. Known limits to design around,
+not fight: no default field initializers (use `fn new`/factory functions
+and switch call sites — note C++20 paren-aggregate-init compiles but
+misfills, so this is mandatory, not cosmetic), and struct fields whose
+names are Rust keywords (e.g. `type`) must be renamed or that type stays
+C++.
+
+Everything below still applies — to the C++ that remains (bridges,
+kernels, and not-yet-converted files):
+
+**CRITICAL: All C++ code MUST be written to be rusty-safe.** This is not optional. Follow these requirements for every new file, function, or modification.
 
 **Refactor as you go.** When touching a file, if you see std constructs
 in the surrounding blast radius of your change that have direct rusty
@@ -173,7 +223,47 @@ Exceptions that stay std:
  - Pre-existing code not in your change's blast radius. File a
    follow-up if it's blocking something.
 
-**IMPORTANT**: Always keep the `third-party/rusty-cpp` submodule on the `main` branch with the latest commit. Do not switch to other branches.
+**IMPORTANT**: For Goal 0 canonical-Rust production, the `third-party/rusty-cpp`
+gitlink is pinned to commit
+`fa7dd9d9612c0bcec695c3e391ace96b56498e74`, the tip of rusty-cpp's
+`main` branch. The Goal 0 work that used to live on the private
+`goal0-rustc-runtime-facade` branch has been merged into `main`, so the
+pin now tracks upstream directly rather than a side branch.
+
+Lineage, so the move is auditable:
+
+ - The previous pin `ebb5161058a982145d253665ce9720f17224722e` is a
+   **strict ancestor** of `fa7dd9d9` (0 behind / 334 ahead). Nothing that
+   was reviewed under the old pin was dropped.
+ - `goal0-rustc-runtime-facade` is **retired**. Its live tip
+   (`dc06d859c832979c723b39c474f43fa01c7e06df`) is four commits *behind*
+   `ebb51610` and does not contain it, so it can no longer describe any
+   pin this repository uses. Do not re-point the gitlink at it.
+ - The old warning about `verify-stack` (the discarded parallel
+   `crates/srpc` pivot) is **not** a hazard on this lineage:
+   `verify-stack` is not an ancestor of `fa7dd9d9` — it diverged 13
+   commits ago and is 346 behind. Merging it in remains undesirable, but
+   the current pin does not contain it.
+
+Two consequences of `fa7dd9d9` that callers must know:
+
+ - `hashbrown_port` was **deleted** as a CMake target (upstream #177).
+   `rusty::HashMap` / `rusty::HashSet` now come from `std_port` (the
+   transpiled Rust `std` `collections::hash` slice) sitting on its own
+   recursively transpiled `hashbrown`. Link `std_port` (which PUBLIC-links
+   `std_port_hashbrown`) instead. Iteration order is now std's
+   randomly-seeded `RandomState` order — do not depend on it.
+ - `HashSet` no longer wraps a `HashMap<T, ()>`: its field is `base`, a
+   hashbrown `HashSet`, and `set.iter()` yields `Option<const T&>` rather
+   than a `(T, monostate)` pair.
+
+Base any further Goal 0 transpiler work on the current approved pin (or a
+separately reviewed upstream base), run the transpiler suite, push the
+commit to a reachable branch, and bump the gitlink in the same Mako
+commit. The pin attestation is triple-enforced — the gitlink, the
+submodule HEAD, and the transpiler's own `--build-info` `git_hash` must
+all agree, and the transpiler must be built from a clean tree so
+`git_dirty=false`. Never pin uncommitted local patches.
 
 #### Required Safety Annotations
 Every function and significant code block must have safety annotations:

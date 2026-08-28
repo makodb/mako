@@ -1,6 +1,5 @@
 #pragma once
 
-#include <inttypes.h>
 #include <map>
 #include <set>
 
@@ -270,7 +269,7 @@ public:
         verify(writable());
         ver_++;
         versioned_value<Value> vv(ver_, value);
-        insert_into_map(ssg_->data, key, vv);
+        ssg_->data.emplace(key, vv);
         ssg_->gc_insert_counter++;
     }
 
@@ -278,7 +277,7 @@ public:
         verify(writable());
         ver_++;
         versioned_value<Value> vv(ver_, kv_pair.second);
-        insert_into_map(ssg_->data, kv_pair.first, vv);
+        ssg_->data.emplace(kv_pair.first, vv);
         ssg_->gc_insert_counter++;
     }
 
@@ -288,7 +287,7 @@ public:
         ver_++;
         while (begin != end) {
             versioned_value<Value> vv(ver_, begin->second);
-            insert_into_map(ssg_->data, begin->first, vv);
+            ssg_->data.emplace(begin->first, vv);
             ssg_->gc_insert_counter++;
             ++begin;
         }
@@ -301,7 +300,7 @@ public:
         while (range) {
             value_type kv_pair = range.next();
             versioned_value<Value> vv(ver_, kv_pair.second);
-            insert_into_map(ssg_->data, kv_pair.first, vv);
+            ssg_->data.emplace(kv_pair.first, vv);
             ssg_->gc_insert_counter++;
         }
     }

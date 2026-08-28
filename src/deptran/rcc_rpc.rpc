@@ -58,28 +58,6 @@ abstract service MultiPaxos {
 }
 
 
-abstract service Mencius {
-
-  defer Prepare(uint64_t slot,
-                ballot_t ballot |
-                ballot_t max_ballot,
-                uint64_t coro_id);
-
-  defer Suggest(uint64_t slot,
-               uint64_t time,
-               ballot_t ballot,
-               uint64_t sender,
-               vector<uint64_t> skip_commits,
-               vector<uint64_t> skip_potentials,
-               Command cmd |
-               ballot_t max_ballot,
-               uint64_t coro_id);
-
-  defer Decide(uint64_t slot,
-               ballot_t ballot,
-               Command cmd);
-}
-
 abstract service FpgaRaft {
 	defer Heartbeat(uint64_t leaderPrevLogIndex,
 									DepId dep_id |
@@ -274,9 +252,9 @@ abstract service Classic {
 								bool_t slow,
                 uint64_t coro_id);
 
-  defer Commit(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Profiling profile, Command view_data);
+  defer Commit(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Command view_data);
 
-  defer Abort(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Profiling profile, Command view_data);
+  defer Abort(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Command view_data);
 
   defer EarlyAbort(i64 tid | i32 res);
 
@@ -334,11 +312,6 @@ abstract service Classic {
 
   defer RccNotifyGlobalValidation(txid_t tx_id, int32_t rank, int32_t res |);
 
-  defer JanusDispatch(vector<SimpleCommand> cmd |
-                      i32 res,
-                      TxnOutput output,
-                      AnyMessage ret_graph);
-
   defer RccCommit(cmdid_t id,
                   rank_t rank,
                   int32_t need_validation,
@@ -346,53 +319,17 @@ abstract service Classic {
                   int32_t res,
                   TxnOutput output);
 
-  defer JanusCommit(cmdid_t id,
-                    rank_t rank,
-                    int32_t need_validation,
-                    AnyMessage graph |
-                    int32_t res,
-                    TxnOutput output);
-
-  defer JanusCommitWoGraph(cmdid_t id,
-                           rank_t rank,
-                           int32_t need_validation |
-                           int32_t res,
-                           TxnOutput output);
-
-  defer JanusInquire(epoch_t epoch,
-                     txnid_t txn_id |
-                     AnyMessage ret_graph);
-
   defer RccPreAccept(cmdid_t txn_id,
                      rank_t rank,
                      vector<SimpleCommand> cmd |
                      i32 res,
                      parent_set_t x );
 
-  defer JanusPreAccept(cmdid_t txn_id,
-                       rank_t rank,
-                       vector<SimpleCommand> cmd,
-                       AnyMessage graph |
-                       i32 res,
-                       AnyMessage ret_graph);
-
-  defer JanusPreAcceptWoGraph(cmdid_t txn_id,
-                              rank_t rank,
-                              vector<SimpleCommand> cmd |
-                              i32 res,
-                              AnyMessage ret_graph);
-
   defer RccAccept(cmdid_t txn_id,
                   i32 rank,
                   ballot_t ballot,
                   parent_set_t p  |
                   i32 res);
-
-  defer JanusAccept(cmdid_t txn_id,
-                    i32 rank,
-                    ballot_t ballot,
-                    AnyMessage graph |
-                    i32 res);
 
   defer JetpackBeginRecovery(Command old_view,
                              Command new_view, 
@@ -495,7 +432,6 @@ struct TxnInfoRes {
 
 struct ServerResponse {
     map<string, ValueTimesPair> statistics;
-    double cpu_util;
     i64 r_cnt_sum;
     i64 r_cnt_num;
     i64 r_sz_sum;
@@ -510,13 +446,6 @@ struct ClientResponse  {
     i64 period_nsec;   // running time in nano seconds
     i32 is_finish;  // if client finishs
     i64 n_asking;   // asking finish request count
-}
-
-struct Profiling {
-    double cpu_util;
-    double tx_util;
-    double rx_util;
-		double mem_util;
 }
 
 abstract service ServerControl {
@@ -546,43 +475,15 @@ abstract service ClientControl {
     defer DispatchTxn(TxDispatchRequest req | TxReply result);
 }
 
-// Configuration node service - serves cluster configuration to other nodes
-abstract service ConfigService {
-    // Get full configuration, checking version for caching
-    // If client_version matches server version, returns has_update=0 (no change)
-    // config_data is serialized PersistentConfig (empty string if no update needed)
-    defer GetConfig(uint64_t client_version |
-                    uint64_t current_version,
-                    i32 has_update,
-                    string config_data);
-
-    // Get just the config version (lightweight check)
-    defer GetConfigVersion( | uint64_t version);
-
-    // Check if config is available (returns 1 if config exists, 0 otherwise)
-    defer HasConfig( | i32 has_config);
-
-    // ==========================================================================
-    // Sharding Policy RPCs
-    // ==========================================================================
-
-    // Set the sharding policy (called by initializer at system startup)
-    // policy_data is serialized ShardingPolicySet
-    // Returns success=1 on success, 0 on failure
-    defer SetShardingPolicy(string policy_data | i32 success);
-
-    // Get sharding policy, checking version for caching
-    // If client_version matches server version, returns has_update=0 (no change)
-    // policy_data is serialized ShardingPolicySet (empty string if no update needed)
-    defer GetShardingPolicy(uint64_t client_version |
-                            uint64_t current_version,
-                            i32 has_update,
-                            string policy_data);
-
-    // Get just the sharding policy version (lightweight check)
-    defer GetShardingPolicyVersion( | uint64_t version);
-
-    // Check if sharding policy is available (returns 1 if policy exists, 0 otherwise)
-    defer HasShardingPolicy( | i32 has_policy);
+// Config key-value read service - lets a non-shard-0 node read a single
+// key from shard 0's __mako_config__ system table (via a KvStore-backed
+// handler, i.e. an OrderedIndexKvStore over shard 0's FullOrderedIndex).
+// This is the transport for RemoteKvStore's ReadFn: cluster metadata
+// lives on shard 0, everyone else discovers it by reading these keys.
+// Distinct from ConfigService (which serves the c-node's ConfigStore).
+abstract service ConfigKvService {
+    // Point read of one config key. found=1 with value on hit, found=0
+    // (empty value) on miss.
+    defer ReadConfigKey(string key | i32 found, string value);
 }
 %%

@@ -24,15 +24,15 @@
 
 #include <signal.h>
 #include <mako.hh>
-#include "db.hh"
-#include "remote_db.hh"
-#include "idb.hh"
-#include "local_table.hh"
+#include "rocks_interface/db.hh"
+#include "rocks_interface/remote_db.hh"
+#include "rocks_interface/idb.hh"
+#include "rocks_interface/local_table.hh"
 #include "examples/common.h"
 #include "examples/test_verification.h"
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/spinbarrier.h"
-#include "../src/mako/benchmarks/mbta_sharded_ordered_index.hh"
+#include "../src/mako/storage/mbta_sharded_ordered_index.hh"
 #include "deptran/replication_helper.h"
 
 import std;
@@ -1237,7 +1237,7 @@ int main(int argc, char **argv) {
 
     if (benchConfig.getLeaderConfig()) {
         // pre-declare sharded tables
-        mako::setup_erpc_server();
+        mako::setup_rpc_server();
         mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         map<int, abstract_ordered_index*> open_tables;
@@ -1314,12 +1314,12 @@ int main(int argc, char **argv) {
         std::cout.flush();
     }
 
-    // Cleanup: stop helper and eRPC server threads before closing DB on leaders
+    // Cleanup: stop helper and RPC server threads before closing DB on leaders
     if (benchConfig.getLeaderConfig()) {
         if (server_only_mode) {
             mako::stop_client_tcp_server();
         }
-        mako::stop_erpc_server();
+        mako::stop_rpc_server();
     }
 
     db_close();

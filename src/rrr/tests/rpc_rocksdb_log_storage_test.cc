@@ -37,7 +37,12 @@ protected:
 
     void SetUp() override {
         // Create unique path for each test
-        db_path_ = "/tmp/test_rocksdb_log_storage_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()) + "_" + std::to_string(rand());
+        // Honour TMPDIR (fall back to /tmp): a hardcoded /tmp made this
+        // suite fail with ENOSPC whenever the host tmpfs filled up.
+        const char* tmp_env = ::getenv("TMPDIR");
+        const std::string tmp_dir =
+            (tmp_env != nullptr && tmp_env[0] != '\0') ? std::string(tmp_env) : std::string("/tmp");
+        db_path_ = tmp_dir + "/test_rocksdb_log_storage_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()) + "_" + std::to_string(rand());
 
         // Clean up any existing database
         std::filesystem::remove_all(db_path_);

@@ -242,7 +242,7 @@ static Str findpv(N *n, int pvi, int npv)
         else
             size = static_cast<internode_type*>(n)->size() + 1;
         if (size == 0)
-            return Str();
+            return Str::empty();
 
         int total_nkeys_estimate = nbranch * size;
         int first_pv_in_node = branchid * size;
@@ -274,7 +274,7 @@ static Str findpv(N *n, int pvi, int npv)
         if (!n->has_changed(v)) {
             char *x = (char *) malloc(sizeof(ikey0));
             int len = string_slice<typename N::ikey_type>::unparse_comparable(x, sizeof(ikey0), ikey0);
-            return Str(x, len);
+            return Str::from_chars(x, len);
         }
     }
 }
@@ -326,11 +326,11 @@ struct scan_tester {
     }
     template <typename T>
     int scan(T& table, threadinfo& ti) {
-        return table.table().scan(Str(key_, keylen_), first_, *this, ti);
+        return table.table().scan(Str::from_chars(key_, keylen_), first_, *this, ti);
     }
     template <typename T>
     int rscan(T& table, threadinfo& ti) {
-        return table.table().rscan(Str(key_, keylen_), first_, *this, ti);
+        return table.table().rscan(Str::from_chars(key_, keylen_), first_, *this, ti);
     }
 };
 }

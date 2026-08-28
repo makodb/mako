@@ -28,12 +28,12 @@ void RO6Coord::deptran_start(TxData *ch) {
 //    fuattr.callback = [ch, pi, this, header, subcmd](rusty::Arc<Future> fu) {
 //      bool early_return = false;
 //      {
-//        //     Log::debug("try locking at start response, tid: %llx, pid: %llx",
+//        //     Log_debug("try locking at start response, tid: {:x}, pid: {:x}",
 //        // header.tid, header.pid);
 //        std::lock_guard<std::recursive_mutex> lock(this->mtx_);
 //
 //        ChopStartResponse  res;
-//        fu->get_reply() >> res;
+//        rrr::deserialize_from(fu->get_reply(), res);
 //
 //        if (IS_MODE_RO6) {
 //          std::vector<i64> ro;
@@ -44,7 +44,7 @@ void RO6Coord::deptran_start(TxData *ch) {
 //
 //        // where should I store this graph?
 //        Graph<TxnInfo>& gra = *(res.gra_m.gra);
-//        Log::debug("start response graph size: %d", (int)gra.size());
+//        Log_debug("start response graph size: {}", (int)gra.size());
 //        verify(gra.size() > 0);
 //        ch->gra_.Aggregate(gra);
 //
@@ -82,7 +82,7 @@ void RO6Coord::deptran_start(TxData *ch) {
 //    };
 //
 //    RococoProxy *proxy = (RococoProxy*)comm()->rpc_proxies_[server_id];
-//    Log::debug("send deptran start request, tid: %llx, pid: %llx",
+//    Log_debug("send deptran start request, tid: {:x}, pid: {:x}",
 //               cmd_->id_,
 //               header.pid);
 //        verify(input != nullptr);
@@ -92,7 +92,7 @@ void RO6Coord::deptran_start(TxData *ch) {
 
 /** caller should be thread safe */
 void RO6Coord::deptran_finish(TxData *ch) {
-//  Log::debug("deptran finish, %llx", cmd_->id_);
+//  Log_debug("deptran finish, {:x}", cmd_->id_);
 //
 //  // commit or abort piece
 //  rrr::FutureAttr fuattr;
@@ -107,9 +107,9 @@ void RO6Coord::deptran_finish(TxData *ch) {
 //
 //      ChopFinishResponse res;
 //
-//      Log::debug("receive finish response. tid: %llx", cmd_->id_);
+//      Log_debug("receive finish response. tid: {:x}", cmd_->id_);
 //
-//      fu->get_reply() >> res;
+//      rrr::deserialize_from(fu->get_reply(), res);
 //
 //      if (n_finish_ack_ == ch->GetPartitionIds().size()) {
 //        ch->finish_callback(res);
@@ -119,7 +119,7 @@ void RO6Coord::deptran_finish(TxData *ch) {
 //
 //    if (callback) {
 //      // generate a reply and callback.
-//      Log::debug("deptran callback, %llx", cmd_->id_);
+//      Log_debug("deptran callback, {:x}", cmd_->id_);
 //
 //      if (!ch->do_early_return()) {
 //        ch->reply_.res_ = SUCCESS;
@@ -187,9 +187,9 @@ void RO6Coord::ro6_start_ro(TxData *ch) {
 //        std::lock_guard<std::recursive_mutex> lock(this->mtx_);
 //
 //        map<int32_t, Value> res;
-//        fu->get_reply() >> res;
+//        rrr::deserialize_from(fu->get_reply(), res);
 //
-//        Log::debug("receive deptran RO start response, tid: %llx, pid: %llx, ",
+//        Log_debug("receive deptran RO start response, tid: {:x}, pid: {:x}, ",
 //                   header.tid,
 //                   header.pid);
 //
@@ -202,7 +202,7 @@ void RO6Coord::ro6_start_ro(TxData *ch) {
 //          ch->reply_.res_ = SUCCESS;
 //
 //          // generate a reply and callback.
-//          Log::debug("snow RO callback, %llx", cmd_->id_);
+//          Log_debug("snow RO callback, {:x}", cmd_->id_);
 //          TxReply& txn_reply_buf = ch->get_reply();
 //          double    last_latency  = ch->last_attempt_latency();
 //          this->report(txn_reply_buf, last_latency
@@ -221,7 +221,7 @@ void RO6Coord::ro6_start_ro(TxData *ch) {
 //    };
 //
 //    RococoProxy *proxy = (RococoProxy*)comm()->rpc_proxies_[server_id];
-//    Log::debug("send deptran RO start request, tid: %llx, pid: %llx",
+//    Log_debug("send deptran RO start request, tid: {:x}, pid: {:x}",
 //               cmd_->id_,
 //               header.pid);
 //    verify(input != nullptr);
@@ -236,7 +236,7 @@ void RO6Coord::do_one(TxRequest & req) {
 //  TxData *ch = frame_->CreateChopper(req, txn_reg_);
 //  cmd_->id_ = this->next_txn_id();
 //
-//  Log::debug("do one request");
+//  Log_debug("do one request");
 //
 //  if (ccsi_) ccsi_->txn_start_one(thread_id_, ch->type_);
 //

@@ -22,6 +22,12 @@
 #define JSON_HH
 #include "straccum.hh"
 #include "str.hh"
+// NOTE (merge of PR #78 onto the a1f8fef8 rusty-cpp pin): this legacy
+// masstree corpus is compiled as plain non-module TUs, and since
+// rusty-cpp #185 rusty::Vec / rusty::HashMap exist only as C++20 modules
+// (<rusty/vec.hpp> and <rusty/hashmap.hpp> are gone/empty). A header
+// cannot `import`, and importing before the textual includes clashes with
+// libc++ under `import std`, so these stay std:: containers.
 #include <vector>
 #include <utility>
 #include <stdlib.h>
@@ -302,9 +308,11 @@ class Json {
 
     // Parsing
     inline bool assign_parse(const String& str);
+    inline bool assign_parse(const char* cstr);
     inline bool assign_parse(const char* first, const char* last);
 
     static inline Json parse(const String& str);
+    static inline Json parse(const char* cstr);
     static inline Json parse(const char* first, const char* last);
 
     // Assignment
@@ -2910,12 +2918,22 @@ inline bool Json::assign_parse(const String &str) {
     return assign_parse(str.begin(), str.end(), str);
 }
 
+/** @brief Parse @a cstr as UTF-8 JSON into this Json object.
+    @return true iff the parse succeeded.
+
+    An unsuccessful parse does not modify *this. */
+inline bool Json::assign_parse(const char *cstr) {
+    String source(cstr);
+    return assign_parse(source.begin(), source.end(), source);
+}
+
 /** @brief Parse [@a first, @a last) as UTF-8 JSON into this Json object.
     @return true iff the parse succeeded.
 
     An unsuccessful parse does not modify *this. */
 inline bool Json::assign_parse(const char *first, const char *last) {
-    return assign_parse(first, last, String());
+    String source(first, last);
+    return assign_parse(source.begin(), source.end(), source);
 }
 
 /** @brief Return @a str parsed as UTF-8 JSON.
@@ -2924,6 +2942,15 @@ inline bool Json::assign_parse(const char *first, const char *last) {
 inline Json Json::parse(const String &str) {
     Json j;
     (void) j.assign_parse(str);
+    return j;
+}
+
+/** @brief Return @a cstr parsed as UTF-8 JSON.
+
+    Returns a null JSON object if the parse fails. */
+inline Json Json::parse(const char *cstr) {
+    Json j;
+    (void) j.assign_parse(cstr);
     return j;
 }
 

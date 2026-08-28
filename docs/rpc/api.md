@@ -71,14 +71,15 @@ public:
 ### Helper Functions
 
 ```cpp
-const char* connection_state_to_string(ConnectionState state);
+std::string_view connection_state_to_string(ConnectionState state);
 ```
 
 ---
 
 ## Reconnection Policy
 
-**Header:** `src/rrr/rpc/reconnect_policy.hpp`
+**Module:** `rrr.reconnect_policy` (canonical Rust source:
+`src/rrr/src/reconnect_policy.rs`)
 
 ### ReconnectPolicy Struct
 
@@ -86,21 +87,18 @@ Configuration for automatic reconnection behavior.
 
 ```cpp
 struct ReconnectPolicy {
-    // Configuration
-    uint32_t max_retries = 5;           // Max reconnection attempts (0 = infinite)
-    uint32_t base_delay_ms = 100;       // Initial delay before first retry
-    uint32_t max_delay_ms = 30000;      // Maximum delay cap
-    double backoff_multiplier = 2.0;    // Exponential backoff multiplier
-    double jitter_factor = 0.1;         // Random jitter (0.0 - 1.0)
-    bool enabled = true;                // Enable/disable reconnection
+    bool auto_reconnect;
+    uint32_t max_retries;           // 0 = unlimited
+    uint32_t initial_delay_ms;
+    uint32_t max_delay_ms;
+    double backoff_multiplier;
+    bool jitter_enabled;
 
     // Presets
-    static ReconnectPolicy AGGRESSIVE();    // Fast retries, more attempts
-    static ReconnectPolicy CONSERVATIVE();  // Slower, fewer attempts
-    static ReconnectPolicy NO_RETRY();      // Disabled
-
-    // Methods
-    bool can_retry(uint32_t attempt) const;
+    static ReconnectPolicy new_();
+    static ReconnectPolicy aggressive();
+    static ReconnectPolicy conservative();
+    static ReconnectPolicy no_retry();
 };
 ```
 
@@ -109,23 +107,21 @@ struct ReconnectPolicy {
 Calculates backoff delays with jitter.
 
 ```cpp
-class ReconnectCalculator {
-public:
-    ReconnectCalculator(const ReconnectPolicy& policy);
+struct ReconnectCalculator {
+    static ReconnectCalculator new_(const ReconnectPolicy& policy);
 
     // Reset retry counter
-    void reset();
+    void reset() const;
 
     // Calculate next delay (ms) and increment counter
-    uint32_t next_delay();
+    uint32_t next_delay_ms() const;
 
     // Peek at next delay without incrementing
-    uint32_t peek_delay() const;
+    uint32_t peek_delay_ms() const;
 
     // Check if more retries allowed
-    bool can_retry() const;
-
-    // Get current retry count
+    bool should_retry() const;
+    bool retries_exhausted() const;
     uint32_t retry_count() const;
 };
 ```
@@ -134,12 +130,13 @@ public:
 
 ## Circuit Breaker
 
-**Header:** `src/rrr/rpc/circuit_breaker.hpp`
+**Module:** `rrr.circuit_breaker` (canonical Rust source:
+`src/rrr/src/circuit_breaker.rs`)
 
 ### CircuitState Enum
 
 ```cpp
-enum class CircuitState : uint8_t {
+enum class CircuitState : int32_t {
     CLOSED,    // Normal operation, requests allowed
     OPEN,      // Failing fast, requests rejected
     HALF_OPEN  // Testing recovery, limited requests
@@ -150,43 +147,45 @@ enum class CircuitState : uint8_t {
 
 ```cpp
 struct CircuitBreakerConfig {
-    uint32_t failure_threshold = 5;     // Failures to open circuit
-    uint32_t success_threshold = 3;     // Successes to close circuit
-    uint64_t half_open_timeout_ms = 5000; // Time before probing
-    bool enabled = true;
+    uint32_t failure_threshold;
+    uint32_t success_threshold;
+    uint32_t timeout_ms;
+    bool enabled;
 
     // Presets
+    static CircuitBreakerConfig new_();
+    static CircuitBreakerConfig defaults();
     static CircuitBreakerConfig sensitive();  // Opens after 3 failures
     static CircuitBreakerConfig relaxed();    // Opens after 10 failures
     static CircuitBreakerConfig disabled();   // Never opens
 };
 ```
 
-### CircuitBreaker Class
+### CircuitBreaker Struct
 
 ```cpp
-class CircuitBreaker {
-public:
-    CircuitBreaker();
-    CircuitBreaker(const CircuitBreakerConfig& config);
+struct CircuitBreaker {
+    static CircuitBreaker new_(CircuitBreakerConfig config);
 
     // State access
     CircuitState state() const;
     bool is_open() const;
+    bool is_closed() const;
+    bool is_half_open() const;
 
     // Request gating
-    bool allow_request();       // True if request should proceed
+    bool allow_request() const; // True if request should proceed
 
     // Record outcomes
-    void record_success();
-    void record_failure();
+    void record_success() const;
+    void record_failure() const;
 
     // Manual control
-    void reset();               // Force to CLOSED state
+    void reset() const;         // Force to CLOSED state
 
     // Configuration
-    void set_config(const CircuitBreakerConfig& config);
-    const CircuitBreakerConfig& config() const;
+    void set_config(CircuitBreakerConfig config) const;
+    CircuitBreakerConfig config() const;
 };
 ```
 
@@ -270,12 +269,13 @@ public:
 
 ## Request Options
 
-**Header:** `src/rrr/rpc/request_options.hpp`
+**Module:** `rrr.request_options` (canonical source:
+`src/rrr/src/request_options.rs`; C++ interface generated by rusty-cpp)
 
 ### TimeoutType Enum
 
 ```cpp
-enum class TimeoutType : uint8_t {
+enum class TimeoutType {
     NONE,             // No timeout occurred
     CONNECT_TIMEOUT,  // Connection establishment timeout
     REQUEST_TIMEOUT,  // Request send timeout
@@ -284,27 +284,30 @@ enum class TimeoutType : uint8_t {
 };
 ```
 
+The supported ABI pins the default enum backing to signed 32-bit storage.
+
 ### RequestOptions Struct
 
 ```cpp
 struct RequestOptions {
     // Timeout configuration
-    uint64_t timeout_ms = 1000;         // Per-attempt timeout
-    uint64_t total_timeout_ms = 0;      // Total operation timeout (0 = no limit)
+    uint64_t timeout_ms;                 // Per-attempt timeout
+    uint64_t total_timeout_ms;           // Total operation timeout (0 = no limit)
 
     // Retry configuration
-    uint16_t max_retries = 0;           // Max retry attempts
-    uint16_t base_delay_ms = 50;        // Base backoff delay
-    uint16_t max_delay_ms = 5000;       // Maximum backoff delay
-    float jitter_factor = 0.1f;         // Backoff jitter
+    uint16_t max_retries;                // Max retry attempts
+    uint16_t base_delay_ms;              // Base backoff delay
+    uint16_t max_delay_ms;               // Maximum backoff delay
+    float jitter_factor;                 // Backoff jitter
 
     // Idempotency
-    bool idempotent = false;            // Safe to retry
+    bool idempotent;                     // Safe to retry
 
     // Presets
-    static RequestOptions defaults();            // 1s timeout, no retry
-    static RequestOptions with_retry(uint16_t max_retries, uint64_t timeout_ms = 1000);
-    static RequestOptions idempotent_retry(uint16_t max_retries = 3);
+    static RequestOptions new_();                 // 1s timeout, no retry
+    static RequestOptions defaults();             // Same as new_()
+    static RequestOptions with_retry(uint16_t max_retries, uint64_t timeout_ms);
+    static RequestOptions idempotent_retry(uint16_t max_retries);
     static RequestOptions no_timeout();          // Wait indefinitely
     static RequestOptions fast();                // 100ms, 2 retries
     static RequestOptions patient();             // 10s, 5 retries
@@ -320,7 +323,7 @@ struct RequestOptions {
 ### Helper Functions
 
 ```cpp
-const char* timeout_type_to_string(TimeoutType type);
+std::string_view timeout_type_to_string(TimeoutType ty);
 ```
 
 ---
@@ -596,8 +599,8 @@ public:
     bool valid() const;
 
     // Configuration
-    void set_reconnect_policy(const ReconnectPolicy& policy);
-    const ReconnectPolicy& reconnect_policy() const;
+    void set_reconnect_policy(const ReconnectPolicy& policy) const;
+    ReconnectPolicy reconnect_policy() const;
     void set_buffering_config(const BufferingConfig& config) const;
     void set_keepalive_config(const KeepaliveConfig& config);
 
@@ -775,7 +778,7 @@ auto fu = client->request_with_options(RPC_IDEMPOTENT_METHOD, opts, [](BinaryWri
 
 ```cpp
 // Configure reconnection
-client->set_reconnect_policy(ReconnectPolicy::AGGRESSIVE());
+client->set_reconnect_policy(ReconnectPolicy::aggressive());
 
 // Configure buffering
 BufferingConfig buffering;

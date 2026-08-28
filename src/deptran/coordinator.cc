@@ -53,7 +53,7 @@ Coordinator::Coordinator(uint32_t coo_id,
 	// commit.
 
 	/*clock_gettime(CLOCK_MONOTONIC, &end);
-	Log_info("time of 2nd part of CreateCoordinator: %d", end.tv_nsec-begin.tv_nsec);*/
+	Log_info("time of 2nd part of CreateCoordinator: {}", end.tv_nsec-begin.tv_nsec);*/
 }
 
 Coordinator::~Coordinator() {
@@ -66,7 +66,7 @@ Coordinator::~Coordinator() {
 #ifdef TXN_STAT
 
   for (auto& it : txn_stats_) {
-        Log::info("TXN: %d", it.first);
+        Log_info("TXN: {}", it.first);
         it.second.output();
       }
 #endif /* ifdef TXN_STAT */

@@ -1,4 +1,6 @@
 #pragma once
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 #include "__dep__.h"
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"
@@ -27,7 +29,7 @@ struct KVOperation {
     std::string value;  // empty for DELETE
 };
 
-// TypeList-derived kind. Wire payload preserved
+// Explicit registered kind. Wire payload preserved
 // byte-for-byte:
 //   uint8_t op | std::string key | std::string value
 //   [if op == BATCH] uint32_t count
@@ -35,12 +37,13 @@ struct KVOperation {
 // Construction sites use `wrap_typed_marshallable` (still works through
 // the Phase 4d-prep bridge dispatch) and `marshallable_cast<T>` (also
 // dispatched through the bridge for any non-Marshallable T). The
-// legacy `to_marshal` / `from_marshal` member functions are kept as
+// legacy `to_marshal` / `from_marshal` member functions are gone as
 // thin wrappers that build a BinaryWriteArchive/BinaryReadArchive on
-// top of a MarshalSink/MarshalSource and delegate to save/load — this
+// top of the archive serde surface via save/load — this
 // keeps the existing test.cc round-trip sites compiling unchanged.
-class ReplicatedDBCommand : public rrr::Serializable<ReplicatedDBCommand,
-                                                     MakoCommands> {
+class ReplicatedDBCommand
+    : public rrr::Serializable<
+          rrr::PayloadMember<MakoCommands, ReplicatedDBCommand>::KIND> {
 public:
     ReplicatedDBOp op_ = ReplicatedDBOp::PUT;
     std::string key_;
@@ -50,22 +53,16 @@ public:
     ReplicatedDBCommand() = default;
 
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
-    static shared_ptr<ReplicatedDBCommand> CreatePut(const std::string& key, const std::string& value);
+    static rusty::Arc<ReplicatedDBCommand> CreatePut(const std::string& key, const std::string& value);
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
-    static shared_ptr<ReplicatedDBCommand> CreateDelete(const std::string& key);
+    static rusty::Arc<ReplicatedDBCommand> CreateDelete(const std::string& key);
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
-    static shared_ptr<ReplicatedDBCommand> CreateBatch(const std::vector<KVOperation>& ops);
+    static rusty::Arc<ReplicatedDBCommand> CreateBatch(const std::vector<KVOperation>& ops);
 
     // Serializable interface.
     void save(BinaryWriteArchive& ar) const;
     void load(BinaryReadArchive& ar);
 
-    // Legacy Marshal-based round-trip wrappers — kept for
-    // test sites that exercise the on-wire encoding directly. They
-    // delegate to save/load via MarshalSink/MarshalSource so the bytes
-    // are byte-for-byte identical to the pre-migration encoding.
-    Marshal& to_marshal(Marshal& m) const;
-    Marshal& from_marshal(Marshal& m);
 };
 
 /**

@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 #include "mako/benchmarks/tpcc_sharding.h"
-#include "sharding_policy_cache.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 
 import std;
 

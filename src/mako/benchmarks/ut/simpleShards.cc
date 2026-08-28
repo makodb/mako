@@ -7,14 +7,14 @@
 #include <stdlib.h>
 
 #include "benchmarks/bench.h"
-#include "benchmarks/mbta_wrapper.hh"
+#include "storage/mbta_wrapper.hh"
 #include "benchmarks/tpcc.h"
 #include "common.h"
 #include "lib/server.h"
 #include "lib/shardClient.h"
 #include "deptran/s_main.h"
-#include "benchmarks/sto/Transaction.hh"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/Transaction.hh"
+#include "sto/sync_util.hh"
 
 import std;
 using namespace std;
@@ -36,7 +36,7 @@ public:
 
     void init() {
         scoped_db_thread_ctx ctx(db, true);
-        mbta_ordered_index::mbta_type::thread_init();
+        mbta_table::thread_init();
         abstract_ordered_index *checking = simple_tpcc_worker::OpenTablesForTablespace(db, "checking") ;
         abstract_ordered_index *saving = simple_tpcc_worker::OpenTablesForTablespace(db, "saving") ;
         open_tables["checking"] = checking;
@@ -52,7 +52,7 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_BASIC);
             std::string key = "key_checking_" + std::to_string(i);
             std::string value = std::to_string(100);
-            open_tables["checking"]->put(txn, key, StringWrapper(value));
+            tx_put(open_tables["checking"], txn, key, StringWrapper(value));
             db->commit_txn(txn);
         }
 
@@ -60,7 +60,7 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_BASIC);
             std::string key = "key_saving_" + std::to_string(i);
             std::string value = std::to_string(100);
-            open_tables["saving"]->put(txn, key, StringWrapper(value));
+            tx_put(open_tables["saving"], txn, key, StringWrapper(value));
             db->commit_txn(txn);
         }
     }
@@ -82,12 +82,12 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
             std::string key = "key_checking_" + std::to_string(i);
             std::string value = "";
-            open_tables["checking"]->get(txn, key, value);
+            tx_get(open_tables["checking"], txn, key, value);
             value = std::to_string(atoi(value.c_str()) + 10);
-            open_tables["checking"]->put(txn, key, StringWrapper(value));
-            open_tables["remote_0"]->get(txn, key, obj_v);  // the checking on the remote shard
+            tx_put(open_tables["checking"], txn, key, StringWrapper(value));
+            tx_get(open_tables["remote_0"], txn, key, obj_v);  // the checking on the remote shard
             obj_v = std::to_string(atoi(obj_v.c_str()) - 10);
-            open_tables["remote_0"]->put(txn, key, obj_v);
+            tx_put(open_tables["remote_0"], txn, key, obj_v);
             db->commit_txn(txn);
         }
 
@@ -133,7 +133,7 @@ public:
         t.detach();
     }
 
-    void static erpc_server(std::string cluster,
+    void static rpc_server(std::string cluster,
                           transport::Configuration *config) {
         std::string local_uri = config->shard(server_shardIndex, mako::convertCluster(cluster)).host;
         int id = num_warehouses;
@@ -152,8 +152,8 @@ public:
         server_transport->Run(); 
     }
 
-    void setup_erpc_server() {
-        auto t=std::thread(erpc_server, cluster, config);
+    void setup_rpc_server() {
+        auto t=std::thread(rpc_server, cluster, config);
         sleep(1);
         queue_holders[0] = server_transport->c->queue_holders[0];
         queue_holders_response[0] = server_transport->c->queue_holders_response[0];
@@ -212,7 +212,7 @@ int main(int argv, char **args) {
         worker->client();
         //worker->print_stats();
     } else {
-        worker->setup_erpc_server();
+        worker->setup_rpc_server();
         worker->setup_helper();
         worker->validate();
         //worker->print_stats();

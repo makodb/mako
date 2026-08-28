@@ -29,6 +29,13 @@
 #include <ctype.h>
 namespace lcdf {
 
+static void assign_vec(std::vector<int>& v, size_t n, int value) {
+    v.clear();
+    v.reserve(n);
+    for (size_t i = 0; i != n; ++i)
+        v.push_back(value);
+}
+
 /** @class Json
     @brief Json data.
 
@@ -140,7 +147,7 @@ void Json::ObjectJson::grow(bool copy)
 // @unsafe - accesses raw char* data() from String keys for bucket hashing
 void Json::ObjectJson::rehash()
 {
-    hash_.assign(hash_.size() * 2, -1);
+    assign_vec(hash_, hash_.size() * 2, -1);
     for (int i = n_ - 1; i >= 0; --i) {
         ObjectItem &oi = item(i);
         if (oi.next_ > -2) {
@@ -155,7 +162,7 @@ void Json::ObjectJson::rehash()
 int Json::ObjectJson::find_insert(const String &key, const Json &value)
 {
     if (hash_.empty())
-        hash_.assign(8, -1);
+        assign_vec(hash_, 8, -1);
     int *b = &hash_[bucket(key.data(), key.length())], chain = 0;
     while (*b >= 0 && os_[*b].v_.first != key) {
         b = &os_[*b].next_;
@@ -180,7 +187,7 @@ int Json::ObjectJson::find_insert(const String &key, const Json &value)
 Json &Json::ObjectJson::get_insert(Str key)
 {
     if (hash_.empty())
-        hash_.assign(8, -1);
+        assign_vec(hash_, 8, -1);
     int *b = &hash_[bucket(key.data(), key.length())], chain = 0;
     while (*b >= 0 && os_[*b].v_.first != key) {
         b = &os_[*b].next_;
@@ -338,7 +345,7 @@ void Json::clear() {
                 if (it->next_ != -2)
                     it->~ObjectItem();
             u_.o.x->n_ = u_.o.x->size = 0;
-            u_.o.x->hash_.assign(u_.o.x->hash_.size(), -1);
+            assign_vec(u_.o.x->hash_, u_.o.x->hash_.size(), -1);
         } else if (u_.o.x) {
             u_.o.x->deref(j_object);
             u_.o.x = 0;
@@ -966,7 +973,7 @@ Json::streaming_parser::consume_string(const uint8_t* first,
     if (first != last) {
         if (!sa.empty())
             str_ = sa.take_string();
-        else if (prev >= str.ubegin() && first <= str.uend())
+        else if (str.length() && prev >= str.ubegin() && first <= str.uend())
             str_ = str.fast_substring(prev, first);
         else
             str_ = String(prev, first);
@@ -1230,7 +1237,7 @@ Json::streaming_parser::consume_number(const uint8_t* first,
 
     if (state_ & st_partmask)
         str_.append(prev, first);
-    else if (prev >= str.ubegin() && first <= str.uend())
+    else if (str.length() && prev >= str.ubegin() && first <= str.uend())
         str_ = str.substring(prev, first);
     else
         str_ = String(prev, first);
