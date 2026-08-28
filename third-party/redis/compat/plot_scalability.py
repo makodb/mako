@@ -49,7 +49,9 @@ def plot(
             y = [float(row[metric]) / 1_000_000 for row in series]
             if metric == "mean_ops_per_sec":
                 error = [
-                    float(row["stdev_ops_per_sec"]) / 1_000_000 for row in series
+                    float(row.get("ci95_half_width_ops_per_sec") or row["stdev_ops_per_sec"])
+                    / 1_000_000
+                    for row in series
                 ]
                 axis.errorbar(
                     x,
@@ -59,7 +61,7 @@ def plot(
                     linewidth=2,
                     capsize=3,
                     color=COLORS[benchmark],
-                    label=LABELS[benchmark],
+                    label=f"{LABELS[benchmark]} (95% CI)",
                 )
             else:
                 axis.plot(

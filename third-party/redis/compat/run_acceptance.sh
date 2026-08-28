@@ -10,8 +10,9 @@ OUT_DIR="${ROOT_DIR}/third-party/redis/compat/acceptance"
 COMMIT="$(git -c safe.directory="${ROOT_DIR}" -C "${ROOT_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 STAMP="$(date -u +%Y%m%d_%H%M%S)"
 OUT_FILE="${OUT_DIR}/ACCEPTANCE_${STAMP}_${COMMIT}.txt"
+COMPONENT_LOG_DIR="${OUT_DIR}/ACCEPTANCE_${STAMP}_${COMMIT}_components"
 
-mkdir -p "${OUT_DIR}"
+mkdir -p "${OUT_DIR}" "${COMPONENT_LOG_DIR}"
 
 line() {
     local name="$1"
@@ -32,8 +33,10 @@ run_client_g1() {
     fi
     local output
     if output="$(cd "${ROOT_DIR}" && MAKO_HOST="${HOST}" MAKO_PORT="${PORT}" bash third-party/redis/compat/run_client_tests.sh 2>&1)"; then
+        printf '%s\n' "${output}" >"${COMPONENT_LOG_DIR}/g1_wire_compatibility.log"
         line "G1 wire compatibility" "PASS" "$(echo "${output}" | grep -E '^(pytest|redis-cli|redis-py|node-clients|jedis|redis-rs|redis_exporter|fakeredis-py)' | wc -l) client/tool rows passed or skipped"
     else
+        printf '%s\n' "${output}" >"${COMPONENT_LOG_DIR}/g1_wire_compatibility.log"
         line "G1 wire compatibility" "FAIL" "$(echo "${output}" | grep 'FAIL' | tail -n 1)"
     fi
 }
@@ -42,15 +45,19 @@ run_optional_script() {
     local name="$1"
     local path="$2"
     shift 2
-    if [[ ! -x "${ROOT_DIR}/${path}" ]]; then
+    if [[ ! -f "${ROOT_DIR}/${path}" ]]; then
         line "${name}" "N/A" "missing ${path}"
         return
     fi
     local output
+    local slug
+    slug="$(printf '%s' "${name}" | tr '[:upper:] ' '[:lower:]_' | tr -cd '[:alnum:]_-')"
     if output="$(cd "${ROOT_DIR}" && "$@" 2>&1)"; then
+        printf '%s\n' "${output}" >"${COMPONENT_LOG_DIR}/${slug}.log"
         line "${name}" "PASS" "$(echo "${output}" | tail -n 1)"
     else
         local status=$?
+        printf '%s\n' "${output}" >"${COMPONENT_LOG_DIR}/${slug}.log"
         if [[ "${status}" -eq 78 ]]; then
             line "${name}" "N/A" "$(echo "${output}" | tail -n 1)"
         else

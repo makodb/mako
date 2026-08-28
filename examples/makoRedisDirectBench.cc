@@ -2,8 +2,8 @@
 #include <time.h>
 
 #include <mako.hh>
-#include "db.hh"
-#include "benchmarks/mbta_sharded_ordered_index.hh"
+#include "rocks_interface/db.hh"
+#include "storage/mbta_sharded_ordered_index.hh"
 #include <examples/common.h>
 
 import std;
@@ -216,8 +216,8 @@ private:
             0, arena, txn_buf.data(), abstract_db::HINT_KV_GET_PUT);
         try {
             std::string value;
-            mako::Status status = table_->Get(txn, key, value);
-            if (!status.ok()) {
+            const bool found = tx_get(table_, txn, key, value);
+            if (!found) {
                 storage_->abort_txn(txn);
                 return false;
             }
@@ -240,11 +240,7 @@ private:
         void* txn = storage_->new_txn(
             0, arena, txn_buf.data(), abstract_db::HINT_KV_GET_PUT);
         try {
-            mako::Status status = table_->Put(txn, key, encoded_value);
-            if (!status.ok()) {
-                storage_->abort_txn(txn);
-                return false;
-            }
+            tx_put(table_, txn, key, encoded_value);
             return storage_->commit_txn(txn);
         } catch (abstract_db::abstract_abort_exception&) {
             storage_->abort_txn(txn);

@@ -229,6 +229,17 @@ int get_outstanding_logs(uint32_t par_id) {
     return -1;
 }
 
+bool is_replication_leader(uint32_t par_id) {
+    for (auto& worker : pxs_workers_g) {
+        if (!worker->IsPartition(par_id)) {
+            continue;
+        }
+        std::lock_guard<std::recursive_mutex> lock(worker->election_state_lock);
+        return worker->is_leader != 0;
+    }
+    return false;
+}
+
 
 std::vector<std::string> setup(int argc, char* argv[]) {
     vector<string> retVector;

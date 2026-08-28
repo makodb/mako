@@ -56,6 +56,11 @@ def test_set_get_missing_returns_nil_and_sets(mako_client: redis.Redis) -> None:
 def test_set_growing_value_retries_resize_abort(mako_client: redis.Redis) -> None:
     name = key("growing-value")
 
+    retries_before = int(mako_client.info("mako")["mako_txn_retries"])
+
     assert mako_client.set(name, b"old") is True
-    assert mako_client.set(name, b"longer") is True
-    assert mako_client.get(name) == b"longer"
+    larger = b"longer" * 1024
+    assert mako_client.set(name, larger) is True
+    assert mako_client.get(name) == larger
+    retries_after = int(mako_client.info("mako")["mako_txn_retries"])
+    assert retries_after > retries_before

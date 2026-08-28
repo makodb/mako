@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <barrier>
 #include <chrono>
@@ -43,6 +44,9 @@ struct Args {
     int duration_sec = 20;
     int read_percent = 80;
     int preload_threads = 1;
+    int preload_max_retries = 0;
+    int pipeline_depth = 1;
+    uint64_t max_latency_samples_per_thread = 65'536;
     std::string key_prefix;
     std::string out_csv{"redis_scalability.csv"};
     std::vector<Workload> workloads{Workload::Get, Workload::Set, Workload::Mixed};
@@ -58,6 +62,8 @@ struct BenchRow {
     double p50_us = 0;
     double p95_us = 0;
     double p99_us = 0;
+    uint64_t latency_observations = 0;
+    uint64_t latency_samples = 0;
 };
 
 const char* workload_name(Workload workload) {
@@ -131,6 +137,12 @@ void parse_args(int argc, char** argv, Args& args) {
             args.read_percent = std::stoi(value());
         } else if (arg == "--preload-threads") {
             args.preload_threads = std::stoi(value());
+        } else if (arg == "--preload-max-retries") {
+            args.preload_max_retries = std::stoi(value());
+        } else if (arg == "--pipeline-depth") {
+            args.pipeline_depth = std::stoi(value());
+        } else if (arg == "--max-latency-samples-per-thread") {
+            args.max_latency_samples_per_thread = std::stoull(value());
         } else if (arg == "--key-prefix") {
             args.key_prefix = value();
         } else if (arg == "--workloads") {
@@ -148,6 +160,10 @@ void parse_args(int argc, char** argv, Args& args) {
 
     if (args.keys == 0 || args.value_size < 0 || args.threads < 1
         || args.duration_sec < 1 || args.preload_threads < 1
+        || args.preload_max_retries < 0
+        || args.pipeline_depth < 1 || args.pipeline_depth > 4096
+        || args.max_latency_samples_per_thread < 1
+        || args.max_latency_samples_per_thread > 10'000'000
         || args.read_percent < 0 || args.read_percent > 100) {
         throw std::runtime_error("invalid benchmark arguments");
     }
@@ -169,8 +185,14 @@ public:
     Connection& operator=(const Connection&) = delete;
 
     Connection(Connection&& other) noexcept
-        : fd_(other.fd_), error_(std::move(other.error_)) {
+        : fd_(other.fd_),
+          error_(std::move(other.error_)),
+          read_buffer_(std::move(other.read_buffer_)),
+          read_pos_(other.read_pos_),
+          read_end_(other.read_end_) {
         other.fd_ = -1;
+        other.read_pos_ = 0;
+        other.read_end_ = 0;
     }
 
     Connection& operator=(Connection&& other) noexcept {
@@ -178,7 +200,12 @@ public:
             close_fd();
             fd_ = other.fd_;
             error_ = std::move(other.error_);
+            read_buffer_ = std::move(other.read_buffer_);
+            read_pos_ = other.read_pos_;
+            read_end_ = other.read_end_;
             other.fd_ = -1;
+            other.read_pos_ = 0;
+            other.read_end_ = 0;
         }
         return *this;
     }
@@ -258,18 +285,38 @@ private:
             close(fd_);
             fd_ = -1;
         }
+        read_pos_ = 0;
+        read_end_ = 0;
+    }
+
+    bool fill_read_buffer() {
+        ssize_t received = recv(fd_, read_buffer_.data(), read_buffer_.size(), 0);
+        if (received <= 0) {
+            error_ = received == 0 ? "connection closed" : std::strerror(errno);
+            return false;
+        }
+        read_pos_ = 0;
+        read_end_ = static_cast<size_t>(received);
+        return true;
+    }
+
+    bool read_byte(char& value) {
+        if (read_pos_ == read_end_ && !fill_read_buffer()) {
+            return false;
+        }
+        value = read_buffer_[read_pos_++];
+        return true;
     }
 
     bool read_exact(size_t length) {
-        char buffer[4096];
         while (length > 0) {
-            size_t requested = std::min(length, sizeof(buffer));
-            ssize_t received = recv(fd_, buffer, requested, 0);
-            if (received <= 0) {
-                error_ = received == 0 ? "connection closed" : std::strerror(errno);
+            if (read_pos_ == read_end_ && !fill_read_buffer()) {
                 return false;
             }
-            length -= static_cast<size_t>(received);
+            const size_t available = read_end_ - read_pos_;
+            const size_t consumed = std::min(length, available);
+            read_pos_ += consumed;
+            length -= consumed;
         }
         return true;
     }
@@ -278,14 +325,11 @@ private:
         line.clear();
         char value = '\0';
         while (true) {
-            ssize_t received = recv(fd_, &value, 1, 0);
-            if (received <= 0) {
-                error_ = received == 0 ? "connection closed" : std::strerror(errno);
+            if (!read_byte(value)) {
                 return false;
             }
             if (value == '\r') {
-                received = recv(fd_, &value, 1, 0);
-                if (received <= 0 || value != '\n') {
+                if (!read_byte(value) || value != '\n') {
                     error_ = "invalid RESP line ending";
                     return false;
                 }
@@ -297,6 +341,9 @@ private:
 
     int fd_ = -1;
     std::string error_;
+    std::array<char, 64 * 1024> read_buffer_{};
+    size_t read_pos_ = 0;
+    size_t read_end_ = 0;
 };
 
 Connection connect_retry(const Target& target) {
@@ -336,10 +383,12 @@ void preload(
     const Target& target,
     const std::vector<std::string>& keys,
     int value_size,
-    int thread_count) {
+    int thread_count,
+    int max_retries) {
     const std::string value(static_cast<size_t>(value_size), 'X');
     std::atomic<uint64_t> next_index{0};
     std::atomic<uint64_t> completed{0};
+    std::atomic<uint64_t> retries{0};
     std::atomic<bool> failed{false};
     std::mutex error_mutex;
     std::string first_error;
@@ -352,11 +401,31 @@ void preload(
             if (index >= keys.size()) {
                 break;
             }
-            if (!connection.send_all(command_set(keys[static_cast<size_t>(index)], value))
-                || !connection.read_reply()) {
+            const std::string command = command_set(
+                keys[static_cast<size_t>(index)], value);
+            bool succeeded = false;
+            std::string last_error;
+            for (int attempt = 0; attempt <= max_retries; ++attempt) {
+                if (connection.send_all(command) && connection.read_reply()) {
+                    succeeded = true;
+                    break;
+                }
+                last_error = connection.error();
+                if (attempt == max_retries) {
+                    break;
+                }
+                retries.fetch_add(1, std::memory_order_relaxed);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                try {
+                    connection = connect_retry(target);
+                } catch (const std::exception& error) {
+                    last_error = error.what();
+                }
+            }
+            if (!succeeded) {
                 std::lock_guard<std::mutex> lock(error_mutex);
                 if (first_error.empty()) {
-                    first_error = connection.error();
+                    first_error = last_error;
                 }
                 failed.store(true, std::memory_order_relaxed);
                 break;
@@ -379,7 +448,8 @@ void preload(
     const double elapsed = std::chrono::duration<double>(Clock::now() - start).count();
     std::cout << "Preloaded " << completed.load() << " keys in " << std::fixed
               << std::setprecision(2) << elapsed << " seconds ("
-              << static_cast<double>(completed.load()) / elapsed << " SET/s)\n";
+              << static_cast<double>(completed.load()) / elapsed << " SET/s, "
+              << retries.load() << " retries)\n";
 }
 
 uint64_t xorshift64(uint64_t& state) {
@@ -393,9 +463,26 @@ uint64_t xorshift64(uint64_t& state) {
 
 struct WorkerStats {
     uint64_t operations = 0;
+    uint64_t latency_observations = 0;
     std::vector<uint32_t> latencies_us;
     std::string error;
 };
+
+void record_latency(
+    WorkerStats& stats,
+    uint32_t latency_us,
+    uint64_t sample_limit,
+    uint64_t& sample_rng) {
+    ++stats.latency_observations;
+    if (stats.latencies_us.size() < sample_limit) {
+        stats.latencies_us.push_back(latency_us);
+        return;
+    }
+    const uint64_t selected = xorshift64(sample_rng) % stats.latency_observations;
+    if (selected < sample_limit) {
+        stats.latencies_us[static_cast<size_t>(selected)] = latency_us;
+    }
+}
 
 double percentile(std::vector<uint32_t>& values, double quantile) {
     if (values.empty()) {
@@ -414,32 +501,59 @@ WorkerStats run_worker(
     int value_size,
     int read_percent,
     int duration_sec,
+    int pipeline_depth,
+    uint64_t max_latency_samples,
     uint64_t seed,
     std::barrier<>& start_barrier) {
     WorkerStats stats;
     Connection connection = connect_retry(target);
     const std::string value(static_cast<size_t>(value_size), 'Y');
     uint64_t rng = seed;
+    uint64_t sample_rng = seed ^ 0xd1b54a32d192ed03ULL;
+    stats.latencies_us.reserve(static_cast<size_t>(max_latency_samples));
+    std::string pipeline;
+    pipeline.reserve(static_cast<size_t>(pipeline_depth) * 128);
+    std::vector<bool> pipeline_gets;
+    pipeline_gets.reserve(static_cast<size_t>(pipeline_depth));
     start_barrier.arrive_and_wait();
     const auto deadline = Clock::now() + std::chrono::seconds(duration_sec);
 
     while (Clock::now() < deadline) {
-        const auto& key = keys[static_cast<size_t>(xorshift64(rng) % keys.size())];
-        const bool is_get = workload == Workload::Get
-            || (workload == Workload::Mixed
-                && static_cast<int>(xorshift64(rng) % 100) < read_percent);
-        const std::string command = is_get ? command_get(key) : command_set(key, value);
-        const auto operation_start = Clock::now();
-        if (!connection.send_all(command) || !connection.read_reply()) {
-            stats.error = std::string(is_get ? "GET: " : "SET: ")
-                + connection.error();
+        pipeline.clear();
+        pipeline_gets.clear();
+        for (int i = 0; i < pipeline_depth; ++i) {
+            const auto& key = keys[static_cast<size_t>(xorshift64(rng) % keys.size())];
+            const bool is_get = workload == Workload::Get
+                || (workload == Workload::Mixed
+                    && static_cast<int>(xorshift64(rng) % 100) < read_percent);
+            pipeline += is_get ? command_get(key) : command_set(key, value);
+            pipeline_gets.push_back(is_get);
+        }
+
+        const auto batch_start = Clock::now();
+        if (!connection.send_all(pipeline)) {
+            stats.error = "pipeline send: " + connection.error();
             break;
         }
-        const auto operation_end = Clock::now();
-        const auto latency = std::chrono::duration_cast<std::chrono::microseconds>(
-            operation_end - operation_start);
-        stats.latencies_us.push_back(static_cast<uint32_t>(latency.count()));
-        ++stats.operations;
+        for (bool is_get : pipeline_gets) {
+            if (!connection.read_reply()) {
+                stats.error = std::string(is_get ? "GET: " : "SET: ")
+                    + connection.error();
+                break;
+            }
+            const auto operation_end = Clock::now();
+            const auto latency = std::chrono::duration_cast<std::chrono::microseconds>(
+                operation_end - batch_start);
+            record_latency(
+                stats,
+                static_cast<uint32_t>(latency.count()),
+                max_latency_samples,
+                sample_rng);
+            ++stats.operations;
+        }
+        if (!stats.error.empty()) {
+            break;
+        }
     }
     return stats;
 }
@@ -465,6 +579,8 @@ BenchRow run_workload(
                 args.value_size,
                 args.read_percent,
                 args.duration_sec,
+                args.pipeline_depth,
+                args.max_latency_samples_per_thread,
                 seed,
                 start_barrier);
         });
@@ -487,6 +603,8 @@ BenchRow run_workload(
                 row.workload + " worker failed: " + worker.error);
         }
         row.total_ops += worker.operations;
+        row.latency_observations += worker.latency_observations;
+        row.latency_samples += worker.latencies_us.size();
         latencies.insert(
             latencies.end(), worker.latencies_us.begin(), worker.latencies_us.end());
     }
@@ -508,7 +626,11 @@ int main(int argc, char** argv) {
 
         if (!args.skip_preload) {
             preload(
-                args.target, keys, args.value_size, args.preload_threads);
+                args.target,
+                keys,
+                args.value_size,
+                args.preload_threads,
+                args.preload_max_retries);
         }
         if (args.preload_only) {
             return 0;
@@ -519,8 +641,9 @@ int main(int argc, char** argv) {
             throw std::runtime_error("failed to open output CSV: " + args.out_csv);
         }
         out << "server,host,port,workload,key_dist,threads,value_size,read_percent,"
-               "duration_sec,total_ops,ops_per_sec,ops_per_sec_per_thread,"
-               "p50_us,p95_us,p99_us\n";
+               "pipeline_depth,duration_sec,total_ops,ops_per_sec,ops_per_sec_per_thread,"
+               "p50_us,p95_us,p99_us,latency_observations,latency_samples,"
+               "latency_sampling\n";
 
         for (Workload workload : args.workloads) {
             BenchRow row = run_workload(args, keys, workload);
@@ -530,11 +653,13 @@ int main(int argc, char** argv) {
             out << args.target.name << ',' << args.target.host << ','
                 << args.target.port << ',' << row.workload
                 << ",uniform-decimal," << args.threads << ',' << args.value_size
-                << ',' << args.read_percent << ',' << std::fixed
+                << ',' << args.read_percent << ',' << args.pipeline_depth << ',' << std::fixed
                 << std::setprecision(6) << row.duration_sec << ','
                 << row.total_ops << ',' << row.ops_per_sec << ','
                 << row.ops_per_sec / static_cast<double>(args.threads) << ','
-                << row.p50_us << ',' << row.p95_us << ',' << row.p99_us << '\n';
+                << row.p50_us << ',' << row.p95_us << ',' << row.p99_us << ','
+                << row.latency_observations << ',' << row.latency_samples
+                << ",deterministic-reservoir\n";
         }
         return 0;
     } catch (const std::exception& error) {

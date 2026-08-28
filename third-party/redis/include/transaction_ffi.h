@@ -264,6 +264,29 @@ typedef struct {
 } TxnResponse;
 
 /**
+ * Result status for the allocation-light plain GET/SET executor.
+ * FALLBACK asks Rust to use cpp_execute_transaction() for semantics that need
+ * the full collection-aware executor (currently SET of a non-string key).
+ */
+typedef enum {
+    FAST_MAKO_ABORTED = 0,
+    FAST_MAKO_GET_MISS = 1,
+    FAST_MAKO_GET_HIT = 2,
+    FAST_MAKO_SET_OK = 3,
+    FAST_MAKO_FALLBACK = 4,
+} FastMakoStatus;
+
+/**
+ * Borrowed fast-path result. GET data remains valid on the calling thread
+ * until the next cpp_execute_fast_mako_string() call or worker cleanup.
+ */
+typedef struct {
+    FastMakoStatus status;
+    const uint8_t* data_ptr;
+    size_t data_len;
+} FastMakoStringResult;
+
+/**
  * Lightweight server metrics exposed to the Redis INFO formatter.
  */
 typedef struct {
@@ -271,7 +294,30 @@ typedef struct {
     uint64_t txn_aborts;
     uint64_t txn_retries;
     uint64_t uptime_seconds;
+    uint64_t cache_enabled;
+    uint64_t cache_capacity_bytes;
+    uint64_t cache_entries;
+    uint64_t cache_bytes;
+    uint64_t cache_hits;
+    uint64_t cache_misses;
+    uint64_t cache_inserts;
+    uint64_t cache_evictions;
+    uint64_t cache_invalidations;
 } MakoMetrics;
+
+/**
+ * Execute one plain GET or unconditional, no-TTL SET without constructing the
+ * generic transaction executor's collection state or heap-owned response.
+ * Existing strings use the direct SET path; missing/non-string keys fall back
+ * so Redis collection replacement semantics stay centralized.
+ */
+bool cpp_execute_fast_mako_string(
+    uint32_t op,
+    const uint8_t* key_ptr,
+    size_t key_len,
+    const uint8_t* val_ptr,
+    size_t val_len,
+    FastMakoStringResult* result);
 
 /**
  * Execute a batch of operations as a single database transaction

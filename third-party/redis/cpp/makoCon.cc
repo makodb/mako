@@ -7,8 +7,8 @@
 // - Nonblocking connection I/O with synchronous Mako transactions
 // - Transaction support via MULTI/EXEC
 //
-// All operations (single GET/SET or batched MULTI/EXEC) go through execute_transaction()
-// which wraps them in a single database transaction.
+// Plain GET and unconditional SET use a specialized transaction path. Other
+// commands and MULTI/EXEC use execute_transaction().
 //
 
 #include <stdint.h>
@@ -23,7 +23,7 @@
 #include <fstream>
 #include <shared_mutex>
 #include <mako.hh>
-#include "db.hh"
+#include "rocks_interface/db.hh"
 #include <examples/common.h>
 #include "transaction_ffi.h"
 #include "silo_runtime.h"
@@ -40,22 +40,102 @@ static std::atomic<uint64_t> g_mako_txn_commits{0};
 static std::atomic<uint64_t> g_mako_txn_aborts{0};
 // Retry attempts are recorded by the Rust Redis retry loop.
 static std::atomic<uint64_t> g_mako_txn_retries{0};
+static constexpr size_t kRedisMaxWorkers = 32;
+struct alignas(64) RedisFastMetricShard {
+    std::atomic<uint64_t> commits{0};
+    std::atomic<uint64_t> aborts{0};
+};
+// The specialized executor updates only its worker's cache line. Generic and
+// non-worker calls retain the global fallback counters above.
+static std::array<RedisFastMetricShard, kRedisMaxWorkers> g_redis_fast_metrics{};
+
 static std::atomic<uint64_t> g_mako_random_counter{1};
 // Redis-facing correctness is claimed through makoCon. Conflicting write
 // transactions are serialized by Redis key stripe instead of using one global
 // executor lock, so unrelated keys can still make progress in parallel.
 static std::shared_mutex g_redis_keyspace_mutex;
-static constexpr size_t kRedisTxnLockStripes = 256;
+// Keep collisions rare at the supported 32-worker maximum. With 256 stripes,
+// unrelated uniformly distributed keys frequently contend; 16K stripes cost
+// well under 1 MiB on the target libc++ while preserving same-key ordering.
+static constexpr size_t kRedisTxnLockStripes = 16 * 1024;
 static std::array<std::mutex, kRedisTxnLockStripes> g_redis_txn_key_mutexes;
 static bool g_redis_single_worker_mode = false;
 static bool g_redis_replication_enabled = false;
+static bool g_redis_bench_skip_ttl = false;
+static bool g_redis_bench_no_db = false;
+static bool g_redis_bench_skip_locks = false;
+static bool g_redis_bench_skip_mutex = false;
+static size_t g_redis_bench_value_size = 8;
+static size_t g_redis_cache_capacity_bytes = 0;
+
+// Optional read-through cache for non-expiring Redis strings. Cache state is
+// protected by the same key stripe that orders Redis writes, so hits do not pay
+// for a second mutex. Fast plain SET refreshes in place after commit; generic
+// writes invalidate after commit and the next GET repopulates.
+// The map is indexed by the already-computed 64-bit stripe hash and retains the
+// full key to turn a hash collision into a safe miss rather than a wrong value.
+static constexpr size_t kRedisCacheShards = kRedisTxnLockStripes;
+struct RedisCacheEntry {
+    std::string key;
+    std::string value;
+    size_t charge = 0;
+    uint64_t generation = 0;
+};
+struct RedisCacheShard {
+    std::unordered_map<uint64_t, RedisCacheEntry> entries;
+    std::deque<std::pair<uint64_t, uint64_t>> fifo;
+    size_t bytes = 0;
+    uint64_t next_generation = 1;
+};
+static std::array<RedisCacheShard, kRedisCacheShards> g_redis_cache;
+static std::atomic<uint64_t> g_redis_cache_hits{0};
+static std::atomic<uint64_t> g_redis_cache_misses{0};
+static std::atomic<uint64_t> g_redis_cache_inserts{0};
+static std::atomic<uint64_t> g_redis_cache_evictions{0};
+static std::atomic<uint64_t> g_redis_cache_invalidations{0};
 
 // Thread-local state for transaction handling
 thread_local str_arena* tl_arena = nullptr;
 thread_local std::string tl_txn_buf;
 thread_local std::string tl_key_buf;
+thread_local std::string tl_ttl_key_buf;
+thread_local std::string tl_ttl_val_buf;
 thread_local std::string tl_val_buf;
+thread_local std::string tl_exists_buf;
+thread_local std::string tl_delete_buf;
+thread_local std::string tl_encoded_val_buf;
+thread_local std::string tl_bench_val_buf;
 thread_local bool tl_initialized = false;
+thread_local size_t tl_redis_worker_id = kRedisMaxWorkers;
+
+static mako::Status redis_table_get(void* txn, const std::string& key,
+                                    std::string& value) {
+    return tx_get(g_table, txn, key, value)
+        ? mako::Status::OK()
+        : mako::Status::NotFound();
+}
+
+static mako::Status redis_table_put(void* txn, const std::string& key,
+                                    const std::string& encoded_value) {
+    tx_put(g_table, txn, key, encoded_value);
+    return mako::Status::OK();
+}
+
+static mako::Status redis_table_delete(void* txn, const std::string& key) {
+    tl_delete_buf.clear();
+    if (!tx_get(g_table, txn, key, tl_delete_buf)) {
+        return mako::Status::NotFound();
+    }
+    tx_remove(g_table, txn, key);
+    return mako::Status::OK();
+}
+
+static mako::Status redis_table_exists(void* txn, const std::string& key,
+                                       bool* exists) {
+    tl_exists_buf.clear();
+    *exists = tx_get(g_table, txn, key, tl_exists_buf);
+    return mako::Status::OK();
+}
 
 // @safe - Parse a positive integer from an environment variable.
 static bool parse_env_int(const char* name, int default_value, int min_value, int max_value, int& out) {
@@ -140,6 +220,30 @@ static void wait_for_redis_replication() {
     }
 }
 
+static void record_fast_commit() {
+    if (tl_redis_worker_id < g_redis_fast_metrics.size()) {
+        g_redis_fast_metrics[tl_redis_worker_id].commits.fetch_add(
+            1, std::memory_order_relaxed);
+    } else {
+        g_mako_txn_commits.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+static void record_fast_abort() {
+    if (tl_redis_worker_id < g_redis_fast_metrics.size()) {
+        g_redis_fast_metrics[tl_redis_worker_id].aborts.fetch_add(
+            1, std::memory_order_relaxed);
+    } else {
+        g_mako_txn_aborts.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+static void append_fast_metrics(MakoMetrics* metrics) {
+    for (const auto& shard : g_redis_fast_metrics) {
+        metrics->txn_commits += shard.commits.load(std::memory_order_relaxed);
+        metrics->txn_aborts += shard.aborts.load(std::memory_order_relaxed);
+    }
+}
 static uint64_t redis_lock_hash(const uint8_t* data, size_t len) {
     uint64_t hash = 1469598103934665603ull;
     for (size_t i = 0; i < len; ++i) {
@@ -147,6 +251,142 @@ static uint64_t redis_lock_hash(const uint8_t* data, size_t len) {
         hash *= 1099511628211ull;
     }
     return hash;
+}
+
+static bool redis_cache_enabled() {
+    return g_redis_cache_capacity_bytes != 0;
+}
+
+static bool redis_cache_key_matches(
+    const RedisCacheEntry& entry, const uint8_t* key_ptr, size_t key_len) {
+    return entry.key.size() == key_len
+        && (key_len == 0
+            || std::memcmp(entry.key.data(), key_ptr, key_len) == 0);
+}
+
+// Caller holds the Redis transaction stripe for hash, or is the sole worker.
+static bool redis_cache_get(
+    uint64_t hash, const uint8_t* key_ptr, size_t key_len, std::string& value) {
+    if (!redis_cache_enabled()) {
+        return false;
+    }
+    RedisCacheShard& shard = g_redis_cache[hash % kRedisCacheShards];
+    auto it = shard.entries.find(hash);
+    if (it == shard.entries.end()
+        || !redis_cache_key_matches(it->second, key_ptr, key_len)) {
+        g_redis_cache_misses.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    value = it->second.value;
+    g_redis_cache_hits.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+static void redis_cache_invalidate(const uint8_t* key_ptr, size_t key_len) {
+    if (!redis_cache_enabled()) {
+        return;
+    }
+    const uint64_t hash = redis_lock_hash(key_ptr, key_len);
+    RedisCacheShard& shard = g_redis_cache[hash % kRedisCacheShards];
+    auto it = shard.entries.find(hash);
+    if (it == shard.entries.end()
+        || !redis_cache_key_matches(it->second, key_ptr, key_len)) {
+        return;
+    }
+    shard.bytes -= it->second.charge;
+    shard.entries.erase(it);
+    g_redis_cache_invalidations.fetch_add(1, std::memory_order_relaxed);
+}
+
+static void redis_cache_put(
+    uint64_t hash, const uint8_t* key_ptr, size_t key_len,
+    const uint8_t* value_ptr, size_t value_len) {
+    if (!redis_cache_enabled()) {
+        return;
+    }
+    RedisCacheShard& shard = g_redis_cache[hash % kRedisCacheShards];
+    const size_t charge = key_len + value_len + sizeof(RedisCacheEntry) + 32;
+    const size_t shard_capacity = std::max<size_t>(
+        1, g_redis_cache_capacity_bytes / kRedisCacheShards);
+    auto existing = shard.entries.find(hash);
+    if (existing != shard.entries.end()
+        && redis_cache_key_matches(existing->second, key_ptr, key_len)) {
+        shard.bytes -= existing->second.charge;
+        if (charge > shard_capacity) {
+            shard.entries.erase(existing);
+            g_redis_cache_invalidations.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (value_len == 0) {
+            existing->second.value.clear();
+        } else {
+            existing->second.value.assign(
+                reinterpret_cast<const char*>(value_ptr), value_len);
+        }
+        existing->second.charge = charge;
+        shard.bytes += charge;
+    } else {
+        if (existing != shard.entries.end()) {
+            shard.bytes -= existing->second.charge;
+            shard.entries.erase(existing);
+            g_redis_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (charge > shard_capacity) {
+            return;
+        }
+        while (shard.bytes + charge > shard_capacity && !shard.fifo.empty()) {
+            auto victim = std::move(shard.fifo.front());
+            shard.fifo.pop_front();
+            auto victim_it = shard.entries.find(victim.first);
+            if (victim_it == shard.entries.end()
+                || victim_it->second.generation != victim.second) {
+                continue;
+            }
+            shard.bytes -= victim_it->second.charge;
+            shard.entries.erase(victim_it);
+            g_redis_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+        }
+        RedisCacheEntry entry;
+        if (key_len != 0) {
+            entry.key.assign(reinterpret_cast<const char*>(key_ptr), key_len);
+        }
+        if (value_len != 0) {
+            entry.value.assign(reinterpret_cast<const char*>(value_ptr), value_len);
+        }
+        entry.charge = charge;
+        entry.generation = shard.next_generation++;
+        if (shard.next_generation == 0) {
+            shard.next_generation = 1;
+        }
+        const uint64_t generation = entry.generation;
+        shard.entries.emplace(hash, std::move(entry));
+        shard.fifo.emplace_back(hash, generation);
+        shard.bytes += charge;
+    }
+    g_redis_cache_inserts.fetch_add(1, std::memory_order_relaxed);
+}
+
+static void redis_cache_clear() {
+    if (!redis_cache_enabled()) {
+        return;
+    }
+    for (auto& shard : g_redis_cache) {
+        shard.entries.clear();
+        shard.fifo.clear();
+        shard.bytes = 0;
+        shard.next_generation = 1;
+    }
+}
+
+static void redis_cache_usage(uint64_t& entries, uint64_t& bytes) {
+    entries = 0;
+    bytes = 0;
+    for (size_t stripe = 0; stripe < g_redis_cache.size(); ++stripe) {
+        std::lock_guard<std::mutex> guard(g_redis_txn_key_mutexes[stripe]);
+        auto& shard = g_redis_cache[stripe];
+        entries += shard.entries.size();
+        bytes += shard.bytes;
+    }
 }
 
 static bool redis_lock_read_u64_le(const uint8_t* data, size_t len, size_t& pos, uint64_t& out) {
@@ -322,6 +562,56 @@ static std::vector<size_t> redis_request_lock_stripes(const TxnRequest* request)
     return stripes;
 }
 
+static void redis_cache_invalidate_committed_writes(const TxnRequest* request) {
+    if (!redis_cache_enabled() || request == nullptr || request->ops == nullptr) {
+        return;
+    }
+    auto invalidate_packed_keys = [](const TxnOperation& op, size_t max_items) {
+        std::vector<std::string> keys;
+        if (!redis_lock_unpack_bytes_list(op.val_ptr, op.val_len, keys)) {
+            return;
+        }
+        const size_t limit = std::min(max_items, keys.size());
+        for (size_t i = 0; i < limit; ++i) {
+            redis_cache_invalidate(
+                reinterpret_cast<const uint8_t*>(keys[i].data()), keys[i].size());
+        }
+    };
+    for (size_t i = 0; i < request->num_ops; ++i) {
+        const TxnOperation& op = request->ops[i];
+        if (redis_op_is_read_only(op)) {
+            continue;
+        }
+        if (op.op == TXN_OP_FLUSHDB) {
+            redis_cache_clear();
+            continue;
+        }
+        redis_cache_invalidate(op.key_ptr, op.key_len);
+        switch (op.op) {
+            case TXN_OP_RENAME:
+            case TXN_OP_COPY:
+                if (op.val_ptr != nullptr || op.val_len == 0) {
+                    redis_cache_invalidate(op.val_ptr, op.val_len);
+                }
+                break;
+            case TXN_OP_SMOVE:
+            case TXN_OP_LMOVE:
+            case TXN_OP_SORT:
+            case TXN_OP_ZRANGESTORE:
+                invalidate_packed_keys(op, 1);
+                break;
+            case TXN_OP_SET_ALGEBRA:
+            case TXN_OP_ZSET_ALGEBRA:
+            case TXN_OP_BPOP:
+            case TXN_OP_ZMPOP:
+                invalidate_packed_keys(op, SIZE_MAX);
+                break;
+            default:
+                break;
+        }
+    }
+}
+
 // Initialize thread-local state for database operations
 void ensure_thread_info() {
     if (!tl_initialized && g_mako_db != nullptr) {
@@ -354,7 +644,13 @@ void cleanup_thread_info() {
     }
     tl_txn_buf.clear();
     tl_key_buf.clear();
+    tl_ttl_key_buf.clear();
+    tl_ttl_val_buf.clear();
     tl_val_buf.clear();
+    tl_exists_buf.clear();
+    tl_delete_buf.clear();
+    tl_encoded_val_buf.clear();
+    tl_bench_val_buf.clear();
     tl_initialized = false;
 }
 
@@ -364,7 +660,7 @@ static bool execute_flushdb_chunked(size_t chunk_size = 1024) {
         return false;
     }
 
-    class FlushChunkScanCallback : public abstract_ordered_index::scan_callback {
+    class FlushChunkScanCallback : public oi_scan_callback {
     public:
         FlushChunkScanCallback(std::vector<std::string>& keys, size_t limit)
             : keys_(keys), limit_(limit) {}
@@ -390,7 +686,7 @@ static bool execute_flushdb_chunked(size_t chunk_size = 1024) {
 
         try {
             FlushChunkScanCallback callback(keys_to_delete, chunk_size);
-            g_table->scan(txn, std::string(), nullptr, callback, tl_arena);
+            tx_scan(g_table, txn, std::string(), nullptr, callback, tl_arena);
 
             if (keys_to_delete.empty()) {
                 g_mako_db->Rollback(txn);
@@ -398,7 +694,7 @@ static bool execute_flushdb_chunked(size_t chunk_size = 1024) {
             }
 
             for (const auto& storage_key : keys_to_delete) {
-                mako::Status s = g_table->Delete(txn, storage_key);
+                mako::Status s = redis_table_delete(txn, storage_key);
                 if (!s.ok() && !s.IsNotFound()) {
                     g_mako_db->Rollback(txn);
                     return false;
@@ -417,8 +713,213 @@ static bool execute_flushdb_chunked(size_t chunk_size = 1024) {
     }
 }
 
-// Execute a batch of operations as a single database transaction
-// This is the ONLY entry point for all database operations (single or batched)
+// Specialized allocation-light executor for the raw plain GET/SET path.
+static bool execute_fast_mako_string(
+    uint32_t op,
+    const uint8_t* key_ptr,
+    size_t key_len,
+    const uint8_t* val_ptr,
+    size_t val_len,
+    FastMakoStringResult* result) {
+    if (result == nullptr) {
+        return false;
+    }
+    result->status = FAST_MAKO_ABORTED;
+    result->data_ptr = nullptr;
+    result->data_len = 0;
+
+    const bool is_get = op == TXN_OP_GET;
+    const bool is_set = op == TXN_OP_SET;
+    if ((!is_get && !is_set)
+        || (key_ptr == nullptr && key_len != 0)
+        || (is_set && val_ptr == nullptr && val_len != 0)) {
+        return false;
+    }
+
+    // Benchmark-only ceiling: retain RESP parsing, Rust/C++ FFI, and response
+    // formatting while removing every database operation.
+    if (g_redis_bench_no_db) {
+        if (is_get) {
+            if (tl_bench_val_buf.size() != g_redis_bench_value_size) {
+                tl_bench_val_buf.assign(g_redis_bench_value_size, 'Y');
+            }
+            result->status = FAST_MAKO_GET_HIT;
+            result->data_ptr = reinterpret_cast<const uint8_t*>(tl_bench_val_buf.data());
+            result->data_len = tl_bench_val_buf.size();
+        } else {
+            result->status = FAST_MAKO_SET_OK;
+        }
+        record_fast_commit();
+        return true;
+    }
+
+    ensure_thread_info();
+    if (g_mako_db == nullptr || g_table == nullptr) {
+        return false;
+    }
+    if (is_set && !redis_can_write_here()) {
+        record_fast_abort();
+        return true;
+    }
+
+    // FLUSHDB takes every stripe before scanning. Using the command's stripe
+    // here preserves keyspace exclusion without making all request workers
+    // contend on shared_mutex's reader-count cache line.
+    const uint64_t key_hash = redis_lock_hash(key_ptr, key_len);
+    std::unique_lock<std::mutex> redis_single_key_lock;
+    if (!g_redis_single_worker_mode && !g_redis_bench_skip_locks) {
+        const size_t stripe = key_hash % kRedisTxnLockStripes;
+        if (!g_redis_bench_skip_mutex) {
+            redis_single_key_lock = std::unique_lock<std::mutex>(g_redis_txn_key_mutexes[stripe]);
+        }
+    }
+
+    if (is_get) {
+        tl_val_buf.clear();
+        if (redis_cache_get(key_hash, key_ptr, key_len, tl_val_buf)) {
+            result->status = FAST_MAKO_GET_HIT;
+            result->data_ptr = reinterpret_cast<const uint8_t*>(tl_val_buf.data());
+            result->data_len = tl_val_buf.size();
+            return true;
+        }
+    }
+
+    tl_key_buf.clear();
+    tl_key_buf.reserve(sizeof("table_key_") - 1 + key_len);
+    tl_key_buf.append("table_key_", sizeof("table_key_") - 1);
+    if (key_len != 0) {
+        tl_key_buf.append(reinterpret_cast<const char*>(key_ptr), key_len);
+    }
+
+    tl_ttl_key_buf.clear();
+    tl_ttl_key_buf.reserve(sizeof("\x01TTL:") - 1 + key_len);
+    tl_ttl_key_buf.append("\x01TTL:", sizeof("\x01TTL:") - 1);
+    if (key_len != 0) {
+        tl_ttl_key_buf.append(reinterpret_cast<const char*>(key_ptr), key_len);
+    }
+
+    void* txn = g_mako_db->BeginTransaction();
+    auto abort_transaction = [&]() {
+        g_mako_db->Rollback(txn);
+        result->status = FAST_MAKO_ABORTED;
+        record_fast_abort();
+        return true;
+    };
+
+    try {
+        if (is_get) {
+            tl_ttl_val_buf.clear();
+            mako::Status ttl_status = g_redis_bench_skip_ttl
+                ? mako::Status::NotFound()
+                : redis_table_get(txn, tl_ttl_key_buf, tl_ttl_val_buf);
+            if (!ttl_status.ok() && !ttl_status.IsNotFound()) {
+                return abort_transaction();
+            }
+
+            bool expired = false;
+            if (ttl_status.ok()
+                && !tl_ttl_val_buf.empty()
+                && !std::isspace(static_cast<unsigned char>(tl_ttl_val_buf.front()))) {
+                errno = 0;
+                char* end = nullptr;
+                long long parsed = std::strtoll(tl_ttl_val_buf.c_str(), &end, 10);
+                if (errno != ERANGE
+                    && end != tl_ttl_val_buf.c_str()
+                    && end == tl_ttl_val_buf.c_str() + tl_ttl_val_buf.size()) {
+                    const int64_t now_ms = static_cast<int64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count());
+                    expired = static_cast<int64_t>(parsed) <= now_ms;
+                }
+            }
+
+            if (expired) {
+                mako::Status s = redis_table_delete(txn, tl_key_buf);
+                if (s.ok() || s.IsNotFound()) {
+                    s = redis_table_delete(txn, tl_ttl_key_buf);
+                }
+                if (!s.ok() && !s.IsNotFound()) {
+                    return abort_transaction();
+                }
+                g_mako_db->Commit(txn);
+                result->status = FAST_MAKO_GET_MISS;
+                record_fast_commit();
+                return true;
+            }
+
+            tl_val_buf.clear();
+            mako::Status s = redis_table_get(txn, tl_key_buf, tl_val_buf);
+            if (!s.ok() && !s.IsNotFound()) {
+                return abort_transaction();
+            }
+            g_mako_db->Commit(txn);
+            record_fast_commit();
+            if (s.IsNotFound()) {
+                result->status = FAST_MAKO_GET_MISS;
+            } else {
+                if (ttl_status.IsNotFound()) {
+                    redis_cache_put(
+                        key_hash, key_ptr, key_len,
+                        reinterpret_cast<const uint8_t*>(tl_val_buf.data()), tl_val_buf.size());
+                }
+                result->status = FAST_MAKO_GET_HIT;
+                result->data_ptr = reinterpret_cast<const uint8_t*>(tl_val_buf.data());
+                result->data_len = tl_val_buf.size();
+            }
+            return true;
+        }
+
+        bool string_exists = false;
+        mako::Status s = redis_table_exists(txn, tl_key_buf, &string_exists);
+        if (!s.ok()) {
+            return abort_transaction();
+        }
+        if (!string_exists) {
+            g_mako_db->Rollback(txn);
+            result->status = FAST_MAKO_FALLBACK;
+            return true;
+        }
+
+        tl_encoded_val_buf.resize(val_len + mako::EXTRA_BITS_FOR_VALUE);
+        if (val_len != 0) {
+            std::memcpy(tl_encoded_val_buf.data(), val_ptr, val_len);
+        }
+        std::memset(
+            tl_encoded_val_buf.data() + val_len,
+            0,
+            mako::EXTRA_BITS_FOR_VALUE);
+        auto* time_term = reinterpret_cast<uint32_t*>(
+            tl_encoded_val_buf.data()
+            + tl_encoded_val_buf.size() - mako::EXTRA_BITS_FOR_VALUE);
+        *time_term = 0;
+        auto* node = reinterpret_cast<mako::Node*>(
+            tl_encoded_val_buf.data()
+            + tl_encoded_val_buf.size() - mako::BITS_OF_NODE);
+        node->timestamp = 0;
+        node->data_size = 0;
+        node->data = nullptr;
+        s = redis_table_put(txn, tl_key_buf, tl_encoded_val_buf);
+        if (s.ok() && !g_redis_bench_skip_ttl) {
+            s = redis_table_delete(txn, tl_ttl_key_buf);
+        }
+        if (!s.ok() && !s.IsNotFound()) {
+            return abort_transaction();
+        }
+
+        g_mako_db->Commit(txn);
+        wait_for_redis_replication();
+        redis_cache_put(key_hash, key_ptr, key_len, val_ptr, val_len);
+        result->status = FAST_MAKO_SET_OK;
+        record_fast_commit();
+        return true;
+    } catch (abstract_db::abstract_abort_exception&) {
+        return abort_transaction();
+    } catch (...) {
+        return abort_transaction();
+    }
+}
+
+// Generic executor for single commands and MULTI/EXEC batches.
 bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     ensure_thread_info();
 
@@ -444,6 +945,13 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         // One Rust protocol worker already serializes all FFI executor calls.
     } else if (redis_request_has_flushdb(request)) {
         redis_keyspace_exclusive_lock = std::unique_lock<std::shared_mutex>(g_redis_keyspace_mutex);
+        // Generic operations take the keyspace lock before any stripe. Once
+        // exclusive ownership is established, acquiring every stripe cannot
+        // deadlock and excludes specialized GET/SET until the scan completes.
+        redis_key_locks.reserve(kRedisTxnLockStripes);
+        for (size_t stripe = 0; stripe < kRedisTxnLockStripes; ++stripe) {
+            redis_key_locks.emplace_back(g_redis_txn_key_mutexes[stripe]);
+        }
     } else {
         redis_keyspace_shared_lock = std::shared_lock<std::shared_mutex>(g_redis_keyspace_mutex);
         if (request != nullptr
@@ -469,6 +977,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         response->results[0].success = ok;
         response->results[0].value_present = ok;
         if (ok) {
+            redis_cache_clear();
             g_mako_txn_commits.fetch_add(1, std::memory_order_relaxed);
         } else {
             g_mako_txn_aborts.fetch_add(1, std::memory_order_relaxed);
@@ -780,7 +1289,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
 
     auto read_raw = [&](void* txn, const std::string& key, std::string& value, bool& exists) {
         value.clear();
-        mako::Status s = g_table->Get(txn, key, value);
+        mako::Status s = redis_table_get(txn, key, value);
         if (s.ok()) {
             exists = true;
             return s;
@@ -799,7 +1308,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
 
     auto delete_raw_if_exists = [&](void* txn, const std::string& key) {
         if (!key.empty() && static_cast<unsigned char>(key[0]) == 0x01) {
-            mako::Status s = g_table->Delete(txn, key);
+            mako::Status s = redis_table_delete(txn, key);
             return s.IsNotFound() ? mako::Status::OK() : s;
         }
         auto batch_it = batch_exists.find(key);
@@ -807,14 +1316,14 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             if (!batch_it->second) {
                 return mako::Status::OK();
             }
-            return g_table->Delete(txn, key);
+            return redis_table_delete(txn, key);
         }
         bool exists = false;
         mako::Status s = read_raw_exists(txn, key, exists);
         if (!s.ok() || !exists) {
             return s;
         }
-        return g_table->Delete(txn, key);
+        return redis_table_delete(txn, key);
     };
 
     auto now_unix_ms = []() {
@@ -897,7 +1406,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
 
     auto put_raw = [&](void* txn, const std::string& key, const std::string& raw_value) {
         owned_encoded_vals.push_back(mako::Encode(raw_value));
-        return g_table->Put(txn, key, owned_encoded_vals.back());
+        return redis_table_put(txn, key, owned_encoded_vals.back());
     };
 
     auto write_ttl_meta = [&](void* txn, const std::string& user_key, int64_t expire_at_ms) {
@@ -948,7 +1457,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         std::optional<std::string> scan_end = storage_prefix_upper(storage_prefix);
         const std::string* scan_end_ptr = scan_end ? &*scan_end : nullptr;
 
-        class DbSizeChunkScanCallback : public abstract_ordered_index::scan_callback {
+        class DbSizeChunkScanCallback : public oi_scan_callback {
         public:
             DbSizeChunkScanCallback(
                 size_t limit,
@@ -1024,7 +1533,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     expired_user_keys,
                     last_storage_key,
                     is_expired);
-                g_table->scan(scan_txn, scan_start, scan_end_ptr, callback, tl_arena);
+                tx_scan(g_table, scan_txn, scan_start, scan_end_ptr, callback, tl_arena);
 
                 for (const auto& expired_user_key : expired_user_keys) {
                     mako::Status s = delete_raw_if_exists(scan_txn, "table_key_" + expired_user_key);
@@ -1420,7 +1929,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         std::optional<std::string> scan_end = storage_prefix_upper(member_prefix);
         const std::string* scan_end_ptr = scan_end ? &*scan_end : nullptr;
 
-        class ZSetMemberScanCallback : public abstract_ordered_index::scan_callback {
+        class ZSetMemberScanCallback : public oi_scan_callback {
         public:
             ZSetMemberScanCallback(
                 std::map<std::string, double>& values,
@@ -1457,7 +1966,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 return parse_zset_score_value(input, out);
             };
         ZSetMemberScanCallback callback(values, member_prefix, member_prefix.size(), parse_score);
-        g_table->scan(txn, member_prefix, scan_end_ptr, callback, tl_arena);
+        tx_scan(g_table, txn, member_prefix, scan_end_ptr, callback, tl_arena);
 
         for (const auto& [storage_key, exists] : batch_exists) {
             if (storage_key.rfind(member_prefix, 0) != 0) {
@@ -1780,7 +2289,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         std::optional<std::string> scan_end = storage_prefix_upper(storage_prefix);
         const std::string* scan_end_ptr = scan_end ? &*scan_end : nullptr;
 
-        class SetScanCallback : public abstract_ordered_index::scan_callback {
+        class SetScanCallback : public oi_scan_callback {
         public:
             SetScanCallback(
                 std::vector<std::string>& members,
@@ -1806,7 +2315,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         };
 
         SetScanCallback callback(members, storage_prefix, user_prefix.size());
-        g_table->scan(txn, storage_prefix, scan_end_ptr, callback, tl_arena);
+        tx_scan(g_table, txn, storage_prefix, scan_end_ptr, callback, tl_arena);
         std::unordered_set<std::string> merged(members.begin(), members.end());
         for (const auto& [storage_key, exists] : batch_exists) {
             if (storage_key.rfind(storage_prefix, 0) != 0) {
@@ -1863,7 +2372,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         std::optional<std::string> scan_end = storage_prefix_upper(field_prefix);
         const std::string* scan_end_ptr = scan_end ? &*scan_end : nullptr;
 
-        class HashScanCallback : public abstract_ordered_index::scan_callback {
+        class HashScanCallback : public oi_scan_callback {
         public:
             HashScanCallback(
                 std::map<std::string, std::string>& entries,
@@ -1889,7 +2398,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         };
 
         HashScanCallback callback(entries, field_prefix, field_prefix.size());
-        g_table->scan(txn, field_prefix, scan_end_ptr, callback, tl_arena);
+        tx_scan(g_table, txn, field_prefix, scan_end_ptr, callback, tl_arena);
         for (const auto& [storage_key, exists] : batch_exists) {
             if (storage_key.rfind(field_prefix, 0) != 0) {
                 continue;
@@ -2629,7 +3138,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
             } else if (op.op == TXN_OP_DEL) {
                 // DEL operation
-                // @unsafe { g_table->Delete calls non-borrow-checked Masstree code }
+                // @unsafe { redis_table_delete calls non-borrow-checked Masstree code }
                 bool exists = false;
                 mako::Status exists_status = read_logical_exists(txn, user_key, tl_key_buf, exists);
                 if (!exists_status.ok()) {
@@ -2692,7 +3201,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     s = delete_hash(txn, user_key);
                 }
                 if (s.ok() && string_exists) {
-                    s = g_table->Delete(txn, tl_key_buf);
+                    s = redis_table_delete(txn, tl_key_buf);
                 }
                 result.success = s.ok();
                 result.value_present = exists;
@@ -4414,7 +4923,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     bool string_exists = false;
                     mako::Status s = read_string_exists_no_expire(txn, tl_key_buf, string_exists);
                     if (s.ok() && string_exists) {
-                        s = g_table->Delete(txn, tl_key_buf);
+                        s = redis_table_delete(txn, tl_key_buf);
                     }
                     if (s.ok() && string_exists) {
                         batch_exists[tl_key_buf] = false;
@@ -5611,7 +6120,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
             } else if (op.op == TXN_OP_FLUSHDB) {
                 std::vector<std::string> keys_to_delete;
-                class FlushScanCallback : public abstract_ordered_index::scan_callback {
+                class FlushScanCallback : public oi_scan_callback {
                 public:
                     explicit FlushScanCallback(std::vector<std::string>& keys)
                         : keys_(keys) {}
@@ -5626,10 +6135,10 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 };
 
                 FlushScanCallback callback(keys_to_delete);
-                g_table->scan(txn, std::string(), nullptr, callback, tl_arena);
+                tx_scan(g_table, txn, std::string(), nullptr, callback, tl_arena);
                 mako::Status s = mako::Status::OK();
                 for (const auto& storage_key : keys_to_delete) {
-                    s = g_table->Delete(txn, storage_key);
+                    s = redis_table_delete(txn, storage_key);
                     if (!s.ok() && !s.IsNotFound()) {
                         break;
                     }
@@ -5678,7 +6187,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 bool has_more = false;
                 int64_t visible_count = 0;
 
-                class RedisScanCallback : public abstract_ordered_index::scan_callback {
+                class RedisScanCallback : public oi_scan_callback {
                 public:
                     RedisScanCallback(
                         bool count_only,
@@ -5765,7 +6274,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     has_more,
                     visible_count,
                     is_expired);
-                g_table->scan(txn, scan_start, scan_end_ptr, callback, tl_arena);
+                tx_scan(g_table, txn, scan_start, scan_end_ptr, callback, tl_arena);
 
                 for (const auto& expired_user_key : expired_user_keys) {
                     std::string expired_storage_key = "table_key_" + expired_user_key;
@@ -5860,6 +6369,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             g_mako_db->Commit(txn);
             if (has_write) {
                 wait_for_redis_replication();
+                redis_cache_invalidate_committed_writes(request);
             }
             response->transaction_success = true;
             g_mako_txn_commits.fetch_add(1, std::memory_order_relaxed);
@@ -5899,6 +6409,7 @@ extern "C" {
     // Called by Rust when each worker thread starts
     void cpp_worker_thread_init(size_t thread_id) {
         ensure_thread_info();
+        tl_redis_worker_id = thread_id;
         std::cout << "[cpp] Worker thread " << thread_id << " initialized" << std::endl;
     }
 
@@ -5907,8 +6418,19 @@ extern "C" {
         cleanup_thread_info();
     }
 
-    // Execute a batch of operations as a single database transaction
-    // This is used for both single operations (GET/SET) and batched MULTI/EXEC
+    // Specialized allocation-light path for plain GET and unconditional SET.
+    bool cpp_execute_fast_mako_string(
+        uint32_t op,
+        const uint8_t* key_ptr,
+        size_t key_len,
+        const uint8_t* val_ptr,
+        size_t val_len,
+        FastMakoStringResult* result) {
+        return execute_fast_mako_string(
+            op, key_ptr, key_len, val_ptr, val_len, result);
+    }
+
+    // Generic command/fallback and MULTI/EXEC entry point.
     bool cpp_execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return execute_transaction(request, response);
     }
@@ -5919,9 +6441,21 @@ extern "C" {
     }
 
     bool cpp_get_metrics(MakoMetrics* metrics) {
-        return makocon_ffi::populate_metrics(
+        const bool ok = makocon_ffi::populate_metrics(
             metrics, g_mako_start_time, g_mako_txn_commits, g_mako_txn_aborts,
             g_mako_txn_retries);
+        if (ok) {
+            append_fast_metrics(metrics);
+            metrics->cache_enabled = redis_cache_enabled() ? 1 : 0;
+            metrics->cache_capacity_bytes = g_redis_cache_capacity_bytes;
+            metrics->cache_hits = g_redis_cache_hits.load(std::memory_order_relaxed);
+            metrics->cache_misses = g_redis_cache_misses.load(std::memory_order_relaxed);
+            metrics->cache_inserts = g_redis_cache_inserts.load(std::memory_order_relaxed);
+            metrics->cache_evictions = g_redis_cache_evictions.load(std::memory_order_relaxed);
+            metrics->cache_invalidations = g_redis_cache_invalidations.load(std::memory_order_relaxed);
+            redis_cache_usage(metrics->cache_entries, metrics->cache_bytes);
+        }
+        return ok;
     }
 
     void cpp_record_txn_retry(void) {
@@ -5937,12 +6471,35 @@ int main() {
     int nshards = 1;
     int shard_index = 0;
     int nthreads = 32;
+    int bench_value_size = 8;
+    int cache_mb = 0;
     if (!parse_env_int("MAKO_REDIS_THREADS", 32, 1, 32, nthreads) ||
         !parse_env_int("MAKO_NUM_SHARDS", 1, 1, 10, nshards) ||
-        !parse_env_int("MAKO_SHARD_INDEX", 0, 0, nshards - 1, shard_index)) {
+        !parse_env_int("MAKO_SHARD_INDEX", 0, 0, nshards - 1, shard_index) ||
+        !parse_env_int("MAKO_REDIS_BENCH_VALUE_SIZE", 8, 0, 1048576, bench_value_size) ||
+        !parse_env_int("MAKO_REDIS_CACHE_MB", 0, 0, 65536, cache_mb)) {
         return 1;
     }
     g_redis_single_worker_mode = nthreads == 1;
+    g_redis_bench_skip_ttl = env_enabled("MAKO_REDIS_BENCH_SKIP_TTL");
+    g_redis_bench_no_db = env_enabled("MAKO_REDIS_BENCH_NO_DB");
+    g_redis_bench_skip_locks = env_enabled("MAKO_REDIS_BENCH_SKIP_LOCKS");
+    g_redis_bench_skip_mutex = env_enabled("MAKO_REDIS_BENCH_SKIP_MUTEX");
+    g_redis_bench_value_size = static_cast<size_t>(bench_value_size);
+    g_redis_cache_capacity_bytes = static_cast<size_t>(cache_mb) * 1024 * 1024;
+    if (redis_cache_enabled()) {
+        std::cout << "Redis string cache enabled: capacity=" << cache_mb
+                  << " MiB; coherence=Redis-mediated writes only; TTL values bypass cache"
+                  << std::endl;
+    }
+    if (g_redis_bench_skip_ttl || g_redis_bench_no_db
+        || g_redis_bench_skip_locks || g_redis_bench_skip_mutex) {
+        std::cerr << "WARNING: benchmark-only Redis semantics ablation enabled:"
+                  << " skip_ttl=" << g_redis_bench_skip_ttl
+                  << " no_db=" << g_redis_bench_no_db
+                  << " skip_locks=" << g_redis_bench_skip_locks
+                  << " skip_mutex=" << g_redis_bench_skip_mutex << std::endl;
+    }
     std::vector<int> local_shards;
     if (!parse_local_shards(getenv("MAKO_LOCAL_SHARDS"), nshards, local_shards)) {
         return 1;

@@ -6,7 +6,9 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 import os
+import random
 import re
 import shutil
 import signal
@@ -90,6 +92,10 @@ class Config:
     warmup: int
     repeats: int
     clients_per_worker: int
+    preload_threads: int
+    preload_max_retries: int
+    server_settle_seconds: int
+    pipeline_depth: int
     host: str
     port: int
     server_cpu_pool: list[int]
@@ -97,10 +103,20 @@ class Config:
     out_dir: Path
     commit: str
     direct_raw: Path | None
+    profile: str
+    experiment_seed: int
+    max_latency_samples_per_thread: int
 
 
 def load_config() -> Config:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    profile = os.environ.get("MAKO_SCALING_PROFILE", "development")
+    if profile not in {"development", "paper", "paper-soak"}:
+        raise SystemExit(
+            "MAKO_SCALING_PROFILE must be development, paper, or paper-soak"
+        )
+    paper = profile == "paper"
+    paper_soak = profile == "paper-soak"
     build_dir = Path(os.environ.get("MAKO_SCALING_BUILD_DIR", "/tmp/codex-pr72-build-final"))
     workers = parse_ints(os.environ.get("MAKO_SCALING_WORKERS", "1 2 4 8 16 24 32"))
     workloads = [
@@ -161,10 +177,20 @@ def load_config() -> Config:
         keys=env_int("MAKO_SCALING_KEYS", 1_000_000, 1),
         value_size=env_int("MAKO_SCALING_VALUE_SIZE", 8),
         read_percent=env_int("MAKO_SCALING_READ_PERCENT", 80),
-        duration=env_int("MAKO_SCALING_DURATION", 20, 1),
-        warmup=env_int("MAKO_SCALING_WARMUP", 2),
-        repeats=env_int("MAKO_SCALING_REPEATS", 3, 1),
-        clients_per_worker=env_int("MAKO_SCALING_CLIENTS_PER_WORKER", 1, 1),
+        duration=env_int(
+            "MAKO_SCALING_DURATION", 1800 if paper_soak else (30 if paper else 20), 1
+        ),
+        warmup=env_int(
+            "MAKO_SCALING_WARMUP", 10 if paper or paper_soak else 2
+        ),
+        repeats=env_int(
+            "MAKO_SCALING_REPEATS", 1 if paper_soak else (5 if paper else 3), 1
+        ),
+        clients_per_worker=env_int("MAKO_SCALING_CLIENTS_PER_WORKER", 2, 1),
+        preload_threads=env_int("MAKO_SCALING_PRELOAD_THREADS", 8, 1),
+        preload_max_retries=env_int("MAKO_SCALING_PRELOAD_MAX_RETRIES", 100),
+        server_settle_seconds=env_int("MAKO_SCALING_SERVER_SETTLE", 5),
+        pipeline_depth=env_int("MAKO_SCALING_PIPELINE_DEPTH", 1, 1),
         host=os.environ.get("MAKO_SCALING_HOST", "127.0.0.1"),
         port=env_int("MAKO_SCALING_PORT", 6410, 1),
         server_cpu_pool=parse_cpu_pool(
@@ -180,14 +206,38 @@ def load_config() -> Config:
             if os.environ.get("MAKO_SCALING_DIRECT_RAW")
             else None
         ),
+        profile=profile,
+        experiment_seed=env_int("MAKO_SCALING_SEED", 20260822),
+        max_latency_samples_per_thread=env_int(
+            "MAKO_SCALING_MAX_LATENCY_SAMPLES_PER_THREAD", 65_536, 1
+        ),
     )
-    if config.workers != sorted(config.workers) or config.workers[0] != 1:
-        raise SystemExit(
-            "MAKO_SCALING_WORKERS must be sorted and start at 1 "
-            "so speedup and efficiency have a one-worker baseline"
-        )
+    if config.workers != sorted(config.workers):
+        raise SystemExit("MAKO_SCALING_WORKERS must be sorted")
     if config.read_percent < 0 or config.read_percent > 100:
         raise SystemExit("MAKO_SCALING_READ_PERCENT must be between 0 and 100")
+    if config.pipeline_depth > 4096:
+        raise SystemExit("MAKO_SCALING_PIPELINE_DEPTH must be <= 4096")
+    if config.max_latency_samples_per_thread > 10_000_000:
+        raise SystemExit(
+            "MAKO_SCALING_MAX_LATENCY_SAMPLES_PER_THREAD must be <= 10000000"
+        )
+    if config.profile == "paper" and (
+        config.duration < 30 or config.warmup < 10 or config.repeats < 5
+    ):
+        raise SystemExit(
+            "paper profile requires duration >= 30, warmup >= 10, and repeats >= 5"
+        )
+    if config.profile == "paper-soak" and (
+        config.duration < 1800
+        or config.warmup < 10
+        or config.repeats != 1
+        or config.targets != {"redis"}
+    ):
+        raise SystemExit(
+            "paper-soak profile requires Redis only, duration >= 1800, "
+            "warmup >= 10, and exactly one repeat"
+        )
     if max(config.workers) > len(config.server_cpu_pool):
         raise SystemExit("server CPU pool is smaller than the largest worker count")
     if set(config.server_cpu_pool) & set(config.client_cpu_pool):
@@ -202,6 +252,13 @@ def load_config() -> Config:
                 f"MAKO_SCALING_DIRECT_RAW does not exist: {config.direct_raw}"
             )
     return config
+
+
+def ordered_workloads(config: Config, workers: int) -> list[str]:
+    """Return a deterministic randomized order to avoid fixed-order drift."""
+    workloads = list(config.workloads)
+    random.Random(config.experiment_seed + workers).shuffle(workloads)
+    return workloads
 
 
 def validate_physical_core_isolation(config: Config) -> None:
@@ -292,6 +349,33 @@ def request_worker_tids(pid: int) -> set[int]:
     return {min(tids) for tids in tids_by_worker.values()}
 
 
+def wait_for_worker_tids(
+    process: subprocess.Popen[bytes], expected: int, timeout_seconds: float = 10.0
+) -> set[int]:
+    deadline = time.monotonic() + timeout_seconds
+    last_count = 0
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"makoCon exited while waiting for worker threads: {process.returncode}"
+            )
+        try:
+            tids = request_worker_tids(process.pid)
+        except (FileNotFoundError, RuntimeError):
+            tids = set()
+        last_count = len(tids)
+        if last_count == expected:
+            return tids
+        if last_count > expected:
+            raise RuntimeError(
+                f"expected {expected} Redis workers, found {last_count}"
+            )
+        time.sleep(0.1)
+    raise RuntimeError(
+        f"timed out waiting for {expected} Redis workers; found {last_count}"
+    )
+
+
 def parse_pidstat(
     output: str, pid: int, worker_tids: set[int]
 ) -> tuple[int, float, float, float]:
@@ -365,6 +449,9 @@ RAW_FIELDS = [
     "p50_us",
     "p95_us",
     "p99_us",
+    "latency_observations",
+    "latency_samples",
+    "latency_sampling",
     "aborts",
     "server_cpu_set",
     "client_cpu_set",
@@ -417,6 +504,7 @@ def import_direct_rows(config: Config, writer: csv.DictWriter[str]) -> None:
 
 def run_direct(config: Config, raw_writer: csv.DictWriter[str]) -> None:
     for workers in config.workers:
+        workloads = ordered_workloads(config, workers)
         cpu_set = cpu_list(config.server_cpu_pool[:workers])
         result_csv = config.out_dir / f"direct_{workers}w.csv"
         log_path = config.out_dir / f"direct_{workers}w.log"
@@ -440,7 +528,7 @@ def run_direct(config: Config, raw_writer: csv.DictWriter[str]) -> None:
             "--read-percent",
             str(config.read_percent),
             "--workloads",
-            ",".join(config.workloads),
+            ",".join(workloads),
             "--out",
             str(result_csv),
         ]
@@ -511,6 +599,10 @@ def resp_command(
         str(duration),
         "--read-percent",
         str(config.read_percent),
+        "--pipeline-depth",
+        str(config.pipeline_depth),
+        "--max-latency-samples-per-thread",
+        str(config.max_latency_samples_per_thread),
         "--workloads",
         workload,
         "--skip-preload",
@@ -549,16 +641,15 @@ def run_redis(config: Config, raw_writer: csv.DictWriter[str]) -> None:
         )
         try:
             wait_for_server(server, config.host, config.port)
-            tids = request_worker_tids(server.pid)
-            if len(tids) != workers:
-                raise RuntimeError(
-                    f"expected {workers} Redis workers, found {len(tids)}"
-                )
+            tids = wait_for_worker_tids(server, workers)
+            if config.server_settle_seconds:
+                time.sleep(config.server_settle_seconds)
             print(
                 f"Redis-over-Mako workers={workers} clients={clients}: preload",
                 flush=True,
             )
             preload_log = config.out_dir / f"redis_{workers}w_preload.log"
+            preload_threads = min(workers, config.preload_threads)
             with preload_log.open("wb") as log:
                 subprocess.run(
                     [
@@ -577,7 +668,9 @@ def run_redis(config: Config, raw_writer: csv.DictWriter[str]) -> None:
                         "--threads",
                         str(workers),
                         "--preload-threads",
-                        str(workers),
+                        str(preload_threads),
+                        "--preload-max-retries",
+                        str(config.preload_max_retries),
                         "--preload-only",
                     ],
                     cwd=ROOT,
@@ -586,7 +679,7 @@ def run_redis(config: Config, raw_writer: csv.DictWriter[str]) -> None:
                     check=True,
                 )
 
-            for workload in config.workloads:
+            for workload in ordered_workloads(config, workers):
                 if config.warmup > 0:
                     warmup_csv = config.out_dir / f"redis_{workers}w_{workload}_warmup.csv"
                     warmup_log = config.out_dir / f"redis_{workers}w_{workload}_warmup.log"
@@ -699,6 +792,11 @@ def run_redis(config: Config, raw_writer: csv.DictWriter[str]) -> None:
                             "p50_us": source["p50_us"],
                             "p95_us": source["p95_us"],
                             "p99_us": source["p99_us"],
+                            "latency_observations": source.get(
+                                "latency_observations", ""
+                            ),
+                            "latency_samples": source.get("latency_samples", ""),
+                            "latency_sampling": source.get("latency_sampling", ""),
                             "server_cpu_set": server_cpu_set,
                             "client_cpu_set": client_cpu_set,
                         },
@@ -715,6 +813,12 @@ SUMMARY_FIELDS = [
     "repeats",
     "mean_ops_per_sec",
     "stdev_ops_per_sec",
+    "min_ops_per_sec",
+    "max_ops_per_sec",
+    "ci95_low_ops_per_sec",
+    "ci95_high_ops_per_sec",
+    "ci95_half_width_ops_per_sec",
+    "coefficient_of_variation_pct",
     "throughput_pct_of_direct_mako",
     "speedup_vs_1",
     "scaling_efficiency_pct",
@@ -730,8 +834,55 @@ SUMMARY_FIELDS = [
     "mean_p50_us",
     "mean_p95_us",
     "mean_p99_us",
+    "mean_latency_observations",
+    "mean_latency_samples",
     "total_aborts",
 ]
+
+
+T_CRITICAL_975 = {
+    1: 12.706,
+    2: 4.303,
+    3: 3.182,
+    4: 2.776,
+    5: 2.571,
+    6: 2.447,
+    7: 2.365,
+    8: 2.306,
+    9: 2.262,
+    10: 2.228,
+    11: 2.201,
+    12: 2.179,
+    13: 2.160,
+    14: 2.145,
+    15: 2.131,
+    16: 2.120,
+    17: 2.110,
+    18: 2.101,
+    19: 2.093,
+    20: 2.086,
+    21: 2.080,
+    22: 2.074,
+    23: 2.069,
+    24: 2.064,
+    25: 2.060,
+    26: 2.056,
+    27: 2.052,
+    28: 2.048,
+    29: 2.045,
+    30: 2.042,
+}
+
+
+def confidence_interval_95(values: list[float]) -> tuple[float, float, float]:
+    """Student-t interval for the arithmetic mean of independent trials."""
+    mean = statistics.mean(values)
+    if len(values) < 2:
+        return mean, mean, 0.0
+    degrees = len(values) - 1
+    critical = T_CRITICAL_975.get(degrees, 1.96)
+    half_width = critical * statistics.stdev(values) / math.sqrt(len(values))
+    return mean - half_width, mean + half_width, half_width
 
 
 def mean_optional(rows: list[dict[str, str]], field: str) -> str:
@@ -751,17 +902,6 @@ def summarize(raw_path: Path, summary_path: Path) -> None:
         key: statistics.mean(float(row["ops_per_sec"]) for row in group)
         for key, group in groups.items()
     }
-    baselines = {
-        (benchmark, workload): means[(benchmark, workload, workers)]
-        for benchmark, workload, workers in groups
-        if workers
-        == min(
-            key_workers
-            for key_benchmark, key_workload, key_workers in groups
-            if key_benchmark == benchmark and key_workload == workload
-        )
-    }
-
     with summary_path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=SUMMARY_FIELDS)
         writer.writeheader()
@@ -770,8 +910,16 @@ def summarize(raw_path: Path, summary_path: Path) -> None:
             group = groups[key]
             throughputs = [float(row["ops_per_sec"]) for row in group]
             mean_throughput = statistics.mean(throughputs)
-            baseline = baselines[(benchmark, workload)]
-            speedup = mean_throughput / baseline
+            stdev_throughput = (
+                statistics.stdev(throughputs) if len(throughputs) > 1 else 0.0
+            )
+            ci_low, ci_high, ci_half_width = confidence_interval_95(throughputs)
+            one_worker_baseline = means.get((benchmark, workload, 1))
+            speedup = (
+                mean_throughput / one_worker_baseline
+                if one_worker_baseline is not None
+                else None
+            )
             direct_throughput = means.get(("direct-mako", workload, workers))
             writer.writerow(
                 {
@@ -781,8 +929,16 @@ def summarize(raw_path: Path, summary_path: Path) -> None:
                     "repeats": len(group),
                     "mean_ops_per_sec": f"{mean_throughput:.6f}",
                     "stdev_ops_per_sec": (
-                        f"{statistics.stdev(throughputs):.6f}"
-                        if len(throughputs) > 1
+                        f"{stdev_throughput:.6f}"
+                    ),
+                    "min_ops_per_sec": f"{min(throughputs):.6f}",
+                    "max_ops_per_sec": f"{max(throughputs):.6f}",
+                    "ci95_low_ops_per_sec": f"{ci_low:.6f}",
+                    "ci95_high_ops_per_sec": f"{ci_high:.6f}",
+                    "ci95_half_width_ops_per_sec": f"{ci_half_width:.6f}",
+                    "coefficient_of_variation_pct": (
+                        f"{stdev_throughput / mean_throughput * 100:.6f}"
+                        if mean_throughput > 0
                         else "0.000000"
                     ),
                     "throughput_pct_of_direct_mako": (
@@ -790,8 +946,14 @@ def summarize(raw_path: Path, summary_path: Path) -> None:
                         if direct_throughput is not None
                         else ""
                     ),
-                    "speedup_vs_1": f"{speedup:.6f}",
-                    "scaling_efficiency_pct": f"{speedup / workers * 100:.6f}",
+                    "speedup_vs_1": (
+                        f"{speedup:.6f}" if speedup is not None else ""
+                    ),
+                    "scaling_efficiency_pct": (
+                        f"{speedup / workers * 100:.6f}"
+                        if speedup is not None
+                        else ""
+                    ),
                     "mean_ops_per_sec_per_worker": mean_optional(
                         group, "ops_per_sec_per_worker"
                     ),
@@ -820,6 +982,12 @@ def summarize(raw_path: Path, summary_path: Path) -> None:
                     "mean_p50_us": mean_optional(group, "p50_us"),
                     "mean_p95_us": mean_optional(group, "p95_us"),
                     "mean_p99_us": mean_optional(group, "p99_us"),
+                    "mean_latency_observations": mean_optional(
+                        group, "latency_observations"
+                    ),
+                    "mean_latency_samples": mean_optional(
+                        group, "latency_samples"
+                    ),
                     "total_aborts": sum(
                         int(row["aborts"]) for row in group if row.get("aborts")
                     ),
@@ -876,7 +1044,16 @@ def write_manifest(config: Config, path: Path) -> None:
         "duration_seconds": config.duration,
         "warmup_seconds": config.warmup,
         "repeats": config.repeats,
+        "profile": config.profile,
+        "experiment_seed": config.experiment_seed,
         "clients_per_worker": config.clients_per_worker,
+        "server_settle_seconds_before_preload": config.server_settle_seconds,
+        "preload_threads_cap": config.preload_threads,
+        "preload_max_retries_per_key": config.preload_max_retries,
+        "effective_preload_threads": {
+            str(workers): min(workers, config.preload_threads)
+            for workers in config.workers
+        },
         "direct_raw_source": str(config.direct_raw)
         if config.direct_raw is not None
         else None,
@@ -885,8 +1062,22 @@ def write_manifest(config: Config, path: Path) -> None:
         else None,
         "shards": 1,
         "replication": False,
-        "pipeline_depth": 1,
+        "pipeline_depth": config.pipeline_depth,
+        "max_latency_samples_per_thread": config.max_latency_samples_per_thread,
+        "latency_sampling": "deterministic reservoir sampling per client thread",
+        "benchmark_ablation": {
+            "skip_ttl": os.environ.get("MAKO_REDIS_BENCH_SKIP_TTL", "0"),
+            "no_database": os.environ.get("MAKO_REDIS_BENCH_NO_DB", "0"),
+            "skip_locks": os.environ.get("MAKO_REDIS_BENCH_SKIP_LOCKS", "0"),
+            "skip_mutex": os.environ.get("MAKO_REDIS_BENCH_SKIP_MUTEX", "0"),
+            "value_size": os.environ.get("MAKO_REDIS_BENCH_VALUE_SIZE", "8"),
+        },
         "load_model": "closed-loop",
+        "measurement_unit": "successful single-key Redis commands per second",
+        "comparison_scope": (
+            "same-host direct Mako is an in-process upper bound; results are not "
+            "equivalent to multi-operation replicated Rolis or Mako transactions"
+        ),
         "server_cpu_pool": config.server_cpu_pool,
         "client_cpu_pool": config.client_cpu_pool,
         "lscpu": lscpu,

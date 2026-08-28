@@ -6,10 +6,58 @@ wire protocol and command API; the default `makoCon` target executes data
 operations through Mako transactions and Masstree. Redis is not a second
 database behind this interface.
 
+An optional bounded string cache can be enabled with
+`MAKO_REDIS_CACHE_MB=<MiB>`. It is a read-through cache for plain strings
+without TTL: cache hits bypass Mako, fast plain SET refreshes an existing entry
+after the Mako commit, and generic Redis writes invalidate affected keys after
+commit. The next GET reloads an invalidated value. TTL-bearing values and
+collections always use Mako. Cache
+coherence currently covers writes made through this `makoCon` process; leave it
+disabled (the default) if independent clients write the same Mako keyspace.
+Cache hit, miss, insertion, eviction, invalidation, entry, and byte counters are
+reported by `INFO mako`.
+
 The semantic target is `third-party/redis/cpp/makoCon.cc` with
 `MAKO_REDIS_BACKEND=mako`, which is the default. The optional `memory` backend
 and `makoConMultiTrd` are not correctness targets for the results below.
 The worker-scaling methodology and 2026-07-27 results are in
+[`SCALABILITY.md`](SCALABILITY.md).
+The 2026-08-24 bottleneck ablations, performance changes, and final validation
+are in [`OPTIMIZATION_20260824.md`](OPTIMIZATION_20260824.md).
+
+Worker scope is part of that semantic target: the shared-listener server is
+validated with 1-32 request workers for the covered single-shard command and
+concurrency surface. Historical one-worker-only wording is stale. This does not
+extend the claim to complete Redis compatibility, every replication topology,
+or unfinished cross-shard operations.
+
+### 2026-08-22 Upstream-Merge Revalidation
+
+PR 72 was merged locally with upstream `mako-dev` at merge commit
+`e5d7f585475fa9fbc854f5073add0250bf098986` and rebuilt on `zoo-002` (ag2)
+with Clang 22.1.2 and CMake 4.3.4. The Redis adapter and direct baseline were
+migrated from the removed `Get`/`Put` storage facade to upstream `tx_get` and
+`tx_put` helpers.
+
+The post-merge binary passed 105/105 focused pytest cases, all 114 command
+probe cases, all 11 scoped Redis Tcl files, the 8/8 ecosystem-client matrix,
+a 97,109-operation G4 serializable history, the 10-second soak guard, and all
+80 RESP fuzz cases. Fixture-dependent multi-shard, replication failover,
+restart, and client-failover checks remain explicitly N/A in the local ag2
+acceptance artifact; they are not counted as passes.
+
+The matched capacity method uses two closed-loop clients per worker, one
+million 8-byte values, an 80% GET / 20% SET uniform-random mix, a two-second
+warmup, and three 20-second samples. At 16 workers, Redis-over-Mako measured
+812,229 operations/s at pipeline depth 1, 9.64 million at depth 64, and 10.94
+million at depth 512. The matched direct-Mako baseline was 20.29 million
+operations/s. At 32 workers the three Redis-facing results were 1.24 million,
+14.89 million, and 16.30 million operations/s, respectively.
+
+The older 2026-08-15 pipeline checkpoint below was measured on `zoo-003`, not
+ag2, and used one 10-second sample per depth. Its absolute numbers are retained
+as historical evidence, not as an identical-host regression threshold. Full
+ag2 methods, variance, CPU accounting, latency, and artifact paths are in
 [`SCALABILITY.md`](SCALABILITY.md).
 
 ## Latest Validation Snapshot
@@ -32,6 +80,28 @@ rebuilt binary on port 6396.
 | RESP fuzz guard | PASS, 80 cases | Random/malformed frames did not kill the server; immediate and delayed health checks passed |
 | Soak guard | PASS, 577 serial SET/GET pairs in 10 seconds | Basic repeated operation and process-resource liveness; this is not a throughput benchmark |
 | Worker CPU benchmark | PASS | Active request workers matched persistent client count and the server did not saturate its configured workers |
+
+### 2026-08-15 PR 72 Delta
+
+A focused 16-worker run at PR-head commit
+`049f605c059962604242bf799c9240171c5df62f` plus the local changes in this
+checkout added a specialized allocation-light GET/SET executor, exact
+per-worker metric shards, distributed fast-path key locking, and a buffered
+pipeline-capable scalability client.
+
+The final 80% GET / 20% SET curve reached 10.51 million operations/s at
+pipeline depth 64 with p99 274 us, or 51.4% of the matched 20.47 million
+operations/s direct-Mako baseline. Depth 512 reached 12.25 million operations/s
+(59.8% of direct) at p99 1.80 ms. With no pipelining it reached 599,596
+operations/s (2.93% of direct), so latency-sensitive single-outstanding-command
+traffic is still not comparable to direct Mako. Full method, ablations, CPU
+accounting, and the latency tradeoff are in [`SCALABILITY.md`](SCALABILITY.md).
+
+With benchmark-only ablations disabled, the final 16-worker binary passed all
+40 Rust tests, all 105 focused pytest cases, exact sharded metric checks, 30
+concurrent `FLUSHDB` rounds, and standard plus hot-key G4 histories. This is
+additional evidence for the documented 1-32-worker single-shard scope; it does
+not broaden the command or topology claims.
 
 The generated ecosystem-client result file is
 `third-party/redis/compat/client_test_results.csv`. CSV and JSON artifacts are
@@ -56,6 +126,12 @@ ignored by Git; the dated human-readable findings are retained here.
 | Robustness and operational guards | `run_fuzz.sh`, `run_soak.sh`, `run_restart_durability.py`, `run_client_failover.py` |
 | Worker CPU sampler | `run_worker_cpu_benchmark.py` |
 | Worker-scaling runner | `run_scalability_benchmark.py` |
+| Paper evaluation protocol | `PAPER_EVALUATION.md` |
+| 2026-08-24 optimization report | `OPTIMIZATION_20260824.md` |
+| Paper soak runner | `run_paper_soak.sh` |
+| Paper soak summarizer | `summarize_paper_soak.py` |
+| Latency reservoir regression | `run_latency_sampling_regression.sh` |
+| Paper results generator | `summarize_paper_evaluation.py` |
 | RESP scalability client | `bench_resp_scalability.cpp` |
 | Direct Mako baseline | `examples/makoRedisDirectBench.cc` |
 | Scalability report and plots | `SCALABILITY.md`, `plot_scalability.py` |

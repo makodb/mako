@@ -20,15 +20,23 @@ static_assert(std::is_standard_layout<TxnOpResult>::value,
               "TxnOpResult must stay C-compatible");
 static_assert(std::is_standard_layout<TxnResponse>::value,
               "TxnResponse must stay C-compatible");
+static_assert(std::is_standard_layout<FastMakoStringResult>::value,
+              "FastMakoStringResult must stay C-compatible");
 static_assert(sizeof(TxnOperation) == 64, "TxnOperation layout changed");
 static_assert(sizeof(TxnRequest) == 16, "TxnRequest layout changed");
 static_assert(sizeof(TxnOpResult) == 32, "TxnOpResult layout changed");
 static_assert(sizeof(TxnResponse) == 24, "TxnResponse layout changed");
+static_assert(sizeof(FastMakoStringResult) == 24,
+              "FastMakoStringResult layout changed");
 static_assert(offsetof(TxnOperation, flags) == 40, "TxnOperation.flags offset changed");
 static_assert(offsetof(TxnOperation, expire_at_ms) == 48,
               "TxnOperation.expire_at_ms offset changed");
 static_assert(offsetof(TxnOpResult, int_value) == 24,
               "TxnOpResult.int_value offset changed");
+static_assert(offsetof(FastMakoStringResult, data_ptr) == 8,
+              "FastMakoStringResult.data_ptr offset changed");
+static_assert(offsetof(FastMakoStringResult, data_len) == 16,
+              "FastMakoStringResult.data_len offset changed");
 
 // @safe
 inline bool allocate_response(const TxnRequest* request, TxnResponse* response) {

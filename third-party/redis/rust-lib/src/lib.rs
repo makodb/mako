@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use redis_protocol::resp3::{types::BytesFrame, types::DecodedFrame};
 use socket2::{Domain, Protocol, Socket, Type};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::io::{ErrorKind, Read, Write};
@@ -25,6 +26,27 @@ static NEXT_SCAN_CURSOR_ID: AtomicUsize = AtomicUsize::new(1);
 static RANDOMKEY_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static MAXMEMORY_SETTING: AtomicUsize = AtomicUsize::new(0);
 static LUA_BUSY: AtomicUsize = AtomicUsize::new(0);
+const MAX_REDIS_WORKERS: usize = 32;
+
+#[repr(align(64))]
+struct WorkerCounter(AtomicUsize);
+
+impl WorkerCounter {
+    const fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+}
+
+static WORKER_COMMANDS_PROCESSED: [WorkerCounter; MAX_REDIS_WORKERS] =
+    [const { WorkerCounter::new() }; MAX_REDIS_WORKERS];
+static WORKER_DIRTY_CHANGES: [WorkerCounter; MAX_REDIS_WORKERS] =
+    [const { WorkerCounter::new() }; MAX_REDIS_WORKERS];
+static WORKER_BLPOP_CALLS: [WorkerCounter; MAX_REDIS_WORKERS] =
+    [const { WorkerCounter::new() }; MAX_REDIS_WORKERS];
+
+thread_local! {
+    static REDIS_WORKER_ID: Cell<usize> = const { Cell::new(MAX_REDIS_WORKERS) };
+}
 static SCAN_CURSORS: OnceLock<Mutex<HashMap<usize, Bytes>>> = OnceLock::new();
 static PUBSUB_REGISTRY: OnceLock<Mutex<PubSubRegistry>> = OnceLock::new();
 static UNBLOCK_REQUESTS: OnceLock<Mutex<HashMap<usize, bool>>> = OnceLock::new();
@@ -160,6 +182,12 @@ const TXN_FLAG_Z_REV: u32 = 1 << 29;
 const TXN_FLAG_Z_BYSCORE: u32 = 1 << 30;
 const TXN_FLAG_Z_COUNT_GIVEN: u32 = 1 << 31;
 
+const FAST_MAKO_ABORTED: u32 = 0;
+const FAST_MAKO_GET_MISS: u32 = 1;
+const FAST_MAKO_GET_HIT: u32 = 2;
+const FAST_MAKO_SET_OK: u32 = 3;
+const FAST_MAKO_FALLBACK: u32 = 4;
+
 #[repr(C)]
 struct TxnOperation {
     op: u32,
@@ -195,12 +223,28 @@ struct TxnResponse {
 }
 
 #[repr(C)]
+struct FastMakoStringResult {
+    status: u32,
+    data_ptr: *const u8,
+    data_len: usize,
+}
+
+#[repr(C)]
 #[derive(Default)]
 struct MakoMetrics {
     txn_commits: u64,
     txn_aborts: u64,
     txn_retries: u64,
     uptime_seconds: u64,
+    cache_enabled: u64,
+    cache_capacity_bytes: u64,
+    cache_entries: u64,
+    cache_bytes: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+    cache_inserts: u64,
+    cache_evictions: u64,
+    cache_invalidations: u64,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -248,7 +292,16 @@ struct MemoryEntry {
 extern "C" {
     fn cpp_worker_thread_init(thread_id: usize);
 
-    // All operations (single or batched) go through the transaction interface
+    fn cpp_execute_fast_mako_string(
+        op: u32,
+        key_ptr: *const u8,
+        key_len: usize,
+        val_ptr: *const u8,
+        val_len: usize,
+        result: *mut FastMakoStringResult,
+    ) -> bool;
+
+    // Generic command/fallback and MULTI/EXEC interface.
     fn cpp_execute_transaction(request: *const TxnRequest, response: *mut TxnResponse) -> bool;
     fn cpp_free_transaction_response(response: *mut TxnResponse);
     fn cpp_get_metrics(metrics: *mut MakoMetrics) -> bool;
@@ -257,6 +310,21 @@ extern "C" {
 
 #[cfg(test)]
 unsafe fn cpp_worker_thread_init(_thread_id: usize) {}
+
+#[cfg(test)]
+unsafe fn cpp_execute_fast_mako_string(
+    _op: u32,
+    _key_ptr: *const u8,
+    _key_len: usize,
+    _val_ptr: *const u8,
+    _val_len: usize,
+    result: *mut FastMakoStringResult,
+) -> bool {
+    if !result.is_null() {
+        (*result).status = FAST_MAKO_FALLBACK;
+    }
+    true
+}
 
 #[cfg(test)]
 unsafe fn cpp_execute_transaction(
@@ -278,6 +346,15 @@ unsafe fn cpp_get_metrics(metrics: *mut MakoMetrics) -> bool {
     (*metrics).txn_aborts = 2;
     (*metrics).txn_retries = 3;
     (*metrics).uptime_seconds = 42;
+    (*metrics).cache_enabled = 0;
+    (*metrics).cache_capacity_bytes = 0;
+    (*metrics).cache_entries = 0;
+    (*metrics).cache_bytes = 0;
+    (*metrics).cache_hits = 0;
+    (*metrics).cache_misses = 0;
+    (*metrics).cache_inserts = 0;
+    (*metrics).cache_evictions = 0;
+    (*metrics).cache_invalidations = 0;
     true
 }
 
@@ -7007,6 +7084,73 @@ fn execute_fast_mako_string_op<W: Write>(
     };
     let max_attempts = fast_mako_max_attempts(op);
 
+    let mut fast_result = FastMakoStringResult {
+        status: FAST_MAKO_ABORTED,
+        data_ptr: std::ptr::null(),
+        data_len: 0,
+    };
+    let mut fast_call_ok = false;
+    for attempt in 0..max_attempts {
+        fast_result = FastMakoStringResult {
+            status: FAST_MAKO_ABORTED,
+            data_ptr: std::ptr::null(),
+            data_len: 0,
+        };
+        fast_call_ok = unsafe {
+            cpp_execute_fast_mako_string(
+                txn_op,
+                key.as_ptr(),
+                key.len(),
+                val_ptr,
+                val_len,
+                &mut fast_result,
+            )
+        };
+        if fast_call_ok && fast_result.status != FAST_MAKO_ABORTED {
+            break;
+        }
+        if attempt + 1 < max_attempts {
+            unsafe { cpp_record_txn_retry() };
+            sleep_for_retry(attempt);
+        }
+    }
+
+    if !fast_call_ok || fast_result.status == FAST_MAKO_ABORTED {
+        write_err(writer, "backend")?;
+        return Ok(false);
+    }
+
+    match (op, fast_result.status) {
+        (OpCode::Get, FAST_MAKO_GET_MISS) => {
+            write_null(writer, protocol_version)?;
+            return Ok(true);
+        }
+        (OpCode::Get, FAST_MAKO_GET_HIT) => {
+            if fast_result.data_len != 0 {
+                if fast_result.data_ptr.is_null() {
+                    write_err(writer, "backend")?;
+                    return Ok(false);
+                }
+                let data = unsafe {
+                    std::slice::from_raw_parts(fast_result.data_ptr, fast_result.data_len)
+                };
+                write_bulk(writer, data)?;
+            } else {
+                write_bulk(writer, b"")?;
+            }
+            return Ok(true);
+        }
+        (OpCode::Set, FAST_MAKO_SET_OK) => {
+            write_simple_ok(writer)?;
+            return Ok(true);
+        }
+        (_, FAST_MAKO_FALLBACK) => {}
+        _ => {
+            write_err(writer, "backend")?;
+            return Ok(false);
+        }
+    }
+
     let operation = TxnOperation {
         op: txn_op,
         key_ptr: key.as_ptr(),
@@ -8649,6 +8793,7 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
         std::thread::Builder::new()
             .name(format!("mako-worker-{}", thread_id))
             .spawn(move || {
+                REDIS_WORKER_ID.with(|worker_id| worker_id.set(thread_id));
                 unsafe {
                     cpp_worker_thread_init(thread_id);
                 }
@@ -8921,7 +9066,11 @@ fn flush_client(client: &mut ClientConn) -> std::io::Result<bool> {
         match client.stream.write(&client.write_buf) {
             Ok(0) => return Ok(false),
             Ok(n) => {
-                client.write_buf.drain(..n);
+                if n == client.write_buf.len() {
+                    client.write_buf.clear();
+                } else {
+                    client.write_buf.drain(..n);
+                }
             }
             Err(e) if e.kind() == ErrorKind::WouldBlock => return Ok(true),
             Err(e) => return Err(e),
@@ -9140,10 +9289,43 @@ fn bump_modified_key_versions(cmd: &Command) {
 }
 
 fn record_command_call(op: OpCode) {
-    TOTAL_COMMANDS_PROCESSED.fetch_add(1, Ordering::Relaxed);
+    increment_worker_counter(&WORKER_COMMANDS_PROCESSED, &TOTAL_COMMANDS_PROCESSED);
     if op == OpCode::BLPop {
-        CMDSTAT_BLPOP_CALLS.fetch_add(1, Ordering::Relaxed);
+        increment_worker_counter(&WORKER_BLPOP_CALLS, &CMDSTAT_BLPOP_CALLS);
     }
+}
+
+fn increment_worker_counter(counters: &[WorkerCounter; MAX_REDIS_WORKERS], fallback: &AtomicUsize) {
+    REDIS_WORKER_ID.with(|worker_id| {
+        let worker_id = worker_id.get();
+        if worker_id < counters.len() {
+            counters[worker_id].0.fetch_add(1, Ordering::Relaxed);
+        } else {
+            fallback.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+}
+
+fn load_worker_counter(
+    counters: &[WorkerCounter; MAX_REDIS_WORKERS],
+    fallback: &AtomicUsize,
+) -> usize {
+    fallback.load(Ordering::Relaxed)
+        + counters
+            .iter()
+            .map(|counter| counter.0.load(Ordering::Relaxed))
+            .sum::<usize>()
+}
+
+fn reset_worker_counter(counters: &[WorkerCounter; MAX_REDIS_WORKERS], fallback: &AtomicUsize) {
+    fallback.store(0, Ordering::Relaxed);
+    for counter in counters {
+        counter.0.store(0, Ordering::Relaxed);
+    }
+}
+
+fn record_dirty_change() {
+    increment_worker_counter(&WORKER_DIRTY_CHANGES, &DIRTY_CHANGES);
 }
 
 fn should_reject_for_oom(op: OpCode) -> bool {
@@ -9201,7 +9383,7 @@ fn execute_or_block_command(client: &mut ClientConn, cmd: &Command) -> std::io::
             client.set_blocked(cmd.clone());
         } else {
             if is_dirty_command(cmd.op) && !is_error_reply(&reply) {
-                DIRTY_CHANGES.fetch_add(1, Ordering::Relaxed);
+                record_dirty_change();
                 bump_modified_key_versions(cmd);
             }
             client.write_buf.extend_from_slice(&reply);
@@ -9215,7 +9397,7 @@ fn execute_or_block_command(client: &mut ClientConn, cmd: &Command) -> std::io::
             &mut client.write_buf,
         )?;
         if !was_in_multi && is_dirty_command(cmd.op) {
-            DIRTY_CHANGES.fetch_add(1, Ordering::Relaxed);
+            record_dirty_change();
             bump_modified_key_versions(cmd);
         } else if !was_in_multi && cmd.op == OpCode::DbSize {
             bump_existing_watched_keys();
@@ -9297,7 +9479,7 @@ fn retry_blocked_command(client: &mut ClientConn) -> std::io::Result<bool> {
     } else {
         let dirty = is_dirty_command(cmd.op) && !is_error_reply(&reply);
         if dirty {
-            DIRTY_CHANGES.fetch_add(1, Ordering::Relaxed);
+            record_dirty_change();
             bump_modified_key_versions(&cmd);
         }
         client.clear_blocked();
@@ -9562,7 +9744,7 @@ fn process_raw_mako_fast_frame(client: &mut ClientConn) -> std::io::Result<bool>
     };
     client.resp3.consume(consumed);
     if dirty {
-        DIRTY_CHANGES.fetch_add(1, Ordering::Relaxed);
+        record_dirty_change();
     }
     Ok(true)
 }
@@ -10057,8 +10239,8 @@ fn handle_config_command<W: Write>(cmd: &Command, writer: &mut W) -> std::io::Re
             )?;
             return Ok(());
         }
-        TOTAL_COMMANDS_PROCESSED.store(0, Ordering::Relaxed);
-        CMDSTAT_BLPOP_CALLS.store(0, Ordering::Relaxed);
+        reset_worker_counter(&WORKER_COMMANDS_PROCESSED, &TOTAL_COMMANDS_PROCESSED);
+        reset_worker_counter(&WORKER_BLPOP_CALLS, &CMDSTAT_BLPOP_CALLS);
         write_simple_ok(writer)
     } else {
         write_err(writer, "unsupported CONFIG subcommand")
@@ -10157,10 +10339,12 @@ fn append_clients_info(out: &mut String) {
 fn append_stats_info(out: &mut String) {
     out.push_str("# Stats\r\n");
     out.push_str("total_commands_processed:");
-    out.push_str(&TOTAL_COMMANDS_PROCESSED.load(Ordering::Relaxed).to_string());
+    out.push_str(
+        &load_worker_counter(&WORKER_COMMANDS_PROCESSED, &TOTAL_COMMANDS_PROCESSED).to_string(),
+    );
     out.push_str("\r\n");
     out.push_str("rdb_changes_since_last_save:");
-    out.push_str(&DIRTY_CHANGES.load(Ordering::Relaxed).to_string());
+    out.push_str(&load_worker_counter(&WORKER_DIRTY_CHANGES, &DIRTY_CHANGES).to_string());
     out.push_str("\r\n");
     out.push_str("pubsub_channels:");
     out.push_str(&pubsub_channel_count().to_string());
@@ -10173,7 +10357,7 @@ fn append_stats_info(out: &mut String) {
 fn append_commandstats_info(out: &mut String) {
     out.push_str("# Commandstats\r\n");
     out.push_str("cmdstat_blpop:calls=");
-    out.push_str(&CMDSTAT_BLPOP_CALLS.load(Ordering::Relaxed).to_string());
+    out.push_str(&load_worker_counter(&WORKER_BLPOP_CALLS, &CMDSTAT_BLPOP_CALLS).to_string());
     out.push_str(",usec=0,usec_per_call=0.00,rejected_calls=0,failed_calls=0\r\n\r\n");
 }
 
@@ -10184,6 +10368,33 @@ fn append_mako_info(out: &mut String, metrics: &MakoMetrics) {
     out.push_str("\r\n");
     out.push_str("mako_txn_aborts:");
     out.push_str(&metrics.txn_aborts.to_string());
+    out.push_str("\r\n");
+    out.push_str("mako_cache_enabled:");
+    out.push_str(&metrics.cache_enabled.to_string());
+    out.push_str("\r\n");
+    out.push_str("mako_cache_capacity_bytes:");
+    out.push_str(&metrics.cache_capacity_bytes.to_string());
+    out.push_str("\r\n");
+    out.push_str("mako_cache_entries:");
+    out.push_str(&metrics.cache_entries.to_string());
+    out.push_str("\r\n");
+    out.push_str("mako_cache_bytes:");
+    out.push_str(&metrics.cache_bytes.to_string());
+    out.push_str("\r\n");
+    out.push_str("mako_cache_hits:");
+    out.push_str(&metrics.cache_hits.to_string());
+    out.push_str("\r\n");
+    out.push_str("mako_cache_misses:");
+    out.push_str(&metrics.cache_misses.to_string());
+    out.push_str("\r\n");
+    out.push_str("mako_cache_inserts:");
+    out.push_str(&metrics.cache_inserts.to_string());
+    out.push_str("\r\n");
+    out.push_str("mako_cache_evictions:");
+    out.push_str(&metrics.cache_evictions.to_string());
+    out.push_str("\r\n");
+    out.push_str("mako_cache_invalidations:");
+    out.push_str(&metrics.cache_invalidations.to_string());
     out.push_str("\r\n");
     out.push_str("mako_txn_retries:");
     out.push_str(&metrics.txn_retries.to_string());
@@ -11048,7 +11259,7 @@ mod tests {
     fn info_stats_reports_and_resetstat_clears_processed_commands() {
         let mut txn_state = TransactionState::new();
         let mut client_state = ClientState::new();
-        TOTAL_COMMANDS_PROCESSED.store(0, Ordering::Relaxed);
+        reset_worker_counter(&WORKER_COMMANDS_PROCESSED, &TOTAL_COMMANDS_PROCESSED);
 
         record_command_call(OpCode::Ping);
         record_command_call(OpCode::Get);

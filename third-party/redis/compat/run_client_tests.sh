@@ -235,6 +235,8 @@ run_jedis() {
   <version>1.0.0</version>
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
   </properties>
   <dependencies>
     <dependency>
