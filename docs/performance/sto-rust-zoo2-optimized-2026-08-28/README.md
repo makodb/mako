@@ -118,11 +118,12 @@ transaction. The roughly 1,500-cycle total delta is work outside the sampled
 `RecordId` registry, typed item lifecycle, commit protocol, and other harness
 work around the lookup, but this is not a component-by-component attribution.
 
-A dedicated fixed-copy `u64` table and compact typed lock lane could reduce
-that residual, but would be a second specialized data structure rather than a
-safe optimization of the general binary-value abstraction. It is deliberately
-left as a separately reviewed future experiment. The profile inputs and
-reports are archived under [`profile-1t-read`](profile-1t-read/).
+That separately reviewed fixed-copy `u64` experiment is now implemented and
+measured in the [one-thread fixed-`u64` follow-up](../sto-rust-zoo2-fixed-u64-2026-08-28/README.md).
+It closes most of this residual for an all-present, preloaded point workload,
+but remains a specialized data structure rather than a replacement for the
+general binary-value abstraction. The profile inputs and reports that motivated
+it remain archived under [`profile-1t-read`](profile-1t-read/).
 
 ## Method
 
