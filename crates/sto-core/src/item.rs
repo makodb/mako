@@ -213,6 +213,14 @@ pub(crate) trait ErasedItemBatch: Any {
 pub(crate) struct TypedItemBatch<A: TransactionalResource> {
     items: Vec<ItemBox<A>>,
     active_len: usize,
+    // These facts are recorded while each newly appended item is already hot.
+    // A live direct batch cannot be accessed again without first being
+    // materialized into ordinary items, and adapter preflight cannot add or
+    // remove intents or predicates, so the cached shape remains exact for the
+    // lifetime of the direct batch.
+    has_writes: bool,
+    has_predicates: bool,
+    all_preflight_free_reads: bool,
 }
 
 impl<A: TransactionalResource> TypedItemBatch<A> {
@@ -220,6 +228,9 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
         Self {
             items: Vec::new(),
             active_len: 0,
+            has_writes: false,
+            has_predicates: false,
+            all_preflight_free_reads: true,
         }
     }
 
@@ -267,6 +278,23 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
         debug_assert!(slot < self.active_len);
         &mut self.items[slot]
     }
+
+    #[inline]
+    pub(crate) fn note_active_item_shape(&mut self, slot: usize) {
+        debug_assert!(slot < self.active_len);
+        let item = &self.items[slot];
+        self.has_writes |= item.intent.is_some();
+        self.has_predicates |= matches!(item.observation, ObservationState::Predicate(_));
+        self.all_preflight_free_reads &=
+            <ItemBox<A> as ErasedItem>::is_preflight_free_read_candidate(item);
+    }
+
+    #[inline]
+    fn reset_shape(&mut self) {
+        self.has_writes = false;
+        self.has_predicates = false;
+        self.all_preflight_free_reads = true;
+    }
 }
 
 impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
@@ -279,22 +307,11 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
     }
 
     fn commit_shape(&self) -> (bool, bool) {
-        let mut has_writes = false;
-        let mut has_predicates = false;
-        for item in &self.items[..self.active_len] {
-            has_writes |= item.intent.is_some();
-            has_predicates |= matches!(item.observation, ObservationState::Predicate(_));
-            if has_writes && has_predicates {
-                break;
-            }
-        }
-        (has_writes, has_predicates)
+        (self.has_writes, self.has_predicates)
     }
 
     fn is_preflight_free_read_only(&self) -> bool {
-        self.items[..self.active_len]
-            .iter()
-            .all(<ItemBox<A> as ErasedItem>::is_preflight_free_read_candidate)
+        self.all_preflight_free_reads
     }
 
     fn preflight(&mut self, cx: &mut PreflightContext<'_>) -> Result<(), PrepareError> {
@@ -349,6 +366,7 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
             ItemBox::teardown_after_finish(item);
         }
         self.active_len = 0;
+        self.reset_shape();
     }
 
     fn drain_active_into(&mut self, destination: &mut [Option<Box<dyn ErasedItem>>]) {
@@ -361,6 +379,7 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
             drop(destination[item_slot].replace(Box::new(item)));
         }
         self.active_len = 0;
+        self.reset_shape();
     }
 
     fn dispose_retained_resources(&mut self) {

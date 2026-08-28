@@ -2,9 +2,27 @@ use sto_masstree::{
     InsertOutcome, PointMutation, PointReadBatch, PointSession, RegistryLayout, ScanBound,
     ScanDirection, ScanRecord, ScanRequest, Table, TableConfig, TableHealth, TableUsage, Value,
 };
+#[cfg(feature = "fixed-u64")]
+use {
+    masstree::{Runtime as MasstreeRuntime, Worker as MasstreeWorker},
+    std::sync::Arc,
+    sto_core::Runtime as StoRuntime,
+    sto_masstree::{FixedU64Batch, FixedU64CreateError, FixedU64Table},
+};
 
 fn assert_send_sync<T: Send + Sync>() {}
 fn assert_clone<T: Clone>() {}
+
+#[cfg(feature = "fixed-u64")]
+#[allow(dead_code)]
+fn fixed_u64_constructor_is_public(
+    sto_runtime: &Arc<StoRuntime>,
+    native_runtime: &MasstreeRuntime,
+    native_worker: &MasstreeWorker,
+    config: TableConfig,
+) -> Result<FixedU64Table, FixedU64CreateError> {
+    FixedU64Table::new(sto_runtime, native_runtime, native_worker, config)
+}
 
 #[allow(dead_code)]
 fn borrowed_fixed_visitors_are_public(
@@ -32,6 +50,17 @@ fn public_handles_and_snapshots_have_shareable_ownership() {
     assert_eq!(request.limit(), 7);
     let value = Value::from(&b"binary\0value"[..]);
     assert_eq!(value.as_ref(), b"binary\0value");
+}
+
+#[cfg(feature = "fixed-u64")]
+#[test]
+fn fixed_u64_public_types_preserve_shareable_ownership() {
+    assert_send_sync::<FixedU64Table>();
+    assert_clone::<FixedU64Table>();
+    assert_send_sync::<FixedU64Batch>();
+    assert_send_sync::<FixedU64CreateError>();
+    fn assert_error<T: std::error::Error>() {}
+    assert_error::<FixedU64CreateError>();
 }
 
 #[test]

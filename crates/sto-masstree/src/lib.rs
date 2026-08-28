@@ -7,8 +7,20 @@
 //! physical locks, and the table membership resource. Point misses eagerly
 //! intern a tombstone, but every abstract mutation remains deferred until the
 //! native Rust STO commit protocol installs it.
+//!
+//! With the `fixed-u64` feature, `FixedU64Table` provides a separate,
+//! deliberately restricted all-live table whose atomic OCC word and `u64`
+//! value occupy one 16-byte hot record. The general binary-value [`Table`]
+//! remains unchanged and is still required for transactional membership,
+//! variable-width values, and scans.
 
 mod record_prefetch;
+
+#[cfg(feature = "fixed-u64")]
+mod fixed_u64;
+
+#[cfg(feature = "fixed-u64")]
+pub use fixed_u64::{FixedU64Batch, FixedU64CreateError, FixedU64Mutation, FixedU64Table};
 
 use arc_swap::ArcSwapOption;
 use std::{
@@ -41,7 +53,8 @@ use sto_core::{
     NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccVersion, OpacityToken,
     PredicateContext, PreflightContext, PreflightFreeReadCapability,
     PreflightFreeValidationContext, PreflightItem, PrepareError, RegisteredResource,
-    RegistrationError, ReleaseContext, ResourceClass, Runtime, Transaction, TransactionLock,
+    RegistrationError, ReleaseContext, ResourceClass, Runtime, TerminalReadBatchCapability,
+    TerminalReadOpen, TerminalReadReady, TerminalReadTransaction, Transaction, TransactionLock,
     TransactionalResource, UniqueItemKeys, ValidationContext, VersionLock,
 };
 #[cfg(not(test))]
@@ -251,6 +264,28 @@ pub struct PointReadBatch {
     unique_record_ids: Vec<RecordId>,
     values: Vec<Option<Value>>,
     membership_updates: Vec<MembershipUpdate>,
+}
+
+/// Result of attempting the all-hit terminal fixed-read protocol.
+///
+/// A directory miss is discovered before any visitor callback or STO item is
+/// created. In that case the restricted transaction is definitely aborted and
+/// the caller may begin a fresh general transaction for ordinary miss handling.
+#[derive(Debug)]
+#[must_use = "a ready terminal transaction must be committed or aborted"]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "boxing the consumed transaction would allocate on the read-only hot path"
+)]
+pub enum TerminalReadVisitOutcome<'worker> {
+    /// Every input was visited and the complete batch is ready to certify.
+    Ready {
+        transaction: TerminalReadTransaction<'worker, TerminalReadReady>,
+        visited: usize,
+    },
+    /// At least one key was absent, so the consumed terminal transaction was
+    /// aborted without invoking the visitor.
+    RetryOrdinary,
 }
 
 impl PointReadBatch {
@@ -760,6 +795,51 @@ impl Table {
         }
     }
 
+    /// Visits one all-present fixed-width read batch as the transaction's
+    /// terminal operation.
+    ///
+    /// This restricted path stores only each record ID and OCC observation in
+    /// STO until certification. Committed value snapshots live only for their
+    /// visitor invocation, and [`PointReadBatch::results`] remains empty.
+    /// Duplicate input keys are permitted and are visited independently in
+    /// input order.
+    ///
+    /// Directory lookup completes, including release of the native RCU read
+    /// scope, before the first visitor runs. If any key is absent, no visitor
+    /// runs and [`TerminalReadVisitOutcome::RetryOrdinary`] is returned after
+    /// definitely aborting `transaction`; the caller may then use an ordinary
+    /// transaction to intern or mutate the missing key.
+    ///
+    /// Visitor side effects are not rolled back if later certification
+    /// conflicts. The returned ready transaction permits only commit or abort.
+    #[inline]
+    pub fn visit_fixed_terminal<'worker, const KEY_LENGTH: usize>(
+        &self,
+        transaction: TerminalReadTransaction<'worker, TerminalReadOpen>,
+        worker: &Worker,
+        keys: &[[u8; KEY_LENGTH]],
+        batch: &mut PointReadBatch,
+        visit: impl for<'value> FnMut(usize, Option<&'value Value>),
+    ) -> Result<TerminalReadVisitOutcome<'worker>, AccessError> {
+        #[cfg(not(test))]
+        {
+            let mut read_scope = None;
+            self.visit_fixed_terminal_inner(transaction, keys, batch, visit, |batch| {
+                self.lookup_fixed_in_read_scope(worker, &mut read_scope, keys, batch)
+            })
+        }
+        #[cfg(test)]
+        {
+            let _ = worker;
+            self.visit_fixed_terminal_inner(transaction, keys, batch, visit, |batch| {
+                for key in keys {
+                    batch.push_record_id(self.shared().lookup(None, key)?);
+                }
+                Ok(())
+            })
+        }
+    }
+
     /// Reads the staged value or the first validated committed snapshot.
     #[inline]
     pub fn get(
@@ -962,6 +1042,102 @@ impl Table {
             return Err(error);
         }
         Ok(keys.len())
+    }
+
+    #[inline]
+    fn visit_fixed_terminal_inner<'worker, const KEY_LENGTH: usize>(
+        &self,
+        transaction: TerminalReadTransaction<'worker, TerminalReadOpen>,
+        keys: &[[u8; KEY_LENGTH]],
+        batch: &mut PointReadBatch,
+        mut visit: impl for<'value> FnMut(usize, Option<&'value Value>),
+        lookup_batch: impl FnOnce(&mut PointReadBatch) -> Result<(), AccessError>,
+    ) -> Result<TerminalReadVisitOutcome<'worker>, AccessError> {
+        let lookup = (|| {
+            batch.prepare_read::<false>(keys.len())?;
+            lookup_batch(batch)?;
+            if batch.record_ids.len() != keys.len() {
+                return Err(table_fault(
+                    "fixed point lookup returned the wrong result count",
+                ));
+            }
+            Ok(())
+        })();
+        if let Err(error) = lookup {
+            batch.clear();
+            return Err(transaction.abort_with_access_error(error));
+        }
+
+        if batch.record_ids.iter().any(Option::is_none) {
+            batch.clear();
+            drop(transaction);
+            return Ok(TerminalReadVisitOutcome::RetryOrdinary);
+        }
+
+        // Equal input keys may legitimately produce repeated IDs. Distinct
+        // keys aliasing one stable ID would violate the append-only directory
+        // binding and must fail closed before exposing a value to the visitor.
+        let mut seen_record_id_fingerprints = 0_u64;
+        for (index, record_id) in batch.record_ids.iter().enumerate() {
+            let record_id = record_id.expect("the terminal miss check rejected absent IDs");
+            // Equal IDs necessarily share these low bits. A new bit proves
+            // this ID has not appeared; a repeated bit falls back to the full
+            // exact comparison, so unrelated fingerprint collisions remain
+            // harmless. This removes the pairwise scan for the common unique
+            // batch without weakening the foreign-directory alias check.
+            let fingerprint = 1_u64 << ((record_id.get() - 1) & 63);
+            if seen_record_id_fingerprints & fingerprint != 0 {
+                for prior in 0..index {
+                    if batch.record_ids[prior] == Some(record_id) && keys[prior] != keys[index] {
+                        self.shared().poison();
+                        batch.clear();
+                        let error =
+                            table_fault("distinct directory keys resolved to one record ID");
+                        return Err(transaction.abort_with_access_error(error));
+                    }
+                }
+            }
+            seen_record_id_fingerprints |= fingerprint;
+        }
+
+        for record_id in batch.record_ids.iter().flatten().copied() {
+            let prefetch = self
+                .shared()
+                .registry
+                .prefetch(record_id)
+                .inspect_err(|error| self.shared().note_access_error(error));
+            if let Err(error) = prefetch {
+                batch.clear();
+                return Err(transaction.abort_with_access_error(error));
+            }
+        }
+        batch
+            .unique_record_ids
+            .extend(batch.record_ids.iter().flatten().copied());
+
+        let adapter = self.record_resource.adapter();
+        let ready = transaction.with_terminal_read_batch(
+            &self.record_resource,
+            &batch.unique_record_ids,
+            |index, entry| {
+                let (observation, snapshot) = adapter.prepare_terminal_read_access(*entry.key())?;
+                // Transfer the OCC token to core before calling user code, so
+                // an unwind leaves a complete prefix for definite cleanup.
+                entry.record_read(observation)?;
+                visit(index, snapshot.value());
+                Ok(())
+            },
+        );
+        match ready {
+            Ok(transaction) => Ok(TerminalReadVisitOutcome::Ready {
+                transaction,
+                visited: keys.len(),
+            }),
+            Err(error) => {
+                batch.clear();
+                Err(error)
+            }
+        }
     }
 
     #[inline]
@@ -3454,6 +3630,13 @@ static RECORD_PREFLIGHT_FREE_READ: PreflightFreeReadCapability<RecordAdapter> =
     // binding. Aborted reads still run RecordAdapter::finish.
     PreflightFreeReadCapability::new_drop_only(validate_record_preflight_free_read);
 
+static RECORD_TERMINAL_READ_BATCH: TerminalReadBatchCapability<RecordAdapter> =
+    // A terminal record read retains no RecordLocal, intent, or Prepared
+    // value. RecordId and RecordObservation are copy-only tokens, so dropping
+    // them is complete cleanup after both commit and abort. The one retained
+    // table resource keeps the adapter and registry alive through teardown.
+    TerminalReadBatchCapability::new_drop_only(validate_record_preflight_free_read);
+
 #[derive(Default)]
 struct RecordLocal {
     first_snapshot: Option<RecordState>,
@@ -3531,6 +3714,21 @@ impl RecordAdapter {
     }
 
     #[inline(always)]
+    fn prepare_terminal_read_access(
+        &self,
+        record_id: RecordId,
+    ) -> Result<(RecordObservation, RecordState), AccessError> {
+        self.table.ensure_healthy()?;
+        let record = self.table.resolve_directory_record(record_id)?;
+        let observed = record
+            .version
+            .observe()
+            .map_err(|_| AccessError::from(Conflict::LockBusy))?;
+        let snapshot = self.snapshot_state(record, observed)?;
+        Ok((RecordObservation { version: observed }, snapshot))
+    }
+
+    #[inline(always)]
     fn snapshot_state(
         &self,
         record: &Record,
@@ -3604,6 +3802,10 @@ impl TransactionalResource for RecordAdapter {
 
     fn preflight_free_read_capability(&self) -> Option<&'static PreflightFreeReadCapability<Self>> {
         Some(&RECORD_PREFLIGHT_FREE_READ)
+    }
+
+    fn terminal_read_batch_capability(&self) -> Option<&'static TerminalReadBatchCapability<Self>> {
+        Some(&RECORD_TERMINAL_READ_BATCH)
     }
 
     fn preflight(
@@ -4099,6 +4301,30 @@ mod tests {
 
     fn committed(outcome: Result<CommitOutcome, sto_core::CommitFailure>) {
         assert!(matches!(outcome, Ok(CommitOutcome::Committed(_))));
+    }
+
+    fn terminal_ready(
+        outcome: TerminalReadVisitOutcome<'_>,
+    ) -> (TerminalReadTransaction<'_, TerminalReadReady>, usize) {
+        match outcome {
+            TerminalReadVisitOutcome::Ready {
+                transaction,
+                visited,
+            } => (transaction, visited),
+            TerminalReadVisitOutcome::RetryOrdinary => {
+                panic!("an all-hit terminal batch must be ready")
+            }
+        }
+    }
+
+    fn terminal_retry(outcome: TerminalReadVisitOutcome<'_>) {
+        match outcome {
+            TerminalReadVisitOutcome::RetryOrdinary => {}
+            TerminalReadVisitOutcome::Ready { transaction, .. } => {
+                transaction.abort();
+                panic!("a terminal batch containing a miss must request retry");
+            }
+        }
     }
 
     fn committed_record_snapshot(record: &Record) -> RecordState {
@@ -5049,6 +5275,323 @@ mod tests {
                 .unwrap(),
             miss_before
         );
+    }
+
+    #[test]
+    fn terminal_fixed_visit_handles_hits_duplicates_and_miss_retry() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut worker = runtime.attach().unwrap();
+        let hit_a = [0x00, 0x11, 0xaa, 0x01];
+        let hit_b = [0x00, 0x22, 0xbb, 0x02];
+        let miss = [0x00, 0x33, 0xcc, 0x03];
+        seed(&table, &mut worker, &[(&hit_a, b"A"), (&hit_b, b"B")]);
+
+        let keys = [hit_b, hit_a, hit_b];
+        let mut batch = PointReadBatch::with_capacity(keys.len());
+        let retained_capacity = batch.capacity();
+        let mut observed = Vec::new();
+        let transaction = worker.begin_terminal_read_batch().unwrap();
+        let outcome = table
+            .visit_fixed_terminal_inner(
+                transaction,
+                &keys,
+                &mut batch,
+                |index, current| {
+                    observed.push((index, current.map(|value| value.as_ref().to_vec())));
+                },
+                |batch| {
+                    for key in &keys {
+                        batch.push_record_id(table.shared().lookup(None, key)?);
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let (transaction, visited) = terminal_ready(outcome);
+        committed(transaction.commit());
+        assert_eq!(visited, keys.len());
+        assert_eq!(
+            observed,
+            vec![
+                (0, Some(b"B".to_vec())),
+                (1, Some(b"A".to_vec())),
+                (2, Some(b"B".to_vec())),
+            ]
+        );
+        assert!(batch.results().is_empty());
+        assert_eq!(batch.capacity(), retained_capacity);
+
+        let keys = [hit_a, miss, hit_b];
+        let mut visits = 0;
+        let transaction = worker.begin_terminal_read_batch().unwrap();
+        let outcome = table
+            .visit_fixed_terminal_inner(
+                transaction,
+                &keys,
+                &mut batch,
+                |_index, _current| visits += 1,
+                |batch| {
+                    for key in &keys {
+                        batch.push_record_id(table.shared().lookup(None, key)?);
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+        terminal_retry(outcome);
+        assert_eq!(visits, 0);
+        assert!(batch.results().is_empty());
+        assert!(batch.record_ids.is_empty());
+
+        // RetryOrdinary has definitely returned the terminal transaction's
+        // scratch to the same worker.
+        let mut ordinary = worker.begin().unwrap();
+        assert_eq!(table.get_inner(&mut ordinary, None, &miss).unwrap(), None);
+        ordinary.abort();
+    }
+
+    #[test]
+    fn terminal_pre_core_retryable_errors_abort_without_poisoning_runtime() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut worker = runtime.attach().unwrap();
+        let keys = [[0x10, 0x20]];
+        let mut batch = PointReadBatch::with_capacity(keys.len());
+
+        for expected in [
+            AccessError::Conflict(Conflict::HiddenLockBusy),
+            AccessError::Capacity(CapacityError::BufferLimit),
+        ] {
+            let transaction = worker.begin_terminal_read_batch().unwrap();
+            let mut visits = 0;
+            let error = table
+                .visit_fixed_terminal_inner(
+                    transaction,
+                    &keys,
+                    &mut batch,
+                    |_index, _current| visits += 1,
+                    |_batch| Err(expected),
+                )
+                .unwrap_err();
+
+            assert_eq!(error, expected);
+            assert_eq!(visits, 0);
+            assert!(batch.is_empty());
+            assert!(batch.record_ids.is_empty());
+            assert_eq!(runtime.health(), sto_core::RuntimeHealth::Healthy);
+            // The consuming error path must have definitely made this worker
+            // available for another transaction.
+            worker.begin().unwrap().abort();
+        }
+    }
+
+    #[test]
+    fn terminal_pre_core_prefetch_fault_poisons_table_and_runtime() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut worker = runtime.attach().unwrap();
+        let keys = [[0x30, 0x40]];
+        let mut batch = PointReadBatch::with_capacity(keys.len());
+        let transaction = worker.begin_terminal_read_batch().unwrap();
+        let mut visits = 0;
+        let error = table
+            .visit_fixed_terminal_inner(
+                transaction,
+                &keys,
+                &mut batch,
+                |_index, _current| visits += 1,
+                |batch| {
+                    // A directory-returned ID whose registry segment was
+                    // never allocated fails in the pre-core prefetch phase.
+                    batch.push_record_id(Some(RecordId::new(1).unwrap()));
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, AccessError::Fault(_)));
+        assert_eq!(visits, 0);
+        assert!(batch.is_empty());
+        assert!(batch.record_ids.is_empty());
+        assert_eq!(table.health(), TableHealth::Poisoned);
+        assert_eq!(runtime.health(), sto_core::RuntimeHealth::Poisoned);
+    }
+
+    #[test]
+    fn terminal_pre_core_alias_fault_poisons_table_and_runtime() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut worker = runtime.attach().unwrap();
+        let first = [0x50, 0x60];
+        let second = [0x70, 0x80];
+        seed(&table, &mut worker, &[(&first, b"value")]);
+        let record_id = table.shared().lookup(None, &first).unwrap().unwrap();
+        let keys = [first, second];
+        let mut batch = PointReadBatch::with_capacity(keys.len());
+        let transaction = worker.begin_terminal_read_batch().unwrap();
+        let mut visits = 0;
+        let error = table
+            .visit_fixed_terminal_inner(
+                transaction,
+                &keys,
+                &mut batch,
+                |_index, _current| visits += 1,
+                |batch| {
+                    batch.push_record_id(Some(record_id));
+                    batch.push_record_id(Some(record_id));
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, AccessError::Fault(_)));
+        assert_eq!(visits, 0);
+        assert!(batch.is_empty());
+        assert!(batch.record_ids.is_empty());
+        assert_eq!(table.health(), TableHealth::Poisoned);
+        assert_eq!(runtime.health(), sto_core::RuntimeHealth::Poisoned);
+    }
+
+    #[test]
+    fn terminal_alias_fingerprint_collision_falls_back_to_exact_ids() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut worker = runtime.attach().unwrap();
+        let mut record_ids = Vec::new();
+        for index in 0_u64..65 {
+            let candidate = table
+                .shared()
+                .registry
+                .reserve_candidate(&index.to_le_bytes())
+                .unwrap();
+            table.shared().registry.mark_published(&candidate).unwrap();
+            record_ids.push(candidate.id);
+        }
+        let first = record_ids[0];
+        let second = record_ids[64];
+        assert_ne!(first, second);
+        assert_eq!((first.get() - 1) & 63, (second.get() - 1) & 63);
+
+        let keys = [[0x81, 0x01], [0x82, 0x02]];
+        let mut batch = PointReadBatch::with_capacity(keys.len());
+        let transaction = worker.begin_terminal_read_batch().unwrap();
+        let mut visits = 0;
+        let outcome = table
+            .visit_fixed_terminal_inner(
+                transaction,
+                &keys,
+                &mut batch,
+                |_index, current| {
+                    visits += 1;
+                    assert!(current.is_none());
+                },
+                |batch| {
+                    batch.push_record_id(Some(first));
+                    batch.push_record_id(Some(second));
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let (transaction, visited) = terminal_ready(outcome);
+        assert_eq!(visited, 2);
+        assert_eq!(visits, 2);
+        committed(transaction.commit());
+        assert_eq!(table.health(), TableHealth::Healthy);
+        assert_eq!(runtime.health(), sto_core::RuntimeHealth::Healthy);
+    }
+
+    #[test]
+    fn terminal_fixed_visit_drops_shared_snapshot_before_certification() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut worker = runtime.attach().unwrap();
+        let key = [0x44, 0x00, 0x55, 0x00];
+        let backing = Arc::new(b"shared-value-beyond-inline".to_vec());
+
+        let mut seed = worker.begin().unwrap();
+        table
+            .put_inner(
+                &mut seed,
+                None,
+                &key,
+                Value {
+                    repr: ValueRepr::Shared(Arc::clone(&backing)),
+                },
+            )
+            .unwrap();
+        committed(seed.commit());
+        assert_eq!(Arc::strong_count(&backing), 2);
+
+        let keys = [key];
+        let mut batch = PointReadBatch::with_capacity(1);
+        let mut visitor_count = 0;
+        let transaction = worker.begin_terminal_read_batch().unwrap();
+        let outcome = table
+            .visit_fixed_terminal_inner(
+                transaction,
+                &keys,
+                &mut batch,
+                |_index, current| {
+                    visitor_count += 1;
+                    assert_eq!(current.map(Value::as_ref), Some(backing.as_slice()));
+                    assert_eq!(Arc::strong_count(&backing), 3);
+                },
+                |batch| {
+                    batch.push_record_id(table.shared().lookup(None, &key)?);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let (transaction, _) = terminal_ready(outcome);
+        assert_eq!(visitor_count, 1);
+        assert_eq!(Arc::strong_count(&backing), 2);
+        committed(transaction.commit());
+        assert_eq!(Arc::strong_count(&backing), 2);
+    }
+
+    #[test]
+    fn terminal_fixed_visit_detects_a_write_before_final_validation() {
+        let (runtime, table) = runtime_and_table(TableConfig::default());
+        let mut reader = runtime.attach().unwrap();
+        let key = [0x66, 0x00, 0x77, 0x00];
+        seed(&table, &mut reader, &[(&key, b"before")]);
+
+        let keys = [key];
+        let mut batch = PointReadBatch::with_capacity(1);
+        let transaction = reader.begin_terminal_read_batch().unwrap();
+        let outcome = table
+            .visit_fixed_terminal_inner(
+                transaction,
+                &keys,
+                &mut batch,
+                |_index, current| {
+                    assert_eq!(current.map(Value::as_ref), Some(&b"before"[..]));
+                },
+                |batch| {
+                    batch.push_record_id(table.shared().lookup(None, &key)?);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let (transaction, _) = terminal_ready(outcome);
+
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let mut writer = runtime.attach().unwrap();
+                    let mut update = writer.begin().unwrap();
+                    table
+                        .put_inner(&mut update, None, &key, Value::from(&b"after"[..]))
+                        .unwrap();
+                    committed(update.commit());
+                })
+                .join()
+                .unwrap();
+        });
+
+        assert!(matches!(
+            transaction.commit(),
+            Ok(CommitOutcome::Aborted(AbortReason::Conflict(
+                Conflict::ReadValidation
+            )))
+        ));
+        let ordinary = reader.begin().unwrap();
+        ordinary.abort();
     }
 
     #[test]

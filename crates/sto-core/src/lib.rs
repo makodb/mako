@@ -21,11 +21,13 @@ pub mod txn_counter;
 pub mod version;
 
 mod item;
+mod terminal_read;
 
 pub use adapter::{
     FinishDisposition, FinishItem, InstallItem, NoPredicate, ObservationOrder, ObservationRef,
     OpacityToken, PreflightFreeReadCapability, PreflightFreeReadFinish, PreflightFreeReadValidate,
-    PreflightItem, ResourceKey, TransactionalResource,
+    PreflightItem, ResourceKey, TerminalReadBatchCapability, TerminalReadBatchValidate,
+    TransactionalResource,
 };
 pub use error::*;
 pub use hook::{CommitHook, CommitHookError};
@@ -40,7 +42,11 @@ pub use runtime::{
     IsolationMode, ObjectRegistration, RegisteredResource, Runtime, RuntimeConfig, RuntimeHealth,
     WorkerContext,
 };
-pub use transaction::{Active, ResolvedItemSession, Transaction, UniqueItemKeys};
+pub use terminal_read::TerminalReadEntry;
+pub use transaction::{
+    Active, ResolvedItemSession, TerminalReadOpen, TerminalReadReady, TerminalReadTransaction,
+    Transaction, UniqueItemKeys,
+};
 pub use txn_array::{ArrayBoundsError, TxnArray};
 pub use txn_cell::{TxnCell, VersionLock};
 pub use txn_counter::TxnCounter;

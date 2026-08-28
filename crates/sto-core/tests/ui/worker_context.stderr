@@ -60,6 +60,51 @@ note: required by a bound in `assert_send`
 3 | fn assert_send<T: Send>() {}
   |                   ^^^^ required by this bound in `assert_send`
 
+error[E0277]: `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be sent between threads safely
+ --> tests/ui/worker_context.rs:7:19
+  |
+7 |     assert_send::<WorkerContext>();
+  |                   ^^^^^^^^^^^^^ `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be sent between threads safely
+  |
+  = help: the trait `Send` is not implemented for `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)`
+  = note: required for `std::ptr::Unique<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>` to implement `Send`
+note: required because it appears within the type `Box<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>`
+ --> $RUST/alloc/src/boxed.rs
+  |
+  | pub struct Box<
+  |            ^^^
+note: required because it appears within the type `Option<Box<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>>`
+ --> $RUST/core/src/option.rs
+  |
+  | pub enum Option<T> {
+  |          ^^^^^^
+note: required because it appears within the type `transaction::TerminalReadScratch`
+ --> src/transaction.rs
+  |
+  | pub(crate) struct TerminalReadScratch {
+  |                   ^^^^^^^^^^^^^^^^^^^
+  = note: required for `std::ptr::Unique<transaction::TerminalReadScratch>` to implement `Send`
+note: required because it appears within the type `Box<transaction::TerminalReadScratch>`
+ --> $RUST/alloc/src/boxed.rs
+  |
+  | pub struct Box<
+  |            ^^^
+note: required because it appears within the type `Option<Box<transaction::TerminalReadScratch>>`
+ --> $RUST/core/src/option.rs
+  |
+  | pub enum Option<T> {
+  |          ^^^^^^
+note: required because it appears within the type `WorkerContext`
+ --> src/runtime.rs
+  |
+  | pub struct WorkerContext {
+  |            ^^^^^^^^^^^^^
+note: required by a bound in `assert_send`
+ --> tests/ui/worker_context.rs:3:19
+  |
+3 | fn assert_send<T: Send>() {}
+  |                   ^^^^ required by this bound in `assert_send`
+
 error[E0277]: `(dyn sto_core::item::ErasedItem + 'static)` cannot be sent between threads safely
  --> tests/ui/worker_context.rs:7:19
   |
@@ -215,6 +260,51 @@ note: required because it appears within the type `transaction::TransactionScrat
   | pub(crate) struct TransactionScratch {
   |                   ^^^^^^^^^^^^^^^^^^
 note: required because it appears within the type `Option<transaction::TransactionScratch>`
+ --> $RUST/core/src/option.rs
+  |
+  | pub enum Option<T> {
+  |          ^^^^^^
+note: required because it appears within the type `WorkerContext`
+ --> src/runtime.rs
+  |
+  | pub struct WorkerContext {
+  |            ^^^^^^^^^^^^^
+note: required by a bound in `assert_sync`
+ --> tests/ui/worker_context.rs:4:19
+  |
+4 | fn assert_sync<T: Sync>() {}
+  |                   ^^^^ required by this bound in `assert_sync`
+
+error[E0277]: `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be shared between threads safely
+ --> tests/ui/worker_context.rs:8:19
+  |
+8 |     assert_sync::<WorkerContext>();
+  |                   ^^^^^^^^^^^^^ `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be shared between threads safely
+  |
+  = help: the trait `Sync` is not implemented for `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)`
+  = note: required for `std::ptr::Unique<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>` to implement `Sync`
+note: required because it appears within the type `Box<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>`
+ --> $RUST/alloc/src/boxed.rs
+  |
+  | pub struct Box<
+  |            ^^^
+note: required because it appears within the type `Option<Box<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>>`
+ --> $RUST/core/src/option.rs
+  |
+  | pub enum Option<T> {
+  |          ^^^^^^
+note: required because it appears within the type `transaction::TerminalReadScratch`
+ --> src/transaction.rs
+  |
+  | pub(crate) struct TerminalReadScratch {
+  |                   ^^^^^^^^^^^^^^^^^^^
+  = note: required for `std::ptr::Unique<transaction::TerminalReadScratch>` to implement `Sync`
+note: required because it appears within the type `Box<transaction::TerminalReadScratch>`
+ --> $RUST/alloc/src/boxed.rs
+  |
+  | pub struct Box<
+  |            ^^^
+note: required because it appears within the type `Option<Box<transaction::TerminalReadScratch>>`
  --> $RUST/core/src/option.rs
   |
   | pub enum Option<T> {

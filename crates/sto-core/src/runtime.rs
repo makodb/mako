@@ -19,7 +19,7 @@ use crate::{
         RegistrationError, RuntimeError, Unsupported,
     },
     identity::{ObjectId, OccCommitId, OwnerId, ResourceClass, RuntimeId},
-    transaction::TransactionScratch,
+    transaction::{TerminalReadScratch, TransactionScratch},
 };
 
 static NEXT_RUNTIME_ID: AtomicU64 = AtomicU64::new(1);
@@ -271,6 +271,7 @@ impl Runtime {
             thread: current_thread,
             transaction_active: false,
             transaction_scratch: Some(TransactionScratch::new(Arc::clone(self))),
+            terminal_read_scratch: Some(Box::new(TerminalReadScratch::new(Arc::clone(self)))),
             next_lock_plan_generation,
             not_send_sync: PhantomData,
         })
@@ -360,10 +361,11 @@ impl Runtime {
 /// The worker cannot migrate to another thread:
 ///
 /// To reuse item allocations without shared reference-count traffic, an idle
-/// worker may retain one typed resource lease per slot in its peak transaction
-/// item count. A lease is released when that slot is rebound or the worker is
-/// dropped; retention is therefore bounded by the runtime's configured maximum
-/// items per transaction.
+/// worker's general item pools may retain one typed resource lease per slot in
+/// its peak transaction item count. The separate terminal-read pool may retain
+/// one additional batch-wide resource lease. A lease is released when its
+/// storage is rebound or the worker is dropped, so retention remains bounded
+/// by the configured maximum item count plus that one terminal binding.
 ///
 /// ```compile_fail
 /// fn require_send<T: Send>() {}
@@ -376,6 +378,7 @@ pub struct WorkerContext {
     pub(crate) thread: ThreadId,
     pub(crate) transaction_active: bool,
     pub(crate) transaction_scratch: Option<TransactionScratch>,
+    pub(crate) terminal_read_scratch: Option<Box<TerminalReadScratch>>,
     next_lock_plan_generation: u64,
     not_send_sync: PhantomData<Rc<()>>,
 }
@@ -415,6 +418,12 @@ impl WorkerContext {
         self.transaction_scratch = Some(scratch);
     }
 
+    pub(crate) fn recycle_terminal_read_scratch(&mut self, scratch: Box<TerminalReadScratch>) {
+        debug_assert!(self.transaction_active);
+        debug_assert!(self.terminal_read_scratch.is_none());
+        self.terminal_read_scratch = Some(scratch);
+    }
+
     /// Reserves a runtime-scoped identity for a lock plan.
     ///
     /// The generation is consumed before adapter preflight begins. An aborted
@@ -444,6 +453,14 @@ impl Drop for WorkerContext {
                 // scratch allocation quarantined so no later pooled destructor
                 // runs during this unwind, and make the failure observable to
                 // every other worker through runtime health.
+                self.runtime.poison();
+                std::mem::forget(quarantined);
+            }
+        }
+        if let Some(scratch) = self.terminal_read_scratch.take() {
+            if let Err(quarantined) = scratch.dispose_retained_resource() {
+                // Keep the terminal pool quarantined independently so a
+                // panicking adapter destructor cannot run again.
                 self.runtime.poison();
                 std::mem::forget(quarantined);
             }

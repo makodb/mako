@@ -11,11 +11,12 @@ use std::{
 };
 
 use crate::{
-    adapter::{FinishDisposition, ResourceKey, TransactionalResource},
+    adapter::{FinishDisposition, ResourceKey, TerminalReadBatchCapability, TransactionalResource},
     error::{
         AbortInfo, AbortReason, AccessError, AcquireError, AdapterFault, AdapterPhase, BeginError,
         CheckError, CommitFailure, CommitInfo, CommitOutcome, DefiniteOutcome, FailurePhase,
         IndeterminateInfo, InternalError, InvalidUse, ItemInitError, PoisonInfo, PrepareError,
+        Unsupported,
     },
     hook::{CommitHook, CommitHookError},
     item::{BatchFinishStage, Entry, ErasedItem, ErasedItemBatch, ItemBox, TypedItemBatch},
@@ -23,11 +24,20 @@ use crate::{
         FinishContext, LockDisposition, LockPlan, LockPlanStorage, PreflightFreeValidationContext,
     },
     runtime::{IsolationMode, RegisteredResource, Runtime, WorkerContext},
+    terminal_read::{ErasedTerminalReadBatch, TerminalReadEntry, TypedTerminalReadBatch},
 };
 
-/// Marker for the only public, executable transaction state in v1.
+/// Marker for a general active transaction.
 #[derive(Debug)]
 pub struct Active;
+
+/// Marker for a newly begun transaction restricted to one terminal read batch.
+#[derive(Debug)]
+pub struct TerminalReadOpen;
+
+/// Marker for a complete terminal read batch that permits only commit or abort.
+#[derive(Debug)]
+pub struct TerminalReadReady;
 
 /// Exact proof that a borrowed key batch contains no duplicate logical keys.
 ///
@@ -356,6 +366,53 @@ impl std::fmt::Debug for TransactionScratch {
     }
 }
 
+/// Worker-affine storage used only by the restricted terminal-read protocol.
+///
+/// Keeping this pool separate preserves the general transaction frame's
+/// by-value layout while allowing a terminal batch to retain one reusable
+/// typed allocation and resource binding at a stable address.
+pub(crate) struct TerminalReadScratch {
+    runtime: Arc<Runtime>,
+    terminal_read_batch: Option<Box<dyn ErasedTerminalReadBatch>>,
+}
+
+impl TerminalReadScratch {
+    pub(crate) fn new(runtime: Arc<Runtime>) -> Self {
+        Self {
+            runtime,
+            terminal_read_batch: None,
+        }
+    }
+
+    /// Disposes the one optional retained terminal binding under an unwind
+    /// boundary. The boxed scratch itself is returned for no-allocation
+    /// quarantine if adapter-owned destruction panics.
+    pub(crate) fn dispose_retained_resource(mut self: Box<Self>) -> Result<(), Box<Self>> {
+        if let Some(batch) = self.terminal_read_batch.as_mut() {
+            let disposal = catch_unwind(AssertUnwindSafe(|| {
+                batch.dispose_retained_resource();
+            }));
+            if disposal.is_err() {
+                return Err(self);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for TerminalReadScratch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TerminalReadScratch")
+            .field("runtime_id", &self.runtime.id())
+            .field(
+                "has_terminal_read_batch_pool",
+                &self.terminal_read_batch.is_some(),
+            )
+            .finish()
+    }
+}
+
 struct TransactionFrame {
     runtime: Arc<Runtime>,
     isolation: IsolationMode,
@@ -460,6 +517,53 @@ impl TransactionFrame {
     }
 }
 
+/// Minimal active state for the terminal-read-only protocol.
+///
+/// It deliberately contains no ordinary item pool, item index, unique batch,
+/// or lock-plan storage. Moving this frame at begin/end therefore moves only a
+/// thin scratch pointer and terminal protocol metadata.
+struct TerminalReadFrame {
+    scratch: Box<TerminalReadScratch>,
+    terminal_read_active: bool,
+    doomed: bool,
+}
+
+impl TerminalReadFrame {
+    fn new(scratch: Box<TerminalReadScratch>) -> Self {
+        debug_assert!(scratch
+            .terminal_read_batch
+            .as_ref()
+            .is_none_or(|batch| batch.active_len() == 0));
+        Self {
+            scratch,
+            terminal_read_active: false,
+            doomed: false,
+        }
+    }
+
+    #[inline(always)]
+    fn runtime(&self) -> &Arc<Runtime> {
+        &self.scratch.runtime
+    }
+
+    fn active_len(&self) -> usize {
+        self.scratch
+            .terminal_read_batch
+            .as_ref()
+            .map_or(0, |batch| batch.active_len())
+    }
+
+    fn into_scratch(self) -> Box<TerminalReadScratch> {
+        debug_assert!(!self.terminal_read_active);
+        debug_assert!(self
+            .scratch
+            .terminal_read_batch
+            .as_ref()
+            .is_none_or(|batch| batch.active_len() == 0));
+        self.scratch
+    }
+}
+
 /// One active transaction borrowing exactly one attached worker.
 ///
 /// Completion consumes this value. Dropping it performs a definite abort.
@@ -472,6 +576,24 @@ impl TransactionFrame {
 pub struct Transaction<'worker, State = Active> {
     worker: Option<&'worker mut WorkerContext>,
     frame: Option<TransactionFrame>,
+    state: PhantomData<fn() -> State>,
+    not_send_sync: PhantomData<Rc<()>>,
+}
+
+/// One restricted terminal-read transaction borrowing an attached worker.
+///
+/// The distinct handle keeps terminal-only storage and code out of
+/// [`Transaction<Active>`]. Completion consumes this value, and dropping it
+/// performs a definite drop-only abort. Like the general transaction, it is
+/// structurally neither `Send` nor `Sync`.
+///
+/// ```compile_fail
+/// fn require_send<T: Send>() {}
+/// require_send::<sto_core::TerminalReadTransaction<'static>>();
+/// ```
+pub struct TerminalReadTransaction<'worker, State = TerminalReadOpen> {
+    worker: Option<&'worker mut WorkerContext>,
+    frame: Option<TerminalReadFrame>,
     state: PhantomData<fn() -> State>,
     not_send_sync: PhantomData<Rc<()>>,
 }
@@ -579,6 +701,34 @@ impl<State> std::fmt::Debug for Transaction<'_, State> {
     }
 }
 
+impl<State> std::fmt::Debug for TerminalReadTransaction<'_, State> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TerminalReadTransaction")
+            .field("active", &self.frame.is_some())
+            .field(
+                "items",
+                &self.frame.as_ref().map_or(0, TerminalReadFrame::active_len),
+            )
+            .field(
+                "doomed",
+                &self.frame.as_ref().is_some_and(|frame| frame.doomed),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'worker, State> TerminalReadTransaction<'worker, State> {
+    fn transition<Next>(mut self) -> TerminalReadTransaction<'worker, Next> {
+        TerminalReadTransaction {
+            worker: self.worker.take(),
+            frame: self.frame.take(),
+            state: PhantomData,
+            not_send_sync: PhantomData,
+        }
+    }
+}
+
 impl WorkerContext {
     /// Begins a transaction with the runtime's configured default isolation.
     pub fn begin(&mut self) -> Result<Transaction<'_, Active>, BeginError> {
@@ -603,6 +753,117 @@ impl WorkerContext {
             state: PhantomData,
             not_send_sync: PhantomData,
         })
+    }
+
+    /// Begins a transaction whose only data access is one terminal read batch.
+    ///
+    /// The returned open typestate exposes no general item API. Successfully
+    /// recording its batch consumes it and returns [`TerminalReadReady`], which
+    /// in turn exposes only commit and abort.
+    pub fn begin_terminal_read_batch(
+        &mut self,
+    ) -> Result<TerminalReadTransaction<'_, TerminalReadOpen>, BeginError> {
+        let isolation = self.runtime.config().default_isolation();
+        self.begin_terminal_read_batch_with(isolation)
+    }
+
+    /// Begins a terminal read batch with an explicitly selected isolation.
+    pub fn begin_terminal_read_batch_with(
+        &mut self,
+        isolation: IsolationMode,
+    ) -> Result<TerminalReadTransaction<'_, TerminalReadOpen>, BeginError> {
+        self.begin_isolation(isolation)?;
+        let scratch = self
+            .terminal_read_scratch
+            .take()
+            .expect("idle worker retains terminal-read scratch");
+        debug_assert!(Arc::ptr_eq(&scratch.runtime, &self.runtime));
+        Ok(TerminalReadTransaction {
+            worker: Some(self),
+            frame: Some(TerminalReadFrame::new(scratch)),
+            state: PhantomData,
+            not_send_sync: PhantomData,
+        })
+    }
+}
+
+impl<'worker> TerminalReadTransaction<'worker, TerminalReadOpen> {
+    /// Definitely aborts preparatory work that failed before the terminal
+    /// batch was handed to core, and returns `error` unchanged.
+    ///
+    /// This is the failure boundary for datatype adapters that perform
+    /// directory or cache preparation before calling
+    /// [`Self::with_terminal_read_batch`]. It applies the same runtime
+    /// quarantine policy as an access error raised inside that method:
+    /// adapter faults, poisoned dependencies, and internal errors poison the
+    /// runtime, while ordinary conflicts and capacity failures do not.
+    #[cold]
+    #[inline(never)]
+    pub fn abort_with_access_error(mut self, error: AccessError) -> AccessError {
+        let worker = self
+            .worker
+            .take()
+            .expect("an open terminal transaction retains its worker");
+        let frame = self
+            .frame
+            .take()
+            .expect("an open terminal transaction retains its frame");
+        if access_error_poisons_runtime(error) {
+            frame.runtime().poison();
+        }
+        let _ = abort_terminal_read_without_locks(worker, frame, AbortReason::Explicit);
+        error
+    }
+
+    /// Records this transaction's one terminal homogeneous read batch.
+    ///
+    /// The transaction must have been created by
+    /// [`WorkerContext::begin_terminal_read_batch`]. Each callback receives a
+    /// restricted [`TerminalReadEntry`] and must record exactly one ordinary
+    /// observation. Duplicate keys are permitted: without writes or later
+    /// lookup they are independent conservative observations of the same
+    /// logical item.
+    ///
+    /// Success consumes the open handle and returns a ready handle that permits
+    /// only commit or abort. An error consumes and definitely aborts the open
+    /// transaction before returning. An unwind likewise reaches transaction
+    /// Drop with the complete prefix and at most one pending key retained.
+    pub fn with_terminal_read_batch<A>(
+        mut self,
+        resource: &RegisteredResource<A>,
+        keys: &[A::Key],
+        mut operation: impl for<'entry> FnMut(
+            usize,
+            &mut TerminalReadEntry<'entry, A>,
+        ) -> Result<(), AccessError>,
+    ) -> Result<TerminalReadTransaction<'worker, TerminalReadReady>, AccessError>
+    where
+        A: TransactionalResource,
+    {
+        let frame = self
+            .frame
+            .as_mut()
+            .expect("an open terminal transaction retains its frame");
+        debug_assert!(!frame.terminal_read_active);
+        debug_assert_eq!(frame.active_len(), 0);
+
+        frame.doomed = true;
+        let result = (|| {
+            resource.validate_for_runtime(frame.runtime().id())?;
+            append_terminal_read_batch(frame, resource, keys, &mut operation)
+        })();
+        match result {
+            Ok(()) => {
+                frame.doomed = false;
+                Ok(self.transition())
+            }
+            Err(error) => {
+                if access_error_poisons_runtime(error) {
+                    frame.runtime().poison();
+                }
+                Err(error)
+            }
+        }
     }
 }
 
@@ -868,12 +1129,57 @@ impl<'worker> Transaction<'worker, Active> {
     }
 }
 
+impl TerminalReadTransaction<'_, TerminalReadReady> {
+    /// Certifies and commits the terminal read batch without constructing a
+    /// lock plan or invoking any general item callback.
+    pub fn commit(mut self) -> Result<CommitOutcome, CommitFailure> {
+        let worker = self
+            .worker
+            .take()
+            .expect("a ready terminal transaction retains its worker");
+        let frame = self
+            .frame
+            .take()
+            .expect("a ready terminal transaction retains its frame");
+        let mut driver = TerminalReadCommitDriver::new(worker, frame);
+        match catch_unwind(AssertUnwindSafe(|| driver.run())) {
+            Ok(result) => result,
+            Err(_) => match catch_unwind(AssertUnwindSafe(|| driver.contain_unexpected_unwind())) {
+                Ok(result) => result,
+                Err(_) => driver.emergency_failure(),
+            },
+        }
+    }
+
+    /// Explicitly aborts a ready terminal batch using drop-only cleanup.
+    pub fn abort(mut self) -> AbortInfo {
+        let worker = self
+            .worker
+            .take()
+            .expect("a ready terminal transaction retains its worker");
+        let frame = self
+            .frame
+            .take()
+            .expect("a ready terminal transaction retains its frame");
+        abort_terminal_read_without_locks(worker, frame, AbortReason::Explicit)
+    }
+}
+
 impl<State> Drop for Transaction<'_, State> {
     fn drop(&mut self) {
         let (Some(worker), Some(frame)) = (self.worker.take(), self.frame.take()) else {
             return;
         };
         let _ = abort_without_locks(worker, frame, AbortReason::Explicit);
+    }
+}
+
+impl<State> Drop for TerminalReadTransaction<'_, State> {
+    fn drop(&mut self) {
+        let (Some(worker), Some(frame)) = (self.worker.take(), self.frame.take()) else {
+            return;
+        };
+        let _ = abort_terminal_read_without_locks(worker, frame, AbortReason::Explicit);
     }
 }
 
@@ -1197,6 +1503,138 @@ where
     Ok(true)
 }
 
+fn append_terminal_read_batch<A>(
+    frame: &mut TerminalReadFrame,
+    resource: &RegisteredResource<A>,
+    keys: &[A::Key],
+    operation: &mut impl for<'entry> FnMut(
+        usize,
+        &mut TerminalReadEntry<'entry, A>,
+    ) -> Result<(), AccessError>,
+) -> Result<(), AccessError>
+where
+    A: TransactionalResource,
+{
+    debug_assert_eq!(frame.active_len(), 0);
+    debug_assert!(!frame.terminal_read_active);
+
+    if keys.len() > frame.runtime().config().max_items_per_transaction() {
+        return Err(crate::error::CapacityError::ItemLimit.into());
+    }
+    if keys.is_empty() {
+        return Ok(());
+    }
+
+    let capability = match catch_unwind(AssertUnwindSafe(|| {
+        resource.adapter().terminal_read_batch_capability()
+    })) {
+        Ok(Some(capability)) => capability,
+        Ok(None) => return Err(Unsupported::Capability("terminal read batch").into()),
+        Err(_) => {
+            frame.runtime().poison();
+            return Err(AdapterFault::new(
+                AdapterPhase::Execute,
+                crate::error::AdapterFaultKind::Panic,
+            )
+            .into());
+        }
+    };
+
+    let TerminalReadFrame {
+        scratch,
+        terminal_read_active,
+        ..
+    } = frame;
+    let TerminalReadScratch {
+        runtime,
+        terminal_read_batch,
+    } = scratch.as_mut();
+    let batch = prepare_typed_terminal_read_batch(
+        runtime,
+        terminal_read_batch,
+        resource,
+        capability,
+        keys.len(),
+    )?;
+
+    // Arm before cloning the first key. Drop can now find the typed pool after
+    // an unwind at any point in item construction or the user callback.
+    *terminal_read_active = true;
+    for (index, key) in keys.iter().enumerate() {
+        batch.push_pending_key(key.clone());
+        let mut entry = batch.pending_entry();
+        operation(index, &mut entry)?;
+        if !entry.has_read() {
+            return Err(InvalidUse::IllegalItemState.into());
+        }
+    }
+    Ok(())
+}
+
+fn prepare_typed_terminal_read_batch<'batch, A: TransactionalResource>(
+    runtime: &Runtime,
+    batch_slot: &'batch mut Option<Box<dyn ErasedTerminalReadBatch>>,
+    resource: &RegisteredResource<A>,
+    capability: &'static TerminalReadBatchCapability<A>,
+    needed: usize,
+) -> Result<&'batch mut TypedTerminalReadBatch<A>, AccessError> {
+    let replace = batch_slot.as_mut().is_some_and(|batch| {
+        batch
+            .as_any_mut()
+            .downcast_mut::<TypedTerminalReadBatch<A>>()
+            .is_none()
+    });
+
+    if replace || batch_slot.is_none() {
+        let mut replacement = TypedTerminalReadBatch::<A>::new();
+        replacement.try_reserve_for_len(needed)?;
+        if replace {
+            let batch = batch_slot
+                .as_mut()
+                .expect("a terminal replacement candidate remains present");
+            if dispose_pooled_terminal_resource(runtime, batch.as_mut()).is_err() {
+                return Err(pooled_resource_panic());
+            }
+        }
+        *batch_slot = Some(Box::new(replacement));
+    }
+
+    let batch = batch_slot
+        .as_mut()
+        .expect("terminal batch storage was installed");
+    if batch.active_len() != 0 {
+        runtime.poison();
+        return Err(AdapterFault::invariant(AdapterPhase::Execute).into());
+    }
+    let batch = batch
+        .as_any_mut()
+        .downcast_mut::<TypedTerminalReadBatch<A>>()
+        .ok_or_else(|| {
+            runtime.poison();
+            AdapterFault::new(
+                AdapterPhase::Execute,
+                crate::error::AdapterFaultKind::TypeMismatch,
+            )
+        })?;
+    if !replace {
+        batch.try_reserve_for_len(needed)?;
+    }
+
+    if batch.retains_binding(resource) {
+        if !batch.retains_capability(capability) {
+            runtime.poison();
+            return Err(AdapterFault::invariant(AdapterPhase::Execute).into());
+        }
+    } else {
+        if batch.has_retained_binding() && dispose_pooled_terminal_resource(runtime, batch).is_err()
+        {
+            return Err(pooled_resource_panic());
+        }
+        batch.retain_binding(resource, capability);
+    }
+    Ok(batch)
+}
+
 fn dispose_ordinary_pool_prefix(
     runtime: &Runtime,
     items: &mut [Option<Box<dyn ErasedItem>>],
@@ -1253,7 +1691,11 @@ where
         batch.push_active(ItemBox::new(resource.clone(), key, local));
     }
     *item_count += 1;
-    operation(&mut Entry::new(batch.active_item_mut(item_slot)))
+    let result = operation(&mut Entry::new(batch.active_item_mut(item_slot)));
+    if result.is_ok() {
+        batch.note_active_item_shape(item_slot);
+    }
+    result
 }
 
 fn prepare_typed_unique_batch<'batch, A: TransactionalResource>(
@@ -1362,6 +1804,19 @@ fn dispose_pooled_batch_resources(
     }
 }
 
+fn dispose_pooled_terminal_resource(
+    runtime: &Runtime,
+    batch: &mut dyn ErasedTerminalReadBatch,
+) -> Result<(), ()> {
+    match catch_unwind(AssertUnwindSafe(|| batch.dispose_retained_resource())) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            runtime.poison();
+            Err(())
+        }
+    }
+}
+
 #[cold]
 fn pooled_resource_panic() -> AccessError {
     AdapterFault::new(
@@ -1373,13 +1828,29 @@ fn pooled_resource_panic() -> AccessError {
 
 #[cfg(test)]
 mod item_index_tests {
-    use super::{ItemIndex, ItemIndexEntry};
+    use super::{
+        ErasedTerminalReadBatch, ItemIndex, ItemIndexEntry, TerminalReadFrame, TerminalReadScratch,
+    };
     use crate::CapacityError;
 
     #[test]
     fn compact_index_entry_remains_two_machine_words() {
         assert_eq!(std::mem::size_of::<ItemIndexEntry>(), 16);
         assert_eq!(std::mem::align_of::<ItemIndexEntry>(), 8);
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn terminal_read_frame_remains_independent_and_minimal() {
+        assert_eq!(
+            std::mem::size_of::<Option<Box<dyn ErasedTerminalReadBatch>>>(),
+            16
+        );
+        assert_eq!(std::mem::size_of::<TerminalReadScratch>(), 24);
+        assert_eq!(std::mem::size_of::<Box<TerminalReadScratch>>(), 8);
+        assert_eq!(std::mem::size_of::<Option<Box<TerminalReadScratch>>>(), 8);
+        assert_eq!(std::mem::size_of::<TerminalReadFrame>(), 16);
+        assert_eq!(std::mem::size_of::<Option<TerminalReadFrame>>(), 16);
     }
 
     #[test]
@@ -2376,6 +2847,261 @@ impl Drop for CommitDriver<'_, '_> {
     }
 }
 
+/// Commit driver for the terminal read typestate.
+///
+/// This intentionally does not share the general driver's lock planning,
+/// shape selection, item dispatch, or finish path.
+struct TerminalReadCommitDriver<'worker> {
+    worker: &'worker mut WorkerContext,
+    frame: Option<TerminalReadFrame>,
+    boundary: CommitBoundary,
+    phase: FailurePhase,
+    completed: bool,
+}
+
+impl<'worker> TerminalReadCommitDriver<'worker> {
+    fn new(worker: &'worker mut WorkerContext, frame: TerminalReadFrame) -> Self {
+        debug_assert!(
+            !frame.terminal_read_active
+                || frame
+                    .scratch
+                    .terminal_read_batch
+                    .as_ref()
+                    .is_some_and(|batch| batch.is_complete())
+        );
+        Self {
+            worker,
+            frame: Some(frame),
+            boundary: CommitBoundary::Reversible,
+            phase: FailurePhase::Validation,
+            completed: false,
+        }
+    }
+
+    fn run(&mut self) -> Result<CommitOutcome, CommitFailure> {
+        if self.frame().doomed {
+            let poison = self
+                .worker
+                .runtime
+                .ensure_healthy(FailurePhase::Execution)
+                .err();
+            return self.abort_commit(AbortReason::Doomed, poison);
+        }
+        if let Err(info) = self
+            .frame()
+            .runtime()
+            .ensure_healthy(FailurePhase::Validation)
+        {
+            return self.abort_commit(AbortReason::Doomed, Some(info));
+        }
+
+        self.phase = FailurePhase::Validation;
+        if self.frame().terminal_read_active {
+            let mut validation_scope = ();
+            let cx = PreflightFreeValidationContext::without_locks(None, &mut validation_scope);
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                self.frame
+                    .as_ref()
+                    .expect("terminal driver owns its frame")
+                    .scratch
+                    .terminal_read_batch
+                    .as_ref()
+                    .expect("an active terminal batch retains its storage")
+                    .validate(&cx)
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(CheckError::Conflict(conflict))) => {
+                    return self.abort_commit(conflict.into(), None)
+                }
+                Ok(Err(CheckError::Fault(fault))) => {
+                    let reason = AbortReason::Internal(InternalError::new(
+                        FailurePhase::Validation,
+                        "adapter fault during terminal read validation",
+                    ));
+                    let info = self.poison(
+                        adapter_failure_phase(fault),
+                        "adapter fault during terminal read validation",
+                    );
+                    return self.abort_commit(reason, Some(info));
+                }
+                Err(_) => {
+                    let reason = AbortReason::Internal(InternalError::new(
+                        FailurePhase::Validation,
+                        "terminal read validation callback panicked",
+                    ));
+                    let info = self.poison(
+                        FailurePhase::Validation,
+                        "terminal read validation callback panicked",
+                    );
+                    return self.abort_commit(reason, Some(info));
+                }
+            }
+        }
+
+        // With no installation or publication callback, successful final
+        // certification is the definite commit boundary.
+        self.boundary = CommitBoundary::Published;
+        self.phase = FailurePhase::Finish;
+        let commit_info = CommitInfo::new(None);
+        if let Err(info) = self.teardown_terminal_batch() {
+            self.complete_worker();
+            return Err(CommitFailure::Poisoned {
+                outcome: DefiniteOutcome::Committed(commit_info),
+                info,
+            });
+        }
+        self.recycle_frame();
+        self.complete_worker();
+        Ok(CommitOutcome::Committed(commit_info))
+    }
+
+    fn abort_commit(
+        &mut self,
+        reason: AbortReason,
+        mut poison: Option<PoisonInfo>,
+    ) -> Result<CommitOutcome, CommitFailure> {
+        self.phase = FailurePhase::Finish;
+        if let Err(info) = self.teardown_terminal_batch() {
+            poison = Some(info);
+        }
+        self.recycle_frame();
+        self.complete_worker();
+        match poison {
+            Some(info) => Err(CommitFailure::Poisoned {
+                outcome: DefiniteOutcome::Aborted(reason),
+                info,
+            }),
+            None => Ok(CommitOutcome::Aborted(reason)),
+        }
+    }
+
+    fn teardown_terminal_batch(&mut self) -> Result<(), PoisonInfo> {
+        let Some(frame) = self.frame.as_mut() else {
+            return Ok(());
+        };
+        if !frame.terminal_read_active {
+            return Ok(());
+        }
+        let cleanup = catch_unwind(AssertUnwindSafe(|| {
+            frame
+                .scratch
+                .terminal_read_batch
+                .as_mut()
+                .expect("an active terminal batch retains its storage")
+                .teardown_drop_only_reverse();
+        }));
+        if cleanup.is_err() {
+            frame.runtime().poison();
+            let retained = self
+                .frame
+                .take()
+                .expect("terminal cleanup retains its frame");
+            std::mem::forget(retained);
+            return Err(PoisonInfo::new(
+                FailurePhase::Finish,
+                "terminal key or observation drop panicked",
+            ));
+        }
+        frame.terminal_read_active = false;
+        Ok(())
+    }
+
+    fn contain_unexpected_unwind(&mut self) -> Result<CommitOutcome, CommitFailure> {
+        let phase = self.phase;
+        match self.boundary {
+            CommitBoundary::Reversible => {
+                let reason = AbortReason::Internal(InternalError::new(
+                    phase,
+                    "unexpected terminal-read commit-driver unwind",
+                ));
+                let info = self.poison(phase, "unexpected terminal-read commit-driver unwind");
+                self.abort_commit(reason, Some(info))
+            }
+            CommitBoundary::Published => {
+                let mut info =
+                    self.poison(phase, "unexpected terminal-read unwind after certification");
+                if let Err(teardown) = self.teardown_terminal_batch() {
+                    info = teardown;
+                }
+                self.recycle_frame();
+                self.complete_worker();
+                Err(CommitFailure::Poisoned {
+                    outcome: DefiniteOutcome::Committed(CommitInfo::new(None)),
+                    info,
+                })
+            }
+            CommitBoundary::Irrevocable => unreachable!(
+                "terminal read transactions have no irreversible installation boundary"
+            ),
+        }
+    }
+
+    fn emergency_failure(&mut self) -> Result<CommitOutcome, CommitFailure> {
+        let phase = self.phase;
+        self.worker.runtime.poison();
+        if let Some(frame) = self.frame.take() {
+            std::mem::forget(frame);
+        }
+        self.complete_worker();
+        let info = PoisonInfo::new(phase, "terminal-read panic containment itself failed");
+        match self.boundary {
+            CommitBoundary::Published => Err(CommitFailure::Poisoned {
+                outcome: DefiniteOutcome::Committed(CommitInfo::new(None)),
+                info,
+            }),
+            CommitBoundary::Reversible | CommitBoundary::Irrevocable => {
+                Err(CommitFailure::Poisoned {
+                    outcome: DefiniteOutcome::Aborted(AbortReason::Internal(InternalError::new(
+                        phase,
+                        "terminal-read panic containment itself failed",
+                    ))),
+                    info,
+                })
+            }
+        }
+    }
+
+    fn frame(&self) -> &TerminalReadFrame {
+        self.frame
+            .as_ref()
+            .expect("terminal commit driver owns its frame")
+    }
+
+    fn poison(&self, phase: FailurePhase, reason: &'static str) -> PoisonInfo {
+        self.worker.runtime.poison();
+        PoisonInfo::new(phase, reason)
+    }
+
+    fn recycle_frame(&mut self) {
+        if let Some(frame) = self.frame.take() {
+            self.worker
+                .recycle_terminal_read_scratch(frame.into_scratch());
+        }
+    }
+
+    fn complete_worker(&mut self) {
+        if !self.completed {
+            self.worker.finish_transaction();
+            self.completed = true;
+        }
+    }
+}
+
+impl Drop for TerminalReadCommitDriver<'_> {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        let fallback = catch_unwind(AssertUnwindSafe(|| {
+            let _ = self.contain_unexpected_unwind();
+        }));
+        if fallback.is_err() || !self.completed {
+            let _ = self.emergency_failure();
+        }
+    }
+}
+
 fn abort_without_locks(
     worker: &mut WorkerContext,
     mut frame: TransactionFrame,
@@ -2408,6 +3134,32 @@ fn abort_without_locks(
         std::mem::forget(frame);
     } else {
         worker.recycle_transaction_scratch(frame.into_scratch());
+    }
+    worker.finish_transaction();
+    AbortInfo::new(reason)
+}
+
+fn abort_terminal_read_without_locks(
+    worker: &mut WorkerContext,
+    mut frame: TerminalReadFrame,
+    reason: AbortReason,
+) -> AbortInfo {
+    let cleanup = catch_unwind(AssertUnwindSafe(|| {
+        if frame.terminal_read_active {
+            frame
+                .scratch
+                .terminal_read_batch
+                .as_mut()
+                .expect("an active terminal batch retains its storage")
+                .teardown_drop_only_reverse();
+            frame.terminal_read_active = false;
+        }
+    }));
+    if cleanup.is_err() {
+        frame.runtime().poison();
+        std::mem::forget(frame);
+    } else {
+        worker.recycle_terminal_read_scratch(frame.into_scratch());
     }
     worker.finish_transaction();
     AbortInfo::new(reason)

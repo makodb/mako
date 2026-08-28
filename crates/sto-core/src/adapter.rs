@@ -62,6 +62,56 @@ pub type PreflightFreeReadValidate<A> = for<'context> fn(
     &PreflightFreeValidationContext<'context>,
 ) -> Result<(), CheckError>;
 
+/// Final-certification callback for a terminal read-batch item.
+pub type TerminalReadBatchValidate<A> = for<'context> fn(
+    &A,
+    &<A as TransactionalResource>::Key,
+    &<A as TransactionalResource>::Observation,
+    &PreflightFreeValidationContext<'context>,
+) -> Result<(), CheckError>;
+
+/// Explicit adapter proof for the restricted terminal read-batch protocol.
+///
+/// A terminal batch owns only keys, ordinary-read observations, and one shared
+/// registered-resource binding. Core never constructs
+/// [`TransactionalResource::Local`], `Intent`, or `Prepared` state for this
+/// protocol and never invokes `preflight`, `install`, or `finish`.
+///
+/// Constructing this capability is therefore a stronger correctness promise
+/// than [`PreflightFreeReadCapability::new_drop_only`]. `validate` must certify
+/// the same abstract observation as [`TransactionalResource::validate_read`].
+/// On both commit and abort, dropping the key and observation must be the
+/// complete cleanup: it must not require shared-state mutation, an outcome,
+/// transaction-local state, or a phase context. An operation that records such
+/// an observation must be a read only; it must not publish or stage a mutation
+/// or create cleanup obligations outside those two owned values.
+///
+/// The adapter must return the same capability for the complete registered
+/// lifetime. Violating these promises can break transactional correctness,
+/// although core still contains callback and destructor panics for memory
+/// safety.
+pub struct TerminalReadBatchCapability<A: TransactionalResource> {
+    validate: TerminalReadBatchValidate<A>,
+}
+
+impl<A: TransactionalResource> TerminalReadBatchCapability<A> {
+    /// Constructs a terminal capability with drop-only cleanup on every
+    /// definite outcome.
+    pub const fn new_drop_only(validate: TerminalReadBatchValidate<A>) -> Self {
+        Self { validate }
+    }
+
+    pub(crate) fn validate(
+        &self,
+        adapter: &A,
+        key: &A::Key,
+        observation: &A::Observation,
+        cx: &PreflightFreeValidationContext<'_>,
+    ) -> Result<(), CheckError> {
+        (self.validate)(adapter, key, observation, cx)
+    }
+}
+
 /// Post-publication cleanup callback for a committed ordinary read that never
 /// produced [`TransactionalResource::Prepared`] state.
 pub type PreflightFreeReadFinish<A> = for<'item, 'context> fn(
@@ -181,6 +231,15 @@ pub trait TransactionalResource: Send + Sync + Sized + 'static {
     /// The default retains the full preflight protocol. Returning `Some` is an
     /// explicit, stable adapter contract; see [`PreflightFreeReadCapability`].
     fn preflight_free_read_capability(&self) -> Option<&'static PreflightFreeReadCapability<Self>> {
+        None
+    }
+
+    /// Optionally advertises the stronger, terminal read-batch protocol.
+    ///
+    /// The default keeps this restricted representation unavailable. Returning
+    /// `Some` is an explicit, stable adapter contract; see
+    /// [`TerminalReadBatchCapability`].
+    fn terminal_read_batch_capability(&self) -> Option<&'static TerminalReadBatchCapability<Self>> {
         None
     }
 

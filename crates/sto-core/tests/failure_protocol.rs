@@ -7,12 +7,12 @@ use sto_core::{
     AbortReason, AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
     AdapterPhase, CheckError, CommitFailure, CommitHook, CommitHookError, CommitOutcome, Conflict,
     DefiniteOutcome, Entry, ExecutionCheckContext, FailurePhase, FinishContext, FinishDisposition,
-    FinishItem, InstallContext, InstallItem, InternalError, ItemInitError, LockClass,
+    FinishItem, InstallContext, InstallItem, InternalError, InvalidUse, ItemInitError, LockClass,
     LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse, ObservationOrder,
     OpacityToken, PoisonInfo, PredicateContext, PreflightContext, PreflightFreeReadCapability,
     PreflightFreeValidationContext, PreflightItem, PrepareError, RegisteredResource, ResourceClass,
-    Runtime, RuntimeConfig, RuntimeHealth, Transaction, TransactionLock, TransactionalResource,
-    TxnArray, UniqueItemKeys, ValidationContext,
+    Runtime, RuntimeConfig, RuntimeHealth, TerminalReadBatchCapability, Transaction,
+    TransactionLock, TransactionalResource, TxnArray, UniqueItemKeys, ValidationContext,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,6 +244,7 @@ enum PreflightFreeReadMode {
 struct InjectAdapter {
     harness: Arc<Harness>,
     preflight_free_reads: PreflightFreeReadMode,
+    terminal_reads: bool,
 }
 
 impl Drop for InjectAdapter {
@@ -278,6 +279,10 @@ impl TransactionalResource for InjectAdapter {
             PreflightFreeReadMode::Callback => Some(&INJECT_PREFLIGHT_FREE_READ),
             PreflightFreeReadMode::DropOnly => Some(&INJECT_DROP_ONLY_PREFLIGHT_FREE_READ),
         }
+    }
+
+    fn terminal_read_batch_capability(&self) -> Option<&'static TerminalReadBatchCapability<Self>> {
+        self.terminal_reads.then_some(&INJECT_TERMINAL_READ_BATCH)
     }
 
     fn preflight(
@@ -413,6 +418,9 @@ static INJECT_PREFLIGHT_FREE_READ: PreflightFreeReadCapability<InjectAdapter> =
 static INJECT_DROP_ONLY_PREFLIGHT_FREE_READ: PreflightFreeReadCapability<InjectAdapter> =
     PreflightFreeReadCapability::new_drop_only(validate_inject_preflight_free_read);
 
+static INJECT_TERMINAL_READ_BATCH: TerminalReadBatchCapability<InjectAdapter> =
+    TerminalReadBatchCapability::new_drop_only(validate_inject_preflight_free_read);
+
 fn validate_inject_preflight_free_read(
     adapter: &InjectAdapter,
     key: &u64,
@@ -507,6 +515,22 @@ fn drop_only_preflight_free_fixture(actions: Vec<(Callback, u64, Action)>) -> Fi
     }
 }
 
+fn terminal_read_fixture(actions: Vec<(Callback, u64, Action)>) -> Fixture {
+    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    let (resource, harness) = register_inject_resource_with_protocols(
+        &runtime,
+        99,
+        actions,
+        PreflightFreeReadMode::Disabled,
+        true,
+    );
+    Fixture {
+        runtime,
+        resource,
+        harness,
+    }
+}
+
 fn register_inject_resource(
     runtime: &Arc<Runtime>,
     resource_class: u32,
@@ -540,6 +564,22 @@ fn register_inject_resource_with_preflight_free_mode(
     actions: Vec<(Callback, u64, Action)>,
     preflight_free_reads: PreflightFreeReadMode,
 ) -> (RegisteredResource<InjectAdapter>, Arc<Harness>) {
+    register_inject_resource_with_protocols(
+        runtime,
+        resource_class,
+        actions,
+        preflight_free_reads,
+        false,
+    )
+}
+
+fn register_inject_resource_with_protocols(
+    runtime: &Arc<Runtime>,
+    resource_class: u32,
+    actions: Vec<(Callback, u64, Action)>,
+    preflight_free_reads: PreflightFreeReadMode,
+    terminal_reads: bool,
+) -> (RegisteredResource<InjectAdapter>, Arc<Harness>) {
     let object = runtime.register_object().unwrap();
     let harness = Arc::new(Harness {
         runtime_id: object.runtime_id(),
@@ -553,6 +593,7 @@ fn register_inject_resource_with_preflight_free_mode(
             InjectAdapter {
                 harness: Arc::clone(&harness),
                 preflight_free_reads,
+                terminal_reads,
             },
         )
         .unwrap();
@@ -736,7 +777,8 @@ fn callback_keys(events: &[Event], callback: Callback) -> Vec<u64> {
             | (Callback::PredicateUpgrade, Event::PredicateUpgrade(key))
             | (Callback::Validation, Event::Validation(key))
             | (Callback::PreflightFreeValidation, Event::PreflightFreeValidation(key))
-            | (Callback::Install, Event::Install(key)) => Some(*key),
+            | (Callback::Install, Event::Install(key))
+            | (Callback::ObservationDrop, Event::ObservationDrop(key)) => Some(*key),
             _ => None,
         })
         .collect()
@@ -2451,4 +2493,337 @@ fn pooled_adapter_destructor_panic_is_contained_on_different_type_replacement() 
         1
     );
     drop(transaction);
+}
+
+#[test]
+fn terminal_read_preparation_errors_abort_and_apply_runtime_poison_policy() {
+    let cases = [
+        (
+            AccessError::Conflict(Conflict::HiddenLockBusy),
+            RuntimeHealth::Healthy,
+        ),
+        (
+            AccessError::Capacity(sto_core::CapacityError::BufferLimit),
+            RuntimeHealth::Healthy,
+        ),
+        (
+            AccessError::Fault(injected_fault(AdapterPhase::Execute)),
+            RuntimeHealth::Poisoned,
+        ),
+    ];
+
+    for (error, expected_health) in cases {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        let mut worker = runtime.attach().unwrap();
+        let returned = worker
+            .begin_terminal_read_batch()
+            .unwrap()
+            .abort_with_access_error(error);
+
+        assert_eq!(returned, error);
+        assert_eq!(runtime.health(), expected_health);
+        if expected_health == RuntimeHealth::Healthy {
+            // Consuming the open handle must have definitely released the
+            // worker and recycled its scratch, not merely marked it doomed.
+            worker.begin().unwrap().abort();
+        }
+    }
+}
+
+#[test]
+fn terminal_read_commit_uses_only_validation_and_reverse_drop_cleanup() {
+    let fixture = terminal_read_fixture(Vec::new());
+    let mut worker = fixture.runtime.attach().unwrap();
+    let keys = [1, 2, 3, 2];
+    let ready = worker
+        .begin_terminal_read_batch()
+        .unwrap()
+        .with_terminal_read_batch(&fixture.resource, &keys, |_, entry| {
+            let key = *entry.key();
+            entry.record_read(Token::upgraded(key, &fixture.harness))
+        })
+        .unwrap();
+
+    assert!(fixture.harness.events().is_empty());
+    assert!(matches!(
+        ready.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    let events = fixture.harness.events();
+    assert_eq!(
+        callback_keys(&events, Callback::PreflightFreeValidation),
+        keys
+    );
+    assert_eq!(
+        callback_keys(&events, Callback::ObservationDrop),
+        [2, 3, 2, 1]
+    );
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        Event::ItemInit(_)
+            | Event::Preflight(_)
+            | Event::Finish { .. }
+            | Event::PreflightFreeFinish(_)
+    )));
+}
+
+#[test]
+fn terminal_read_explicit_abort_and_operation_failure_are_drop_only() {
+    let fixture = terminal_read_fixture(Vec::new());
+    let mut worker = fixture.runtime.attach().unwrap();
+
+    let ready = worker
+        .begin_terminal_read_batch()
+        .unwrap()
+        .with_terminal_read_batch(&fixture.resource, &[1, 2, 3], |_, entry| {
+            let key = *entry.key();
+            entry.record_read(Token::upgraded(key, &fixture.harness))
+        })
+        .unwrap();
+    ready.abort();
+    assert_eq!(
+        callback_keys(&fixture.harness.events(), Callback::ObservationDrop),
+        [3, 2, 1]
+    );
+    assert!(callback_keys(&fixture.harness.events(), Callback::PreflightFreeValidation).is_empty());
+
+    fixture.harness.clear();
+    let result = worker
+        .begin_terminal_read_batch()
+        .unwrap()
+        .with_terminal_read_batch(&fixture.resource, &[4, 5, 6], |index, entry| {
+            if index == 1 {
+                return Err(InvalidUse::IllegalItemState.into());
+            }
+            let key = *entry.key();
+            entry.record_read(Token::upgraded(key, &fixture.harness))
+        });
+    assert!(matches!(
+        result,
+        Err(AccessError::InvalidUse(InvalidUse::IllegalItemState))
+    ));
+    assert_eq!(
+        callback_keys(&fixture.harness.events(), Callback::ObservationDrop),
+        [4]
+    );
+    assert_eq!(fixture.runtime.health(), RuntimeHealth::Healthy);
+}
+
+#[test]
+fn terminal_read_operation_unwind_aborts_recorded_prefix_and_reuses_worker() {
+    let fixture = terminal_read_fixture(Vec::new());
+    let mut worker = fixture.runtime.attach().unwrap();
+    let unwind = catch_unwind(AssertUnwindSafe(|| {
+        let _ = worker
+            .begin_terminal_read_batch()
+            .unwrap()
+            .with_terminal_read_batch(&fixture.resource, &[1, 2, 3], |index, entry| {
+                let key = *entry.key();
+                entry.record_read(Token::upgraded(key, &fixture.harness))?;
+                assert_ne!(index, 1, "injected terminal operation panic");
+                Ok(())
+            });
+    }));
+    assert!(unwind.is_err());
+    assert_eq!(
+        callback_keys(&fixture.harness.events(), Callback::ObservationDrop),
+        [2, 1]
+    );
+
+    fixture.harness.clear();
+    let ready = worker
+        .begin_terminal_read_batch()
+        .unwrap()
+        .with_terminal_read_batch(&fixture.resource, &[9], |_, entry| {
+            entry.record_read(Token::inert())
+        })
+        .unwrap();
+    assert!(matches!(
+        ready.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+#[test]
+fn terminal_read_validation_failures_keep_definite_abort_classification() {
+    let conflict = terminal_read_fixture(vec![(
+        Callback::PreflightFreeValidation,
+        2,
+        Action::Conflict,
+    )]);
+    let mut worker = conflict.runtime.attach().unwrap();
+    let ready = worker
+        .begin_terminal_read_batch()
+        .unwrap()
+        .with_terminal_read_batch(&conflict.resource, &[1, 2, 3], |_, entry| {
+            let key = *entry.key();
+            entry.record_read(Token::upgraded(key, &conflict.harness))
+        })
+        .unwrap();
+    assert_eq!(
+        ready.commit().unwrap(),
+        CommitOutcome::Aborted(AbortReason::Conflict(Conflict::ReadValidation))
+    );
+    assert_eq!(conflict.runtime.health(), RuntimeHealth::Healthy);
+    assert_eq!(
+        callback_keys(&conflict.harness.events(), Callback::ObservationDrop),
+        [3, 2, 1]
+    );
+
+    for action in [Action::Fault, Action::Panic] {
+        let fixture = terminal_read_fixture(vec![(Callback::PreflightFreeValidation, 1, action)]);
+        let mut worker = fixture.runtime.attach().unwrap();
+        let ready = worker
+            .begin_terminal_read_batch()
+            .unwrap()
+            .with_terminal_read_batch(&fixture.resource, &[1], |_, entry| {
+                let key = *entry.key();
+                entry.record_read(Token::upgraded(key, &fixture.harness))
+            })
+            .unwrap();
+        assert!(matches!(
+            ready.commit(),
+            Err(CommitFailure::Poisoned {
+                outcome: DefiniteOutcome::Aborted(AbortReason::Internal(_)),
+                ..
+            })
+        ));
+        assert_eq!(fixture.runtime.health(), RuntimeHealth::Poisoned);
+        assert_eq!(
+            callback_keys(&fixture.harness.events(), Callback::ObservationDrop),
+            [1]
+        );
+    }
+}
+
+#[test]
+fn terminal_read_post_certification_drop_panic_is_definitely_committed() {
+    let fixture = terminal_read_fixture(vec![(Callback::ObservationDrop, 2, Action::Panic)]);
+    let mut worker = fixture.runtime.attach().unwrap();
+    let ready = worker
+        .begin_terminal_read_batch()
+        .unwrap()
+        .with_terminal_read_batch(&fixture.resource, &[1, 2, 3], |_, entry| {
+            let key = *entry.key();
+            entry.record_read(Token::upgraded(key, &fixture.harness))
+        })
+        .unwrap();
+    assert!(matches!(
+        ready.commit(),
+        Err(CommitFailure::Poisoned {
+            outcome: DefiniteOutcome::Committed(_),
+            ..
+        })
+    ));
+    assert_eq!(fixture.runtime.health(), RuntimeHealth::Poisoned);
+    assert_eq!(
+        callback_keys(&fixture.harness.events(), Callback::ObservationDrop),
+        [3, 2]
+    );
+}
+
+#[test]
+fn terminal_read_requires_its_stronger_explicit_capability() {
+    let fixture = fixture(Vec::new());
+    let mut worker = fixture.runtime.attach().unwrap();
+    {
+        let result = worker
+            .begin_terminal_read_batch()
+            .unwrap()
+            .with_terminal_read_batch(&fixture.resource, &[1], |_, entry| {
+                entry.record_read(Token::inert())
+            });
+        assert_eq!(
+            result.unwrap_err(),
+            AccessError::Unsupported(sto_core::Unsupported::Capability("terminal read batch"))
+        );
+    }
+    assert!(fixture.harness.events().is_empty());
+    assert_eq!(fixture.runtime.health(), RuntimeHealth::Healthy);
+    assert!(worker.begin().is_ok());
+}
+
+#[test]
+fn terminal_read_pool_contains_adapter_panic_on_rebind() {
+    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    let (first, first_harness) = register_inject_resource_with_protocols(
+        &runtime,
+        97,
+        vec![(Callback::AdapterDrop, 0, Action::Panic)],
+        PreflightFreeReadMode::Disabled,
+        true,
+    );
+    let (second, _) = register_inject_resource_with_protocols(
+        &runtime,
+        96,
+        Vec::new(),
+        PreflightFreeReadMode::Disabled,
+        true,
+    );
+    let mut worker = runtime.attach().unwrap();
+
+    let ready = worker
+        .begin_terminal_read_batch()
+        .unwrap()
+        .with_terminal_read_batch(&first, &[1], |_, entry| entry.record_read(Token::inert()))
+        .unwrap();
+    assert!(matches!(
+        ready.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    drop(first);
+
+    let result = worker
+        .begin_terminal_read_batch()
+        .unwrap()
+        .with_terminal_read_batch(&second, &[2], |_, entry| entry.record_read(Token::inert()));
+    assert!(matches!(
+        result,
+        Err(AccessError::Fault(fault))
+            if fault.phase() == AdapterPhase::ItemInit
+                && matches!(fault.kind(), AdapterFaultKind::Panic)
+    ));
+    assert_eq!(runtime.health(), RuntimeHealth::Poisoned);
+    assert_eq!(
+        first_harness
+            .events()
+            .iter()
+            .filter(|event| matches!(event, Event::AdapterDrop))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn terminal_read_pool_contains_adapter_panic_when_worker_drops() {
+    let Fixture {
+        runtime,
+        resource,
+        harness,
+    } = terminal_read_fixture(vec![(Callback::AdapterDrop, 0, Action::Panic)]);
+    let mut worker = runtime.attach().unwrap();
+    let ready = worker
+        .begin_terminal_read_batch()
+        .unwrap()
+        .with_terminal_read_batch(&resource, &[1], |_, entry| {
+            entry.record_read(Token::inert())
+        })
+        .unwrap();
+    assert!(matches!(
+        ready.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    drop(resource);
+    let worker_drop = catch_unwind(AssertUnwindSafe(|| drop(worker)));
+    assert!(worker_drop.is_ok());
+    assert_eq!(runtime.health(), RuntimeHealth::Poisoned);
+    assert_eq!(
+        harness
+            .events()
+            .iter()
+            .filter(|event| matches!(event, Event::AdapterDrop))
+            .count(),
+        1
+    );
 }

@@ -1,9 +1,13 @@
 #![cfg(mtree_native_integration)]
 
 use masstree::{Runtime as MasstreeRuntime, RuntimeConfig as MasstreeRuntimeConfig};
+#[cfg(feature = "fixed-u64")]
+use sto_core::InvalidUse;
 use sto_core::{
     AbortReason, AccessError, CapacityError, CommitOutcome, Conflict, Runtime, RuntimeConfig,
 };
+#[cfg(feature = "fixed-u64")]
+use sto_masstree::{FixedU64Batch, FixedU64Mutation, FixedU64Table, TerminalReadVisitOutcome};
 use sto_masstree::{
     InsertOutcome, PointMutation, PointReadBatch, RegistryLayout, ScanBound, ScanDirection,
     ScanRequest, Table, TableConfig, Value,
@@ -62,6 +66,117 @@ fn native_point_commit_read_and_abort_round_trip() {
         verify.commit().unwrap(),
         CommitOutcome::Committed(_)
     ));
+    native_worker.quiesce().unwrap();
+}
+
+#[cfg(feature = "fixed-u64")]
+#[test]
+fn fixed_u64_public_native_loader_mutation_and_terminal_read_round_trip() {
+    const RECORD_LIMIT: u64 = 16;
+    const REGISTRY_BUDGET_BYTES: usize = 2 * 1024 * 1024;
+
+    let native_runtime = MasstreeRuntime::new(MasstreeRuntimeConfig::new()).unwrap();
+    let native_worker = native_runtime.attach().unwrap();
+    let sto_runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    let table = FixedU64Table::new(
+        &sto_runtime,
+        &native_runtime,
+        &native_worker,
+        TableConfig::new()
+            .with_max_retained_records(RECORD_LIMIT)
+            .with_max_retained_key_bytes(8 * RECORD_LIMIT)
+            .with_max_consumed_record_ids(RECORD_LIMIT)
+            .with_registry_layout(RegistryLayout::EagerContiguous {
+                max_bytes: REGISTRY_BUDGET_BYTES,
+            }),
+    )
+    .unwrap();
+    let key_a = 7_u64.to_be_bytes();
+    let key_b = 9_u64.to_be_bytes();
+    table.insert_initial(&native_worker, &key_a, 10).unwrap();
+    table.insert_initial(&native_worker, &key_b, 20).unwrap();
+    table.insert_initial(&native_worker, &key_a, 10).unwrap();
+    assert_eq!(table.usage().retained_records(), 2);
+    table.finish_initial_load().unwrap();
+    assert_eq!(
+        table
+            .insert_initial(&native_worker, &11_u64.to_be_bytes(), 30)
+            .unwrap_err(),
+        AccessError::InvalidUse(InvalidUse::IllegalItemState)
+    );
+
+    let mut sto_worker = sto_runtime.attach().unwrap();
+    let keys = [key_a, key_b];
+    let mut batch = FixedU64Batch::with_capacity(keys.len());
+    let retained_capacity = batch.capacity();
+    let mut transaction = sto_worker.begin().unwrap();
+    let mut observed = Vec::new();
+    assert_eq!(
+        table
+            .modify_fixed(
+                &mut transaction,
+                &native_worker,
+                &keys,
+                &mut batch,
+                |index, value| {
+                    observed.push(value);
+                    if index == 0 {
+                        FixedU64Mutation::Put(value + 1)
+                    } else {
+                        FixedU64Mutation::Keep
+                    }
+                },
+            )
+            .unwrap(),
+        Some(keys.len())
+    );
+    assert_eq!(observed, [10, 20]);
+    assert!(matches!(
+        transaction.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+
+    {
+        let transaction = sto_worker.begin_terminal_read_batch().unwrap();
+        let mut observed = Vec::new();
+        let outcome = table
+            .visit_fixed_terminal(
+                transaction,
+                &native_worker,
+                &keys,
+                &mut batch,
+                |index, value| observed.push((index, value)),
+            )
+            .unwrap();
+        let (transaction, visited) = match outcome {
+            TerminalReadVisitOutcome::Ready {
+                transaction,
+                visited,
+            } => (transaction, visited),
+            TerminalReadVisitOutcome::RetryOrdinary => {
+                panic!("preloaded fixed-u64 keys must remain present");
+            }
+        };
+        assert_eq!(visited, keys.len());
+        assert!(matches!(
+            transaction.commit().unwrap(),
+            CommitOutcome::Committed(_)
+        ));
+        assert_eq!(observed, [(0, 11), (1, 20)]);
+    }
+    assert_eq!(batch.capacity(), retained_capacity);
+
+    let transaction = sto_worker.begin_terminal_read_batch().unwrap();
+    let outcome = table
+        .visit_fixed_terminal(
+            transaction,
+            &native_worker,
+            &[99_u64.to_be_bytes()],
+            &mut batch,
+            |_, _| panic!("a terminal miss must invoke no visitor"),
+        )
+        .unwrap();
+    assert!(matches!(outcome, TerminalReadVisitOutcome::RetryOrdinary));
     native_worker.quiesce().unwrap();
 }
 

@@ -35,8 +35,11 @@ mod benchmark {
     use sto_core::{
         AbortReason, AccessError, CommitOutcome, Runtime, RuntimeConfig, WorkerContext,
     };
+    #[cfg(feature = "fixed-u64")]
+    use sto_masstree::{FixedU64Batch, FixedU64Mutation, FixedU64Table};
     use sto_masstree::{
-        PointMutation, PointReadBatch, PointSession, RegistryLayout, Table, TableConfig, Value,
+        PointMutation, PointReadBatch, PointSession, RegistryLayout, Table, TableConfig,
+        TerminalReadVisitOutcome, Value,
     };
 
     const DEFAULT_THREADS: usize = 1;
@@ -73,6 +76,13 @@ mod benchmark {
     }
 
     #[derive(Clone, Copy, Debug)]
+    enum ValueMode {
+        Binary,
+        #[cfg(feature = "fixed-u64")]
+        FixedU64,
+    }
+
+    #[derive(Clone, Copy, Debug)]
     struct Config {
         threads: usize,
         keyspace: u64,
@@ -81,6 +91,7 @@ mod benchmark {
         warmup_ms: u64,
         duration_ms: u64,
         seed: u64,
+        value_mode: ValueMode,
     }
 
     impl Default for Config {
@@ -93,6 +104,7 @@ mod benchmark {
                 warmup_ms: DEFAULT_WARMUP_MS,
                 duration_ms: DEFAULT_DURATION_MS,
                 seed: DEFAULT_SEED,
+                value_mode: ValueMode::Binary,
             }
         }
     }
@@ -113,6 +125,7 @@ mod benchmark {
                     "--warmup-ms" => config.warmup_ms = parse_value(&flag, &value)?,
                     "--duration-ms" => config.duration_ms = parse_value(&flag, &value)?,
                     "--seed" => config.seed = parse_value(&flag, &value)?,
+                    "--value-mode" => config.value_mode = parse_value_mode(&value)?,
                     _ => return Err(format!("unknown argument {flag}")),
                 }
             }
@@ -139,6 +152,21 @@ mod benchmark {
                 return Err("--duration-ms must be positive".into());
             }
             Ok(config)
+        }
+    }
+
+    fn parse_value_mode(value: &str) -> Result<ValueMode, String> {
+        match value {
+            "binary" => Ok(ValueMode::Binary),
+            #[cfg(feature = "fixed-u64")]
+            "fixed-u64" => Ok(ValueMode::FixedU64),
+            #[cfg(not(feature = "fixed-u64"))]
+            "fixed-u64" => {
+                Err("--value-mode fixed-u64 requires the sto-masstree fixed-u64 feature".into())
+            }
+            _ => Err(format!(
+                "invalid value for --value-mode: {value} (expected binary or fixed-u64)"
+            )),
         }
     }
 
@@ -195,6 +223,31 @@ mod benchmark {
         Fatal(String),
     }
 
+    trait BenchmarkTable: Clone + Send + Sync + 'static {
+        type Batch;
+
+        const ENGINE: &'static str;
+
+        fn batch_with_capacity(capacity: usize) -> Self::Batch;
+
+        fn prepopulate(
+            &self,
+            native_worker: &Worker,
+            sto_worker: &mut WorkerContext,
+            keyspace: u64,
+        ) -> Result<(), String>;
+
+        fn attempt(
+            &self,
+            native_worker: &Worker,
+            sto_worker: &mut WorkerContext,
+            operations: &[Operation],
+            keys: &[[u8; 8]],
+            batch: &mut Self::Batch,
+            has_writes: bool,
+        ) -> Result<AttemptOutcome, String>;
+    }
+
     pub(super) fn run() -> Result<(), String> {
         let config = Config::parse()?;
         let native_thread_limit = u32::try_from(
@@ -221,9 +274,6 @@ mod benchmark {
         let native_loader = native_runtime
             .attach()
             .map_err(|error| format!("attach native loader: {error:?}"))?;
-        let tree = native_runtime
-            .create_tree(&native_loader)
-            .map_err(|error| format!("create native Masstree tree: {error:?}"))?;
 
         let sto_runtime = Runtime::new(
             RuntimeConfig::new()
@@ -237,32 +287,62 @@ mod benchmark {
                 .with_max_locks_per_transaction(transaction_capacity),
         )
         .map_err(|error| format!("create STO runtime: {error:?}"))?;
-        let table = Table::new(
-            &sto_runtime,
-            tree,
-            TableConfig::new()
-                .with_max_retained_records(config.keyspace)
-                .with_max_retained_key_bytes(retained_key_bytes)
-                .with_max_consumed_record_ids(config.keyspace)
-                // The benchmark preloads its complete bounded keyspace, so
-                // paying the arena's startup/memory cost removes lazy segment
-                // lookup from the timed RecordId resolution path.
-                .with_registry_layout(RegistryLayout::EagerContiguous {
-                    max_bytes: 8 * 1024 * 1024,
-                }),
-        )
-        .map_err(|error| format!("create STO Masstree table: {error:?}"))?;
+        let table_config = TableConfig::new()
+            .with_max_retained_records(config.keyspace)
+            .with_max_retained_key_bytes(retained_key_bytes)
+            .with_max_consumed_record_ids(config.keyspace)
+            // The benchmark preloads its complete bounded keyspace, so
+            // paying the arena's startup/memory cost removes lazy segment
+            // lookup from the timed RecordId resolution path.
+            .with_registry_layout(RegistryLayout::EagerContiguous {
+                max_bytes: 8 * 1024 * 1024,
+            });
+        match config.value_mode {
+            ValueMode::Binary => {
+                let tree = native_runtime
+                    .create_tree(&native_loader)
+                    .map_err(|error| format!("create native Masstree tree: {error:?}"))?;
+                let table = Table::new(&sto_runtime, tree, table_config)
+                    .map_err(|error| format!("create STO Masstree table: {error:?}"))?;
+                prepare_and_run(config, native_runtime, sto_runtime, native_loader, table)
+            }
+            #[cfg(feature = "fixed-u64")]
+            ValueMode::FixedU64 => {
+                let table =
+                    FixedU64Table::new(&sto_runtime, &native_runtime, &native_loader, table_config)
+                        .map_err(|error| {
+                            format!("create fixed-u64 STO Masstree table: {error:?}")
+                        })?;
+                prepare_and_run(config, native_runtime, sto_runtime, native_loader, table)
+            }
+        }
+    }
 
+    fn prepare_and_run<T: BenchmarkTable>(
+        config: Config,
+        native_runtime: MasstreeRuntime,
+        sto_runtime: Arc<Runtime>,
+        native_loader: Worker,
+        table: T,
+    ) -> Result<(), String> {
         let mut sto_loader = sto_runtime
             .attach()
             .map_err(|error| format!("attach STO loader: {error:?}"))?;
-        prepopulate(&table, &native_loader, &mut sto_loader, config.keyspace)?;
+        table.prepopulate(&native_loader, &mut sto_loader, config.keyspace)?;
         native_loader
             .quiesce()
             .map_err(|error| format!("quiesce native loader: {error:?}"))?;
         drop(sto_loader);
         drop(native_loader);
+        run_table(config, native_runtime, sto_runtime, table)
+    }
 
+    fn run_table<T: BenchmarkTable>(
+        config: Config,
+        native_runtime: MasstreeRuntime,
+        sto_runtime: Arc<Runtime>,
+        table: T,
+    ) -> Result<(), String> {
         let phase = Arc::new(AtomicU8::new(PHASE_WAIT));
         let quiesced = Arc::new(AtomicUsize::new(0));
         let ready = Arc::new(Barrier::new(config.threads + 1));
@@ -363,7 +443,7 @@ mod benchmark {
         println!(
             concat!(
                 "BENCH_RESULT={{",
-                "\"engine\":\"rust-sto-masstree\",",
+                "\"engine\":\"{}\",",
                 "\"threads\":{},",
                 "\"keyspace\":{},",
                 "\"ops_per_txn\":{},",
@@ -381,6 +461,7 @@ mod benchmark {
                 "\"checksum\":{}",
                 "}}"
             ),
+            T::ENGINE,
             config.threads,
             config.keyspace,
             config.ops_per_txn,
@@ -418,7 +499,91 @@ mod benchmark {
         Err(first_error.unwrap_or_else(|| fallback.to_owned()))
     }
 
-    fn prepopulate(
+    impl BenchmarkTable for Table {
+        type Batch = PointReadBatch;
+
+        const ENGINE: &'static str = "rust-sto-masstree";
+
+        fn batch_with_capacity(capacity: usize) -> Self::Batch {
+            PointReadBatch::with_capacity(capacity)
+        }
+
+        fn prepopulate(
+            &self,
+            native_worker: &Worker,
+            sto_worker: &mut WorkerContext,
+            keyspace: u64,
+        ) -> Result<(), String> {
+            prepopulate_binary(self, native_worker, sto_worker, keyspace)
+        }
+
+        fn attempt(
+            &self,
+            native_worker: &Worker,
+            sto_worker: &mut WorkerContext,
+            operations: &[Operation],
+            keys: &[[u8; 8]],
+            batch: &mut Self::Batch,
+            has_writes: bool,
+        ) -> Result<AttemptOutcome, String> {
+            attempt_binary_transaction(
+                self,
+                native_worker,
+                sto_worker,
+                operations,
+                keys,
+                batch,
+                has_writes,
+            )
+        }
+    }
+
+    #[cfg(feature = "fixed-u64")]
+    impl BenchmarkTable for FixedU64Table {
+        type Batch = FixedU64Batch;
+
+        const ENGINE: &'static str = "rust-sto-masstree-fixed-u64";
+
+        fn batch_with_capacity(capacity: usize) -> Self::Batch {
+            FixedU64Batch::with_capacity(capacity)
+        }
+
+        fn prepopulate(
+            &self,
+            native_worker: &Worker,
+            _sto_worker: &mut WorkerContext,
+            keyspace: u64,
+        ) -> Result<(), String> {
+            for logical_key in 0..keyspace {
+                self.insert_initial(native_worker, &logical_key.to_be_bytes(), logical_key)
+                    .map_err(|error| format!("fixed-u64 preload access failed: {error:?}"))?;
+            }
+            self.finish_initial_load()
+                .map_err(|error| format!("seal fixed-u64 initial load: {error:?}"))
+        }
+
+        fn attempt(
+            &self,
+            native_worker: &Worker,
+            sto_worker: &mut WorkerContext,
+            operations: &[Operation],
+            keys: &[[u8; 8]],
+            batch: &mut Self::Batch,
+            has_writes: bool,
+        ) -> Result<AttemptOutcome, String> {
+            attempt_fixed_u64_transaction(
+                self,
+                native_worker,
+                sto_worker,
+                operations,
+                keys,
+                batch,
+                has_writes,
+            )
+        }
+    }
+
+    fn prepopulate_binary(
         table: &Table,
         native_worker: &Worker,
         sto_worker: &mut WorkerContext,
@@ -462,13 +627,146 @@ mod benchmark {
         Ok(())
     }
 
+    #[cfg(feature = "fixed-u64")]
+    fn attempt_fixed_u64_transaction(
+        table: &FixedU64Table,
+        native_worker: &Worker,
+        sto_worker: &mut WorkerContext,
+        operations: &[Operation],
+        keys: &[[u8; 8]],
+        batch: &mut FixedU64Batch,
+        has_writes: bool,
+    ) -> Result<AttemptOutcome, String> {
+        if !has_writes {
+            return attempt_fixed_u64_terminal_read(
+                table,
+                native_worker,
+                sto_worker,
+                operations,
+                keys,
+                batch,
+            );
+        }
+        if keys.len() != operations.len() {
+            return Err("timed fixed-u64 key batch has the wrong operation count".into());
+        }
+
+        let mut transaction = sto_worker
+            .begin()
+            .map_err(|error| format!("begin timed fixed-u64 transaction: {error:?}"))?;
+        let mut checksum = 0_u64;
+        let visited = match table.modify_fixed(
+            &mut transaction,
+            native_worker,
+            keys,
+            batch,
+            |index, current| {
+                checksum = checksum.wrapping_add(current);
+                if operations[index].write {
+                    FixedU64Mutation::Put(current.wrapping_add(1))
+                } else {
+                    FixedU64Mutation::Keep
+                }
+            },
+        ) {
+            Ok(Some(visited)) => visited,
+            Ok(None) => {
+                transaction.abort();
+                return Err(
+                    "prepopulated fixed-u64 key disappeared or batch was not unique".into(),
+                );
+            }
+            Err(AccessError::Conflict(_)) => {
+                transaction.abort();
+                return Ok(AttemptOutcome::Retry);
+            }
+            Err(error) => {
+                transaction.abort();
+                return Err(format!("timed fixed-u64 batch failed: {error:?}"));
+            }
+        };
+        if visited != operations.len() {
+            transaction.abort();
+            return Err("timed fixed-u64 batch visited the wrong item count".into());
+        }
+
+        match transaction
+            .commit()
+            .map_err(|error| format!("timed fixed-u64 commit failed: {error:?}"))?
+        {
+            CommitOutcome::Committed(_) => Ok(AttemptOutcome::Committed(checksum)),
+            CommitOutcome::Aborted(AbortReason::Conflict(_)) => Ok(AttemptOutcome::Retry),
+            CommitOutcome::Aborted(reason) => {
+                Err(format!("timed fixed-u64 transaction aborted: {reason:?}"))
+            }
+        }
+    }
+
+    #[cfg(feature = "fixed-u64")]
+    fn attempt_fixed_u64_terminal_read(
+        table: &FixedU64Table,
+        native_worker: &Worker,
+        sto_worker: &mut WorkerContext,
+        operations: &[Operation],
+        keys: &[[u8; 8]],
+        batch: &mut FixedU64Batch,
+    ) -> Result<AttemptOutcome, String> {
+        if keys.len() != operations.len() {
+            return Err("timed fixed-u64 key batch has the wrong operation count".into());
+        }
+
+        let transaction = sto_worker
+            .begin_terminal_read_batch()
+            .map_err(|error| format!("begin timed fixed-u64 terminal read: {error:?}"))?;
+        let mut checksum = 0_u64;
+        let outcome = match table.visit_fixed_terminal(
+            transaction,
+            native_worker,
+            keys,
+            batch,
+            |_index, value| checksum = checksum.wrapping_add(value),
+        ) {
+            Ok(outcome) => outcome,
+            Err(AccessError::Conflict(_)) => return Ok(AttemptOutcome::Retry),
+            Err(error) => {
+                return Err(format!(
+                    "timed fixed-u64 terminal batch visit failed: {error:?}"
+                ));
+            }
+        };
+        let (transaction, visited) = match outcome {
+            TerminalReadVisitOutcome::Ready {
+                transaction,
+                visited,
+            } => (transaction, visited),
+            TerminalReadVisitOutcome::RetryOrdinary => {
+                return Err("prepopulated fixed-u64 key disappeared before timed read".into());
+            }
+        };
+        if visited != operations.len() {
+            transaction.abort();
+            return Err("timed fixed-u64 terminal batch visited the wrong item count".into());
+        }
+
+        match transaction
+            .commit()
+            .map_err(|error| format!("timed fixed-u64 terminal commit failed: {error:?}"))?
+        {
+            CommitOutcome::Committed(_) => Ok(AttemptOutcome::Committed(checksum)),
+            CommitOutcome::Aborted(AbortReason::Conflict(_)) => Ok(AttemptOutcome::Retry),
+            CommitOutcome::Aborted(reason) => Err(format!(
+                "timed fixed-u64 terminal transaction aborted: {reason:?}"
+            )),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
-    fn run_worker(
+    fn run_worker<T: BenchmarkTable>(
         thread_id: usize,
         config: Config,
         native_runtime: &MasstreeRuntime,
         sto_runtime: &Arc<Runtime>,
-        table: &Table,
+        table: &T,
         phase: &AtomicU8,
         quiesced: &AtomicUsize,
         ready: &Barrier,
@@ -491,7 +789,7 @@ mod benchmark {
         let mut reported_quiescence = false;
         let mut operations = Vec::with_capacity(config.ops_per_txn);
         let mut keys = Vec::with_capacity(config.ops_per_txn);
-        let mut read_batch = PointReadBatch::with_capacity(config.ops_per_txn);
+        let mut batch = T::batch_with_capacity(config.ops_per_txn);
         let mut stats = WorkerStats::default();
 
         loop {
@@ -524,6 +822,7 @@ mod benchmark {
 
             operations.clear();
             keys.clear();
+            let mut has_writes = false;
             for _ in 0..config.ops_per_txn {
                 let mut key = random.next_u64() % config.keyspace;
                 while operations
@@ -533,6 +832,7 @@ mod benchmark {
                     key = key.wrapping_add(1) % config.keyspace;
                 }
                 let write = random.next_u64() % 100 < u64::from(config.write_percent);
+                has_writes |= write;
                 operations.push(Operation {
                     key_number: key,
                     write,
@@ -547,13 +847,13 @@ mod benchmark {
                     break None;
                 }
                 logical_attempts = logical_attempts.wrapping_add(1);
-                match attempt_transaction(
-                    table,
+                match table.attempt(
                     &native_worker,
                     &mut sto_worker,
                     &operations,
                     &keys,
-                    &mut read_batch,
+                    &mut batch,
+                    has_writes,
                 )? {
                     AttemptOutcome::Committed(checksum) => break Some(checksum),
                     AttemptOutcome::Retry => {
@@ -582,20 +882,32 @@ mod benchmark {
         Ok(stats)
     }
 
-    fn attempt_transaction(
+    fn attempt_binary_transaction(
         table: &Table,
         native_worker: &Worker,
         sto_worker: &mut WorkerContext,
         operations: &[Operation],
         keys: &[[u8; 8]],
         read_batch: &mut PointReadBatch,
+        has_writes: bool,
     ) -> Result<AttemptOutcome, String> {
+        if !has_writes {
+            return attempt_terminal_read(
+                table,
+                native_worker,
+                sto_worker,
+                operations,
+                keys,
+                read_batch,
+            );
+        }
+
         let mut transaction = sto_worker
             .begin()
             .map_err(|error| format!("begin timed transaction: {error:?}"))?;
         let body = {
             let mut session = table.point_session(&mut transaction, native_worker);
-            let body = execute_operations(&mut session, operations, keys, read_batch);
+            let body = execute_mutations(&mut session, operations, keys, read_batch);
             match session.close() {
                 Ok(()) => body,
                 Err(AccessError::Conflict(_)) if !matches!(&body, AttemptBody::Fatal(_)) => {
@@ -629,28 +941,36 @@ mod benchmark {
         }
     }
 
-    fn execute_operations(
-        session: &mut PointSession<'_, '_>,
+    fn attempt_terminal_read(
+        table: &Table,
+        native_worker: &Worker,
+        sto_worker: &mut WorkerContext,
         operations: &[Operation],
         keys: &[[u8; 8]],
         read_batch: &mut PointReadBatch,
-    ) -> AttemptBody {
+    ) -> Result<AttemptOutcome, String> {
         if keys.len() != operations.len() {
-            return AttemptBody::Fatal("timed key batch has the wrong operation count".into());
+            return Err("timed key batch has the wrong operation count".into());
         }
 
-        if operations.iter().all(|operation| !operation.write) {
-            let mut checksum = 0_u64;
-            let mut fatal = None;
-            let visited = match session.visit_fixed(keys, read_batch, |index, snapshot| {
+        let transaction = sto_worker
+            .begin_terminal_read_batch()
+            .map_err(|error| format!("begin timed terminal read: {error:?}"))?;
+        let mut checksum = 0_u64;
+        let mut fatal = None;
+        let outcome = match table.visit_fixed_terminal(
+            transaction,
+            native_worker,
+            keys,
+            read_batch,
+            |index, snapshot| {
                 if fatal.is_some() {
                     return;
                 }
-                let operation = &operations[index];
                 let Some(value) = snapshot else {
                     fatal = Some(format!(
                         "prepopulated key {} disappeared during timed run",
-                        operation.key_number
+                        operations[index].key_number
                     ));
                     return;
                 };
@@ -662,20 +982,53 @@ mod benchmark {
                     }
                 };
                 checksum = checksum.wrapping_add(u64::from_le_bytes(value_bytes));
-            }) {
-                Ok(visited) => visited,
-                Err(AccessError::Conflict(_)) => return AttemptBody::Retry,
-                Err(error) => {
-                    return AttemptBody::Fatal(format!("timed batch visit failed: {error:?}"));
-                }
-            };
-            if let Some(error) = fatal {
-                return AttemptBody::Fatal(error);
+            },
+        ) {
+            Ok(outcome) => outcome,
+            Err(AccessError::Conflict(_)) => return Ok(AttemptOutcome::Retry),
+            Err(error) => {
+                return Err(format!("timed terminal batch visit failed: {error:?}"));
             }
-            if visited != operations.len() {
-                return AttemptBody::Fatal("timed batch visited the wrong item count".into());
+        };
+
+        let (transaction, visited) = match outcome {
+            TerminalReadVisitOutcome::Ready {
+                transaction,
+                visited,
+            } => (transaction, visited),
+            TerminalReadVisitOutcome::RetryOrdinary => {
+                return Err("prepopulated key disappeared before timed terminal read".into());
             }
-            return AttemptBody::Ready(checksum);
+        };
+        if let Some(error) = fatal {
+            transaction.abort();
+            return Err(error);
+        }
+        if visited != operations.len() {
+            transaction.abort();
+            return Err("timed terminal batch visited the wrong item count".into());
+        }
+
+        match transaction
+            .commit()
+            .map_err(|error| format!("timed terminal commit failed: {error:?}"))?
+        {
+            CommitOutcome::Committed(_) => Ok(AttemptOutcome::Committed(checksum)),
+            CommitOutcome::Aborted(AbortReason::Conflict(_)) => Ok(AttemptOutcome::Retry),
+            CommitOutcome::Aborted(reason) => {
+                Err(format!("timed terminal transaction aborted: {reason:?}"))
+            }
+        }
+    }
+
+    fn execute_mutations(
+        session: &mut PointSession<'_, '_>,
+        operations: &[Operation],
+        keys: &[[u8; 8]],
+        read_batch: &mut PointReadBatch,
+    ) -> AttemptBody {
+        if keys.len() != operations.len() {
+            return AttemptBody::Fatal("timed key batch has the wrong operation count".into());
         }
 
         let mut checksum = 0_u64;

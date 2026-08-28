@@ -4,7 +4,8 @@
 >
 > **Implementation status:** `sto-core`, the raw and safe Masstree boundary,
 > transactional Masstree point operations, copied scans, membership validation,
-> bounded registries, and the upper commit-hook seam exist on this branch.
+> bounded registries, the terminal-read typestate, the optional fixed-`u64`
+> Masstree specialization, and the upper commit-hook seam exist on this branch.
 > A reproducible zoo-2 point-workload comparison is complete; the optional
 > opacity profile, graceful native shutdown, production upper-layer
 > facade/cutover, and production-wide performance acceptance remain deferred.
@@ -213,7 +214,15 @@ The initial production profile includes:
 - logical tombstones and insert/delete/resurrection composition;
 - bounded forward and reverse scans;
 - scan read-your-writes and conservative phantom detection; and
+- a restricted terminal homogeneous read-batch typestate for adapters that can
+  prove final certification and drop-only cleanup; and
 - an optional, nonblocking pre-install hook with an upper-layer watchdog budget.
+
+The `sto-masstree/fixed-u64` feature additionally provides an optional,
+specialized all-present point-workload profile. It is not a replacement for the
+general binary-value table and does not add transactional membership changes or
+range operations; its exact restrictions are normative in
+[Section 14.7](#147-optional-fixed-u64-specialization).
 
 Opacity can land after the non-opaque protocol is proven. An API request for an
 unimplemented isolation profile MUST fail explicitly; it MUST NOT silently
@@ -427,7 +436,13 @@ use std::sync::Arc;
 pub struct Runtime { /* private */ }
 pub struct WorkerContext { /* private; structurally !Send + !Sync */ }
 pub struct Active;
+pub struct TerminalReadOpen;
+pub struct TerminalReadReady;
 pub struct Transaction<'worker, State = Active> { /* private */ }
+pub struct TerminalReadTransaction<
+    'worker,
+    State = TerminalReadOpen,
+> { /* private */ }
 
 impl Runtime {
     pub fn new(config: RuntimeConfig) -> Result<Arc<Self>, RuntimeError> {
@@ -454,6 +469,25 @@ impl WorkerContext {
     ) -> Result<Transaction<'_, Active>, BeginError> {
         unimplemented!("signature-only design target")
     }
+
+    pub fn begin_terminal_read_batch(
+        &mut self,
+    ) -> Result<
+        TerminalReadTransaction<'_, TerminalReadOpen>,
+        BeginError,
+    > {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn begin_terminal_read_batch_with(
+        &mut self,
+        isolation: IsolationMode,
+    ) -> Result<
+        TerminalReadTransaction<'_, TerminalReadOpen>,
+        BeginError,
+    > {
+        unimplemented!("signature-only design target")
+    }
 }
 
 impl<'worker> Transaction<'worker, Active> {
@@ -464,6 +498,60 @@ impl<'worker> Transaction<'worker, Active> {
     }
 
     pub fn abort(self) -> AbortInfo {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl<'worker> TerminalReadTransaction<'worker, TerminalReadOpen> {
+    pub fn with_terminal_read_batch<A>(
+        self,
+        resource: &RegisteredResource<A>,
+        keys: &[A::Key],
+        operation: impl for<'entry> FnMut(
+            usize,
+            &mut TerminalReadEntry<'entry, A>,
+        ) -> Result<(), AccessError>,
+    ) -> Result<
+        TerminalReadTransaction<'worker, TerminalReadReady>,
+        AccessError,
+    >
+    where
+        A: TransactionalResource,
+    {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn abort_with_access_error(
+        self,
+        error: AccessError,
+    ) -> AccessError {
+        unimplemented!("signature-only design target")
+    }
+}
+
+impl TerminalReadTransaction<'_, TerminalReadReady> {
+    pub fn commit(self) -> Result<CommitOutcome, CommitFailure> {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn abort(self) -> AbortInfo {
+        unimplemented!("signature-only design target")
+    }
+}
+
+pub struct TerminalReadEntry<'entry, A: TransactionalResource> {
+    /* private */
+}
+
+impl<A: TransactionalResource> TerminalReadEntry<'_, A> {
+    pub fn key(&self) -> &A::Key {
+        unimplemented!("signature-only design target")
+    }
+
+    pub fn record_read(
+        &mut self,
+        observation: A::Observation,
+    ) -> Result<(), AccessError> {
         unimplemented!("signature-only design target")
     }
 }
@@ -503,6 +591,27 @@ Both completion methods consume the active transaction. `abort` is infallible
 under the adapter contract and returns only after exact-once cleanup. Dropping
 an active transaction takes the same abort path but cannot return its
 `AbortInfo`; any impossible cleanup violation is recorded in runtime health.
+
+The terminal-read handle is deliberately a different public type, not a mode
+bit on `Transaction<Active>`. `TerminalReadOpen` exposes exactly one consuming
+`with_terminal_read_batch` transition. The callback receives only the retained
+key and a one-shot `record_read`; it cannot create local state, predicates,
+intents, prepared state, locks, or another transaction item. Success returns
+`TerminalReadReady`, which exposes only consuming `commit` and `abort`.
+Neither typestate has `with_item`, `with_item_session`, unique-write batching,
+or a conversion into the general transaction. Each callback invocation MUST
+record exactly one ordinary observation. Duplicate keys are permitted because
+the batch cannot write or perform later item lookup; they remain independent,
+conservative observations.
+
+An outer access error or unwind definitely aborts the retained prefix and at
+most one pending key. `abort_with_access_error` exists for an adapter that must
+perform fallible directory preparation before handing keys to core; it applies
+the normal poisoning policy and returns the original error. Like ordinary STO,
+effects performed by the visitor itself are not rolled back if final
+certification later conflicts. The capability proof that authorizes this
+restricted representation is defined in Section 8.3, and its commit path is
+defined in Section 10.2.
 
 ### 6.3 Transaction ownership
 
@@ -670,6 +779,7 @@ hierarchy or ask adapters to implement type erasure.
 | `TObject::cleanup` | `A::finish` | Runs after all physical locks are released on definite outcomes. |
 | `Sto::commit_id()` | `InstallContext::occ_commit_id` and committed `LockDisposition` | Core OCC identity is phase-scoped and remains distinct from upper timestamps. |
 | `new_item`, `fresh_item`, `read_item`, `check_item` | `with_item`, resolved access, `with_unique_item_batch`, and `ObservationState` transitions | The fast lane requires a core-checked exact uniqueness proof and an empty transaction; it exposes no unchecked item access. |
+| specialized terminal read loop | `TerminalReadTransaction<Open/Ready>`, `TerminalReadEntry`, and `TerminalReadBatchCapability` | A distinct consuming typestate proves there can be no later operation or mutation; the batch stores only typed keys and observations. |
 | clear/user flags | private observation/preparation states and `A::Local` | Adapters own typed local data, not core flag bits. |
 | `TObject::print` | ordinary adapter diagnostics outside the commit protocol | No formatting callback runs while committing. |
 | Mako `get_table_id` / `get_is_remote` extensions | upper integration layer | Distribution and table-routing policy are not STO callbacks. |
@@ -915,6 +1025,25 @@ pub enum ObservationOrder {
     Unordered,
 }
 
+pub type TerminalReadBatchValidate<A> = for<'context> fn(
+    &A,
+    &<A as TransactionalResource>::Key,
+    &<A as TransactionalResource>::Observation,
+    &PreflightFreeValidationContext<'context>,
+) -> Result<(), CheckError>;
+
+pub struct TerminalReadBatchCapability<
+    A: TransactionalResource,
+> { /* private */ }
+
+impl<A: TransactionalResource> TerminalReadBatchCapability<A> {
+    pub const fn new_drop_only(
+        validate: TerminalReadBatchValidate<A>,
+    ) -> Self {
+        unimplemented!("signature-only design target")
+    }
+}
+
 pub type PreflightFreeReadValidate<A> = for<'context> fn(
     &A,
     &<A as TransactionalResource>::Key,
@@ -962,6 +1091,12 @@ pub trait TransactionalResource: Send + Sync + Sized + 'static {
     fn preflight_free_read_capability(
         &self,
     ) -> Option<&'static PreflightFreeReadCapability<Self>> {
+        None
+    }
+
+    fn terminal_read_batch_capability(
+        &self,
+    ) -> Option<&'static TerminalReadBatchCapability<Self>> {
         None
     }
 
@@ -1093,6 +1228,25 @@ checked-through opacity bound but does not replace the predicate or perform the
 commit-time state transition. `Unordered` forces the conservative full-
 revalidation path.
 
+`TerminalReadBatchCapability` is stronger than
+`PreflightFreeReadCapability::new_drop_only`. It proves that a homogeneous
+batch operation needs only `A::Key` and `A::Observation`: core MUST NOT
+construct `A::Local`, `A::Intent`, or `A::Prepared`, and MUST NOT invoke
+`new_local`, `preflight`, `install`, or `finish` for the terminal batch. Its
+validation callback performs the same final certification as `validate_read`,
+using the restricted `PreflightFreeValidationContext` and no lock guard.
+Dropping each key and observation MUST be the complete cleanup on both commit
+and abort; cleanup cannot depend on shared mutation, outcome, transaction-local
+state, or a phase context. An operation using the capability is therefore a
+read only and cannot create an untracked cleanup obligation.
+
+As with the ordinary prepared-free capability, an adapter MUST return the same
+`'static` terminal capability for the complete registered lifetime. Merely
+having a cheap `validate_read` implementation is not enough to advertise it.
+The capability opts into the representation and cleanup contract; the
+`TerminalReadOpen -> TerminalReadReady` consuming transition proves that no
+later general operation can invalidate that contract.
+
 `PreflightItem`, `InstallItem`, and `FinishItem` have private fields and expose
 only phase-appropriate typed accessors. `PreflightItem` can inspect observations,
 predicates, and intents. `InstallItem` can borrow but cannot move the core-owned
@@ -1129,6 +1283,7 @@ enum ObservationState<O, P> {
 
 enum PreparationState<P> {
     Unprepared,
+    PreflightFreeRead,
     Prepared(P),
     Installed(P),
 }
@@ -1201,6 +1356,13 @@ drops each guard before its target, one frame and one unwind boundary at a time;
 on the first destructor panic it retains the rest. These retained values and
 the optional item fields make teardown order enforceable even when an associated
 type has a nontrivial destructor.
+
+`PreparationState::PreflightFreeRead` is a core-selected marker for an ordinary
+`ItemBox<A>` that used `PreflightFreeReadCapability`; it is not adapter-owned
+prepared state. Terminal batches do not allocate `ItemBox<A>` at all and
+therefore do not add another state to this enum. Their homogeneous pooled
+storage contains parallel typed key and observation vectors plus one retained
+registered-resource binding and capability.
 
 In the implemented serializable profile, `Entry` is a scoped typed borrow of an
 already `TypeId`-checked `ItemBox<A>`; it is not a pointer into erased storage,
@@ -1343,6 +1505,9 @@ lifetime, and are `!Send + !Sync`. Their capabilities are deliberately narrow:
 - `AcquireContext` exposes the opaque current `LockOwner` only;
 - `ExecutionCheckContext` exposes the opacity bound needed to revalidate prior
   reads or predicates;
+- `PreflightFreeValidationContext` exposes final-certification metadata but no
+  lock-plan or guard resolution, and is used by both prepared-free ordinary
+  reads and terminal read batches;
 - `PredicateContext` provides immutable access to already-held guards, before a
   core commit ID necessarily exists;
 - `ValidationContext` provides immutable guards and core OCC metadata;
@@ -1453,9 +1618,11 @@ pub enum FinishDisposition {
 | --- | --- | --- | --- |
 | `TransactionalResource::new_local` | first typed lookup | `ItemInitError::{Capacity, Fault}` | Doom the transaction; poison on adapter fault. |
 | adapter operation inside `with_item` | execution | outer `AccessError` or unwind | Mark the transaction doomed; no later commit. |
+| terminal batch operation | execution | outer `AccessError`, missing `record_read`, or unwind | Consume/doom the open handle and definitely abort the retained prefix; poison on adapter fault. |
 | `TransactionalResource::preflight` | preflight | `PrepareError::{Conflict, Capacity, Fault}` | Definite abort for conflict/capacity; poison for adapter fault. |
 | `TransactionLock::try_acquire` | locking | `AcquireError::{Conflict, Fault}` | Reverse-release acquired guards on conflict; poison on fault. |
 | `revalidate_read` / `revalidate_predicate` | execution-time opacity | `CheckError::{Conflict, Fault}` | Abort before exposing an inconsistent result; poison on fault. |
+| `TerminalReadBatchCapability::validate` | terminal final certification | `CheckError::{Conflict, Fault}` | Definite read-only abort for conflict; poison with a definite aborted outcome on fault. |
 | `upgrade_predicate` | predicate upgrade | `CheckError::{Conflict, Fault}` | Definite abort or poison; state changes only on success. |
 | `validate_read` | final validation | `CheckError::{Conflict, Fault}` | Definite abort or poison before irreversibility. |
 | optional upper hook | after validation | reject or contained panic | Definite abort under the stronger no-visible-effect hook contract. |
@@ -1790,6 +1957,32 @@ heterogeneous lock and validation protocol. If every item is an eligible
 prepared-free ordinary read, the core additionally skips creation of the empty
 lock plan and runs the restricted final-certification pass directly. Neither
 form substitutes execution-time `revalidate_read` for final certification.
+
+#### Terminal homogeneous read batches
+
+The terminal path is a stronger, transaction-wide specialization and does not
+enter the general `ItemBox` commit pipeline. Before recording the batch, an
+adapter may perform fallible directory lookup and construct stable logical
+keys while retaining the open handle. `with_terminal_read_batch` then validates
+the resource/runtime binding, reserves homogeneous key and observation vectors,
+retains one binding and one `TerminalReadBatchCapability`, and invokes the
+restricted operation once per key. A callback must record exactly one
+observation. It cannot stage a write, add another resource, or construct any
+associated local, intent, predicate, or prepared value.
+
+Commit defines its certification cut immediately before the capability's first
+validation callback and validates every retained `(key, observation)` in order
+with a lock-free `PreflightFreeValidationContext`. A conflict definitely aborts;
+an adapter fault or callback panic poisons the runtime with a definite aborted
+outcome. If every validation succeeds, that final certification is the definite
+read-only commit boundary: there is no preflight, lock plan, core commit ID,
+hook, irreversible install, publication, or adapter `finish` callback. Core
+then drops observations and keys in reverse order and recycles the worker-local
+homogeneous allocation. A destructor panic after certification poisons with a
+definite committed outcome; before certification it poisons with a definite
+aborted outcome. The terminal protocol therefore preserves the same
+certification argument as an ordinary read-only transaction while removing
+state that its consuming typestate proves unreachable.
 
 ### 10.3 Serialization and irreversible points
 
@@ -2317,6 +2510,91 @@ insertion. That let the adapter repair an earlier range witness after the same
 transaction's eager insert. Rust v1 deliberately replaces that precision with
 the coarse membership resource and staged scan overlay.
 
+### 14.7 Optional fixed-`u64` specialization
+
+The Cargo feature `sto-masstree/fixed-u64` exposes `FixedU64Table` as a
+separate, deliberately restricted table. It exists to remove general
+binary-value representation cost from preloaded fixed-copy point workloads; it
+does not change `Table`, weaken the general adapter contract, or claim support
+for arbitrary Masstree workloads.
+
+#### Ownership and lifecycle
+
+`FixedU64Table::new` MUST create a fresh Masstree through the supplied native
+runtime and worker and keep that directory privately owned. It MUST NOT accept
+an externally clonable `Tree`, expose the new tree, or share a directory whose
+`RecordId` bindings can be published outside this table. Cloning
+`FixedU64Table` clones only its registered table handle and retains the same
+private ownership unit. This exclusive directory-to-arena relationship is the
+capability that permits a transaction-time `RecordId` to resolve without
+rechecking publication metadata.
+
+Construction requires a bounded `RegistryLayout::EagerContiguous` arena.
+`insert_initial(worker, key, value)` is nontransactional loader-only work. It
+publishes a fully initialized record before its immutable key-to-ID binding;
+repeating a key is accepted only when the already published value is equal.
+No transactional worker may use the table until `finish_initial_load()` takes
+the structural publication gate and Release-publishes a permanent seal. After
+the seal, loader calls fail and neither directory membership nor cold slot
+publication state may ever change. There is no unseal transition.
+
+#### Supported operation set
+
+The specialized table supports only all-present, fixed-width point batches:
+
+- terminal read batches through `visit_fixed_terminal`; and
+- exactly unique update/keep batches through `modify_fixed` on an otherwise
+  empty general transaction.
+
+It provides no transactional insert, delete, resurrection, variable-width
+value, scan, range predicate, or membership item. A point miss invokes no
+visitor/mutator callback and does not create an STO item. The terminal API may
+return `RetryOrdinary` as a neutral dispatch result, and the mutation API may
+return `None`, but this table intentionally has no ordinary miss/insertion
+fallback; the caller must treat the miss as a workload violation or consult a
+different general table. Distinct input keys resolving to one `RecordId` fail
+closed. Duplicate reads are permitted, while a duplicate mutation batch takes
+the no-callback result because direct unique item append cannot prove one item
+per input position.
+
+#### Record shape and OCC protocol
+
+The hot arena layout is pinned by tests:
+
+```rust
+#[repr(C)]
+struct FixedRecord {
+    version: AtomicVersion,
+    value: AtomicU64,
+}
+```
+
+`FixedRecord` is exactly 16 bytes with eight-byte alignment: the adjacent OCC
+word and atomic `u64` match the relevant physical shape of C++
+`versioned_value_struct<u64>`. Publication state remains in a separate cold
+one-byte `AtomicU8` sidecar per arena slot. Loader resolution checks that
+sidecar; after permanent sealing, transaction-time resolution retains a bounds
+check but does not load the immutable cold state. Lock-target segment metadata
+is likewise outside the hot stride.
+
+A read observes an unlocked `AtomicVersion`, loads the `AtomicU64`, and validates
+the same version. It retries an unlocked generation change and reports a
+conflict if a writer holds the version lock. A changed value uses the ordinary
+STO lock plan and the same version word as its physical lock: preflight emits a
+canonical record `LockIdentity`, final validation compares the observation with
+the guard's pre-lock version, install stores the staged replacement while that
+guard is held, and committed release publishes the new OCC generation. The
+atomic value load/store may be relaxed because the version's acquire/release
+protocol supplies publication ordering and the payload itself remains atomic.
+`Intent = ()` marks the presence of a write while the replacement `u64` lives
+in typed transaction-local state; a same-value `Put` is a no-op.
+
+Thus fixed-`u64` uses the same core OCC certification, canonical locking,
+validation, failure dispositions, and exact-once publication protocol as the
+general adapter. Its performance advantage comes only from stronger lifecycle
+and datatype restrictions, a smaller record, and the terminal/batch interfaces;
+it is not a separate transaction algorithm.
+
 ## 15. Masstree C ABI
 
 ### 15.1 Boundary principles
@@ -2651,6 +2929,14 @@ Required tests include:
   transaction doomed;
 - compile-fail checks that active transactions, entries, phase contexts, and
   worker-affine guards do not accidentally become `Send` or `Sync`;
+- compile-fail checks that neither terminal typestate exposes `with_item`, plus
+  runtime tests for the consuming open-to-ready transition and structurally
+  worker-affine terminal handle;
+- terminal-batch tests proving validation-only commit, reverse drop-only
+  cleanup, capability refusal, explicit abort, preparation/operation error and
+  unwind containment, definite validation conflict/fault classification,
+  post-certification destructor poisoning with a definite committed outcome,
+  and safe pooled-resource rebind/drop behavior;
 - version classification, checked overflow, and own-lock validation;
 - item identity, hash collision handling, deduplication, and total order;
 - aliased physical-lock canonicalization, cross-transaction order, and
@@ -2726,6 +3012,18 @@ Before safe integration, test:
 - shutdown with active handles/guards when `GRACEFUL_SHUTDOWN` is negotiated,
   plus process-lifetime behavior when it is not; and
 - ASan, UBSan, and TSan stress.
+
+The optional fixed-`u64` profile additionally requires:
+
+- pinned 16-byte/eight-byte-aligned hot-record layout and cold-sidecar
+  accounting;
+- permanent loader sealing, checked bounds, private native-tree construction,
+  publication outcome handling, and fail-closed alias detection;
+- version-sandwiched atomic snapshots, including retry after an unlocked
+  generation change and conflict on a held writer lock;
+- stale-writer validation, unchanged-value no-op behavior, duplicate and miss
+  no-callback outcomes, terminal reads, and exact OCC update publication; and
+- a feature-enabled native loader/update/read round trip through the real C ABI.
 
 Compile-fail tests prove worker and active transaction types are `!Send` and
 `!Sync`.
@@ -2815,10 +3113,12 @@ follows:
 | Surface | Repository implementation | V1 state |
 | --- | --- | --- |
 | Typed STO protocol, private erasure, lock planning, failure dispositions | [`crates/sto-core`](../../crates/sto-core) | Implemented for serializable non-opaque transactions. |
+| Restricted terminal-read typestate, homogeneous pooled storage, and adapter capability | [`terminal_read.rs`](../../crates/sto-core/src/terminal_read.rs), [`adapter.rs`](../../crates/sto-core/src/adapter.rs), and [`transaction.rs`](../../crates/sto-core/src/transaction.rs) | Implemented with final certification, drop-only cleanup, compile-fail API separation, and contained failure dispositions. |
 | Raw stable declarations | [`crates/mtree-sys`](../../crates/mtree-sys) | Implemented for ABI version 1. |
 | Native C boundary | [`mtree_abi.h`](../../src/mako/storage/mtree_abi.h) and [`mtree_abi.cc`](../../src/mako/storage/mtree_abi.cc) | Implemented for scalar/scoped/strided point operations and copied bounded scans. |
 | Safe runtime, worker, tree, point, and scan facade | [`crates/masstree`](../../crates/masstree) | Implemented; native cursors, pointers, and RCU guards remain private. |
 | Transactional records, tombstones, quotas, membership predicate, and scan overlay | [`crates/sto-masstree`](../../crates/sto-masstree) | Implemented for the conservative table-membership profile. |
+| Optional all-present fixed-`u64` point specialization | [`fixed_u64.rs`](../../crates/sto-masstree/src/fixed_u64.rs) | Implemented behind `fixed-u64`: private fresh directory, permanent loader seal, 16-byte atomic record, terminal reads, and exact-unique point updates; membership changes, scans, and miss fallback are intentionally unsupported. |
 | Upper metadata reservation and pre-install coordination | [`hook.rs`](../../crates/sto-core/src/hook.rs) | Implemented as an optional caller-owned `CommitHook`. |
 | Opacity, graceful native shutdown, and upper backend cutover | Sections 12, 15.5, 17, and 19.2 | Deferred; callers receive explicit unsupported/capability outcomes rather than silent downgrade. |
 | Bounded point-workload performance characterization | [`sto-rust-zoo2-optimized-2026-08-28`](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md) | Complete on `zoo-002`; production-wide budget acceptance remains deferred. |
@@ -2828,14 +3128,18 @@ workspace suite in debug and release modes on Rust 1.95, strict Clippy and
 rustdoc builds, C11 header compilation, the exact 41-symbol native allowlist,
 required feature mask `0x0f7f`, export-manifest FNV-1a fingerprint
 `0xdb5bed9b8f1490e3`, the raw ABI suite, native safe-wrapper and
-transactional-adapter integration. Earlier branch baselines included ASan,
-UBSan, and unsuppressed TSan stress, but those sanitizer suites were not rerun
-against the exact scoped/strided ABI performance commit and therefore are not a
-current cutover claim. The production cutover record still needs explicit
-native fault injection for allocation failure, ordinary C++ exceptions, and
-publication-unknown insertion, plus the upper-backend differential histories,
-accepted production-wide throughput, latency, and false-conflict budgets, the
-exact sanitizer reruns, and the deferred capabilities in the table above.
+transactional-adapter integration. The current feature-enabled suite also pins
+the terminal API/typestate failure protocol and fixed-`u64` record layout,
+loader seal, snapshot validation, stale-writer behavior, miss/duplicate
+outcomes, public ownership surface, and real-native load/update/read path.
+Earlier branch baselines included ASan, UBSan, and unsuppressed TSan stress, but
+those sanitizer suites were not rerun against the exact scoped/strided ABI
+performance commit and therefore are not a current cutover claim. The
+production cutover record still needs explicit native fault injection for
+allocation failure, ordinary C++ exceptions, and publication-unknown insertion,
+plus the upper-backend differential histories, accepted production-wide
+throughput, latency, and false-conflict budgets, the exact sanitizer reruns, and
+the deferred capabilities in the table above.
 
 This table records implementation presence, not authorization to make the Rust
 backend the production default. That decision still requires the cutover gates
@@ -2907,6 +3211,8 @@ satisfy, the performance and false-conflict gate.
 | D15 | RUST | Native version encoding is private; the C++ layout is a parity oracle. | Rust records do not exchange atomic objects with C++. |
 | D16 | RUST/COMPAT | Native teardown requires negotiated `GRACEFUL_SHUTDOWN`; otherwise native allocations are process-lifetime. | Makes RCU/thread-affine destruction an explicit capability rather than a `Drop` guess. |
 | D17 | RUST | External adapters implement safe typed `TransactionalResource`, `OpacityToken`, and `TransactionLock` traits; heterogeneous item/guard erasure is sealed, private, and checked. | Preserves the paper's virtual extension seam without exposing untagged storage or making memory safety depend on adapter semantics. |
+| D18 | RUST | A terminal homogeneous read batch uses a distinct `Open -> Ready` consuming transaction typestate and an explicit stronger adapter capability. | The type surface proves that general item state, later operations, locks, installation, and outcome-dependent cleanup are unreachable, allowing a minimal key/observation representation without weakening certification. |
+| D19 | RUST | Fixed-`u64` is an optional permanently sealed, all-present point profile over a fresh privately owned Masstree, not a mode of the general table. | The 16-byte hot record and omitted publication checks are justified only by exclusive directory ownership and immutable post-load membership. |
 
 ### 20.2 Deferred decisions and review triggers
 
@@ -2920,6 +3226,7 @@ satisfy, the performance and false-conflict gate.
 | Physical record GC | No reclamation | Growth is material and a grace-period design is proven. |
 | Distributed `PreparedTransaction` | Not exposed | `sto-mako` specifies IDs, terms, idempotence, recovery, and liveness. |
 | Native version bit allocation | Opaque `AtomicVersion` contract; legacy layout permitted but not exposed | Before the core implementation is performance-frozen. |
+| Fixed-`u64` membership changes, scans, or general miss fallback | Unsupported; use the general binary-value `Table` | A workload requires them and supplies a new conflict, publication, and representation proof without weakening the specialized sealed profile. |
 
 ### 20.3 Changing this guideline
 
