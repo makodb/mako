@@ -71,7 +71,11 @@ impl<K: KeyIndex + 'static, B: Blobs + 'static> Runtime<K, B> {
             );
         }
 
-        Self { store, stop, threads }
+        Self {
+            store,
+            stop,
+            threads,
+        }
     }
 
     /// The store.

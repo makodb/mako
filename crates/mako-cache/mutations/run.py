@@ -86,29 +86,34 @@ REPLAY_ANCHOR = """    #[cfg(test)]
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
-        name="stale-journal-writeback",
-        relative_path="src/lib.rs",
-        anchor="""            Some(index) => {
-                let key = take_mutation_key(&mut self.journal[index].mutation);
-                self.journal[index].mutation = Mutation::Put {
-                    table_id: DEFAULT_TABLE_ID,
-                    key,
-                    value,
-                };
-            }
+        name="native-replay-drops-put-value",
+        relative_path="src/record.rs",
+        anchor="""                PUT_TAG => {
+                    let value = cursor.take(value_len)?;
+                    parsed.push(ParsedMutation::Put {
+                        table_id,
+                        key,
+                        value,
+                    });
+                }
 """,
-        anchor_sha256="f13073166835bc1075cfcdd9ad8a4898f62498d530e1d653c814d83d00a94b7f",
-        replacement="""            Some(index) => {
-                // MUTANT: retain the first journal value after a same-key put.
-                let _ = (index, value);
-            }
+        anchor_sha256="d0883774d9a0de40a3427a643047cbf5ea300aaaed3d903d89bcbe11119a717f",
+        replacement="""                PUT_TAG => {
+                    let value = cursor.take(value_len)?;
+                    // MUTANT: replay every native put as an empty value.
+                    parsed.push(ParsedMutation::Put {
+                        table_id,
+                        key,
+                        value: &value[..0],
+                    });
+                }
 """,
         test=NATIVE_INTEGRATION(
             "every_same_key_mutation_pair_has_one_canonical_backend_result"
         ),
         breaks=(
-            "The native transaction installs the latest same-key value while the "
-            "journal sends the stale first value to the backend."
+            "The native transaction installs the canonical final same-key value "
+            "while asynchronous RocksDB replay materializes an empty value."
         ),
     ),
     Mutation(
@@ -136,15 +141,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         name="hook-time-allocation",
         relative_path="src/writeback.rs",
         anchor="""        let mut state = lock_recover(&self.owner.state);
-        if let Some(sequence) = state.first_unknown {
+        if let Some(error) = state.reserve_health_error() {
 """,
-        anchor_sha256="e5f24c089860da8f4a44e4aa017e6dc6cdc3457e79b18859998e211bdb4dda88",
+        anchor_sha256="11d1d125d842e8b70fb02a793012bed18f0b08b7e8c1ee1034bed24678295352",
         replacement="""        let mut state = lock_recover(&self.owner.state);
         // MUTANT: allocate while Silo's post-validation hook holds write locks.
         let hook_allocation = Box::new(mako_timestamp.get());
         std::hint::black_box(&hook_allocation);
         drop(hook_allocation);
-        if let Some(sequence) = state.first_unknown {
+        if let Some(error) = state.reserve_health_error() {
 """,
         test=TestTarget(
             ("--test", "hook_allocation"),
@@ -191,19 +196,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="missing-ready-publication",
         relative_path="src/writeback.rs",
-        anchor="""                } else {
-                    slot.state = SlotState::Ready;
-                    state.highest_acknowledged = state.highest_acknowledged.max(sequence.get());
-                    Ok(())
-                }
+        anchor="""                    state.queue[offset].state = SlotState::Ready;
+                    state.advance_acknowledged_prefix();
 """,
-        anchor_sha256="157553a8db326405f13e11b9e5627648eb5235c517e590ac514f51ba1f1c042d",
-        replacement="""                } else {
-                    // MUTANT: acknowledge without publishing the Prepared slot.
-                    slot.state = SlotState::Prepared { pinned: false };
-                    state.highest_acknowledged = state.highest_acknowledged.max(sequence.get());
-                    Ok(())
-                }
+        anchor_sha256="1407ddd783fb180dcab1fbfbe85e48fab82f5d0fd6cd1fbd0bdf5b2d9a3941dc",
+        replacement="""                    // MUTANT: acknowledge without publishing the Prepared slot.
+                    state.queue[offset].state = SlotState::Prepared { pinned: false };
+                    state.highest_acknowledged = sequence.get();
 """,
         test=WRITEBACK_UNIT(
             "bind_and_publish_make_the_prepared_to_ready_transition_explicit"
@@ -241,12 +240,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="unpinned-unknown-outcome",
         relative_path="src/writeback.rs",
-        anchor="""            bound: Some(bound),
+        anchor="""            bound,
             record,
             on_drop: DropAction::PinUnknown,
 """,
-        anchor_sha256="848cd4b9c20bb18cabd148a2c45173277b8049a5d0d7f43ed2b278904d3f87cb",
-        replacement="""            bound: Some(bound),
+        anchor_sha256="6994082f858b574217a46cca8ceda6e50785ec6f15cf4be304c9225e17fa6ee6",
+        replacement="""            bound,
             record,
             // MUTANT: silently discard an ambiguous post-bind outcome.
             on_drop: DropAction::Done,
@@ -316,13 +315,20 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         name="wrong-mako-timestamp",
         relative_path="src/writeback.rs",
-        anchor="""        let bound = prepared.bind(sequence, mako_timestamp);
+        anchor="""                    state
+                        .applied
+                        .advance(record.sequence(), record.mako_timestamp());
 """,
-        anchor_sha256="96144a439901a5dc16d6b2d27c7af8f8dfcab8e81f9bed64153e5ba81686f69e",
-        replacement="""        // MUTANT: persist a valid but different timestamp than Silo allocated.
-        let wrong_timestamp = MakoTimestamp::new(if mako_timestamp.get() == 1 { 2 } else { 1 })
-            .expect("mutant timestamp remains nonzero");
-        let bound = prepared.bind(sequence, wrong_timestamp);
+        anchor_sha256="15e1d49b704a8993a1c925967394761cee909c4f6c5838d98d1d4222d10d0382",
+        replacement="""                    // MUTANT: advance the frontier with a valid but different timestamp.
+                    let record_timestamp = record.mako_timestamp();
+                    let wrong_timestamp = MakoTimestamp::new(
+                        if record_timestamp.get() == 1 { 2 } else { 1 },
+                    )
+                    .expect("mutant timestamp remains nonzero");
+                    state
+                        .applied
+                        .advance(record.sequence(), wrong_timestamp);
 """,
         test=TestTarget(
             ("--test", "timestamp"),
@@ -331,14 +337,14 @@ MUTATIONS: tuple[Mutation, ...] = (
             needs_hooks=True,
         ),
         breaks=(
-            "The cache record and applied frontier no longer carry the exact "
-            "Mako timestamp allocated at native serialization."
+            "The applied frontier no longer agrees with the exact Mako "
+            "timestamp encoded by native serialization."
         ),
     ),
     Mutation(
         name="missing-recovery-clock-floor",
         relative_path="src/lib.rs",
-        anchor="""    if let Some(timestamp) = max_mako_timestamp {
+        anchor="""    if let Some(timestamp) = applied_mako_timestamp {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
         mako_local::advance_mako_timestamp_past(timestamp)?;
@@ -346,8 +352,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         crate::failpoint::hit(crate::failpoint::Point::RecoveryAfterClockFloor);
     }
 """,
-        anchor_sha256="ab890bd7068c177072adbac8f3f5294c5f58615aaa97f689fd0ac37694efd14f",
-        replacement="""    if let Some(timestamp) = max_mako_timestamp {
+        anchor_sha256="b4ebbd5d9c7f81332a4df1623ea159ff1fee03a17b1e8b4d495f84be466d0a33",
+        replacement="""    if let Some(timestamp) = applied_mako_timestamp {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
         // MUTANT: expose recovery without advancing the process-wide clock.

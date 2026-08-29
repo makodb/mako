@@ -1,4 +1,4 @@
-//! Integrated acceptance coverage for the unbounded single-machine cache.
+//! Integrated acceptance coverage for the bounded single-machine cache.
 //!
 //! The lower-level write-back suite proves each queue transition separately.
 //! These tests retain a real [`Cache`] around the native Silo transaction path
@@ -109,6 +109,10 @@ fn options(capacity: usize) -> CacheOptions {
     CacheOptions {
         writeback: WritebackConfig {
             capacity,
+            // These acceptance cases assert the number of backend attempts
+            // per logical transaction. Prefix batching has dedicated coverage
+            // in writeback.rs, so keep that accounting deterministic here.
+            max_batch_records: 1,
             max_apply_retries: 2,
             retry_delay: Duration::from_millis(10),
             ..WritebackConfig::default()

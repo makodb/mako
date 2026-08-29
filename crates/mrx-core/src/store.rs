@@ -8,12 +8,13 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
 
-use crate::durability::{Floors, Ticket, TicketLog, VersionCounter, Watermark, WriterSlot,
-                        NO_FLOOR};
-use crate::table::EntryTable;
+use crate::durability::{
+    Floors, Ticket, TicketLog, VersionCounter, Watermark, WriterSlot, NO_FLOOR,
+};
 use crate::record::{Kind, Record};
+use crate::table::EntryTable;
 use crate::value::Entry;
-use crate::{Blobs, BlobOp, CacheLine, Config, EntryWord, KeyIndex, Version};
+use crate::{BlobOp, Blobs, CacheLine, Config, EntryWord, KeyIndex, Version};
 
 /// What a write did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,14 +267,10 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             // can reach it.
             return (won - 1) as u32;
         }
-        self.floor_bytes.fetch_add(
-            ENTRY_OVERHEAD + key.len() as u64,
-            Ordering::Relaxed,
-        );
-        self.resident_bytes.fetch_add(
-            ENTRY_OVERHEAD + key.len() as u64,
-            Ordering::Relaxed,
-        );
+        self.floor_bytes
+            .fetch_add(ENTRY_OVERHEAD + key.len() as u64, Ordering::Relaxed);
+        self.resident_bytes
+            .fetch_add(ENTRY_OVERHEAD + key.len() as u64, Ordering::Relaxed);
         idx
     }
 
@@ -288,8 +285,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// always a prefix — which is what makes this a slice rather than a
     /// scan with a liveness test.
     fn live_writers(&self) -> &[WriterSlot] {
-        let n = (self.next_writer.load(Ordering::Acquire) as usize)
-            .min(self.writers.len());
+        let n = (self.next_writer.load(Ordering::Acquire) as usize).min(self.writers.len());
         &self.writers[..n]
     }
 
@@ -430,11 +426,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// *exact* record read before going to the durable store, so a writer
     /// that published in the meantime — even one already flushed and
     /// re-evicted — replaced that record and the install fails.
-    fn fill(
-        &self,
-        e: &Entry,
-        seen: &Record,
-    ) -> Result<Option<Vec<u8>>, crate::BlobError> {
+    fn fill(&self, e: &Entry, seen: &Record) -> Result<Option<Vec<u8>>, crate::BlobError> {
         let Some(bytes) = self.blobs.get(e.key())? else {
             // The index says this key exists but the store has no row.
             // Report absent rather than inventing data.
@@ -501,7 +493,10 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
                 return (
                     None,
                     (
-                        WriteOutcome { wrote: false, existed: live },
+                        WriteOutcome {
+                            wrote: false,
+                            existed: live,
+                        },
                         0,
                         0,
                         0,
@@ -522,7 +517,10 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             (
                 Some(nv),
                 (
-                    WriteOutcome { wrote: true, existed: live },
+                    WriteOutcome {
+                        wrote: true,
+                        existed: live,
+                    },
                     ver,
                     freed,
                     added,
@@ -538,7 +536,13 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
 
         // submit() releases the announce floor only once the ticket is
         // covered by the batch.
-        if let Some(full) = w.submit(Ticket { entry: idx, version: ver }, self.cfg.batch) {
+        if let Some(full) = w.submit(
+            Ticket {
+                entry: idx,
+                version: ver,
+            },
+            self.cfg.batch,
+        ) {
             self.log.append(&full);
             w.clear_staged();
         }
@@ -547,9 +551,11 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
 
     fn account(&self, freed: u64, added: u64) {
         if added >= freed {
-            self.resident_bytes.fetch_add(added - freed, Ordering::Relaxed);
+            self.resident_bytes
+                .fetch_add(added - freed, Ordering::Relaxed);
         } else {
-            self.resident_bytes.fetch_sub(freed - added, Ordering::Relaxed);
+            self.resident_bytes
+                .fetch_sub(freed - added, Ordering::Relaxed);
         }
     }
 
@@ -632,7 +638,10 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             self.index.rscan_chunk(from, self.cfg.scan_chunk, &mut raw)
         };
         if n == 0 {
-            return Ok(Chunk { pairs: Vec::new(), next_from: None });
+            return Ok(Chunk {
+                pairs: Vec::new(),
+                next_from: None,
+            });
         }
         let last = raw[n - 1].0.clone();
         let mut pairs = Vec::with_capacity(n);
@@ -650,9 +659,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
                     let cur = e.load();
                     match cur.kind() {
                         Kind::Tombstone => continue,
-                        Kind::Resident => {
-                            cur.bytes().expect("resident has bytes").to_vec()
-                        }
+                        Kind::Resident => cur.bytes().expect("resident has bytes").to_vec(),
                         Kind::Evicted => match self.fill(e, &cur)? {
                             Some(b) => b,
                             None => continue,
@@ -690,7 +697,9 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         let mut first = true;
         loop {
             let mut chunk: Vec<(Vec<u8>, EntryWord)> = Vec::new();
-            let n = self.index.scan_chunk(&cursor, self.cfg.scan_chunk, &mut chunk);
+            let n = self
+                .index
+                .scan_chunk(&cursor, self.cfg.scan_chunk, &mut chunk);
             if n == 0 {
                 break;
             }
@@ -802,8 +811,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             // invisible; against a real RocksDB it runs constantly, and
             // the allocator traffic lands on the same arenas the sixteen
             // producer threads are using.
-            let mut held: Vec<(&Entry, Record)> =
-                Vec::with_capacity(candidates.len());
+            let mut held: Vec<(&Entry, Record)> = Vec::with_capacity(candidates.len());
             let mut wrote: Vec<u32> = Vec::with_capacity(candidates.len());
             for (idx, owed) in &candidates {
                 let e = self.entry(*idx);
@@ -830,7 +838,10 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             let ops: Vec<BlobOp<'_>> = held
                 .iter()
                 .map(|(e, v)| match v.bytes() {
-                    Some(b) => BlobOp::Put { key: e.key(), val: b },
+                    Some(b) => BlobOp::Put {
+                        key: e.key(),
+                        val: b,
+                    },
                     // Tombstone; `Evicted` never reaches here.
                     None => BlobOp::Delete { key: e.key() },
                 })
@@ -944,9 +955,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             if self.watermark.get() >= target {
                 break true;
             }
-            if self.io_failing.load(Ordering::Acquire)
-                || self.stopping.load(Ordering::Acquire)
-            {
+            if self.io_failing.load(Ordering::Acquire) || self.stopping.load(Ordering::Acquire) {
                 break self.watermark.get() >= target;
             }
             let g = self.sync_lock.lock().expect("sync lock poisoned");

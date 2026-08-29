@@ -1,16 +1,18 @@
 // Relative overhead benchmark for the local MassTrans transaction boundary.
 //
-// This binary runs one surface per process (direct MassTrans or the raw C
-// facade).  crates/mako-local/tests/overhead.rs runs the safe Rust surface in
-// a third process, validates this machine-readable protocol, and computes
-// same-host relative wrapper tax.  Absolute throughput is deliberately not a
-// correctness or release gate.
+// This binary runs one surface per process (direct MassTrans, the raw public C
+// facade, or the private trusted Rust fast ABI).
+// crates/mako-local/tests/overhead.rs runs the safe Rust surface in another
+// process, validates this machine-readable protocol, and computes same-host
+// relative wrapper tax. Absolute throughput is deliberately not a correctness
+// or release gate.
 
 #include "lib/common.h"
 #include "sto/MassTrans.hh"
 #include "sto/StringWrapper.hh"
 #include "sto/thread_registration.hh"
 #include "storage/mako_local_abi.h"
+#include "storage/mako_local_rust_fast_abi.h"
 
 #include <algorithm>
 #include <array>
@@ -68,7 +70,7 @@ using DirectTable =
     MassTrans<std::string, versioned_str_struct, false /* opacity */>;
 #endif
 
-enum class Mode { direct, abi };
+enum class Mode { direct, abi, fast };
 enum class Workload { read, write, rmw };
 enum class Contention { low, high };
 
@@ -96,7 +98,15 @@ struct TableHandle {
 };
 
 std::string_view mode_name(Mode mode) {
-  return mode == Mode::direct ? "direct" : "abi";
+  switch (mode) {
+  case Mode::direct:
+    return "direct";
+  case Mode::abi:
+    return "abi";
+  case Mode::fast:
+    return "fast";
+  }
+  std::abort();
 }
 
 std::string_view workload_name(Workload workload) {
@@ -452,6 +462,125 @@ private:
   mako_local_txn *txn_ = nullptr;
 };
 
+class FastAbiWorker {
+public:
+  FastAbiWorker(mako_local_db *db, mako_local_table *table)
+      : db_(db), table_(table) {
+    if (db_ == nullptr || table_ == nullptr)
+      throw std::runtime_error("null fast-ABI benchmark handle");
+  }
+
+  ~FastAbiWorker() {
+    if (txn_ != nullptr)
+      (void)mako_rust_fast_txn_abort_and_destroy(txn_);
+  }
+
+  void begin() {
+    if (txn_ != nullptr)
+      throw std::runtime_error("fast-ABI benchmark transaction already active");
+    require_ok(mako_rust_fast_txn_begin(db_, table_, &txn_),
+               "fast-ABI benchmark transaction begin");
+    if (txn_ == nullptr)
+      throw std::runtime_error("fast-ABI benchmark begin returned null");
+  }
+
+  bool get(const Bytes &key, uint64_t &value) {
+    require_active();
+    uint8_t *bytes = nullptr;
+    size_t length = 0;
+    uint8_t found = 0;
+    // The trusted begin returns the ordinary transaction facade, so reads can
+    // intentionally retain the public ABI until a separate fast-read design
+    // has its own measured justification.
+    const int status = mako_local_txn_get(txn_, table_, abi_bytes(key),
+                                          key.size(), &bytes, &length, &found);
+    std::unique_ptr<uint8_t, decltype(&mako_local_bytes_free)> owned(
+        bytes, &mako_local_bytes_free);
+    if (status == MAKO_LOCAL_CONFLICT) {
+      abort_and_destroy();
+      return false;
+    }
+    if (status != MAKO_LOCAL_OK)
+      fail_status(status, "fast-ABI benchmark get");
+    if (found != 1 || bytes == nullptr || length != sizeof(uint64_t))
+      fail("fast-ABI benchmark get returned malformed output");
+    value = decode_value(
+        std::string_view(reinterpret_cast<const char *>(bytes), length));
+    return true;
+  }
+
+  bool put(const Bytes &key, uint64_t value) {
+    require_active();
+    const Bytes bytes = value_bytes(value);
+    const uint64_t packed = mako_rust_fast_txn_put(
+        txn_, abi_bytes(key), static_cast<uint32_t>(key.size()),
+        abi_bytes(bytes), static_cast<uint32_t>(bytes.size()));
+    const int status = MAKO_RUST_FAST_PUT_STATUS(packed);
+    const uint8_t created = MAKO_RUST_FAST_PUT_CREATED(packed);
+    if ((packed >> 33) != 0 || (status != MAKO_LOCAL_OK && created != 0))
+      fail("fast-ABI benchmark put returned malformed packed output");
+    if (status == MAKO_LOCAL_CONFLICT) {
+      abort_and_destroy();
+      return false;
+    }
+    if (status != MAKO_LOCAL_OK)
+      fail_status(status, "fast-ABI benchmark put");
+    return true;
+  }
+
+  bool commit() {
+    require_active();
+    mako_local_txn *txn = txn_;
+    txn_ = nullptr;
+    const uint64_t packed = mako_rust_fast_txn_commit_and_destroy(txn);
+    const int commit_status = MAKO_RUST_FAST_TERMINAL_STATUS(packed);
+    const int cleanup_status = MAKO_RUST_FAST_CLEANUP_STATUS(packed);
+    require_ok(cleanup_status, "fast-ABI benchmark transaction cleanup");
+    if (commit_status == MAKO_LOCAL_CONFLICT)
+      return false;
+    require_ok(commit_status, "fast-ABI benchmark transaction commit");
+    return true;
+  }
+
+private:
+  void require_active() const {
+    if (txn_ == nullptr)
+      throw std::runtime_error("fast-ABI benchmark transaction is not active");
+  }
+
+  void abort_and_destroy() {
+    mako_local_txn *txn = txn_;
+    txn_ = nullptr;
+    if (txn == nullptr)
+      return;
+    const uint64_t packed = mako_rust_fast_txn_abort_and_destroy(txn);
+    const int cleanup_status = MAKO_RUST_FAST_CLEANUP_STATUS(packed);
+    require_ok(cleanup_status, "fast-ABI benchmark transaction cleanup");
+  }
+
+  [[noreturn]] void fail(const std::string &message) {
+    mako_local_txn *txn = txn_;
+    txn_ = nullptr;
+    if (txn != nullptr) {
+      const uint64_t packed = mako_rust_fast_txn_abort_and_destroy(txn);
+      const int cleanup_status = MAKO_RUST_FAST_CLEANUP_STATUS(packed);
+      if (cleanup_status != MAKO_LOCAL_OK) {
+        throw std::runtime_error(message + "; cleanup failed with " +
+                                 status_description(cleanup_status));
+      }
+    }
+    throw std::runtime_error(message);
+  }
+
+  [[noreturn]] void fail_status(int status, std::string_view operation) {
+    fail(std::string(operation) + " failed with " + status_description(status));
+  }
+
+  mako_local_db *db_;
+  mako_local_table *table_;
+  mako_local_txn *txn_ = nullptr;
+};
+
 size_t transactions_for(size_t transaction_size, bool warmup) {
   const size_t key_touches = warmup ? kWarmupKeyTouches : kSampleKeyTouches;
   const size_t minimum =
@@ -733,8 +862,13 @@ public:
                  "benchmark table open");
       if (handle.abi == nullptr)
         throw std::runtime_error("benchmark table open returned null");
-      AbiWorker worker(db_, handle.abi);
-      seed_table(worker, key_count(configuration));
+      if (mode_ == Mode::fast) {
+        FastAbiWorker worker(db_, handle.abi);
+        seed_table(worker, key_count(configuration));
+      } else {
+        AbiWorker worker(db_, handle.abi);
+        seed_table(worker, key_count(configuration));
+      }
     }
     return handle;
   }
@@ -745,6 +879,12 @@ public:
       return run_concurrent(configuration, [handle] {
         initialize_direct_worker();
         return std::make_unique<DirectWorker>(handle.direct);
+      });
+    }
+    if (mode_ == Mode::fast) {
+      return run_concurrent(configuration, [this, handle] {
+        require_ok(mako_local_thread_attach(), "benchmark worker attach");
+        return std::make_unique<FastAbiWorker>(db_, handle.abi);
       });
     }
     return run_concurrent(configuration, [this, handle] {
@@ -758,6 +898,10 @@ public:
       DirectWorker worker(handle.direct);
       return validate_table(worker, configuration);
     }
+    if (mode_ == Mode::fast) {
+      FastAbiWorker worker(db_, handle.abi);
+      return validate_table(worker, configuration);
+    }
     AbiWorker worker(db_, handle.abi);
     return validate_table(worker, configuration);
   }
@@ -769,13 +913,17 @@ private:
 
 Mode parse_mode(int argc, char **argv) {
   if (argc != 2)
-    throw std::runtime_error("usage: mako_local_overhead_driver direct|abi");
+    throw std::runtime_error(
+        "usage: mako_local_overhead_driver direct|abi|fast");
   const std::string_view mode(argv[1]);
   if (mode == "direct")
     return Mode::direct;
   if (mode == "abi")
     return Mode::abi;
-  throw std::runtime_error("mode must be exactly 'direct' or 'abi'");
+  if (mode == "fast")
+    return Mode::fast;
+  throw std::runtime_error(
+      "mode must be exactly 'direct', 'abi', or 'fast'");
 }
 
 void emit_sample(Mode mode, const Configuration &configuration, size_t index,

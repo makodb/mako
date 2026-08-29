@@ -30,7 +30,8 @@ use std::cell::Cell;
 use std::ffi::{c_void, CStr};
 use std::fmt;
 use std::marker::PhantomData;
-use std::num::NonZeroU32;
+use std::mem::{ManuallyDrop, MaybeUninit};
+use std::num::{NonZeroU32, NonZeroU64};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
 use std::rc::Rc;
@@ -43,6 +44,72 @@ use mako_local_sys as abi;
 mod fake_abi;
 #[cfg(test)]
 use fake_abi as abi;
+
+// This build-private ABI is deliberately absent from mako-local-sys and the
+// stable v0 export manifest. It is a trusted optimization seam for the Rust
+// cache wrapper built from the exact same source fingerprint as the C++
+// engine. The public methods below continue to enforce Rust ownership and
+// thread affinity before reaching these unchecked native entries.
+#[cfg(not(test))]
+mod fast_abi {
+    use std::ffi::c_void;
+
+    use super::sys;
+
+    pub(super) type RecordBindHook = Option<
+        unsafe extern "C" fn(
+            context: *mut c_void,
+            mako_timestamp: u32,
+            exact_record_bytes: usize,
+            sequence_out: *mut u64,
+            record_bytes_out: *mut *mut u8,
+            record_capacity_out: *mut usize,
+        ) -> i32,
+    >;
+
+    extern "C" {
+        pub(super) fn mako_rust_fast_txn_begin(
+            db: *mut sys::mako_local_db,
+            bound_table: *mut sys::mako_local_table,
+            out: *mut *mut sys::mako_local_txn,
+        ) -> i32;
+
+        pub(super) fn mako_rust_fast_txn_put(
+            txn: *mut sys::mako_local_txn,
+            key: *const u8,
+            key_len: u32,
+            value: *const u8,
+            value_len: u32,
+        ) -> u64;
+
+        pub(super) fn mako_rust_fast_txn_commit_and_destroy(txn: *mut sys::mako_local_txn) -> u64;
+
+        pub(super) fn mako_rust_fast_txn_commit_with_hook_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            hook: sys::mako_local_post_validate_hook,
+            context: *mut c_void,
+        ) -> u64;
+
+        pub(super) fn mako_rust_fast_txn_record_preflight(
+            txn: *mut sys::mako_local_txn,
+            max_record_bytes: usize,
+            exact_record_bytes_out: *mut usize,
+            op_count_out: *mut u32,
+        ) -> i32;
+
+        pub(super) fn mako_rust_fast_txn_commit_record_and_destroy(
+            txn: *mut sys::mako_local_txn,
+            hook: RecordBindHook,
+            context: *mut c_void,
+            record_written_out: *mut u8,
+        ) -> u64;
+
+        pub(super) fn mako_rust_fast_txn_abort_and_destroy(txn: *mut sys::mako_local_txn) -> u64;
+    }
+}
+
+#[cfg(test)]
+use fake_abi as fast_abi;
 
 #[cfg(all(not(test), have_mako))]
 mod identity_abi {
@@ -351,6 +418,149 @@ pub struct CommitReport {
     pub disposition: CommitDisposition,
     /// Whether the now-terminal facade handle was destroyed cleanly.
     pub cleanup: Result<()>,
+}
+
+/// Exact native sizing for one canonical cache commit record.
+///
+/// This build-private type is returned only for a trusted transaction whose
+/// native write plan has been sealed. The byte count includes the complete v3
+/// header and CRC; `op_count == 0` identifies a logical read-only transaction
+/// that must use the ordinary no-record commit terminal.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommitRecordPreflight {
+    exact_record_bytes: usize,
+    op_count: u32,
+}
+
+impl CommitRecordPreflight {
+    /// Complete encoded record size, including header and CRC.
+    pub const fn exact_record_bytes(self) -> usize {
+        self.exact_record_bytes
+    }
+
+    /// Number of canonical final-effect mutations in the record.
+    pub const fn op_count(self) -> u32 {
+        self.op_count
+    }
+
+    /// Whether native canonicalization found no externally visible mutation.
+    pub const fn is_empty(self) -> bool {
+        self.op_count == 0
+    }
+}
+
+/// Preallocated storage that exposes bytes only after native completion.
+///
+/// Allocation happens in [`Self::try_for`], before native validation and write
+/// locking. The private completion state is set only when the consuming native
+/// terminal reports that it initialized exactly the preflight extent. Thus
+/// safe callers cannot read spare or partially initialized storage.
+#[doc(hidden)]
+pub struct UninitCommitRecord {
+    bytes: Vec<MaybeUninit<u8>>,
+    preflight: CommitRecordPreflight,
+    written: bool,
+}
+
+impl fmt::Debug for UninitCommitRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UninitCommitRecord")
+            .field("preflight", &self.preflight)
+            .field("written", &self.written)
+            .finish_non_exhaustive()
+    }
+}
+
+impl UninitCommitRecord {
+    /// Allocate the exact writable extent described by `preflight`.
+    pub fn try_for(preflight: CommitRecordPreflight) -> Result<Self> {
+        let exact = preflight.exact_record_bytes;
+        if exact == 0 {
+            return Err(Error::Internal);
+        }
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(exact)
+            .map_err(|_| Error::OutOfMemory)?;
+        // SAFETY: `MaybeUninit<u8>` may be left uninitialized. Native receives
+        // this exact extent only through the synchronous terminal below.
+        unsafe { bytes.set_len(exact) };
+        Ok(Self {
+            bytes,
+            preflight,
+            written: false,
+        })
+    }
+
+    /// Writable extent supplied to native serialization.
+    pub fn capacity(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Whether native supplied and the wrapper accepted its completion witness.
+    pub const fn is_written(&self) -> bool {
+        self.written
+    }
+
+    /// Borrow the complete initialized record, if native finished writing it.
+    pub fn written_bytes(&self) -> Option<&[u8]> {
+        if !self.written || self.bytes.len() != self.preflight.exact_record_bytes {
+            return None;
+        }
+        // SAFETY: `written` is set only after the consuming native terminal's
+        // completion witness says it initialized this exact allocation.
+        Some(unsafe {
+            std::slice::from_raw_parts(self.bytes.as_ptr().cast::<u8>(), self.bytes.len())
+        })
+    }
+
+    /// Consume the wrapper and return the initialized encoded record.
+    ///
+    /// `None` fails closed when no valid native completion witness exists.
+    pub fn into_written(self) -> Option<Vec<u8>> {
+        if !self.written || self.bytes.len() != self.preflight.exact_record_bytes {
+            return None;
+        }
+        let mut bytes = ManuallyDrop::new(self.bytes);
+        let ptr = bytes.as_mut_ptr().cast::<u8>();
+        let len = bytes.len();
+        let capacity = bytes.capacity();
+        // SAFETY: `MaybeUninit<u8>` has the same allocation layout as `u8`,
+        // and the validated witness covers every element in `len`.
+        Some(unsafe { Vec::from_raw_parts(ptr, len, capacity) })
+    }
+
+    fn mark_written(&mut self, preflight: CommitRecordPreflight) -> bool {
+        if self.written
+            || self.preflight != preflight
+            || self.bytes.len() != preflight.exact_record_bytes
+        {
+            return false;
+        }
+        self.written = true;
+        true
+    }
+}
+
+/// Commit visibility together with native record-binding progress.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "a bound record must be published or pinned before acknowledgement"]
+pub struct CommitRecordReport {
+    /// Native commit visibility and facade cleanup outcomes.
+    pub commit: CommitReport,
+    /// Whether native's terminal status, bind callback, and 0/1 completion
+    /// witness form one internally consistent result.
+    ///
+    /// A false value is an ABI contract violation, not an ordinary native
+    /// error. When no record was bound, a durability adapter has no ordered
+    /// slot it can pin and must fail-stop the process.
+    pub completion_contract_valid: bool,
+    /// Whether the synchronous acquire callback returned a sequence and storage.
+    pub record_bound: bool,
+    /// Whether native initialized the complete record and issued its witness.
+    pub record_written: bool,
 }
 
 /// Maximum table-name length accepted by the draft ABI.
@@ -688,6 +898,44 @@ fn known_status(status: sys::KnownStatus) -> Result<()> {
     }
 }
 
+#[inline]
+fn decode_fast_put(packed: u64) -> Option<(i32, bool)> {
+    let status = packed as u32 as i32;
+    let created = packed & (1_u64 << 32) != 0;
+    // Bits above the documented created flag are reserved. Native must not
+    // claim creation for an operation it also reports as failed.
+    if packed >> 33 != 0 || (status != sys::MAKO_LOCAL_OK && created) {
+        return None;
+    }
+    Some((status, created))
+}
+
+#[inline]
+fn decode_fast_commit(packed: u64) -> Option<(i32, i32)> {
+    let commit = packed as u32 as i32;
+    let cleanup = (packed >> 32) as u32 as i32;
+    let definite_terminal = matches!(
+        commit,
+        sys::MAKO_LOCAL_OK
+            | sys::MAKO_LOCAL_CONFLICT
+            | sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED
+            | sys::MAKO_LOCAL_TIMESTAMP_EXHAUSTED
+    ) && cleanup == sys::MAKO_LOCAL_OK;
+    let quarantined =
+        commit == sys::MAKO_LOCAL_WORKER_POISONED && cleanup == sys::MAKO_LOCAL_WORKER_POISONED;
+    (definite_terminal || quarantined).then_some((commit, cleanup))
+}
+
+#[inline]
+fn decode_fast_abort(packed: u64) -> Option<(i32, i32)> {
+    let abort = packed as u32 as i32;
+    let cleanup = (packed >> 32) as u32 as i32;
+    let definite_terminal = abort == sys::MAKO_LOCAL_OK && cleanup == sys::MAKO_LOCAL_OK;
+    let quarantined =
+        abort == sys::MAKO_LOCAL_WORKER_POISONED && cleanup == sys::MAKO_LOCAL_WORKER_POISONED;
+    (definite_terminal || quarantined).then_some((abort, cleanup))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OperationEffect {
     Active,
@@ -894,6 +1142,51 @@ impl LocalDb {
         Ok(Transaction {
             raw: Some(raw),
             active: true,
+            fast_bound_table: None,
+            record_preflight: None,
+            _db: PhantomData,
+            _thread_affine: PhantomData,
+        })
+    }
+
+    /// Begin a transaction using the build-private Rust/C++ fast path.
+    ///
+    /// This entry point exists for `mako-cache`, which has already checked the
+    /// exact native build fingerprint and whose safe wrapper supplies the
+    /// pointer, length, database, table, and thread-affinity invariants omitted
+    /// by the hot native Put and consuming terminal entries. Other operations
+    /// retain the checked v0 ABI. The transaction has exactly the same public
+    /// ownership and error semantics as one returned by [`Self::transaction`].
+    ///
+    /// This is intentionally not the long-term compiler optimization story.
+    /// ABI-only synthetic PGO came within about one percent of an unprofiled
+    /// native control, but that was only an optimization ceiling: profiling
+    /// both paths equally retained about a ten-percent dynamic-instruction gap.
+    /// Reconsider PGO once a production workload and pinned toolchain can
+    /// support a reviewed, reproducible training profile.
+    #[doc(hidden)]
+    pub fn trusted_transaction<'db>(
+        &'db self,
+        bound_table: &Table<'db>,
+    ) -> Result<Transaction<'db>> {
+        ensure_current_thread_attached()?;
+        let mut raw = std::ptr::null_mut();
+        // SAFETY: `self` and `bound_table` remain borrowed for the returned
+        // transaction's complete lifetime. Native begin validates their owner
+        // relationship once and binds the table into the pooled facade.
+        status(unsafe {
+            fast_abi::mako_rust_fast_txn_begin(
+                self.raw.as_ptr(),
+                bound_table.raw.as_ptr(),
+                &mut raw,
+            )
+        })?;
+        let raw = NonNull::new(raw).ok_or(Error::Internal)?;
+        Ok(Transaction {
+            raw: Some(raw),
+            active: true,
+            fast_bound_table: Some(bound_table.raw),
+            record_preflight: None,
             _db: PhantomData,
             _thread_affine: PhantomData,
         })
@@ -999,6 +1292,13 @@ impl Table<'_> {
 pub struct Transaction<'db> {
     raw: Option<NonNull<sys::mako_local_txn>>,
     active: bool,
+    // Present only for the build-private cache path. Exact pointer equality is
+    // required before the unchecked Put can omit table ownership validation.
+    fast_bound_table: Option<NonNull<sys::mako_local_table>>,
+    // A successful private preflight seals native's canonical write plan. It
+    // is retained so storage sized for another transaction cannot be supplied
+    // to the consuming serialization terminal.
+    record_preflight: Option<CommitRecordPreflight>,
     _db: PhantomData<&'db LocalDb>,
     _thread_affine: PhantomData<Rc<()>>,
 }
@@ -1299,6 +1599,12 @@ impl<'db> Transaction<'db> {
         if !self.active {
             return Err(Error::TransactionFinished);
         }
+        // Native preflight seals the canonical write plan. In particular, the
+        // trusted fast put entry intentionally omits most public-ABI checks, so
+        // safe Rust must never let a later operation reach it after sealing.
+        if self.record_preflight.is_some() {
+            return Err(Error::Busy);
+        }
         Ok(self
             .raw
             .expect("transaction handle already consumed")
@@ -1425,12 +1731,37 @@ impl<'db> Transaction<'db> {
     /// this operation, including after an earlier same-transaction removal.
     #[inline]
     pub fn put(&mut self, table: &Table<'db>, key: &[u8], value: &[u8]) -> Result<bool> {
+        let raw = self.active_raw()?;
+        if self.fast_bound_table == Some(table.raw) {
+            if key.len() > MAX_KEY_BYTES || value.len() > MAX_VALUE_BYTES {
+                return Err(Error::ValueTooLarge);
+            }
+            // SAFETY: the safe Rust transaction/table borrows prove the
+            // thread, database, table, and slice-lifetime invariants that this
+            // build-private entry intentionally omits. The representation
+            // limits above make both narrowing conversions exact.
+            let packed = unsafe {
+                fast_abi::mako_rust_fast_txn_put(
+                    raw,
+                    key.as_ptr(),
+                    key.len() as u32,
+                    value.as_ptr(),
+                    value.len() as u32,
+                )
+            };
+            let Some((code, created)) = decode_fast_put(packed) else {
+                return self.fail_closed(Error::Internal);
+            };
+            self.operation_status(code)?;
+            return Ok(created);
+        }
+
         let mut created = 0u8;
         // SAFETY: input slices live through the call. C++ copies/encodes the
         // value into transaction-owned stable storage before returning.
         let code = unsafe {
             abi::mako_local_txn_put(
-                self.active_raw()?,
+                raw,
                 table.raw.as_ptr(),
                 key.as_ptr(),
                 key.len(),
@@ -1490,6 +1821,61 @@ impl<'db> Transaction<'db> {
         Ok(existed != 0)
     }
 
+    /// Seal and size native's canonical cache commit record.
+    ///
+    /// This private cache integration is available only on a transaction from
+    /// [`LocalDb::trusted_transaction`]. It performs no Rust allocation and
+    /// runs before commit validation or write locking. A successful call seals
+    /// the transaction's native write plan; call it exactly once, after the
+    /// final transaction operation. `max_record_bytes` bounds nonempty plans
+    /// and guards the eventual allocation request. A read-only or net-empty
+    /// plan succeeds without allocation even when its diagnostic 30-byte
+    /// framing size exceeds that cap.
+    #[doc(hidden)]
+    pub fn commit_record_preflight(
+        &mut self,
+        max_record_bytes: usize,
+    ) -> Result<CommitRecordPreflight> {
+        let raw = self.active_raw()?;
+        if self.fast_bound_table.is_none() {
+            return Err(Error::FeatureUnavailable);
+        }
+        if self.record_preflight.is_some() {
+            return Err(Error::Busy);
+        }
+
+        let mut exact_record_bytes = 0usize;
+        let mut op_count = 0u32;
+        // SAFETY: this is a live trusted transaction. Both initialized output
+        // scalars remain writable for the synchronous private ABI call.
+        let code = unsafe {
+            fast_abi::mako_rust_fast_txn_record_preflight(
+                raw,
+                max_record_bytes,
+                &mut exact_record_bytes,
+                &mut op_count,
+            )
+        };
+        if let Err(error) = status(code) {
+            // Native seals the plan even when the caller's byte cap rejects
+            // it. Abort now so a caller cannot accidentally fall back to an
+            // ordinary unlogged commit after observing the preflight error.
+            return self.fail_closed(error);
+        }
+        if exact_record_bytes == 0
+            || (op_count != 0 && exact_record_bytes > max_record_bytes)
+            || op_count as usize > TRANSACTION_ITEM_BUDGET
+        {
+            return self.fail_closed(Error::Internal);
+        }
+        let preflight = CommitRecordPreflight {
+            exact_record_bytes,
+            op_count,
+        };
+        self.record_preflight = Some(preflight);
+        Ok(preflight)
+    }
+
     /// Validate and atomically install the transaction's local writes.
     ///
     /// Consumes the handle. [`Error::Conflict`] is a normal OCC outcome.
@@ -1514,10 +1900,7 @@ impl<'db> Transaction<'db> {
     /// pinning the corresponding durability obligation is the safe response.
     #[inline]
     pub fn commit_report(self) -> CommitReport {
-        self.finish_commit(|raw| {
-            // SAFETY: handle is live, active, and cannot have moved threads.
-            unsafe { abi::mako_local_txn_commit(raw) }
-        })
+        self.finish_commit(None, std::ptr::null_mut())
     }
 
     /// Commit with an allocation-free post-validation, pre-install hook.
@@ -1542,24 +1925,186 @@ impl<'db> Transaction<'db> {
         F: FnOnce(MakoTimestamp) -> bool,
     {
         let mut state = PostValidateHook { hook: Some(hook) };
-        self.finish_commit(|raw| {
-            // SAFETY: native invokes the callback synchronously at most once
-            // and does not retain the stack context after returning.
-            unsafe {
-                abi::mako_local_txn_commit_with_hook(
-                    raw,
-                    Some(post_validate_trampoline::<F>),
-                    std::ptr::from_mut(&mut state).cast::<c_void>(),
-                )
+        self.finish_commit(
+            Some(post_validate_trampoline::<F>),
+            std::ptr::from_mut(&mut state).cast::<c_void>(),
+        )
+    }
+
+    /// Commit while native serializes its canonical record into owned storage.
+    ///
+    /// The transaction must have a successful nonempty
+    /// [`Self::commit_record_preflight`], and `record` must have been allocated
+    /// from those exact bounds. For this record-only terminal, native orders
+    /// Mako timestamp assignment, final validation, and `acquire` with a
+    /// per-database gate. Thus successful callbacks can bind the next dense
+    /// serialization-safe slot while validation losers consume no slot. Native
+    /// retires that short turn before walking/copying the canonical record, but
+    /// retains every write lock and installs nothing until serialization ends.
+    /// `acquire` runs synchronously before installation and must return its
+    /// nonzero sequence without allocating, performing I/O, waiting for
+    /// capacity, re-entering mako-local, or unwinding. Returning `None`
+    /// definitely rejects installation.
+    ///
+    /// A callback panic is contained and treated as rejection in unwind builds.
+    /// `record` exposes bytes only when native confirms complete initialization;
+    /// callers must publish a written committed record before acknowledging it,
+    /// and pin every non-committed outcome for which `record_bound` is true.
+    #[doc(hidden)]
+    pub fn commit_report_with_record<F>(
+        mut self,
+        record: &mut UninitCommitRecord,
+        acquire: F,
+    ) -> CommitRecordReport
+    where
+        F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<NonZeroU64>,
+    {
+        let Some(preflight) = self.record_preflight else {
+            return self.reject_record_commit(Error::InvalidArgument);
+        };
+        if self.fast_bound_table.is_none()
+            || preflight.is_empty()
+            || record.preflight != preflight
+            || record.written
+            || record.bytes.len() != preflight.exact_record_bytes
+        {
+            return self.reject_record_commit(Error::InvalidArgument);
+        }
+
+        let raw = self
+            .raw
+            .take()
+            .expect("transaction handle already consumed");
+        if !self.active {
+            // Reuse the established terminal-handle cleanup path. Its inactive
+            // branch never invokes commit.
+            self.raw = Some(raw);
+            let commit = self.finish_commit(None, std::ptr::null_mut());
+            return CommitRecordReport {
+                commit,
+                completion_contract_valid: true,
+                record_bound: false,
+                record_written: false,
+            };
+        }
+        self.active = false;
+
+        let mut state = RecordBindHook {
+            hook: Some(acquire),
+            record: NonNull::from(&mut *record),
+            preflight,
+            bound: false,
+        };
+        let mut record_written = 0u8;
+        // SAFETY: this active fast-bound handle is consumed by the private
+        // terminal on every outcome. The callback state and record allocation
+        // remain live and immovable until this synchronous call returns.
+        let packed = unsafe {
+            fast_abi::mako_rust_fast_txn_commit_record_and_destroy(
+                raw.as_ptr(),
+                Some(record_bind_trampoline::<F>),
+                std::ptr::from_mut(&mut state).cast::<c_void>(),
+                &mut record_written,
+            )
+        };
+
+        let record_bound = state.bound;
+        let witness_claimed = record_written == 1;
+        // A bound-but-unwritten result is the legitimate fail-stop shape when
+        // native assigned the dense sequence and then rejected post-gate
+        // serialization before install. Written without bound is impossible;
+        // a successful terminal still separately requires a written witness.
+        let mut contract_valid = record_written <= 1 && (!witness_claimed || record_bound);
+        if contract_valid && witness_claimed && !record.mark_written(preflight) {
+            contract_valid = false;
+        }
+
+        let decoded = decode_fast_commit(packed);
+        if decoded.is_none() {
+            contract_valid = false;
+        }
+        if let Some((commit, _)) = decoded {
+            // A reported successful installation without a bound and written
+            // record would have escaped durability coverage.
+            if commit == sys::MAKO_LOCAL_OK && !witness_claimed {
+                contract_valid = false;
             }
-        })
+            // Once binding succeeded, a zero witness has only two native
+            // shapes: serializer rejection is the definite pre-install
+            // COMMIT_HOOK_REJECTED result, while an exception poisons the
+            // worker and leaves visibility unknown. A conflict, timestamp
+            // exhaustion, or argument failure after binding contradicts the
+            // validation-gate protocol and must never be exposed as retryable.
+            if record_bound
+                && !witness_claimed
+                && commit != sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED
+                && commit != sys::MAKO_LOCAL_WORKER_POISONED
+            {
+                contract_valid = false;
+            }
+        }
+        let commit = if contract_valid {
+            decoded.map_or(
+                CommitReport {
+                    disposition: CommitDisposition::Unknown(Error::Internal),
+                    cleanup: Err(Error::Internal),
+                },
+                |(commit, cleanup)| CommitReport {
+                    disposition: commit_disposition(commit),
+                    cleanup: status(cleanup),
+                },
+            )
+        } else {
+            // The native handle was consumed, so malformed completion cannot
+            // be retried. Never expose bytes without the exact 0/1 witness.
+            CommitReport {
+                disposition: CommitDisposition::Unknown(Error::Internal),
+                cleanup: Err(Error::Internal),
+            }
+        };
+        CommitRecordReport {
+            commit,
+            completion_contract_valid: contract_valid,
+            record_bound,
+            record_written: contract_valid && witness_claimed,
+        }
+    }
+
+    fn reject_record_commit(self, error: Error) -> CommitRecordReport {
+        let cleanup = self.abort();
+        CommitRecordReport {
+            commit: CommitReport {
+                disposition: if cleanup.is_ok() {
+                    CommitDisposition::Aborted(error)
+                } else {
+                    CommitDisposition::Unknown(error)
+                },
+                cleanup,
+            },
+            completion_contract_valid: true,
+            record_bound: false,
+            record_written: false,
+        }
     }
 
     #[inline(always)]
-    fn finish_commit<F>(mut self, native_commit: F) -> CommitReport
-    where
-        F: FnOnce(*mut sys::mako_local_txn) -> i32,
-    {
+    fn finish_commit(
+        mut self,
+        hook: sys::mako_local_post_validate_hook,
+        context: *mut c_void,
+    ) -> CommitReport {
+        if self.record_preflight.is_some_and(|plan| !plan.is_empty()) {
+            // A nonempty sealed plan may install only through the record
+            // terminal. Ordinary commit here would bypass durability.
+            let cleanup = self.abort();
+            return CommitReport {
+                disposition: match cleanup {
+                    Ok(()) => CommitDisposition::Aborted(Error::InvalidArgument),
+                    Err(error) => CommitDisposition::Unknown(error),
+                },
+                cleanup,
+            };
+        }
         let raw = self
             .raw
             .take()
@@ -1576,7 +2121,44 @@ impl<'db> Transaction<'db> {
             };
         }
         self.active = false;
-        let commit = native_commit(raw.as_ptr());
+        if self.fast_bound_table.is_some() {
+            // SAFETY: the handle is active and thread-affine. The callback and
+            // context, when non-null, remain live for this synchronous call.
+            // Native consumes and invalidates the pooled facade on every
+            // returned terminal outcome and packs commit/cleanup separately.
+            let packed = unsafe {
+                match hook {
+                    Some(_) => fast_abi::mako_rust_fast_txn_commit_with_hook_and_destroy(
+                        raw.as_ptr(),
+                        hook,
+                        context,
+                    ),
+                    None => fast_abi::mako_rust_fast_txn_commit_and_destroy(raw.as_ptr()),
+                }
+            };
+            let Some((commit, cleanup)) = decode_fast_commit(packed) else {
+                // The terminal entry consumed the native handle, so there is
+                // no safe cleanup retry. Preserve visibility as unknown and
+                // make the malformed cleanup result explicit.
+                return CommitReport {
+                    disposition: CommitDisposition::Unknown(Error::Internal),
+                    cleanup: Err(Error::Internal),
+                };
+            };
+            return CommitReport {
+                disposition: commit_disposition(commit),
+                cleanup: status(cleanup),
+            };
+        }
+
+        // SAFETY: the checked handle is live, active, and thread-affine. A
+        // supplied callback is synchronous and does not outlive `context`.
+        let commit = unsafe {
+            match hook {
+                Some(_) => abi::mako_local_txn_commit_with_hook(raw.as_ptr(), hook, context),
+                None => abi::mako_local_txn_commit(raw.as_ptr()),
+            }
+        };
         // SAFETY: commit is terminal; destroy only consumes and invalidates
         // the facade handle. Native storage may be recycled internally.
         let destroy = unsafe { abi::mako_local_txn_destroy(raw.as_ptr()) };
@@ -1602,6 +2184,19 @@ impl<'db> Transaction<'db> {
             return Err(Error::TransactionFinished);
         }
         self.active = false;
+        if self.fast_bound_table.is_some() {
+            // SAFETY: active fast-bound handle is uniquely owned on its
+            // creator thread. Native aborts and consumes it in one call.
+            let Some((abort, destroy)) = decode_fast_abort(unsafe {
+                fast_abi::mako_rust_fast_txn_abort_and_destroy(raw.as_ptr())
+            }) else {
+                // The consuming native entry cannot be retried even when its
+                // packed result violates the build-private contract.
+                return Err(Error::Internal);
+            };
+            status(abort)?;
+            return status(destroy);
+        }
         // SAFETY: handle is live, active, and thread-affine by type.
         let abort = unsafe { abi::mako_local_txn_abort(raw.as_ptr()) };
         // SAFETY: abort is terminal.
@@ -1613,6 +2208,13 @@ impl<'db> Transaction<'db> {
 
 struct PostValidateHook<F> {
     hook: Option<F>,
+}
+
+struct RecordBindHook<F> {
+    hook: Option<F>,
+    record: NonNull<UninitCommitRecord>,
+    preflight: CommitRecordPreflight,
+    bound: bool,
 }
 
 unsafe extern "C" fn post_validate_trampoline<F>(context: *mut c_void, raw_timestamp: u32) -> i32
@@ -1636,6 +2238,80 @@ where
     } else {
         0
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe extern "C" fn record_bind_trampoline<F>(
+    context: *mut c_void,
+    raw_timestamp: u32,
+    exact_record_bytes: usize,
+    sequence_out: *mut u64,
+    record_bytes_out: *mut *mut u8,
+    record_capacity_out: *mut usize,
+) -> i32
+where
+    F: FnOnce(MakoTimestamp, CommitRecordPreflight) -> Option<NonZeroU64>,
+{
+    // Initialize every present output before inspecting any other argument.
+    // Native supplies all three, but this keeps malformed calls fail-closed.
+    if !sequence_out.is_null() {
+        // SAFETY: a non-null ABI output is writable for this callback.
+        unsafe { sequence_out.write(0) };
+    }
+    if !record_bytes_out.is_null() {
+        // SAFETY: a non-null ABI output is writable for this callback.
+        unsafe { record_bytes_out.write(std::ptr::null_mut()) };
+    }
+    if !record_capacity_out.is_null() {
+        // SAFETY: a non-null ABI output is writable for this callback.
+        unsafe { record_capacity_out.write(0) };
+    }
+    if context.is_null()
+        || sequence_out.is_null()
+        || record_bytes_out.is_null()
+        || record_capacity_out.is_null()
+    {
+        return 0;
+    }
+
+    // SAFETY: commit_report_with_record passes this exact stack value and the
+    // native contract invokes the callback synchronously at most once.
+    let state = unsafe { &mut *context.cast::<RecordBindHook<F>>() };
+    let Some(timestamp) = MakoTimestamp::new(raw_timestamp) else {
+        return 0;
+    };
+    if exact_record_bytes != state.preflight.exact_record_bytes {
+        return 0;
+    }
+    // SAFETY: the caller's exclusive record borrow spans the complete native
+    // terminal call, and the allocation is never resized during that call.
+    let record = unsafe { state.record.as_mut() };
+    if record.written
+        || record.preflight != state.preflight
+        || record.bytes.len() != exact_record_bytes
+    {
+        return 0;
+    }
+    let Some(hook) = state.hook.take() else {
+        return 0;
+    };
+    let Some(sequence) = catch_unwind(AssertUnwindSafe(|| hook(timestamp, state.preflight)))
+        .ok()
+        .flatten()
+    else {
+        return 0;
+    };
+
+    // Nothing below is fallible: once `bound` becomes true, native owns the
+    // obligation to fill this exact storage before attempting installation.
+    // SAFETY: required outputs were checked above.
+    unsafe {
+        sequence_out.write(sequence.get());
+        record_bytes_out.write(record.bytes.as_mut_ptr().cast::<u8>());
+        record_capacity_out.write(record.bytes.len());
+    }
+    state.bound = true;
+    1
 }
 
 unsafe extern "C" fn test_commit_observer_trampoline(
@@ -1662,6 +2338,13 @@ impl Drop for Transaction<'_> {
         let Some(raw) = self.raw.take() else {
             return;
         };
+        if self.fast_bound_table.is_some() && self.active {
+            // SAFETY: !Send keeps Drop on the creator thread. The combined
+            // operation consumes the facade even when abort cleanup poisons
+            // the worker, so no separate destroy may follow.
+            let _ = unsafe { fast_abi::mako_rust_fast_txn_abort_and_destroy(raw.as_ptr()) };
+            return;
+        }
         if self.active {
             // SAFETY: !Send keeps Drop on the creator thread in safe Rust.
             let _ = unsafe { abi::mako_local_txn_abort(raw.as_ptr()) };

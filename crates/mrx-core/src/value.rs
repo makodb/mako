@@ -179,8 +179,7 @@ mod tests {
     #[test]
     fn with_value_sees_the_published_record_and_marks_it_used() {
         let e = Entry::new(b"k", Record::resident(7, b"hello"));
-        let (ver, bytes) =
-            e.with_value(|v| (v.version(), v.bytes().map(<[u8]>::to_vec)));
+        let (ver, bytes) = e.with_value(|v| (v.version(), v.bytes().map(<[u8]>::to_vec)));
         assert_eq!(ver, 7);
         assert_eq!(bytes.as_deref(), Some(&b"hello"[..]));
         assert!(e.take_referenced(), "a read marks the entry recently used");

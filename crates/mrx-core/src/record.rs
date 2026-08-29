@@ -117,8 +117,7 @@ fn layout_for(len: usize) -> Layout {
         Some(c) => class_bytes(c),
         None => total,
     };
-    Layout::from_size_align(size, std::mem::align_of::<Header>())
-        .expect("value record layout")
+    Layout::from_size_align(size, std::mem::align_of::<Header>()).expect("value record layout")
 }
 
 /// Per-thread cache of free blocks, one list per size class.
@@ -131,11 +130,9 @@ impl Drop for Cache {
         // A thread exiting must return its cache to the allocator, or
         // every short-lived thread leaks whatever it was holding.
         for (class, list) in self.lists.iter_mut().enumerate() {
-            let layout = Layout::from_size_align(
-                class_bytes(class),
-                std::mem::align_of::<Header>(),
-            )
-            .expect("class layout");
+            let layout =
+                Layout::from_size_align(class_bytes(class), std::mem::align_of::<Header>())
+                    .expect("class layout");
             for p in list.drain(..) {
                 // SAFETY: every pointer in this list came from `alloc`
                 // with exactly this class layout, and is owned by the
@@ -260,11 +257,7 @@ impl Record {
             // the header by construction of `layout_for`, and the source
             // cannot overlap a block we have just allocated.
             if !bytes.is_empty() {
-                std::ptr::copy_nonoverlapping(
-                    bytes.as_ptr(),
-                    raw.add(PAYLOAD_OFFSET),
-                    bytes.len(),
-                );
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw.add(PAYLOAD_OFFSET), bytes.len());
             }
         }
         Self { ptr }
@@ -422,7 +415,10 @@ mod tests {
     #[test]
     fn only_a_tombstone_means_absent() {
         assert!(Record::resident(1, b"x").is_live());
-        assert!(Record::evicted(1).is_live(), "an evicted value still EXISTS");
+        assert!(
+            Record::evicted(1).is_live(),
+            "an evicted value still EXISTS"
+        );
         assert!(!Record::tombstone(1).is_live());
     }
 
@@ -455,7 +451,10 @@ mod tests {
     fn shared_seeds_are_one_record_with_the_right_shape() {
         let a = Record::shared_tombstone();
         let b = Record::shared_tombstone();
-        assert!(Record::ptr_eq(&a, &b), "the seed must be shared, not rebuilt");
+        assert!(
+            Record::ptr_eq(&a, &b),
+            "the seed must be shared, not rebuilt"
+        );
         assert_eq!(a.version(), 0, "version 0 is durable by provenance");
         assert!(!a.is_live());
 
@@ -470,7 +469,10 @@ mod tests {
     fn ptr_eq_is_identity_not_equality() {
         let a = Record::resident(1, b"same");
         let twin = Record::resident(1, b"same");
-        assert!(!Record::ptr_eq(&a, &twin), "equal content, distinct records");
+        assert!(
+            !Record::ptr_eq(&a, &twin),
+            "equal content, distinct records"
+        );
         assert!(Record::ptr_eq(&a, &a.clone()));
     }
 

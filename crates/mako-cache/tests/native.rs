@@ -3,6 +3,7 @@
 use std::sync::{Arc, Barrier};
 
 use mako_cache::{Cache, CacheOptions, Error};
+use mako_local::Error as LocalError;
 use mrx_core::fakes::MemBlobs;
 use mrx_core::{BlobOp, Blobs};
 
@@ -518,6 +519,34 @@ fn read_only_noops_do_not_log_and_recovery_rejects_invalid_backends() {
             panic!("foreign backend key was accepted");
         }
     }
+}
+
+#[test]
+fn a_tiny_record_budget_still_allows_read_only_commits() {
+    let backend = Arc::new(MemBlobs::new());
+    let mut options = CacheOptions::default();
+    options.writeback.max_record_bytes = 1;
+    let cache = Cache::from_backend(Arc::clone(&backend), options).expect("open tiny-budget cache");
+
+    let mut read_only = cache.transaction().expect("begin read-only transaction");
+    assert_eq!(read_only.get(b"missing").expect("read missing key"), None);
+    read_only
+        .commit()
+        .expect("an empty native record does not consume the byte budget");
+
+    let mut writer = cache.transaction().expect("begin oversized writer");
+    assert!(writer
+        .put(b"tiny-budget/write", b"value")
+        .expect("stage write"));
+    assert!(matches!(
+        writer.commit(),
+        Err(Error::Native(LocalError::ValueTooLarge))
+    ));
+
+    assert_eq!(cache.highest_acknowledged_sequence(), 0);
+    assert_eq!(cache.flush().expect("flush empty queue"), 0);
+    assert_eq!(backend.batch_count(), 0);
+    cache.close().expect("close tiny-budget cache");
 }
 
 #[test]

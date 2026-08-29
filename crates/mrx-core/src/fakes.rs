@@ -39,12 +39,7 @@ impl KeyIndex for MemIndex {
         *m.entry(key.to_vec()).or_insert(word)
     }
 
-    fn scan_chunk(
-        &self,
-        from: &[u8],
-        budget: usize,
-        out: &mut Vec<(Vec<u8>, EntryWord)>,
-    ) -> usize {
+    fn scan_chunk(&self, from: &[u8], budget: usize, out: &mut Vec<(Vec<u8>, EntryWord)>) -> usize {
         let m = self.map.read().expect("index poisoned");
         let mut n = 0;
         for (k, v) in m.range(from.to_vec()..) {
@@ -222,10 +217,18 @@ mod tests {
     fn a_failed_batch_leaves_nothing_behind() {
         let b = MemBlobs::new();
         b.fail_next_writes(1);
-        let err = b.write_batch(&[BlobOp::Put { key: b"k", val: b"v" }]);
+        let err = b.write_batch(&[BlobOp::Put {
+            key: b"k",
+            val: b"v",
+        }]);
         assert!(err.is_err());
         assert_eq!(b.peek(b"k"), None, "all-or-nothing per batch");
-        assert!(b.write_batch(&[BlobOp::Put { key: b"k", val: b"v" }]).is_ok());
+        assert!(b
+            .write_batch(&[BlobOp::Put {
+                key: b"k",
+                val: b"v"
+            }])
+            .is_ok());
         assert_eq!(b.peek(b"k").as_deref(), Some(&b"v"[..]));
     }
 

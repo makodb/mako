@@ -383,10 +383,9 @@ mod tests {
                 scope.spawn(move || {
                     let mut mine = Vec::new();
                     for i in 0..PER {
-                        mine.push(t.push(Entry::new(
-                            format!("k{i}").as_bytes(),
-                            Record::tombstone(0),
-                        )));
+                        mine.push(
+                            t.push(Entry::new(format!("k{i}").as_bytes(), Record::tombstone(0))),
+                        );
                     }
                     got.lock().unwrap().extend(mine);
                 });
@@ -395,7 +394,11 @@ mod tests {
         let mut all = got.into_inner().unwrap();
         all.sort_unstable();
         all.dedup();
-        assert_eq!(all.len(), 8 * PER as usize, "two threads got the same index");
+        assert_eq!(
+            all.len(),
+            8 * PER as usize,
+            "two threads got the same index"
+        );
         // And every one of them resolves, which is what would break if a
         // segment were published before it was filled.
         for idx in all {

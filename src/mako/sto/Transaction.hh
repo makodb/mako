@@ -393,6 +393,23 @@ public:
     // unwind because the transaction still holds its complete write set.
     using post_validation_hook = bool (*)(void*, uint32_t) noexcept;
 
+    // Optional storage-agnostic ordering gate for a durability hook. enter
+    // runs only after the complete write set is locked and before the Mako
+    // timestamp and final validation; leave runs after an accepted hook but
+    // before install, or after abort cleanup has released the write locks.
+    // after_leave optionally completes storage work after retiring the turn
+    // while the transaction still owns every write lock and before install.
+    // All callbacks must be allocation-free, must perform no I/O, and must not
+    // unwind. enter may spin waiting for the preceding ordered turn.
+    // Public/general hooks pass no gate.
+    struct commit_validation_gate {
+        using callback = void (*)(void*) noexcept;
+        callback enter;
+        callback leave;
+        post_validation_hook after_leave;
+        void* context;
+    };
+
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     // Test-only synchronous observation points for exact local crash seams.
     // The callback and context are borrowed from the calling thread. It may
@@ -432,6 +449,34 @@ public:
         hook_rejected,
         timestamp_exhausted,
     };
+
+    // Allocation-free view of one final local MassTrans mutation. This is a
+    // storage-engine seam rather than a log format: callers choose their own
+    // framing and may only borrow the byte spans for the synchronous visit.
+    // Insert-then-delete items are omitted because their net write is empty;
+    // every other same-key chain appears once in final transaction-set order.
+    struct canonical_write_view {
+        enum class operation : uint8_t {
+            put = 1,
+            remove = 2,
+        } op;
+        uint64_t table_id;
+        const char* key;
+        size_t key_length;
+        const char* value;
+        size_t value_length;
+    };
+    using canonical_write_visitor =
+        bool (*)(void*, const canonical_write_view&) noexcept;
+
+    // Visit the normalized final local MassTrans write set without copying or
+    // allocation. Returns false for a malformed engine value or visitor
+    // rejection. count_out is initialized to zero and counts only emitted net
+    // mutations. The transaction must remain in progress and unmodified for
+    // the duration of the synchronous call.
+    bool visit_local_canonical_writes(canonical_write_visitor visitor,
+                                      void* context,
+                                      uint32_t* count_out) const noexcept;
 private:
     static std::atomic<TransactionTid::type> _TID;
 public:
@@ -742,7 +787,8 @@ public:
     bool try_commit(bool no_paxos = false,
                     post_validation_hook hook = nullptr,
                     void* hook_context = nullptr,
-                    preinstall_failure* failure = nullptr);
+                    preinstall_failure* failure = nullptr,
+                    const commit_validation_gate* validation_gate = nullptr);
     bool shard_try_lock_last_writeset();
     int shard_validate();
     void shard_install(uint32_t timestamp);
@@ -1128,10 +1174,12 @@ public:
     static bool try_commit_no_paxos(
         Transaction::post_validation_hook hook,
         void* hook_context,
-        Transaction::preinstall_failure* failure) {
+        Transaction::preinstall_failure* failure,
+        const Transaction::commit_validation_gate* validation_gate = nullptr) {
         // Be defensive during shutdown - return false if no transaction.
         if (!in_progress()) return false;
-        return TThread::txn->try_commit(true, hook, hook_context, failure);
+        return TThread::txn->try_commit(
+            true, hook, hook_context, failure, validation_gate);
     }
 
     static bool shard_try_lock_last_writeset() {

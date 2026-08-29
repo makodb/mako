@@ -51,20 +51,27 @@ fn native_timestamp_matches_the_persisted_record_and_applied_frontier() {
     let native_timestamp = OBSERVED_TIMESTAMP.load(Ordering::SeqCst);
     assert_ne!(native_timestamp, 0);
 
-    assert_eq!(cache.wait_applied().expect("apply observed transaction"), 1);
+    let applied = cache.wait_applied();
+    let persisted_timestamps = mako_cache::test_support::decoded_log_timestamps(&backend);
+    let applied_timestamp = cache
+        .applied_watermark()
+        .mako_timestamp()
+        .map(|timestamp| timestamp.get());
+    let closed = cache.close();
+
+    // Assert only after the cache is closed. Mutation tests deliberately make
+    // these values disagree; keeping a live cache here would make its Drop
+    // cleanup panic during assertion unwinding and obscure the exact failure.
+    assert_eq!(applied.expect("apply observed transaction"), 1);
+    assert_eq!(closed.expect("close timestamp cache"), 1);
     assert_eq!(
-        mako_cache::test_support::decoded_log_timestamps(&backend),
+        persisted_timestamps,
         vec![(1, native_timestamp)],
         "the record must carry the exact timestamp allocated at the native serialization point"
     );
     assert_eq!(
-        cache
-            .applied_watermark()
-            .mako_timestamp()
-            .expect("applied timestamp")
-            .get(),
+        applied_timestamp.expect("applied timestamp"),
         native_timestamp,
         "the applied frontier must name the exact persisted record timestamp"
     );
-    cache.close().expect("close timestamp cache");
 }

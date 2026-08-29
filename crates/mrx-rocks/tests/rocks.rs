@@ -136,6 +136,38 @@ fn deletes_apply_and_a_batch_may_mix_them() {
 }
 
 #[test]
+fn duplicate_keys_apply_in_slice_order() {
+    let s = Scratch::new("duplicate-key-order");
+    let db = open(&s);
+
+    db.write_batch(&[
+        BlobOp::Put {
+            key: b"put-wins",
+            val: b"old",
+        },
+        BlobOp::Delete { key: b"put-wins" },
+        BlobOp::Put {
+            key: b"put-wins",
+            val: b"new",
+        },
+        BlobOp::Put {
+            key: b"delete-wins",
+            val: b"present",
+        },
+        BlobOp::Delete {
+            key: b"delete-wins",
+        },
+    ])
+    .expect("ordered duplicate-key batch");
+
+    assert_eq!(
+        db.get(b"put-wins").expect("get").as_deref(),
+        Some(&b"new"[..])
+    );
+    assert_eq!(db.get(b"delete-wins").expect("get"), None);
+}
+
+#[test]
 fn empty_batches_are_a_no_op() {
     let s = Scratch::new("empty-batch");
     let db = open(&s);

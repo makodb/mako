@@ -142,8 +142,7 @@ impl WriterSlot {
                 // leaves the batch at ZERO capacity, so the next
                 // `batch_cap` pushes re-grow it 1, 2, 4 ... 64 — six
                 // reallocations per batch, every batch, inside this lock.
-                let taken =
-                    std::mem::replace(&mut *b, Vec::with_capacity(batch_cap));
+                let taken = std::mem::replace(&mut *b, Vec::with_capacity(batch_cap));
                 // `batch_min` already holds this; the O(batch_cap) rescan
                 // it replaced was pure duplicated work under the lock.
                 let min = self.batch_min.load(Ordering::Relaxed);
@@ -351,7 +350,10 @@ impl TicketLog {
         let slots = (0..cap)
             .map(|i| Slot {
                 seq: AtomicU64::new(i),
-                data: UnsafeCell::new(Ticket { entry: 0, version: 0 }),
+                data: UnsafeCell::new(Ticket {
+                    entry: 0,
+                    version: 0,
+                }),
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -435,12 +437,10 @@ impl TicketLog {
             if t + k > conf + self.cap {
                 return false;
             }
-            match self.tail.compare_exchange_weak(
-                t,
-                t + k,
-                Ordering::SeqCst,
-                Ordering::Relaxed,
-            ) {
+            match self
+                .tail
+                .compare_exchange_weak(t, t + k, Ordering::SeqCst, Ordering::Relaxed)
+            {
                 Ok(_) => {
                     for (i, tk) in tickets.iter().enumerate() {
                         self.publish(t + i as u64, *tk);
@@ -646,7 +646,13 @@ mod tests {
         s.arm(10);
         // Between arm and submit the announce floor is the only cover.
         assert_eq!(Floors::min_over(std::slice::from_ref(&s), 999), 10);
-        let full = s.submit(Ticket { entry: 0, version: 10 }, 64);
+        let full = s.submit(
+            Ticket {
+                entry: 0,
+                version: 10,
+            },
+            64,
+        );
         assert!(full.is_none(), "batch of 64 should not be full yet");
         // announce is released, but batch_min now covers it.
         assert_eq!(Floors::min_over(std::slice::from_ref(&s), 999), 10);
@@ -657,7 +663,13 @@ mod tests {
         let s = WriterSlot::new();
         for v in 1..=2u64 {
             s.arm(v);
-            let full = s.submit(Ticket { entry: 0, version: v }, 2);
+            let full = s.submit(
+                Ticket {
+                    entry: 0,
+                    version: v,
+                },
+                2,
+            );
             if v == 2 {
                 assert!(full.is_some(), "batch of 2 should be full");
             }
@@ -672,7 +684,13 @@ mod tests {
     fn steal_takes_a_partial_batch_and_keeps_it_covered() {
         let s = WriterSlot::new();
         s.arm(7);
-        s.submit(Ticket { entry: 3, version: 7 }, 64);
+        s.submit(
+            Ticket {
+                entry: 3,
+                version: 7,
+            },
+            64,
+        );
         let taken = s.steal().expect("a partial batch is stealable");
         assert_eq!(taken.len(), 1);
         assert_eq!(
@@ -691,7 +709,13 @@ mod tests {
         let s = WriterSlot::new();
         assert!(s.steal().is_none(), "a fresh slot has nothing");
         s.arm(5);
-        s.submit(Ticket { entry: 1, version: 5 }, 64);
+        s.submit(
+            Ticket {
+                entry: 1,
+                version: 5,
+            },
+            64,
+        );
         assert!(
             s.steal().is_some(),
             "the fast path skipped a batch holding an acked write"
@@ -703,10 +727,19 @@ mod tests {
     fn log_try_append_refuses_rather_than_blocking() {
         let log = TicketLog::new(2);
         // (the ring rounds capacity up to a power of two)
-        assert!(log.try_append(&[Ticket { entry: 0, version: 1 }]));
-        assert!(log.try_append(&[Ticket { entry: 0, version: 2 }]));
+        assert!(log.try_append(&[Ticket {
+            entry: 0,
+            version: 1
+        }]));
+        assert!(log.try_append(&[Ticket {
+            entry: 0,
+            version: 2
+        }]));
         assert!(
-            !log.try_append(&[Ticket { entry: 0, version: 3 }]),
+            !log.try_append(&[Ticket {
+                entry: 0,
+                version: 3
+            }]),
             "the flusher's own append must never block on backpressure"
         );
     }
@@ -770,8 +803,7 @@ mod tests {
         }
         consumer.join().unwrap();
 
-        let mut got: Vec<u64> =
-            seen.lock().unwrap().iter().map(|t| t.version).collect();
+        let mut got: Vec<u64> = seen.lock().unwrap().iter().map(|t| t.version).collect();
         let n = got.len();
         got.sort_unstable();
         got.dedup();
@@ -789,7 +821,10 @@ mod tests {
     fn batches_are_reserved_contiguously() {
         let log = TicketLog::new(1024);
         let batch: Vec<Ticket> = (1..=64)
-            .map(|v| Ticket { entry: 7, version: v })
+            .map(|v| Ticket {
+                entry: 7,
+                version: v,
+            })
             .collect();
         log.append(&batch);
         let mut out = Vec::new();
@@ -820,13 +855,22 @@ mod tests {
                 while !release.load(Ordering::Acquire) {
                     std::hint::spin_loop();
                 }
-                log.publish(pos, Ticket { entry: 0, version: 1 });
+                log.publish(
+                    pos,
+                    Ticket {
+                        entry: 0,
+                        version: 1,
+                    },
+                );
             })
         };
         while started.load(Ordering::Acquire) == 0 {
             std::hint::spin_loop();
         }
-        log.append(&[Ticket { entry: 1, version: 2 }]);
+        log.append(&[Ticket {
+            entry: 1,
+            version: 2,
+        }]);
 
         let mut out = Vec::new();
         assert_eq!(log.drain(&mut out), 0, "the hole must stop the drain");
@@ -844,8 +888,14 @@ mod tests {
         let log = TicketLog::new(8);
         assert_eq!(log.min_version(), NO_FLOOR);
         log.try_append(&[
-            Ticket { entry: 0, version: 9 },
-            Ticket { entry: 1, version: 4 },
+            Ticket {
+                entry: 0,
+                version: 9,
+            },
+            Ticket {
+                entry: 1,
+                version: 4,
+            },
         ]);
         assert_eq!(log.min_version(), 4);
         let mut out = Vec::new();

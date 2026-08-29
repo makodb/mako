@@ -1,6 +1,6 @@
 // mako_local_abi.cc - exception-contained C facade over local STO/MassTrans.
 
-#include "storage/mako_local_abi.h"
+#include "storage/mako_local_rust_fast_abi.h"
 
 #include "lib/common.h"
 #include "sto/MassTrans.hh"
@@ -14,6 +14,7 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -21,6 +22,10 @@
 #include <unordered_map>
 #if !READ_MY_WRITES
 #include <unordered_set>
+#endif
+
+#if defined(__i386__) || defined(__x86_64__)
+#include <nmmintrin.h>
 #endif
 
 #if STO_OPACITY
@@ -47,19 +52,44 @@ struct mako_local_table {
   uint64_t id;
 };
 
+struct alignas(64) record_validation_counter {
+  std::atomic<uint64_t> value{0};
+};
+static_assert(sizeof(record_validation_counter) == 64);
+
 struct mako_local_db {
+  // Record commits for one cache/database share this allocation-free ticket
+  // gate. The turn is acquired only after STO owns the full write set, so a
+  // waiter never holds the turn while acquiring another transaction lock.
+  // Isolate the producer and consumer words: enqueue fetch_add traffic must
+  // not invalidate the cache line polled by every waiter.
+  record_validation_counter record_validation_next;
+  record_validation_counter record_validation_serving;
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+  std::atomic<uint64_t> record_validation_wait_observations{0};
+#endif
   std::mutex tables_mu;
   std::unordered_map<std::string, std::unique_ptr<mako_local_table>> tables;
 };
 
 struct mako_local_txn {
   mako_local_db *owner;
+  // Non-null only for a live transaction created through the private Rust
+  // fast begin. The public point APIs ignore it; fast put treats the binding
+  // and its lifetime as a trusted Rust invariant.
+  mako_local_table_impl *fast_table_impl;
   size_t worker_slot;
-  bool active;
-  bool poisoned;
   size_t item_budget_used;
   size_t encoded_values_used;
+  size_t record_plan_bytes;
+  uint32_t record_plan_ops;
+  // Keep the booleans together so adding the private binding does not move the
+  // hot stable-value pool or add padding to every pooled facade.
+  bool active;
+  bool poisoned;
   bool encoded_values_require_release;
+  bool record_plan_sealed;
+  bool record_plan_ready;
 
   // StringWrapper retains the std::string object's address until terminal
   // native cleanup. Every write consumes at least four item-budget credits,
@@ -69,7 +99,7 @@ struct mako_local_txn {
   // while eliminating allocation churn for up to 128 short values.
   std::array<std::string, kMaximumEncodedValues> encoded_values;
 #if !READ_MY_WRITES
-  std::unordered_map<mako_local_table *, std::unordered_set<std::string>>
+  std::unordered_map<mako_local_table_impl *, std::unordered_set<std::string>>
       mutated_keys;
 #endif
 };
@@ -155,8 +185,239 @@ class operation_cleanup_failure_scope {
 };
 #endif
 
-bool valid_slice(const uint8_t *p, size_t n) {
-  return p != nullptr || n == 0;
+bool valid_slice(const uint8_t *p, size_t n) { return p != nullptr || n == 0; }
+
+constexpr uint64_t pack_fast_put_result(int status,
+                                        bool created = false) noexcept {
+  return static_cast<uint64_t>(static_cast<uint32_t>(status)) |
+         (created ? MAKO_RUST_FAST_PUT_CREATED_BIT : UINT64_C(0));
+}
+
+constexpr uint64_t pack_fast_terminal_result(int status,
+                                             int cleanup_status) noexcept {
+  return static_cast<uint64_t>(static_cast<uint32_t>(status)) |
+         (static_cast<uint64_t>(static_cast<uint32_t>(cleanup_status)) << 32);
+}
+
+static_assert(MAKO_RUST_FAST_PUT_STATUS(pack_fast_put_result(
+                  MAKO_LOCAL_VALUE_TOO_LARGE)) == MAKO_LOCAL_VALUE_TOO_LARGE);
+static_assert(MAKO_RUST_FAST_PUT_CREATED(pack_fast_put_result(MAKO_LOCAL_OK,
+                                                              true)) == 1);
+static_assert(MAKO_RUST_FAST_TERMINAL_STATUS(pack_fast_terminal_result(
+                  MAKO_LOCAL_COMMIT_HOOK_REJECTED, MAKO_LOCAL_OK)) ==
+              MAKO_LOCAL_COMMIT_HOOK_REJECTED);
+static_assert(MAKO_RUST_FAST_CLEANUP_STATUS(pack_fast_terminal_result(
+                  MAKO_LOCAL_OK, MAKO_LOCAL_WORKER_POISONED)) ==
+              MAKO_LOCAL_WORKER_POISONED);
+
+constexpr std::array<uint8_t, 8> kCacheRecordMagic{
+    'M', 'A', 'K', 'O', 'C', 'M', 'T', '\0'};
+constexpr uint16_t kCacheRecordVersion = 3;
+constexpr uint8_t kCacheRecordPutTag = 1;
+constexpr uint8_t kCacheRecordDeleteTag = 2;
+constexpr size_t kCacheRecordHeaderBytes = 8 + 2 + 8 + 4 + 4;
+constexpr size_t kCacheRecordOperationHeaderBytes = 1 + 8 + 4 + 4;
+constexpr size_t kCacheRecordCrcBytes = 4;
+constexpr size_t kCacheRecordMinimumBytes =
+    kCacheRecordHeaderBytes + kCacheRecordCrcBytes;
+constexpr uint32_t kReversedCastagnoli = UINT32_C(0x82f63b78);
+
+constexpr uint32_t make_crc32c_entry(uint32_t value) noexcept {
+  for (unsigned bit = 0; bit != 8; ++bit) {
+    const uint32_t low_mask = UINT32_C(0) - (value & UINT32_C(1));
+    value = (value >> 1) ^ (kReversedCastagnoli & low_mask);
+  }
+  return value;
+}
+
+constexpr std::array<std::array<uint32_t, 256>, 8>
+make_crc32c_slicing_tables() noexcept {
+  std::array<std::array<uint32_t, 256>, 8> tables{};
+  for (size_t value = 0; value != 256; ++value)
+    tables[0][value] = make_crc32c_entry(static_cast<uint32_t>(value));
+  for (size_t slice = 1; slice != tables.size(); ++slice) {
+    for (size_t value = 0; value != 256; ++value) {
+      const uint32_t prior = tables[slice - 1][value];
+      tables[slice][value] =
+          (prior >> 8) ^ tables[0][prior & UINT32_C(0xff)];
+    }
+  }
+  return tables;
+}
+
+constexpr auto kCrc32cSlicingTables = make_crc32c_slicing_tables();
+
+uint32_t crc32c_slicing_by_8(const uint8_t *bytes, size_t length) noexcept {
+  uint32_t crc = UINT32_MAX;
+  while (length >= 8) {
+    uint64_t block = 0;
+    for (unsigned byte = 0; byte != 8; ++byte)
+      block |= static_cast<uint64_t>(bytes[byte]) << (byte * 8);
+    block ^= crc;
+    crc = kCrc32cSlicingTables[7][block & UINT64_C(0xff)] ^
+          kCrc32cSlicingTables[6][(block >> 8) & UINT64_C(0xff)] ^
+          kCrc32cSlicingTables[5][(block >> 16) & UINT64_C(0xff)] ^
+          kCrc32cSlicingTables[4][(block >> 24) & UINT64_C(0xff)] ^
+          kCrc32cSlicingTables[3][(block >> 32) & UINT64_C(0xff)] ^
+          kCrc32cSlicingTables[2][(block >> 40) & UINT64_C(0xff)] ^
+          kCrc32cSlicingTables[1][(block >> 48) & UINT64_C(0xff)] ^
+          kCrc32cSlicingTables[0][(block >> 56) & UINT64_C(0xff)];
+    bytes += 8;
+    length -= 8;
+  }
+  while (length-- != 0)
+    crc = (crc >> 8) ^ kCrc32cSlicingTables[0][(crc ^ *bytes++) & 0xff];
+  return ~crc;
+}
+
+#if defined(__i386__) || defined(__x86_64__)
+__attribute__((target("sse4.2")))
+uint32_t crc32c_sse42(const uint8_t *bytes, size_t length) noexcept {
+#if defined(__x86_64__)
+  uint64_t crc = UINT32_MAX;
+  while (length >= sizeof(uint64_t)) {
+    uint64_t word;
+    std::memcpy(&word, bytes, sizeof(word));
+    crc = _mm_crc32_u64(crc, word);
+    bytes += sizeof(word);
+    length -= sizeof(word);
+  }
+#else
+  uint32_t crc = UINT32_MAX;
+  while (length >= sizeof(uint32_t)) {
+    uint32_t word;
+    std::memcpy(&word, bytes, sizeof(word));
+    crc = _mm_crc32_u32(crc, word);
+    bytes += sizeof(word);
+    length -= sizeof(word);
+  }
+#endif
+  while (length-- != 0)
+    crc = _mm_crc32_u8(static_cast<uint32_t>(crc), *bytes++);
+  return ~static_cast<uint32_t>(crc);
+}
+#endif
+
+uint32_t crc32c(const uint8_t *bytes, size_t length) noexcept {
+#if defined(__i386__) || defined(__x86_64__)
+  if (__builtin_cpu_supports("sse4.2"))
+    return crc32c_sse42(bytes, length);
+#endif
+  return crc32c_slicing_by_8(bytes, length);
+}
+
+void write_u16_be(uint8_t *&cursor, uint16_t value) noexcept {
+  *cursor++ = static_cast<uint8_t>(value >> 8);
+  *cursor++ = static_cast<uint8_t>(value);
+}
+
+void write_u32_be(uint8_t *&cursor, uint32_t value) noexcept {
+  for (int shift = 24; shift >= 0; shift -= 8)
+    *cursor++ = static_cast<uint8_t>(value >> shift);
+}
+
+void write_u64_be(uint8_t *&cursor, uint64_t value) noexcept {
+  for (int shift = 56; shift >= 0; shift -= 8)
+    *cursor++ = static_cast<uint8_t>(value >> shift);
+}
+
+struct record_shape {
+  size_t bytes = kCacheRecordMinimumBytes;
+  uint32_t operations = 0;
+};
+
+bool add_record_shape(
+    void *opaque, const Transaction::canonical_write_view &write) noexcept {
+  auto *shape = static_cast<record_shape *>(opaque);
+  if (write.key_length > UINT32_MAX || write.value_length > UINT32_MAX)
+    return false;
+  if (shape->bytes > SIZE_MAX - kCacheRecordOperationHeaderBytes)
+    return false;
+  size_t next = shape->bytes + kCacheRecordOperationHeaderBytes;
+  if (write.key_length > SIZE_MAX - next)
+    return false;
+  next += write.key_length;
+  if (write.value_length > SIZE_MAX - next)
+    return false;
+  shape->bytes = next + write.value_length;
+  return true;
+}
+
+bool derive_record_shape(const Transaction *native_txn,
+                         record_shape *shape) noexcept {
+  if (native_txn == nullptr || shape == nullptr) return false;
+  *shape = record_shape{};
+  uint32_t visited = 0;
+  if (!native_txn->visit_local_canonical_writes(
+          add_record_shape, shape, &visited))
+    return false;
+  shape->operations = visited;
+  return true;
+}
+
+struct record_writer {
+  uint8_t *cursor;
+  uint8_t *operations_end;
+};
+
+bool write_record_mutation(
+    void *opaque, const Transaction::canonical_write_view &write) noexcept {
+  auto *writer = static_cast<record_writer *>(opaque);
+  const size_t required = kCacheRecordOperationHeaderBytes +
+                          write.key_length + write.value_length;
+  if (writer->cursor > writer->operations_end ||
+      required > static_cast<size_t>(writer->operations_end - writer->cursor))
+    return false;
+
+  *writer->cursor++ =
+      write.op == Transaction::canonical_write_view::operation::put
+          ? kCacheRecordPutTag
+          : kCacheRecordDeleteTag;
+  write_u64_be(writer->cursor, write.table_id);
+  write_u32_be(writer->cursor, static_cast<uint32_t>(write.key_length));
+  write_u32_be(writer->cursor, static_cast<uint32_t>(write.value_length));
+  if (write.key_length != 0) {
+    std::memcpy(writer->cursor, write.key, write.key_length);
+    writer->cursor += write.key_length;
+  }
+  if (write.value_length != 0) {
+    std::memcpy(writer->cursor, write.value, write.value_length);
+    writer->cursor += write.value_length;
+  }
+  return true;
+}
+
+bool serialize_cache_record(const Transaction *native_txn,
+                            uint64_t sequence, uint32_t mako_timestamp,
+                            const record_shape &shape,
+                            uint8_t *record) noexcept {
+  assert(native_txn != nullptr);
+  assert(sequence != 0);
+  assert(mako_timestamp != 0);
+  assert(shape.operations != 0);
+  assert(shape.bytes >= kCacheRecordMinimumBytes);
+  assert(record != nullptr);
+
+  uint8_t *cursor = record;
+  std::memcpy(cursor, kCacheRecordMagic.data(), kCacheRecordMagic.size());
+  cursor += kCacheRecordMagic.size();
+  write_u16_be(cursor, kCacheRecordVersion);
+  write_u64_be(cursor, sequence);
+  write_u32_be(cursor, mako_timestamp);
+  write_u32_be(cursor, shape.operations);
+
+  record_writer writer{cursor, record + shape.bytes - kCacheRecordCrcBytes};
+  uint32_t visited = 0;
+  if (!native_txn->visit_local_canonical_writes(
+          write_record_mutation, &writer, &visited) ||
+      visited != shape.operations || writer.cursor != writer.operations_end)
+    return false;
+
+  const uint32_t checksum =
+      crc32c(record, shape.bytes - kCacheRecordCrcBytes);
+  cursor = writer.operations_end;
+  write_u32_be(cursor, checksum);
+  return cursor == record + shape.bytes;
 }
 
 lcdf::Str as_key(const uint8_t *p, size_t n) {
@@ -191,19 +452,46 @@ void finish_encoded_values(mako_local_txn *txn) noexcept {
   txn->encoded_values_used = 0;
 }
 
-void finish_txn(mako_local_txn *txn) noexcept {
+template <bool TrustedOwnerBorrow>
+[[gnu::always_inline]] inline void finish_txn_known(
+    mako_local_txn *txn) noexcept {
   assert(txn->active);
   assert(!txn->poisoned);
   assert(local_active_txn == txn);
+  if constexpr (TrustedOwnerBorrow)
+    assert(txn->fast_table_impl != nullptr);
+  else
+    assert(txn->fast_table_impl == nullptr);
   txn->active = false;
+  if constexpr (TrustedOwnerBorrow)
+    txn->fast_table_impl = nullptr;
   txn->item_budget_used = 0;
+  txn->record_plan_bytes = 0;
+  txn->record_plan_ops = 0;
+  txn->record_plan_sealed = false;
+  txn->record_plan_ready = false;
   local_active_txn = nullptr;
+  // Keep the database published for both surfaces. Safe Rust normally borrows
+  // LocalDb through this point, but mem::forget is safe and ends that borrow
+  // without native cleanup; db_close must still report BUSY rather than free
+  // facade storage beneath the ambient transaction.
   active_database_slots[txn->worker_slot].database.store(
       nullptr, std::memory_order_release);
   finish_encoded_values(txn);
 #if !READ_MY_WRITES
   txn->mutated_keys.clear();
 #endif
+}
+
+// Public point operations can also be used by a trusted transaction and may
+// terminate it on conflict or cleanup failure, so those shared cold paths
+// select the matching lifetime publication dynamically. Known-success public
+// and trusted terminal paths call the specialization directly.
+void finish_txn(mako_local_txn *txn) noexcept {
+  if (txn->fast_table_impl == nullptr)
+    finish_txn_known<false>(txn);
+  else
+    finish_txn_known<true>(txn);
 }
 
 void recycle_txn(mako_local_txn *txn) noexcept {
@@ -222,26 +510,36 @@ void recycle_txn(mako_local_txn *txn) noexcept {
 }
 
 [[gnu::noinline]] mako_local_txn *allocate_txn(mako_local_db *db,
-                                                size_t worker_slot) {
+                                               size_t worker_slot) {
 #if READ_MY_WRITES
-  return new mako_local_txn{db, worker_slot, true, false, 0, 0, false, {}};
+  return new mako_local_txn{db,   nullptr, worker_slot, 0,     0,    0,
+                            0,    true,    false,       false, false, false,
+                            {}};
 #else
-  return new mako_local_txn{db, worker_slot, true, false, 0, 0, false, {}, {}};
+  return new mako_local_txn{db,   nullptr, worker_slot, 0,     0,    0,
+                            0,    true,    false,       false, false, false,
+                            {}, {}};
 #endif
 }
 
-[[gnu::always_inline]] inline mako_local_txn *acquire_txn(
-    mako_local_db *db, size_t worker_slot) {
+[[gnu::always_inline]] inline mako_local_txn *acquire_txn(mako_local_db *db,
+                                                          size_t worker_slot) {
   active_database_slot &slot = active_database_slots[worker_slot];
   mako_local_txn *txn = slot.spare;
-  if (txn == nullptr) [[unlikely]] return allocate_txn(db, worker_slot);
+  if (txn == nullptr) [[unlikely]]
+    return allocate_txn(db, worker_slot);
   slot.spare = nullptr;
   assert(!txn->active);
   assert(!txn->poisoned);
   assert(txn->worker_slot == active_database_slots.size());
+  assert(txn->fast_table_impl == nullptr);
   assert(txn->item_budget_used == 0);
   assert(txn->encoded_values_used == 0);
+  assert(txn->record_plan_bytes == 0);
+  assert(txn->record_plan_ops == 0);
   assert(!txn->encoded_values_require_release);
+  assert(!txn->record_plan_sealed);
+  assert(!txn->record_plan_ready);
   txn->owner = db;
   txn->worker_slot = worker_slot;
   txn->active = true;
@@ -314,6 +612,16 @@ int check_txn(mako_local_txn *txn, mako_local_table *table = nullptr) {
   return MAKO_LOCAL_OK;
 }
 
+int check_txn_operation(mako_local_txn *txn,
+                        mako_local_table *table = nullptr) {
+  const int checked = check_txn(txn, table);
+  if (checked != MAKO_LOCAL_OK) return checked;
+  // Private record preflight is a seal: its byte count is derived from the
+  // current canonical TransItems, so no subsequent read/write-set mutation is
+  // permitted. Stable revision-0 transactions never set this flag.
+  return txn->record_plan_sealed ? MAKO_LOCAL_BUSY : MAKO_LOCAL_OK;
+}
+
 int operation_abort(mako_local_txn *txn, int status) {
   return abort_and_finish(txn, cleanup_boundary::operation)
              ? status
@@ -332,11 +640,24 @@ int operation_exception(mako_local_txn *txn, int status) noexcept {
   return operation_abort(txn, status);
 }
 
-void account_begin_txn(mako_local_txn *txn) noexcept {
+template <bool TrustedOwnerBorrow>
+[[gnu::always_inline]] inline void account_begin_txn_known(
+    mako_local_txn *txn) noexcept {
   assert(local_active_txn == nullptr || local_active_txn == txn);
+  if constexpr (TrustedOwnerBorrow)
+    assert(txn->fast_table_impl != nullptr);
+  else
+    assert(txn->fast_table_impl == nullptr);
   local_active_txn = txn;
   active_database_slots[txn->worker_slot].database.store(
       txn->owner, std::memory_order_release);
+}
+
+void account_begin_txn(mako_local_txn *txn) noexcept {
+  if (txn->fast_table_impl == nullptr)
+    account_begin_txn_known<false>(txn);
+  else
+    account_begin_txn_known<true>(txn);
 }
 
 int cleanup_failed_begin(mako_local_txn *txn, int original_status) noexcept {
@@ -351,6 +672,50 @@ int cleanup_failed_begin(mako_local_txn *txn, int original_status) noexcept {
     return MAKO_LOCAL_WORKER_POISONED;
   recycle_txn(txn);
   return original_status;
+}
+
+// Both exported begin surfaces perform their own contract checks, then inline
+// this native transaction setup. In particular, the private Rust entry must
+// not call the interposable public ABI and pay a second facade boundary on
+// every short transaction.
+template <bool TrustedOwnerBorrow>
+[[gnu::always_inline]] inline int begin_txn_prevalidated(
+    mako_local_db *db, mako_local_table_impl *fast_table_impl,
+    mako_local_txn **out) noexcept {
+  if (!local_attached) return MAKO_LOCAL_NOT_ATTACHED;
+  if (local_worker_poisoned) return MAKO_LOCAL_WORKER_POISONED;
+  if (local_active_txn != nullptr)
+    return local_active_txn->poisoned ? MAKO_LOCAL_WORKER_POISONED
+                                      : MAKO_LOCAL_TXN_ALREADY_ACTIVE;
+  // Attachment permanently claims this worker for the local ABI, and every
+  // native transaction it starts remains anchored by local_active_txn until
+  // terminal cleanup. No independent STO transaction can therefore remain.
+  assert(!Sto::in_progress());
+  const int native_worker = TThread::id();
+  if (native_worker < 0 ||
+      static_cast<size_t>(native_worker) >= active_database_slots.size())
+    return MAKO_LOCAL_INTERNAL;
+
+  mako_local_txn *txn = nullptr;
+  try {
+    txn = acquire_txn(db, static_cast<size_t>(native_worker));
+    if constexpr (TrustedOwnerBorrow)
+      txn->fast_table_impl = fast_table_impl;
+    else
+      assert(fast_table_impl == nullptr);
+    Sto::start_transaction();
+    account_begin_txn_known<TrustedOwnerBorrow>(txn);
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (cleanup_failure_armed(cleanup_boundary::begin))
+      return cleanup_failed_begin(txn, MAKO_LOCAL_INTERNAL);
+#endif
+    *out = txn;
+    return MAKO_LOCAL_OK;
+  } catch (const std::bad_alloc &) {
+    return cleanup_failed_begin(txn, MAKO_LOCAL_OUT_OF_MEMORY);
+  } catch (...) {
+    return cleanup_failed_begin(txn, MAKO_LOCAL_INTERNAL);
+  }
 }
 
 constexpr size_t kMasstreeSliceBytes = sizeof(uint64_t);
@@ -629,7 +994,7 @@ int scan_chunk_impl(
   scan_window window{};
   const int bounds_status = make_scan_window(options, reverse, &window);
   if (bounds_status != MAKO_LOCAL_OK) return bounds_status;
-  const int checked = check_txn(txn, table);
+  const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
   if (window.empty) {
     *done_out = 1;
@@ -703,6 +1068,115 @@ bool invoke_post_validate_hook(void *opaque,
     // unwind-enabled builds; panic=abort builds terminate before unwinding.
     return false;
   }
+}
+
+struct record_bind_bridge {
+  mako_local_txn *txn;
+  mako_rust_fast_record_bind_hook hook;
+  void *context;
+  uint8_t *record_written_out;
+  record_shape final_shape;
+  uint64_t sequence = 0;
+  uint8_t *record = nullptr;
+  uint64_t validation_ticket = 0;
+  bool validation_gate_held = false;
+};
+
+void record_validation_cpu_relax() noexcept {
+#if defined(__i386__) || defined(__x86_64__)
+  _mm_pause();
+#else
+  std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
+}
+
+// @unsafe - Spins only after Transaction has acquired the complete write set.
+// Ticket order therefore fixes Mako timestamp/final-validation order without
+// assigning a persistent cache sequence to a transaction that may still
+// abort. Unsigned ticket wrap remains correct while fewer than 2^64 turns are
+// simultaneously outstanding, which is structurally guaranteed by workers.
+void enter_record_validation_gate(void *opaque) noexcept {
+  auto *bridge = static_cast<record_bind_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(!bridge->validation_gate_held);
+  mako_local_db *const db = bridge->txn->owner;
+  const uint64_t ticket = db->record_validation_next.value.fetch_add(
+      UINT64_C(1), std::memory_order_relaxed);
+  bool reported_wait = false;
+  while (db->record_validation_serving.value.load(std::memory_order_acquire) !=
+         ticket) {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    if (!reported_wait) {
+      db->record_validation_wait_observations.fetch_add(
+          UINT64_C(1), std::memory_order_release);
+      reported_wait = true;
+    }
+#else
+    (void)reported_wait;
+#endif
+    record_validation_cpu_relax();
+  }
+  bridge->validation_ticket = ticket;
+  bridge->validation_gate_held = true;
+}
+
+void leave_record_validation_gate(void *opaque) noexcept {
+  auto *bridge = static_cast<record_bind_bridge *>(opaque);
+  assert(bridge != nullptr);
+  assert(bridge->validation_gate_held);
+  bridge->validation_gate_held = false;
+  bridge->txn->owner->record_validation_serving.value.store(
+      bridge->validation_ticket + UINT64_C(1), std::memory_order_release);
+}
+
+// @unsafe - Binds Rust-owned uninitialized storage while the full native write
+// set is locked and the ordered validation turn is held. Every potentially
+// failing native shape check precedes the external dense-sequence assignment.
+bool invoke_record_bind_hook(void *opaque, uint32_t timestamp) noexcept {
+  auto *bridge = static_cast<record_bind_bridge *>(opaque);
+  assert(bridge->validation_gate_held);
+  record_shape final_shape;
+  if (!derive_record_shape(TThread::txn, &final_shape) ||
+      final_shape.operations == 0 ||
+      final_shape.operations != bridge->txn->record_plan_ops ||
+      final_shape.bytes != bridge->txn->record_plan_bytes)
+    return false;
+
+  uint64_t sequence = 0;
+  uint8_t *record = nullptr;
+  size_t capacity = 0;
+  try {
+    if (bridge->hook(bridge->context, timestamp, final_shape.bytes,
+                     &sequence, &record, &capacity) == 0)
+      return false;
+  } catch (...) {
+    return false;
+  }
+
+  if (sequence == 0 || record == nullptr || capacity < final_shape.bytes)
+    return false;
+  bridge->final_shape = final_shape;
+  bridge->sequence = sequence;
+  bridge->record = record;
+  return true;
+}
+
+// @unsafe - Completes the already-bound record after the ticket turn is
+// retired, but while STO still owns the complete write set and before any
+// write is installed. This bounded walk, copy, and CRC performs no allocation
+// or I/O; failure leaves Rust's ordered slot bound but unwritten, which pins
+// the queue fail-closed.
+bool serialize_bound_record_after_gate(void *opaque,
+                                       uint32_t timestamp) noexcept {
+  auto *bridge = static_cast<record_bind_bridge *>(opaque);
+  assert(!bridge->validation_gate_held);
+  assert(bridge->sequence != 0);
+  assert(bridge->record != nullptr);
+  if (!serialize_cache_record(TThread::txn, bridge->sequence, timestamp,
+                              bridge->final_shape, bridge->record))
+    return false;
+  *bridge->record_written_out = 1;
+  return true;
 }
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -1019,36 +1493,7 @@ int mako_local_txn_begin(mako_local_db *db, mako_local_txn **out) noexcept {
   if (out == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
   *out = nullptr;
   if (db == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
-  if (!local_attached) return MAKO_LOCAL_NOT_ATTACHED;
-  if (local_worker_poisoned) return MAKO_LOCAL_WORKER_POISONED;
-  if (local_active_txn != nullptr)
-    return local_active_txn->poisoned ? MAKO_LOCAL_WORKER_POISONED
-                                      : MAKO_LOCAL_TXN_ALREADY_ACTIVE;
-  // Attachment permanently claims this worker for the local ABI, and every
-  // native transaction it starts remains anchored by local_active_txn until
-  // terminal cleanup. No independent STO transaction can therefore remain.
-  assert(!Sto::in_progress());
-  const int native_worker = TThread::id();
-  if (native_worker < 0 ||
-      static_cast<size_t>(native_worker) >= active_database_slots.size())
-    return MAKO_LOCAL_INTERNAL;
-
-  mako_local_txn *txn = nullptr;
-  try {
-    txn = acquire_txn(db, static_cast<size_t>(native_worker));
-    Sto::start_transaction();
-    account_begin_txn(txn);
-#if defined(MAKO_LOCAL_TEST_HOOKS)
-    if (cleanup_failure_armed(cleanup_boundary::begin))
-      return cleanup_failed_begin(txn, MAKO_LOCAL_INTERNAL);
-#endif
-    *out = txn;
-    return MAKO_LOCAL_OK;
-  } catch (const std::bad_alloc &) {
-    return cleanup_failed_begin(txn, MAKO_LOCAL_OUT_OF_MEMORY);
-  } catch (...) {
-    return cleanup_failed_begin(txn, MAKO_LOCAL_INTERNAL);
-  }
+  return begin_txn_prevalidated<false>(db, nullptr, out);
 }
 
 int mako_local_txn_get(mako_local_txn *txn, mako_local_table *table,
@@ -1064,7 +1509,7 @@ int mako_local_txn_get(mako_local_txn *txn, mako_local_table *table,
     return MAKO_LOCAL_INVALID_ARGUMENT;
   if (key_len > MAKO_LOCAL_MAX_KEY_BYTES)
     return MAKO_LOCAL_VALUE_TOO_LARGE;
-  const int checked = check_txn(txn, table);
+  const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
@@ -1112,7 +1557,7 @@ int mako_local_txn_put(mako_local_txn *txn, mako_local_table *table,
   if (key_len > MAKO_LOCAL_MAX_KEY_BYTES ||
       value_len > MAKO_LOCAL_MAX_VALUE_BYTES)
     return MAKO_LOCAL_VALUE_TOO_LARGE;
-  const int checked = check_txn(txn, table);
+  const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
@@ -1120,7 +1565,7 @@ int mako_local_txn_put(mako_local_txn *txn, mako_local_table *table,
     operation_cleanup_failure_scope cleanup_failure_scope;
 #endif
 #if !READ_MY_WRITES
-    auto &mutations = txn->mutated_keys[table];
+    auto &mutations = txn->mutated_keys[table->table];
     const std::string mutation_key(
         key_len == 0 ? "" : reinterpret_cast<const char *>(key), key_len);
     if (mutations.contains(mutation_key))
@@ -1160,7 +1605,7 @@ int mako_local_txn_insert(mako_local_txn *txn, mako_local_table *table,
   if (key_len > MAKO_LOCAL_MAX_KEY_BYTES ||
       value_len > MAKO_LOCAL_MAX_VALUE_BYTES)
     return MAKO_LOCAL_VALUE_TOO_LARGE;
-  const int checked = check_txn(txn, table);
+  const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
@@ -1168,7 +1613,7 @@ int mako_local_txn_insert(mako_local_txn *txn, mako_local_table *table,
     operation_cleanup_failure_scope cleanup_failure_scope;
 #endif
 #if !READ_MY_WRITES
-    auto &mutations = txn->mutated_keys[table];
+    auto &mutations = txn->mutated_keys[table->table];
     const std::string mutation_key(
         key_len == 0 ? "" : reinterpret_cast<const char *>(key), key_len);
     if (mutations.contains(mutation_key))
@@ -1202,7 +1647,7 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
     return MAKO_LOCAL_INVALID_ARGUMENT;
   if (key_len > MAKO_LOCAL_MAX_KEY_BYTES)
     return MAKO_LOCAL_VALUE_TOO_LARGE;
-  const int checked = check_txn(txn, table);
+  const int checked = check_txn_operation(txn, table);
   if (checked != MAKO_LOCAL_OK) return checked;
 
   try {
@@ -1210,7 +1655,7 @@ int mako_local_txn_remove(mako_local_txn *txn, mako_local_table *table,
     operation_cleanup_failure_scope cleanup_failure_scope;
 #endif
 #if !READ_MY_WRITES
-    auto &mutations = txn->mutated_keys[table];
+    auto &mutations = txn->mutated_keys[table->table];
     const std::string mutation_key(
         key_len == 0 ? "" : reinterpret_cast<const char *>(key), key_len);
     if (mutations.contains(mutation_key))
@@ -1267,7 +1712,7 @@ int mako_local_txn_commit(mako_local_txn *txn) noexcept {
     arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
 #endif
     const bool committed = Sto::try_commit_no_paxos();
-    finish_txn(txn);
+    finish_txn_known<false>(txn);
     return committed ? MAKO_LOCAL_OK : MAKO_LOCAL_CONFLICT;
   } catch (...) {
     // try_commit() may have thrown from Transaction::stop() after an unknown
@@ -1293,7 +1738,7 @@ int mako_local_txn_commit_with_hook(
 #endif
     const bool committed = Sto::try_commit_no_paxos(
         invoke_post_validate_hook, &bridge, &failure);
-    finish_txn(txn);
+    finish_txn_known<false>(txn);
     if (committed) return MAKO_LOCAL_OK;
     switch (failure) {
       case Transaction::preinstall_failure::hook_rejected:
@@ -1339,5 +1784,346 @@ int mako_local_txn_destroy(mako_local_txn *txn) noexcept {
 void mako_local_bytes_free(void *bytes) noexcept {
   std::free(bytes);
 }
+
+#if defined(__GNUC__) || defined(__clang__)
+#define MAKO_RUST_FAST_DEFINITION_HIDDEN __attribute__((visibility("hidden")))
+#else
+#define MAKO_RUST_FAST_DEFINITION_HIDDEN
+#endif
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN int
+mako_rust_fast_txn_begin(mako_local_db *db, mako_local_table *bound_table,
+                         mako_local_txn **out) noexcept {
+  if (out == nullptr)
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  *out = nullptr;
+  if (db == nullptr || bound_table == nullptr)
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  if (bound_table->owner != db)
+    return MAKO_LOCAL_WRONG_DB_OR_TABLE;
+  return begin_txn_prevalidated<true>(db, bound_table->table, out);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t mako_rust_fast_txn_put(
+    mako_local_txn *txn, const uint8_t *key, uint32_t key_len,
+    const uint8_t *value, uint32_t value_len) noexcept {
+  if (key_len > MAKO_LOCAL_MAX_KEY_BYTES ||
+      value_len > MAKO_LOCAL_MAX_VALUE_BYTES)
+    return pack_fast_put_result(MAKO_LOCAL_VALUE_TOO_LARGE);
+  if (txn->record_plan_sealed) [[unlikely]]
+    return pack_fast_put_result(MAKO_LOCAL_BUSY);
+
+  // Rust's private wrapper makes these proofs once at fast begin. Retaining
+  // debug assertions documents the contract without putting opaque-handle,
+  // owner-thread, table-owner, or slice validation on the release hot path.
+  assert(txn != nullptr);
+  assert(local_active_txn == txn);
+  assert(on_owner_thread(txn));
+  assert(txn->active);
+  assert(!txn->poisoned);
+  assert(txn->fast_table_impl != nullptr);
+  assert(!txn->record_plan_sealed);
+  assert(valid_slice(key, key_len));
+  assert(valid_slice(value, value_len));
+  mako_local_table_impl *const table = txn->fast_table_impl;
+
+  try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    operation_cleanup_failure_scope cleanup_failure_scope;
+#endif
+#if !READ_MY_WRITES
+    auto &mutations = txn->mutated_keys[table];
+    const std::string mutation_key(
+        key_len == 0 ? "" : reinterpret_cast<const char *>(key), key_len);
+    if (mutations.contains(mutation_key))
+      return pack_fast_put_result(MAKO_LOCAL_DUPLICATE_WRITE);
+#endif
+    if (!try_reserve_item_budget(txn, write_item_charge(key_len))) {
+      return pack_fast_put_result(
+          operation_abort(txn, MAKO_LOCAL_TXN_TOO_LARGE));
+    }
+
+    // StringWrapper retains this address through commit/abort. Use the same
+    // fixed transaction-owned staging pool and retention bound as the public
+    // ABI; bypassing validation must never shorten the value lifetime.
+    std::string &encoded = stage_encoded_value(txn, value, value_len);
+    const bool existed =
+        table->transPut(as_key(key, key_len), StringWrapper(encoded));
+#if !READ_MY_WRITES
+    mutations.insert(mutation_key);
+#endif
+    return pack_fast_put_result(MAKO_LOCAL_OK, !existed);
+  } catch (const Transaction::Abort &) {
+    return pack_fast_put_result(operation_exception(txn, MAKO_LOCAL_CONFLICT));
+  } catch (const std::bad_alloc &) {
+    return pack_fast_put_result(
+        operation_exception(txn, MAKO_LOCAL_OUT_OF_MEMORY));
+  } catch (...) {
+    return pack_fast_put_result(operation_exception(txn, MAKO_LOCAL_INTERNAL));
+  }
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN int
+mako_rust_fast_txn_record_preflight(
+    mako_local_txn *txn, size_t max_record_bytes,
+    size_t *exact_record_bytes_out, uint32_t *op_count_out) noexcept {
+  if (exact_record_bytes_out == nullptr || op_count_out == nullptr)
+    return MAKO_LOCAL_INVALID_ARGUMENT;
+  *exact_record_bytes_out = 0;
+  *op_count_out = 0;
+
+  const int checked = check_txn(txn);
+  if (checked != MAKO_LOCAL_OK) return checked;
+  if (txn->fast_table_impl == nullptr) return MAKO_LOCAL_INVALID_ARGUMENT;
+  if (txn->record_plan_sealed) return MAKO_LOCAL_BUSY;
+
+  record_shape shape;
+  if (!derive_record_shape(TThread::txn, &shape) ||
+      shape.operations > MAKO_LOCAL_TXN_ITEM_BUDGET)
+    return MAKO_LOCAL_INTERNAL;
+
+  // Seal even on a cap rejection. Rust consumes that transaction by aborting;
+  // allowing another operation or a differently capped second preflight would
+  // make failure handling depend on a mutable write set.
+  txn->record_plan_bytes = shape.bytes;
+  txn->record_plan_ops = shape.operations;
+  txn->record_plan_sealed = true;
+  txn->record_plan_ready =
+      shape.operations == 0 || shape.bytes <= max_record_bytes;
+  *exact_record_bytes_out = shape.bytes;
+  *op_count_out = shape.operations;
+  return txn->record_plan_ready ? MAKO_LOCAL_OK
+                                : MAKO_LOCAL_VALUE_TOO_LARGE;
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_txn_commit_record_and_destroy(
+    mako_local_txn *txn, mako_rust_fast_record_bind_hook bind_hook,
+    void *context, uint8_t *record_written_out) noexcept {
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+
+  if (record_written_out != nullptr) *record_written_out = 0;
+  if (bind_hook == nullptr || record_written_out == nullptr ||
+      !txn->record_plan_sealed || !txn->record_plan_ready ||
+      txn->record_plan_ops == 0 ||
+      txn->record_plan_bytes < kCacheRecordMinimumBytes) {
+    if (!abort_and_finish(txn, cleanup_boundary::abort))
+      return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                       MAKO_LOCAL_WORKER_POISONED);
+    recycle_txn(txn);
+    return pack_fast_terminal_result(MAKO_LOCAL_INVALID_ARGUMENT,
+                                     MAKO_LOCAL_OK);
+  }
+
+  int status = MAKO_LOCAL_INTERNAL;
+  try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
+#endif
+    Transaction::preinstall_failure failure =
+        Transaction::preinstall_failure::none;
+    record_bind_bridge bridge{txn, bind_hook, context, record_written_out};
+    const Transaction::commit_validation_gate validation_gate{
+        enter_record_validation_gate, leave_record_validation_gate,
+        serialize_bound_record_after_gate, &bridge};
+    const bool committed = Sto::try_commit_no_paxos(
+        invoke_record_bind_hook, &bridge, &failure, &validation_gate);
+    finish_txn_known<true>(txn);
+
+    if (committed) {
+      status = MAKO_LOCAL_OK;
+    } else {
+      switch (failure) {
+      case Transaction::preinstall_failure::hook_rejected:
+        status = MAKO_LOCAL_COMMIT_HOOK_REJECTED;
+        break;
+      case Transaction::preinstall_failure::timestamp_exhausted:
+        status = MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
+        break;
+      case Transaction::preinstall_failure::none:
+        status = MAKO_LOCAL_CONFLICT;
+        break;
+      default:
+        poison_transaction(txn);
+        return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                         MAKO_LOCAL_WORKER_POISONED);
+      }
+    }
+  } catch (...) {
+    poison_transaction(txn);
+    return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                     MAKO_LOCAL_WORKER_POISONED);
+  }
+
+  recycle_txn(txn);
+  return pack_fast_terminal_result(status, MAKO_LOCAL_OK);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_txn_commit_and_destroy(mako_local_txn *txn) noexcept {
+  // This build-private terminal entry is unsafe by contract. Transaction's
+  // !Send/!Sync marker and consuming Rust call prove these invariants;
+  // repeating their opaque-handle diagnostics was more work than the checked
+  // commit+destroy pair this entry replaces.
+  assert(txn != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+
+  // A nonempty sealed record plan may only commit through the serializer. A
+  // cap-rejected plan likewise has no valid caller storage. Definite abort is
+  // safer than permitting a trusted-wrapper bug to commit without durability.
+  if (txn->record_plan_sealed &&
+      (!txn->record_plan_ready || txn->record_plan_ops != 0)) {
+    if (!abort_and_finish(txn, cleanup_boundary::abort))
+      return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                       MAKO_LOCAL_WORKER_POISONED);
+    recycle_txn(txn);
+    return pack_fast_terminal_result(MAKO_LOCAL_INVALID_ARGUMENT,
+                                     MAKO_LOCAL_OK);
+  }
+
+  try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
+#endif
+    const bool committed = Sto::try_commit_no_paxos();
+    finish_txn_known<true>(txn);
+    recycle_txn(txn);
+    return pack_fast_terminal_result(
+        committed ? MAKO_LOCAL_OK : MAKO_LOCAL_CONFLICT, MAKO_LOCAL_OK);
+  } catch (...) {
+    // try_commit may have entered Transaction::stop(). Never retry cleanup or
+    // release the stable staging pool when its progress is uncertain.
+    poison_transaction(txn);
+    return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                     MAKO_LOCAL_WORKER_POISONED);
+  }
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_txn_commit_with_hook_and_destroy(
+    mako_local_txn *txn, mako_local_post_validate_hook hook,
+    void *context) noexcept {
+  assert(txn != nullptr);
+  assert(hook != nullptr);
+  assert(on_owner_thread(txn));
+  assert(!txn->poisoned);
+  assert(!local_worker_poisoned);
+  assert(txn->active);
+  assert(local_active_txn == txn);
+  assert(txn->fast_table_impl != nullptr);
+
+  int status = MAKO_LOCAL_INTERNAL;
+  try {
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+    arm_native_cleanup_failure_if_requested(cleanup_boundary::commit);
+#endif
+    Transaction::preinstall_failure failure =
+        Transaction::preinstall_failure::none;
+    post_validate_bridge bridge{hook, context};
+    const bool committed = Sto::try_commit_no_paxos(
+        invoke_post_validate_hook, &bridge, &failure);
+    finish_txn_known<true>(txn);
+
+    if (committed) {
+      status = MAKO_LOCAL_OK;
+    } else {
+      switch (failure) {
+      case Transaction::preinstall_failure::hook_rejected:
+        status = MAKO_LOCAL_COMMIT_HOOK_REJECTED;
+        break;
+      case Transaction::preinstall_failure::timestamp_exhausted:
+        status = MAKO_LOCAL_TIMESTAMP_EXHAUSTED;
+        break;
+      case Transaction::preinstall_failure::none:
+        status = MAKO_LOCAL_CONFLICT;
+        break;
+      default:
+        poison_transaction(txn);
+        return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                         MAKO_LOCAL_WORKER_POISONED);
+      }
+    }
+  } catch (...) {
+    // try_commit may have entered Transaction::stop(). Never retry cleanup or
+    // release the stable staging pool when its progress is uncertain.
+    poison_transaction(txn);
+    return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                     MAKO_LOCAL_WORKER_POISONED);
+  }
+
+  recycle_txn(txn);
+  return pack_fast_terminal_result(status, MAKO_LOCAL_OK);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_txn_abort_and_destroy(mako_local_txn *txn) noexcept {
+  if (txn == nullptr) {
+    return pack_fast_terminal_result(MAKO_LOCAL_INVALID_ARGUMENT,
+                                     MAKO_LOCAL_OK);
+  }
+  if (!on_owner_thread(txn)) {
+    return pack_fast_terminal_result(MAKO_LOCAL_WRONG_THREAD,
+                                     MAKO_LOCAL_WRONG_THREAD);
+  }
+  if (txn->poisoned || local_worker_poisoned) {
+    return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                     MAKO_LOCAL_WORKER_POISONED);
+  }
+
+  try {
+    if (txn->active) {
+      if (local_active_txn != txn) {
+        // As in fast commit, neither abort nor recycling is safe once the
+        // facade and ambient STO state disagree. Quarantine instead of
+        // stranding an active transaction after the consuming Rust call.
+        poison_worker(txn);
+        return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                         MAKO_LOCAL_WORKER_POISONED);
+      }
+      if (!abort_and_finish(txn, cleanup_boundary::abort)) {
+        return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                         MAKO_LOCAL_WORKER_POISONED);
+      }
+    }
+    recycle_txn(txn);
+    return pack_fast_terminal_result(MAKO_LOCAL_OK, MAKO_LOCAL_OK);
+  } catch (...) {
+    poison_transaction(txn);
+    return pack_fast_terminal_result(MAKO_LOCAL_WORKER_POISONED,
+                                     MAKO_LOCAL_WORKER_POISONED);
+  }
+}
+
+#if defined(MAKO_LOCAL_TEST_HOOKS)
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_test_record_validation_tickets(
+    const mako_local_db *db) noexcept {
+  return db == nullptr
+             ? 0
+             : db->record_validation_next.value.load(std::memory_order_acquire);
+}
+
+MAKO_RUST_FAST_DEFINITION_HIDDEN uint64_t
+mako_rust_fast_test_record_validation_wait_observations(
+    const mako_local_db *db) noexcept {
+  return db == nullptr
+             ? 0
+             : db->record_validation_wait_observations.load(
+                   std::memory_order_acquire);
+}
+#endif
+
+#undef MAKO_RUST_FAST_DEFINITION_HIDDEN
 
 }  // extern "C"

@@ -33,17 +33,23 @@ impl Fixture {
     }
 
     fn with_capacity(cap: u64) -> Self {
-        let cfg = Config { capacity_bytes: Some(cap), ..Config::default() };
+        let cfg = Config {
+            capacity_bytes: Some(cap),
+            ..Config::default()
+        };
         Self::with(cfg, MemBlobs::new())
     }
 
     fn with(cfg: Config, blobs: MemBlobs) -> Self {
         let blobs = Arc::new(blobs);
         let index = Arc::new(MemIndex::new());
-        let store = Arc::new(
-            Store::open(cfg, Arc::clone(&index), Arc::clone(&blobs)).expect("open"),
-        );
-        Self { store, blobs, index }
+        let store =
+            Arc::new(Store::open(cfg, Arc::clone(&index), Arc::clone(&blobs)).expect("open"));
+        Self {
+            store,
+            blobs,
+            index,
+        }
     }
 
     /// Reopen over the same durable store with a fresh index and cache,
@@ -150,7 +156,10 @@ fn remove_reports_existence() {
     f.put("k", "v");
     let r = f.store.remove(b"k");
     assert!(r.wrote && r.existed);
-    assert!(!f.store.remove(b"k").wrote, "second remove finds a tombstone");
+    assert!(
+        !f.store.remove(b"k").wrote,
+        "second remove finds a tombstone"
+    );
 }
 
 #[test]
@@ -197,7 +206,11 @@ fn delete_reaches_the_system_of_record() {
     assert!(f.blobs.peek(b"k").is_some());
     f.store.remove(b"k");
     assert!(f.flush());
-    assert_eq!(f.blobs.peek(b"k"), None, "the tombstone must be written back");
+    assert_eq!(
+        f.blobs.peek(b"k"),
+        None,
+        "the tombstone must be written back"
+    );
 }
 
 #[test]
@@ -222,7 +235,11 @@ fn deleted_key_survives_reopen_as_absent() {
     assert!(f.flush());
 
     let re = f.reopen(Config::default());
-    assert_eq!(get_of(&re, "k"), None, "a deleted key came back after reopen");
+    assert_eq!(
+        get_of(&re, "k"),
+        None,
+        "a deleted key came back after reopen"
+    );
 }
 
 #[test]
@@ -359,7 +376,8 @@ fn scan_fills_non_resident_values() {
     assert_eq!(seen.len(), 20);
     for i in 0..20 {
         assert_eq!(
-            seen.get(format!("k{i:02}").as_bytes()).map(|v| v.as_slice()),
+            seen.get(format!("k{i:02}").as_bytes())
+                .map(|v| v.as_slice()),
             Some(format!("v{i}").as_bytes()),
             "scan served an evicted value incorrectly"
         );
@@ -370,7 +388,10 @@ fn scan_fills_non_resident_values() {
 fn scan_spans_multiple_chunks() {
     // The seam between index chunks is where an off-by-one either drops a
     // key or yields one twice.
-    let cfg = Config { scan_chunk: 7, ..Config::default() };
+    let cfg = Config {
+        scan_chunk: 7,
+        ..Config::default()
+    };
     let f = Fixture::with(cfg, MemBlobs::new());
     for i in 0..100 {
         f.put(&format!("k{i:03}"), &format!("v{i}"));
@@ -615,7 +636,10 @@ fn clear_is_refused_while_io_is_failing() {
     assert!(f.flush());
     f.blobs.fail_next_writes(usize::MAX);
     f.store.flush_cycle(); // let the store notice
-    assert!(!f.store.clear(), "clear must not report success it cannot deliver");
+    assert!(
+        !f.store.clear(),
+        "clear must not report success it cannot deliver"
+    );
 }
 
 // ===================================================================

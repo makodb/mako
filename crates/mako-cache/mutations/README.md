@@ -80,7 +80,7 @@ is preferable.
 
 ## Mutants and scope
 
-The table in `run.py` covers stale same-key journal writeback, early detached
+The table in `run.py` covers corrupted native-record put replay, early detached
 capacity discharge, hook-time allocation, a conflict cancellation CacheSeq
 gap, missing and premature Ready publication, an unpinned unknown outcome,
 partial/reordered/duplicate recovery replay, a wrong Mako timestamp, and a

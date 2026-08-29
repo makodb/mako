@@ -1,20 +1,113 @@
 # Mako cache Milestone 1 acceptance
 
-Status: **PASS** on 2026-08-26.
+Status: **CURRENT REWRITE PASS** on 2026-08-29. The full comparative acceptance
+below remains historical evidence for candidate `6574cf47c`; the native-record
+and bounded-batching rewrite is validated separately here and does not
+retroactively change that immutable artifact.
 
 Milestone 1 is complete for its declared scope: one process, one recovered
 cache namespace, C++ STO/MassTrans transactions behind the revision-0 C ABI,
 the safe Rust transaction/cache layer, and asynchronous atomic RocksDB
 application. Phase 1G eviction and all distributed work remain deferred.
 
-Here, PASS means that the functional and contract gates are green and that the
+## Current native-record and bounded-batching validation
+
+The 2026-08-29 rewrite keeps STO/MassTrans/Masstree in C++, but moves commit-
+record construction to STO's canonical write set. Rust preallocates one exact-
+size buffer. After the complete write set is locked, a short per-database ticket
+turn orders `MakoTimestamp` allocation, final validation, and dense `CacheSeq`
+binding. Native code then retires that turn, serializes and checksums directly
+into the buffer while retaining the write locks, and installs the transaction.
+Rust attaches the witnessed bytes in constant time and acknowledges only across
+a dense Ready prefix.
+
+The background path validates and materializes records, then applies a
+contiguous prefix in one atomic RocksDB `WriteBatch`, bounded by 64 records and
+1 MiB of encoded record bytes by default. Transaction boundaries and order are
+preserved inside that physical batch. `wait_applied()` never processes beyond
+the acknowledgement snapshot it captured. A permanent structural record error
+latches the earliest failing sequence and fail-stops later work; allocation and
+backend failures remain retryable. Neither acknowledgement nor the applied
+watermark claims disk synchronization.
+
+The frozen production snapshot had source-tree digest
+`191d0ef64732ae67fb16d2d944c5f48ffa7afd9e5f5bc18a48346d13ee91fb80`
+at Git HEAD `c4fe90fb418618f751771fc1f854618ba001cde4`. The source-drift guard
+matched before and after every fresh build and after the benchmark. The final
+patch adds only validation artifacts, documentation, and test-only mutation
+cleanup after that run; no measured production source changed. The fresh
+hooks-off native fingerprint was
+`a7b05a47436b86b764c7b3f8078f986d4125e5bdf6c2e803a9cd54e11b95fb55`.
+
+Current functional evidence includes the 66/66 hook-enabled native ABI suite,
+the 56/56 fresh hooks-off zoo-2 ABI suite, the complete required-native
+`mako-local` suite, all 96 `mako-cache` tests, 38/38 focused writeback tests,
+100/100 point and 100/100 predicate ordering runs, 13/13 Miri fake-ABI tests,
+and a [12/12 isolated mutation report](benchmarks/mako-cache-mutations-20260829-final.json)
+(SHA-256 `c6d791e0e476d6a3d1396486700fc7be533e9f7e45ed3613889af55cb4bb1d69`)
+with zero survivors or harness errors. Strict Clippy, package-scoped formatting,
+symbol, fingerprint, crash, history, recovery, and independent implementation-
+audit gates are also clean.
+
+### Focused before/after scaling run
+
+The retained [pre-rewrite report](benchmarks/mako-cache-scaling-zoo002-20260828-current-v1.json)
+(SHA-256 `0d3bbb0b40a30e993ea10de6dde396c5538a1def6e15c7a9a039fb63d5c27fcc`)
+and [native-record rewrite report](benchmarks/mako-cache-scaling-zoo002-20260829-frozen-thin-log.json)
+(SHA-256 `25237bdcf5b39bd17bc7c1664545c0cde5f6024463e31063a491d356df3e24c3`)
+record the same `zoo-002` host, Git HEAD, Rust toolchain, scaling profile, CPU
+set 0-31, transaction size, and seven-repetition protocol. Both reports mark
+their worktrees dirty, and the older run did not retain a whole-tree digest;
+therefore this is a controlled comparison of the two archived executions, not
+a claim that the exact old dirty source tree is reconstructible from the
+repository. Native manifests inspected during validation established matching
+CMake 4.3.4, Clang 22.1.8, Release, `-march=native`, `STO_RMW=ON`,
+`OPACITY=OFF`, and hooks-off settings. The JSON report-time load averages were
+`1.61 1.64 1.93` before the rewrite and `7.40 5.78 4.00` after it; the latter
+was sampled after the matrix and includes its decaying self-load. The rewrite
+report contains exactly 84 unique, validated samples: read and write at 1, 2,
+4, 8, 16, and 32 workers. All expected commits, recovery checksums, record/key
+counts, ACK-plus-drain arithmetic, and independently recomputed medians match.
+
+Throughput below is thousands of transactions per second; ratios are
+rewrite/pre-rewrite. Read applied throughput is included even though it is
+effectively identical to ACK for this workload.
+
+| Workload | Workers | Old ACK | Rewrite ACK | Ratio | Old applied | Rewrite applied | Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| read | 1 | 725.1 | 685.1 | 0.945x | 725.1 | 685.1 | 0.945x |
+| read | 2 | 1,180.4 | 1,159.5 | 0.982x | 1,180.3 | 1,159.4 | 0.982x |
+| read | 4 | 1,682.5 | 1,653.5 | 0.983x | 1,682.4 | 1,653.4 | 0.983x |
+| read | 8 | 1,411.0 | 1,445.0 | 1.024x | 1,410.9 | 1,445.0 | 1.024x |
+| read | 16 | 1,519.9 | 1,491.1 | 0.981x | 1,519.9 | 1,491.1 | 0.981x |
+| read | 32 | 1,769.9 | 1,712.7 | 0.968x | 1,769.9 | 1,712.7 | 0.968x |
+| write | 1 | 119.9 | 384.9 | 3.210x | 44.8 | 87.3 | 1.950x |
+| write | 2 | 106.6 | 507.0 | 4.758x | 46.7 | 104.6 | 2.241x |
+| write | 4 | 35.5 | 438.2 | 12.339x | 24.2 | 135.2 | 5.583x |
+| write | 8 | 20.1 | 386.6 | 19.236x | 15.8 | 132.0 | 8.367x |
+| write | 16 | 11.1 | 444.6 | 40.155x | 9.7 | 126.3 | 13.081x |
+| write | 32 | 7.2 | 57.3 | 7.951x | 6.6 | 56.9 | 8.634x |
+
+The rewrite is write-path-specific: read ACK changes range from -5.5% to
++2.4%. Write ACK improves 3.21x at one worker and 40.16x at 16 workers, while
+applied throughput improves 1.95x and 13.08x at those endpoints. W32 still
+drops sharply in absolute throughput from W16, despite remaining about 8x over
+the old implementation. Its ACK and applied rates converge and drain time is
+only 6-31 ms, pointing toward a high-concurrency foreground/native/dense-ACK
+bottleneck rather than a RocksDB backlog. W4-W16 ACK samples also have roughly
+9-14% coefficient of variation. Both limitations remain explicit profiling
+work, not hidden by the improvement.
+
+## Historical candidate and retained evidence
+
+For historical candidate `6574cf47c`, PASS means that the functional and
+contract gates are green and that the
 complete comparative measurement ran under a fully recorded, resumable
 protocol with its correctness and accounting invariants independently checked.
 No performance SLA was declared before the run, so PASS does not mean that
-Mako beat either baseline. The run in fact exposes a serious concurrent-write
-scaling cost that should drive the next optimization work.
-
-## Candidate and retained evidence
+Mako beat either baseline. The run exposed the serious concurrent-write
+scaling cost that drove the native-record rewrite; the rewrite's W32 collapse
+remains the next profiling target.
 
 - Implementation candidate:
   `6574cf47c3233f208d5b2e68790e411c2ea3debe`
@@ -154,16 +247,14 @@ Because these rows share a point contract, ratios are meaningful here:
 | write / low / W16 | 0.0021x | 0.0522x | 0.0026x | 0.0456x |
 | write / high / W16 | 0.0079x | 0.0634x | 0.0070x | 0.0563x |
 
-The important performance result is the collapse in Mako's concurrent point
+The important historical performance result is the collapse in Mako's concurrent point
 write throughput, even without conflicts. The W16 result is stable across
 repetitions: ACK maximum/minimum is 1.022x and p99 spans 17.42-19.39 ms, so it
-is not one noisy sample. A plausible first profiling target is
-`Writeback::resolve`'s linear pending-record search while holding the state
-mutex, but that is a source-level hypothesis, not a proven diagnosis. This is
-not an acceptance-artifact failure: all commits and checksums are correct, the
-report has complete provenance, and no throughput threshold was predeclared.
-It is a concrete follow-up priority, not evidence hidden behind the Milestone
-1 PASS.
+is not one noisy sample. That diagnosis applies only to the historical
+candidate. The rewrite replaces the linear pending-record lookup with dense
+queue-token indexing, constructs records directly in native STO, and batches
+contiguous records. Current scaling results are reported above; these
+historical W16 values must not be read as current performance.
 
 ## Representative transactional context (semantically non-equivalent baselines)
 
@@ -193,8 +284,9 @@ not measurements of an equivalent transaction implementation.
 ## Acceptance conclusion and deferred scope
 
 The functional gates and the final comparative evidence gate are complete, so
-Milestone 1 is accepted. The measured concurrent-write scaling problem is
-carried forward as optimization work; changing it does not require weakening
+Milestone 1 is accepted. The historical concurrent-write collapse was largely
+removed by the native-record rewrite. The new W32 foreground drop is carried
+forward as a narrower profiling target; changing it does not require weakening
 the transaction or writeback contract established here.
 
 This acceptance deliberately does not claim:

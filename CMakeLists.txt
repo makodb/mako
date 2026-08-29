@@ -938,6 +938,7 @@ add_custom_command(
   DEPENDS
     "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_rust_fast_abi.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.cc"
     "${CMAKE_BINARY_DIR}/compile_commands.json"
     "${CMAKE_BINARY_DIR}/CMakeCache.txt"
@@ -2571,8 +2572,9 @@ if(BUILD_TESTS)
     # Process-isolated relative-overhead runner. Like the differential driver,
     # direct MassTrans and the raw C ABI must execute in separate processes
     # because they permanently claim different STO worker-runtime identities.
-    # The Rust integration test supplies the third (safe-wrapper) process and
-    # validates the complete benchmark protocol before calculating ratios.
+    # The Rust integration test supplies separate public-safe and
+    # trusted-fast wrapper processes and validates the complete benchmark
+    # protocol before calculating ratios.
     add_executable(mako_local_overhead_driver
         tests/mako_local_overhead_driver.cc)
     target_link_libraries(mako_local_overhead_driver
@@ -2970,7 +2972,7 @@ if(BUILD_TESTS)
             DEPENDS mako mako_local_overhead_driver
                     check_mako_local_build_fingerprint
                     check_mako_local_abi_symbols
-            COMMENT "Running optimized three-surface wrapper-overhead gate"
+            COMMENT "Running optimized five-surface wrapper-overhead gate"
             VERBATIM
         )
 

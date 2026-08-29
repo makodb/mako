@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use mako_cache::{ApplyError, Cache, CacheOptions, Error, RecordError, ReserveError};
+use mako_cache::{ApplyError, Cache, CacheOptions, Error};
 use mako_local::{
     arm_test_cleanup_failure, features, quarantined_worker_count, worker_health,
     Error as LocalError, TestCleanupBoundary, WorkerHealth,
@@ -85,18 +85,11 @@ fn preparation_error_drop_quarantines_without_a_slot() {
     let error = transaction
         .commit()
         .expect_err("record preparation must reject the transaction");
-    assert!(matches!(
-        error,
-        Error::Reserve(ReserveError::Record(RecordError::RecordTooLarge {
-            max: 1,
-            ..
-        }))
-    ));
+    assert!(matches!(error, Error::Native(LocalError::WorkerPoisoned)));
 
-    // The public error describes preparation, while the moved native handle's
-    // Drop path independently attempted abort and hit the injected failure.
-    // These assertions prevent that otherwise ignored Drop result from making
-    // this test falsely green.
+    // Native preflight rejects the oversized record and immediately aborts the
+    // now-sealed transaction. The injected abort-cleanup failure is more severe
+    // than the size error and therefore reaches the public result directly.
     assert_nothing_published(&cache, &backend);
     assert_eq!(cache.close().expect("close empty write-back queue"), 0);
 }

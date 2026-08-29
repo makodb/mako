@@ -1,0 +1,1620 @@
+{
+  "anchor_validation": [
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "d0883774d9a0de40a3427a643047cbf5ea300aaaed3d903d89bcbe11119a717f",
+      "name": "native-replay-drops-put-value",
+      "path": "src/record.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "20fdbd104c9fb454261bca666824724f05bab20adba2cc0308e1550992a1d051",
+      "name": "early-detached-capacity-discharge",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "11d1d125d842e8b70fb02a793012bed18f0b08b7e8c1ee1034bed24678295352",
+      "name": "hook-time-allocation",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "98221015887568c08b5f1ec6946e53b51f8176ed0d98c04dff4d5a8b9dfae4e7",
+      "name": "conflict-cancellation-slot",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "1407ddd783fb180dcab1fbfbe85e48fab82f5d0fd6cd1fbd0bdf5b2d9a3941dc",
+      "name": "missing-ready-publication",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "28dd3534675321cba6d84f3e4f319d0935dc7769dc550258c527b7b8e39584cc",
+      "name": "premature-ready-publication",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "6994082f858b574217a46cca8ceda6e50785ec6f15cf4be304c9225e17fa6ee6",
+      "name": "unpinned-unknown-outcome",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "3bd182ec1c7d606ab3d96c7fb4621cfd64235833fc046ee64eddf67867c720f2",
+      "name": "partial-replay",
+      "path": "src/lib.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "3bd182ec1c7d606ab3d96c7fb4621cfd64235833fc046ee64eddf67867c720f2",
+      "name": "reordered-replay",
+      "path": "src/lib.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "3bd182ec1c7d606ab3d96c7fb4621cfd64235833fc046ee64eddf67867c720f2",
+      "name": "duplicate-replay",
+      "path": "src/lib.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "15e1d49b704a8993a1c925967394761cee909c4f6c5838d98d1d4222d10d0382",
+      "name": "wrong-mako-timestamp",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "b4ebbd5d9c7f81332a4df1623ea159ff1fee03a17b1e8b4d495f84be466d0a33",
+      "name": "missing-recovery-clock-floor",
+      "path": "src/lib.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    }
+  ],
+  "baseline": {
+    "compile": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "mako-cache",
+        "--features",
+        "test-support",
+        "--no-run"
+      ],
+      "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-6unufuna",
+      "elapsed_seconds": 104.939,
+      "failed_test_lines": [],
+      "output_sha256": "0805b428da99220f8c5db3bd0e19a6852a458afa8a51e5d9b17ac3528be7506c",
+      "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling quote v1.0.47\n   Compiling glob v0.3.4\n   Compiling unicode-ident v1.0.24\n   Compiling prettyplease v0.2.37\n   Compiling libc v0.2.189\n   Compiling regex-syntax v0.8.11\n   Compiling minimal-lexical v0.2.1\n   Compiling cfg-if v1.0.4\n   Compiling memchr v2.8.3\n   Compiling bindgen v0.72.1\n   Compiling either v1.18.0\n   Compiling shlex v1.3.0\n   Compiling log v0.4.34\n   Compiling bitflags v2.13.1\n   Compiling rustc-hash v2.1.3\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-6unufuna/mako-cache)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling clang-sys v1.9.1\n   Compiling nom v7.1.3\n   Compiling regex-automata v0.4.18\n   Compiling syn v2.0.119\n   Compiling cexpr v0.6.0\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 44s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n  Executable tests/cleanup.rs (cargo-target-empty/debug/deps/cleanup-5c242a8724610ef7)\n  Executable tests/hook_allocation.rs (cargo-target-empty/debug/deps/hook_allocation-34be056cd1c56c92)\n  Executable tests/native.rs (cargo-target-empty/debug/deps/native-0025d68ce7a5d9bc)\n  Executable tests/rocks.rs (cargo-target-empty/debug/deps/rocks-91e1186947504bb0)\n  Executable tests/timestamp.rs (cargo-target-empty/debug/deps/timestamp-27c624f69c55cca3)\n",
+      "returncode": 0,
+      "running_test_counts": [],
+      "timed_out": false,
+      "timeout_seconds": 900
+    },
+    "lock_setup": {
+      "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+      "normalization": {
+        "command": [
+          "cargo",
+          "metadata",
+          "--offline",
+          "--format-version",
+          "1"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-6unufuna",
+        "elapsed_seconds": 0.323,
+        "failed_test_lines": [],
+        "output_sha256": "0cffc8cdf9939bb878c2f6d4459a97781df217f6a52af204d460d69f4aaabd4f",
+        "output_tail": "worktrees/masstree-rocks/crates/mrx-rocks#0.1.0\",\"dependencies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-6unufuna/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-6unufuna/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-6unufuna\",\"metadata\":null}\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+      "target_still_absent": true
+    },
+    "path_rewrites": [
+      {
+        "from": "../mako-local",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+      },
+      {
+        "from": "../mrx-core",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+      },
+      {
+        "from": "../mrx-rocks",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+      },
+      {
+        "from": "../mako-history",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+      },
+      {
+        "from": "../mrx-rocks",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+      }
+    ],
+    "reason": null,
+    "status": "green",
+    "tests": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "mako-cache",
+        "--features",
+        "test-support"
+      ],
+      "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-6unufuna",
+      "elapsed_seconds": 68.928,
+      "failed_test_lines": [],
+      "output_sha256": "4eb32da476f3e3099501b5193d23a2eb7dcbd87f73ef72f44aa8627215252f58",
+      "output_tail": "_the_recovered_maximum ... ok\ntest runtime::tests::background_worker_advances_applied_watermark_without_a_flush_barrier ... ok\ntest tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... ok\ntest tests::recovery_reconstructs_the_in_memory_applied_frontier ... ok\ntest milestone1_acceptance_tests::forced_cache_stop_preserves_applied_prefix_and_discards_only_unapplied_tail ... ok\ntest writeback::tests::wait_applied_covers_safe_acknowledged_prefix_before_later_unknown ... ok\ntest tests::native_mako_timestamp_is_carried_into_the_backend_record ... ok\ntest writeback::tests::cache_sequence_is_assigned_by_bind_order_not_reserve_order ... ok\ntest writeback::tests::out_of_order_publications_wait_for_one_dense_acknowledgement_prefix ... ok\ntest writeback::tests::publication_during_backend_io_is_not_retired_with_captured_prefix ... ok\ntest writeback::tests::later_bind_does_not_wait_for_front_backend_io ... ok\ntest writeback::tests::prepared_hole_blocks_later_ready_transaction_and_acknowledgement ... ok\ntest writeback::tests::publishing_a_later_slot_does_not_wake_a_waiter_blocked_on_the_front ... ok\ntest writeback::tests::prepared_and_pinned_slots_cut_the_ready_prefix ... ok\ntest writeback::tests::queue_tokens_track_current_vecdeque_offsets_after_front_retirement ... ok\ntest runtime::tests::drop_uses_abort_semantics ... ok\ntest writeback::tests::watermark_advances_only_after_a_successful_backend_call_returns ... \nrunning 1 test\nok\ntest runtime::tests::shutdown_prioritizes_apply_error_over_worker_panic ... ok\ntest writeback::tests::poisoned_consumer_retries_the_untouched_ready_record ... ok\ntest application_history_tests::application_transcript_rejects_a_partial_materialized_batch - should panic ... ok\ntest tests::preparation_failure_surfaces_native_abort_cleanup_quarantine ... ok\ntest tests::unbound_native_record_contract_violation_aborts_process ... ok\ntest milestone1_acceptance_tests::recovery_near_timestamp_exhaustion_mints_maximum_once_then_fails_closed ... ok\ntest runtime::tests::abort_stops_without_draining_a_failing_tail ... ok\ntest application_history_tests::real_cache_history_connects_visibility_acknowledgement_and_ordered_application ... ok\ntest writeback::tests::detached_permit_backpressures_another_reserver_until_drop ... ok\ntest writeback::tests::binding_the_final_sequence_wakes_every_sequence_space_waiter ... ok\ntest writeback::tests::full_queue_backpressures_until_front_advances ... ok\ntest writeback::tests::unknown_outcome_wakes_a_backpressured_reserver ... ok\ntest application_history_tests::real_concurrent_cache_history_waits_for_dense_acknowledgement_prefix ... ok\ntest runtime::tests::runtime_recovers_from_backend_panic_and_unblocks_capacity ... ok\ntest milestone1_acceptance_tests::clean_cache_close_drains_every_acknowledged_transaction ... ok\ntest writeback::tests::permanent_record_failure_wakes_capacity_and_acknowledgement_waiters ... ok\ntest milestone1_acceptance_tests::bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers ... ok\ntest crash_tests::process_crash_matrix_recovers_only_whole_transactions ... ok\ntest crash_tests::recovery_process_crash_matrix_converges_after_restart ... ok\n\ntest result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.78s\n\n\nrunning 1 test\ntest cleanup_uncertainty_quarantines_fresh_cache_workers ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\n\nrunning 1 test\ntest detached_bind_is_allocation_free_and_the_tripwire_is_live ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 8 tests\ntest a_multi_key_commit_is_visible_then_flushed_as_one_atomic_backend_batch ... ok\ntest read_only_noops_do_not_log_and_recovery_rejects_invalid_backends ... ok\ntest every_same_key_mutation_pair_has_one_canonical_backend_result ... ok\ntest absent_put_then_delete_is_a_backend_noop ... ok\ntest existing_delete_then_put_is_one_canonical_put ... ok\ntest a_tiny_record_budget_still_allows_read_only_commits ... ok\ntest same_key_composition_preserves_results_and_abort_publishes_nothing ... ok\ntest conflicting_writer_consumes_no_cache_sequence_or_log_slot ... ok\n\ntest result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 5 tests\ntest required_opacity_follows_the_native_feature_bit ... ok\ntest required_read_your_writes_follows_the_native_feature_bit ... ok\ntest canonical_same_key_histories_survive_rocks_recovery ... ok\ntest transactional_scans_reflect_staged_writes_and_survive_rocks_reopen ... ok\ntest atomic_transactions_and_latest_overwrite_survive_rocks_reopen ... ok\n\ntest result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s\n\n\nrunning 1 test\ntest native_timestamp_matches_the_persisted_record_and_applied_frontier ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 1 test\ntest mako-cache/src/lib.rs - (line 25) - compile ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-6unufuna/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 06s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n     Running tests/cleanup.rs (cargo-target-empty/debug/deps/cleanup-5c242a8724610ef7)\n     Running tests/hook_allocation.rs (cargo-target-empty/debug/deps/hook_allocation-34be056cd1c56c92)\n     Running tests/native.rs (cargo-target-empty/debug/deps/native-0025d68ce7a5d9bc)\n     Running tests/rocks.rs (cargo-target-empty/debug/deps/rocks-91e1186947504bb0)\n     Running tests/timestamp.rs (cargo-target-empty/debug/deps/timestamp-27c624f69c55cca3)\n   Doc-tests mako_cache\n",
+      "returncode": 0,
+      "running_test_counts": [
+        79,
+        1,
+        1,
+        1,
+        8,
+        5,
+        1,
+        1
+      ],
+      "timed_out": false,
+      "timeout_seconds": 1200
+    },
+    "workspace": null
+  },
+  "elapsed_seconds": 1880.083,
+  "mutations": [
+    {
+      "anchor_sha256": "d0883774d9a0de40a3427a643047cbf5ea300aaaed3d903d89bcbe11119a717f",
+      "breaks": "The native transaction installs the canonical final same-key value while asynchronous RocksDB replay materializes an empty value.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--test",
+          "native",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-pd4lrwnh",
+        "elapsed_seconds": 63.626,
+        "failed_test_lines": [],
+        "output_sha256": "3e755b6b82d1f67139a4c65a457f42bf707c3063268435fb85bed8cfd7250ba1",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling unicode-ident v1.0.24\n   Compiling quote v1.0.47\n   Compiling glob v0.3.4\n   Compiling libc v0.2.189\n   Compiling prettyplease v0.2.37\n   Compiling cfg-if v1.0.4\n   Compiling minimal-lexical v0.2.1\n   Compiling memchr v2.8.3\n   Compiling regex-syntax v0.8.11\n   Compiling bindgen v0.72.1\n   Compiling either v1.18.0\n   Compiling shlex v1.3.0\n   Compiling bitflags v2.13.1\n   Compiling rustc-hash v2.1.3\n   Compiling log v0.4.34\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-pd4lrwnh/mako-cache)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling clang-sys v1.9.1\n   Compiling nom v7.1.3\n   Compiling regex-automata v0.4.18\n   Compiling cexpr v0.6.0\n   Compiling syn v2.0.119\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 03s\n  Executable tests/native.rs (cargo-target-empty/debug/deps/native-0025d68ce7a5d9bc)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "every_same_key_mutation_pair_has_one_canonical_backend_result",
+      "executed_test_count": 1,
+      "expected_signature": "test every_same_key_mutation_pair_has_one_canonical_backend_result ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-pd4lrwnh",
+          "elapsed_seconds": 0.297,
+          "failed_test_lines": [],
+          "output_sha256": "70ece808ddf533ec4192cc793be9b4f4e551dca1e9d420bf5cbb4a87cce2e5c7",
+          "output_tail": ":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-pd4lrwnh/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-pd4lrwnh/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-pd4lrwnh\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "0edb629726ff9a1830498eb38489c503df4697d2a4aec25f3c50dbefb925e69b",
+      "name": "native-replay-drops-put-value",
+      "observed_signature": "test every_same_key_mutation_pair_has_one_canonical_backend_result ... FAILED",
+      "original_file_sha256": "f09df2cd3d52e496f135af1cde4df826fe9082f04d12434e001f311f10b7093b",
+      "path": "src/record.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "651cf7bb7431656c0d6cbe2397becae5bb21810edf3050cc6dc62d283c6e6fdd",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--test",
+          "native",
+          "every_same_key_mutation_pair_has_one_canonical_backend_result",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-pd4lrwnh",
+        "elapsed_seconds": 61.811,
+        "failed_test_lines": [
+          "test every_same_key_mutation_pair_has_one_canonical_backend_result ... FAILED"
+        ],
+        "output_sha256": "9e892382d7b98aafebf768f5254cb8e688953c9732f60665b04a03c0e8ee38b1",
+        "output_tail": "\nrunning 1 test\ntest every_same_key_mutation_pair_has_one_canonical_backend_result ... FAILED\n\nfailures:\n\nfailures:\n    every_same_key_mutation_pair_has_one_canonical_backend_result\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.01s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-pd4lrwnh/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 01s\n     Running tests/native.rs (cargo-target-empty/debug/deps/native-0025d68ce7a5d9bc)\n\nthread 'every_same_key_mutation_pair_has_one_canonical_backend_result' (852305) panicked at mako-cache/tests/native.rs:300:9:\nassertion `left == right` failed\n  left: Some([])\n right: Some([115, 101, 99, 111, 110, 100])\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --test native`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "20fdbd104c9fb454261bca666824724f05bab20adba2cc0308e1550992a1d051",
+      "breaks": "A second producer can enter a capacity-one queue before the first detached reservation is consumed or dropped.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-gvixozgx",
+        "elapsed_seconds": 131.073,
+        "failed_test_lines": [],
+        "output_sha256": "4da9d2eb5c93c9e5f26208fca2035f837ef7bf144082eb8511a290dc7265281e",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling quote v1.0.47\n   Compiling glob v0.3.4\n   Compiling unicode-ident v1.0.24\n   Compiling libc v0.2.189\n   Compiling prettyplease v0.2.37\n   Compiling memchr v2.8.3\n   Compiling minimal-lexical v0.2.1\n   Compiling regex-syntax v0.8.11\n   Compiling cfg-if v1.0.4\n   Compiling bindgen v0.72.1\n   Compiling either v1.18.0\n   Compiling rustc-hash v2.1.3\n   Compiling bitflags v2.13.1\n   Compiling log v0.4.34\n   Compiling shlex v1.3.0\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-gvixozgx/mako-cache)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling nom v7.1.3\n   Compiling clang-sys v1.9.1\n   Compiling regex-automata v0.4.18\n   Compiling cexpr v0.6.0\n   Compiling syn v2.0.119\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 11s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::detached_permit_backpressures_another_reserver_until_drop",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::detached_permit_backpressures_another_reserver_until_drop ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-gvixozgx",
+          "elapsed_seconds": 0.295,
+          "failed_test_lines": [],
+          "output_sha256": "c5e549c53ca3eaaff617be455f81128a820e9b480cb03fcc4349a81e15b51126",
+          "output_tail": ":///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-gvixozgx/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-gvixozgx/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-gvixozgx\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "af99c319e41c401c27f76fd48eb306887dc1c88e4b0878659b2f5c86ed547288",
+      "name": "early-detached-capacity-discharge",
+      "observed_signature": "test writeback::tests::detached_permit_backpressures_another_reserver_until_drop ... FAILED",
+      "original_file_sha256": "d4570019bf4e38e998475fd7e12d51d69392ff03c18d40c55a2030c7a0216151",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "01a2ed7441deac8252fda47451947ebe814c3fd1f453a9eb0250413809456ee4",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "writeback::tests::detached_permit_backpressures_another_reserver_until_drop",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-gvixozgx",
+        "elapsed_seconds": 61.282,
+        "failed_test_lines": [
+          "test writeback::tests::detached_permit_backpressures_another_reserver_until_drop ... FAILED"
+        ],
+        "output_sha256": "d61d3831e39a9d98073329ef6d4826a5dde64eee556303b4c78a040ef8e52da3",
+        "output_tail": "\nrunning 1 test\ntest writeback::tests::detached_permit_backpressures_another_reserver_until_drop ... FAILED\n\nfailures:\n\nfailures:\n    writeback::tests::detached_permit_backpressures_another_reserver_until_drop\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.05s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-gvixozgx/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 01s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n\nthread 'writeback::tests::detached_permit_backpressures_another_reserver_until_drop' (876463) panicked at mako-cache/src/writeback.rs:2949:9:\nassertion `left == right` failed\n  left: 0\n right: 1\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --lib`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "11d1d125d842e8b70fb02a793012bed18f0b08b7e8c1ee1034bed24678295352",
+      "breaks": "DetachedPermit::bind performs a heap round trip in the native post-validation critical section.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--test",
+          "hook_allocation",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-b3zlg4xo",
+        "elapsed_seconds": 81.888,
+        "failed_test_lines": [],
+        "output_sha256": "4551ac97f3d1bc14f663d95c5fa4d4687c929248bd506559e6fd758b698facb0",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling unicode-ident v1.0.24\n   Compiling glob v0.3.4\n   Compiling quote v1.0.47\n   Compiling prettyplease v0.2.37\n   Compiling libc v0.2.189\n   Compiling regex-syntax v0.8.11\n   Compiling cfg-if v1.0.4\n   Compiling memchr v2.8.3\n   Compiling minimal-lexical v0.2.1\n   Compiling bindgen v0.72.1\n   Compiling either v1.18.0\n   Compiling bitflags v2.13.1\n   Compiling log v0.4.34\n   Compiling rustc-hash v2.1.3\n   Compiling shlex v1.3.0\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-b3zlg4xo/mako-cache)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling clang-sys v1.9.1\n   Compiling nom v7.1.3\n   Compiling regex-automata v0.4.18\n   Compiling syn v2.0.119\n   Compiling cexpr v0.6.0\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 21s\n  Executable tests/hook_allocation.rs (cargo-target-empty/debug/deps/hook_allocation-34be056cd1c56c92)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "detached_bind_is_allocation_free_and_the_tripwire_is_live",
+      "executed_test_count": 1,
+      "expected_signature": "test detached_bind_is_allocation_free_and_the_tripwire_is_live ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-b3zlg4xo",
+          "elapsed_seconds": 0.264,
+          "failed_test_lines": [],
+          "output_sha256": "63d1f0e195dfb5c941e4aefb72d8ba493e009ef19108d123a408783e351256a9",
+          "output_tail": "rocks#0.1.0\",\"dependencies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-b3zlg4xo/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-b3zlg4xo/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-b3zlg4xo\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "2266a887052fa2ee4d2336031bc66a138c07bae47d8bc8fa61b12014765d77ea",
+      "name": "hook-time-allocation",
+      "observed_signature": "test detached_bind_is_allocation_free_and_the_tripwire_is_live ... FAILED",
+      "original_file_sha256": "d4570019bf4e38e998475fd7e12d51d69392ff03c18d40c55a2030c7a0216151",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "a13dbf83dafc730979d3cd4478b21b728f7b5ac587410b91f5c2dc295ac2f378",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--test",
+          "hook_allocation",
+          "detached_bind_is_allocation_free_and_the_tripwire_is_live",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-b3zlg4xo",
+        "elapsed_seconds": 60.599,
+        "failed_test_lines": [
+          "test detached_bind_is_allocation_free_and_the_tripwire_is_live ... FAILED"
+        ],
+        "output_sha256": "ba563c3163dbe515f461eaa23d5e02697dde86d4fd0eb27ae26b9c19b2806a02",
+        "output_tail": "\nrunning 1 test\ntest detached_bind_is_allocation_free_and_the_tripwire_is_live ... FAILED\n\nfailures:\n\nfailures:\n    detached_bind_is_allocation_free_and_the_tripwire_is_live\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-b3zlg4xo/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 00s\n     Running tests/hook_allocation.rs (cargo-target-empty/debug/deps/hook_allocation-34be056cd1c56c92)\n\nthread 'detached_bind_is_allocation_free_and_the_tripwire_is_live' (903626) panicked at mako-cache/tests/hook_allocation.rs:106:5:\nassertion `left == right` failed: DetachedPermit::bind allocated or freed memory while the native hook would hold locks\n  left: (1, 1)\n right: (0, 0)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --test hook_allocation`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "98221015887568c08b5f1ec6946e53b51f8176ed0d98c04dff4d5a8b9dfae4e7",
+      "breaks": "A validation loser advances last_bound and leaves a gap in the dense committed CacheSeq history.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-901r0l5z",
+        "elapsed_seconds": 67.61,
+        "failed_test_lines": [],
+        "output_sha256": "7ecc0dde57ca9b5696156e056be37519c1f45a4f58fe981f9c35268354c767a8",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling unicode-ident v1.0.24\n   Compiling quote v1.0.47\n   Compiling glob v0.3.4\n   Compiling libc v0.2.189\n   Compiling prettyplease v0.2.37\n   Compiling minimal-lexical v0.2.1\n   Compiling memchr v2.8.3\n   Compiling regex-syntax v0.8.11\n   Compiling cfg-if v1.0.4\n   Compiling bindgen v0.72.1\n   Compiling either v1.18.0\n   Compiling log v0.4.34\n   Compiling shlex v1.3.0\n   Compiling rustc-hash v2.1.3\n   Compiling bitflags v2.13.1\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-901r0l5z/mako-cache)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling nom v7.1.3\n   Compiling clang-sys v1.9.1\n   Compiling regex-automata v0.4.18\n   Compiling syn v2.0.119\n   Compiling cexpr v0.6.0\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 07s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-901r0l5z",
+          "elapsed_seconds": 0.323,
+          "failed_test_lines": [],
+          "output_sha256": "adf221ab33fc79b7a2d1e150e349bdbd7036a342aec6a6ef3d07111e6d0a6b9f",
+          "output_tail": "ndencies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-901r0l5z/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-901r0l5z/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-901r0l5z\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "376d945d0a8ad3825fa6305eba3b6494b9656ebee4a696e5d91b715c18a1bab6",
+      "name": "conflict-cancellation-slot",
+      "observed_signature": "test writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot ... FAILED",
+      "original_file_sha256": "d4570019bf4e38e998475fd7e12d51d69392ff03c18d40c55a2030c7a0216151",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "75fdfddc4cb5d62c9bf7fe718974c642f40e09f73d91f6f3921f65ccb8eb92d7",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-901r0l5z",
+        "elapsed_seconds": 63.491,
+        "failed_test_lines": [
+          "test writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot ... FAILED"
+        ],
+        "output_sha256": "9d431a00edc271dfd9160e285088af3ebcbf025da3154165666bcb40227a2b21",
+        "output_tail": "\nrunning 1 test\ntest writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot ... FAILED\n\nfailures:\n\nfailures:\n    writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.07s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-901r0l5z/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 03s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n\nthread 'writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot' (924875) panicked at mako-cache/src/writeback.rs:2167:9:\nassertion `left == right` failed: abort left no sequence gap\n  left: 11\n right: 10\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --lib`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "1407ddd783fb180dcab1fbfbe85e48fab82f5d0fd6cd1fbd0bdf5b2d9a3941dc",
+      "breaks": "A successful publish advances the acknowledged frontier but leaves the write-back consumer permanently blocked.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-jfbxo3bs",
+        "elapsed_seconds": 91.426,
+        "failed_test_lines": [],
+        "output_sha256": "53a61c94b03f7f997538dedf2180eabe24292280f6dab4c0e40357d64c124b17",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling quote v1.0.47\n   Compiling glob v0.3.4\n   Compiling unicode-ident v1.0.24\n   Compiling prettyplease v0.2.37\n   Compiling libc v0.2.189\n   Compiling cfg-if v1.0.4\n   Compiling memchr v2.8.3\n   Compiling minimal-lexical v0.2.1\n   Compiling regex-syntax v0.8.11\n   Compiling bindgen v0.72.1\n   Compiling either v1.18.0\n   Compiling rustc-hash v2.1.3\n   Compiling shlex v1.3.0\n   Compiling bitflags v2.13.1\n   Compiling log v0.4.34\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-jfbxo3bs/mako-cache)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling nom v7.1.3\n   Compiling clang-sys v1.9.1\n   Compiling regex-automata v0.4.18\n   Compiling syn v2.0.119\n   Compiling cexpr v0.6.0\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\nwarning: method `advance_acknowledged_prefix` is never used\n   --> mako-cache/src/writeback.rs:477:8\n    |\n449 | impl State {\n    | ---------- method in this implementation\n...\n477 |     fn advance_acknowledged_prefix(&mut self) {\n    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `mako-cache` (lib test) generated 1 warning\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 31s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-jfbxo3bs",
+          "elapsed_seconds": 0.345,
+          "failed_test_lines": [],
+          "output_sha256": "2671219a4e1732dc6196a2a4f2aa19cc539fb59a1697430ec472c61b58bd1de0",
+          "output_tail": "ependencies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-jfbxo3bs/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-jfbxo3bs/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-jfbxo3bs\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "51207e765ce7d93a88b35a03c0369e8d6bf68960f7836fb91ed0922ffd295aad",
+      "name": "missing-ready-publication",
+      "observed_signature": "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED",
+      "original_file_sha256": "d4570019bf4e38e998475fd7e12d51d69392ff03c18d40c55a2030c7a0216151",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "5dbc57696cec9bd04807cc2e4a69ccc859dfad93d6604a3f7b4704da92083c18",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-jfbxo3bs",
+        "elapsed_seconds": 66.307,
+        "failed_test_lines": [
+          "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED"
+        ],
+        "output_sha256": "da4db7a58503ecd80ad9a2c4c8254569f18b2d7918ae3e6ef1d7c08d122434e0",
+        "output_tail": "\nrunning 1 test\ntest writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED\n\nfailures:\n\nfailures:\n    writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.06s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-jfbxo3bs/mako-cache)\nwarning: method `advance_acknowledged_prefix` is never used\n   --> mako-cache/src/writeback.rs:477:8\n    |\n449 | impl State {\n    | ---------- method in this implementation\n...\n477 |     fn advance_acknowledged_prefix(&mut self) {\n    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `mako-cache` (lib test) generated 1 warning\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 06s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n\nthread 'writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit' (949618) panicked at mako-cache/src/writeback.rs:2599:13:\nassertion `left == right` failed\n  left: Prepared { pinned: false }\n right: Ready\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --lib`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "28dd3534675321cba6d84f3e4f319d0935dc7769dc550258c527b7b8e39584cc",
+      "breaks": "The consumer may observe Ready before native success and before the finalized record has been stored.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-nh5v11t6",
+        "elapsed_seconds": 67.525,
+        "failed_test_lines": [],
+        "output_sha256": "3a3a5b9431639030a86b2b16040048954536052f7fba9dd379d4092164c83e03",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling glob v0.3.4\n   Compiling quote v1.0.47\n   Compiling unicode-ident v1.0.24\n   Compiling prettyplease v0.2.37\n   Compiling libc v0.2.189\n   Compiling regex-syntax v0.8.11\n   Compiling minimal-lexical v0.2.1\n   Compiling memchr v2.8.3\n   Compiling cfg-if v1.0.4\n   Compiling bindgen v0.72.1\n   Compiling either v1.18.0\n   Compiling rustc-hash v2.1.3\n   Compiling shlex v1.3.0\n   Compiling log v0.4.34\n   Compiling bitflags v2.13.1\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-nh5v11t6/mako-cache)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling nom v7.1.3\n   Compiling clang-sys v1.9.1\n   Compiling regex-automata v0.4.18\n   Compiling syn v2.0.119\n   Compiling cexpr v0.6.0\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 07s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-nh5v11t6",
+          "elapsed_seconds": 0.326,
+          "failed_test_lines": [],
+          "output_sha256": "9aee65953c09e2ca0e3651e26e652d12f58b47a5d9adbc91d7c54e53573dd9ad",
+          "output_tail": "ncies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-nh5v11t6/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-nh5v11t6/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-nh5v11t6\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "b37520ad3a00f4f441e7aa5947ead5fedf6048336d757a577bd5e13406e799d1",
+      "name": "premature-ready-publication",
+      "observed_signature": "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED",
+      "original_file_sha256": "d4570019bf4e38e998475fd7e12d51d69392ff03c18d40c55a2030c7a0216151",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "842d72aa8d6d8c3ae7d9184b744e63015d84026cf22dd2956f861b77a950827a",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-nh5v11t6",
+        "elapsed_seconds": 86.427,
+        "failed_test_lines": [
+          "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED"
+        ],
+        "output_sha256": "c9e59d125e471e7b38fb0612ac02c8c65ad26bb2899e9a6481e7850a581d3985",
+        "output_tail": "\nrunning 1 test\ntest writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED\n\nfailures:\n\nfailures:\n    writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.05s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-nh5v11t6/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 26s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n\nthread 'writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit' (969303) panicked at mako-cache/src/writeback.rs:2587:13:\nassertion `left == right` failed\n  left: Ready\n right: Prepared { pinned: false }\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --lib`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "6994082f858b574217a46cca8ceda6e50785ec6f15cf4be304c9225e17fa6ee6",
+      "breaks": "Dropping a bound reservation neither finalizes its record nor pins the uncertain sequence, permitting unsafe progress.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ct0f16mo",
+        "elapsed_seconds": 66.89,
+        "failed_test_lines": [],
+        "output_sha256": "52110b2dcc9b089c17f82657bf8dcca1ff8f304f38d5b91c3e907022da4ffb2c",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling quote v1.0.47\n   Compiling glob v0.3.4\n   Compiling unicode-ident v1.0.24\n   Compiling prettyplease v0.2.37\n   Compiling libc v0.2.189\n   Compiling cfg-if v1.0.4\n   Compiling regex-syntax v0.8.11\n   Compiling memchr v2.8.3\n   Compiling minimal-lexical v0.2.1\n   Compiling either v1.18.0\n   Compiling bindgen v0.72.1\n   Compiling shlex v1.3.0\n   Compiling rustc-hash v2.1.3\n   Compiling log v0.4.34\n   Compiling bitflags v2.13.1\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ct0f16mo/mako-cache)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling clang-sys v1.9.1\n   Compiling nom v7.1.3\n   Compiling regex-automata v0.4.18\n   Compiling syn v2.0.119\n   Compiling cexpr v0.6.0\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 06s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ct0f16mo",
+          "elapsed_seconds": 0.33,
+          "failed_test_lines": [],
+          "output_sha256": "d65c99b18ffce2aa6bc2d8b68db1d4af046a5ebd62a56535fe7a7e4af77b3c17",
+          "output_tail": ",\"dependencies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ct0f16mo/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ct0f16mo/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ct0f16mo\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "ed90e5394f0bf52e98c52cb5d9c620533422192bd74c51b8eaaea5926fab4acb",
+      "name": "unpinned-unknown-outcome",
+      "observed_signature": "test writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set ... FAILED",
+      "original_file_sha256": "d4570019bf4e38e998475fd7e12d51d69392ff03c18d40c55a2030c7a0216151",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "2dbb675270d2e912d6a5f0e49a4871306a916e06430beadbf58ceb2d5fa51411",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ct0f16mo",
+        "elapsed_seconds": 61.028,
+        "failed_test_lines": [
+          "test writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set ... FAILED"
+        ],
+        "output_sha256": "7d7e4633aef51c8bf7d51f4acbb266eddf01a64fb5148e047e658c3e8a766ac5",
+        "output_tail": "\nrunning 1 test\ntest writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set ... FAILED\n\nfailures:\n\nfailures:\n    writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.05s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ct0f16mo/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 00s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n\nthread 'writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set' (985139) panicked at mako-cache/src/writeback.rs:2730:9:\nassertion failed: matches!(slot.state, SlotState::Prepared { pinned: true })\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --lib`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "3bd182ec1c7d606ab3d96c7fb4621cfd64235833fc046ee64eddf67867c720f2",
+      "breaks": "Recovery exposes a native cache missing a committed suffix while claiming the complete backend frontier.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-partial-replay-j4c1sy5l",
+        "elapsed_seconds": 67.611,
+        "failed_test_lines": [],
+        "output_sha256": "6dee171ae1cdcb88ff5e2ebf32b6673e23b0ae6d82cbd21d5b848c0087223664",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling glob v0.3.4\n   Compiling quote v1.0.47\n   Compiling unicode-ident v1.0.24\n   Compiling prettyplease v0.2.37\n   Compiling libc v0.2.189\n   Compiling cfg-if v1.0.4\n   Compiling regex-syntax v0.8.11\n   Compiling memchr v2.8.3\n   Compiling minimal-lexical v0.2.1\n   Compiling either v1.18.0\n   Compiling bindgen v0.72.1\n   Compiling rustc-hash v2.1.3\n   Compiling log v0.4.34\n   Compiling bitflags v2.13.1\n   Compiling shlex v1.3.0\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-partial-replay-j4c1sy5l/mako-cache)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling nom v7.1.3\n   Compiling clang-sys v1.9.1\n   Compiling regex-automata v0.4.18\n   Compiling syn v2.0.119\n   Compiling cexpr v0.6.0\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 07s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "tests::recovery_replays_each_cache_sequence_exactly_once_in_order",
+      "executed_test_count": 1,
+      "expected_signature": "test tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-partial-replay-j4c1sy5l",
+          "elapsed_seconds": 0.293,
+          "failed_test_lines": [],
+          "output_sha256": "5f8cfd45026f15d49f85d1ffe493a1482b3f47ecf7da3740a65da00906fdfb40",
+          "output_tail": "-rocks/crates/mrx-rocks#0.1.0\",\"dependencies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-partial-replay-j4c1sy5l/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-partial-replay-j4c1sy5l/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-partial-replay-j4c1sy5l\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "e8c50fb46c13716dc664f9120d0e55fde6eb620730df95c1bd5ec472b77a88b3",
+      "name": "partial-replay",
+      "observed_signature": "test tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED",
+      "original_file_sha256": "cdcb6b530b5429310ab91af72c22b09c786c3e22b08aaf2271c4b4baadab66f7",
+      "path": "src/lib.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "b0f1e00293a1cb2bcff8b935b83e2ab26201ac30f9d689dc60e426e6fa545b7b",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "tests::recovery_replays_each_cache_sequence_exactly_once_in_order",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-partial-replay-j4c1sy5l",
+        "elapsed_seconds": 63.784,
+        "failed_test_lines": [
+          "test tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED"
+        ],
+        "output_sha256": "cd1819d2fca4f47179312ca4d4faae184773c8216886858214357f40887aaf19",
+        "output_tail": "\nrunning 1 test\ntest tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED\n\nfailures:\n\nfailures:\n    tests::recovery_replays_each_cache_sequence_exactly_once_in_order\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.05s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-partial-replay-j4c1sy5l/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 03s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n\nthread 'tests::recovery_replays_each_cache_sequence_exactly_once_in_order' (1002741) panicked at mako-cache/src/lib.rs:1374:9:\nassertion `left == right` failed: recovery must replay each dense CacheSeq exactly once and in order\n  left: [1, 2]\n right: [1, 2, 3]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --lib`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "3bd182ec1c7d606ab3d96c7fb4621cfd64235833fc046ee64eddf67867c720f2",
+      "breaks": "Recovery violates CacheSeq serialization order and can materialize an older value or an impossible delete.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-reordered-replay-r1wn18oj",
+        "elapsed_seconds": 68.288,
+        "failed_test_lines": [],
+        "output_sha256": "3177e520d56ffd5320523a1ab9658effb79d3643d211294a2a0726a2453de21f",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling glob v0.3.4\n   Compiling unicode-ident v1.0.24\n   Compiling quote v1.0.47\n   Compiling libc v0.2.189\n   Compiling prettyplease v0.2.37\n   Compiling regex-syntax v0.8.11\n   Compiling minimal-lexical v0.2.1\n   Compiling memchr v2.8.3\n   Compiling cfg-if v1.0.4\n   Compiling bindgen v0.72.1\n   Compiling either v1.18.0\n   Compiling log v0.4.34\n   Compiling shlex v1.3.0\n   Compiling bitflags v2.13.1\n   Compiling rustc-hash v2.1.3\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-reordered-replay-r1wn18oj/mako-cache)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling clang-sys v1.9.1\n   Compiling nom v7.1.3\n   Compiling regex-automata v0.4.18\n   Compiling cexpr v0.6.0\n   Compiling syn v2.0.119\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 08s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "tests::recovery_replays_each_cache_sequence_exactly_once_in_order",
+      "executed_test_count": 1,
+      "expected_signature": "test tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-reordered-replay-r1wn18oj",
+          "elapsed_seconds": 0.278,
+          "failed_test_lines": [],
+          "output_sha256": "6d784827564e36d0ace69a7b0a781264b4e3e352a394d975d61906801c385ea1",
+          "output_tail": "/crates/mrx-rocks#0.1.0\",\"dependencies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-reordered-replay-r1wn18oj/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-reordered-replay-r1wn18oj/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-reordered-replay-r1wn18oj\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "410221a11cfae9491f96e16e99d198ecc19a1cd0feb37a993a07b750d2a383cf",
+      "name": "reordered-replay",
+      "observed_signature": "test tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED",
+      "original_file_sha256": "cdcb6b530b5429310ab91af72c22b09c786c3e22b08aaf2271c4b4baadab66f7",
+      "path": "src/lib.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "9f0c027cfdb5b62f08826564b9a40f3eb74699cd5032fc47ab227e003180f776",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "tests::recovery_replays_each_cache_sequence_exactly_once_in_order",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-reordered-replay-r1wn18oj",
+        "elapsed_seconds": 58.756,
+        "failed_test_lines": [
+          "test tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED"
+        ],
+        "output_sha256": "06b56ed56e53d1ecc61d1c373bc9db0c5fba0179d92ac69476b8d2463b0b09cd",
+        "output_tail": "\nrunning 1 test\ntest tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED\n\nfailures:\n\nfailures:\n    tests::recovery_replays_each_cache_sequence_exactly_once_in_order\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.05s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-reordered-replay-r1wn18oj/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 58.58s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n\nthread 'tests::recovery_replays_each_cache_sequence_exactly_once_in_order' (1021601) panicked at mako-cache/src/lib.rs:1373:14:\nrecover audited history: RecoveryDiverged\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --lib`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "3bd182ec1c7d606ab3d96c7fb4621cfd64235833fc046ee64eddf67867c720f2",
+      "breaks": "Recovery applies one committed transaction twice and can overwrite the correct final application state.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-duplicate-replay-vw8n1kra",
+        "elapsed_seconds": 69.748,
+        "failed_test_lines": [],
+        "output_sha256": "93104488d952a71a221b7128be080eafea2a6bfb5e2b120852c0eb42239d1de6",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling unicode-ident v1.0.24\n   Compiling quote v1.0.47\n   Compiling glob v0.3.4\n   Compiling libc v0.2.189\n   Compiling prettyplease v0.2.37\n   Compiling memchr v2.8.3\n   Compiling minimal-lexical v0.2.1\n   Compiling regex-syntax v0.8.11\n   Compiling cfg-if v1.0.4\n   Compiling either v1.18.0\n   Compiling bindgen v0.72.1\n   Compiling log v0.4.34\n   Compiling shlex v1.3.0\n   Compiling bitflags v2.13.1\n   Compiling rustc-hash v2.1.3\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-duplicate-replay-vw8n1kra/mako-cache)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling nom v7.1.3\n   Compiling clang-sys v1.9.1\n   Compiling regex-automata v0.4.18\n   Compiling cexpr v0.6.0\n   Compiling syn v2.0.119\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 09s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "tests::recovery_replays_each_cache_sequence_exactly_once_in_order",
+      "executed_test_count": 1,
+      "expected_signature": "test tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-duplicate-replay-vw8n1kra",
+          "elapsed_seconds": 0.276,
+          "failed_test_lines": [],
+          "output_sha256": "9db88e685881eea7ed92c512c470f6f126f5d6304e6c37dcf13a0f0dfc42d8e2",
+          "output_tail": "/crates/mrx-rocks#0.1.0\",\"dependencies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-duplicate-replay-vw8n1kra/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-duplicate-replay-vw8n1kra/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-duplicate-replay-vw8n1kra\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "e49733ef031f4791327ae0164de12c6b2d20b8784c8fa9943269a54ba5186db4",
+      "name": "duplicate-replay",
+      "observed_signature": "test tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED",
+      "original_file_sha256": "cdcb6b530b5429310ab91af72c22b09c786c3e22b08aaf2271c4b4baadab66f7",
+      "path": "src/lib.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "a864e6575085c7630a38adbf3662571a728554cfb7f1892083d6f7742f87068c",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "tests::recovery_replays_each_cache_sequence_exactly_once_in_order",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-duplicate-replay-vw8n1kra",
+        "elapsed_seconds": 60.995,
+        "failed_test_lines": [
+          "test tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED"
+        ],
+        "output_sha256": "b79f5bf7fdd5d445ba103731a08b083e0ed4c63bd159395e6ec562479e1ee0cb",
+        "output_tail": "\nrunning 1 test\ntest tests::recovery_replays_each_cache_sequence_exactly_once_in_order ... FAILED\n\nfailures:\n\nfailures:\n    tests::recovery_replays_each_cache_sequence_exactly_once_in_order\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.05s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-duplicate-replay-vw8n1kra/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 00s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n\nthread 'tests::recovery_replays_each_cache_sequence_exactly_once_in_order' (1049181) panicked at mako-cache/src/lib.rs:1374:9:\nassertion `left == right` failed: recovery must replay each dense CacheSeq exactly once and in order\n  left: [1, 2, 3, 1]\n right: [1, 2, 3]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --lib`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "15e1d49b704a8993a1c925967394761cee909c4f6c5838d98d1d4222d10d0382",
+      "breaks": "The applied frontier no longer agrees with the exact Mako timestamp encoded by native serialization.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--test",
+          "timestamp",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-aj3u5lse",
+        "elapsed_seconds": 64.587,
+        "failed_test_lines": [],
+        "output_sha256": "f42668f2f7df1c05f684f37a9493af1925603e96a87c2033beab26bad68b1525",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling glob v0.3.4\n   Compiling quote v1.0.47\n   Compiling unicode-ident v1.0.24\n   Compiling libc v0.2.189\n   Compiling prettyplease v0.2.37\n   Compiling cfg-if v1.0.4\n   Compiling memchr v2.8.3\n   Compiling regex-syntax v0.8.11\n   Compiling minimal-lexical v0.2.1\n   Compiling bindgen v0.72.1\n   Compiling either v1.18.0\n   Compiling rustc-hash v2.1.3\n   Compiling bitflags v2.13.1\n   Compiling log v0.4.34\n   Compiling shlex v1.3.0\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-aj3u5lse/mako-cache)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling clang-sys v1.9.1\n   Compiling nom v7.1.3\n   Compiling regex-automata v0.4.18\n   Compiling syn v2.0.119\n   Compiling cexpr v0.6.0\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 04s\n  Executable tests/timestamp.rs (cargo-target-empty/debug/deps/timestamp-27c624f69c55cca3)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "native_timestamp_matches_the_persisted_record_and_applied_frontier",
+      "executed_test_count": 1,
+      "expected_signature": "test native_timestamp_matches_the_persisted_record_and_applied_frontier ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-aj3u5lse",
+          "elapsed_seconds": 0.286,
+          "failed_test_lines": [],
+          "output_sha256": "7f0c08a33e982576e3c590efcbeec2d46649ac87222309bca1639e9f74a85654",
+          "output_tail": "rocks#0.1.0\",\"dependencies\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-aj3u5lse/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-aj3u5lse/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-aj3u5lse\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "24100270cd4c87cf60c76fd64e3f4af7a1d17369b7333d93a78ae16b8b076fda",
+      "name": "wrong-mako-timestamp",
+      "observed_signature": "test native_timestamp_matches_the_persisted_record_and_applied_frontier ... FAILED",
+      "original_file_sha256": "d4570019bf4e38e998475fd7e12d51d69392ff03c18d40c55a2030c7a0216151",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "06a3bc6f5b7e185829748ce62f5460e741de97163c732784484d25326dfbbb58",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--test",
+          "timestamp",
+          "native_timestamp_matches_the_persisted_record_and_applied_frontier",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-aj3u5lse",
+        "elapsed_seconds": 66.269,
+        "failed_test_lines": [
+          "test native_timestamp_matches_the_persisted_record_and_applied_frontier ... FAILED"
+        ],
+        "output_sha256": "0e9dfe381965404f32843e9065c9d00dd7f57d23ed90e8129c01b544e66993a8",
+        "output_tail": "\nrunning 1 test\ntest native_timestamp_matches_the_persisted_record_and_applied_frontier ... FAILED\n\nfailures:\n\nfailures:\n    native_timestamp_matches_the_persisted_record_and_applied_frontier\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-aj3u5lse/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 06s\n     Running tests/timestamp.rs (cargo-target-empty/debug/deps/timestamp-27c624f69c55cca3)\n\nthread 'native_timestamp_matches_the_persisted_record_and_applied_frontier' (1065014) panicked at mako-cache/tests/timestamp.rs:72:5:\nassertion `left == right` failed: the applied frontier must name the exact persisted record timestamp\n  left: 2\n right: 1\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --test timestamp`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "b4ebbd5d9c7f81332a4df1623ea159ff1fee03a17b1e8b4d495f84be466d0a33",
+      "breaks": "A post-recovery native commit can reuse or precede a timestamp in the recovered backend history.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-5i5uzp5_",
+        "elapsed_seconds": 64.231,
+        "failed_test_lines": [],
+        "output_sha256": "70cbd73f88349aa46302eabe24a48db4bda1424bd98623f820a47532c9f31129",
+        "output_tail": "   Compiling proc-macro2 v1.0.107\n   Compiling glob v0.3.4\n   Compiling unicode-ident v1.0.24\n   Compiling quote v1.0.47\n   Compiling libc v0.2.189\n   Compiling prettyplease v0.2.37\n   Compiling cfg-if v1.0.4\n   Compiling memchr v2.8.3\n   Compiling minimal-lexical v0.2.1\n   Compiling regex-syntax v0.8.11\n   Compiling either v1.18.0\n   Compiling bindgen v0.72.1\n   Compiling bitflags v2.13.1\n   Compiling log v0.4.34\n   Compiling rustc-hash v2.1.3\n   Compiling shlex v1.3.0\n   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks)\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-5i5uzp5_/mako-cache)\n   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core)\n   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)\n   Compiling libloading v0.8.9\n   Compiling itertools v0.13.0\n   Compiling nom v7.1.3\n   Compiling clang-sys v1.9.1\n   Compiling regex-automata v0.4.18\n   Compiling syn v2.0.119\n   Compiling cexpr v0.6.0\n   Compiling regex v1.13.1\n   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local-sys)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 04s\n  Executable unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "tests::recovery_advances_mako_timestamp_past_the_recovered_maximum",
+      "executed_test_count": 1,
+      "expected_signature": "test tests::recovery_advances_mako_timestamp_past_the_recovered_maximum ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "eb1dfab63184e5f5073eb5055be0770b46070d9fb68a8fc4734d0141b8963294",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-5i5uzp5_",
+          "elapsed_seconds": 0.311,
+          "failed_test_lines": [],
+          "output_sha256": "c58767d312803424fe2322a3af6a5275472bbe4472e819b0ef9bcbb7a491dbb5",
+          "output_tail": "es\":[\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\"],\"deps\":[{\"name\":\"mrx_core\",\"pkg\":\"path+file:///home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core#0.1.0\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"test-hooks\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#nom@7.1.3\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\"],\"deps\":[{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"minimal_lexical\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#minimal-lexical@0.2.1\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#prettyplease@0.2.37\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"syn\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"verbatim\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"default\",\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"proc-macro\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_automata\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\"],\"deps\":[{\"name\":\"aho_corasick\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"memchr\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"regex_syntax\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"alloc\",\"meta\",\"nfa-pikevm\",\"nfa-thompson\",\"std\",\"syntax\",\"unicode-perl\",\"unicode-word-boundary\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11\",\"dependencies\":[],\"deps\":[],\"features\":[\"std\",\"unicode-perl\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#shlex@1.3.0\",\"dependencies\":[],\"deps\":[],\"features\":[\"default\",\"std\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119\",\"dependencies\":[\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\"],\"deps\":[{\"name\":\"proc_macro2\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"quote\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]},{\"name\":\"unicode_ident\",\"pkg\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dep_kinds\":[{\"kind\":null,\"target\":null}]}],\"features\":[\"clone-impls\",\"default\",\"derive\",\"extra-traits\",\"full\",\"parsing\",\"printing\",\"proc-macro\",\"visit-mut\"]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24\",\"dependencies\":[],\"deps\":[],\"features\":[]},{\"id\":\"registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1\",\"dependencies\":[],\"deps\":[],\"features\":[]}],\"root\":null},\"target_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-5i5uzp5_/cargo-target-empty\",\"build_directory\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-5i5uzp5_/cargo-target-empty\",\"version\":1,\"workspace_root\":\"/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-5i5uzp5_\",\"metadata\":null}\n",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "b6c4909fbf34a9042b8370bd18fadd2c4cfde66d4e3a4380ad8dbcd955ddbbd0",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "ff5badb9e693ebbff9193f6e2005efe0ececc262d7d8e10055a047a3c3371034",
+      "name": "missing-recovery-clock-floor",
+      "observed_signature": "test tests::recovery_advances_mako_timestamp_past_the_recovered_maximum ... FAILED",
+      "original_file_sha256": "cdcb6b530b5429310ab91af72c22b09c786c3e22b08aaf2271c4b4baadab66f7",
+      "path": "src/lib.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-local",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "221e44deb8180edb1425c85a19e1f2df512b53638482b44e25fa8ab7ff2125b3",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--features",
+          "test-support",
+          "--lib",
+          "tests::recovery_advances_mako_timestamp_past_the_recovered_maximum",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-5i5uzp5_",
+        "elapsed_seconds": 62.868,
+        "failed_test_lines": [
+          "test tests::recovery_advances_mako_timestamp_past_the_recovered_maximum ... FAILED"
+        ],
+        "output_sha256": "8464c6b41bf8a6dc515cb37e3919ce133fa646112d106619095fb64cc169bac0",
+        "output_tail": "\nrunning 1 test\ntest tests::recovery_advances_mako_timestamp_past_the_recovered_maximum ... FAILED\n\nfailures:\n\nfailures:\n    tests::recovery_advances_mako_timestamp_past_the_recovered_maximum\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.06s\n\n   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)\n   Compiling mako-cache v0.1.0 (/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-5i5uzp5_/mako-cache)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 02s\n     Running unittests src/lib.rs (cargo-target-empty/debug/deps/mako_cache-62b55afbf649dbbe)\n\nthread 'tests::recovery_advances_mako_timestamp_past_the_recovered_maximum' (1078893) panicked at mako-cache/src/lib.rs:1536:9:\nassertion failed: record.mako_timestamp().get() > RECOVERED_TIMESTAMP\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p mako-cache --lib`\n",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    }
+  ],
+  "native_profile": {
+    "build_dir": "/var/tmp/mako-thin-hooks-cmake434-20260829-shuai",
+    "hook_archive_required": true
+  },
+  "original_crate": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-cache",
+  "schema": "mako-cache-phase1f-mutations-v1",
+  "scope": "applied-to-Rocks; asynchronous and not a Rocks WAL durability claim",
+  "score": {
+    "harness_errors": 0,
+    "killed": 12,
+    "survived": 0,
+    "total": 12
+  },
+  "selected": [
+    "native-replay-drops-put-value",
+    "early-detached-capacity-discharge",
+    "hook-time-allocation",
+    "conflict-cancellation-slot",
+    "missing-ready-publication",
+    "premature-ready-publication",
+    "unpinned-unknown-outcome",
+    "partial-replay",
+    "reordered-replay",
+    "duplicate-replay",
+    "wrong-mako-timestamp",
+    "missing-recovery-clock-floor"
+  ],
+  "source_integrity": {
+    "after_tree_sha256": "a285858ba70deba6f0fffa5661e66e6c3fcf8366234dd47a4428916188eb229c",
+    "before_tree_sha256": "a285858ba70deba6f0fffa5661e66e6c3fcf8366234dd47a4428916188eb229c",
+    "changed_paths": [],
+    "file_count": 16,
+    "file_sha256": {
+      "Cargo.toml": "78929aa5497c55efea53e00f2fb1fb3e5c6d0316abf39eebabceaf4ffbbf9b06",
+      "build.rs": "480104a85d2dd55a2c7f663bb173219e7f7da1cec76b75f3e8eb5ef614860e27",
+      "src/application_history_tests.rs": "c8b5d241fa17c7241462cbc957e2ab2cf471e08319e8a1ee5062e1e3f0f0e735",
+      "src/crash_tests.rs": "b0fad4b9906a4b5061d08e6251a69bb06824039942275954bf0dc1edae6b9011",
+      "src/failpoint.rs": "f507cc18f48dc765ddeefdad221cd59420232ec41e04fe8db066ac5c82ccb216",
+      "src/lib.rs": "cdcb6b530b5429310ab91af72c22b09c786c3e22b08aaf2271c4b4baadab66f7",
+      "src/milestone1_acceptance_tests.rs": "71739a397e39ab34841cfedc7862db65b08c3faa573d7cdc385497f113e8ca3e",
+      "src/record.rs": "f09df2cd3d52e496f135af1cde4df826fe9082f04d12434e001f311f10b7093b",
+      "src/runtime.rs": "021a7b7e9b6d5cd9d65ca3c289c5f300538ca30366cdc5f12a3328bdcbaa9381",
+      "src/test_support.rs": "8c8235dfd412f91bf970ca980c249f5a9bf2b39ab29ab9905bf3e52df682a37d",
+      "src/writeback.rs": "d4570019bf4e38e998475fd7e12d51d69392ff03c18d40c55a2030c7a0216151",
+      "tests/cleanup.rs": "cae354f2034a67f70f64b07405bf82fa840500af32242849508158fbc904a52a",
+      "tests/hook_allocation.rs": "c40b5dc116d6f34321ebe5977ffad417fd6737e70fac661aaaddee74ac523580",
+      "tests/native.rs": "b379da2d37189b6b2e8b52ba951f9bfc0324681185ea8b5f3cee9bbf4f455efb",
+      "tests/rocks.rs": "daff9bb1cdad00cadd6ef014610d5422ff200f9e28b0a29390245b69db9aa9eb",
+      "tests/timestamp.rs": "d847fc089824756e0a726d87b0323df84c0cb1e7a077bc7b334e43e212e1d530"
+    },
+    "unchanged": true
+  },
+  "started_utc": "2026-08-29T07:24:40Z",
+  "status": "all_killed",
+  "temp_root": "/home/users/shuai/.cache/mako-cache-mutations"
+}

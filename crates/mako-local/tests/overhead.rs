@@ -42,13 +42,18 @@ const MINIMUM_HIGH_CONFLICT_RATE: f64 = 0.01;
 // throughput SLA. Every low-contention configuration first takes the median
 // of seven samples; the gate checks each ratio plus per-workload median/max.
 const ABI_OVER_DIRECT_SANITY_CEILING: f64 = 6.0;
+const FAST_OVER_DIRECT_SANITY_CEILING: f64 = 6.0;
 const SAFE_OVER_ABI_SANITY_CEILING: f64 = 6.0;
+const TRUSTED_OVER_FAST_SANITY_CEILING: f64 = 6.0;
+const TRUSTED_OVER_DIRECT_SANITY_CEILING: f64 = 6.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Surface {
     Direct,
     Abi,
+    Fast,
     Safe,
+    Trusted,
 }
 
 impl Surface {
@@ -56,7 +61,9 @@ impl Surface {
         match self {
             Self::Direct => "direct",
             Self::Abi => "abi",
+            Self::Fast => "fast",
             Self::Safe => "safe",
+            Self::Trusted => "trusted",
         }
     }
 
@@ -64,7 +71,9 @@ impl Surface {
         match value {
             "direct" => Ok(Self::Direct),
             "abi" => Ok(Self::Abi),
+            "fast" => Ok(Self::Fast),
             "safe" => Ok(Self::Safe),
+            "trusted" => Ok(Self::Trusted),
             _ => Err(format!("unknown benchmark surface {value:?}")),
         }
     }
@@ -267,8 +276,14 @@ fn run_attempt(
     worker: usize,
     successful_transaction: u64,
     collision_barrier: Option<&Barrier>,
+    trusted: bool,
 ) -> Result<Attempt, String> {
-    let mut transaction = db.transaction().map_err(|error| error.to_string())?;
+    let mut transaction = if trusted {
+        db.trusted_transaction(table)
+    } else {
+        db.transaction()
+    }
+    .map_err(|error| error.to_string())?;
     let mut logical_operations = 0;
     for item in 0..configuration.transaction_size {
         let key = key_bytes(selected_key(
@@ -325,6 +340,7 @@ fn run_batch(
     worker: usize,
     target_commits: u64,
     collision_barrier: Option<&Barrier>,
+    trusted: bool,
 ) -> Result<BatchStats, String> {
     let mut stats = BatchStats::default();
     let retry_limit = (target_commits + 1).max(target_commits * RETRY_LIMIT_MULTIPLIER);
@@ -345,6 +361,7 @@ fn run_batch(
             worker,
             stats.commits,
             synchronized_collision,
+            trusted,
         )? {
             Attempt::Committed { logical_operations } => {
                 stats.commits += 1;
@@ -365,6 +382,7 @@ fn run_concurrent(
     table_name: &[u8],
     table_id: u64,
     configuration: Configuration,
+    trusted: bool,
 ) -> Result<Vec<(Duration, BatchStats)>, String> {
     let phases = 1 + REPETITIONS;
     let barrier = Arc::new(Barrier::new(WORKERS + 1));
@@ -383,7 +401,7 @@ fn run_concurrent(
             let mut results = vec![BatchStats::default(); phases];
             let mut failure = table.as_ref().err().cloned();
 
-            for phase in 0..phases {
+            for (phase, phase_result) in results.iter_mut().enumerate() {
                 barrier.wait();
                 if failure.is_none() {
                     let result = run_batch(
@@ -395,9 +413,10 @@ fn run_concurrent(
                         (configuration.contention == Contention::High
                             && configuration.workload != Workload::Read)
                             .then_some(collision_barrier.as_ref()),
+                        trusted,
                     );
                     match result {
-                        Ok(stats) => results[phase] = stats,
+                        Ok(stats) => *phase_result = stats,
                         Err(error) => failure = Some(error),
                     }
                 }
@@ -489,6 +508,7 @@ fn validate_table(
 
 fn emit_sample(
     output: &mut String,
+    surface: Surface,
     configuration: Configuration,
     index: usize,
     duration: Duration,
@@ -497,7 +517,8 @@ fn emit_sample(
 ) {
     writeln!(
         output,
-        "sample mode safe workload {} size {} contention {} index {} duration_ns {} commits {} conflicts {} logical_ops {} validated_keys {} final_sum {}",
+        "sample mode {} workload {} size {} contention {} index {} duration_ns {} commits {} conflicts {} logical_ops {} validated_keys {} final_sum {}",
+        surface.name(),
         configuration.workload.name(),
         configuration.transaction_size,
         configuration.contention.name(),
@@ -512,13 +533,21 @@ fn emit_sample(
     .expect("writing to String cannot fail");
 }
 
-fn run_safe_surface() -> Result<String, String> {
+fn run_safe_surface(surface: Surface) -> Result<String, String> {
+    if !matches!(surface, Surface::Safe | Surface::Trusted) {
+        return Err(format!(
+            "Rust benchmark role does not support surface {}",
+            surface.name()
+        ));
+    }
+    let trusted = surface == Surface::Trusted;
     let db = Arc::new(LocalDb::open().map_err(|error| error.to_string())?);
     let mut output = String::new();
     writeln!(&mut output, "{PROTOCOL}").unwrap();
     writeln!(
         &mut output,
-        "meta mode safe workers {WORKERS} warmup_key_touches {WARMUP_KEY_TOUCHES} sample_key_touches {SAMPLE_KEY_TOUCHES} repetitions {REPETITIONS} lifetime_worker_ids {LIFETIME_WORKER_IDS}"
+        "meta mode {} workers {WORKERS} warmup_key_touches {WARMUP_KEY_TOUCHES} sample_key_touches {SAMPLE_KEY_TOUCHES} repetitions {REPETITIONS} lifetime_worker_ids {LIFETIME_WORKER_IDS}",
+        surface.name(),
     )
     .unwrap();
 
@@ -529,11 +558,12 @@ fn run_safe_surface() -> Result<String, String> {
             .open_table(&table_name, table_id)
             .map_err(|error| error.to_string())?;
         seed_table(&db, &table, key_count(configuration))?;
-        let samples = run_concurrent(&db, &table_name, table_id, configuration)?;
+        let samples = run_concurrent(&db, &table_name, table_id, configuration, trusted)?;
         let final_sum = validate_table(&db, &table, configuration)?;
         for (index, (duration, stats)) in samples.into_iter().enumerate() {
             emit_sample(
                 &mut output,
+                surface,
                 configuration,
                 index,
                 duration,
@@ -542,7 +572,7 @@ fn run_safe_surface() -> Result<String, String> {
             );
         }
     }
-    writeln!(&mut output, "end mode safe").unwrap();
+    writeln!(&mut output, "end mode {}", surface.name()).unwrap();
     Ok(output)
 }
 
@@ -916,8 +946,14 @@ fn run_driver(driver: &Path, surface: Surface) -> Result<String, String> {
     )
 }
 
-fn run_safe_child(directory: &Path) -> Result<String, String> {
-    let output_path = directory.join("safe.txt");
+fn run_safe_child(directory: &Path, surface: Surface) -> Result<String, String> {
+    if !matches!(surface, Surface::Safe | Surface::Trusted) {
+        return Err(format!(
+            "cannot run {} through the Rust benchmark role",
+            surface.name()
+        ));
+    }
+    let output_path = directory.join(format!("{}.txt", surface.name()));
     let executable = std::env::current_exe()
         .map_err(|error| format!("cannot locate benchmark test executable: {error}"))?;
     let mut command = Command::new(executable);
@@ -925,19 +961,20 @@ fn run_safe_child(directory: &Path) -> Result<String, String> {
         .arg("--exact")
         .arg("overhead_safe_role")
         .arg("--nocapture")
-        .env(SAFE_ROLE_ENV, "1")
+        .env(SAFE_ROLE_ENV, surface.name())
         .env(SAFE_OUTPUT_ENV, &output_path);
-    let child = run_child(command, "safe Rust benchmark")?;
+    let label = format!("{} Rust benchmark", surface.name());
+    let child = run_child(command, &label)?;
     if !child.status.success() {
         return Err(format!(
-            "safe Rust benchmark exited with {}\nstdout:\n{}\nstderr:\n{}",
+            "{label} exited with {}\nstdout:\n{}\nstderr:\n{}",
             child.status,
             String::from_utf8_lossy(&child.stdout),
             String::from_utf8_lossy(&child.stderr)
         ));
     }
     fs::read_to_string(&output_path)
-        .map_err(|error| format!("cannot read safe benchmark output {output_path:?}: {error}"))
+        .map_err(|error| format!("cannot read {label} output {output_path:?}: {error}"))
 }
 
 fn median_u64(mut values: Vec<u64>) -> f64 {
@@ -964,8 +1001,19 @@ fn median_f64(mut values: Vec<f64>) -> f64 {
 
 fn calculate_wrapper_tax(runs: &[ParsedRun]) -> Result<String, String> {
     let observed_order: Vec<_> = runs.iter().map(|run| run.surface).collect();
-    if observed_order != [Surface::Direct, Surface::Abi, Surface::Safe] {
-        return Err("benchmark surfaces must run in fixed direct -> ABI -> safe order".to_owned());
+    if observed_order
+        != [
+            Surface::Direct,
+            Surface::Abi,
+            Surface::Fast,
+            Surface::Safe,
+            Surface::Trusted,
+        ]
+    {
+        return Err(
+            "benchmark surfaces must run in fixed direct -> ABI -> fast -> safe -> trusted order"
+                .to_owned(),
+        );
     }
 
     let mut medians = BTreeMap::new();
@@ -993,7 +1041,7 @@ fn calculate_wrapper_tax(runs: &[ParsedRun]) -> Result<String, String> {
         .filter(|configuration| configuration.contention == Contention::Low)
         .collect();
     let mut summary = format!(
-        "mako-local-overhead-method-v1 surface_order direct_then_abi_then_safe process_isolation one_process_per_surface lifetime_worker_ids_per_surface {LIFETIME_WORKER_IDS} worker_id_scope bounded_matrix_not_fixed_worker_gate budget_kind enforced_opt_in_advisory_sanity_ceiling_not_release_sla\n"
+        "mako-local-overhead-method-v1 surface_order direct_then_abi_then_fast_then_safe_then_trusted process_isolation one_process_per_surface lifetime_worker_ids_per_surface {LIFETIME_WORKER_IDS} worker_id_scope bounded_matrix_not_fixed_worker_gate budget_kind enforced_opt_in_advisory_sanity_ceiling_not_release_sla\n"
     );
 
     for run in runs {
@@ -1024,7 +1072,22 @@ fn calculate_wrapper_tax(runs: &[ParsedRun]) -> Result<String, String> {
             Surface::Direct,
             ABI_OVER_DIRECT_SANITY_CEILING,
         ),
+        (
+            Surface::Fast,
+            Surface::Direct,
+            FAST_OVER_DIRECT_SANITY_CEILING,
+        ),
         (Surface::Safe, Surface::Abi, SAFE_OVER_ABI_SANITY_CEILING),
+        (
+            Surface::Trusted,
+            Surface::Fast,
+            TRUSTED_OVER_FAST_SANITY_CEILING,
+        ),
+        (
+            Surface::Trusted,
+            Surface::Direct,
+            TRUSTED_OVER_DIRECT_SANITY_CEILING,
+        ),
     ];
     let mut violations = Vec::new();
     for (numerator, denominator, budget) in comparisons {
@@ -1137,13 +1200,17 @@ fn preserve(
     directory: &Path,
     direct: Option<&str>,
     abi: Option<&str>,
+    fast: Option<&str>,
     safe: Option<&str>,
+    trusted: Option<&str>,
     summary: Option<&str>,
 ) -> Result<(), String> {
     for (name, value) in [
         ("direct.txt", direct),
         ("abi.txt", abi),
+        ("fast.txt", fast),
         ("safe.txt", safe),
+        ("trusted.txt", trusted),
         ("wrapper-tax.txt", summary),
     ] {
         if let Some(value) = value {
@@ -1178,23 +1245,40 @@ fn wrapper_overhead_gate() {
     let directory = temporary_directory().expect("create benchmark artifact directory");
 
     let result = (|| -> Result<(Vec<ParsedRun>, String), String> {
-        // Fixed same-host method: direct C++, then raw ABI, then safe Rust.
-        // calculate_wrapper_tax verifies this order before producing ratios.
+        // Fixed same-host method: direct C++, raw ABI, trusted fast ABI,
+        // public safe Rust, then the safe Rust trusted wrapper shipped by
+        // mako-cache. calculate_wrapper_tax verifies this order before ratios.
         let direct_text = run_driver(&driver, Surface::Direct)?;
-        preserve(&directory, Some(&direct_text), None, None, None)?;
+        preserve(&directory, Some(&direct_text), None, None, None, None, None)?;
         let direct = parse_run(direct_text, Surface::Direct)?;
 
         let abi_text = run_driver(&driver, Surface::Abi)?;
-        preserve(&directory, None, Some(&abi_text), None, None)?;
+        preserve(&directory, None, Some(&abi_text), None, None, None, None)?;
         let abi = parse_run(abi_text, Surface::Abi)?;
 
-        let safe_text = run_safe_child(&directory)?;
-        preserve(&directory, None, None, Some(&safe_text), None)?;
+        let fast_text = run_driver(&driver, Surface::Fast)?;
+        preserve(&directory, None, None, Some(&fast_text), None, None, None)?;
+        let fast = parse_run(fast_text, Surface::Fast)?;
+
+        let safe_text = run_safe_child(&directory, Surface::Safe)?;
+        preserve(&directory, None, None, None, Some(&safe_text), None, None)?;
         let safe = parse_run(safe_text, Surface::Safe)?;
 
-        let runs = vec![direct, abi, safe];
+        let trusted_text = run_safe_child(&directory, Surface::Trusted)?;
+        preserve(
+            &directory,
+            None,
+            None,
+            None,
+            None,
+            Some(&trusted_text),
+            None,
+        )?;
+        let trusted = parse_run(trusted_text, Surface::Trusted)?;
+
+        let runs = vec![direct, abi, fast, safe, trusted];
         let summary = calculate_wrapper_tax(&runs)?;
-        preserve(&directory, None, None, None, Some(&summary))?;
+        preserve(&directory, None, None, None, None, None, Some(&summary))?;
         Ok((runs, summary))
     })();
 
@@ -1221,7 +1305,9 @@ fn wrapper_overhead_gate() {
             if std::env::var_os(ARTIFACT_ENV).is_none() {
                 let _ = fs::remove_file(directory.join("direct.txt"));
                 let _ = fs::remove_file(directory.join("abi.txt"));
+                let _ = fs::remove_file(directory.join("fast.txt"));
                 let _ = fs::remove_file(directory.join("safe.txt"));
+                let _ = fs::remove_file(directory.join("trusted.txt"));
                 let _ = fs::remove_file(directory.join("wrapper-tax.txt"));
                 let _ = fs::remove_dir(&directory);
             }
@@ -1235,13 +1321,19 @@ fn wrapper_overhead_gate() {
 
 #[test]
 fn overhead_safe_role() {
-    if std::env::var_os(SAFE_ROLE_ENV).is_none() {
+    let Some(surface) = std::env::var_os(SAFE_ROLE_ENV) else {
         return;
-    }
+    };
+    let surface = Surface::parse(
+        surface
+            .to_str()
+            .expect("Rust benchmark surface must be valid UTF-8"),
+    )
+    .expect("Rust benchmark surface must be safe or trusted");
     let path = PathBuf::from(
         std::env::var_os(SAFE_OUTPUT_ENV).expect("safe benchmark output path is required"),
     );
-    let result = run_safe_surface().expect("run safe Rust overhead benchmark");
+    let result = run_safe_surface(surface).expect("run safe Rust overhead benchmark");
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)

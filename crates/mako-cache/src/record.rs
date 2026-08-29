@@ -267,6 +267,140 @@ impl BoundCommitRecord {
     }
 }
 
+/// One complete v3 record produced directly by the trusted native transaction
+/// adapter.
+///
+/// Native code fills the encoded bytes after Silo has validated the canonical
+/// write set and before it installs any write.  The foreground cache path
+/// retains those bytes without decoding or copying them; validation and
+/// construction of materialized RocksDB keys happen on the background replay
+/// thread.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NativeCommitRecord {
+    sequence: CommitSeq,
+    mako_timestamp: MakoTimestamp,
+    encoded: Vec<u8>,
+}
+
+impl NativeCommitRecord {
+    /// Adopt bytes initialized by the build-private native serializer.
+    ///
+    /// The serializer and Rust wrapper share an exact build fingerprint and a
+    /// completion witness.  These constant-time checks deliberately fail fast
+    /// on a broken private contract: after `sequence` has been inserted into
+    /// the ordered queue, treating malformed bytes as an ordinary abort would
+    /// create a durability hole.
+    pub(crate) fn from_native(
+        sequence: CommitSeq,
+        mako_timestamp: MakoTimestamp,
+        encoded: Vec<u8>,
+    ) -> Self {
+        assert!(
+            encoded.len() >= MIN_RECORD_LEN,
+            "native commit record is shorter than its v3 envelope"
+        );
+        assert_eq!(
+            encoded.get(..MAGIC.len()),
+            Some(MAGIC.as_slice()),
+            "native commit record has the wrong magic"
+        );
+        assert_eq!(
+            u16::from_be_bytes(
+                encoded[VERSION_OFFSET..SEQUENCE_OFFSET]
+                    .try_into()
+                    .expect("fixed version field"),
+            ),
+            FORMAT_VERSION,
+            "native commit record has the wrong version"
+        );
+        assert_eq!(
+            u64::from_be_bytes(
+                encoded[SEQUENCE_OFFSET..MAKO_TIMESTAMP_OFFSET]
+                    .try_into()
+                    .expect("fixed sequence field"),
+            ),
+            sequence.get(),
+            "native commit record has the wrong cache sequence"
+        );
+        assert_eq!(
+            u32::from_be_bytes(
+                encoded[MAKO_TIMESTAMP_OFFSET..OP_COUNT_OFFSET]
+                    .try_into()
+                    .expect("fixed timestamp field"),
+            ),
+            mako_timestamp.get(),
+            "native commit record has the wrong Mako timestamp"
+        );
+
+        Self {
+            sequence,
+            mako_timestamp,
+            encoded,
+        }
+    }
+
+    pub(crate) const fn sequence(&self) -> CommitSeq {
+        self.sequence
+    }
+
+    pub(crate) fn encoded_len(&self) -> usize {
+        self.encoded.len()
+    }
+
+    /// Decode and materialize RocksDB replay state off the acknowledgement
+    /// path.  The checksum is verified here even though the trusted native
+    /// producer already computed it, so corrupt memory can never be persisted
+    /// as a valid cache-log entry.
+    pub(crate) fn materialize(&self, max_bytes: usize) -> Result<CommitRecord, RecordError> {
+        let log_key = make_log_key(self.sequence)?;
+        let record = CommitRecord::decode(&log_key, &self.encoded, max_bytes)?;
+        debug_assert_eq!(record.mako_timestamp(), self.mako_timestamp);
+        Ok(record)
+    }
+}
+
+/// Record representation stored in an ordered write-back slot.
+///
+/// Legacy/unit-test producers may still supply an already materialized record.
+/// The production cache uses `Native`, which keeps foreground acknowledgement
+/// to one native serialization and defers decoding/key construction to replay.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum QueuedCommitRecord {
+    Materialized(CommitRecord),
+    Native(NativeCommitRecord),
+}
+
+impl QueuedCommitRecord {
+    pub(crate) const fn sequence(&self) -> CommitSeq {
+        match self {
+            Self::Materialized(record) => record.sequence(),
+            Self::Native(record) => record.sequence(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn mako_timestamp(&self) -> MakoTimestamp {
+        match self {
+            Self::Materialized(record) => record.mako_timestamp(),
+            Self::Native(record) => record.mako_timestamp,
+        }
+    }
+
+    pub(crate) fn encoded_len(&self) -> usize {
+        match self {
+            Self::Materialized(record) => record.encoded.len(),
+            Self::Native(record) => record.encoded_len(),
+        }
+    }
+
+    pub(crate) fn materialize(&self, max_bytes: usize) -> Result<CommitRecord, RecordError> {
+        match self {
+            Self::Materialized(record) => Ok(record.clone()),
+            Self::Native(record) => record.materialize(max_bytes),
+        }
+    }
+}
+
 /// A sealed, owned commit record.
 ///
 /// Besides the encoded recovery value, this owns every materialized RocksDB
@@ -440,9 +574,28 @@ impl CommitRecord {
     ///
     /// The log-record put is first, followed by materialized data mutations
     /// in their encoded order. Every byte slice points into `self`.
+    #[cfg(test)]
     pub(crate) fn backend_ops(&self) -> Vec<BlobOp<'_>> {
         debug_assert_eq!(self.mutations.len(), self.data_keys.len());
         let mut ops = Vec::with_capacity(self.mutations.len() + 1);
+        self.append_backend_ops(&mut ops);
+        ops
+    }
+
+    /// Number of backend operations contributed by this logical transaction.
+    pub(crate) fn backend_op_count(&self) -> usize {
+        self.mutations.len() + 1
+    }
+
+    /// Append this transaction's log record and materialized mutations to a
+    /// larger atomic backend batch.
+    ///
+    /// Callers append records in dense cache-sequence order. Consequently a
+    /// later transaction updating the same key naturally wins inside the one
+    /// RocksDB `WriteBatch`, while every individual recovery record remains
+    /// present.
+    pub(crate) fn append_backend_ops<'a>(&'a self, ops: &mut Vec<BlobOp<'a>>) {
+        debug_assert_eq!(self.mutations.len(), self.data_keys.len());
         ops.push(BlobOp::Put {
             key: &self.log_key,
             val: &self.encoded,
@@ -457,7 +610,6 @@ impl CommitRecord {
                 Mutation::Delete { .. } => ops.push(BlobOp::Delete { key: data_key }),
             }
         }
-        ops
     }
 }
 
@@ -807,16 +959,32 @@ impl<'a> Cursor<'a> {
 
 /// CRC-32C (Castagnoli), in its standard reflected representation.
 fn crc32c(bytes: &[u8]) -> u32 {
-    const REVERSED_CASTAGNOLI: u32 = 0x82f6_3b78;
     let mut crc = !0_u32;
     for &byte in bytes {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            let low_bit_mask = (crc & 1).wrapping_neg();
-            crc = (crc >> 1) ^ (REVERSED_CASTAGNOLI & low_bit_mask);
-        }
+        let index = ((crc ^ u32::from(byte)) & 0xff) as usize;
+        crc = CRC32C_TABLE[index] ^ (crc >> 8);
     }
     !crc
+}
+
+const CRC32C_TABLE: [u32; 256] = make_crc32c_table();
+
+const fn make_crc32c_table() -> [u32; 256] {
+    const REVERSED_CASTAGNOLI: u32 = 0x82f6_3b78;
+    let mut table = [0_u32; 256];
+    let mut index = 0usize;
+    while index < table.len() {
+        let mut value = index as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            let low_bit_mask = (value & 1).wrapping_neg();
+            value = (value >> 1) ^ (REVERSED_CASTAGNOLI & low_bit_mask);
+            bit += 1;
+        }
+        table[index] = value;
+        index += 1;
+    }
+    table
 }
 
 #[cfg(test)]
@@ -927,6 +1095,38 @@ mod tests {
             ),
             BlobOp::Put { .. } => panic!("delete became put"),
         }
+    }
+
+    #[test]
+    fn native_record_defers_materialization_without_changing_v3_bytes() {
+        let mutations = vec![
+            Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"native\0key".to_vec(),
+                value: vec![0, 0xff, 7],
+            },
+            Mutation::Delete {
+                table_id: 9,
+                key: b"gone".to_vec(),
+            },
+        ];
+        let expected = seal_at(73, 91, mutations.clone());
+        let native = NativeCommitRecord::from_native(
+            seq(73),
+            mako_timestamp(91),
+            expected.encoded().to_vec(),
+        );
+        let queued = QueuedCommitRecord::Native(native);
+
+        assert_eq!(queued.sequence(), seq(73));
+        assert_eq!(queued.mako_timestamp(), mako_timestamp(91));
+        assert_eq!(queued.encoded_len(), expected.encoded().len());
+
+        let replay = queued.materialize(16 * 1024).unwrap();
+        assert_eq!(replay.sequence(), seq(73));
+        assert_eq!(replay.mako_timestamp(), mako_timestamp(91));
+        assert_eq!(replay.mutations(), mutations.as_slice());
+        assert_eq!(replay.encoded(), expected.encoded());
     }
 
     #[test]

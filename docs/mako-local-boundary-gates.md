@@ -8,18 +8,17 @@ volatile ordered cache and asynchronous RocksDB application contract. Neither
 record tests disk-sync durability, distributed transactions, or the future
 Rust OCC engine.
 
-The first all-green record below completes the executable Phase 1A-1D boundary
-gate. The separate Item 5 record completes Phase 1F for the current
-asynchronous contract. Subsequent closure work resolved the remaining
-Phase 1B-1E contract items described below. The ABI intentionally continues to
-report revision 0 until a separate promotion action. Milestone 1 final
-acceptance was completed by the comparative zoo-2 benchmark on 2026-08-26.
-Historical Item 4 and Item 5 evidence remains tied to the exact commits named
-in its records.
+The all-green records below are historical evidence for the exact candidates
+they name. Subsequent closure work and the native-record/bounded-batching
+rewrite changed the implementation and therefore require a fresh validation
+record; the old PASS rows must not be read as results for the current source.
+The ABI intentionally continues to report revision 0 until a separate
+promotion action.
 
-## Current Milestone 1 closure status
+## Historical Milestone 1 closure status
 
-The functional and contract rows through Phase 1F are complete:
+For the named 2026-08-25/26 candidates, the functional and contract rows
+through Phase 1F were complete:
 
 - **Phase 1B:** `CacheOptions::isolation` makes the isolation profile explicit.
   `StrictSerializable` is the production default; requesting `Opaque` rejects
@@ -60,7 +59,8 @@ precondition, not a mutex-enforced feature. A future multi-namespace supervisor
 must discover and scan every backend and floor the shared timestamp authority
 before any namespace admits work.
 
-The final Milestone 1 acceptance row is complete. The linked record retains the
+The historical Milestone 1 acceptance row is complete for its named candidate.
+The linked record retains the
 methodology, all medians, the machine-readable report, and the significant
 concurrent-write scaling limitation exposed by the run:
 
@@ -322,11 +322,12 @@ dense `CacheSeq` order, derives canonical final same-key/RYW mutations, and
 checks exact backend batches, retries, frontiers, visible/backend states,
 wait barriers, and pinned unknown suffixes. Real cache histories exercise a
 three-transaction asynchronous backlog/reopen path and concurrent disjoint
-commits whose wrapper responses are deliberately reversed at a Rust-side
-post-native, pre-publication seam. The backend transcript is decoded through
-the production record reader and compared independently with the actual
-`BlobOp` batch. Deliberate decoded-batch divergence must turn the same checker
-path red; partial materialization is rejected earlier by transcript decoding.
+commits where a later transaction reaches Ready first but cannot acknowledge
+until the earlier transaction closes the dense prefix. The backend transcript
+is decoded through the production record reader and compared independently
+with the actual `BlobOp` batch. Deliberate decoded-batch divergence must turn
+the same checker path red; partial materialization is rejected earlier by
+transcript decoding.
 
 The hook gate also proves that detached bind performs exactly zero allocations
 or frees while a live allocator tripwire detects an injected allocation, and
@@ -338,8 +339,8 @@ The mutation runner is deliberately outside the production crate path. It
 copies the crate and lockfile into a fresh workspace for the baseline and each
 mutant, rewrites path dependencies explicitly, starts with a distinct absent
 Cargo target directory, compiles before testing, and accepts a kill only from
-one designated exact failure signature. Its twelve contracts cover stale
-journal writeback, early capacity discharge, hook allocation, cancellation
+one designated exact failure signature. Its twelve contracts cover corrupted
+native-record put replay, early capacity discharge, hook allocation, cancellation
 gaps, missing/premature Ready, an unpinned unknown, partial/reordered/duplicate
 replay, a wrong Mako timestamp, and a missing recovery clock floor. It verifies
 that the original source hash tree is unchanged and removes every temporary

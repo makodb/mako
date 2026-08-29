@@ -60,6 +60,42 @@ std::function<void(threadinfo_t::epoch_type)> Transaction::epoch_advance_callbac
 namespace {
 thread_local bool local_transaction_cleanup_in_progress = false;
 
+class commit_validation_gate_scope {
+public:
+    explicit commit_validation_gate_scope(
+        const Transaction::commit_validation_gate* gate) noexcept
+        : gate_(gate) {
+        assert(gate_ == nullptr ||
+               (gate_->enter != nullptr && gate_->leave != nullptr));
+    }
+
+    void acquire() noexcept {
+        assert(gate_ != nullptr);
+        assert(!held_);
+        gate_->enter(gate_->context);
+        held_ = true;
+    }
+
+    void release() noexcept {
+        if (!held_)
+            return;
+        held_ = false;
+        gate_->leave(gate_->context);
+    }
+
+    bool held() const noexcept {
+        return held_;
+    }
+
+    ~commit_validation_gate_scope() {
+        release();
+    }
+
+private:
+    const Transaction::commit_validation_gate* gate_;
+    bool held_ = false;
+};
+
 #if defined(MAKO_LOCAL_TEST_HOOKS)
 thread_local Transaction::test_commit_observer local_test_commit_observer =
     nullptr;
@@ -535,12 +571,85 @@ void Transaction::shard_unlock(bool committed) {
     }
 }
 
+// @unsafe: decodes the three MassTrans write layouts from borrowed TransItems.
+// The representation matches serialize_util(): inserts keep their key in
+// write data and their payload in the private row, while updates/deletes keep
+// the key in extra and updates keep their payload in write data. Unlike the
+// legacy Paxos serializer, this normalized view omits insert-then-delete.
+bool Transaction::visit_local_canonical_writes(
+    canonical_write_visitor visitor, void* context,
+    uint32_t* count_out) const noexcept {
+    if (count_out == nullptr)
+        return false;
+    *count_out = 0;
+    assert(TThread::id() == threadid_);
+    assert(state_ == s_in_progress || state_ == s_committing ||
+           state_ == s_committing_locked);
+
+    const TransItem* item = nullptr;
+    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
+        item = (tidx % tset_chunk ? item + 1
+                                  : tset_[tidx / tset_chunk]);
+        if (!item->has_write() || item->owner()->get_is_remote())
+            continue;
+
+        const bool is_insert = hasInsertOp(item);
+        const bool is_delete = hasDeleteOp(item);
+        if (is_insert && is_delete)
+            continue;
+
+        canonical_write_view view{};
+        view.table_id = item->owner()->get_table_id();
+        if (is_insert) {
+            const std::string& key = item->write_value<std::string>();
+            versioned_str_struct* row =
+                item->key<versioned_str_struct*>();
+            if (row == nullptr ||
+                row->length() < mako::EXTRA_BITS_FOR_VALUE)
+                return false;
+            view.op = canonical_write_view::operation::put;
+            view.key = key.data();
+            view.key_length = key.size();
+            view.value = row->data();
+            view.value_length = static_cast<size_t>(row->length()) -
+                                mako::EXTRA_BITS_FOR_VALUE;
+        } else {
+            view.key = item->extra.data();
+            view.key_length = item->extra.size();
+            if (is_delete) {
+                view.op = canonical_write_view::operation::remove;
+                view.value = nullptr;
+                view.value_length = 0;
+            } else {
+                const std::string& value =
+                    item->write_value<std::string>();
+                if (value.size() < mako::EXTRA_BITS_FOR_VALUE)
+                    return false;
+                view.op = canonical_write_view::operation::put;
+                view.value = value.data();
+                view.value_length = value.size() -
+                                    mako::EXTRA_BITS_FOR_VALUE;
+            }
+        }
+
+        if (*count_out == std::numeric_limits<uint32_t>::max())
+            return false;
+        if (visitor != nullptr && !visitor(context, view))
+            return false;
+        ++*count_out;
+    }
+    return true;
+}
+
 // @unsafe: complex commit protocol with remote operations, locking, and validation
 bool Transaction::try_commit(bool no_paxos,
                              post_validation_hook hook,
                              void* hook_context,
-                             preinstall_failure* failure) {
+                             preinstall_failure* failure,
+                             const commit_validation_gate* validation_gate) {
     assert(TThread::id() == threadid_);
+    assert(validation_gate == nullptr || hook != nullptr);
+    commit_validation_gate_scope validation_gate_scope(validation_gate);
     if (failure)
         *failure = preinstall_failure::none;
 #if ASSERT_TX_SIZE
@@ -683,6 +792,9 @@ bool Transaction::try_commit(bool no_paxos,
     }
 #endif
 
+    if (validation_gate != nullptr && nwriteset != 0)
+        validation_gate_scope.acquire();
+
     // Allocate the cache record's Mako logical timestamp after the entire
     // write set is locked but before validating the read set. A failed
     // transaction may consume a harmless timestamp gap. No cache log position
@@ -747,6 +859,18 @@ bool Transaction::try_commit(bool no_paxos,
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
         bool isRemote = it->owner()->get_is_remote();
+        // Predicate checks normally happen while phase1 discovers and locks
+        // writes. An ordered durability commit repeats them after entering its
+        // validation gate so range anti-dependencies cannot slip between the
+        // gate's timestamp order and the final point-read validation.
+        if (validation_gate_scope.held() && !isRemote &&
+            !it->has_read() && it->has_predicate()) {
+            TXP_INCREMENT(txp_total_check_predicate);
+            if (!it->owner()->check_predicate(*it, *this, true)) {
+                mark_abort_because(it, "ordered commit check_predicate");
+                goto abort;
+            }
+        }
         if (!isRemote && it->has_read()) {
             TXP_INCREMENT(txp_total_check_read);
             if (!it->owner()->check(*it, *this) // this is just a version check
@@ -789,6 +913,17 @@ bool Transaction::try_commit(bool no_paxos,
     // definite abort because phase3 has not begun.
     if (hook != nullptr && nwriteset != 0 &&
         !hook(hook_context, tid_unique_)) {
+        if (failure)
+            *failure = preinstall_failure::hook_rejected;
+        goto abort;
+    }
+    // The ordered record is now bound. Later transactions retain their own
+    // write locks while waiting, so releasing here preserves anti-dependency
+    // validation order without serializing record bytes or phase3 installs.
+    validation_gate_scope.release();
+    if (validation_gate != nullptr && nwriteset != 0 &&
+        validation_gate->after_leave != nullptr &&
+        !validation_gate->after_leave(validation_gate->context, tid_unique_)) {
         if (failure)
             *failure = preinstall_failure::hook_rejected;
         goto abort;
@@ -918,6 +1053,10 @@ bool Transaction::try_commit(bool no_paxos,
 abort:
     TXP_INCREMENT(txp_commit_time_aborts);
     stop(false, nullptr, 0);
+    // On an ordinary abort, keep the gate until stop has released every write
+    // lock. If stop unwinds, the scope destructor still retires the turn so a
+    // quarantined worker cannot strand the database-wide record pipeline.
+    validation_gate_scope.release();
     if ((TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) && TThread::sclient != nullptr) {
         TThread::sclient->remoteAbort();
     }

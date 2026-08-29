@@ -164,80 +164,223 @@ impl RecordingBlobs {
         state
     }
 
-    fn decode_attempt(operations: &[BlobOp<'_>]) -> (CacheSeq, Vec<ModelMutation>) {
-        let (log_key, encoded) = match operations.first() {
-            Some(BlobOp::Put { key, val }) => (*key, *val),
-            Some(BlobOp::Delete { .. }) | None => {
-                panic!("cache batch must begin with its commit-record put")
+    fn decode_attempt(operations: &[BlobOp<'_>]) -> Vec<(CacheSeq, Vec<ModelMutation>)> {
+        let mut decoded = Vec::new();
+        let mut offset = 0;
+        while offset < operations.len() {
+            let (log_key, encoded) = match operations.get(offset) {
+                Some(BlobOp::Put { key, val }) => (*key, *val),
+                Some(BlobOp::Delete { .. }) | None => {
+                    panic!("each cache transaction must begin with its commit-record put")
+                }
+            };
+            let record = CommitRecord::decode(
+                log_key,
+                encoded,
+                CacheOptions::default().writeback.max_record_bytes,
+            )
+            .expect("decode recorded backend attempt");
+            let end = offset
+                .checked_add(record.mutations().len() + 1)
+                .expect("materialized backend batch length overflow");
+            assert!(
+                end <= operations.len(),
+                "materialized backend batch length differs from its commit record"
+            );
+            for (index, (actual, expected)) in operations[offset + 1..end]
+                .iter()
+                .zip(record.mutations())
+                .enumerate()
+            {
+                let identical = match (actual, expected) {
+                    (
+                        BlobOp::Put {
+                            key: actual_key,
+                            val: actual_value,
+                        },
+                        Mutation::Put {
+                            table_id,
+                            key,
+                            value,
+                        },
+                    ) => {
+                        matches!(
+                            classify_backend_key(actual_key),
+                            BackendKey::Data {
+                                table_id: actual_table,
+                                key: actual_data_key,
+                            } if actual_table == *table_id && actual_data_key == key
+                        ) && *actual_value == value
+                    }
+                    (BlobOp::Delete { key: actual_key }, Mutation::Delete { table_id, key }) => {
+                        matches!(
+                            classify_backend_key(actual_key),
+                            BackendKey::Data {
+                                table_id: actual_table,
+                                key: actual_data_key,
+                            } if actual_table == *table_id && actual_data_key == key
+                        )
+                    }
+                    (BlobOp::Put { .. }, Mutation::Delete { .. })
+                    | (BlobOp::Delete { .. }, Mutation::Put { .. }) => false,
+                };
+                assert!(
+                    identical,
+                    "materialized backend operation {} differs from its decoded commit mutation: expected {expected:?}, observed {actual:?}",
+                    index + 1
+                );
             }
-        };
-        let record = CommitRecord::decode(
-            log_key,
-            encoded,
-            CacheOptions::default().writeback.max_record_bytes,
-        )
-        .expect("decode recorded backend attempt");
-        assert_eq!(
-            operations.len(),
-            record.mutations().len() + 1,
-            "materialized backend batch length differs from its commit record"
-        );
-        for (index, (actual, expected)) in
-            operations[1..].iter().zip(record.mutations()).enumerate()
-        {
-            let identical = match (actual, expected) {
-                (
-                    BlobOp::Put {
-                        key: actual_key,
-                        val: actual_value,
-                    },
+            let sequence =
+                CacheSeq::new(record.sequence().get()).expect("cache sequence is nonzero");
+            let mutations = record
+                .mutations()
+                .iter()
+                .map(|mutation| match mutation {
                     Mutation::Put {
                         table_id,
                         key,
                         value,
-                    },
-                ) => {
-                    matches!(
-                        classify_backend_key(actual_key),
-                        BackendKey::Data {
-                            table_id: actual_table,
-                            key: actual_data_key,
-                        } if actual_table == *table_id && actual_data_key == key
-                    ) && *actual_value == value
-                }
-                (BlobOp::Delete { key: actual_key }, Mutation::Delete { table_id, key }) => {
-                    matches!(
-                        classify_backend_key(actual_key),
-                        BackendKey::Data {
-                            table_id: actual_table,
-                            key: actual_data_key,
-                        } if actual_table == *table_id && actual_data_key == key
-                    )
-                }
-                (BlobOp::Put { .. }, Mutation::Delete { .. })
-                | (BlobOp::Delete { .. }, Mutation::Put { .. }) => false,
-            };
-            assert!(
-                identical,
-                "materialized backend operation {} differs from its decoded commit mutation: expected {expected:?}, observed {actual:?}",
-                index + 1
+                    } => ModelMutation::put(*table_id, key.clone(), value.clone()),
+                    Mutation::Delete { table_id, key } => {
+                        ModelMutation::delete(*table_id, key.clone())
+                    }
+                })
+                .collect();
+            decoded.push((sequence, mutations));
+            offset = end;
+        }
+        assert!(!decoded.is_empty(), "cache backend batch must not be empty");
+        for pair in decoded.windows(2) {
+            assert_eq!(
+                pair[1].0.get(),
+                pair[0].0.get() + 1,
+                "one physical backend batch must contain a dense sequence prefix"
             );
         }
-        let sequence = CacheSeq::new(record.sequence().get()).expect("cache sequence is nonzero");
-        let mutations = record
-            .mutations()
-            .iter()
-            .map(|mutation| match mutation {
-                Mutation::Put {
-                    table_id,
-                    key,
-                    value,
-                } => ModelMutation::put(*table_id, key.clone(), value.clone()),
-                Mutation::Delete { table_id, key } => ModelMutation::delete(*table_id, key.clone()),
-            })
-            .collect();
-        (sequence, mutations)
+        decoded
     }
+}
+
+fn transcript_record(sequence: u64, mako_timestamp: u32, mutations: Vec<Mutation>) -> CommitRecord {
+    crate::record::PreparedCommitRecord::prepare(
+        mutations,
+        CacheOptions::default().writeback.max_record_bytes,
+    )
+    .expect("prepare transcript record")
+    .bind(
+        crate::record::CommitSeq::new(sequence).expect("nonzero transcript sequence"),
+        mako_local::MakoTimestamp::new(mako_timestamp).expect("nonzero transcript timestamp"),
+    )
+    .finalize()
+}
+
+#[test]
+fn application_transcript_decodes_every_record_in_a_physical_batch() {
+    let records = [
+        transcript_record(
+            1,
+            11,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"phase1f/transcript/a".to_vec(),
+                value: b"one".to_vec(),
+            }],
+        ),
+        transcript_record(
+            2,
+            12,
+            vec![Mutation::Delete {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"phase1f/transcript/b".to_vec(),
+            }],
+        ),
+    ];
+    let mut operations = Vec::new();
+    for record in &records {
+        record.append_backend_ops(&mut operations);
+    }
+
+    let decoded = RecordingBlobs::decode_attempt(&operations);
+    assert_eq!(
+        decoded,
+        vec![
+            (
+                CacheSeq::new(1).unwrap(),
+                vec![ModelMutation::put(
+                    DEFAULT_TABLE_ID,
+                    b"phase1f/transcript/a",
+                    b"one",
+                )],
+            ),
+            (
+                CacheSeq::new(2).unwrap(),
+                vec![ModelMutation::delete(
+                    DEFAULT_TABLE_ID,
+                    b"phase1f/transcript/b",
+                )],
+            ),
+        ]
+    );
+}
+
+#[test]
+fn application_transcript_projects_atomic_failure_to_front_then_full_retry() {
+    let records = [
+        transcript_record(
+            1,
+            21,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"phase1f/transcript/retry-a".to_vec(),
+                value: b"one".to_vec(),
+            }],
+        ),
+        transcript_record(
+            2,
+            22,
+            vec![Mutation::Put {
+                table_id: DEFAULT_TABLE_ID,
+                key: b"phase1f/transcript/retry-b".to_vec(),
+                value: b"two".to_vec(),
+            }],
+        ),
+    ];
+    let mut operations = Vec::new();
+    for record in &records {
+        record.append_backend_ops(&mut operations);
+    }
+
+    let clock = Arc::new(LogicalClock::default());
+    let backend = RecordingBlobs::new(clock);
+    backend.release();
+    backend.inner.fail_next_writes(1);
+
+    assert!(backend.write_batch(&operations).is_err());
+    assert!(
+        backend.inner.snapshot().is_empty(),
+        "the failed physical batch must apply no partial state"
+    );
+    assert!(backend.write_batch(&operations).is_ok());
+
+    let attempts = backend.attempts();
+    assert_eq!(
+        attempts
+            .iter()
+            .map(|attempt| (attempt.seq.get(), attempt.outcome))
+            .collect::<Vec<_>>(),
+        vec![
+            (1, BackendAttemptOutcome::Failed),
+            (1, BackendAttemptOutcome::Succeeded),
+            (2, BackendAttemptOutcome::Succeeded),
+        ]
+    );
+    for pair in attempts.windows(2) {
+        assert!(
+            pair[1].interval.invocation > pair[0].interval.response.unwrap(),
+            "projected logical attempts must be strictly sequential"
+        );
+    }
+    assert_eq!(backend.inner.batch_count(), 1);
 }
 
 #[test]
@@ -278,7 +421,7 @@ impl Blobs for RecordingBlobs {
     }
 
     fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
-        let (sequence, mutations) = Self::decode_attempt(operations);
+        let decoded = Self::decode_attempt(operations);
         let mut gate = self.gate.lock().expect("backend gate poisoned");
         gate.entered = true;
         self.changed.notify_all();
@@ -290,22 +433,29 @@ impl Blobs for RecordingBlobs {
         }
         drop(gate);
 
-        let invocation = self.clock.next();
         let result = self.inner.write_batch(operations);
-        let response = self.clock.next();
-        self.attempts
-            .lock()
-            .expect("backend transcript poisoned")
-            .push(BackendAttempt::new(
+        let outcome = if result.is_ok() {
+            BackendAttemptOutcome::Succeeded
+        } else {
+            BackendAttemptOutcome::Failed
+        };
+        let mut attempts = self.attempts.lock().expect("backend transcript poisoned");
+        // The independent application checker models one logical record per
+        // attempt. A successful physical multi-record batch therefore becomes
+        // consecutive zero-overlap logical effects. An atomic failed batch is
+        // represented by its front record only: no later sequence was eligible
+        // to advance, and the same physical prefix will be retried from there.
+        let logical_records = if result.is_ok() { decoded.len() } else { 1 };
+        for (sequence, mutations) in decoded.into_iter().take(logical_records) {
+            let invocation = self.clock.next();
+            let response = self.clock.next();
+            attempts.push(BackendAttempt::new(
                 sequence,
                 Interval::completed(invocation, response),
                 mutations,
-                if result.is_ok() {
-                    BackendAttemptOutcome::Succeeded
-                } else {
-                    BackendAttemptOutcome::Failed
-                },
+                outcome,
             ));
+        }
         result
     }
 
@@ -484,7 +634,7 @@ fn concurrent_final_state() -> State {
     state
 }
 
-fn recorded_concurrent_response_reordering() -> ApplicationHistory {
+fn recorded_concurrent_prefix_acknowledgement() -> ApplicationHistory {
     reset_response_gate();
     let clock = Arc::new(LogicalClock::default());
     let backend = Arc::new(RecordingBlobs::new(Arc::clone(&clock)));
@@ -510,20 +660,46 @@ fn recorded_concurrent_response_reordering() -> ApplicationHistory {
         });
 
         wait_for_delayed_response();
-        let mut transaction = RecordedTransaction::begin(2, &cache, &clock);
-        transaction.put(CONCURRENT_SECOND, b"second");
-        let second = transaction.commit_as(CacheSeq::new(2).unwrap());
+        let (second_tx, second_rx) = mpsc::sync_channel(1);
+        let second_cache = &cache;
+        let second_clock = &clock;
+        let second_worker = scope.spawn(move || {
+            let mut transaction = RecordedTransaction::begin(2, second_cache, second_clock);
+            transaction.put(CONCURRENT_SECOND, b"second");
+            second_tx
+                .send(transaction.commit_as(CacheSeq::new(2).unwrap()))
+                .expect("receive the second commit result");
+        });
+
+        let second_bound_deadline = Instant::now() + Duration::from_secs(5);
+        while cache.queued_transactions() != 2 && Instant::now() < second_bound_deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            cache.queued_transactions(),
+            2,
+            "the second native commit did not bind behind the parked first commit"
+        );
+        assert!(
+            matches!(
+                second_rx.recv_timeout(Duration::from_millis(30)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "a Ready suffix was acknowledged across an unresolved prefix"
+        );
         release_delayed_response();
         let first = first_worker
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        let second = second_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second commit completes after the prefix resolves");
+        second_worker
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
         (first, second)
     });
 
-    assert!(
-        second.1.interval.response.unwrap() < first.1.interval.response.unwrap(),
-        "the crafted post-native seam did not reverse commit response order"
-    );
     backend.wait_until_blocked();
     let keys = [CONCURRENT_FIRST, CONCURRENT_SECOND];
     let lagging = observe_frontier_for(&cache, &backend, &clock, &keys);
@@ -581,9 +757,9 @@ fn recorded_concurrent_response_reordering() -> ApplicationHistory {
 
     let mut transactions = History::new(State::new());
     transactions.set_observed_final_state(concurrent_final_state());
-    transactions.push(second.0).push(first.0);
+    transactions.push(first.0).push(second.0);
     let mut history = ApplicationHistory::new(transactions);
-    history.commits.extend([second.1, first.1]);
+    history.commits.extend([first.1, second.1]);
     history.backend_attempts = attempts;
     history.frontiers.extend([lagging, applied]);
     history.waits.push(wait);
@@ -730,8 +906,8 @@ fn real_cache_history_connects_visibility_acknowledgement_and_ordered_applicatio
 }
 
 #[test]
-fn real_concurrent_cache_history_uses_bind_order_not_response_order() {
-    let history = recorded_concurrent_response_reordering();
+fn real_concurrent_cache_history_waits_for_dense_acknowledgement_prefix() {
+    let history = recorded_concurrent_prefix_acknowledgement();
     let witness = check_application(
         &history,
         Semantics::StrictSerializability,

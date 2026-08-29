@@ -137,6 +137,7 @@ impl Contention {
 enum Profile {
     Smoke,
     Acceptance,
+    Scaling,
 }
 
 impl Profile {
@@ -144,6 +145,7 @@ impl Profile {
         match self {
             Self::Smoke => "smoke",
             Self::Acceptance => "acceptance",
+            Self::Scaling => "scaling",
         }
     }
 
@@ -151,8 +153,9 @@ impl Profile {
         match value {
             "smoke" => Ok(Self::Smoke),
             "acceptance" => Ok(Self::Acceptance),
+            "scaling" => Ok(Self::Scaling),
             _ => Err(format!(
-                "profile must be smoke or acceptance, found {value:?}"
+                "profile must be smoke, acceptance, or scaling, found {value:?}"
             )),
         }
     }
@@ -160,14 +163,14 @@ impl Profile {
     fn repetitions(self) -> usize {
         match self {
             Self::Smoke => 1,
-            Self::Acceptance => 7,
+            Self::Acceptance | Self::Scaling => 7,
         }
     }
 
     fn child_timeout(self) -> Duration {
         match self {
             Self::Smoke => Duration::from_secs(120),
-            Self::Acceptance => Duration::from_secs(600),
+            Self::Acceptance | Self::Scaling => Duration::from_secs(600),
         }
     }
 }
@@ -438,7 +441,7 @@ fn real_main() -> AnyResult<()> {
 }
 
 fn usage() -> String {
-    "usage: mako-cache-bench run --profile smoke|acceptance --data-root PATH [--output FILE] [--checkpoint FILE] [--resume] [--keep-data]".to_owned()
+    "usage: mako-cache-bench run --profile smoke|acceptance|scaling --data-root PATH [--output FILE] [--checkpoint FILE] [--resume] [--keep-data]".to_owned()
 }
 
 fn parse_run_options(arguments: &[String]) -> AnyResult<RunOptions> {
@@ -488,11 +491,11 @@ fn parse_run_options(arguments: &[String]) -> AnyResult<RunOptions> {
         index += 1;
     }
     let profile = profile.ok_or_else(usage)?;
-    if profile == Profile::Acceptance && cfg!(debug_assertions) {
-        return Err("the acceptance profile requires --release".to_owned());
+    if profile != Profile::Smoke && cfg!(debug_assertions) {
+        return Err(format!("the {} profile requires --release", profile.name()));
     }
-    if profile == Profile::Acceptance && output.is_none() {
-        return Err("the acceptance profile requires --output".to_owned());
+    if profile != Profile::Smoke && output.is_none() {
+        return Err(format!("the {} profile requires --output", profile.name()));
     }
     if checkpoint.is_none() {
         checkpoint = output.as_deref().map(checkpoint_path_for_output);
@@ -1428,6 +1431,19 @@ fn benchmark_configurations(profile: Profile) -> Vec<Configuration> {
                 }
             }
         }
+        Profile::Scaling => {
+            for workload in [Workload::Read, Workload::Write] {
+                for workers in [1, 2, 4, 8, 16, 32] {
+                    configurations.push(Configuration {
+                        arm: Arm::Mako,
+                        workload,
+                        transaction_size: 1,
+                        contention: Contention::Low,
+                        workers,
+                    });
+                }
+            }
+        }
     }
     configurations
 }
@@ -1435,7 +1451,7 @@ fn benchmark_configurations(profile: Profile) -> Vec<Configuration> {
 fn target_commits(profile: Profile, transaction_size: usize) -> (u64, u64) {
     match profile {
         Profile::Smoke => (16, 4),
-        Profile::Acceptance => (
+        Profile::Acceptance | Profile::Scaling => (
             256usize.max(8192 / transaction_size) as u64,
             64usize.max(2048 / transaction_size) as u64,
         ),
@@ -2936,6 +2952,49 @@ mod tests {
         assert_eq!(configuration.semantic_class(), "common_point_contract");
         configuration.workload = Workload::Rmw;
         assert_ne!(configuration.semantic_class(), "common_point_contract");
+    }
+
+    #[test]
+    fn scaling_profile_is_the_focused_mako_point_matrix() {
+        assert_eq!(Profile::parse("scaling"), Ok(Profile::Scaling));
+        assert_eq!(Profile::Scaling.name(), "scaling");
+        assert_eq!(Profile::Scaling.repetitions(), 7);
+        assert_eq!(Profile::Scaling.child_timeout(), Duration::from_secs(600));
+        assert_eq!(target_commits(Profile::Scaling, 1), (8192, 2048));
+
+        let configurations = benchmark_configurations(Profile::Scaling);
+        assert_eq!(configurations.len(), 12);
+        assert_eq!(
+            configurations
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .len(),
+            configurations.len()
+        );
+        for workload in [Workload::Read, Workload::Write] {
+            for workers in [1, 2, 4, 8, 16, 32] {
+                assert!(configurations.contains(&Configuration {
+                    arm: Arm::Mako,
+                    workload,
+                    transaction_size: 1,
+                    contention: Contention::Low,
+                    workers,
+                }));
+            }
+        }
+        assert!(configurations.iter().all(|configuration| {
+            configuration.arm == Arm::Mako
+                && matches!(configuration.workload, Workload::Read | Workload::Write)
+                && configuration.transaction_size == 1
+                && configuration.contention == Contention::Low
+                && [1, 2, 4, 8, 16, 32].contains(&configuration.workers)
+        }));
+        assert!(configurations.iter().all(|configuration| {
+            let (target, _) = target_commits(Profile::Scaling, configuration.transaction_size);
+            target * configuration.workers as u64 * configuration.transaction_size as u64
+                <= ASYNC_MUTATION_CAPACITY as u64
+        }));
     }
 
     #[test]

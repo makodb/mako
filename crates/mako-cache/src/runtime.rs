@@ -125,7 +125,8 @@ fn run<B: Blobs + 'static>(writeback: Arc<Writeback<B>>, stop: Arc<AtomicBool>) 
         let outcome = catch_unwind(AssertUnwindSafe(|| writeback.process_front()));
         match outcome {
             Ok(ProcessOutcome::Advanced) => {}
-            Ok(ProcessOutcome::BackendFailed { .. }) | Err(_) => {
+            Ok(ProcessOutcome::BackendFailed { .. } | ProcessOutcome::RecordFailed { .. })
+            | Err(_) => {
                 wait_interruptibly(&writeback, &stop, writeback.retry_delay());
             }
             Ok(ProcessOutcome::Idle | ProcessOutcome::Blocked | ProcessOutcome::Pinned(_)) => {

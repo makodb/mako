@@ -154,8 +154,7 @@ pub trait KeyIndex: Send + Sync {
     /// runs inside an RCU epoch that pins a per-core spinlock, and
     /// letting arbitrary caller code run there stalls epoch advancement
     /// process-wide — a bug the C++ version had and had to fix.
-    fn scan_chunk(&self, from: &[u8], budget: usize, out: &mut Vec<(Vec<u8>, EntryWord)>)
-        -> usize;
+    fn scan_chunk(&self, from: &[u8], budget: usize, out: &mut Vec<(Vec<u8>, EntryWord)>) -> usize;
 
     /// Descending mirror of [`KeyIndex::scan_chunk`].
     fn rscan_chunk(&self, from: &[u8], budget: usize, out: &mut Vec<(Vec<u8>, EntryWord)>)
@@ -196,12 +195,7 @@ impl<T: KeyIndex + ?Sized> KeyIndex for std::sync::Arc<T> {
     fn get_or_insert(&self, key: &[u8], word: EntryWord) -> EntryWord {
         (**self).get_or_insert(key, word)
     }
-    fn scan_chunk(
-        &self,
-        from: &[u8],
-        budget: usize,
-        out: &mut Vec<(Vec<u8>, EntryWord)>,
-    ) -> usize {
+    fn scan_chunk(&self, from: &[u8], budget: usize, out: &mut Vec<(Vec<u8>, EntryWord)>) -> usize {
         (**self).scan_chunk(from, budget, out)
     }
     fn rscan_chunk(
@@ -251,8 +245,10 @@ pub trait Blobs: Send + Sync {
     /// Apply a batch atomically-enough: either the whole batch lands or
     /// none of it does.
     ///
-    /// The cache relies on all-or-nothing per batch, not on ordering
-    /// between batches.
+    /// Operations apply in slice order. If a key occurs more than once, the
+    /// last operation for that key determines its final state. The cache
+    /// relies on this rule when one physical batch contains several logical
+    /// transactions. It does not rely on ordering between separate batches.
     fn write_batch(&self, ops: &[BlobOp<'_>]) -> Result<(), BlobError>;
 
     /// Iterate every key, in ascending order, for the open-time load.

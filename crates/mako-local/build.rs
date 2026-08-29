@@ -292,6 +292,7 @@ fn warn_about_newer_inputs(build: &Path) {
     let root = repository_root();
     let inputs = [
         "src/mako/storage/mako_local_abi.h",
+        "src/mako/storage/mako_local_rust_fast_abi.h",
         "src/mako/storage/mako_local_abi.cc",
         "src/mako/sto/thread_registration.hh",
         "src/mako/sto/thread_registration.cc",

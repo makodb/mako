@@ -1,17 +1,23 @@
 //! Transaction-ordered, asynchronous RocksDB write-back.
 //!
-//! Before entering native commit, a transaction prepares its complete record
-//! and claims bounded queue capacity, but it does not yet receive a cache
-//! sequence or occupy an ordered slot. After Mako has chosen the transaction's
-//! logical timestamp and native validation has succeeded,
-//! [`DetachedPermit::bind`] attaches that preallocated record to the ordered
-//! queue and records that Mako timestamp. The hook-time operation is
+//! Before entering native commit, STO preflights its canonical write set while
+//! Rust claims bounded queue capacity and allocates the exact record buffer,
+//! but the transaction does not yet receive a cache sequence or occupy an
+//! ordered slot. After the complete write set is locked, a per-database native
+//! gate orders Mako timestamp assignment, final validation, and the hook. A
+//! validation loser leaves only a harmless timestamp gap. A winner receives
+//! the next dense cache sequence; native retires the ordering turn, then STO
+//! writes the checksummed record directly into that buffer while retaining its
+//! write locks and before installation. The hook-time Rust operation is
 //! allocation-free and never performs backend IO.
 //!
-//! A bound slot remains Prepared until native commit returns successfully.
-//! Publishing then finalizes the checksum outside Silo's lock critical section
-//! and flips the slot Ready. An ambiguous post-bind outcome pins the slot, so
+//! A bound slot remains Prepared until native commit returns successfully and
+//! Rust attaches the completed bytes. Publishing flips the slot Ready, but a
+//! caller receives success only after Ready spans the dense acknowledgement
+//! prefix through that slot. An ambiguous post-bind outcome pins the slot, so
 //! the background consumer can neither skip it nor mistake it for an abort.
+//! The consumer decodes records off the foreground path and replays a bounded
+//! contiguous Ready prefix in one atomic backend batch.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -19,24 +25,37 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
+#[cfg(test)]
+use std::cell::RefCell;
+
 use mako_local::MakoTimestamp;
 use mrx_core::{BlobError, Blobs};
 
 use crate::record::{
-    BoundCommitRecord, CommitRecord, CommitSeq, Mutation, PreparedCommitRecord, RecordError,
+    BoundCommitRecord, CommitSeq, Mutation, NativeCommitRecord, PreparedCommitRecord,
+    QueuedCommitRecord, RecordError,
 };
+
+#[cfg(test)]
+thread_local! {
+    /// Deterministic materialization failure injection for sequence-bounded
+    /// consumer tests. Thread-local storage prevents parallel tests from
+    /// perturbing one another or a background worker.
+    static TEST_MATERIALIZATION_FAILURE: RefCell<Option<(CommitSeq, RecordError)>> =
+        const { RefCell::new(None) };
+}
 
 /// Default maximum encoded transaction-record size (8 MiB).
 pub const DEFAULT_MAX_RECORD_BYTES: usize = 8 * 1024 * 1024;
 
 /// In-memory progress of the ordered RocksDB consumer.
 ///
-/// `sequence` is the dense [`CommitSeq`] prefix and is therefore the field
-/// that proves contiguity. `mako_timestamp` identifies the record at exactly
-/// that frontier. Mako timestamps may contain gaps and disjoint transactions
-/// may bind out of timestamp order, so the timestamp alone must not be
-/// interpreted as a dense log position. Neither field claims that RocksDB has
-/// synced data to disk.
+/// `sequence` is the dense, serialization-safe [`CommitSeq`] prefix and is
+/// therefore the field that proves contiguity. `mako_timestamp` identifies the
+/// record at exactly that frontier. Mako timestamps remain strictly increasing
+/// for production cache records but may contain gaps from validation aborts or
+/// unrelated native work, so the timestamp alone is not a dense log position.
+/// Neither field claims that RocksDB has synced data to disk.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AppliedWatermark {
     sequence: u64,
@@ -78,8 +97,14 @@ impl AppliedWatermark {
 pub struct WritebackConfig {
     /// Maximum number of detached permits plus prepared or ready slots.
     pub capacity: usize,
-    /// Maximum encoded size accepted by [`PreparedCommitRecord::prepare`].
+    /// Maximum encoded size accepted by native record preflight.
     pub max_record_bytes: usize,
+    /// Maximum number of consecutive Ready transactions submitted in one
+    /// atomic backend batch.
+    pub max_batch_records: usize,
+    /// Approximate encoded-log byte budget for one backend batch. A front
+    /// record larger than this limit is submitted alone.
+    pub max_batch_bytes: usize,
     /// Extra attempts made by [`Writeback::wait_applied`] after a failed backend
     /// write. Zero means that the first failed attempt is returned.
     pub max_apply_retries: usize,
@@ -92,6 +117,8 @@ impl Default for WritebackConfig {
         Self {
             capacity: 1_024,
             max_record_bytes: DEFAULT_MAX_RECORD_BYTES,
+            max_batch_records: 64,
+            max_batch_bytes: 1024 * 1024,
             max_apply_retries: 8,
             retry_delay: Duration::from_millis(1),
         }
@@ -105,6 +132,10 @@ pub enum ConfigError {
     ZeroCapacity,
     /// A zero-byte record budget cannot hold the record envelope.
     ZeroRecordBudget,
+    /// A zero-record batch can never make progress.
+    ZeroBatchRecords,
+    /// A zero-byte batch can never make progress.
+    ZeroBatchBytes,
     /// A zero retry delay would turn a persistent backend error into a spin
     /// loop.
     ZeroRetryDelay,
@@ -117,6 +148,8 @@ impl fmt::Display for ConfigError {
         match self {
             Self::ZeroCapacity => write!(f, "write-back capacity must be nonzero"),
             Self::ZeroRecordBudget => write!(f, "transaction record budget must be nonzero"),
+            Self::ZeroBatchRecords => write!(f, "write-back batch record limit must be nonzero"),
+            Self::ZeroBatchBytes => write!(f, "write-back batch byte limit must be nonzero"),
             Self::ZeroRetryDelay => write!(f, "write-back retry delay must be nonzero"),
             Self::SequenceExhausted => write!(f, "commit sequence space is exhausted"),
         }
@@ -139,6 +172,14 @@ pub enum ReserveError {
         /// The first pinned sequence.
         sequence: CommitSeq,
     },
+    /// A previously acknowledged native record is permanently malformed.
+    /// New work cannot safely pass its ordered slot.
+    PermanentRecordFailure {
+        /// Sequence of the malformed record.
+        sequence: CommitSeq,
+        /// Exact structural validation failure retained by the queue.
+        source: RecordError,
+    },
 }
 
 impl fmt::Display for ReserveError {
@@ -151,6 +192,11 @@ impl fmt::Display for ReserveError {
                 "commit sequence {} has an unknown native outcome",
                 sequence.get()
             ),
+            Self::PermanentRecordFailure { sequence, source } => write!(
+                f,
+                "commit record {} is permanently unreplayable: {source}",
+                sequence.get()
+            ),
         }
     }
 }
@@ -158,7 +204,7 @@ impl fmt::Display for ReserveError {
 impl std::error::Error for ReserveError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Record(error) => Some(error),
+            Self::Record(error) | Self::PermanentRecordFailure { source: error, .. } => Some(error),
             Self::SequenceExhausted | Self::UnknownOutcome { .. } => None,
         }
     }
@@ -171,7 +217,7 @@ impl From<RecordError> for ReserveError {
 }
 
 /// An impossible-in-normal-use reservation transition was rejected.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolveError {
     /// The slot is no longer present in the queue.
     Missing {
@@ -195,6 +241,16 @@ pub enum ResolveError {
         sequence: CommitSeq,
         /// Earlier sequence whose native outcome is ambiguous.
         prior_unknown: CommitSeq,
+    },
+    /// A known-committed transaction cannot be acknowledged because an
+    /// earlier record is permanently malformed.
+    BlockedByPriorRecordFailure {
+        /// Sequence of the known-committed transaction retained in the queue.
+        sequence: CommitSeq,
+        /// Earlier malformed sequence that prevents replay.
+        prior_failure: CommitSeq,
+        /// Exact structural validation failure retained by the queue.
+        source: RecordError,
     },
 }
 
@@ -221,11 +277,31 @@ impl fmt::Display for ResolveError {
                 sequence.get(),
                 prior_unknown.get()
             ),
+            Self::BlockedByPriorRecordFailure {
+                sequence,
+                prior_failure,
+                source,
+            } => write!(
+                f,
+                "reservation {} cannot be acknowledged because prior record {} is permanently unreplayable: {source}",
+                sequence.get(),
+                prior_failure.get()
+            ),
         }
     }
 }
 
-impl std::error::Error for ResolveError {}
+impl std::error::Error for ResolveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::BlockedByPriorRecordFailure { source, .. } => Some(source),
+            Self::Missing { .. }
+            | Self::AlreadyResolved { .. }
+            | Self::Pinned { .. }
+            | Self::BlockedByPriorUnknown { .. } => None,
+        }
+    }
+}
 
 /// A queue drain could not apply its acknowledged snapshot to the backend.
 #[derive(Debug, Clone)]
@@ -235,8 +311,9 @@ pub enum ApplyError {
         /// The first pinned sequence.
         sequence: CommitSeq,
     },
-    /// Rocks (or another [`Blobs`] implementation) kept rejecting the exact
-    /// front transaction after the configured retry budget.
+    /// Rocks (or another [`Blobs`] implementation) kept rejecting the atomic
+    /// Ready prefix beginning at the front transaction after the configured
+    /// retry budget.
     Backend {
         /// Sequence whose atomic backend batch failed.
         sequence: CommitSeq,
@@ -244,6 +321,14 @@ pub enum ApplyError {
         attempts: usize,
         /// Last backend error.
         source: BlobError,
+    },
+    /// A native-produced record could not be decoded for replay. The ordered
+    /// slot remains present and later transactions cannot pass it.
+    Record {
+        /// Sequence of the malformed record.
+        sequence: CommitSeq,
+        /// Record validation failure.
+        source: RecordError,
     },
 }
 
@@ -264,6 +349,11 @@ impl fmt::Display for ApplyError {
                 "backend rejected commit sequence {} after {attempts} attempt(s): {source}",
                 sequence.get()
             ),
+            Self::Record { sequence, source } => write!(
+                f,
+                "commit record {} cannot be replayed: {source}",
+                sequence.get()
+            ),
         }
     }
 }
@@ -273,6 +363,7 @@ impl std::error::Error for ApplyError {
         match self {
             Self::UnknownOutcome { .. } => None,
             Self::Backend { source, .. } => Some(source),
+            Self::Record { source, .. } => Some(source),
         }
     }
 }
@@ -286,8 +377,61 @@ enum SlotState {
 #[derive(Debug)]
 struct Slot {
     sequence: CommitSeq,
-    record: Arc<OnceLock<CommitRecord>>,
+    record: Arc<OnceLock<QueuedCommitRecord>>,
     state: SlotState,
+}
+
+/// Stable identity for one slot in the dense ordered queue.
+///
+/// Slots are only removed from the front and every bound transaction receives
+/// the next dense commit sequence. Consequently subtracting the current front
+/// sequence from this token gives the slot's current `VecDeque` offset without
+/// scanning unrelated transactions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct QueueToken(CommitSeq);
+
+impl QueueToken {
+    const fn new(sequence: CommitSeq) -> Self {
+        Self(sequence)
+    }
+
+    const fn sequence(self) -> CommitSeq {
+        self.0
+    }
+}
+
+/// Earliest structural record failure discovered by the ordered consumer.
+///
+/// Allocation failure is deliberately excluded: it does not prove the native
+/// bytes are malformed and can succeed on a later replay attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PermanentRecordFailure {
+    sequence: CommitSeq,
+    source: RecordError,
+}
+
+impl PermanentRecordFailure {
+    fn apply_error(&self) -> ApplyError {
+        ApplyError::Record {
+            sequence: self.sequence,
+            source: self.source.clone(),
+        }
+    }
+
+    fn reserve_error(&self) -> ReserveError {
+        ReserveError::PermanentRecordFailure {
+            sequence: self.sequence,
+            source: self.source.clone(),
+        }
+    }
+
+    fn resolve_error(&self, sequence: CommitSeq) -> ResolveError {
+        ResolveError::BlockedByPriorRecordFailure {
+            sequence,
+            prior_failure: self.sequence,
+            source: self.source.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -299,6 +443,88 @@ struct State {
     applied: AppliedWatermark,
     highest_acknowledged: u64,
     first_unknown: Option<CommitSeq>,
+    permanent_record_failure: Option<PermanentRecordFailure>,
+}
+
+impl State {
+    /// Resolve a stable queue token to its current `VecDeque` offset.
+    ///
+    /// A token before the current front has already been consumed; a token
+    /// beyond the back was never inserted (or has otherwise gone missing).
+    /// Retain the final equality check as a fail-closed guard around the dense
+    /// queue invariant.
+    fn queue_offset(&self, token: QueueToken) -> Option<usize> {
+        let front = self.queue.front()?.sequence;
+        let offset = token
+            .sequence()
+            .get()
+            .checked_sub(front.get())
+            .and_then(|offset| usize::try_from(offset).ok())?;
+        self.queue
+            .get(offset)
+            .is_some_and(|slot| slot.sequence == token.sequence())
+            .then_some(offset)
+    }
+
+    /// Extend the caller-visible acknowledgement frontier across the maximal
+    /// contiguous Ready prefix after the current frontier.
+    ///
+    /// Ready publication itself may happen out of order. Keeping this frontier
+    /// dense ensures that returning success for sequence N also proves every
+    /// lower bound native commit has a known-successful outcome. Already
+    /// applied slots need no special case: the consumer only removes records
+    /// after they have crossed this acknowledgement frontier.
+    fn advance_acknowledged_prefix(&mut self) {
+        while let Some(raw_next) = self.highest_acknowledged.checked_add(1) {
+            let Some(next) = CommitSeq::new(raw_next) else {
+                break;
+            };
+            let Some(offset) = self.queue_offset(QueueToken::new(next)) else {
+                break;
+            };
+            if self.queue[offset].state != SlotState::Ready {
+                break;
+            }
+            self.highest_acknowledged = raw_next;
+        }
+    }
+
+    /// Return the earliest fail-stop condition that rejects new work.
+    fn reserve_health_error(&self) -> Option<ReserveError> {
+        match (&self.permanent_record_failure, self.first_unknown) {
+            (Some(failure), Some(unknown)) if unknown < failure.sequence => {
+                Some(ReserveError::UnknownOutcome { sequence: unknown })
+            }
+            (Some(failure), _) => Some(failure.reserve_error()),
+            (None, Some(sequence)) => Some(ReserveError::UnknownOutcome { sequence }),
+            (None, None) => None,
+        }
+    }
+
+    /// Return the earliest fail-stop condition relevant to `target`.
+    fn apply_health_error_through(&self, target: u64) -> Option<ApplyError> {
+        let record = self
+            .permanent_record_failure
+            .as_ref()
+            .filter(|failure| failure.sequence.get() <= target);
+        let unknown = self
+            .first_unknown
+            .filter(|sequence| sequence.get() <= target);
+        match (record, unknown) {
+            (Some(failure), Some(sequence)) if sequence < failure.sequence => {
+                Some(ApplyError::UnknownOutcome { sequence })
+            }
+            (Some(failure), _) => Some(failure.apply_error()),
+            (None, Some(sequence)) => Some(ApplyError::UnknownOutcome { sequence }),
+            (None, None) => None,
+        }
+    }
+
+    /// Return any fail-stop health condition, including one after an already
+    /// applied target. Clean shutdown uses this stronger check.
+    fn health_error(&self) -> Option<ApplyError> {
+        self.apply_health_error_through(u64::MAX)
+    }
 }
 
 /// A bounded, transaction-ordered bridge from native Silo commits to Rocks.
@@ -311,6 +537,7 @@ pub struct Writeback<B: Blobs> {
     config: WritebackConfig,
     state: Mutex<State>,
     changed: Condvar,
+    acknowledgement_changed: Condvar,
     capacity_available: Condvar,
     consumer: Mutex<()>,
 }
@@ -346,6 +573,12 @@ impl<B: Blobs> Writeback<B> {
         if config.max_record_bytes == 0 {
             return Err(ConfigError::ZeroRecordBudget);
         }
+        if config.max_batch_records == 0 {
+            return Err(ConfigError::ZeroBatchRecords);
+        }
+        if config.max_batch_bytes == 0 {
+            return Err(ConfigError::ZeroBatchBytes);
+        }
         if config.retry_delay.is_zero() {
             return Err(ConfigError::ZeroRetryDelay);
         }
@@ -363,8 +596,10 @@ impl<B: Blobs> Writeback<B> {
                 applied: applied_seed,
                 highest_acknowledged: applied_seed.sequence,
                 first_unknown: None,
+                permanent_record_failure: None,
             }),
             changed: Condvar::new(),
+            acknowledgement_changed: Condvar::new(),
             capacity_available: Condvar::new(),
             consumer: Mutex::new(()),
         })
@@ -373,6 +608,11 @@ impl<B: Blobs> Writeback<B> {
     /// Access the underlying backend.
     pub fn backend(&self) -> &B {
         &self.backend
+    }
+
+    /// Maximum native/log record extent accepted by this queue.
+    pub(crate) const fn max_record_bytes(&self) -> usize {
+        self.config.max_record_bytes
     }
 
     /// Prepare a complete transaction record and claim capacity before native
@@ -391,6 +631,7 @@ impl<B: Blobs> Writeback<B> {
         let mut permit = DetachedPermit {
             owner: self,
             prepared: None,
+            native_record: false,
             record: None,
             owns_capacity: true,
         };
@@ -402,11 +643,40 @@ impl<B: Blobs> Writeback<B> {
         Ok(permit)
     }
 
+    /// Claim queue capacity and preallocate a publication cell for a record
+    /// that the trusted native transaction adapter will serialize directly.
+    ///
+    /// The exact byte buffer is owned by `mako-local` across the synchronous
+    /// native commit call. This permit owns only the bounded queue slot and
+    /// therefore adds no duplicate write-set representation.
+    pub(crate) fn reserve_native(
+        &self,
+        record_bytes: usize,
+    ) -> Result<DetachedPermit<'_, B>, ReserveError> {
+        if record_bytes == 0 {
+            return Err(ReserveError::Record(RecordError::Truncated));
+        }
+        if record_bytes > self.config.max_record_bytes {
+            return Err(ReserveError::Record(RecordError::RecordTooLarge {
+                size: record_bytes,
+                max: self.config.max_record_bytes,
+            }));
+        }
+        self.claim_detached_capacity()?;
+        Ok(DetachedPermit {
+            owner: self,
+            prepared: None,
+            native_record: true,
+            record: Some(Arc::new(OnceLock::new())),
+            owns_capacity: true,
+        })
+    }
+
     fn claim_detached_capacity(&self) -> Result<(), ReserveError> {
         let mut state = lock_recover(&self.state);
         loop {
-            if let Some(sequence) = state.first_unknown {
-                return Err(ReserveError::UnknownOutcome { sequence });
+            if let Some(error) = state.reserve_health_error() {
+                return Err(error);
             }
             if state.last_bound == u64::MAX {
                 return Err(ReserveError::SequenceExhausted);
@@ -441,8 +711,10 @@ impl<B: Blobs> Writeback<B> {
             .checked_sub(1)
             .expect("detached permit capacity underflow");
         drop(state);
-        self.capacity_available.notify_all();
-        self.changed.notify_all();
+        // Exactly one bounded-capacity claim became available. A detached
+        // cancellation neither creates consumer work nor changes an applied
+        // target, so the consumer/activity condition needs no notification.
+        self.capacity_available.notify_one();
     }
 
     /// Current in-memory applied watermark.
@@ -455,8 +727,9 @@ impl<B: Blobs> Writeback<B> {
         self.applied_watermark().sequence()
     }
 
-    /// Highest sequence acknowledged to a caller as a successful native
-    /// commit. This is deliberately distinct from the queue tail.
+    /// Highest dense sequence prefix acknowledged to callers as successful
+    /// native commits. This is deliberately distinct from both the queue tail
+    /// and out-of-order Ready publication.
     pub fn highest_acknowledged(&self) -> u64 {
         lock_recover(&self.state).highest_acknowledged
     }
@@ -477,20 +750,27 @@ impl<B: Blobs> Writeback<B> {
     /// Transactions acknowledged after the snapshot are intentionally not
     /// part of this barrier. That includes a later pinned unknown slot: it does
     /// not invalidate an earlier acknowledged prefix, although clean shutdown
-    /// separately rejects any unknown outcome. Each ready record is submitted
-    /// to the backend in exactly one atomic `write_batch` call. A failed record
-    /// remains unchanged at the front for the next retry.
+    /// separately rejects any unknown outcome. Consecutive ready records are
+    /// submitted in bounded atomic `write_batch` calls. A failed prefix remains
+    /// unchanged at the front for the next retry.
     pub fn wait_applied(&self) -> Result<u64, ApplyError> {
         let target = {
             let state = lock_recover(&self.state);
-            let target = state.highest_acknowledged;
-            if let Some(sequence) = state.first_unknown {
-                if sequence.get() <= target {
-                    return Err(ApplyError::UnknownOutcome { sequence });
-                }
-            }
-            target
+            state.highest_acknowledged
         };
+        self.wait_applied_through(target)
+    }
+
+    /// Apply exactly one caller-visible acknowledgement snapshot.
+    ///
+    /// The background consumer may batch every currently Ready slot, but a
+    /// synchronous barrier must not inspect or materialize a suffix published
+    /// after it captured `target`. Otherwise corruption or transient memory
+    /// pressure in later work can incorrectly fail an earlier barrier.
+    fn wait_applied_through(&self, target: u64) -> Result<u64, ApplyError> {
+        if let Some(error) = lock_recover(&self.state).apply_health_error_through(target) {
+            return Err(error);
+        }
 
         let mut failed_sequence = None;
         let mut failed_attempts = 0usize;
@@ -498,17 +778,15 @@ impl<B: Blobs> Writeback<B> {
         loop {
             {
                 let state = lock_recover(&self.state);
+                if let Some(error) = state.apply_health_error_through(target) {
+                    return Err(error);
+                }
                 if state.applied.sequence >= target {
                     return Ok(target);
                 }
-                if let Some(sequence) = state.first_unknown {
-                    if sequence.get() <= target {
-                        return Err(ApplyError::UnknownOutcome { sequence });
-                    }
-                }
             }
 
-            match self.process_front() {
+            match self.process_front_through(Some(target)) {
                 ProcessOutcome::Advanced => {
                     failed_sequence = None;
                     failed_attempts = 0;
@@ -542,6 +820,17 @@ impl<B: Blobs> Writeback<B> {
                     }
                     self.wait_for_activity(self.config.retry_delay);
                 }
+                ProcessOutcome::RecordFailed { sequence, error } => {
+                    if sequence.get() <= target {
+                        return Err(ApplyError::Record {
+                            sequence,
+                            source: error,
+                        });
+                    }
+                    // The sequence cap makes this unreachable for a healthy
+                    // dense queue. Retain the defensive branch for a cached
+                    // concurrent failure, then re-check applied progress.
+                }
                 ProcessOutcome::Blocked | ProcessOutcome::Idle => {
                     self.wait_for_apply_progress(target);
                 }
@@ -552,18 +841,19 @@ impl<B: Blobs> Writeback<B> {
         }
     }
 
-    fn resolve(&self, sequence: CommitSeq, resolution: Resolution) -> Result<(), ResolveError> {
+    fn resolve(&self, token: QueueToken, resolution: Resolution) -> Result<(), ResolveError> {
         let mut state = lock_recover(&self.state);
+        let sequence = token.sequence();
         let prior_unknown = state.first_unknown.filter(|unknown| *unknown < sequence);
-        let Some(slot) = state
-            .queue
-            .iter_mut()
-            .find(|slot| slot.sequence == sequence)
-        else {
+        let prior_record_failure = state
+            .permanent_record_failure
+            .as_ref()
+            .filter(|failure| failure.sequence < sequence)
+            .cloned();
+        let Some(offset) = state.queue_offset(token) else {
             return Err(ResolveError::Missing { sequence });
         };
-
-        match slot.state {
+        match state.queue[offset].state {
             SlotState::Prepared { pinned: true } => {
                 return Err(ResolveError::Pinned { sequence });
             }
@@ -573,103 +863,327 @@ impl<B: Blobs> Writeback<B> {
             }
         }
 
+        let mut wake_ready_front = false;
+        let mut wake_acknowledgement = false;
+        let mut wake_fail_stop = false;
         let result = match resolution {
             Resolution::Publish => {
-                if let Some(prior_unknown) = prior_unknown {
+                if let Some(prior_unknown) = prior_unknown.filter(|prior_unknown| {
+                    prior_record_failure
+                        .as_ref()
+                        .is_none_or(|failure| *prior_unknown < failure.sequence)
+                }) {
                     // The current transaction is known committed, but callers
                     // must not observe an acknowledgement beyond an ambiguous
                     // prefix. Retain it as a pinned Prepared slot.
-                    slot.state = SlotState::Prepared { pinned: true };
+                    state.queue[offset].state = SlotState::Prepared { pinned: true };
                     Err(ResolveError::BlockedByPriorUnknown {
                         sequence,
                         prior_unknown,
                     })
+                } else if let Some(failure) = prior_record_failure {
+                    // This transaction is known committed and retains its
+                    // complete record, but no caller acknowledgement may cross
+                    // a permanently malformed earlier record.
+                    state.queue[offset].state = SlotState::Ready;
+                    Err(failure.resolve_error(sequence))
                 } else {
-                    slot.state = SlotState::Ready;
-                    state.highest_acknowledged = state.highest_acknowledged.max(sequence.get());
-                    Ok(())
+                    state.queue[offset].state = SlotState::Ready;
+                    state.advance_acknowledged_prefix();
+                    // If this publication closed a hole and advanced across a
+                    // later Ready suffix, those publishers are parked on the
+                    // acknowledgement condition. The ordinary in-order fast
+                    // path does not broadcast when no later sequence became
+                    // newly acknowledged.
+                    wake_acknowledgement = state.highest_acknowledged > sequence.get();
+                    // A later Ready slot is still blocked by the current front.
+                    // Only publishing the front can create work for a sleeping
+                    // consumer or synchronous application waiter.
+                    wake_ready_front = offset == 0;
+
+                    // Ready publication and caller acknowledgement are distinct
+                    // transitions. A later native commit may finish first and
+                    // expose its immutable record to the ordered consumer, but
+                    // it cannot return success across a Prepared hole.
+                    #[cfg(test)]
+                    self.acknowledgement_changed.notify_all();
+                    loop {
+                        if state.highest_acknowledged >= sequence.get() {
+                            break Ok(());
+                        }
+                        let prior_unknown =
+                            state.first_unknown.filter(|unknown| *unknown < sequence);
+                        let prior_failure = state
+                            .permanent_record_failure
+                            .as_ref()
+                            .filter(|failure| failure.sequence < sequence)
+                            .cloned();
+                        if let Some(prior_unknown) = prior_unknown.filter(|prior_unknown| {
+                            prior_failure
+                                .as_ref()
+                                .is_none_or(|failure| *prior_unknown < failure.sequence)
+                        }) {
+                            let current_offset = state.queue_offset(token).expect(
+                                "an unacknowledged Ready slot cannot be consumed from the queue",
+                            );
+                            let current = &mut state.queue[current_offset];
+                            assert_eq!(
+                                current.state,
+                                SlotState::Ready,
+                                "a waiting publication remains Ready until its prefix resolves"
+                            );
+                            // This native transaction is known committed. Keep
+                            // its complete record, but pin it behind the earlier
+                            // ambiguity so neither replay nor caller-visible
+                            // acknowledgement can cross the unknown outcome.
+                            current.state = SlotState::Prepared { pinned: true };
+                            break Err(ResolveError::BlockedByPriorUnknown {
+                                sequence,
+                                prior_unknown,
+                            });
+                        }
+                        if let Some(failure) = prior_failure {
+                            break Err(failure.resolve_error(sequence));
+                        }
+                        state = wait_recover(&self.acknowledgement_changed, state);
+                    }
                 }
             }
             Resolution::PinUnknown => {
-                slot.state = SlotState::Prepared { pinned: true };
+                state.queue[offset].state = SlotState::Prepared { pinned: true };
                 state.first_unknown = Some(match state.first_unknown {
                     Some(current) => current.min(sequence),
                     None => sequence,
                 });
+                wake_fail_stop = true;
                 Ok(())
             }
         };
 
         drop(state);
-        self.changed.notify_all();
-        // A producer blocked on a full queue must wake and observe a newly
-        // pinned unknown outcome instead of waiting forever for capacity that
-        // can no longer advance.
-        self.capacity_available.notify_all();
+        if wake_fail_stop {
+            // Every application/capacity waiter must observe the permanent
+            // fail-stop state rather than remain parked behind a queue that can
+            // no longer advance.
+            self.changed.notify_all();
+            self.acknowledgement_changed.notify_all();
+            self.capacity_available.notify_all();
+        } else {
+            if wake_acknowledgement {
+                self.acknowledgement_changed.notify_all();
+            }
+            if wake_ready_front {
+                // Any activity waiter can drive the single serialized consumer;
+                // waking one avoids a notify-all herd on the normal commit path.
+                self.changed.notify_one();
+            }
+        }
         result
     }
 
     pub(crate) fn process_front(&self) -> ProcessOutcome {
+        self.process_front_through(None)
+    }
+
+    /// Process a bounded Ready prefix, optionally capped at an inclusive
+    /// sequence. `None` is the background worker's ordinary unbounded mode;
+    /// synchronous barriers pass their immutable acknowledgement snapshot.
+    fn process_front_through(&self, max_sequence: Option<u64>) -> ProcessOutcome {
         // This guard is separate from the queue state so the single-consumer
         // rule remains explicit if the state lock is narrowed around IO later.
         // Both locks deliberately recover poison: if a backend panics, the
-        // untouched Ready record is safe to retry.
+        // untouched Ready prefix is safe to retry.
         let _consumer = lock_recover(&self.consumer);
         let state = lock_recover(&self.state);
 
         let Some(front) = state.queue.front() else {
             return ProcessOutcome::Idle;
         };
-        let sequence = front.sequence;
-
+        let first_sequence = front.sequence;
+        if max_sequence.is_some_and(|maximum| first_sequence.get() > maximum) {
+            return ProcessOutcome::Idle;
+        }
+        let permanent_record_failure = state.permanent_record_failure.clone();
+        if let Some(failure) = permanent_record_failure
+            .as_ref()
+            .filter(|failure| failure.sequence <= first_sequence)
+        {
+            // The first discovery left this exact slot in place. Never decode
+            // it again: structural invalidity cannot be repaired by retrying.
+            return ProcessOutcome::RecordFailed {
+                sequence: failure.sequence,
+                error: failure.source.clone(),
+            };
+        }
         match front.state {
-            SlotState::Prepared { pinned: false } => ProcessOutcome::Blocked,
-            SlotState::Prepared { pinned: true } => ProcessOutcome::Pinned(sequence),
-            SlotState::Ready => {
-                // The consumer guard preserves global order while the Arc keeps
-                // the exact record alive. Drop the queue-state lock during slow
-                // backend IO so later native commits can publish without
-                // waiting for Rocks.
-                let record = Arc::clone(&front.record);
-                drop(state);
-                #[cfg(test)]
-                crate::failpoint::hit(crate::failpoint::Point::ReadyBeforeBackend);
-                let record = record
-                    .get()
-                    .expect("a Ready slot must contain its finalized record");
-                let operations = record.backend_ops();
-                let result = self.backend.write_batch(&operations);
+            SlotState::Prepared { pinned: false } => return ProcessOutcome::Blocked,
+            SlotState::Prepared { pinned: true } => return ProcessOutcome::Pinned(first_sequence),
+            SlotState::Ready => {}
+        }
 
-                match result {
-                    Ok(()) => {
-                        #[cfg(test)]
-                        crate::failpoint::hit(crate::failpoint::Point::BackendWrittenBeforeApplied);
-                        let mut state = lock_recover(&self.state);
-                        let current = state
-                            .queue
-                            .front()
-                            .expect("serialized consumer keeps front present");
-                        assert_eq!(
-                            current.sequence, sequence,
-                            "serialized consumer changed the front sequence"
-                        );
-                        assert_eq!(
-                            current.state,
-                            SlotState::Ready,
-                            "published front changed state during backend IO"
-                        );
-                        state.queue.pop_front();
-                        state.applied.advance(sequence, record.mako_timestamp());
-                        #[cfg(test)]
-                        crate::failpoint::hit(crate::failpoint::Point::AppliedAdvanced);
-                        drop(state);
-                        self.capacity_available.notify_all();
-                        self.changed.notify_all();
-                        ProcessOutcome::Advanced
-                    }
-                    Err(error) => ProcessOutcome::BackendFailed { sequence, error },
-                }
+        // Capture a bounded contiguous Ready prefix. Prepared and pinned slots
+        // are ordering barriers; a later Ready transaction must never pass
+        // either one. Arc ownership keeps every exact record alive after the
+        // queue lock is dropped for decoding and backend IO.
+        let mut cells = Vec::new();
+        let mut encoded_bytes = 0usize;
+        for slot in &state.queue {
+            if slot.state != SlotState::Ready || cells.len() == self.config.max_batch_records {
+                break;
             }
+            if max_sequence.is_some_and(|maximum| slot.sequence.get() > maximum) {
+                break;
+            }
+            if permanent_record_failure
+                .as_ref()
+                .is_some_and(|failure| slot.sequence >= failure.sequence)
+            {
+                // A prior application barrier may still drain a safe Ready
+                // prefix before the later permanent failure.
+                break;
+            }
+            let record = slot
+                .record
+                .get()
+                .expect("a Ready slot must contain its finalized record");
+            let next_bytes = encoded_bytes.saturating_add(record.encoded_len());
+            if !cells.is_empty() && next_bytes > self.config.max_batch_bytes {
+                break;
+            }
+            encoded_bytes = next_bytes;
+            cells.push(Arc::clone(&slot.record));
+        }
+        assert!(
+            !cells.is_empty(),
+            "a Ready front must form a nonempty batch"
+        );
+        drop(state);
+
+        #[cfg(test)]
+        crate::failpoint::hit(crate::failpoint::Point::ReadyBeforeBackend);
+
+        // Native records are decoded and materialized only on this background
+        // path. Keeping the owned decoded records together lets one flat
+        // BlobOp vector borrow from all of them for the synchronous batch call.
+        let mut records = Vec::with_capacity(cells.len());
+        for cell in &cells {
+            let queued = cell
+                .get()
+                .expect("a captured Ready slot retains its record");
+            match self.materialize_queued_record(queued) {
+                Ok(record) => records.push(record),
+                Err(error) => return self.record_failure_outcome(queued.sequence(), error),
+            }
+        }
+
+        let operation_count = records.iter().fold(0usize, |total, record| {
+            total.saturating_add(record.backend_op_count())
+        });
+        let mut operations = Vec::with_capacity(operation_count);
+        for record in &records {
+            record.append_backend_ops(&mut operations);
+        }
+        let result = self.backend.write_batch(&operations);
+
+        match result {
+            Ok(()) => {
+                #[cfg(test)]
+                crate::failpoint::hit(crate::failpoint::Point::BackendWrittenBeforeApplied);
+                let mut state = lock_recover(&self.state);
+                for record in &records {
+                    let current = state
+                        .queue
+                        .front()
+                        .expect("serialized consumer keeps the captured prefix present");
+                    assert_eq!(
+                        current.sequence,
+                        record.sequence(),
+                        "serialized consumer changed the captured prefix"
+                    );
+                    assert_eq!(
+                        current.state,
+                        SlotState::Ready,
+                        "captured Ready slot changed state during backend IO"
+                    );
+                    state.queue.pop_front();
+                    state
+                        .applied
+                        .advance(record.sequence(), record.mako_timestamp());
+                }
+                #[cfg(test)]
+                crate::failpoint::hit(crate::failpoint::Point::AppliedAdvanced);
+                drop(state);
+                // A whole prefix became free. Wake all bounded-capacity
+                // producers once, and every barrier/consumer observing the
+                // new applied frontier once.
+                self.capacity_available.notify_all();
+                self.changed.notify_all();
+                ProcessOutcome::Advanced
+            }
+            Err(error) => ProcessOutcome::BackendFailed {
+                sequence: first_sequence,
+                error,
+            },
+        }
+    }
+
+    fn materialize_queued_record(
+        &self,
+        queued: &QueuedCommitRecord,
+    ) -> Result<crate::record::CommitRecord, RecordError> {
+        #[cfg(test)]
+        if let Some(error) = TEST_MATERIALIZATION_FAILURE.with(|failure| {
+            failure
+                .borrow()
+                .as_ref()
+                .filter(|(sequence, _)| *sequence == queued.sequence())
+                .map(|(_, error)| error.clone())
+        }) {
+            return Err(error);
+        }
+
+        queued.materialize(self.config.max_record_bytes)
+    }
+
+    /// Classify a replay-materialization failure and retain structural errors
+    /// as a permanent queue-health condition.
+    ///
+    /// Allocation failure is transient: the Ready slot remains untouched and
+    /// a future background or synchronous consumer may retry materialization.
+    fn record_failure_outcome(&self, sequence: CommitSeq, error: RecordError) -> ProcessOutcome {
+        if error == RecordError::AllocationFailed {
+            return ProcessOutcome::RecordFailed { sequence, error };
+        }
+
+        let failure = {
+            let mut state = lock_recover(&self.state);
+            let replace = state
+                .permanent_record_failure
+                .as_ref()
+                .is_none_or(|current| sequence < current.sequence);
+            if replace {
+                state.permanent_record_failure = Some(PermanentRecordFailure {
+                    sequence,
+                    source: error,
+                });
+            }
+            state
+                .permanent_record_failure
+                .clone()
+                .expect("a structural record failure was just latched")
+        };
+
+        // Every kind of waiter must re-check queue health. In particular, a
+        // capacity waiter must not remain parked behind the malformed Ready
+        // slot and an out-of-order publisher must not wait forever for an
+        // acknowledgement frontier that can no longer be safely consumed.
+        self.changed.notify_all();
+        self.acknowledgement_changed.notify_all();
+        self.capacity_available.notify_all();
+
+        ProcessOutcome::RecordFailed {
+            sequence: failure.sequence,
+            error: failure.source,
         }
     }
 
@@ -679,18 +1193,27 @@ impl<B: Blobs> Writeback<B> {
     }
 
     pub(crate) fn retry_delay(&self) -> Duration {
-        self.config.retry_delay
+        if lock_recover(&self.state).permanent_record_failure.is_some() {
+            // Runtime stop still interrupts this through `wake_waiters`. A
+            // permanent structural failure cannot improve through retrying,
+            // so keep the worker asleep instead of re-decoding the same bytes
+            // at the ordinary transient-error cadence.
+            Duration::MAX
+        } else {
+            self.config.retry_delay
+        }
     }
 
     pub(crate) fn ensure_no_unknown(&self) -> Result<(), ApplyError> {
-        match lock_recover(&self.state).first_unknown {
-            Some(sequence) => Err(ApplyError::UnknownOutcome { sequence }),
+        match lock_recover(&self.state).health_error() {
+            Some(error) => Err(error),
             None => Ok(()),
         }
     }
 
     pub(crate) fn wake_waiters(&self) {
         self.changed.notify_all();
+        self.acknowledgement_changed.notify_all();
         self.capacity_available.notify_all();
     }
 
@@ -699,10 +1222,7 @@ impl<B: Blobs> Writeback<B> {
         if state.applied.sequence >= target {
             return;
         }
-        if state
-            .first_unknown
-            .is_some_and(|sequence| sequence.get() <= target)
-        {
+        if state.apply_health_error_through(target).is_some() {
             return;
         }
         if state
@@ -751,8 +1271,7 @@ fn retry_progress(applied: u64, target: u64, failed: CommitSeq) -> RetryProgress
     }
 }
 
-/// A fully preallocated record and bounded capacity claim that has not entered
-/// the ordered commit log.
+/// A bounded capacity claim that has not entered the ordered commit log.
 ///
 /// This value is created before native commit. Dropping it means Silo failed
 /// before reaching the post-validation hook: capacity is released without
@@ -760,15 +1279,19 @@ fn retry_progress(applied: u64, target: u64, failed: CommitSeq) -> RetryProgress
 pub struct DetachedPermit<'a, B: Blobs> {
     owner: &'a Writeback<B>,
     prepared: Option<PreparedCommitRecord>,
-    record: Option<Arc<OnceLock<CommitRecord>>>,
+    native_record: bool,
+    record: Option<Arc<OnceLock<QueuedCommitRecord>>>,
     owns_capacity: bool,
 }
 
 impl<'a, B: Blobs> DetachedPermit<'a, B> {
-    /// Bind this record in Silo's post-validation, pre-install hook.
+    /// Bind this record in Silo's ordered post-validation, pre-install hook.
     ///
-    /// This assigns the next cache sequence, embeds Mako's transaction
-    /// timestamp, and appends one Prepared slot. The method performs no heap
+    /// Production callers enter this hook under native's per-database
+    /// validation gate, so successful binds follow a legal Silo serialization
+    /// order even though failed validations consumed no slot. This assigns the
+    /// next cache sequence, embeds Mako's transaction timestamp, and appends
+    /// one Prepared slot. The method performs no heap
     /// allocation, capacity wait, backend IO, or record-length work. It can
     /// reject the transaction if an earlier commit became ambiguous after this
     /// permit was detached; the caller must then abort native commit before
@@ -781,12 +1304,37 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
         &mut self,
         mako_timestamp: MakoTimestamp,
     ) -> Result<BoundReservation<'a, B>, ReserveError> {
+        assert!(
+            !self.native_record,
+            "native record permits must use bind_native"
+        );
+        self.bind_inner(mako_timestamp)
+    }
+
+    /// Assign a dense sequence and insert an empty Prepared slot for a record
+    /// being filled directly by native code. The returned reservation must be
+    /// given the completed native bytes before it is published or pinned.
+    pub(crate) fn bind_native(
+        &mut self,
+        mako_timestamp: MakoTimestamp,
+    ) -> Result<BoundReservation<'a, B>, ReserveError> {
+        assert!(
+            self.native_record,
+            "materialized record permits must use bind"
+        );
+        self.bind_inner(mako_timestamp)
+    }
+
+    fn bind_inner(
+        &mut self,
+        mako_timestamp: MakoTimestamp,
+    ) -> Result<BoundReservation<'a, B>, ReserveError> {
         let mut state = lock_recover(&self.owner.state);
-        if let Some(sequence) = state.first_unknown {
+        if let Some(error) = state.reserve_health_error() {
             // Leave the complete prepared record on this permit. The caller
             // is inside Silo's hook and will drop it only after native abort
             // has returned and released the write locks.
-            return Err(ReserveError::UnknownOutcome { sequence });
+            return Err(error);
         }
         let raw_sequence = state
             .last_bound
@@ -794,15 +1342,19 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
             .expect("detached capacity guarantees commit sequence space");
         let sequence = CommitSeq::new(raw_sequence)
             .expect("the sequence after a valid applied seed is nonzero");
-        let prepared = self
-            .prepared
-            .take()
-            .expect("a detached permit owns one prepared record");
         let record = self
             .record
             .take()
             .expect("a detached permit owns one preallocated record cell");
-        let bound = prepared.bind(sequence, mako_timestamp);
+        let bound = self
+            .prepared
+            .take()
+            .map(|prepared| prepared.bind(sequence, mako_timestamp));
+        assert_eq!(
+            bound.is_none(),
+            self.native_record,
+            "detached permit record kind changed before binding"
+        );
 
         // Queue storage and the record cell were both preallocated before
         // native commit. Since detached claims count against capacity, this
@@ -833,15 +1385,20 @@ impl<'a, B: Blobs> DetachedPermit<'a, B> {
         self.owns_capacity = false;
         state.queue.push_back(slot);
         drop(state);
-        self.owner.changed.notify_all();
-        // Wake sequence-space waiters. Occupancy is unchanged by binding, but
-        // a bind at u64::MAX turns a temporary sequence shortage permanent.
-        self.owner.capacity_available.notify_all();
+        // Binding only replaces one detached capacity claim with one Prepared
+        // queue slot; it creates no consumer work and frees no capacity. The
+        // sole exceptional transition is assigning the final sequence, which
+        // wakes every sequence-space waiter so each can fail closed instead of
+        // remaining parked forever.
+        if raw_sequence == u64::MAX {
+            self.owner.capacity_available.notify_all();
+        }
 
         Ok(BoundReservation {
             owner: self.owner,
-            sequence,
-            bound: Some(bound),
+            token: QueueToken::new(sequence),
+            mako_timestamp,
+            bound,
             record,
             on_drop: DropAction::PinUnknown,
         })
@@ -864,30 +1421,54 @@ impl<B: Blobs> Drop for DetachedPermit<'_, B> {
 /// ambiguous return may call [`Self::pin_unknown`] explicitly or simply drop.
 pub struct BoundReservation<'a, B: Blobs> {
     owner: &'a Writeback<B>,
-    sequence: CommitSeq,
+    token: QueueToken,
+    mako_timestamp: MakoTimestamp,
     bound: Option<BoundCommitRecord>,
-    record: Arc<OnceLock<CommitRecord>>,
+    record: Arc<OnceLock<QueuedCommitRecord>>,
     on_drop: DropAction,
 }
 
 impl<B: Blobs> BoundReservation<'_, B> {
     /// Return the cache sequence assigned at the native serialization hook.
-    #[cfg(test)]
     pub const fn sequence(&self) -> CommitSeq {
-        self.sequence
+        self.token.sequence()
     }
 
-    /// Publish a successfully committed native transaction.
+    /// Attach the exact bytes initialized by the trusted native serializer.
+    /// This is constant-time and allocation-free; decoding is deferred to the
+    /// background replay path.
+    pub(crate) fn attach_native_record(&mut self, encoded: Vec<u8>) {
+        assert!(
+            self.bound.is_none(),
+            "a materialized reservation cannot accept native bytes"
+        );
+        let record =
+            NativeCommitRecord::from_native(self.token.sequence(), self.mako_timestamp, encoded);
+        assert!(
+            self.record.set(QueuedCommitRecord::Native(record)).is_ok(),
+            "a native record may be attached exactly once"
+        );
+    }
+
+    /// Publish a successfully committed transaction.
     ///
-    /// Checksum finalization is allocation-free but linear in record length, so
-    /// it intentionally runs here after Silo has left its lock critical
-    /// section. The finalized record is installed in its preallocated cell
-    /// before the slot becomes Ready.
+    /// A native reservation already has its complete checksummed bytes attached.
+    /// The legacy materialized test path finalizes its preallocated record here;
+    /// either way the complete record is installed before the slot becomes
+    /// Ready. If an earlier bound transaction has not published yet, this call
+    /// waits without holding the queue mutex until that dense acknowledgement
+    /// prefix catches up. An earlier unknown outcome instead retains this
+    /// known-committed record as pinned and returns
+    /// [`ResolveError::BlockedByPriorUnknown`].
     pub fn publish(mut self) -> Result<CommitSeq, ResolveError> {
         self.finalize_once();
-        self.owner.resolve(self.sequence, Resolution::Publish)?;
+        assert!(
+            self.record.get().is_some(),
+            "a bound slot must own a complete record before publication"
+        );
+        self.owner.resolve(self.token, Resolution::Publish)?;
         self.on_drop = DropAction::Done;
-        Ok(self.sequence)
+        Ok(self.token.sequence())
     }
 
     /// Permanently pin the slot because the native commit outcome is unknown.
@@ -898,9 +1479,13 @@ impl<B: Blobs> BoundReservation<'_, B> {
     pub fn pin_unknown(mut self) -> Result<CommitSeq, ResolveError> {
         self.on_drop = DropAction::PinUnknown;
         self.finalize_once();
-        self.owner.resolve(self.sequence, Resolution::PinUnknown)?;
+        assert!(
+            self.record.get().is_some(),
+            "a bound slot must retain its complete record before pinning"
+        );
+        self.owner.resolve(self.token, Resolution::PinUnknown)?;
         self.on_drop = DropAction::Done;
-        Ok(self.sequence)
+        Ok(self.token.sequence())
     }
 
     /// Finalize and retain the exact write set at most once.
@@ -916,7 +1501,7 @@ impl<B: Blobs> BoundReservation<'_, B> {
         // Safe consuming transitions provide exactly one BoundCommitRecord.
         // If an internal misuse somehow finalized the cell first, retaining
         // that existing complete record is safer than panicking here.
-        let _ = self.record.set(record);
+        let _ = self.record.set(QueuedCommitRecord::Materialized(record));
     }
 }
 
@@ -931,7 +1516,7 @@ impl<B: Blobs> Drop for BoundReservation<'_, B> {
         // regresses; pinning is still attempted after a contained panic.
         let _ = catch_unwind(AssertUnwindSafe(|| self.finalize_once()));
         let _ = catch_unwind(AssertUnwindSafe(|| {
-            let _ = self.owner.resolve(self.sequence, resolution);
+            let _ = self.owner.resolve(self.token, resolution);
         }));
         self.on_drop = DropAction::Done;
     }
@@ -946,6 +1531,10 @@ pub(crate) enum ProcessOutcome {
     BackendFailed {
         sequence: CommitSeq,
         error: BlobError,
+    },
+    RecordFailed {
+        sequence: CommitSeq,
+        error: RecordError,
     },
 }
 
@@ -976,7 +1565,8 @@ fn wait_timeout_recover<'a, T>(
 mod tests {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc};
+    use std::sync::{mpsc, Arc, Barrier};
+    use std::time::Instant;
 
     use mrx_core::fakes::MemBlobs;
     use mrx_core::BlobOp;
@@ -1003,10 +1593,84 @@ mod tests {
     fn config(capacity: usize, max_apply_retries: usize) -> WritebackConfig {
         WritebackConfig {
             capacity,
+            // Legacy tests exercise one-at-a-time application semantics. New
+            // prefix tests opt into larger batches explicitly below.
+            max_batch_records: 1,
             max_apply_retries,
             retry_delay: Duration::from_millis(1),
             ..WritebackConfig::default()
         }
+    }
+
+    fn batch_config(
+        capacity: usize,
+        max_batch_records: usize,
+        max_batch_bytes: usize,
+    ) -> WritebackConfig {
+        WritebackConfig {
+            max_batch_records,
+            max_batch_bytes,
+            ..config(capacity, 0)
+        }
+    }
+
+    fn record_encoded_len(mutations: Vec<Mutation>) -> usize {
+        PreparedCommitRecord::prepare(mutations, DEFAULT_MAX_RECORD_BYTES)
+            .unwrap()
+            .bind(CommitSeq::new(1).unwrap(), mako_timestamp_of(1))
+            .finalize()
+            .encoded()
+            .len()
+    }
+
+    fn encoded_native_record(
+        raw_sequence: u64,
+        raw_mako_timestamp: u32,
+        mutations: Vec<Mutation>,
+    ) -> Vec<u8> {
+        PreparedCommitRecord::prepare(mutations, DEFAULT_MAX_RECORD_BYTES)
+            .unwrap()
+            .bind(
+                CommitSeq::new(raw_sequence).expect("test sequence is nonzero"),
+                mako_timestamp_of(raw_mako_timestamp),
+            )
+            .finalize()
+            .encoded()
+            .to_vec()
+    }
+
+    fn publish_native_bytes<B: Blobs>(
+        writeback: &Writeback<B>,
+        raw_mako_timestamp: u32,
+        encoded: Vec<u8>,
+    ) -> CommitSeq {
+        let mut permit = writeback.reserve_native(encoded.len()).unwrap();
+        let mut reservation = permit
+            .bind_native(mako_timestamp_of(raw_mako_timestamp))
+            .unwrap();
+        reservation.attach_native_record(encoded);
+        reservation.publish().unwrap()
+    }
+
+    struct MaterializationFailureGuard;
+
+    impl Drop for MaterializationFailureGuard {
+        fn drop(&mut self) {
+            TEST_MATERIALIZATION_FAILURE.with(|failure| {
+                *failure.borrow_mut() = None;
+            });
+        }
+    }
+
+    fn force_materialization_failure(
+        sequence: CommitSeq,
+        error: RecordError,
+    ) -> MaterializationFailureGuard {
+        TEST_MATERIALIZATION_FAILURE.with(|failure| {
+            let previous = failure.borrow_mut().replace((sequence, error));
+            assert!(previous.is_none(), "test failure injection already armed");
+        });
+        MaterializationFailureGuard
     }
 
     fn bind<'a, B: Blobs>(
@@ -1016,8 +1680,107 @@ mod tests {
         permit.bind(mako_timestamp_of(mako_timestamp)).unwrap()
     }
 
+    fn publish<B: Blobs>(
+        writeback: &Writeback<B>,
+        mutations: Vec<Mutation>,
+        mako_timestamp: u32,
+    ) -> CommitSeq {
+        writeback
+            .reserve(mutations)
+            .unwrap()
+            .bind(mako_timestamp_of(mako_timestamp))
+            .unwrap()
+            .publish()
+            .unwrap()
+    }
+
     fn mako_timestamp_of(raw: u32) -> MakoTimestamp {
         MakoTimestamp::new(raw).expect("test Mako timestamps are nonzero")
+    }
+
+    fn wait_until_ready<B: Blobs>(writeback: &Writeback<B>, raw_sequence: u64) {
+        let sequence = CommitSeq::new(raw_sequence).expect("test sequence is nonzero");
+        let token = QueueToken::new(sequence);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut state = lock_recover(&writeback.state);
+        loop {
+            let offset = state
+                .queue_offset(token)
+                .expect("publication slot remains queued while acknowledgement waits");
+            if state.queue[offset].state == SlotState::Ready {
+                return;
+            }
+
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .expect("publication did not make its slot Ready within one second");
+            let (next_state, timeout) = writeback
+                .acknowledgement_changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state = next_state;
+            if timeout.timed_out() {
+                let offset = state
+                    .queue_offset(token)
+                    .expect("timed-out publication slot remains queued");
+                assert_eq!(
+                    state.queue[offset].state,
+                    SlotState::Ready,
+                    "publication did not make its slot Ready within one second"
+                );
+                return;
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum OwnedBlobOp {
+        Put { key: Vec<u8>, value: Vec<u8> },
+        Delete { key: Vec<u8> },
+    }
+
+    impl OwnedBlobOp {
+        fn capture(operation: &BlobOp<'_>) -> Self {
+            match operation {
+                BlobOp::Put { key, val } => Self::Put {
+                    key: key.to_vec(),
+                    value: val.to_vec(),
+                },
+                BlobOp::Delete { key } => Self::Delete { key: key.to_vec() },
+            }
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingBlobs {
+        inner: MemBlobs,
+        attempts: Mutex<Vec<Vec<OwnedBlobOp>>>,
+    }
+
+    impl RecordingBlobs {
+        fn fail_next_writes(&self, count: usize) {
+            self.inner.fail_next_writes(count);
+        }
+
+        fn attempts(&self) -> Vec<Vec<OwnedBlobOp>> {
+            lock_recover(&self.attempts).clone()
+        }
+    }
+
+    impl Blobs for RecordingBlobs {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+            self.inner.get(key)
+        }
+
+        fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
+            lock_recover(&self.attempts)
+                .push(operations.iter().map(OwnedBlobOp::capture).collect());
+            self.inner.write_batch(operations)
+        }
+
+        fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
+            self.inner.for_each_key(f)
+        }
     }
 
     #[test]
@@ -1042,6 +1805,280 @@ mod tests {
             AppliedWatermark::recovered(1, Some(mako_timestamp_of(11)))
         );
         assert_eq!(writeback.queue_len(), 0);
+    }
+
+    #[test]
+    fn contiguous_ready_prefix_uses_one_backend_call() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback =
+            Writeback::new(Arc::clone(&backend), 0, batch_config(4, 4, usize::MAX)).unwrap();
+        publish(&writeback, vec![put(b"a", b"one")], 111);
+        publish(&writeback, vec![put(b"b", b"two")], 112);
+        publish(&writeback, vec![put(b"c", b"three")], 113);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(backend.batch_count(), 1);
+        assert_eq!(backend.op_count(), 6, "each record contributes log + data");
+        assert_eq!(writeback.applied_sequence(), 3);
+        assert_eq!(writeback.queue_len(), 0);
+    }
+
+    #[test]
+    fn ready_prefix_respects_record_count_cap() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback =
+            Writeback::new(Arc::clone(&backend), 0, batch_config(5, 2, usize::MAX)).unwrap();
+        publish(&writeback, vec![put(b"a", b"one")], 121);
+        publish(&writeback, vec![put(b"b", b"two")], 122);
+        publish(&writeback, vec![put(b"c", b"three")], 123);
+        publish(&writeback, vec![put(b"d", b"four")], 124);
+        publish(&writeback, vec![put(b"e", b"five")], 125);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 2);
+        assert_eq!(writeback.queue_len(), 3);
+        assert_eq!(backend.batch_count(), 1);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 4);
+        assert_eq!(writeback.queue_len(), 1);
+        assert_eq!(backend.batch_count(), 2);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 5);
+        assert_eq!(writeback.queue_len(), 0);
+        assert_eq!(backend.batch_count(), 3);
+    }
+
+    #[test]
+    fn ready_prefix_respects_encoded_byte_cap() {
+        let record_bytes = record_encoded_len(vec![put(b"a", b"one")]);
+        let two_record_cap = record_bytes.checked_mul(2).unwrap();
+        let backend = Arc::new(MemBlobs::new());
+        let writeback =
+            Writeback::new(Arc::clone(&backend), 0, batch_config(3, 3, two_record_cap)).unwrap();
+        publish(&writeback, vec![put(b"a", b"one")], 131);
+        publish(&writeback, vec![put(b"b", b"two")], 132);
+        publish(&writeback, vec![put(b"c", b"six")], 133);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 2);
+        assert_eq!(writeback.queue_len(), 1);
+        assert_eq!(backend.batch_count(), 1);
+        assert_eq!(backend.op_count(), 4);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 3);
+        assert_eq!(backend.batch_count(), 2);
+    }
+
+    #[test]
+    fn oversized_ready_front_is_submitted_alone() {
+        let large_value = vec![b'x'; 128];
+        let oversized_mutation = put(b"large", &large_value);
+        let oversized_bytes = record_encoded_len(vec![oversized_mutation.clone()]);
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(
+            Arc::clone(&backend),
+            0,
+            batch_config(2, 2, oversized_bytes - 1),
+        )
+        .unwrap();
+        publish(&writeback, vec![oversized_mutation], 141);
+        publish(&writeback, vec![put(b"small", b"value")], 142);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(writeback.queue_len(), 1);
+        assert_eq!(backend.batch_count(), 1);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 2);
+        assert_eq!(backend.batch_count(), 2);
+    }
+
+    #[test]
+    fn prepared_and_pinned_slots_cut_the_ready_prefix() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback =
+            Writeback::new(Arc::clone(&backend), 0, batch_config(3, 3, usize::MAX)).unwrap();
+        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 151);
+        let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 152);
+        let third = bind(writeback.reserve(vec![put(b"c", b"three")]).unwrap(), 153);
+        first.publish().unwrap();
+        std::thread::scope(|scope| {
+            let (published_tx, published_rx) = mpsc::channel();
+            let publisher = scope.spawn(move || published_tx.send(third.publish()).unwrap());
+            wait_until_ready(&writeback, 3);
+            assert_eq!(writeback.highest_acknowledged(), 1);
+
+            assert!(matches!(
+                writeback.process_front(),
+                ProcessOutcome::Advanced
+            ));
+            assert_eq!(writeback.applied_sequence(), 1);
+            assert_eq!(writeback.queue_len(), 2);
+            assert_eq!(backend.batch_count(), 1);
+            assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
+
+            second.pin_unknown().unwrap();
+            assert!(matches!(
+                published_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                Err(ResolveError::BlockedByPriorUnknown {
+                    sequence,
+                    prior_unknown,
+                }) if sequence.get() == 3 && prior_unknown.get() == 2
+            ));
+            publisher.join().unwrap();
+        });
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Pinned(sequence) if sequence.get() == 2
+        ));
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(writeback.queue_len(), 2);
+        assert_eq!(backend.batch_count(), 1);
+        let state = lock_recover(&writeback.state);
+        assert_eq!(state.queue[0].state, SlotState::Prepared { pinned: true });
+        assert_eq!(state.queue[1].state, SlotState::Prepared { pinned: true });
+    }
+
+    #[test]
+    fn failed_ready_prefix_retires_none_and_retries_the_same_operations() {
+        let backend = Arc::new(RecordingBlobs::default());
+        backend.fail_next_writes(1);
+        let writeback =
+            Writeback::new(Arc::clone(&backend), 0, batch_config(4, 3, usize::MAX)).unwrap();
+        publish(&writeback, vec![put(b"a", b"one")], 161);
+        publish(&writeback, vec![put(b"b", b"two")], 162);
+        publish(&writeback, vec![put(b"c", b"three")], 163);
+        publish(&writeback, vec![put(b"d", b"four")], 164);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::BackendFailed { sequence, .. } if sequence.get() == 1
+        ));
+        assert_eq!(writeback.applied_sequence(), 0);
+        assert_eq!(writeback.queue_len(), 4);
+        assert!(backend.inner.snapshot().is_empty());
+        assert_eq!(backend.attempts().len(), 1);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        let attempts = backend.attempts();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(
+            attempts[0], attempts[1],
+            "retry changed the captured prefix"
+        );
+        assert_eq!(attempts[0].len(), 6, "three log + data record pairs");
+        assert_eq!(writeback.applied_sequence(), 3);
+        assert_eq!(writeback.queue_len(), 1);
+        assert_eq!(backend.inner.batch_count(), 1);
+    }
+
+    #[test]
+    fn publication_during_backend_io_is_not_retired_with_captured_prefix() {
+        let backend = Arc::new(BlockingBlobs::default());
+        let writeback =
+            Writeback::new(Arc::clone(&backend), 0, batch_config(2, 2, usize::MAX)).unwrap();
+        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 171);
+        let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 172);
+        first.publish().unwrap();
+
+        std::thread::scope(|scope| {
+            let consumer = scope.spawn(|| writeback.process_front());
+            backend.wait_until_entered();
+            second.publish().unwrap();
+            backend.release();
+            assert!(matches!(consumer.join().unwrap(), ProcessOutcome::Advanced));
+        });
+
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(writeback.highest_acknowledged(), 2);
+        assert_eq!(writeback.queue_len(), 1);
+        assert_eq!(backend.inner.batch_count(), 1);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 2);
+        assert_eq!(backend.inner.batch_count(), 2);
+    }
+
+    #[test]
+    fn same_key_updates_preserve_transaction_order_inside_one_batch() {
+        let backend = Arc::new(RecordingBlobs::default());
+        let writeback =
+            Writeback::new(Arc::clone(&backend), 0, batch_config(2, 2, usize::MAX)).unwrap();
+        publish(&writeback, vec![put(b"same", b"first")], 181);
+        publish(&writeback, vec![put(b"same", b"second")], 182);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 2);
+        assert_eq!(backend.inner.batch_count(), 1);
+
+        let attempts = backend.attempts();
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].len(), 4);
+        match (&attempts[0][1], &attempts[0][3]) {
+            (
+                OwnedBlobOp::Put {
+                    key: first_key,
+                    value: first_value,
+                },
+                OwnedBlobOp::Put {
+                    key: second_key,
+                    value: second_value,
+                },
+            ) => {
+                assert_eq!(first_key, second_key);
+                assert_eq!(first_value, b"first");
+                assert_eq!(second_value, b"second");
+            }
+            operations => panic!("unexpected data operation order: {operations:?}"),
+        }
+
+        let snapshot = backend.inner.snapshot();
+        assert_eq!(snapshot.len(), 3, "two logs and one materialized data key");
+        assert!(!snapshot.values().any(|value| value.as_slice() == b"first"));
+        assert_eq!(
+            snapshot
+                .values()
+                .filter(|value| value.as_slice() == b"second")
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1145,6 +2182,251 @@ mod tests {
     }
 
     #[test]
+    fn permanent_native_record_failure_latches_exact_health_error() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(3, 0)).unwrap();
+        let mut detached_before_failure = writeback
+            .reserve(vec![put(b"already-detached", b"value")])
+            .unwrap();
+
+        let mut malformed = encoded_native_record(1, 191, vec![put(b"bad", b"crc")]);
+        *malformed.last_mut().unwrap() ^= 1;
+        assert_eq!(publish_native_bytes(&writeback, 191, malformed).get(), 1);
+
+        let latched_source = match writeback.process_front() {
+            ProcessOutcome::RecordFailed { sequence, error } => {
+                assert_eq!(sequence.get(), 1);
+                assert!(matches!(error, RecordError::BadChecksum { .. }));
+                error
+            }
+            outcome => panic!("malformed native record was not rejected: {outcome:?}"),
+        };
+        assert_eq!(writeback.queue_len(), 1, "malformed slot stays queued");
+        assert_eq!(
+            backend.batch_count(),
+            0,
+            "malformed bytes never reach Rocks"
+        );
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::RecordFailed { sequence, error }
+                if sequence.get() == 1 && error == latched_source
+        ));
+        assert!(matches!(
+            writeback.ensure_no_unknown(),
+            Err(ApplyError::Record { sequence, source })
+                if sequence.get() == 1 && source == latched_source
+        ));
+        assert!(matches!(
+            writeback.wait_applied(),
+            Err(ApplyError::Record { sequence, source })
+                if sequence.get() == 1 && source == latched_source
+        ));
+        assert!(matches!(
+            writeback.reserve(vec![put(b"new", b"work")]),
+            Err(ReserveError::PermanentRecordFailure { sequence, source })
+                if sequence.get() == 1 && source == latched_source
+        ));
+        assert!(matches!(
+            detached_before_failure.bind(mako_timestamp_of(192)),
+            Err(ReserveError::PermanentRecordFailure { sequence, source })
+                if sequence.get() == 1 && source == latched_source
+        ));
+        assert!(detached_before_failure.owns_capacity);
+    }
+
+    #[test]
+    fn barrier_snapshot_ignores_a_later_permanent_record_failure() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback =
+            Writeback::new(Arc::clone(&backend), 0, batch_config(2, 2, usize::MAX)).unwrap();
+        publish(&writeback, vec![put(b"safe", b"prefix")], 197);
+        let mut malformed = encoded_native_record(2, 198, vec![put(b"bad", b"suffix")]);
+        *malformed.last_mut().unwrap() ^= 1;
+        publish_native_bytes(&writeback, 198, malformed);
+        assert_eq!(writeback.highest_acknowledged(), 2);
+
+        // Model a barrier that captured sequence 1 immediately before the
+        // second publication. It must neither decode nor apply sequence 2.
+        assert_eq!(writeback.wait_applied_through(1).unwrap(), 1);
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(writeback.queue_len(), 1);
+        assert_eq!(backend.batch_count(), 1);
+        assert!(writeback.ensure_no_unknown().is_ok());
+
+        // The ordinary background mode remains unbounded and discovers the
+        // malformed suffix on its next attempt.
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::RecordFailed {
+                sequence,
+                error: RecordError::BadChecksum { .. },
+            } if sequence.get() == 2
+        ));
+        assert!(matches!(
+            writeback.ensure_no_unknown(),
+            Err(ApplyError::Record {
+                sequence,
+                source: RecordError::BadChecksum { .. },
+            }) if sequence.get() == 2
+        ));
+    }
+
+    #[test]
+    fn barrier_snapshot_ignores_a_later_retryable_allocation_failure() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback =
+            Writeback::new(Arc::clone(&backend), 0, batch_config(2, 2, usize::MAX)).unwrap();
+        publish(&writeback, vec![put(b"safe", b"prefix")], 199);
+        publish(&writeback, vec![put(b"retry", b"suffix")], 200);
+        let later = CommitSeq::new(2).unwrap();
+        let failure = force_materialization_failure(later, RecordError::AllocationFailed);
+
+        assert_eq!(writeback.wait_applied_through(1).unwrap(), 1);
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(writeback.queue_len(), 1);
+        assert_eq!(backend.batch_count(), 1);
+
+        // Background processing is still unbounded, observes the transient
+        // failure, and leaves queue health retryable.
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::RecordFailed {
+                sequence,
+                error: RecordError::AllocationFailed,
+            } if sequence == later
+        ));
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(writeback.queue_len(), 1);
+        assert!(writeback.ensure_no_unknown().is_ok());
+
+        drop(failure);
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 2);
+        assert_eq!(backend.batch_count(), 2);
+    }
+
+    #[test]
+    fn permanent_record_failure_wakes_capacity_and_acknowledgement_waiters() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Arc::new(Writeback::new(backend, 0, config(2, 0)).unwrap());
+        let first = bind(writeback.reserve(vec![put(b"front", b"one")]).unwrap(), 193);
+        let second = bind(writeback.reserve(vec![put(b"later", b"two")]).unwrap(), 194);
+
+        std::thread::scope(|scope| {
+            let (published_tx, published_rx) = mpsc::channel();
+            let publisher = scope.spawn(move || published_tx.send(second.publish()).unwrap());
+            wait_until_ready(&writeback, 2);
+            assert!(published_rx
+                .recv_timeout(Duration::from_millis(30))
+                .is_err());
+
+            assert!(matches!(
+                writeback.record_failure_outcome(
+                    CommitSeq::new(1).unwrap(),
+                    RecordError::BadMagic,
+                ),
+                ProcessOutcome::RecordFailed { sequence, error: RecordError::BadMagic }
+                    if sequence.get() == 1
+            ));
+            assert!(matches!(
+                published_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                Err(ResolveError::BlockedByPriorRecordFailure {
+                    sequence,
+                    prior_failure,
+                    source: RecordError::BadMagic,
+                }) if sequence.get() == 2 && prior_failure.get() == 1
+            ));
+            publisher.join().unwrap();
+        });
+        drop(first);
+
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Arc::new(Writeback::new(backend, 0, config(1, 0)).unwrap());
+        let mut malformed = encoded_native_record(1, 195, vec![put(b"bad", b"crc")]);
+        *malformed.last_mut().unwrap() ^= 1;
+        publish_native_bytes(&writeback, 195, malformed);
+
+        let (result_tx, result_rx) = mpsc::channel();
+        let producer_writeback = Arc::clone(&writeback);
+        let producer = std::thread::spawn(move || {
+            let result = match producer_writeback.reserve(vec![put(b"blocked", b"work")]) {
+                Err(ReserveError::PermanentRecordFailure { sequence, source }) => {
+                    Ok((sequence, source))
+                }
+                Err(error) => Err(format!("unexpected reservation error: {error}")),
+                Ok(permit) => {
+                    drop(permit);
+                    Err("reservation unexpectedly succeeded".to_owned())
+                }
+            };
+            result_tx.send(result).unwrap();
+        });
+        assert!(result_rx.recv_timeout(Duration::from_millis(30)).is_err());
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::RecordFailed { sequence, error: RecordError::BadChecksum { .. } }
+                if sequence.get() == 1
+        ));
+        let (sequence, source) = result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .expect("backpressured reservation observed the permanent failure");
+        assert_eq!(sequence.get(), 1);
+        assert!(matches!(source, RecordError::BadChecksum { .. }));
+        producer.join().unwrap();
+    }
+
+    #[test]
+    fn allocation_failure_remains_retryable_and_does_not_poison_health() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(Arc::clone(&backend), 0, config(2, 0)).unwrap();
+        publish(&writeback, vec![put(b"retry", b"value")], 196);
+        let sequence = CommitSeq::new(1).unwrap();
+
+        assert!(matches!(
+            writeback.record_failure_outcome(sequence, RecordError::AllocationFailed),
+            ProcessOutcome::RecordFailed {
+                sequence: failed,
+                error: RecordError::AllocationFailed,
+            } if failed == sequence
+        ));
+        assert!(writeback.ensure_no_unknown().is_ok());
+        let detached = writeback.reserve(vec![put(b"still", b"healthy")]).unwrap();
+        drop(detached);
+
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), 1);
+        assert_eq!(backend.batch_count(), 1);
+    }
+
+    #[test]
+    fn permanent_record_latch_retains_the_earliest_sequence() {
+        let writeback = Writeback::new(MemBlobs::new(), 0, config(1, 0)).unwrap();
+        let seventh = CommitSeq::new(7).unwrap();
+        let third = CommitSeq::new(3).unwrap();
+
+        let _ = writeback.record_failure_outcome(seventh, RecordError::BadMagic);
+        let _ = writeback.record_failure_outcome(third, RecordError::Truncated);
+        let _ = writeback.record_failure_outcome(seventh, RecordError::InvalidSequence);
+
+        assert!(matches!(
+            writeback.ensure_no_unknown(),
+            Err(ApplyError::Record {
+                sequence,
+                source: RecordError::Truncated,
+            }) if sequence == third
+        ));
+    }
+
+    #[test]
     fn cache_sequence_is_assigned_by_bind_order_not_reserve_order() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(backend, 0, config(2, 0)).unwrap();
@@ -1156,11 +2438,25 @@ mod tests {
         assert_eq!(bound_first.sequence().get(), 1);
         assert_eq!(bound_second.sequence().get(), 2);
 
-        bound_second.publish().unwrap();
-        assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
-        assert_eq!(writeback.applied_watermark(), AppliedWatermark::default());
+        std::thread::scope(|scope| {
+            let (published_tx, published_rx) = mpsc::channel();
+            let publisher = scope.spawn(move || published_tx.send(bound_second.publish()).unwrap());
+            wait_until_ready(&writeback, 2);
+            assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
+            assert_eq!(writeback.applied_watermark(), AppliedWatermark::default());
+            assert_eq!(writeback.highest_acknowledged(), 0);
 
-        bound_first.publish().unwrap();
+            bound_first.publish().unwrap();
+            assert_eq!(
+                published_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .unwrap()
+                    .get(),
+                2
+            );
+            publisher.join().unwrap();
+        });
         assert!(matches!(
             writeback.process_front(),
             ProcessOutcome::Advanced
@@ -1181,18 +2477,92 @@ mod tests {
     }
 
     #[test]
-    fn prepared_hole_blocks_later_ready_transaction() {
+    fn queue_tokens_track_current_vecdeque_offsets_after_front_retirement() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Writeback::new(backend, 0, config(4, 0)).unwrap();
+        let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 203);
+        let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 204);
+        let third = bind(writeback.reserve(vec![put(b"c", b"three")]).unwrap(), 205);
+        let first_token = first.token;
+        let second_token = second.token;
+        let third_token = third.token;
+
+        {
+            let state = lock_recover(&writeback.state);
+            assert_eq!(state.queue_offset(first_token), Some(0));
+            assert_eq!(state.queue_offset(second_token), Some(1));
+            assert_eq!(state.queue_offset(third_token), Some(2));
+        }
+
+        first.publish().unwrap();
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        {
+            let state = lock_recover(&writeback.state);
+            assert_eq!(state.queue_offset(first_token), None);
+            assert_eq!(state.queue_offset(second_token), Some(0));
+            assert_eq!(state.queue_offset(third_token), Some(1));
+        }
+        assert!(matches!(
+            writeback.resolve(first_token, Resolution::PinUnknown),
+            Err(ResolveError::Missing { sequence }) if sequence.get() == 1
+        ));
+
+        // Both handles were minted before the front moved. Resolving them
+        // afterward must use their new offsets rather than a stale bind-time
+        // index or a scan from the current front.
+        std::thread::scope(|scope| {
+            let (published_tx, published_rx) = mpsc::channel();
+            let publisher = scope.spawn(move || published_tx.send(third.publish()).unwrap());
+            wait_until_ready(&writeback, 3);
+            assert_eq!(writeback.highest_acknowledged(), 1);
+
+            second.publish().unwrap();
+            assert_eq!(
+                published_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .unwrap()
+                    .get(),
+                3
+            );
+            publisher.join().unwrap();
+        });
+        assert_eq!(writeback.wait_applied().unwrap(), 3);
+    }
+
+    #[test]
+    fn prepared_hole_blocks_later_ready_transaction_and_acknowledgement() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
         let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 21);
         let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 22);
-        second.publish().unwrap();
+        std::thread::scope(|scope| {
+            let (published_tx, published_rx) = mpsc::channel();
+            let publisher = scope.spawn(move || published_tx.send(second.publish()).unwrap());
+            wait_until_ready(&writeback, 2);
 
-        assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
-        assert_eq!(backend.batch_count(), 0);
-        assert_eq!(writeback.highest_acknowledged(), 2);
+            assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
+            assert_eq!(backend.batch_count(), 0);
+            assert_eq!(writeback.highest_acknowledged(), 0);
+            assert!(matches!(
+                published_rx.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
 
-        first.publish().unwrap();
+            first.publish().unwrap();
+            assert_eq!(
+                published_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .unwrap()
+                    .get(),
+                2
+            );
+            publisher.join().unwrap();
+        });
         assert_eq!(writeback.wait_applied().unwrap(), 2);
         assert_eq!(backend.batch_count(), 2);
         assert_eq!(writeback.applied_sequence(), 2);
@@ -1242,18 +2612,57 @@ mod tests {
     }
 
     #[test]
-    fn out_of_order_publication_still_applies_in_sequence_order() {
+    fn out_of_order_publications_wait_for_one_dense_acknowledgement_prefix() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Writeback::new(Arc::clone(&backend), 0, config(4, 0)).unwrap();
         let first = bind(writeback.reserve(vec![put(b"a", b"one")]).unwrap(), 31);
         let second = bind(writeback.reserve(vec![put(b"b", b"two")]).unwrap(), 32);
-        second.publish().unwrap();
-        assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
+        let third = bind(writeback.reserve(vec![put(b"c", b"three")]).unwrap(), 33);
 
-        first.publish().unwrap();
-        assert_eq!(writeback.wait_applied().unwrap(), 2);
-        assert_eq!(backend.batch_count(), 2);
-        assert_eq!(writeback.applied_sequence(), 2);
+        std::thread::scope(|scope| {
+            let (second_tx, second_rx) = mpsc::channel();
+            let (third_tx, third_rx) = mpsc::channel();
+            let second_publisher = scope.spawn(move || second_tx.send(second.publish()).unwrap());
+            let third_publisher = scope.spawn(move || third_tx.send(third.publish()).unwrap());
+            wait_until_ready(&writeback, 2);
+            wait_until_ready(&writeback, 3);
+
+            assert_eq!(writeback.highest_acknowledged(), 0);
+            assert!(matches!(
+                second_rx.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+            assert!(matches!(
+                third_rx.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+            assert!(matches!(writeback.process_front(), ProcessOutcome::Blocked));
+
+            first.publish().unwrap();
+            assert_eq!(writeback.highest_acknowledged(), 3);
+            assert_eq!(
+                second_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .unwrap()
+                    .get(),
+                2
+            );
+            assert_eq!(
+                third_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .unwrap()
+                    .get(),
+                3
+            );
+            second_publisher.join().unwrap();
+            third_publisher.join().unwrap();
+        });
+
+        assert_eq!(writeback.wait_applied().unwrap(), 3);
+        assert_eq!(backend.batch_count(), 3);
+        assert_eq!(writeback.applied_sequence(), 3);
     }
 
     #[test]
@@ -1453,6 +2862,52 @@ mod tests {
     }
 
     #[test]
+    fn publishing_a_later_slot_does_not_wake_a_waiter_blocked_on_the_front() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Arc::new(Writeback::new(backend, 0, config(2, 0)).unwrap());
+        let first = bind(writeback.reserve(vec![put(b"front", b"one")]).unwrap(), 74);
+        let second = bind(writeback.reserve(vec![put(b"later", b"two")]).unwrap(), 75);
+
+        std::thread::scope(|scope| {
+            let (started_tx, started_rx) = mpsc::channel();
+            let (returned_tx, returned_rx) = mpsc::channel();
+            let waiter_writeback = Arc::clone(&writeback);
+            let waiter = scope.spawn(move || {
+                started_tx.send(()).unwrap();
+                waiter_writeback.wait_for_apply_progress(2);
+                returned_tx.send(()).unwrap();
+            });
+            started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+            let (published_tx, published_rx) = mpsc::channel();
+            let publisher = scope.spawn(move || published_tx.send(second.publish()).unwrap());
+            wait_until_ready(&writeback, 2);
+            assert!(matches!(
+                published_rx.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+            assert!(
+                matches!(returned_rx.try_recv(), Err(mpsc::TryRecvError::Empty)),
+                "a Ready suffix cannot unblock a Prepared front"
+            );
+
+            first.publish().unwrap();
+            assert_eq!(
+                published_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .unwrap()
+                    .get(),
+                2
+            );
+            returned_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            publisher.join().unwrap();
+            waiter.join().unwrap();
+        });
+        assert_eq!(writeback.wait_applied().unwrap(), 2);
+    }
+
+    #[test]
     fn full_queue_backpressures_until_front_advances() {
         let backend = Arc::new(MemBlobs::new());
         let writeback = Arc::new(Writeback::new(backend, 0, config(1, 0)).unwrap());
@@ -1505,6 +2960,56 @@ mod tests {
         producer.join().unwrap();
         assert_eq!(writeback.detached_len(), 0);
         assert_eq!(writeback.queue_len(), 0);
+    }
+
+    #[test]
+    fn binding_the_final_sequence_wakes_every_sequence_space_waiter() {
+        let backend = Arc::new(MemBlobs::new());
+        let writeback = Arc::new(
+            Writeback::new(backend, u64::MAX - 1, config(3, 0))
+                .expect("the final sequence remains available"),
+        );
+        let final_permit = writeback.reserve(vec![put(b"final", b"value")]).unwrap();
+        let start = Arc::new(Barrier::new(3));
+        let (result_tx, result_rx) = mpsc::channel();
+        let mut waiters = Vec::new();
+
+        for key in [b"blocked-a".as_slice(), b"blocked-b".as_slice()] {
+            let waiter_writeback = Arc::clone(&writeback);
+            let waiter_start = Arc::clone(&start);
+            let waiter_result = result_tx.clone();
+            let key = key.to_vec();
+            waiters.push(std::thread::spawn(move || {
+                waiter_start.wait();
+                let exhausted = matches!(
+                    waiter_writeback.reserve(vec![put(&key, b"never-admitted")]),
+                    Err(ReserveError::SequenceExhausted)
+                );
+                waiter_result.send(exhausted).unwrap();
+            }));
+        }
+        drop(result_tx);
+        start.wait();
+        assert!(result_rx.recv_timeout(Duration::from_millis(30)).is_err());
+
+        let final_reservation = bind(final_permit, 82);
+        assert_eq!(final_reservation.sequence().get(), u64::MAX);
+        for _ in 0..2 {
+            assert!(
+                result_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                "a sequence-space waiter did not observe terminal exhaustion"
+            );
+        }
+        for waiter in waiters {
+            waiter.join().unwrap();
+        }
+
+        final_reservation.publish().unwrap();
+        assert!(matches!(
+            writeback.process_front(),
+            ProcessOutcome::Advanced
+        ));
+        assert_eq!(writeback.applied_sequence(), u64::MAX);
     }
 
     #[derive(Debug, Default)]

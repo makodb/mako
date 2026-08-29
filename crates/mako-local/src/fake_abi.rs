@@ -17,19 +17,36 @@ use super::sys;
 
 static ENGINE_ID: &[u8] = b"mako-local/sto-masstrans\0";
 
+pub(super) type RecordBindHook = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        mako_timestamp: u32,
+        exact_record_bytes: usize,
+        sequence_out: *mut u64,
+        record_bytes_out: *mut *mut u8,
+        record_capacity_out: *mut usize,
+    ) -> i32,
+>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Call {
     TableOpen,
     Begin,
+    FastBegin,
     Get,
     Put,
+    FastPut,
     Insert,
     Remove,
     Scan,
     ReverseScan,
     Commit,
     CommitWithHook,
+    FastCommitDestroy,
+    FastRecordPreflight,
+    FastRecordCommitDestroy,
     Abort,
+    FastAbortDestroy,
     Destroy,
     BytesFree,
     DbClose,
@@ -121,6 +138,18 @@ pub(super) enum Step {
     CommitWithHook {
         status: c_int,
         timestamp: Option<u32>,
+    },
+    RecordPreflight {
+        status: c_int,
+        exact_record_bytes: usize,
+        op_count: u32,
+    },
+    CommitRecord {
+        status: c_int,
+        timestamp: Option<u32>,
+        exact_record_bytes: usize,
+        record: Vec<u8>,
+        reported_written: Option<u8>,
     },
     Abort(c_int),
     Destroy(c_int),
@@ -464,6 +493,43 @@ pub(super) unsafe fn mako_local_txn_begin(
     })
 }
 
+pub(super) unsafe fn mako_rust_fast_txn_begin(
+    _db: *mut sys::mako_local_db,
+    _bound_table: *mut sys::mako_local_table,
+    out: *mut *mut sys::mako_local_txn,
+) -> c_int {
+    if out.is_null() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: caller supplied the required writable output pointer.
+    unsafe { out.write(ptr::null_mut()) };
+    with_state(|state| {
+        state.calls.push(Call::FastBegin);
+        if state.poisoned {
+            return sys::MAKO_LOCAL_WORKER_POISONED;
+        }
+        let (status, return_handle) = match state.steps.front() {
+            Some(Step::Begin { .. }) => match state.steps.pop_front() {
+                Some(Step::Begin {
+                    status,
+                    return_handle,
+                }) => (status, return_handle),
+                found => unexpected("fast begin", found),
+            },
+            _ => (sys::MAKO_LOCAL_OK, true),
+        };
+        observe_status(state, status);
+        if status == sys::MAKO_LOCAL_OK && return_handle {
+            let mut txn = Box::new(FakeTxn);
+            let raw = ptr::from_mut(txn.as_mut()).cast::<sys::mako_local_txn>();
+            state.txn = Some(txn);
+            // SAFETY: checked above; fake state owns the allocation.
+            unsafe { out.write(raw) };
+        }
+        status
+    })
+}
+
 pub(super) unsafe fn mako_local_txn_get(
     _txn: *mut sys::mako_local_txn,
     _table: *mut sys::mako_local_table,
@@ -540,6 +606,20 @@ pub(super) unsafe fn mako_local_txn_put(
     // SAFETY: checked above.
     unsafe { created_out.write(reply.value) };
     reply.status
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_put(
+    _txn: *mut sys::mako_local_txn,
+    _key: *const u8,
+    _key_len: u32,
+    _value: *const u8,
+    _value_len: u32,
+) -> u64 {
+    let reply = byte_operation("fast put", Call::FastPut, |step| match step {
+        Step::Put(reply) => Some(reply),
+        _ => None,
+    });
+    u64::from(reply.status as u32) | (u64::from(reply.value) << 32)
 }
 
 pub(super) unsafe fn mako_local_txn_insert(
@@ -736,6 +816,181 @@ pub(super) unsafe fn mako_local_txn_commit_with_hook(
     })
 }
 
+pub(super) unsafe fn mako_rust_fast_txn_commit_and_destroy(_txn: *mut sys::mako_local_txn) -> u64 {
+    with_state(|state| {
+        state.calls.push(Call::FastCommitDestroy);
+        let commit = match state.steps.pop_front() {
+            Some(Step::Commit(status)) => status,
+            found => unexpected("fast commit", found),
+        };
+        let cleanup = match state.steps.pop_front() {
+            Some(Step::Destroy(status)) => status,
+            found => unexpected("fast commit cleanup", found),
+        };
+        observe_status(state, commit);
+        observe_status(state, cleanup);
+        if cleanup == sys::MAKO_LOCAL_OK {
+            state.txn = None;
+        }
+        u64::from(commit as u32) | (u64::from(cleanup as u32) << 32)
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_commit_with_hook_and_destroy(
+    _txn: *mut sys::mako_local_txn,
+    hook: sys::mako_local_post_validate_hook,
+    context: *mut c_void,
+) -> u64 {
+    with_state(|state| {
+        state.calls.push(Call::FastCommitDestroy);
+        let (commit, timestamp) = match state.steps.pop_front() {
+            Some(Step::CommitWithHook { status, timestamp }) => (status, timestamp),
+            found => unexpected("fast commit with hook", found),
+        };
+        let hook = hook.expect("trusted fast hook commit requires a callback");
+        if let Some(timestamp) = timestamp {
+            // SAFETY: safe wrapper keeps its stack callback context live for
+            // this synchronous fake boundary.
+            let _ = unsafe { hook(context, timestamp) };
+        }
+        let cleanup = match state.steps.pop_front() {
+            Some(Step::Destroy(status)) => status,
+            found => unexpected("fast commit cleanup", found),
+        };
+        observe_status(state, commit);
+        observe_status(state, cleanup);
+        if cleanup == sys::MAKO_LOCAL_OK {
+            state.txn = None;
+        }
+        u64::from(commit as u32) | (u64::from(cleanup as u32) << 32)
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_record_preflight(
+    _txn: *mut sys::mako_local_txn,
+    _max_record_bytes: usize,
+    exact_record_bytes_out: *mut usize,
+    op_count_out: *mut u32,
+) -> c_int {
+    if exact_record_bytes_out.is_null() || op_count_out.is_null() {
+        return sys::MAKO_LOCAL_INVALID_ARGUMENT;
+    }
+    // SAFETY: required outputs were checked above.
+    unsafe {
+        exact_record_bytes_out.write(0);
+        op_count_out.write(0);
+    }
+    with_state(|state| {
+        state.calls.push(Call::FastRecordPreflight);
+        let (status, exact_record_bytes, op_count) = match state.steps.pop_front() {
+            Some(Step::RecordPreflight {
+                status,
+                exact_record_bytes,
+                op_count,
+            }) => (status, exact_record_bytes, op_count),
+            found => unexpected("fast record preflight", found),
+        };
+        observe_status(state, status);
+        // Deliberately write scripted outputs even on error so tests can prove
+        // the safe wrapper ignores them unless status is OK.
+        unsafe {
+            exact_record_bytes_out.write(exact_record_bytes);
+            op_count_out.write(op_count);
+        }
+        status
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_commit_record_and_destroy(
+    _txn: *mut sys::mako_local_txn,
+    hook: RecordBindHook,
+    context: *mut c_void,
+    record_written_out: *mut u8,
+) -> u64 {
+    if !record_written_out.is_null() {
+        // SAFETY: the optional completion output is writable for this call.
+        unsafe { record_written_out.write(0) };
+    }
+    with_state(|state| {
+        state.calls.push(Call::FastRecordCommitDestroy);
+        let (commit, timestamp, exact_record_bytes, record, reported_written) =
+            match state.steps.pop_front() {
+                Some(Step::CommitRecord {
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_written,
+                }) => (
+                    status,
+                    timestamp,
+                    exact_record_bytes,
+                    record,
+                    reported_written,
+                ),
+                found => unexpected("fast record commit", found),
+            };
+
+        let mut sequence = 0u64;
+        let mut record_bytes = ptr::null_mut();
+        let mut record_capacity = 0usize;
+        let accepted = match (hook, timestamp) {
+            (Some(hook), Some(timestamp)) => {
+                // SAFETY: the safe wrapper keeps the callback context and its
+                // output scalars live throughout this synchronous fake call.
+                (unsafe {
+                    hook(
+                        context,
+                        timestamp,
+                        exact_record_bytes,
+                        &mut sequence,
+                        &mut record_bytes,
+                        &mut record_capacity,
+                    )
+                }) != 0
+            }
+            _ => false,
+        };
+        let valid_binding = accepted
+            && sequence != 0
+            && !record_bytes.is_null()
+            && record_capacity >= exact_record_bytes
+            && record.len() == exact_record_bytes;
+        // A scripted zero witness models native rejecting serialization after
+        // the bind callback. Leave the MaybeUninit destination genuinely
+        // untouched so Miri can prove the safe wrapper never reads it merely
+        // because a dense slot was assigned.
+        let initialize_record = reported_written != Some(0);
+        let actual_written = if valid_binding && initialize_record {
+            if exact_record_bytes != 0 {
+                // SAFETY: the callback reported at least the exact writable
+                // capacity and the scripted source has exactly that extent.
+                unsafe {
+                    ptr::copy_nonoverlapping(record.as_ptr(), record_bytes, exact_record_bytes)
+                };
+            }
+            1
+        } else {
+            0
+        };
+        if !record_written_out.is_null() {
+            // SAFETY: checked immediately before the write.
+            unsafe { record_written_out.write(reported_written.unwrap_or(actual_written)) };
+        }
+
+        let cleanup = match state.steps.pop_front() {
+            Some(Step::Destroy(status)) => status,
+            found => unexpected("fast record commit cleanup", found),
+        };
+        observe_status(state, commit);
+        observe_status(state, cleanup);
+        if cleanup == sys::MAKO_LOCAL_OK {
+            state.txn = None;
+        }
+        u64::from(commit as u32) | (u64::from(cleanup as u32) << 32)
+    })
+}
+
 pub(super) unsafe fn mako_local_txn_abort(_txn: *mut sys::mako_local_txn) -> c_int {
     with_state(|state| {
         state.calls.push(Call::Abort);
@@ -745,6 +1000,26 @@ pub(super) unsafe fn mako_local_txn_abort(_txn: *mut sys::mako_local_txn) -> c_i
         };
         observe_status(state, status);
         status
+    })
+}
+
+pub(super) unsafe fn mako_rust_fast_txn_abort_and_destroy(_txn: *mut sys::mako_local_txn) -> u64 {
+    with_state(|state| {
+        state.calls.push(Call::FastAbortDestroy);
+        let abort = match state.steps.pop_front() {
+            Some(Step::Abort(status)) => status,
+            found => unexpected("fast abort", found),
+        };
+        let cleanup = match state.steps.pop_front() {
+            Some(Step::Destroy(status)) => status,
+            found => unexpected("fast abort cleanup", found),
+        };
+        observe_status(state, abort);
+        observe_status(state, cleanup);
+        if cleanup == sys::MAKO_LOCAL_OK {
+            state.txn = None;
+        }
+        u64::from(abort as u32) | (u64::from(cleanup as u32) << 32)
     })
 }
 
@@ -780,6 +1055,7 @@ pub(super) unsafe fn mako_local_bytes_free(bytes: *mut c_void) {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
     use std::thread;
 
     use super::*;
@@ -878,7 +1154,7 @@ mod tests {
 
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
         assert_eq!(local_quarantine_transition_count(), 1);
-        assert!(quarantined_worker_count().unwrap() >= before + 1);
+        assert!(quarantined_worker_count().unwrap() > before);
         assert!(matches!(db.transaction(), Err(Error::WorkerPoisoned)));
         assert_call_count(Call::Begin, 1);
         assert_call_count(Call::Abort, 1);
@@ -958,6 +1234,37 @@ mod tests {
         assert_drained();
     }
 
+    fn exercise_malformed_fast_terminal_outputs() {
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fast-malformed-commit", 16).unwrap();
+        let transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Commit(sys::MAKO_LOCAL_INTERNAL));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let report = transaction.commit_report();
+        assert_eq!(
+            report.disposition,
+            CommitDisposition::Unknown(Error::Internal)
+        );
+        assert_eq!(report.cleanup, Err(Error::Internal));
+        assert_call_count(Call::FastCommitDestroy, 1);
+        assert_call_count(Call::Destroy, 0);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fast-malformed-abort", 17).unwrap();
+        let transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Abort(sys::MAKO_LOCAL_INTERNAL));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        assert_eq!(transaction.abort(), Err(Error::Internal));
+        assert_call_count(Call::FastAbortDestroy, 1);
+        assert_call_count(Call::Destroy, 0);
+        drop(db);
+        assert_drained();
+    }
+
     fn exercise_commit_with_hook_stack_callback() {
         reset();
         let db = open_db();
@@ -1009,7 +1316,7 @@ mod tests {
         assert_call_count(Call::Destroy, 1);
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
         assert_eq!(local_quarantine_transition_count(), 1);
-        assert!(quarantined_worker_count().unwrap() >= before + 1);
+        assert!(quarantined_worker_count().unwrap() > before);
         assert!(matches!(db.transaction(), Err(Error::WorkerPoisoned)));
         assert_call_count(Call::Begin, 1);
         assert_call_count(Call::Abort, 1);
@@ -1157,7 +1464,7 @@ mod tests {
         drop(transaction);
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
         assert_eq!(local_quarantine_transition_count(), 1);
-        assert!(quarantined_worker_count().unwrap() >= before + 1);
+        assert!(quarantined_worker_count().unwrap() > before);
         assert_call_count(Call::Put, 1);
         assert_call_count(Call::Abort, 1);
         assert_call_count(Call::Destroy, 1);
@@ -1294,7 +1601,7 @@ mod tests {
         drop(transaction);
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
         assert_eq!(local_quarantine_transition_count(), 1);
-        assert!(quarantined_worker_count().unwrap() >= before + 1);
+        assert!(quarantined_worker_count().unwrap() > before);
         assert_call_count(Call::Scan, 1);
         assert_call_count(Call::Put, 0);
         assert_call_count(Call::Abort, 1);
@@ -1327,7 +1634,7 @@ mod tests {
         assert!(matches!(db.transaction(), Err(Error::WorkerPoisoned)));
         assert_eq!(worker_health(), Ok(WorkerHealth::Poisoned));
         assert_eq!(local_quarantine_transition_count(), 1);
-        assert!(quarantined_worker_count().unwrap() >= before + 1);
+        assert!(quarantined_worker_count().unwrap() > before);
         assert!(matches!(db.transaction(), Err(Error::WorkerPoisoned)));
         assert_call_count(Call::Begin, 1);
         assert_call_count(Call::Abort, 0);
@@ -1352,6 +1659,562 @@ mod tests {
         assert_drained();
     }
 
+    fn exercise_trusted_fast_transaction_path() {
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fast", 11).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 1,
+        }));
+        assert_eq!(transaction.put(&table, b"key", b"value"), Ok(true));
+
+        // Checked operations can safely share the same pooled facade.
+        push(Step::Get(GetReply::absent()));
+        assert_eq!(transaction.get(&table, b"other"), Ok(None));
+
+        push(Step::CommitWithHook {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(47),
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let report = transaction.commit_report_with_hook(|timestamp| timestamp.get() == 47);
+        assert_eq!(report.disposition, CommitDisposition::Committed);
+        assert_eq!(report.cleanup, Ok(()));
+        assert_call_count(Call::FastBegin, 1);
+        assert_call_count(Call::FastPut, 1);
+        assert_call_count(Call::Get, 1);
+        assert_call_count(Call::FastCommitDestroy, 1);
+        assert_call_count(Call::CommitWithHook, 0);
+        assert_call_count(Call::Destroy, 0);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fast-cross-table", 12).unwrap();
+        let mut other_native = Box::new(FakeTable { id: 99 });
+        let other_table = crate::Table {
+            raw: std::ptr::NonNull::from(other_native.as_mut()).cast(),
+            _db: std::marker::PhantomData,
+        };
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 0,
+        }));
+        assert_eq!(transaction.put(&other_table, b"key", b"value"), Ok(false));
+        push(Step::Abort(sys::MAKO_LOCAL_OK));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        drop(transaction);
+        assert_call_count(Call::FastPut, 0);
+        assert_call_count(Call::Put, 1);
+        assert_call_count(Call::FastAbortDestroy, 1);
+        assert_call_count(Call::Abort, 0);
+        assert_call_count(Call::Destroy, 0);
+        drop(other_native);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fast-abort", 13).unwrap();
+        let transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Abort(sys::MAKO_LOCAL_OK));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        assert_eq!(transaction.abort(), Ok(()));
+        assert_call_count(Call::FastAbortDestroy, 1);
+        assert_call_count(Call::Abort, 0);
+        assert_call_count(Call::Destroy, 0);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fast-terminal-put", 14).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::Put(ByteReply::status(sys::MAKO_LOCAL_CONFLICT)));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        assert_eq!(
+            transaction.put(&table, b"key", b"value"),
+            Err(Error::Conflict)
+        );
+        let report = transaction.commit_report();
+        assert_eq!(
+            report.disposition,
+            CommitDisposition::Aborted(Error::TransactionFinished)
+        );
+        assert_eq!(report.cleanup, Ok(()));
+        assert_call_count(Call::FastCommitDestroy, 0);
+        assert_call_count(Call::FastAbortDestroy, 0);
+        assert_call_count(Call::Destroy, 1);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-fast-malformed", 15).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        // Values above one set reserved packed-result bits. The wrapper must
+        // fail closed through the checked abort/destroy lifecycle.
+        push(Step::Put(ByteReply {
+            status: sys::MAKO_LOCAL_OK,
+            value: 2,
+        }));
+        push(Step::Abort(sys::MAKO_LOCAL_OK));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        assert_eq!(
+            transaction.put(&table, b"key", b"value"),
+            Err(Error::Internal)
+        );
+        drop(transaction);
+        assert_call_count(Call::FastPut, 1);
+        assert_call_count(Call::Abort, 1);
+        assert_call_count(Call::Destroy, 1);
+        drop(db);
+        assert_drained();
+    }
+
+    fn exercise_commit_record_happy_path_and_empty_plan() {
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-record", 18).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 8,
+            op_count: 2,
+        });
+        let preflight = transaction.commit_record_preflight(64).unwrap();
+        assert_eq!(preflight.exact_record_bytes(), 8);
+        assert_eq!(preflight.op_count(), 2);
+        assert!(!preflight.is_empty());
+        let copied = preflight;
+        let mut record = crate::UninitCommitRecord::try_for(preflight).unwrap();
+        assert_eq!(record.capacity(), 8);
+        assert!(!record.is_written());
+        assert_eq!(record.written_bytes(), None);
+
+        let expected = b"v3record".to_vec();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_OK,
+            timestamp: Some(53),
+            exact_record_bytes: 8,
+            record: expected.clone(),
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let mut callback_count = 0;
+        let report = transaction.commit_report_with_record(&mut record, |timestamp, bounds| {
+            callback_count += 1;
+            assert_eq!(timestamp.get(), 53);
+            assert_eq!(bounds, copied);
+            NonZeroU64::new(7)
+        });
+        assert_eq!(callback_count, 1);
+        assert_eq!(report.commit.disposition, CommitDisposition::Committed);
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        assert!(record.is_written());
+        assert_eq!(record.written_bytes(), Some(expected.as_slice()));
+        assert_eq!(record.into_written(), Some(expected));
+        assert_call_count(Call::FastRecordPreflight, 1);
+        assert_call_count(Call::FastRecordCommitDestroy, 1);
+        assert_call_count(Call::FastCommitDestroy, 0);
+        drop(db);
+        assert_drained();
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("trusted-empty-record", 19).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 30,
+            op_count: 0,
+        });
+        // Empty plans need no output allocation and therefore remain valid
+        // even when the caller's nonempty-record cap is below the 30-byte v3
+        // framing size.
+        let preflight = transaction.commit_record_preflight(1).unwrap();
+        assert!(preflight.is_empty());
+        push(Step::Commit(sys::MAKO_LOCAL_OK));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let report = transaction.commit_report();
+        assert_eq!(report.disposition, CommitDisposition::Committed);
+        assert_eq!(report.cleanup, Ok(()));
+        assert_call_count(Call::FastRecordPreflight, 1);
+        assert_call_count(Call::FastRecordCommitDestroy, 0);
+        assert_call_count(Call::FastCommitDestroy, 1);
+        drop(db);
+        assert_drained();
+    }
+
+    fn exercise_commit_record_preflight_fail_closed() {
+        reset();
+        let db = open_db();
+        let table = db.open_table("record-preflight-limit", 20).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_VALUE_TOO_LARGE,
+            // Error-path diagnostics must not be accepted as a successful plan.
+            exact_record_bytes: 1_000,
+            op_count: 1,
+        });
+        push(Step::Abort(sys::MAKO_LOCAL_OK));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        assert_eq!(
+            transaction.commit_record_preflight(16),
+            Err(Error::ValueTooLarge)
+        );
+        drop(transaction);
+        assert_call_count(Call::FastRecordPreflight, 1);
+        assert_call_count(Call::Abort, 1);
+        assert_call_count(Call::Destroy, 1);
+        drop(db);
+        assert_drained();
+
+        for (index, exact_record_bytes, op_count, max_record_bytes) in [
+            (0, 0, 1, 64),
+            (1, 65, 1, 64),
+            (2, 30, crate::TRANSACTION_ITEM_BUDGET as u32 + 1, 64),
+        ] {
+            reset();
+            let db = open_db();
+            let table = db
+                .open_table("record-preflight-malformed", 21 + index)
+                .unwrap();
+            let mut transaction = db.trusted_transaction(&table).unwrap();
+            push(Step::RecordPreflight {
+                status: sys::MAKO_LOCAL_OK,
+                exact_record_bytes,
+                op_count,
+            });
+            // Malformed successful outputs trigger the checked fail-closed
+            // abort path, followed by the sole destroy probe from Drop.
+            push(Step::Abort(sys::MAKO_LOCAL_OK));
+            push(Step::Destroy(sys::MAKO_LOCAL_OK));
+            assert_eq!(
+                transaction.commit_record_preflight(max_record_bytes),
+                Err(Error::Internal),
+                "case {index}"
+            );
+            drop(transaction);
+            assert_call_count(Call::FastRecordPreflight, 1);
+            assert_call_count(Call::Abort, 1);
+            assert_call_count(Call::Destroy, 1);
+            drop(db);
+            assert_drained();
+        }
+
+        reset();
+        let db = open_db();
+        let table = db.open_table("record-preflight-once", 24).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 30,
+            op_count: 0,
+        });
+        assert!(transaction.commit_record_preflight(64).is_ok());
+        assert_eq!(
+            transaction.put(&table, b"after-preflight", b"must-not-stage"),
+            Err(Error::Busy)
+        );
+        assert_call_count(Call::FastPut, 0);
+        assert_eq!(transaction.commit_record_preflight(64), Err(Error::Busy));
+        push(Step::Commit(sys::MAKO_LOCAL_OK));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        assert_eq!(transaction.commit(), Ok(()));
+        assert_call_count(Call::FastRecordPreflight, 1);
+        drop(db);
+        assert_drained();
+
+        // A nonempty sealed plan cannot fall back to ordinary unlogged commit.
+        reset();
+        let db = open_db();
+        let table = db.open_table("record-no-unlogged-fallback", 35).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 31,
+            op_count: 1,
+        });
+        assert!(transaction.commit_record_preflight(64).is_ok());
+        push(Step::Abort(sys::MAKO_LOCAL_OK));
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let report = transaction.commit_report();
+        assert_eq!(
+            report.disposition,
+            CommitDisposition::Aborted(Error::InvalidArgument)
+        );
+        assert_eq!(report.cleanup, Ok(()));
+        assert_call_count(Call::FastCommitDestroy, 0);
+        assert_call_count(Call::FastAbortDestroy, 1);
+        drop(db);
+        assert_drained();
+    }
+
+    fn exercise_commit_record_hook_outcomes() {
+        // A validation conflict never invokes or binds the acquire callback.
+        reset();
+        let db = open_db();
+        let table = db.open_table("record-conflict", 25).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 4,
+            op_count: 1,
+        });
+        let bounds = transaction.commit_record_preflight(4).unwrap();
+        let mut record = crate::UninitCommitRecord::try_for(bounds).unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_CONFLICT,
+            timestamp: None,
+            exact_record_bytes: 4,
+            record: b"data".to_vec(),
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let report = transaction.commit_report_with_record(&mut record, |_, _| {
+            panic!("conflicting commit must not acquire a record slot")
+        });
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::Conflict)
+        );
+        assert!(!report.record_bound);
+        assert!(!report.record_written);
+        assert!(!record.is_written());
+        drop(db);
+        assert_drained();
+
+        // Explicit rejection is a definite abort and leaves storage unreadable.
+        reset();
+        let db = open_db();
+        let table = db.open_table("record-reject", 26).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 4,
+            op_count: 1,
+        });
+        let bounds = transaction.commit_record_preflight(4).unwrap();
+        let mut record = crate::UninitCommitRecord::try_for(bounds).unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED,
+            timestamp: Some(61),
+            exact_record_bytes: 4,
+            record: b"data".to_vec(),
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let report = transaction.commit_report_with_record(&mut record, |timestamp, _| {
+            assert_eq!(timestamp.get(), 61);
+            None
+        });
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::CommitHookRejected)
+        );
+        assert!(!report.record_bound);
+        assert!(!report.record_written);
+        assert_eq!(record.written_bytes(), None);
+        assert_eq!(record.into_written(), None);
+        drop(db);
+        assert_drained();
+
+        // Panics are contained and have exactly the same rejection semantics.
+        reset();
+        let db = open_db();
+        let table = db.open_table("record-panic", 27).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 4,
+            op_count: 1,
+        });
+        let bounds = transaction.commit_record_preflight(4).unwrap();
+        let mut record = crate::UninitCommitRecord::try_for(bounds).unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED,
+            timestamp: Some(62),
+            exact_record_bytes: 4,
+            record: b"data".to_vec(),
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let report = transaction
+            .commit_report_with_record(&mut record, |_, _| panic!("contained acquire panic"));
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::CommitHookRejected)
+        );
+        assert!(!report.record_bound);
+        assert!(!record.is_written());
+        drop(db);
+        assert_drained();
+
+        // Invalid timestamps and size drift are rejected before user code.
+        for (index, timestamp, exact_record_bytes) in [(0, 0, 4), (1, 63, 5)] {
+            reset();
+            let db = open_db();
+            let table = db.open_table("record-hook-malformed", 28 + index).unwrap();
+            let mut transaction = db.trusted_transaction(&table).unwrap();
+            push(Step::RecordPreflight {
+                status: sys::MAKO_LOCAL_OK,
+                exact_record_bytes: 4,
+                op_count: 1,
+            });
+            let bounds = transaction.commit_record_preflight(4).unwrap();
+            let mut record = crate::UninitCommitRecord::try_for(bounds).unwrap();
+            push(Step::CommitRecord {
+                status: sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED,
+                timestamp: Some(timestamp),
+                exact_record_bytes,
+                record: vec![0; exact_record_bytes],
+                reported_written: None,
+            });
+            push(Step::Destroy(sys::MAKO_LOCAL_OK));
+            let report = transaction.commit_report_with_record(&mut record, |_, _| {
+                panic!("invalid native callback inputs must be rejected first")
+            });
+            assert_eq!(
+                report.commit.disposition,
+                CommitDisposition::Aborted(Error::CommitHookRejected),
+                "case {index}"
+            );
+            assert!(!report.record_bound);
+            assert!(!report.record_written);
+            assert!(!record.is_written());
+            drop(db);
+            assert_drained();
+        }
+    }
+
+    fn exercise_commit_record_completion_witness() {
+        // Binding is irrevocable even when the post-gate serializer rejects
+        // before install. Preserve native's definite rejection and successful
+        // cleanup while exposing the bound/unwritten shape for fail-stop
+        // pinning by the cache.
+        reset();
+        let db = open_db();
+        let table = db.open_table("record-bound-unwritten", 36).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 4,
+            op_count: 1,
+        });
+        let bounds = transaction.commit_record_preflight(4).unwrap();
+        let mut record = crate::UninitCommitRecord::try_for(bounds).unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_COMMIT_HOOK_REJECTED,
+            timestamp: Some(70),
+            exact_record_bytes: 4,
+            record: b"data".to_vec(),
+            reported_written: Some(0),
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_OK));
+        let report = transaction.commit_report_with_record(&mut record, |_, _| NonZeroU64::new(99));
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Aborted(Error::CommitHookRejected)
+        );
+        assert_eq!(report.commit.cleanup, Ok(()));
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(!report.record_written);
+        assert!(!record.is_written());
+        drop(db);
+        assert_drained();
+
+        for (index, status, timestamp, reported_written, expect_bound) in [
+            (0, sys::MAKO_LOCAL_OK, Some(71), Some(0), true),
+            (1, sys::MAKO_LOCAL_OK, Some(72), Some(2), true),
+            (2, sys::MAKO_LOCAL_OK, None, Some(1), false),
+            (3, sys::MAKO_LOCAL_OK, None, Some(0), false),
+            // Final validation cannot report a conflict after the bind gate.
+            // Preserve the bound slot but reject the malformed terminal shape.
+            (4, sys::MAKO_LOCAL_CONFLICT, Some(73), Some(0), true),
+        ] {
+            reset();
+            let db = open_db();
+            let table = db.open_table("record-witness", 30 + index).unwrap();
+            let mut transaction = db.trusted_transaction(&table).unwrap();
+            push(Step::RecordPreflight {
+                status: sys::MAKO_LOCAL_OK,
+                exact_record_bytes: 4,
+                op_count: 1,
+            });
+            let bounds = transaction.commit_record_preflight(4).unwrap();
+            let mut record = crate::UninitCommitRecord::try_for(bounds).unwrap();
+            push(Step::CommitRecord {
+                status,
+                timestamp,
+                exact_record_bytes: 4,
+                record: b"data".to_vec(),
+                reported_written,
+            });
+            push(Step::Destroy(sys::MAKO_LOCAL_OK));
+            let report = transaction
+                .commit_report_with_record(&mut record, |_, _| NonZeroU64::new(100 + index));
+            assert_eq!(
+                report.commit.disposition,
+                CommitDisposition::Unknown(Error::Internal),
+                "case {index}"
+            );
+            assert_eq!(report.commit.cleanup, Err(Error::Internal));
+            assert!(!report.completion_contract_valid, "case {index}");
+            assert_eq!(report.record_bound, expect_bound);
+            assert!(!report.record_written);
+            assert!(!record.is_written());
+            assert_eq!(record.written_bytes(), None);
+            drop(db);
+            assert_drained();
+        }
+
+        // Once the record is written, an uncertain native terminal still
+        // returns the bytes so the ordered slot can be pinned and diagnosed.
+        reset();
+        let before = quarantined_worker_count().unwrap();
+        let db = open_db();
+        let table = db.open_table("record-written-unknown", 34).unwrap();
+        let mut transaction = db.trusted_transaction(&table).unwrap();
+        push(Step::RecordPreflight {
+            status: sys::MAKO_LOCAL_OK,
+            exact_record_bytes: 4,
+            op_count: 1,
+        });
+        let bounds = transaction.commit_record_preflight(4).unwrap();
+        let mut record = crate::UninitCommitRecord::try_for(bounds).unwrap();
+        push(Step::CommitRecord {
+            status: sys::MAKO_LOCAL_WORKER_POISONED,
+            timestamp: Some(73),
+            exact_record_bytes: 4,
+            record: b"data".to_vec(),
+            reported_written: None,
+        });
+        push(Step::Destroy(sys::MAKO_LOCAL_WORKER_POISONED));
+        let report =
+            transaction.commit_report_with_record(&mut record, |_, _| NonZeroU64::new(104));
+        assert_eq!(
+            report.commit.disposition,
+            CommitDisposition::Unknown(Error::WorkerPoisoned)
+        );
+        assert_eq!(report.commit.cleanup, Err(Error::WorkerPoisoned));
+        assert!(report.completion_contract_valid);
+        assert!(report.record_bound);
+        assert!(report.record_written);
+        assert_eq!(record.written_bytes(), Some(b"data".as_slice()));
+        assert!(quarantined_worker_count().unwrap() > before);
+        drop(db);
+        assert_drained();
+    }
+
     #[test]
     fn fake_abi_exhaustively_checks_lifecycle_and_outputs() {
         exercise_operation_statuses();
@@ -1368,5 +2231,11 @@ mod tests {
         exercise_malformed_begin_success();
         exercise_handleless_poisoned_begin();
         exercise_malformed_table_success();
+        exercise_trusted_fast_transaction_path();
+        exercise_malformed_fast_terminal_outputs();
+        exercise_commit_record_happy_path_and_empty_plan();
+        exercise_commit_record_preflight_fail_closed();
+        exercise_commit_record_hook_outcomes();
+        exercise_commit_record_completion_witness();
     }
 }

@@ -34,16 +34,17 @@ use mrx_core::{Config, Runtime, Store};
 type S = Store<Arc<MemIndex>, Arc<MemBlobs>>;
 
 fn open(cfg: Config, blobs: &Arc<MemBlobs>) -> Arc<S> {
-    Arc::new(
-        Store::open(cfg, Arc::new(MemIndex::new()), Arc::clone(blobs)).expect("open"),
-    )
+    Arc::new(Store::open(cfg, Arc::new(MemIndex::new()), Arc::clone(blobs)).expect("open"))
 }
 
 fn slow_config() -> Config {
     // A backlog has to be able to EXIST for any of this to be
     // observable. With an instant durable store the flusher keeps up and
     // every property below passes vacuously.
-    Config { writeback_chunk: 16, ..Config::default() }
+    Config {
+        writeback_chunk: 16,
+        ..Config::default()
+    }
 }
 
 // ===================================================================
@@ -123,9 +124,7 @@ fn the_watermark_is_a_promise_not_an_estimate() {
     let w = store.watermark();
     let below: Vec<(String, String)> = expected
         .iter()
-        .filter(|(k, _)| {
-            store.version_of(k.as_bytes()).is_some_and(|ver| ver <= w)
-        })
+        .filter(|(k, _)| store.version_of(k.as_bytes()).is_some_and(|ver| ver <= w))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     rt.abort();
@@ -184,9 +183,9 @@ fn a_crash_above_the_watermark_loses_writes_but_never_corrupts() {
     re.scan(b"", |k, v| {
         n += 1;
         let key = String::from_utf8(k.to_vec()).expect("utf8");
-        let want = written.get(&key).unwrap_or_else(|| {
-            panic!("reopen produced a key that was never written: {key}")
-        });
+        let want = written
+            .get(&key)
+            .unwrap_or_else(|| panic!("reopen produced a key that was never written: {key}"));
         assert_eq!(
             v,
             want.as_bytes(),
@@ -573,7 +572,10 @@ fn sustained_overload_pins_the_watermark_rather_than_lying() {
     // data-loss bug wearing a performance hat, and it will fail here.
     let blobs = Arc::new(MemBlobs::new());
     blobs.set_write_delay_us(2000);
-    let cfg = Config { writeback_chunk: 4, ..Config::default() };
+    let cfg = Config {
+        writeback_chunk: 4,
+        ..Config::default()
+    };
     let store = open(cfg, &blobs);
     let mut rt = Runtime::start(Arc::clone(&store));
 
@@ -590,7 +592,10 @@ fn sustained_overload_pins_the_watermark_rather_than_lying() {
     // the trade.
     for i in (0..20_000u64).step_by(997) {
         assert_eq!(
-            store.get(format!("k{i:06}").as_bytes()).expect("get").as_deref(),
+            store
+                .get(format!("k{i:06}").as_bytes())
+                .expect("get")
+                .as_deref(),
             Some(&b"v"[..]),
             "an acked write became unreadable under backlog"
         );
@@ -728,7 +733,13 @@ fn draining_beside_the_flusher_does_not_write_back_stale_bytes() {
     for round in 0..40 {
         let blobs = Arc::new(MemBlobs::new());
         blobs.set_write_delay_us(300);
-        let store = open(Config { writeback_chunk: 8, ..Config::default() }, &blobs);
+        let store = open(
+            Config {
+                writeback_chunk: 8,
+                ..Config::default()
+            },
+            &blobs,
+        );
 
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut flushers = Vec::new();
@@ -785,7 +796,13 @@ fn clear_leaves_nothing_in_the_durable_store() {
     // durable store, those rows come back on reopen.
     for round in 0..40 {
         let blobs = Arc::new(MemBlobs::new());
-        let store = open(Config { writeback_chunk: 8, ..Config::default() }, &blobs);
+        let store = open(
+            Config {
+                writeback_chunk: 8,
+                ..Config::default()
+            },
+            &blobs,
+        );
         let mut rt = Runtime::start(Arc::clone(&store));
 
         for k in 0..400u32 {

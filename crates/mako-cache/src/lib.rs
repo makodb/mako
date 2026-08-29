@@ -1,21 +1,26 @@
 //! Transactional Silo/MassTrans write-back cache over RocksDB.
 //!
 //! Native C++ Silo is the authoritative live state while this process runs.
-//! A write transaction first prepares a complete owned record and claims
-//! bounded capacity. After Silo locks and validates it, a native hook binds
-//! that storage to an ordered cache sequence and records Mako's logical
-//! transaction timestamp immediately before installation. Native success then
-//! publishes the record into the volatile queue. Publication is the
-//! acknowledgement boundary; one background writer later stores the
-//! checksummed record and all of its data mutations in a single atomic RocksDB
+//! Before commit, STO sizes and seals its canonical final write set while Rust
+//! claims bounded queue capacity and allocates one exact output buffer. After
+//! Silo locks the complete write set, then a per-database native gate orders
+//! Mako timestamp assignment, final validation, and record binding. A failed
+//! validation may leave a timestamp gap but never a cache-log slot. A
+//! successful hook assigns the next dense, serialization-safe cache sequence.
+//! Native retires that ordering turn, writes the complete checksummed record
+//! directly into the exact buffer while retaining all write locks, and only
+//! then installs the writes. Native success publishes the already-built record
+//! as Ready in the volatile queue. The caller is acknowledged only when Ready
+//! forms a dense prefix through that record; one background writer later
+//! decodes and replays a bounded contiguous prefix in one atomic RocksDB
 //! `WriteBatch`.
 //!
 //! [`Cache::wait_applied`] and [`Cache::close`] drain acknowledged work into
 //! RocksDB, but neither operation adds a separate WAL flush or disk sync. The
 //! default batch mode uses `sync=false`; the applied watermark is process-local
 //! progress, not a durability promise.
-//! This first slice is deliberately unbounded in memory and exposes one
-//! logical application table. Transactions may contain many keys.
+//! This first slice exposes one logical application table. Queue occupancy and
+//! individual record size are bounded; transactions may contain many keys.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mako_cache::Error> {
@@ -33,12 +38,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 
-use mako_local::{CommitDisposition, LocalDb};
+use mako_local::{CommitDisposition, LocalDb, UninitCommitRecord};
 use mrx_core::{BlobError, Blobs};
 use mrx_rocks::RocksBlobs;
 
@@ -189,6 +195,20 @@ pub enum Error {
         /// Native cleanup failure.
         source: LocalError,
     },
+    /// Native definitely aborted after consuming a dense cache sequence, but
+    /// rejected before it could produce a replayable record.
+    ///
+    /// Visibility is not ambiguous, so callers may retry the logical
+    /// transaction. The consumed ordering slot is nevertheless permanently
+    /// pinned and this cache instance cannot admit later work.
+    BoundRecordUnwritten {
+        /// Pinned cache commit sequence.
+        sequence: CommitSeq,
+        /// Definite pre-install native abort reason.
+        abort: LocalError,
+        /// A separate terminal-handle cleanup failure, if one occurred.
+        cleanup: Option<LocalError>,
+    },
     /// Native commit returned an outcome that cannot safely be called abort.
     ///
     /// The corresponding queue slot is permanently pinned; later commits and
@@ -258,6 +278,21 @@ impl fmt::Display for Error {
                 "transaction {} committed and was queued, but native cleanup failed: {source}",
                 sequence.get()
             ),
+            Self::BoundRecordUnwritten {
+                sequence,
+                abort,
+                cleanup,
+            } => {
+                write!(
+                    f,
+                    "transaction {} definitely aborted after binding, but its unwritten ordering slot pins write-back: {abort}",
+                    sequence.get()
+                )?;
+                if let Some(cleanup) = cleanup {
+                    write!(f, "; cleanup also failed: {cleanup}")?;
+                }
+                Ok(())
+            }
             Self::UnknownCommitOutcome {
                 sequence,
                 source,
@@ -294,6 +329,7 @@ impl std::error::Error for Error {
             Self::RuntimeStart(error) => Some(error),
             Self::Runtime(error) => Some(error),
             Self::CommittedButCleanupFailed { source, .. } => Some(source),
+            Self::BoundRecordUnwritten { abort, .. } => Some(abort),
             Self::UnknownCommitOutcome { source, .. } => Some(source),
             Self::AbortCleanupFailed { cleanup, .. } => Some(cleanup),
             Self::RuntimeLockPoisoned
@@ -432,12 +468,15 @@ impl<B: Blobs + 'static> Cache<B> {
         let table = self
             .local
             .open_table(DEFAULT_TABLE_NAME, DEFAULT_TABLE_ID)?;
-        let native = self.local.transaction()?;
+        // The cache and table borrows establish the invariants required by
+        // mako-local's build-private trusted Put path. Public cache semantics
+        // are unchanged: reads/scans and conditional mutations still use the
+        // checked ABI, and commit retains separate visibility/cleanup results.
+        let native = self.local.trusted_transaction(&table)?;
         Ok(Transaction {
             cache: self,
             table,
             native: Some(native),
-            journal: Vec::new(),
         })
     }
 
@@ -500,7 +539,11 @@ impl<B: Blobs + 'static> Cache<B> {
         self.writeback.applied_sequence()
     }
 
-    /// Highest successful native commit published to the volatile queue.
+    /// Highest dense cache-sequence prefix acknowledged to callers.
+    ///
+    /// A later record may already be Ready internally while its publisher
+    /// waits for an earlier bound transaction to resolve; such a suffix is not
+    /// included here.
     pub fn highest_acknowledged_sequence(&self) -> u64 {
         self.writeback.highest_acknowledged()
     }
@@ -567,7 +610,6 @@ pub struct Transaction<'db, B: Blobs + 'static> {
     cache: &'db Cache<B>,
     table: mako_local::Table<'db>,
     native: Option<mako_local::Transaction<'db>>,
-    journal: Vec<JournalEntry>,
 }
 
 /// A transactional range iterator over the cache's default table.
@@ -587,14 +629,6 @@ impl Iterator for Scan<'_, '_> {
             .next()
             .map(|result| result.map_err(Error::Native))
     }
-}
-
-/// One canonical final mutation and the base-state fact needed to compose a
-/// later remove. Keeping these fields together makes it impossible for their
-/// indices or lifetimes to diverge.
-struct JournalEntry {
-    mutation: Mutation,
-    initially_present: bool,
 }
 
 impl<'db, B: Blobs + 'static> Transaction<'db, B> {
@@ -641,148 +675,69 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
 
     /// Upsert a key, returning whether it was newly created.
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<bool, Error> {
-        check_native_lengths(key, Some(value))?;
-        let journal_index = self.journal_index(key);
-        let owned_key = self.prepare_journal_key(journal_index, key)?;
-        let owned_value = copy_bytes(value)?;
         let table = self.table;
-        let created = self.native_mut().put(&table, key, value)?;
-        self.record_put(journal_index, owned_key, owned_value, !created);
-        Ok(created)
+        Ok(self.native_mut().put(&table, key, value)?)
     }
 
     /// Insert a key only when absent, returning whether it was staged.
     pub fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<bool, Error> {
-        check_native_lengths(key, Some(value))?;
-        let journal_index = self.journal_index(key);
-        let owned_key = self.prepare_journal_key(journal_index, key)?;
-        let owned_value = copy_bytes(value)?;
         let table = self.table;
-        let inserted = self.native_mut().insert(&table, key, value)?;
-        if inserted {
-            self.record_put(journal_index, owned_key, owned_value, false);
-        }
-        Ok(inserted)
+        Ok(self.native_mut().insert(&table, key, value)?)
     }
 
     /// Remove a key, returning whether a live value existed.
     pub fn remove(&mut self, key: &[u8]) -> Result<bool, Error> {
-        check_native_lengths(key, None)?;
-        let journal_index = self.journal_index(key);
-        let owned_key = self.prepare_journal_key(journal_index, key)?;
         let table = self.table;
-        let existed = self.native_mut().remove(&table, key)?;
-        if existed {
-            self.record_remove(journal_index, owned_key);
-        }
-        Ok(existed)
-    }
-
-    fn journal_index(&self, key: &[u8]) -> Option<usize> {
-        self.journal
-            .iter()
-            .position(|entry| mutation_key(&entry.mutation) == key)
-    }
-
-    /// Reserve and copy everything a new journal entry would need before the
-    /// corresponding native mutation is staged. Existing entries reuse their
-    /// owned key, so only replacement values need allocation.
-    fn prepare_journal_key(
-        &mut self,
-        journal_index: Option<usize>,
-        key: &[u8],
-    ) -> Result<Option<Vec<u8>>, Error> {
-        if journal_index.is_some() {
-            return Ok(None);
-        }
-        self.journal
-            .try_reserve(1)
-            .map_err(|_| Error::AllocationFailed)?;
-        Ok(Some(copy_bytes(key)?))
-    }
-
-    fn record_put(
-        &mut self,
-        journal_index: Option<usize>,
-        owned_key: Option<Vec<u8>>,
-        value: Vec<u8>,
-        initially_present: bool,
-    ) {
-        match journal_index {
-            Some(index) => {
-                let key = take_mutation_key(&mut self.journal[index].mutation);
-                self.journal[index].mutation = Mutation::Put {
-                    table_id: DEFAULT_TABLE_ID,
-                    key,
-                    value,
-                };
-            }
-            None => {
-                self.journal.push(JournalEntry {
-                    mutation: Mutation::Put {
-                        table_id: DEFAULT_TABLE_ID,
-                        key: owned_key.expect("new journal entry has a prepared key"),
-                        value,
-                    },
-                    initially_present,
-                });
-            }
-        }
-    }
-
-    fn record_remove(&mut self, journal_index: Option<usize>, owned_key: Option<Vec<u8>>) {
-        match journal_index {
-            Some(index) if self.journal[index].initially_present => {
-                let key = take_mutation_key(&mut self.journal[index].mutation);
-                self.journal[index].mutation = Mutation::Delete {
-                    table_id: DEFAULT_TABLE_ID,
-                    key,
-                };
-            }
-            Some(index) => {
-                self.journal.remove(index);
-            }
-            None => {
-                self.journal.push(JournalEntry {
-                    mutation: Mutation::Delete {
-                        table_id: DEFAULT_TABLE_ID,
-                        key: owned_key.expect("new journal entry has a prepared key"),
-                    },
-                    initially_present: true,
-                });
-            }
-        }
+        Ok(self.native_mut().remove(&table, key)?)
     }
 
     /// Validate/install in Silo, then publish the preallocated write-back
     /// record before returning success.
     pub fn commit(mut self) -> Result<(), Error> {
-        let native = self
+        let mut native = self
             .native
             .take()
             .expect("cache transaction already consumed");
+        let preflight = native.commit_record_preflight(self.cache.writeback.max_record_bytes())?;
 
-        if self.journal.is_empty() {
+        if preflight.is_empty() {
             // Writers hold this fence shared from native commit through queue
-            // resolution. Taking it exclusively prevents a read-only result
-            // from being acknowledged while a possibly observed writer is in
-            // the post-install, pre-resolution window.
+            // resolution. Taking it exclusively prevents a read-only or
+            // logical no-op result from being acknowledged while a possibly
+            // observed writer is in the post-install, pre-resolution window.
             let _fence = self
                 .cache
                 .commit_fence
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            self.cache.writeback.ensure_no_unknown()?;
+            if let Err(error) = self.cache.writeback.ensure_no_unknown() {
+                return Err(abort_after_precommit_failure(native, Error::Apply(error)));
+            }
             return finish_read_only(native);
         }
 
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::BeforeDetachedPreparation);
 
-        // Preparation may allocate or wait for bounded capacity, so it must
-        // finish before native Silo takes write locks.
-        let mutations = extract_mutations(std::mem::take(&mut self.journal))?;
-        let mut permit = self.cache.writeback.reserve(mutations)?;
+        // Capacity waits and the exact byte-buffer allocation both complete
+        // before native Silo takes write locks. Native later fills that one
+        // buffer directly from its canonical validated TransItems.
+        let mut permit = match self
+            .cache
+            .writeback
+            .reserve_native(preflight.exact_record_bytes())
+        {
+            Ok(permit) => permit,
+            Err(error) => {
+                return Err(abort_after_precommit_failure(native, Error::Reserve(error)));
+            }
+        };
+        let mut record = match UninitCommitRecord::try_for(preflight) {
+            Ok(record) => record,
+            Err(error) => {
+                return Err(abort_after_precommit_failure(native, Error::Native(error)));
+            }
+        };
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::DetachedPrepared);
 
@@ -794,22 +749,37 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
             .commit_fence
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.cache.writeback.ensure_no_unknown()?;
+        if let Err(error) = self.cache.writeback.ensure_no_unknown() {
+            return Err(abort_after_precommit_failure(native, Error::Apply(error)));
+        }
 
         let mut bound = None;
         let mut bind_error = None;
-        let report = native.commit_report_with_hook(|timestamp| match permit.bind(timestamp) {
-            Ok(reservation) => {
-                bound = Some(reservation);
-                #[cfg(test)]
-                crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
-                true
-            }
-            Err(error) => {
-                bind_error = Some(error);
-                false
-            }
-        });
+        let record_report =
+            native.commit_report_with_record(&mut record, |timestamp, native_preflight| {
+                debug_assert_eq!(native_preflight, preflight);
+                match permit.bind_native(timestamp) {
+                    Ok(reservation) => {
+                        let sequence = NonZeroU64::new(reservation.sequence().get())
+                            .expect("cache sequences are nonzero");
+                        bound = Some(reservation);
+                        #[cfg(test)]
+                        crate::failpoint::hit(crate::failpoint::Point::PreinstallBound);
+                        Some(sequence)
+                    }
+                    Err(error) => {
+                        bind_error = Some(error);
+                        None
+                    }
+                }
+            });
+        enforce_record_completion_contract(&record_report);
+        let report = record_report.commit;
+        assert_eq!(
+            record_report.record_bound,
+            bound.is_some(),
+            "native and queue record-binding outcomes diverged"
+        );
         #[cfg(test)]
         crate::failpoint::observe_post_native_commit();
         #[cfg(test)]
@@ -817,7 +787,19 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
             crate::failpoint::hit(crate::failpoint::Point::NativeCommittedBeforeReady);
         }
 
-        if let Some(reservation) = bound {
+        if let Some(mut reservation) = bound {
+            if !record_report.record_written {
+                // A sequence was assigned but native did not prove complete
+                // initialization. Dropping the reservation pins the ordered
+                // slot; treating this as an abort could let later data pass a
+                // possibly visible transaction with no replayable record.
+                return Err(finish_unwritten_bound(reservation, record_report));
+            }
+            reservation.attach_native_record(
+                record
+                    .into_written()
+                    .expect("a native completion witness exposes exact initialized bytes"),
+            );
             return match report.disposition {
                 CommitDisposition::Committed => {
                     let sequence = reservation.publish()?;
@@ -854,11 +836,11 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
             };
         }
 
-        // A nonempty journal implies a native write set. If no hook ran, Silo
-        // never entered its install phase, so every failure is a definite
-        // visibility abort even when the generic wrapper labels the status
-        // Unknown. A committed result without a hook would be a native contract
-        // violation and, critically, an uncovered visible write.
+        // A nonempty native preflight implies a write set. If no bind callback
+        // ran, Silo never entered installation, so every failure is a definite
+        // visibility abort even when the generic wrapper labels cleanup as
+        // Unknown. A committed result without a record is an uncovered-write
+        // contract violation.
         match report.disposition {
             CommitDisposition::Committed => {
                 panic!("native write commit succeeded without invoking its pre-install hook")
@@ -895,43 +877,66 @@ fn finish_read_only(native: mako_local::Transaction<'_>) -> Result<(), Error> {
     }
 }
 
-fn check_native_lengths(key: &[u8], value: Option<&[u8]>) -> Result<(), Error> {
-    if key.len() > mako_local::MAX_KEY_BYTES
-        || value.is_some_and(|value| value.len() > mako_local::MAX_VALUE_BYTES)
-    {
-        return Err(Error::Native(LocalError::ValueTooLarge));
-    }
-    Ok(())
-}
-
-fn copy_bytes(bytes: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut owned = Vec::new();
-    owned
-        .try_reserve_exact(bytes.len())
-        .map_err(|_| Error::AllocationFailed)?;
-    owned.extend_from_slice(bytes);
-    Ok(owned)
-}
-
-fn mutation_key(mutation: &Mutation) -> &[u8] {
-    match mutation {
-        Mutation::Put { key, .. } | Mutation::Delete { key, .. } => key,
+/// Abort an active native transaction after Rust-side preparation failed.
+///
+/// Returning the preparation error is correct only when native cleanup is
+/// known complete. A cleanup failure quarantines the worker and is the more
+/// severe result, matching mako-local's own fail-closed preflight behavior.
+fn abort_after_precommit_failure(native: mako_local::Transaction<'_>, preparation: Error) -> Error {
+    match native.abort() {
+        Ok(()) => preparation,
+        Err(cleanup) => Error::Native(cleanup),
     }
 }
 
-fn take_mutation_key(mutation: &mut Mutation) -> Vec<u8> {
-    match mutation {
-        Mutation::Put { key, .. } | Mutation::Delete { key, .. } => std::mem::take(key),
+#[cold]
+fn enforce_record_completion_contract(report: &mako_local::CommitRecordReport) {
+    if !report.completion_contract_valid && !report.record_bound {
+        // Native consumed the transaction handle but returned a malformed
+        // terminal result without invoking the only callback that could
+        // establish serialization order and a durability slot. There is no
+        // sound sequence to pin and no safe way to admit later work. This is
+        // ABI corruption, not a recoverable commit error; terminate even in
+        // panic-unwind builds.
+        std::process::abort();
     }
 }
 
-fn extract_mutations(journal: Vec<JournalEntry>) -> Result<Vec<Mutation>, Error> {
-    let mut mutations = Vec::new();
-    mutations
-        .try_reserve_exact(journal.len())
-        .map_err(|_| Error::AllocationFailed)?;
-    mutations.extend(journal.into_iter().map(|entry| entry.mutation));
-    Ok(mutations)
+fn finish_unwritten_bound<B: Blobs>(
+    reservation: writeback::BoundReservation<'_, B>,
+    record_report: mako_local::CommitRecordReport,
+) -> Error {
+    assert!(record_report.record_bound);
+    assert!(!record_report.record_written);
+    let sequence = reservation.sequence();
+    // Drop performs the fail-closed Prepared -> pinned transition before the
+    // typed result becomes visible to the caller.
+    drop(reservation);
+    let report = record_report.commit;
+    match report.disposition {
+        CommitDisposition::Aborted(abort)
+            if record_report.completion_contract_valid
+                && abort == LocalError::CommitHookRejected =>
+        {
+            Error::BoundRecordUnwritten {
+                sequence,
+                abort,
+                cleanup: report.cleanup.err(),
+            }
+        }
+        CommitDisposition::Committed => Error::UnknownCommitOutcome {
+            sequence,
+            source: LocalError::Internal,
+            cleanup: report.cleanup.err(),
+        },
+        CommitDisposition::Aborted(source) | CommitDisposition::Unknown(source) => {
+            Error::UnknownCommitOutcome {
+                sequence,
+                source,
+                cleanup: report.cleanup.err(),
+            }
+        }
+    }
 }
 
 fn recover<B: Blobs>(
@@ -966,11 +971,8 @@ fn recover<B: Blobs>(
     records
         .try_reserve_exact(log_keys.len())
         .map_err(|_| Error::AllocationFailed)?;
-    let mut timestamps = HashSet::new();
-    timestamps
-        .try_reserve(log_keys.len())
-        .map_err(|_| Error::AllocationFailed)?;
     let mut previous = 0u64;
+    let mut previous_mako_timestamp = None;
     for (sequence, key) in log_keys {
         let expected = previous.checked_add(1).ok_or(Error::BackendStateMismatch)?;
         if sequence.get() != expected {
@@ -978,9 +980,10 @@ fn recover<B: Blobs>(
         }
         let value = backend.get(&key)?.ok_or(Error::BackendStateMismatch)?;
         let record = CommitRecord::decode(&key, &value, max_bytes)?;
-        if !timestamps.insert(record.mako_timestamp()) {
+        if previous_mako_timestamp.is_some_and(|timestamp| record.mako_timestamp() <= timestamp) {
             return Err(Error::BackendStateMismatch);
         }
+        previous_mako_timestamp = Some(record.mako_timestamp());
         for mutation in record.mutations() {
             let table_id = match mutation {
                 Mutation::Put { table_id, .. } | Mutation::Delete { table_id, .. } => *table_id,
@@ -1010,8 +1013,7 @@ fn recover<B: Blobs>(
     // timestamp before replay completes and the recovered cache is exposed,
     // otherwise a process restart could reuse transaction timestamps.
     let applied_mako_timestamp = records.last().map(CommitRecord::mako_timestamp);
-    let max_mako_timestamp = records.iter().map(CommitRecord::mako_timestamp).max();
-    if let Some(timestamp) = max_mako_timestamp {
+    if let Some(timestamp) = applied_mako_timestamp {
         #[cfg(test)]
         crate::failpoint::hit(crate::failpoint::Point::RecoveryBeforeClockFloor);
         mako_local::advance_mako_timestamp_past(timestamp)?;
@@ -1150,6 +1152,141 @@ fn finish_replay_audit() -> Vec<u64> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn unbound_native_record_contract_violation_aborts_process() {
+        const ROLE: &str = "MAKO_CACHE_UNBOUND_RECORD_CONTRACT_VIOLATION_ROLE";
+        if std::env::var_os(ROLE).is_some() {
+            enforce_record_completion_contract(&mako_local::CommitRecordReport {
+                commit: mako_local::CommitReport {
+                    disposition: CommitDisposition::Unknown(LocalError::Internal),
+                    cleanup: Err(LocalError::Internal),
+                },
+                completion_contract_valid: false,
+                record_bound: false,
+                record_written: false,
+            });
+            unreachable!("the uncovered native completion must fail-stop");
+        }
+
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("tests::unbound_native_record_contract_violation_aborts_process")
+            .env(ROLE, "1")
+            .status()
+            .expect("run fail-stop subprocess");
+        assert!(!status.success(), "contract corruption process survived");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(status.signal(), Some(6), "expected SIGABRT");
+        }
+    }
+
+    #[test]
+    fn bound_unwritten_completion_is_typed_and_pins_its_dense_slot() {
+        use std::sync::Arc;
+
+        use mrx_core::fakes::MemBlobs;
+
+        fn reservation<'a>(
+            writeback: &'a Writeback<Arc<MemBlobs>>,
+        ) -> writeback::BoundReservation<'a, Arc<MemBlobs>> {
+            writeback
+                .reserve(vec![Mutation::Put {
+                    table_id: DEFAULT_TABLE_ID,
+                    key: b"unwritten".to_vec(),
+                    value: b"never-installed".to_vec(),
+                }])
+                .unwrap()
+                .bind(MakoTimestamp::new(1).unwrap())
+                .unwrap()
+        }
+
+        let writeback =
+            Writeback::new(Arc::new(MemBlobs::new()), 0, WritebackConfig::default()).unwrap();
+        let error = finish_unwritten_bound(
+            reservation(&writeback),
+            mako_local::CommitRecordReport {
+                commit: mako_local::CommitReport {
+                    disposition: CommitDisposition::Aborted(LocalError::CommitHookRejected),
+                    cleanup: Ok(()),
+                },
+                completion_contract_valid: true,
+                record_bound: true,
+                record_written: false,
+            },
+        );
+        assert!(matches!(
+            error,
+            Error::BoundRecordUnwritten {
+                sequence,
+                abort: LocalError::CommitHookRejected,
+                cleanup: None,
+            } if sequence.get() == 1
+        ));
+        assert!(matches!(
+            writeback.ensure_no_unknown(),
+            Err(ApplyError::UnknownOutcome { sequence }) if sequence.get() == 1
+        ));
+
+        let malformed =
+            Writeback::new(Arc::new(MemBlobs::new()), 0, WritebackConfig::default()).unwrap();
+        let error = finish_unwritten_bound(
+            reservation(&malformed),
+            mako_local::CommitRecordReport {
+                commit: mako_local::CommitReport {
+                    disposition: CommitDisposition::Unknown(LocalError::Internal),
+                    cleanup: Err(LocalError::Internal),
+                },
+                completion_contract_valid: false,
+                record_bound: true,
+                record_written: false,
+            },
+        );
+        assert!(matches!(
+            error,
+            Error::UnknownCommitOutcome {
+                sequence,
+                source: LocalError::Internal,
+                cleanup: Some(LocalError::Internal),
+            } if sequence.get() == 1
+        ));
+        assert!(matches!(
+            malformed.ensure_no_unknown(),
+            Err(ApplyError::UnknownOutcome { sequence }) if sequence.get() == 1
+        ));
+
+        // Defense in depth: even if a future wrapper accidentally marks this
+        // impossible post-bind conflict shape as contract-valid, the cache
+        // must not tell callers it was a retryable definite abort.
+        let impossible_conflict =
+            Writeback::new(Arc::new(MemBlobs::new()), 0, WritebackConfig::default()).unwrap();
+        let error = finish_unwritten_bound(
+            reservation(&impossible_conflict),
+            mako_local::CommitRecordReport {
+                commit: mako_local::CommitReport {
+                    disposition: CommitDisposition::Aborted(LocalError::Conflict),
+                    cleanup: Ok(()),
+                },
+                completion_contract_valid: true,
+                record_bound: true,
+                record_written: false,
+            },
+        );
+        assert!(matches!(
+            error,
+            Error::UnknownCommitOutcome {
+                sequence,
+                source: LocalError::Conflict,
+                cleanup: None,
+            } if sequence.get() == 1
+        ));
+        assert!(matches!(
+            impossible_conflict.ensure_no_unknown(),
+            Err(ApplyError::UnknownOutcome { sequence }) if sequence.get() == 1
+        ));
+    }
+
     #[cfg(have_mako)]
     fn test_record(sequence: u64, timestamp: u32, key: &[u8]) -> CommitRecord {
         test_record_with_mutations(
@@ -1262,20 +1399,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn oversized_inputs_are_rejected_before_native_staging() {
-        let key = vec![0; mako_local::MAX_KEY_BYTES + 1];
-        assert!(matches!(
-            check_native_lengths(&key, None),
-            Err(Error::Native(LocalError::ValueTooLarge))
-        ));
-        let value = vec![0; mako_local::MAX_VALUE_BYTES + 1];
-        assert!(matches!(
-            check_native_lengths(b"key", Some(&value)),
-            Err(Error::Native(LocalError::ValueTooLarge))
-        ));
-    }
-
     #[cfg(have_mako)]
     #[test]
     fn native_mako_timestamp_is_carried_into_the_backend_record() {
@@ -1324,21 +1447,23 @@ mod tests {
 
     #[cfg(have_mako)]
     #[test]
-    fn recovery_rejects_duplicate_mako_timestamps() {
+    fn recovery_rejects_non_increasing_mako_timestamps() {
         use std::sync::Arc;
 
         use mrx_core::fakes::MemBlobs;
 
-        let backend = Arc::new(MemBlobs::new());
-        let first = test_record(1, 202, b"first");
-        let second = test_record(2, 202, b"second");
-        backend.write_batch(&first.backend_ops()).unwrap();
-        backend.write_batch(&second.backend_ops()).unwrap();
+        for (label, second_timestamp) in [("duplicate", 202), ("decreasing", 201)] {
+            let backend = Arc::new(MemBlobs::new());
+            let first = test_record(1, 202, b"first");
+            let second = test_record(2, second_timestamp, label.as_bytes());
+            backend.write_batch(&first.backend_ops()).unwrap();
+            backend.write_batch(&second.backend_ops()).unwrap();
 
-        assert!(matches!(
-            Cache::from_backend(backend, CacheOptions::default()),
-            Err(Error::BackendStateMismatch)
-        ));
+            assert!(matches!(
+                Cache::from_backend(backend, CacheOptions::default()),
+                Err(Error::BackendStateMismatch)
+            ));
+        }
     }
 
     #[cfg(have_mako)]
@@ -1348,10 +1473,10 @@ mod tests {
 
         use mrx_core::fakes::MemBlobs;
 
-        const HIGH_TIMESTAMP: u32 = 1 << 25;
-        const FRONTIER_TIMESTAMP: u32 = HIGH_TIMESTAMP - 1;
+        const FIRST_TIMESTAMP: u32 = (1 << 25) - 1;
+        const FRONTIER_TIMESTAMP: u32 = 1 << 25;
         let backend = Arc::new(MemBlobs::new());
-        let first = test_record(1, HIGH_TIMESTAMP, b"higher-timestamp");
+        let first = test_record(1, FIRST_TIMESTAMP, b"first-timestamp");
         let second = test_record(2, FRONTIER_TIMESTAMP, b"sequence-frontier");
         backend.write_batch(&first.backend_ops()).unwrap();
         backend.write_batch(&second.backend_ops()).unwrap();
@@ -1364,13 +1489,13 @@ mod tests {
             "the timestamp identifies CacheSeq 2 rather than taking a numeric maximum"
         );
 
-        cache.put(b"after-inverted-recovery", b"new").unwrap();
+        cache.put(b"after-ordered-recovery", b"new").unwrap();
         cache.wait_applied().unwrap();
         let next = cache.applied_watermark();
         assert_eq!(next.sequence(), 3);
         assert!(
-            next.mako_timestamp().unwrap().get() > HIGH_TIMESTAMP,
-            "clock recovery must use the maximum timestamp, not the CacheSeq frontier timestamp"
+            next.mako_timestamp().unwrap().get() > FRONTIER_TIMESTAMP,
+            "clock recovery must continue past the serialized CacheSeq frontier"
         );
         cache.close().unwrap();
     }
@@ -1471,5 +1596,52 @@ mod tests {
                 ApplyError::UnknownOutcome { sequence }
             ))) if sequence.get() == 1
         ));
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn preparation_failure_surfaces_native_abort_cleanup_quarantine() {
+        if !mako_local::features().unwrap().test_cleanup_failures() {
+            return;
+        }
+
+        std::thread::spawn(|| {
+            use std::sync::Arc;
+
+            use mako_local::{
+                arm_test_cleanup_failure, worker_health, TestCleanupBoundary, WorkerHealth,
+            };
+            use mrx_core::fakes::MemBlobs;
+
+            let backend = Arc::new(MemBlobs::new());
+            let cache = Cache::from_backend(backend, CacheOptions::default()).unwrap();
+            let mut transaction = cache.transaction().unwrap();
+            transaction
+                .put(b"preparation-cleanup", b"never-installed")
+                .unwrap();
+
+            cache
+                .writeback
+                .reserve(vec![Mutation::Put {
+                    table_id: DEFAULT_TABLE_ID,
+                    key: b"prior-unknown".to_vec(),
+                    value: b"uncertain".to_vec(),
+                }])
+                .unwrap()
+                .bind(MakoTimestamp::new(1).unwrap())
+                .unwrap()
+                .pin_unknown()
+                .unwrap();
+            arm_test_cleanup_failure(TestCleanupBoundary::Abort).unwrap();
+
+            assert!(matches!(
+                transaction.commit(),
+                Err(Error::Native(LocalError::WorkerPoisoned))
+            ));
+            assert_eq!(worker_health().unwrap(), WorkerHealth::Poisoned);
+            let _ = cache.close();
+        })
+        .join()
+        .unwrap();
     }
 }
