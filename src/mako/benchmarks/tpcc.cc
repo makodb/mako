@@ -632,6 +632,10 @@ public:
     return true;
   }
 
+  // Native MassTrans invokes the callback once more after ten retained rows;
+  // preserve that read-set/callback boundary for materializing backends.
+  size_t max_records_hint() const override { return 11; }
+
   inline void print_warehouse_info() {
     std::cout << "# of records in the warehouse table: " << values.size() << std::endl;
     for (int i=0; i<values.size(); i++) {
@@ -2530,6 +2534,7 @@ public:
 #endif
     return false;
   }
+  size_t max_records_hint() const override { return 1; }
   inline const new_order::key *
   get_key() const
   {
@@ -3125,6 +3130,7 @@ public:
     ++n;
     return true;
   }
+  size_t max_records_hint() const override { return 15; }
   size_t n;
 };
 
@@ -3233,8 +3239,11 @@ tpcc_worker::txn_order_status()
       ALWAYS_ERROR(c_oorder.size());
     } else {
       latest_key_callback c_oorder(*newest_o_c_id, 1);
+      const oorder_c_id_idx::key k_oo_idx_lo(warehouse_id, districtID, k_c.c_id, 0);
       const oorder_c_id_idx::key k_oo_idx_hi(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
-      tx_rscan(tbl_oorder_c_id_idx(warehouse_id), txn, Encode(obj_key0, k_oo_idx_hi), nullptr, c_oorder, s_arena.get());
+      tx_rscan(tbl_oorder_c_id_idx(warehouse_id), txn,
+               Encode(obj_key0, k_oo_idx_hi), &Encode(obj_key1, k_oo_idx_lo),
+               c_oorder, s_arena.get());
       ALWAYS_ERROR(c_oorder.size() == 1);
     }
 
@@ -3282,6 +3291,7 @@ public:
     n++;
     return true;
   }
+  size_t max_records_hint() const override { return 20 * 15; }
   size_t n;
   small_unordered_map<uint, bool, 512> s_i_ids;
 };

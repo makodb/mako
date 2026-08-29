@@ -2,6 +2,7 @@
 #define _ABSTRACT_ORDERED_INDEX_H_
 
 #include <stdint.h>
+#include <limits>
 #include <string>
 #include <utility>
 #include <map>
@@ -53,6 +54,14 @@ public:
   // strings are generated
   virtual bool invoke(const char *keyp, size_t keylen,
                       const std::string &value) = 0;
+
+  // Upper bound on the number of records the caller can consume. Backends
+  // that materialize scans (notably the Rust STO adapter) use this to avoid
+  // walking and copying the rest of a range after invoke() would stop. The
+  // default preserves the historical streaming/unbounded contract.
+  virtual size_t max_records_hint() const {
+    return std::numeric_limits<size_t>::max();
+  }
 };
 
 // Spellings for the DSL's raw-pointer types (`*mut c_void` etc.).

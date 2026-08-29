@@ -297,6 +297,11 @@ public:
     return (limit == -1) || (++n < size_t(limit));
   }
 
+  size_t max_records_hint() const override {
+    return limit == -1 ? std::numeric_limits<size_t>::max()
+                       : static_cast<size_t>(limit);
+  }
+
   typedef std::pair<std::string, std::string> kv_pair;
   std::vector<kv_pair> values;
 
@@ -326,6 +331,11 @@ public:
 
   inline size_t size() const { return n; }
   inline std::string &kstr() { return *k; }
+
+  size_t max_records_hint() const override {
+    return limit == -1 ? std::numeric_limits<size_t>::max()
+                       : static_cast<size_t>(limit);
+  }
 
 private:
   ssize_t limit;
@@ -378,6 +388,8 @@ public:
   {
     return values.size();
   }
+
+  size_t max_records_hint() const override { return N; }
 
   typedef std::pair<const std::string *, const std::string *> kv_pair;
   typename util::vec<kv_pair, N>::type values;

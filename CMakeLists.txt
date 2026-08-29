@@ -8,7 +8,22 @@ cmake_minimum_required(VERSION 3.30)
 # into no-ops via the header guard. The UUID gates CMake's
 # experimental `import std;` materialization and must be set BEFORE
 # `project()`.
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+# CMake intentionally rotates this experimental gate. Keep the established
+# 3.30/3.31 value while accepting the CMake 4.4 gate used by current developer
+# environments.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.4")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.3")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0.3")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "a9e1cf81-9932-4810-974b-6eccaf14e457")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "3.31.8")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
+else()
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
+endif()
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -95,7 +110,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # can find the right libc++ at runtime too. apt.llvm.org installs are
 # unaffected — clang-21 there ships in /usr/bin and uses the matching
 # /usr/lib/llvm-21/lib/libc++.so via its built-in search.
-get_filename_component(MAKO_CLANG_BINDIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+# Resolve Homebrew's bin/clang++ symlink before deriving the keg root.  CMake
+# preserves an explicitly supplied symlink path (for example
+# ~/.linuxbrew/bin/clang++), whose parent is not the versioned LLVM keg and
+# therefore cannot supply the matching libc++.
+get_filename_component(MAKO_CLANG_REALPATH "${CMAKE_CXX_COMPILER}" REALPATH)
+get_filename_component(MAKO_CLANG_BINDIR "${MAKO_CLANG_REALPATH}" DIRECTORY)
 get_filename_component(MAKO_CLANG_ROOT "${MAKO_CLANG_BINDIR}" DIRECTORY)
 set(MAKO_BREW_LIBCXX_FLAGS "")
 if(EXISTS "${MAKO_CLANG_ROOT}/lib/libc++.so")
@@ -141,6 +161,13 @@ endif()
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-stdlib=libc++>)
     add_link_options(-stdlib=libc++ -lc++abi)
+    # Also apply the detected keg path after project() so an existing build
+    # tree picks it up; *_FLAGS_INIT only initializes a fresh CMake cache.
+    if(MAKO_BREW_LIBCXX_FLAGS)
+        separate_arguments(MAKO_BREW_LIBCXX_OPTIONS NATIVE_COMMAND
+            "${MAKO_BREW_LIBCXX_FLAGS}")
+        add_link_options(${MAKO_BREW_LIBCXX_OPTIONS})
+    endif()
 endif()
 
 # `std_compat.hpp` does `import std;` at the bottom of its 90-line
@@ -1353,6 +1380,12 @@ if(MAKO_CARGO_EXECUTABLE)
             "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/tests/native_integration.rs")
     endif()
 
+    set(_MAKO_STO_TPCC_NATIVE_TEST "")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/tests/native_ffi.rs")
+        set(_MAKO_STO_TPCC_NATIVE_TEST
+            "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/tests/native_ffi.rs")
+    endif()
+
     add_custom_target(rust_masstree_native_integration
         COMMAND "${CMAKE_COMMAND}"
             "-DMAKO_CARGO_EXECUTABLE=${MAKO_CARGO_EXECUTABLE}"
@@ -1364,6 +1397,7 @@ if(MAKO_CARGO_EXECUTABLE)
             "-DMAKO_LOADER_PATH_VARIABLE=${_MAKO_MTREE_LOADER_PATH_VARIABLE}"
             "-DMAKO_NATIVE_LIBS=${MAKO_MTREE_RUST_NATIVE_LIBS}"
             "-DMAKO_STO_NATIVE_TEST=${_MAKO_STO_MASSTREE_NATIVE_TEST}"
+            "-DMAKO_STO_TPCC_NATIVE_TEST=${_MAKO_STO_TPCC_NATIVE_TEST}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunRustMasstreeNativeIntegration.cmake"
         DEPENDS check_mtree_abi_exports masstree
         USES_TERMINAL
@@ -1586,6 +1620,95 @@ target_link_libraries(sto_masstree_cpp_bench PRIVATE
     ${BENCH_LDFLAGS}
     ${LIBEVENT_LDFLAGS}
 )
+
+# Matched TPC-C application with a selectable native C++ STO/Masstree or
+# Rust STO/Masstree storage backend. Both modes execute the same compiled
+# workload code; only the abstract_db implementation changes.
+if(MAKO_CARGO_EXECUTABLE)
+    set(STO_TPCC_RUST_TARGET_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/rust-sto-tpcc-target")
+    set(STO_TPCC_RUST_ARCHIVE
+        "${STO_TPCC_RUST_TARGET_DIR}/release/libsto_tpcc_ffi.a")
+    set(STO_TPCC_RUST_MANIFESTS
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-core/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/Cargo.toml")
+    file(GLOB_RECURSE STO_TPCC_RUST_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-core/src/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/src/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/src/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/src/*.rs")
+    add_custom_command(
+        OUTPUT "${STO_TPCC_RUST_ARCHIVE}"
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=CARGO_BUILD_TARGET
+            --unset=CARGO_ENCODED_RUSTFLAGS
+            "CARGO_TARGET_DIR=${STO_TPCC_RUST_TARGET_DIR}"
+            "CARGO_INCREMENTAL=0"
+            "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1"
+            "CARGO_PROFILE_RELEASE_DEBUG=1"
+            "CARGO_PROFILE_RELEASE_LTO=fat"
+            "CARGO_PROFILE_RELEASE_OPT_LEVEL=2"
+            "CARGO_PROFILE_RELEASE_PANIC=unwind"
+            "RUSTFLAGS=-C target-cpu=native -C force-frame-pointers=yes"
+            "${MAKO_CARGO_EXECUTABLE}" build --release --locked
+            --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+            --package sto-tpcc-ffi
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.lock"
+            ${STO_TPCC_RUST_MANIFESTS}
+            ${STO_TPCC_RUST_SOURCES}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        USES_TERMINAL
+        VERBATIM
+        COMMENT "Building the Rust STO TPC-C C-ABI adapter")
+    add_custom_target(sto_tpcc_rust_build DEPENDS "${STO_TPCC_RUST_ARCHIVE}")
+    add_library(sto_tpcc_rust_ffi STATIC IMPORTED)
+    set_target_properties(sto_tpcc_rust_ffi PROPERTIES
+        IMPORTED_LOCATION "${STO_TPCC_RUST_ARCHIVE}")
+    add_dependencies(sto_tpcc_rust_ffi sto_tpcc_rust_build)
+
+    add_executable(sto_tpcc_bench EXCLUDE_FROM_ALL
+        src/mako/benchmarks/dbtest.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_include_directories(sto_tpcc_bench PRIVATE
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+        ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
+    target_compile_options(sto_tpcc_bench PRIVATE
+        ${BENCH_CXXFLAGS}
+        ${MASSTREE_FORCE_INCLUDE_FLAG})
+    target_compile_definitions(sto_tpcc_bench PRIVATE
+        CONFIG_H="${CONFIG_H}"
+        MAKO_RUST_STO_TPCC=1)
+    target_link_libraries(sto_tpcc_bench PRIVATE
+        sto_tpcc_rust_ffi
+        mako
+        ${TXLOG_LINK_LIBS}
+        ${BENCH_LDFLAGS}
+        yaml-cpp
+        pthread
+        $<$<PLATFORM_ID:Linux>:util>
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+        ${GFLAGS_LDFLAGS}
+        ${PROTOBUF_LDFLAGS}
+        $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>)
+    add_dependencies(sto_tpcc_bench mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
+else()
+    message(STATUS "Cargo not found; sto_tpcc_bench target is unavailable")
+endif()
 
 # ============================================================================
 # Test Configuration

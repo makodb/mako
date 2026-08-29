@@ -100,3 +100,25 @@ if(DEFINED MAKO_STO_NATIVE_TEST
             "Rust STO Masstree native integration failed with exit code ${_sto_masstree_result}")
     endif()
 endif()
+
+if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
+        AND NOT "${MAKO_STO_TPCC_NATIVE_TEST}" STREQUAL "")
+    if(NOT EXISTS "${MAKO_STO_TPCC_NATIVE_TEST}")
+        message(FATAL_ERROR
+            "Configured sto-tpcc-ffi native test does not exist: ${MAKO_STO_TPCC_NATIVE_TEST}")
+    endif()
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}
+            "${MAKO_CARGO_EXECUTABLE}" test
+            --manifest-path "${MAKO_RUST_MANIFEST}"
+            --locked
+            -p sto-tpcc-ffi
+            --test native_ffi
+        COMMAND_ECHO STDOUT
+        RESULT_VARIABLE _sto_tpcc_result
+    )
+    if(NOT _sto_tpcc_result EQUAL 0)
+        message(FATAL_ERROR
+            "Rust STO TPC-C FFI integration failed with exit code ${_sto_tpcc_result}")
+    endif()
+endif()

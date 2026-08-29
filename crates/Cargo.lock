@@ -155,6 +155,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sto-tpcc-ffi"
+version = "0.0.0"
+dependencies = [
+ "masstree",
+ "sto-core",
+ "sto-masstree",
+]
+
+[[package]]
 name = "syn"
 version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

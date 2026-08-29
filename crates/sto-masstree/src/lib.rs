@@ -25,7 +25,7 @@ pub use fixed_u64::{FixedU64Batch, FixedU64CreateError, FixedU64Mutation, FixedU
 use arc_swap::ArcSwapOption;
 use std::{
     borrow::Borrow,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     fmt,
     ops::Deref,
     sync::{
@@ -33,6 +33,9 @@ use std::{
         Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
     },
 };
+
+#[cfg(test)]
+use std::collections::BTreeMap;
 
 #[cfg(not(test))]
 use masstree::{
@@ -1450,10 +1453,20 @@ impl Table {
         request: ScanRequest<'_>,
         config: TableConfig,
     ) -> Result<Vec<ScanRecord>, AccessError> {
-        let mut base = BTreeMap::<RecordKey, ScannedRecord>::new();
+        let initial_capacity = request.limit.min(config.scan_chunk_records);
+        let mut result = Vec::new();
+        if result.try_reserve_exact(initial_capacity).is_err() {
+            return self.fail_scan(txn, CapacityError::BufferLimit.into());
+        }
         let mut resume_key: Option<Box<[u8]>> = None;
         let mut previous_key: Option<Box<[u8]>> = None;
-        let mut arena_capacity = config.scan_initial_key_arena_bytes;
+        // A small bounded result rarely needs the table-wide default arena.
+        // Begin with up to 64 key bytes per requested live row and retain the
+        // existing exact-size growth path when a key or tombstone-heavy range
+        // needs more. This avoids allocating and zeroing 16 KiB for a limit-1
+        // scan while preserving every configured hard maximum.
+        let request_arena_hint = request.limit.saturating_mul(64).max(1);
+        let mut arena_capacity = config.scan_initial_key_arena_bytes.min(request_arena_hint);
         let mut physical_records = 0_usize;
         let mut chunks = 0_usize;
 
@@ -1464,11 +1477,19 @@ impl Table {
             chunks += 1;
 
             let (lower, upper) = resumed_bounds(request, resume_key.as_deref());
+            // Do not ask the native directory to copy rows beyond the number
+            // that can still contribute to this bounded logical result.
+            // Tombstones may require another chunk, but live TPC-C scans avoid
+            // copying a full default chunk for limits such as 1 or 15.
+            let entry_capacity = config
+                .scan_chunk_records
+                .min(request.limit - result.len())
+                .max(1);
             let directory_request = DirectoryScanRequest {
                 direction: request.direction,
                 lower,
                 upper,
-                entry_capacity: config.scan_chunk_records,
+                entry_capacity,
                 key_arena_capacity: arena_capacity,
             };
             let chunk = txn.with_item(&self.membership_resource, (), |_entry| {
@@ -1499,7 +1520,6 @@ impl Table {
             physical_records = next_physical;
 
             for copied in &chunk.entries {
-                let key = RecordKey(Arc::from(copied.key.clone()));
                 let record_id = copied.record_id;
                 let adapter = self.record_resource.adapter();
                 let snapshot = txn.with_resolved_item(
@@ -1511,12 +1531,14 @@ impl Table {
                         current_state_snapshot(entry).cloned()
                     },
                 )?;
-                if base
-                    .insert(key, ScannedRecord { state: snapshot })
-                    .is_some()
-                {
-                    return self
-                        .fail_scan(txn, table_fault("directory scan returned a duplicate key"));
+                if let Some(value) = snapshot.value() {
+                    result.push(ScanRecord {
+                        key: Arc::from(copied.key.clone()),
+                        value: value.clone(),
+                    });
+                    if result.len() == request.limit {
+                        return Ok(result);
+                    }
                 }
             }
 
@@ -1557,40 +1579,6 @@ impl Table {
                         txn,
                         table_fault("directory scan stop metadata is inconsistent"),
                     );
-                }
-            }
-        }
-
-        let result_capacity = request.limit.min(base.len());
-        let mut result = Vec::new();
-        if result.try_reserve_exact(result_capacity).is_err() {
-            return self.fail_scan(txn, CapacityError::BufferLimit.into());
-        }
-        match request.direction {
-            ScanDirection::Forward => {
-                for (key, scanned) in base {
-                    if let Some(value) = scanned.state.value() {
-                        result.push(ScanRecord {
-                            key: key.0,
-                            value: value.clone(),
-                        });
-                        if result.len() == request.limit {
-                            break;
-                        }
-                    }
-                }
-            }
-            ScanDirection::Reverse => {
-                for (key, scanned) in base.into_iter().rev() {
-                    if let Some(value) = scanned.state.value() {
-                        result.push(ScanRecord {
-                            key: key.0,
-                            value: value.clone(),
-                        });
-                        if result.len() == request.limit {
-                            break;
-                        }
-                    }
                 }
             }
         }
@@ -2152,13 +2140,6 @@ struct MembershipUpdate {
     record_id: RecordId,
     changed: bool,
 }
-
-struct ScannedRecord {
-    state: RecordState,
-}
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-struct RecordKey(Arc<[u8]>);
 
 #[derive(Clone, Copy)]
 struct DirectoryScanRequest<'key> {
@@ -7223,6 +7204,50 @@ mod tests {
         );
         committed(limited.commit());
         drop(runtime);
+    }
+
+    #[test]
+    fn scan_limit_does_not_consume_transaction_items_past_the_result() {
+        // One item records the table-membership observation and one records
+        // the returned row. A bounded scan must not consume items for rows
+        // that follow its completed logical result.
+        let runtime = Runtime::new(
+            RuntimeConfig::new()
+                .with_max_items_per_transaction(2)
+                .with_max_locks_per_transaction(2),
+        )
+        .unwrap();
+        let table = Table::new_memory(&runtime, TableConfig::new().with_scan_chunk_records(16));
+        let mut worker = runtime.attach().unwrap();
+        for (key, value) in [(b"a", b"A"), (b"b", b"B"), (b"c", b"C")] {
+            let mut insert = worker.begin().unwrap();
+            table
+                .put_inner(&mut insert, None, key, Arc::from(&value[..]))
+                .unwrap();
+            committed(insert.commit());
+        }
+
+        let mut forward = worker.begin().unwrap();
+        assert_eq!(
+            scan_rows(
+                &table,
+                &mut forward,
+                ScanRequest::new(ScanDirection::Forward, 1),
+            ),
+            vec![(b"a".to_vec(), b"A".to_vec())]
+        );
+        committed(forward.commit());
+
+        let mut reverse = worker.begin().unwrap();
+        assert_eq!(
+            scan_rows(
+                &table,
+                &mut reverse,
+                ScanRequest::new(ScanDirection::Reverse, 1),
+            ),
+            vec![(b"c".to_vec(), b"C".to_vec())]
+        );
+        committed(reverse.commit());
     }
 
     #[test]

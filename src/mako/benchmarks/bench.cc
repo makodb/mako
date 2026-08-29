@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <sched.h>
 #include <unistd.h>
+
+#include <iomanip>
 #if defined(__linux__)
 #include <sys/sysinfo.h>
 #else
@@ -814,6 +816,49 @@ bench_runner::run()
   }
   std::cout<<"DONE"<<std::endl;
 #endif
+
+  if (BenchmarkConfig::getInstance().getEmitTpccResult()) {
+    // Stable machine-readable record consumed by the paired TPC-C runner.
+    // The no-sync interval excludes the deliberate one-second worker shutdown
+    // sleep and is the actual workload measurement interval.
+    std::cout
+        << std::setprecision(17) << "TPCC_BENCH_RESULT {"
+        << "\"schema_version\":1,"
+        << "\"engine\":\"" << BenchmarkConfig::getInstance().getStorageEngine()
+        << "\","
+        << "\"threads\":" << workers.size() << ","
+        << "\"warehouses\":"
+        << static_cast<size_t>(
+               BenchmarkConfig::getInstance().getScaleFactor())
+        << ","
+        << "\"configured_seconds\":"
+        << BenchmarkConfig::getInstance().getRuntime() << ","
+        << "\"measured_seconds\":" << elapsed_nosync_sec << ","
+        << "\"commits\":" << n_commits << ","
+        << "\"aborts\":" << n_aborts << ","
+        << "\"attempts\":" << (n_commits + n_aborts) << ","
+        << "\"throughput_txn_s\":" << agg_nosync_throughput << ","
+        << "\"mix\":{"
+        << "\"NewOrder\":"
+        << (agg_txn_counts["NewOrder_Local"] +
+            agg_txn_counts["NewOrder_Remote"])
+        << ","
+        << "\"Payment\":"
+        << (agg_txn_counts["Payment_Local"] + agg_txn_counts["Payment_Remote"])
+        << ","
+        << "\"Delivery\":"
+        << (agg_txn_counts["Delivery_Local"] +
+            agg_txn_counts["Delivery_Remote"])
+        << ","
+        << "\"OrderStatus\":"
+        << (agg_txn_counts["OrderStatus_Local"] +
+            agg_txn_counts["OrderStatus_Remote"])
+        << ","
+        << "\"StockLevel\":"
+        << (agg_txn_counts["StockLevel_Local"] +
+            agg_txn_counts["StockLevel_Remote"])
+        << "}}" << std::endl;
+  }
 
   cout.flush();
 
