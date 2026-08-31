@@ -1,9 +1,12 @@
 # Mako cache Milestone 1 acceptance
 
-Status: **CURRENT DETACHED-WRITEBACK PASS** on 2026-08-30. The latest code and
-performance evidence is for candidate `153e14c78`. The earlier native-record
-rewrite and the full comparative acceptance remain below as historical
-evidence; newer measurements do not retroactively alter those artifacts.
+Status: **CURRENT DETACHED-WRITEBACK PASS** on 2026-08-30. The retained
+performance evidence is for candidate `153e14c78`. Later commits add this
+documentation and an MSRV-compatible safety annotation around the same CPUID
+feature checks; the measured transaction path is otherwise unchanged. The
+earlier native-record rewrite and the full comparative acceptance remain below
+as historical evidence; newer measurements do not retroactively alter those
+artifacts.
 
 Milestone 1 is complete for its declared scope: one process, one recovered
 cache namespace, C++ STO/MassTrans transactions behind the public revision-0 C

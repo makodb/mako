@@ -92,6 +92,9 @@ unsafe fn prefetch_write_unchecked(address: *const u8) {
 /// Cache the architectural PRFCHW capability without putting CPUID in the
 /// transaction hot path after the first call.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+// `__cpuid` is unsafe on the Rust 1.91 MSRV but safe on newer toolchains. Keep
+// the explicit blocks for the MSRV without making newer builds fail linting.
+#[allow(unused_unsafe)]
 #[inline]
 fn prefetch_write_supported() -> bool {
     const UNKNOWN: u8 = 0;
@@ -110,8 +113,18 @@ fn prefetch_write_supported() -> bool {
 
             // CPUID is available on Rust's supported x86 targets. The
             // extended-leaf maximum is checked before querying PRFCHW (ECX 8).
-            let maximum = __cpuid(0x8000_0000).eax;
-            let supported = maximum >= 0x8000_0001 && (__cpuid(0x8000_0001).ecx & (1 << 8)) != 0;
+            // SAFETY: Rust's x86 targets which reach this implementation
+            // support CPUID. The base extended leaf is always valid, and its
+            // result gates the only subsequent extended-leaf query.
+            let maximum = unsafe { __cpuid(0x8000_0000) }.eax;
+            let extended_features = if maximum >= 0x8000_0001 {
+                // SAFETY: the maximum-leaf result above proves this query is
+                // implemented by the current processor.
+                unsafe { __cpuid(0x8000_0001) }.ecx
+            } else {
+                0
+            };
+            let supported = (extended_features & (1 << 8)) != 0;
             SUPPORT.store(if supported { YES } else { NO }, Ordering::Relaxed);
             supported
         }
